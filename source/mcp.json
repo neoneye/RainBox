@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "hello": {
+      "command": "python",
+      "args": ["mcp_servers/hello_server.py"]
+    }
+  }
+}

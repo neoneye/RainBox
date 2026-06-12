@@ -1,0 +1,17 @@
+# Whisper STT service — isolated from the main project's deps.
+#
+# Direct dependencies are pinned below. The transitive tree (ctranslate2,
+# tokenizers, onnxruntime, av, huggingface_hub, numpy, ...) is intentionally
+# left to the resolver here; after the first `pip install` run
+# `pip freeze > requirements.lock.txt` if you want a fully reproducible lock for
+# supply-chain safety (matching kokoro_service's fully-pinned approach).
+#
+# faster-whisper uses CTranslate2 (not torch) and bundles PyAV/ffmpeg for
+# decoding, so the browser's webm/opus recordings transcribe without a system
+# ffmpeg install. Use Python 3.12 for this venv.
+
+faster-whisper==1.1.1
+Flask==3.1.3
+# faster-whisper 1.1.1 imports `requests` at runtime but doesn't declare it
+# (newer huggingface_hub dropped its requests dependency), so pin it directly.
+requests==2.34.2

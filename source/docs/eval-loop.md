@@ -1,0 +1,153 @@
+# Eval Loop Architecture
+
+## Purpose
+
+The eval loop turns real chat feedback into repeatable checks. It exists so
+memory and retrieval changes can be tested before they become trusted behavior.
+
+The current loop is deterministic-first:
+
+```text
+agent reply
+-> feedback_event
+-> eval_case
+-> eval_run / eval_result
+-> baseline comparison
+-> optimizer candidate decision
+```
+
+LLM-as-judge is intentionally out of scope for the current implementation.
+
+## Core Tables
+
+### `feedback_event`
+
+Stores upvotes/downvotes on user-facing agent messages.
+
+Important fields:
+
+- `room_uuid`
+- `message_uuid`
+- `agent_uuid`
+- `rating`
+- `comment`
+- `metadata`
+
+The metadata snapshot includes the rated message text, latest prior human
+message, and same-turn diagnostics such as `debug-memory` and `debug-query`.
+
+### `eval_case`
+
+Stores a benchmark case promoted from feedback or written by hand.
+
+Important fields:
+
+- `case_type`: `chat_reply`, `memory_retrieval`, `query_answer`, `tool_output`
+- `split`: `train`, `holdout`, `regression`
+- `status`: `candidate`, `active`, `archived`
+- `input`, `expected`, `rubric`
+- `source_feedback_uuid`
+
+Downvoted feedback defaults to a regression case. Upvoted feedback defaults to a
+train case.
+
+### `eval_run`
+
+One execution of a set of eval cases.
+
+Important fields:
+
+- `name`
+- `agent_role`
+- `config`
+- `summary`
+- `is_baseline`
+
+The config records the case filter and candidate settings, such as
+`memory_retrieval_limit`.
+
+### `eval_result`
+
+One case outcome inside one eval run.
+
+Important fields:
+
+- `eval_run_uuid`
+- `eval_case_uuid`
+- `score`
+- `passed`
+- `details`
+
+## Runner
+
+`eval_runner.py` runs active or explicitly selected eval cases.
+
+Supported current case types:
+
+- `chat_reply`: scores known output snapshots from `case.input["actual_output"]`.
+- `memory_retrieval`: calls `memory_retrieval.retrieve_memories`.
+
+Supported candidate config keys:
+
+- `memory_retrieval_limit`
+- `memory_include_secret`
+
+Unknown keys are recorded in `unsupported_config_keys` on the run config instead
+of silently pretending they were evaluated.
+
+## Comparison And Gate
+
+`eval_compare.py` compares a candidate run against a baseline run.
+
+Current gate rules:
+
+- fail if mean score drops beyond tolerance.
+- fail if regression split cases go pass -> fail.
+- fail if candidate omitted baseline cases.
+- warn if train improves while holdout drops.
+
+The remaining hardening direction is to also reject candidate-only cases by
+default, so candidate runs cannot add easy unmatched cases to inflate summary
+means.
+
+## Optimizer
+
+`eval_optimizer.py` tries bounded candidate configurations. It is deliberately
+not a free-form source or prompt rewriter.
+
+Current candidate matrix:
+
+- `memory_retrieval_limit`: `3`, `6`, `10`
+
+Optimizer safety rules are stricter than the basic gate:
+
+- candidate mean must not drop.
+- regression pins must not break.
+- holdout drop must stay within tolerance.
+- forbidden-memory failures reject the candidate.
+- missing baseline cases reject the candidate.
+
+## Production Monitor
+
+`eval_monitor.py` samples recent production chat outputs into an eval run. It is
+a monitoring signal, not a runtime guardrail.
+
+It ignores:
+
+- human messages
+- diagnostic rows
+- progress/thinking rows
+
+## Current Limits
+
+- Chat-reply evals score snapshots, not live LLM calls.
+- No LLM-as-judge scoring yet.
+- Optimizer tests bounded configs; it does not autonomously edit code or prompts.
+- Candidate-only case-set mismatch still needs to be rejected.
+- Eval quality depends on promoted/hand-authored case quality.
+
+## Design Principle
+
+The eval loop should make improvements harder to fake. A candidate should only
+look better when it improves the same important behavior, not because it skipped
+hard cases or added easy ones.

@@ -1,0 +1,15 @@
+{
+  "id": "egon-benny",
+  "name": "Egon and Benny",
+  "participants": [
+    { "persona_slug": "egon",  "agent_kind": "chat_unstructured", "turn_order": 1 },
+    { "persona_slug": "benny", "agent_kind": "chat_unstructured", "turn_order": 2 }
+  ],
+  "turn_policy": {
+    "mode": "round_robin",
+    "min_turns": 4,
+    "max_turns": 8,
+    "stop_phrases": ["DONE", "NO_REPLY"],
+    "max_wall_clock_seconds": 600
+  }
+}
