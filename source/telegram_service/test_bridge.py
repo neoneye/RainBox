@@ -1,5 +1,6 @@
 """Bridge logic with in-memory fakes — no network, no threads."""
 import json
+from typing import Any
 
 import pytest
 
@@ -42,8 +43,8 @@ class FakeRainbox:
         return [m for m in self.messages if m["id"] > after_id]
 
 
-def _cfg(tmp_path, **overrides):
-    base = dict(
+def _cfg(tmp_path, **overrides: Any) -> Config:
+    base: dict[str, Any] = dict(
         bot_token="tok",
         allowed_user_ids=frozenset({111}),
         rainbox_url="http://127.0.0.1:5000",
@@ -54,8 +55,8 @@ def _cfg(tmp_path, **overrides):
     return Config(**base)
 
 
-def _update(update_id, from_id=111, chat_id=222, text="hello"):
-    msg = {"from": {"id": from_id}, "chat": {"id": chat_id}}
+def _update(update_id: int, from_id: int = 111, chat_id: int = 222, text: str | None = "hello") -> dict[str, Any]:
+    msg: dict[str, Any] = {"from": {"id": from_id}, "chat": {"id": chat_id}}
     if text is not None:
         msg["text"] = text
     return {"update_id": update_id, "message": msg}
