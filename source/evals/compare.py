@@ -121,7 +121,7 @@ def _load_case_meta(case_uuids: set[str]) -> dict[str, EvalCase]:
 
 def _failure_reason(details: dict[str, Any]) -> str:
     """Pull a short human-readable reason out of an EvalResult.details
-    dict. Mirrors the eval_runner CLI's reason heuristic."""
+    dict. Mirrors the evals.runner CLI's reason heuristic."""
     reasons: list[str] = []
     for key in ("must_include", "must_not_include",
                 "expected_memories", "forbidden_memories"):
@@ -223,7 +223,7 @@ def _format_missing_baseline_cases_reason(
     """Format the shared "candidate_missing_baseline_cases" rejection
     reason. Returns None when there are no missing cases (so callers
     can `if reason: reasons.append(reason)`). Used by both
-    `gate_candidate_run` and `eval_optimizer._evaluate_candidate` so
+    `gate_candidate_run` and `evals.optimizer._evaluate_candidate` so
     the wording is locked at one source — drift will surface as a
     single-test failure rather than the two sites disagreeing
     silently."""
@@ -334,7 +334,7 @@ def gate_candidate_run(
 
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="eval_compare",
+        prog="evals.compare",
         description="Compare a candidate EvalRun against a baseline and "
                     "decide whether to gate the change.",
     )

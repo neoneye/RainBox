@@ -353,7 +353,7 @@ def _print_summary(run: EvalRun) -> None:
 
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="eval_runner",
+        prog="evals.runner",
         description="Run active eval cases against the current chat/memory implementation.",
     )
     parser.add_argument(

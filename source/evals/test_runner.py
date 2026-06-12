@@ -1,4 +1,4 @@
-"""Tests for eval_runner: scoring functions + run_eval_case +
+"""Tests for evals.runner: scoring functions + run_eval_case +
 run_eval_suite. The scoring tests are pure (no DB); the runner tests use
 live Postgres and clean up via per-test name tags."""
 
@@ -9,7 +9,7 @@ import pytest
 import db
 from db import EvalCase, EvalResult, EvalRun
 
-from eval_runner import (
+from evals.runner import (
     run_eval_case,
     run_eval_suite,
     score_chat_reply_case,
@@ -241,12 +241,12 @@ def test_run_eval_suite_passes_memory_retrieval_limit_to_retrieve_memories(
 ):
     """If the candidate config supplies memory_retrieval_limit, the
     runner must pass it to retrieve_memories. Verified by spying on
-    the function the eval_runner actually calls."""
+    the function the evals.runner actually calls."""
     received_kwargs: dict = {}
 
-    import eval_runner as er
+    import evals.runner as er
 
-    # eval_runner may import retrieve_memories at module level or call
+    # evals.runner may import retrieve_memories at module level or call
     # it via memory_retrieval.retrieve_memories. Patch both, harmless
     # if one is unused.
     import memory.retrieval as mr
@@ -342,7 +342,7 @@ import subprocess
 
 
 def test_cli_runs_a_single_case_and_exits_successfully(app_ctx, fresh_tag):
-    """Run `python eval_runner.py --case <uuid>` in a subprocess. The CLI
+    """Run `python -m evals.runner --case <uuid>` in a subprocess. The CLI
     must print a compact summary and exit 0."""
     try:
         case = _case(
@@ -356,7 +356,7 @@ def test_cli_runs_a_single_case_and_exits_successfully(app_ctx, fresh_tag):
         db.db.session.commit()
         result = subprocess.run(
             [
-                "venv/bin/python", "eval_runner.py",
+                "venv/bin/python", "-m", "evals.runner",
                 "--case", str(case.uuid),
             ],
             capture_output=True, text=True, timeout=30,
@@ -385,7 +385,7 @@ def test_cli_failure_line_shows_case_name(app_ctx, fresh_tag):
         db.db.session.commit()
         result = subprocess.run(
             [
-                "venv/bin/python", "eval_runner.py",
+                "venv/bin/python", "-m", "evals.runner",
                 "--case", str(case.uuid),
             ],
             capture_output=True, text=True, timeout=30,
@@ -406,7 +406,7 @@ def test_memory_include_private_is_unsupported(app_ctx, fresh_tag, monkeypatch):
     include_secret=True. The misnamed key is now explicitly unsupported."""
     received_kwargs: dict = {}
     import memory.retrieval as mr
-    import eval_runner as er
+    import evals.runner as er
     real = mr.retrieve_memories
 
     def spy(query, **kw):
@@ -443,7 +443,7 @@ def test_memory_include_secret_is_supported(app_ctx, fresh_tag, monkeypatch):
     knob; it must flow to retrieve_memories(include_secret=True)."""
     received_kwargs: dict = {}
     import memory.retrieval as mr
-    import eval_runner as er
+    import evals.runner as er
     real = mr.retrieve_memories
 
     def spy(query, **kw):

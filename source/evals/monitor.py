@@ -137,7 +137,7 @@ def run_production_sample(
 
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="eval_monitor",
+        prog="evals.monitor",
         description="Sample recent chat outputs and store a quality signal "
                     "as an EvalRun(config.source='production_sample').",
     )
@@ -155,7 +155,7 @@ def _main(argv: list[str] | None = None) -> int:
     if not args.recent_chat:
         parser.error("--recent-chat is required (no other source today)")
 
-    # Skip db.init_db here for the same lock-conflict reason eval_compare's
+    # Skip db.init_db here for the same lock-conflict reason evals.compare's
     # CLI avoids it: ALTER TABLE migrations need AccessExclusiveLock and can
     # deadlock against any caller holding an open SQLAlchemy session.
     app = db.make_app()

@@ -1,4 +1,4 @@
-"""Tests for eval_compare: compare_eval_runs + gate_candidate_run.
+"""Tests for evals.compare: compare_eval_runs + gate_candidate_run.
 
 The gate tests use live Postgres (EvalRun + EvalResult rows are real).
 Tests clean up via a per-test `name` prefix on EvalRun and EvalCase."""
@@ -11,7 +11,7 @@ import pytest
 import db
 from db import EvalCase, EvalResult, EvalRun
 
-from eval_compare import (
+from evals.compare import (
     EvalComparison,
     GateDecision,
     compare_eval_runs,
@@ -247,7 +247,7 @@ def test_cli_exits_0_on_pass(app_ctx, fresh_tag):
         db.db.session.commit()
         result = subprocess.run(
             [
-                "venv/bin/python", "eval_compare.py",
+                "venv/bin/python", "-m", "evals.compare",
                 "--baseline", str(baseline.uuid),
                 "--candidate", str(candidate.uuid),
             ],
@@ -273,7 +273,7 @@ def test_cli_exits_1_on_fail(app_ctx, fresh_tag):
         db.db.session.commit()
         result = subprocess.run(
             [
-                "venv/bin/python", "eval_compare.py",
+                "venv/bin/python", "-m", "evals.compare",
                 "--baseline", str(baseline.uuid),
                 "--candidate", str(candidate.uuid),
             ],

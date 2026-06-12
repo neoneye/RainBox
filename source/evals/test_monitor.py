@@ -1,4 +1,4 @@
-"""Tests for eval_monitor.run_production_sample.
+"""Tests for evals.monitor.run_production_sample.
 
 Lives against live local Postgres. Creates real ChatUser + Chatroom +
 ChatMessage rows so the kind-filter test exercises the actual query.
@@ -18,7 +18,7 @@ from db import (
     EvalRun,
 )
 
-from eval_monitor import run_production_sample
+from evals.monitor import run_production_sample
 
 
 @pytest.fixture

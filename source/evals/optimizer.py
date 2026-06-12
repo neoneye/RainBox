@@ -17,7 +17,7 @@ from uuid import UUID
 import db
 from db import EvalResult, EvalRun
 
-from eval_compare import (
+from evals.compare import (
     _format_extra_candidate_cases_reason,
     _format_missing_baseline_cases_reason,
     compare_eval_runs,
@@ -194,13 +194,13 @@ def select_best_candidate(
 def _default_runner(
     config: dict[str, Any], case_filter: dict[str, Any],
 ) -> EvalRun:
-    """Default candidate-matrix runner: invokes eval_runner.run_eval_suite
+    """Default candidate-matrix runner: invokes evals.runner.run_eval_suite
     threading the candidate config and case_filter through. Supported
     knobs (memory_retrieval_limit, memory_include_secret) are applied
     to memory_retrieval cases; unsupported knobs are recorded on the
     EvalRun.config under `unsupported_config_keys` instead of being
     silently dropped."""
-    from eval_runner import run_eval_suite
+    from evals.runner import run_eval_suite
     name = (
         "optimizer-candidate: "
         f"limit={config.get('memory_retrieval_limit', '?')}"
@@ -220,7 +220,7 @@ def run_candidate_matrix(
     runner: Callable[[dict[str, Any], dict[str, Any]], EvalRun] | None = None,
 ) -> list[EvalRun]:
     """Run one EvalRun per candidate config. `runner` is injectable for
-    tests; defaults to a thin wrapper around eval_runner.run_eval_suite.
+    tests; defaults to a thin wrapper around evals.runner.run_eval_suite.
 
     The returned list preserves the input `configs` order; downstream
     tie-break in `select_best_candidate` depends on this."""

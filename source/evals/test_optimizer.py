@@ -1,4 +1,4 @@
-"""Tests for eval_optimizer: candidate generation and safety-gated selection."""
+"""Tests for evals.optimizer: candidate generation and safety-gated selection."""
 
 from uuid import uuid4
 
@@ -7,13 +7,13 @@ import pytest
 import db
 from db import EvalCase, EvalResult, EvalRun
 
-from eval_optimizer import (
+from evals.optimizer import (
     BASE_CONFIG,
     OptimizerDecision,
     generate_candidate_configs,
     select_best_candidate,
 )
-from eval_optimizer import run_candidate_matrix
+from evals.optimizer import run_candidate_matrix
 
 
 def test_generate_candidate_configs_returns_known_bounded_variants():
@@ -259,7 +259,7 @@ def test_run_candidate_matrix_default_runner_creates_eval_runs(
     app_ctx, fresh_tag,
 ):
     """Without a custom runner, the default runner must call into
-    eval_runner.run_eval_suite and produce one EvalRun per candidate
+    evals.runner.run_eval_suite and produce one EvalRun per candidate
     config. Each EvalRun.config must contain the candidate config."""
     try:
         case = db.create_eval_case(
@@ -414,7 +414,7 @@ def test_select_best_candidate_rejects_missing_baseline_cases(
 def test_base_config_does_not_include_secret_by_default():
     """BASE_CONFIG must default to NOT including secret memories.
     Regression for WP07 Finding 2."""
-    from eval_optimizer import BASE_CONFIG
+    from evals.optimizer import BASE_CONFIG
     assert BASE_CONFIG.get("memory_include_secret") is False, BASE_CONFIG
     assert "memory_include_private" not in BASE_CONFIG, BASE_CONFIG
 
