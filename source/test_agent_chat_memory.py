@@ -27,7 +27,7 @@ def _build_retrieved_memory(*, memory_uuid: UUID, score: float = 0.0):
     field. `score` is currently unused by the dataclass; we keep the
     kwarg so future RetrievedMemory schemas can adopt it without
     rewriting every test."""
-    from memory_retrieval import RetrievedMemory
+    from memory.retrieval import RetrievedMemory
     import dataclasses
     fields = {f.name: f for f in dataclasses.fields(RetrievedMemory)}
     kwargs: dict = {}
@@ -344,7 +344,7 @@ def test_chat_memory_retrieval_writes_retrieved_and_used_events(
     """Every memory `retrieve_memories` returns must produce a paired
     (retrieved, used) RetrievalEvent in Phase 1, since all retrieved
     memories are currently injected into the prompt context."""
-    from memory_retrieval import _record_memory_telemetry
+    from memory.retrieval import _record_memory_telemetry
 
     room_uuid = uuid4()
     agent_uuid = uuid4()
@@ -398,7 +398,7 @@ def test_chat_memory_retrieval_writes_retrieved_and_used_events(
 
 
 def test_chat_memory_telemetry_empty_memories_is_noop(app_ctx):
-    from memory_retrieval import _record_memory_telemetry
+    from memory.retrieval import _record_memory_telemetry
     _record_memory_telemetry(
         query="x",
         room_uuid=uuid4(),
@@ -416,7 +416,7 @@ def test_chat_memory_telemetry_call_site_is_wrapped_for_isolation():
     """If `_record_memory_telemetry` raises, the agent must NOT crash.
     Verify by source inspection that the call site in user_prompt() is
     wrapped in try/except — same pattern as WP05's QFR telemetry."""
-    import memory_retrieval as ac
+    import memory.retrieval as ac
     src = open(ac.__file__).read()
     lines = src.split("\n")
     call_lines = [
@@ -448,7 +448,7 @@ def test_chat_memory_telemetry_call_site_uses_local_journal_id():
     """Regression: the call site of _record_memory_telemetry must
     pass `journal_id=journal_id` (the local), not the dead
     `getattr(self, '_journal_id', None)` pattern."""
-    import memory_retrieval as ac
+    import memory.retrieval as ac
     src = open(ac.__file__).read()
     # The dead-getattr pattern must be gone.
     assert "_journal_id" not in src, (
@@ -469,7 +469,7 @@ def test_chat_memory_telemetry_uses_actual_retrieval_limit():
     telemetry helper must be the same locals that were passed to
     retrieve_memories — otherwise drift bugs silently lie about what
     was retrieved."""
-    import memory_retrieval as ac
+    import memory.retrieval as ac
     src = open(ac.__file__).read()
     import re
     # Look for `retrieve_memories(...limit=<name>...)` and verify the

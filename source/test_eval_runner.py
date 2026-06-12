@@ -249,7 +249,7 @@ def test_run_eval_suite_passes_memory_retrieval_limit_to_retrieve_memories(
     # eval_runner may import retrieve_memories at module level or call
     # it via memory_retrieval.retrieve_memories. Patch both, harmless
     # if one is unused.
-    import memory_retrieval as mr
+    import memory.retrieval as mr
     real_mr = mr.retrieve_memories
 
     def spy(query, **kw):
@@ -405,7 +405,7 @@ def test_memory_include_private_is_unsupported(app_ctx, fresh_tag, monkeypatch):
     """Passing `memory_include_private=True` must NOT set
     include_secret=True. The misnamed key is now explicitly unsupported."""
     received_kwargs: dict = {}
-    import memory_retrieval as mr
+    import memory.retrieval as mr
     import eval_runner as er
     real = mr.retrieve_memories
 
@@ -442,7 +442,7 @@ def test_memory_include_secret_is_supported(app_ctx, fresh_tag, monkeypatch):
     """`memory_include_secret=True` is the explicitly-named supported
     knob; it must flow to retrieve_memories(include_secret=True)."""
     received_kwargs: dict = {}
-    import memory_retrieval as mr
+    import memory.retrieval as mr
     import eval_runner as er
     real = mr.retrieve_memories
 

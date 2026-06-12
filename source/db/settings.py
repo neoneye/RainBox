@@ -87,7 +87,7 @@ SETTINGS: dict[str, Setting] = {
         "customize.dir", "RAINBOX_CUSTOMIZE_DIR", "string", None,
         description="Directory with the operator's private customizations "
                     "(PII / persona — e.g. a checkout of a private repo). "
-                    "Mirrors memory/'s file naming: question_answer.jsonl "
+                    "Mirrors data/'s file naming: question_answer.jsonl "
                     "here overlays the base Q&A registry by id. Empty = no "
                     "overlay. After changing it (or editing the files), "
                     "press 'Repopulate Q&A memory'.",

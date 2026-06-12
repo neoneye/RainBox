@@ -81,7 +81,7 @@ def _git(*args: str, timeout: float = 5.0) -> str:
 def get_capabilities(ctx: QueryContext) -> str:
     return (
         "I can answer questions from a small knowledge base in "
-        "memory/question_answer.jsonl — identity, system status / health / "
+        "data/question_answer.jsonl — identity, system status / health / "
         "uptime / IP, git repo / branch / status / log / remote, project "
         "context, my own memory stats, and a bit of casual chat. Static "
         "answers come straight from the JSONL; dynamic ones run a Python "
@@ -413,7 +413,7 @@ def get_outdated_dependencies(ctx: QueryContext) -> str:
 
 def get_memory_stats(ctx: QueryContext) -> str:
     """Where the QueryAgent stores its memory and how much is there."""
-    kb_path = _REPO_DIR / "memory" / "question_answer.jsonl"
+    kb_path = _REPO_DIR / "data" / "question_answer.jsonl"
     jsonl_count = 0
     try:
         jsonl_count = sum(1 for line in kb_path.read_text().splitlines() if line.strip())
@@ -428,7 +428,7 @@ def get_memory_stats(ctx: QueryContext) -> str:
     except Exception:
         pass
     return (
-        f"Q&A registry: {jsonl_count} entries in memory/question_answer.jsonl, "
+        f"Q&A registry: {jsonl_count} entries in data/question_answer.jsonl, "
         f"{embed_count} embedded rows in data_query_agent_kb (one per question alternate)."
     )
 

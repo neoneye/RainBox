@@ -26,7 +26,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 import db
-import memory_retrieval
+from memory import retrieval as memory_retrieval
 from agent import StatusSender, StructuredLLMAgent
 from chat.transcript import format_history
 

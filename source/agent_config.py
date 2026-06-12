@@ -116,7 +116,7 @@ agent_config: dict[str, AgentConfigEntry] = {
     },
     "query": {
         "uuid": QUERY_UUID,
-        "description": "answers chat questions from memory/question_answer.jsonl via pgvector similarity (no LLM completion, only embeddings)",
+        "description": "answers chat questions from data/question_answer.jsonl via pgvector similarity (no LLM completion, only embeddings)",
         "next": None,
     },
     "query_router": {

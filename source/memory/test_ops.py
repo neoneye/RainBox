@@ -11,7 +11,7 @@ import pytest
 import db
 from db import MemoryClaim, MemoryEvidence
 
-from memory_ops import (
+from memory.ops import (
     MemoryCommand,
     find_memory_matches,  # noqa: E402 — added in Task 2
     normalize_memory_text,
@@ -164,7 +164,7 @@ def test_find_memory_matches_returns_empty_when_nothing_matches(app_ctx):
     assert find_memory_matches(f"nonexistent-{uuid4()}") == []
 
 
-from memory_ops import handle_memory_command  # noqa: E402 — added in Task 3
+from memory.ops import handle_memory_command  # noqa: E402 — added in Task 3
 
 
 def _ctx(query: str, message_uuid: str | None = None, room_uuid=None, agent_uuid=None) -> QueryContext:

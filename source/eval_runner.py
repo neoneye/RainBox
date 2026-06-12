@@ -22,7 +22,7 @@ from uuid import UUID
 
 import db
 from db import EvalCase, EvalResult, EvalRun
-from memory_retrieval import retrieve_memories
+from memory.retrieval import retrieve_memories
 
 logger = logging.getLogger(__name__)
 

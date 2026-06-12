@@ -27,7 +27,7 @@ from uuid import UUID
 from llama_index.core.llms import ChatMessage, MessageRole
 
 import db
-import memory_retrieval
+from memory import retrieval as memory_retrieval
 from agent import ModelGroupAgent, StatusSender
 from chat.streaming import StreamingReplyWriter, extract_stream_deltas
 from chat.transcript import format_history

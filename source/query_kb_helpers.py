@@ -30,7 +30,7 @@ from query_handlers import HANDLERS, QueryContext
 
 logger = logging.getLogger(__name__)
 
-QA_JSONL_PATH: Path = Path(__file__).resolve().parent / "memory" / "question_answer.jsonl"
+QA_JSONL_PATH: Path = Path(__file__).resolve().parent / "data" / "question_answer.jsonl"
 QA_TABLE_NAME: str = "query_agent_kb"   # PGVectorStore creates table "data_query_agent_kb"
 QA_FULL_TABLE: str = f"data_{QA_TABLE_NAME}"
 # Embeddings run on Ollama (the same server already used for chat at :11434),

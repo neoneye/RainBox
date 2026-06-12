@@ -76,7 +76,7 @@ class QueryAgent(Agent):
         # depend on LM Studio / pgvector being healthy: parse first, dispatch,
         # and return without touching the Q&A KB. Anything that doesn't parse
         # falls through to the existing Q&A path below.
-        from memory_ops import handle_memory_command, parse_memory_command
+        from memory.ops import handle_memory_command, parse_memory_command
         mem_cmd = parse_memory_command(query)
         if mem_cmd is not None:
             reply = handle_memory_command(ctx, mem_cmd)

@@ -13,7 +13,7 @@ import pytest
 import db
 from db import MemoryClaim
 
-from memory_retrieval import RetrievedMemory, retrieve_memories
+from memory.retrieval import RetrievedMemory, retrieve_memories
 
 
 @pytest.fixture
@@ -175,7 +175,7 @@ def test_retrieval_returns_empty_when_no_overlap(app_ctx, fresh_subject):
         _cleanup(fresh_subject)
 
 
-from memory_retrieval import format_memory_context, record_memory_use  # noqa: E402
+from memory.retrieval import format_memory_context, record_memory_use  # noqa: E402
 
 
 def _retrieved(

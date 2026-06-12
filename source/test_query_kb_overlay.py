@@ -65,7 +65,7 @@ def test_load_jsonl_merges_overlay_by_id(customize_dir):
     by_id = {e["id"]: e for e in kb._load_jsonl()}
     assert by_id["identity.builtwith"]["answer"] == "OVERLAY WINS"
     assert by_id["test.overlay_only"]["answer"] == "yes"
-    # stable base entries; if this fails, check memory/question_answer.jsonl
+    # stable base entries; if this fails, check data/question_answer.jsonl
     assert "project.rainbox" in by_id
 
 
@@ -73,7 +73,7 @@ def test_load_jsonl_without_overlay_is_base_only(customize_dir):
     # setting points at a dir with NO question_answer.jsonl → base only
     by_id = {e["id"]: e for e in kb._load_jsonl()}
     assert "test.overlay_only" not in by_id
-    # stable base entries; if this fails, check memory/question_answer.jsonl
+    # stable base entries; if this fails, check data/question_answer.jsonl
     assert "identity.builtwith" in by_id
     assert by_id["identity.builtwith"]["answer"] != "OVERLAY WINS"
 
