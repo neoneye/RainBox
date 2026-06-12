@@ -2,4 +2,3 @@ __pycache__/
 kokoro_service/venv/
 whisper_service/venv/
 .superpowers/
-.claude/worktrees/
