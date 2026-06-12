@@ -61,6 +61,8 @@ class RainboxClient:
         )
         resp.raise_for_status()
         for raw in resp.iter_lines(decode_unicode=True):
+            if not isinstance(raw, str):
+                continue
             if not raw or not raw.startswith("data: "):
                 continue  # keepalive comments and blank separators
             try:
