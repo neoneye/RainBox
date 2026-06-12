@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 import db
 from agent import StatusSender, StructuredLLMAgent
-from chat_transcript import format_history
+from chat.transcript import format_history
 
 logger = logging.getLogger(__name__)
 

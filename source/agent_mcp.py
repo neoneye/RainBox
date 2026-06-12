@@ -19,7 +19,7 @@ from llama_index.tools.mcp import BasicMCPClient, McpToolSpec
 import db
 import llm as llm_module
 from agent import ModelGroupAgent, StatusSender
-from chat_transcript import format_history
+from chat.transcript import format_history
 from llm import ThinkingAwareOpenAILike
 from mcp_config import load_mcp_servers
 

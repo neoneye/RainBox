@@ -4,7 +4,7 @@ callables and a fake clock, and the extractor is fed synthetic chunk objects."""
 
 from types import SimpleNamespace
 
-from chat_streaming import StreamingReplyWriter, extract_stream_deltas
+from chat.streaming import StreamingReplyWriter, extract_stream_deltas
 
 
 class FakeClock:

@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 import db
 from agent import ModelGroupAgent
-from chat_transcript import format_history
+from chat.transcript import format_history
 from llm import prepare_llm
 from query_handlers import QueryContext
 from query_kb_helpers import (

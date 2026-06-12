@@ -22,7 +22,7 @@ from llama_index.core.agent.workflow import FunctionAgent
 
 import db
 from agent import ModelGroupAgent, StatusSender
-from chat_transcript import format_history
+from chat.transcript import format_history
 from llama_index.core.llms import LLM
 from llm import prepare_llm
 

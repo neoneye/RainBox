@@ -22,7 +22,7 @@ from uuid import UUID
 
 import db
 from agent import StatusSender, StructuredLLMAgent
-from chat_transcript import format_history
+from chat.transcript import format_history
 from query_kb_helpers import (
     Match,
     _ensure_populated,

@@ -7,7 +7,7 @@ These are pure functions — no database or LM Studio needed:
 
 from datetime import datetime
 
-from chat_transcript import format_history
+from chat.transcript import format_history
 
 
 def test_empty_history():
