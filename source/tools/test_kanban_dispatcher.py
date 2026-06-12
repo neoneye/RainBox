@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 
 import db
-from agent_config import KANBAN_WORKER_UUID, WORKSPACE_SHELL_UUID
+from agents.config import KANBAN_WORKER_UUID, WORKSPACE_SHELL_UUID
 from tools.kanban_dispatcher import (
     KanbanAuthorityError,
     KanbanDispatchError,

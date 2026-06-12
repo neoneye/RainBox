@@ -262,7 +262,7 @@ def init_db(app: Flask) -> None:
         _migrate_ollama_native_args()
         _migrate_cron_message_targets()
         # Seed an (unassigned) model binding for each code-defined agent.
-        from agent_config import agent_config
+        from agents.config import agent_config
 
         ensure_agent_model_bindings([entry["uuid"] for entry in agent_config.values()])
         seed_chat_defaults()

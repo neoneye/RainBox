@@ -379,7 +379,7 @@ def _md_block(text: str) -> list[str]:
 
 def _agent_display_names() -> dict[str, str]:
     """agent uuid (str) -> role name, for resolving @agent in serializations."""
-    from agent_config import agent_config
+    from agents.config import agent_config
 
     return {str(entry["uuid"]): name for name, entry in agent_config.items()}
 
@@ -828,7 +828,7 @@ def kanban_enqueue_task(task_uuid: UUID) -> dict[str, Any] | None:
     Loud preconditions: KanbanError when the task has no assignee or the
     assignee isn't a runnable agent (not in agent_config); KanbanConflict
     while someone holds a LIVE lease (it is already being worked)."""
-    from agent_config import agent_config
+    from agents.config import agent_config
     from db.queue import enqueue
 
     now = datetime.now(UTC)

@@ -14,7 +14,7 @@ from benchmarks.editdocument import (
     BenchmarkEditDocumentResult,
     EditDocumentTest,
 )
-from patch_apply import apply_patches
+from agents.patch_apply import apply_patches
 
 
 # Subset of EDIT_DOCUMENT_TESTS used by the runner tests below: keeps the
@@ -101,8 +101,8 @@ def test_each_seeded_test_expected_is_reachable_via_known_patch():
 import pytest
 
 import db
-from agent_config import EDIT_DOCUMENT_V1_UUID
-from agent_edit_document_v1 import EditDocumentAgentV1, EditPlan, Patch
+from agents.config import EDIT_DOCUMENT_V1_UUID
+from agents.edit_document_v1 import EditDocumentAgentV1, EditPlan, Patch
 
 
 @pytest.fixture

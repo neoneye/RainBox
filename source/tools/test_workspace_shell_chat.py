@@ -15,7 +15,7 @@ from .conftest import WS_AGENT_UUID
 
 
 def test_workspace_shell_in_agent_config():
-    from agent_config import WORKSPACE_SHELL_UUID, agent_config
+    from agents.config import WORKSPACE_SHELL_UUID, agent_config
 
     entry = agent_config["workspace_shell"]
     assert entry["uuid"] == WORKSPACE_SHELL_UUID
@@ -25,7 +25,7 @@ def test_workspace_shell_in_agent_config():
 
 
 def test_workspace_shell_is_wired_as_responder():
-    from agent_config import WORKSPACE_SHELL_UUID
+    from agents.config import WORKSPACE_SHELL_UUID
     from webapp.chat_api import CHAT_RESPONDER_UUIDS
 
     assert WORKSPACE_SHELL_UUID in CHAT_RESPONDER_UUIDS

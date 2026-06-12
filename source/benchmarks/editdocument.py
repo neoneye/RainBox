@@ -20,7 +20,7 @@ from uuid import UUID
 
 import db
 import llm
-from patch_apply import apply_patches
+from agents.patch_apply import apply_patches
 
 
 @dataclass(frozen=True)

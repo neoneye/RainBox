@@ -491,7 +491,7 @@ def fire_cron_job(job: "CronJob", trigger: str = "scheduled", debug: bool = Fals
     backups resolve and report the destination without dumping; commands are
     enqueued with debug so the workspace-shell agent validates and echoes the
     argv without executing. The run row records debug=True."""
-    from agent_config import agent_config
+    from agents.config import agent_config
 
     now = datetime.now(UTC)
     run = CronRun(cron_uuid=job.uuid, trigger=trigger, debug=debug, fired_at=now)

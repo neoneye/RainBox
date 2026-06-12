@@ -276,7 +276,7 @@ def test_duplicate_board(board):
 def test_llm_json_serialization(board):
     """The JSON twin of the markdown view: columns→tasks nested, agent names
     resolved, no version token."""
-    from agent_config import agent_config
+    from agents.config import agent_config
 
     role, entry = next(iter(agent_config.items()))
     bu = _u(board["uuid"])
@@ -511,7 +511,7 @@ def test_enqueue_task(board):
     failures for unassigned / unknown-agent / missing / live-leased tasks."""
     import json
 
-    from agent_config import agent_config
+    from agents.config import agent_config
 
     s = db.db.session
     base_inbox = s.query(sa.func.max(db.Inbox.id)).scalar() or 0

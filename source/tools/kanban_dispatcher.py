@@ -36,7 +36,7 @@ class KanbanAuthorityError(PermissionError):
 
 
 def _registry_entry(agent_uuid: UUID) -> dict[str, Any] | None:
-    from agent_config import agent_config
+    from agents.config import agent_config
 
     for entry in agent_config.values():
         if entry["uuid"] == agent_uuid:

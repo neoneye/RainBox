@@ -381,7 +381,7 @@ def seed_chat_defaults() -> None:
     """Idempotent chat seed: exactly one human operator, an agent chat_user per
     agent_config entry, and — only if there are no rooms yet — a starter
     'general' room so /chat isn't empty on first load."""
-    from agent_config import agent_config
+    from agents.config import agent_config
 
     human = get_human_user()
     if human is None:
@@ -408,7 +408,7 @@ def seed_chat_defaults() -> None:
     # ("Egon") so the transcript reads naturally. Best-effort — a missing or
     # broken agent_profiles/ must not break chat seeding.
     try:
-        from persona import load_personas
+        from agents.persona import load_personas
 
         for p in load_personas().values():
             cu = (

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 from werkzeug.serving import make_server  # noqa: E402
 
 import db  # noqa: E402
-from agent_config import AgentConfigEntry, agent_config  # noqa: E402
+from agents.config import AgentConfigEntry, agent_config  # noqa: E402
 from webapp import app  # noqa: E402
 from webapp.core import sync_models_from_providers  # noqa: E402
 
@@ -29,7 +29,7 @@ from webapp.core import sync_models_from_providers  # noqa: E402
 HEARTBEAT_TIMEOUT: float = 60.0
 TICK_TIMEOUT: float = 1.0
 CRON_TICK_INTERVAL: float = 5.0  # how often to check for due cron jobs (cron granularity is 1 min)
-AGENT_SCRIPT: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent.py")
+ROOT_DIR: str = os.path.dirname(os.path.abspath(__file__))
 
 
 class Agent(TypedDict):
@@ -48,10 +48,14 @@ def spawn(name: str, params: AgentConfigEntry) -> Agent:
     parent_sock, agent_sock = socket.socketpair()
     os.set_inheritable(agent_sock.fileno(), True)
     argv = [
-        sys.executable, AGENT_SCRIPT,
+        sys.executable, "-m", "agents",
         "--socket-fd", str(agent_sock.fileno()),
     ]
-    pid = os.posix_spawn(sys.executable, argv, os.environ)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = ROOT_DIR + (
+        os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else ""
+    )
+    pid = os.posix_spawn(sys.executable, argv, env)
     agent_sock.close()
     config_msg = {"name": name, **params}
     parent_sock.sendall((json.dumps(config_msg, default=str) + "\n").encode())

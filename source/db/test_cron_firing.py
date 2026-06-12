@@ -124,7 +124,7 @@ def test_fire_message_job_resolves_target_by_uuid(firing):
 
 
 def test_fire_command_job_enqueues_workspace_shell(firing):
-    from agent_config import agent_config
+    from agents.config import agent_config
     ws_uuid = agent_config["workspace_shell"]["uuid"]
     job = firing(action_type="command", command="echo hi", name="Echo")
     db.fire_cron_job(job, trigger="manual")
@@ -436,7 +436,7 @@ def test_fire_debug_command_enqueues_with_flag(firing):
     """A command dry-run still goes through the workspace-shell agent (it owns
     the validation), with debug in the payload so it echoes instead of runs."""
     import json
-    from agent_config import agent_config
+    from agents.config import agent_config
 
     ws_uuid = agent_config["workspace_shell"]["uuid"]
     job = firing(action_type="command", command="echo hi", name="DryCmd")

@@ -18,7 +18,7 @@ from flask import Flask
 
 import db
 from benchmarks.subproc import stream_target_subprocess
-from agent_config import (
+from agents.config import (
     EDIT_DOCUMENT_V1_UUID,
     EDIT_DOCUMENT_V2_UUID,
     EDIT_DOCUMENT_V3_UUID,
@@ -26,12 +26,12 @@ from agent_config import (
     EDIT_DOCUMENT_V5_UUID,
     EDIT_DOCUMENT_V6_UUID,
 )
-from agent_edit_document_v1 import EditDocumentAgentV1
-from agent_edit_document_v2 import EditDocumentAgentV2
-from agent_edit_document_v3 import EditDocumentAgentV3
-from agent_edit_document_v4 import EditDocumentAgentV4
-from agent_edit_document_v5 import EditDocumentAgentV5
-from agent_edit_document_v6 import EditDocumentAgentV6
+from agents.edit_document_v1 import EditDocumentAgentV1
+from agents.edit_document_v2 import EditDocumentAgentV2
+from agents.edit_document_v3 import EditDocumentAgentV3
+from agents.edit_document_v4 import EditDocumentAgentV4
+from agents.edit_document_v5 import EditDocumentAgentV5
+from agents.edit_document_v6 import EditDocumentAgentV6
 from benchmarks.editdocument import EDIT_DOCUMENT_TESTS
 
 logger = logging.getLogger(__name__)

@@ -169,7 +169,7 @@ from memory.ops import handle_memory_command  # noqa: E402 — added in Task 3
 
 def _ctx(query: str, message_uuid: str | None = None, room_uuid=None, agent_uuid=None) -> QueryContext:
     """Build a minimal QueryContext for the dispatcher tests."""
-    from query_handlers import QueryContext as QC
+    from agents.query_handlers import QueryContext as QC
     return QC(
         room_uuid=room_uuid or uuid4(),
         query=query,
@@ -461,7 +461,7 @@ def test_handle_used_reports_memories_from_most_recent_debug_memory(
             _json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             "json", kind="debug-memory",
         )
-        from query_handlers import QueryContext as QC
+        from agents.query_handlers import QueryContext as QC
         ctx = QC(
             room_uuid=room.uuid, query="which memories did you use?",
             payload={"message_uuid": str(uuid4())},
@@ -491,7 +491,7 @@ def test_handle_used_reports_no_history_when_no_debug_row(app_ctx):
         f"empty-{uuid4().hex[:6]}", human.uuid, [],
     )
     try:
-        from query_handlers import QueryContext as QC
+        from agents.query_handlers import QueryContext as QC
         ctx = QC(
             room_uuid=room.uuid, query="which memories did you use?",
             payload={"message_uuid": str(uuid4())},

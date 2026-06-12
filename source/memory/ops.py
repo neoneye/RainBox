@@ -13,7 +13,7 @@ from typing import Any
 
 import db
 from db import MemoryClaim, MemoryEvidence
-from query_handlers import QueryContext
+from agents.query_handlers import QueryContext
 
 
 @dataclass(frozen=True)

@@ -18,7 +18,7 @@ from typing import Any
 from uuid import UUID
 
 import db
-from agent import Agent
+from agents.base import Agent
 
 from .command_policy import validate_command
 from .workspace_command_runner import (

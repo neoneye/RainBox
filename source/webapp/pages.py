@@ -10,7 +10,7 @@ from flask import (
     url_for,
 )
 
-from agent_config import DREAMER_UUID, agent_config
+from agents.config import DREAMER_UUID, agent_config
 from db import Inbox, Journal, db, enqueue, reset_demo_data
 
 from .core import app

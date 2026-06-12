@@ -303,7 +303,7 @@ def settings_repopulate_memory() -> tuple[Response, int] | Response:
     restart — the 'Repopulate Q&A memory' button. 502 carries the embedding
     error (typically Ollama being down); the table is left empty then, and
     clicking again after starting Ollama heals it."""
-    import query_kb_helpers
+    import agents.query_kb_helpers as query_kb_helpers
 
     try:
         counts = query_kb_helpers.rebuild_kb()

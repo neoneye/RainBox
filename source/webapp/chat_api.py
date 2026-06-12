@@ -13,7 +13,7 @@ import psycopg
 from flask import Response, abort, jsonify, request, stream_with_context
 
 import db
-from agent_config import (
+from agents.config import (
     CHAT_STRUCTURED_UUID,
     CHAT_UNSTRUCTURED_UUID,
     MCP_UUID,

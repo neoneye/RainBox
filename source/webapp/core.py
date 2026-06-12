@@ -651,7 +651,7 @@ def _kanban_agent_label(view, context, model, name):
     """Render an agent reference (KanbanTask.agent_uuid, or an event's free-text
     `actor` that may hold an agent uuid) as truncated uuid + the agent_config
     role name. Non-uuid actors (e.g. 'human') render verbatim."""
-    from agent_config import agent_config
+    from agents.config import agent_config
 
     raw = getattr(model, name)
     if not raw:

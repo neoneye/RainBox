@@ -261,7 +261,7 @@ KANBAN_TEMPLATE = """
 
 @app.route("/kanban")
 def kanban_page() -> str:
-    from agent_config import agent_config
+    from agents.config import agent_config
 
     agents = [{"name": name, "uuid": str(entry["uuid"])}
               for name, entry in sorted(agent_config.items())]

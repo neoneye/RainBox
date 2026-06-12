@@ -12,7 +12,7 @@ import pytest
 import sqlalchemy as sa
 
 import db
-from agent_config import WORKSPACE_SHELL_UUID
+from agents.config import WORKSPACE_SHELL_UUID
 from tools.workspace_policy import SHELL_CWD
 
 # The canonical workspace_shell UUID from agent_config (kanban authority="work",

@@ -11,8 +11,8 @@ from uuid import UUID
 from flask import Response, abort, jsonify, request
 
 import db
-from agent_config import CONVERSATION_MANAGER_UUID
-from persona import (
+from agents.config import CONVERSATION_MANAGER_UUID
+from agents.persona import (
     list_conversation_templates,
     load_conversation_template,
     personas_by_slug,

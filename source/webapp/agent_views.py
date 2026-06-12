@@ -4,7 +4,7 @@ from uuid import UUID
 
 from flask import Response, abort, redirect, render_template_string, request, url_for
 
-from agent_config import agent_config
+from agents.config import agent_config
 from db import (
     get_model_group,
     get_model_group_member_uuids,
