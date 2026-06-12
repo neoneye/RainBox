@@ -50,7 +50,15 @@ def load_config(env: Mapping[str, str] = os.environ) -> Config:
     if not token:
         raise SystemExit("TELEGRAM_BOT_TOKEN is required (get one from @BotFather)")
     raw_ids = (env.get("TELEGRAM_ALLOWED_USER_IDS") or "").strip()
-    ids = frozenset(int(part) for part in raw_ids.split(",") if part.strip())
+    try:
+        ids = frozenset(int(part) for part in raw_ids.split(",") if part.strip())
+    except ValueError:
+        raise SystemExit(
+            f"TELEGRAM_ALLOWED_USER_IDS must contain numeric Telegram user ids "
+            f"(got {raw_ids!r}). This is NOT a rainbox user uuid — it is your "
+            f"numeric Telegram account id; message @userinfobot on Telegram to "
+            f"find it."
+        ) from None
     if not ids:
         raise SystemExit(
             "TELEGRAM_ALLOWED_USER_IDS is required (comma-separated numeric ids; "

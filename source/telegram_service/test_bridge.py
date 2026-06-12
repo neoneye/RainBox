@@ -93,6 +93,16 @@ def test_load_config_empty_allowlist_exits():
         load_config({"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_ALLOWED_USER_IDS": " "})
 
 
+def test_load_config_non_numeric_allowlist_exits_with_guidance():
+    """A rainbox UUID (or any non-number) in the allowlist must produce a
+    helpful SystemExit, not a raw ValueError traceback."""
+    with pytest.raises(SystemExit, match="numeric Telegram user id"):
+        load_config({
+            "TELEGRAM_BOT_TOKEN": "tok",
+            "TELEGRAM_ALLOWED_USER_IDS": "516612c3-5284-446e-ba5c-ee3446b750a4",
+        })
+
+
 # --- state --------------------------------------------------------------
 
 
