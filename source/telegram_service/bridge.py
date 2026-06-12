@@ -149,3 +149,121 @@ def outbound_catchup(
                 logger.info("room -> telegram: row id=%s", row["id"])
         state["room_cursor"] = row["id"]
         save_state(cfg.state_file, state)
+
+
+# --- loops ----------------------------------------------------------------
+
+BACKOFF_CAP_SECONDS = 60.0
+
+
+def _backoff_wait(attempt: int, stop: "threading.Event") -> None:
+    stop.wait(min(BACKOFF_CAP_SECONDS, 2.0 ** attempt))
+
+
+def init_room_cursor(cfg: Config, state: dict[str, Any], rainbox: Any, room_uuid: str) -> None:
+    """First run only: start the cursor at the room's latest message so the
+    bridge never replays history to Telegram."""
+    if "room_cursor" in state:
+        return
+    rows = rainbox.get_messages_after(room_uuid, 0)
+    state["room_cursor"] = max((r["id"] for r in rows), default=0)
+    save_state(cfg.state_file, state)
+
+
+def inbound_loop(
+    cfg: Config, state: dict[str, Any], rainbox: Any, telegram: Any,
+    room_uuid: str, stop: "threading.Event",
+) -> None:
+    limiter = RateLimitedLogger(60.0)
+    attempt = 0
+    while not stop.is_set():
+        try:
+            updates = telegram.get_updates(offset=state.get("telegram_offset", 0) + 1)
+            process_updates(updates, cfg, state, rainbox, room_uuid, limiter)
+            attempt = 0
+        except Exception:
+            attempt += 1
+            logger.exception("inbound loop error (attempt %d)", attempt)
+            _backoff_wait(attempt, stop)
+
+
+def outbound_loop(
+    cfg: Config, state: dict[str, Any], rainbox: Any, telegram: Any,
+    room_uuid: str, stop: "threading.Event",
+) -> None:
+    attempt = 0
+    while not stop.is_set():
+        try:
+            # catch up first: covers replies that landed while disconnected
+            outbound_catchup(cfg, state, rainbox, telegram, room_uuid)
+            for event in rainbox.iter_sse_events():
+                attempt = 0
+                if str(event.get("room_uuid")) == str(room_uuid):
+                    outbound_catchup(cfg, state, rainbox, telegram, room_uuid)
+                if stop.is_set():
+                    break
+        except Exception:
+            attempt += 1
+            logger.exception("outbound loop error (attempt %d)", attempt)
+            _backoff_wait(attempt, stop)
+        else:
+            if not stop.is_set():
+                # SSE generator ended without error (server restart): reconnect
+                attempt += 1
+                _backoff_wait(attempt, stop)
+
+
+# --- entrypoint -------------------------------------------------------------
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    import requests  # imported here so tests never need it  # noqa: F401
+
+    from rainbox_api import RainboxClient
+    from telegram_api import TelegramClient
+
+    cfg = load_config()
+    rainbox = RainboxClient(cfg.rainbox_url)
+    telegram = TelegramClient(cfg.bot_token)
+
+    room = rainbox.find_room_by_name(cfg.room_name)
+    if room is None:
+        raise SystemExit(
+            f"chatroom {cfg.room_name!r} not found at {cfg.rainbox_url}. Create it "
+            f"on /chat in the webapp and add the agents that should answer, then rerun."
+        )
+    room_uuid = str(room["uuid"])
+    logger.info("bridging telegram <-> room %r (%s)", cfg.room_name, room_uuid)
+
+    state = load_state(cfg.state_file)
+    init_room_cursor(cfg, state, rainbox, room_uuid)
+
+    stop = threading.Event()
+
+    def _shutdown(signum: int, frame: Any) -> None:
+        logger.info("signal %d: shutting down", signum)
+        stop.set()
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    threads = [
+        threading.Thread(
+            target=inbound_loop, name="inbound",
+            args=(cfg, state, rainbox, telegram, room_uuid, stop), daemon=True,
+        ),
+        threading.Thread(
+            target=outbound_loop, name="outbound",
+            args=(cfg, state, rainbox, telegram, room_uuid, stop), daemon=True,
+        ),
+    ]
+    for t in threads:
+        t.start()
+    while not stop.is_set():
+        stop.wait(1.0)
+    logger.info("bye")
+
+
+if __name__ == "__main__":
+    main()

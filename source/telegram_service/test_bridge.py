@@ -1,5 +1,6 @@
 """Bridge logic with in-memory fakes — no network, no threads."""
 import json
+import threading
 from typing import Any
 
 import pytest
@@ -7,9 +8,12 @@ import pytest
 from bridge import (
     Config,
     RateLimitedLogger,
+    inbound_loop,
+    init_room_cursor,
     load_config,
     load_state,
     outbound_catchup,
+    outbound_loop,
     process_updates,
     save_state,
 )
@@ -188,3 +192,73 @@ def test_outbound_without_chat_id_advances_cursor_without_sending(tmp_path):
     outbound_catchup(cfg, state, rainbox, telegram, "room-1")
     assert telegram.sent == []
     assert state["room_cursor"] == 1
+
+
+# --- loops / main wiring --------------------------------------------------
+
+
+class FakeTelegramPolling(FakeTelegram):
+    """get_updates returns one batch, then sets stop so loops exit in tests."""
+
+    def __init__(self, batches: list[list[dict[str, Any]]], stop: threading.Event) -> None:
+        super().__init__()
+        self.batches = list(batches)
+        self.stop = stop
+
+    def get_updates(self, offset: int, timeout: int = 50) -> list[dict[str, Any]]:
+        if self.batches:
+            return self.batches.pop(0)
+        self.stop.set()
+        return []
+
+
+class FakeRainboxSSE(FakeRainbox):
+    def __init__(self, events: list[dict[str, Any]], stop: threading.Event, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.events = list(events)
+        self.stop = stop
+
+    def iter_sse_events(self) -> Any:
+        yield from self.events
+        self.stop.set()
+
+
+def test_init_room_cursor_uses_latest_message(tmp_path):
+    cfg = _cfg(tmp_path)
+    rainbox = FakeRainbox(messages=[_agent_msg(4), _agent_msg(9)])
+    state: dict[str, Any] = {}
+    init_room_cursor(cfg, state, rainbox, "room-1")
+    assert state["room_cursor"] == 9  # never replay history
+
+
+def test_init_room_cursor_keeps_existing(tmp_path):
+    cfg = _cfg(tmp_path)
+    state: dict[str, Any] = {"room_cursor": 5}
+    init_room_cursor(cfg, state, FakeRainbox(messages=[_agent_msg(9)]), "room-1")
+    assert state["room_cursor"] == 5
+
+
+def test_inbound_loop_processes_then_stops(tmp_path):
+    cfg = _cfg(tmp_path)
+    stop = threading.Event()
+    telegram = FakeTelegramPolling([[_update(7)]], stop)
+    rainbox = FakeRainbox()
+    state: dict[str, Any] = {}
+    inbound_loop(cfg, state, rainbox, telegram, "room-1", stop)
+    assert rainbox.posted == [("room-1", "hello")]
+    assert state["telegram_offset"] == 7
+
+
+def test_outbound_loop_catches_up_on_matching_room_event(tmp_path):
+    cfg = _cfg(tmp_path)
+    stop = threading.Event()
+    rainbox = FakeRainboxSSE(
+        events=[{"room_uuid": "other", "message_id": 1},
+                {"room_uuid": "room-1", "message_id": 2}],
+        stop=stop,
+        messages=[_agent_msg(2)],
+    )
+    telegram = FakeTelegram()
+    state: dict[str, Any] = {"operator_chat_id": 222, "room_cursor": 0}
+    outbound_loop(cfg, state, rainbox, telegram, "room-1", stop)
+    assert telegram.sent == [(222, "reply")]
