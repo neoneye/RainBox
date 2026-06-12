@@ -9,6 +9,7 @@ from bridge import (
     RateLimitedLogger,
     load_config,
     load_state,
+    outbound_catchup,
     process_updates,
     save_state,
 )
@@ -137,3 +138,53 @@ def test_inbound_post_failure_does_not_advance_offset(tmp_path):
     with pytest.raises(RuntimeError, match="rainbox down"):
         process_updates([_update(7)], cfg, state, rainbox, "room-1", RateLimitedLogger(60))
     assert state["telegram_offset"] == 6  # redelivered on next poll
+
+
+# --- outbound -----------------------------------------------------------
+
+
+def _agent_msg(mid: int, text: str = "reply", kind: str = "message", sender_type: str = "agent", streaming: bool = False) -> dict[str, Any]:
+    return {
+        "id": mid, "uuid": f"m{mid}", "text": text, "kind": kind,
+        "sender_type": sender_type, "streaming": streaming,
+    }
+
+
+def test_outbound_forwards_agent_messages_only(tmp_path):
+    cfg = _cfg(tmp_path)
+    state = {"operator_chat_id": 222, "room_cursor": 0}
+    rainbox = FakeRainbox(messages=[
+        _agent_msg(1, text="from human", sender_type="human"),
+        _agent_msg(2, text="debug row", kind="debug-router"),
+        _agent_msg(3, text="real reply"),
+    ])
+    telegram = FakeTelegram()
+    outbound_catchup(cfg, state, rainbox, telegram, "room-1")
+    assert telegram.sent == [(222, "real reply")]
+    assert state["room_cursor"] == 3
+
+
+def test_outbound_stops_at_streaming_row(tmp_path):
+    cfg = _cfg(tmp_path)
+    state = {"operator_chat_id": 222, "room_cursor": 0}
+    rainbox = FakeRainbox(messages=[
+        _agent_msg(1, text="done reply"),
+        _agent_msg(2, text="half a repl", streaming=True),
+        _agent_msg(3, text="later reply"),
+    ])
+    telegram = FakeTelegram()
+    outbound_catchup(cfg, state, rainbox, telegram, "room-1")
+    # forwarded the finished row, then STOPPED at the streaming row without
+    # advancing past it — its finalizing SSE event re-triggers catch-up
+    assert telegram.sent == [(222, "done reply")]
+    assert state["room_cursor"] == 1
+
+
+def test_outbound_without_chat_id_advances_cursor_without_sending(tmp_path):
+    cfg = _cfg(tmp_path)
+    state = {"room_cursor": 0}
+    rainbox = FakeRainbox(messages=[_agent_msg(1)])
+    telegram = FakeTelegram()
+    outbound_catchup(cfg, state, rainbox, telegram, "room-1")
+    assert telegram.sent == []
+    assert state["room_cursor"] == 1

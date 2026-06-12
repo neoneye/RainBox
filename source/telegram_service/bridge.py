@@ -117,3 +117,35 @@ def process_updates(
             logger.info("telegram -> room: %d chars", len(text))
         state["telegram_offset"] = update_id
         save_state(cfg.state_file, state)
+
+
+# --- outbound: chatroom -> Telegram ---------------------------------------
+
+
+def outbound_catchup(
+    cfg: Config,
+    state: dict[str, Any],
+    rainbox: Any,
+    telegram: Any,
+    room_uuid: str,
+) -> None:
+    """Forward unseen finished agent messages to Telegram, advancing the
+    cursor row by row. Stops at the first still-streaming row WITHOUT
+    advancing past it: streamed rows are updated in place (same id) and the
+    finalizing update fires another SSE event that re-runs this catch-up."""
+    rows = rainbox.get_messages_after(room_uuid, state.get("room_cursor", 0))
+    for row in rows:
+        if row.get("streaming"):
+            break
+        if row.get("kind") == "message" and row.get("sender_type") == "agent":
+            chat_id = state.get("operator_chat_id")
+            if chat_id is None:
+                logger.warning(
+                    "agent reply not delivered: no operator chat id yet "
+                    "(send any telegram message first); room row id=%s", row["id"],
+                )
+            else:
+                telegram.send_message(chat_id, row.get("text") or "")
+                logger.info("room -> telegram: row id=%s", row["id"])
+        state["room_cursor"] = row["id"]
+        save_state(cfg.state_file, state)
