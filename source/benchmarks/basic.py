@@ -27,13 +27,13 @@ callers can stream progress, and all produce a BenchmarkResult with totals
 (correct / mistakes / failures) and the full list of per-trial records.
 
 CLI demo:
-    python3 benchmark.py                              # decode, first available config
-    python3 benchmark.py <uuid>                       # decode against specific target
-    python3 benchmark.py <uuid> --encode              # encode against specific target
-    python3 benchmark.py <uuid> --reverse             # reverse-string against target
-    python3 benchmark.py <uuid> --reverse-list        # reverse-list against target
-    python3 benchmark.py <uuid> --tool-order          # tool-call ordering (needs FC model)
-    python3 benchmark.py <uuid> --tool-route          # data-dependent tool dispatch (needs FC model)
+    python3 -m benchmarks.basic                              # decode, first available config
+    python3 -m benchmarks.basic <uuid>                       # decode against specific target
+    python3 -m benchmarks.basic <uuid> --encode              # encode against specific target
+    python3 -m benchmarks.basic <uuid> --reverse             # reverse-string against target
+    python3 -m benchmarks.basic <uuid> --reverse-list        # reverse-list against target
+    python3 -m benchmarks.basic <uuid> --tool-order          # tool-call ordering (needs FC model)
+    python3 -m benchmarks.basic <uuid> --tool-route          # data-dependent tool dispatch (needs FC model)
 """
 
 import asyncio

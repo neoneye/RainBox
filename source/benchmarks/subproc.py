@@ -20,25 +20,40 @@ import sys
 import threading
 from typing import Any, Callable
 
+# The project root (parent of benchmarks/) so workers can import all packages.
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _worker_env() -> dict[str, str]:
+    """Env for spawned worker subprocesses: make the source root importable
+    regardless of the worker's CWD. Mirrors webapp/models_views._worker_env."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = _ROOT_DIR + (
+        os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else ""
+    )
+    return env
+
 
 def stream_target_subprocess(
-    worker_script: str,
+    worker_module: str,
     request: dict[str, Any],
     on_event: Callable[[dict[str, Any]], None],
     stop_event: threading.Event,
     poll_interval: float = 0.25,
 ) -> bool:
-    """Spawn `worker_script`, send `request` as one JSON line on stdin, and call
-    `on_event(event)` for each NDJSON object the worker writes to stdout.
+    """Spawn `worker_module` (a dotted module name, e.g. ``benchmarks.worker``),
+    send `request` as one JSON line on stdin, and call `on_event(event)` for
+    each NDJSON object the worker writes to stdout.
 
     Returns True if the child was killed because `stop_event` was set, False if
     it ran to completion. The child is always reaped. stderr is discarded so
     library chatter can't deadlock on a full pipe."""
     proc = subprocess.Popen(
-        [sys.executable, worker_script],
+        [sys.executable, "-m", worker_module],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
+        env=_worker_env(),
     )
     killed = False
     sel = selectors.DefaultSelector()

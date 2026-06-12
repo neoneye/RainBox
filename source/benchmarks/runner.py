@@ -3,7 +3,6 @@ order, runs every benchmark per target, and maintains a state dict the
 webapp polls."""
 
 import logging
-import os
 import threading
 import time
 from typing import Any
@@ -11,7 +10,7 @@ from typing import Any
 from flask import Flask
 
 import db
-from benchmark import (
+from benchmarks.basic import (
     BenchmarkBase64Decode,
     BenchmarkBase64Encode,
     BenchmarkReverseList,
@@ -19,15 +18,13 @@ from benchmark import (
     BenchmarkToolOrder,
     BenchmarkToolRoute,
 )
-from benchmark_kanban import BenchmarkKanbanOpStructured, BenchmarkKanbanOpTools
-from benchmark_subprocess import stream_target_subprocess
+from benchmarks.kanban import BenchmarkKanbanOpStructured, BenchmarkKanbanOpTools
+from benchmarks.subproc import stream_target_subprocess
 
 logger = logging.getLogger(__name__)
 
-# Each target runs in this child process so a stuck model can be SIGKILLed.
-_BENCHMARK_WORKER = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "benchmark_worker.py"
-)
+# Each target runs in its own child process so a stuck model can be SIGKILLed.
+_BENCHMARK_WORKER_MODULE = "benchmarks.worker"
 
 BENCHMARK_SPECS: list[tuple[str, type, dict[str, Any]]] = [
     ("base64_decode", BenchmarkBase64Decode, {"num_trials": 5, "string_length": 6}),
@@ -358,7 +355,7 @@ class BenchmarkRunner:
             )
 
     def _run(self, app: Flask, targets: list[dict[str, Any]]) -> None:
-        # Each target runs in its own child process (benchmark_worker.py). The
+        # Each target runs in its own child process (benchmarks.worker). The
         # child streams progress events back; stop() sets _stop_event, which
         # makes stream_target_subprocess SIGKILL the active child — closing its
         # provider socket so a runaway model stops pegging CPU/GPU.
@@ -386,7 +383,7 @@ class BenchmarkRunner:
                                "skip_warmup": skip_warmup,
                                "spec_set": self.spec_set}
                     killed = stream_target_subprocess(
-                        _BENCHMARK_WORKER,
+                        _BENCHMARK_WORKER_MODULE,
                         request,
                         lambda ev, _ti=ti: self._apply_event(_ti, ev),
                         self._stop_event,

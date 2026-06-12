@@ -2,7 +2,7 @@ import json
 
 from flask import Response, render_template_string, request
 
-from benchmark_runner import BENCHMARK_SPECS
+from benchmarks.runner import BENCHMARK_SPECS
 
 from .core import app, benchmark_runner
 

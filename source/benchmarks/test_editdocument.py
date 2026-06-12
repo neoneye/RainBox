@@ -1,14 +1,14 @@
-"""Tests for benchmark_editdocument.
+"""Tests for benchmarks.editdocument.
 
 Deterministic / fast / no LM Studio. Verifies the seeded test cases are
 self-consistent (the expected output really is reachable via valid
 patches), and that the runner records correct/failure outcomes given
 stubbed agents.
 
-    python -m pytest test_benchmark_editdocument.py -v
+    python -m pytest benchmarks/test_editdocument.py -v
 """
 
-from benchmark_editdocument import (
+from benchmarks.editdocument import (
     EDIT_DOCUMENT_TESTS,
     BenchmarkEditDocument,
     BenchmarkEditDocumentResult,
@@ -125,7 +125,7 @@ def _patch_resolve(monkeypatch):
     (an agent uuid, not a model uuid) as the target, so stub the resolver
     to return a fixed tuple."""
     monkeypatch.setattr(
-        "benchmark_editdocument.db.resolved_model_kwargs",
+        "benchmarks.editdocument.db.resolved_model_kwargs",
         lambda _uuid: ("lm_studio", "stub-model", {}),
     )
 
@@ -183,7 +183,7 @@ def test_benchmark_run_records_correct_for_passing_stub(app_ctx, monkeypatch):
     # have to override that. Monkeypatch the constructor lookup to return
     # our pre-stubbed agent for any call.
     monkeypatch.setattr(
-        "benchmark_editdocument._instantiate_agent",
+        "benchmarks.editdocument._instantiate_agent",
         lambda agent_cls, agent_uuid, name: agent,
     )
     bench = BenchmarkEditDocument(
@@ -217,7 +217,7 @@ def test_benchmark_run_records_failure_for_raising_stub(app_ctx, monkeypatch):
     agent.candidate_model_uuids = []
     monkeypatch.setattr(agent, "_structured_call", raising_stub)
     monkeypatch.setattr(
-        "benchmark_editdocument._instantiate_agent",
+        "benchmarks.editdocument._instantiate_agent",
         lambda agent_cls, agent_uuid, name: agent,
     )
     bench = BenchmarkEditDocument(
@@ -245,7 +245,7 @@ def test_benchmark_run_records_mistake_when_patches_dont_match_expected(app_ctx,
         )])
     agent = _build_agent_with_stub(monkeypatch, bad_plan)
     monkeypatch.setattr(
-        "benchmark_editdocument._instantiate_agent",
+        "benchmarks.editdocument._instantiate_agent",
         lambda agent_cls, agent_uuid, name: agent,
     )
     bench = BenchmarkEditDocument(
@@ -268,7 +268,7 @@ def test_benchmark_run_invokes_on_trial_callback(app_ctx, monkeypatch):
         lambda i: _correct_plan_for(_KNOWN_TESTS[i]),
     )
     monkeypatch.setattr(
-        "benchmark_editdocument._instantiate_agent",
+        "benchmarks.editdocument._instantiate_agent",
         lambda agent_cls, agent_uuid, name: agent,
     )
     seen: list[str] = []

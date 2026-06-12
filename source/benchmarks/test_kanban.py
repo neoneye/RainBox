@@ -1,4 +1,4 @@
-"""Tests for the deterministic parts of benchmark_kanban.py (no LLM): board
+"""Tests for the deterministic parts of benchmarks/kanban.py (no LLM): board
 generation, instruction/expected validity, serialization id-coverage via the
 PRODUCTION renderers, and the grader. The LLM-facing run() paths are exercised
 manually / from /benchmark against live local models.
@@ -9,7 +9,7 @@ import random
 
 import pytest
 
-from benchmark_kanban import (
+from benchmarks.kanban import (
     _OPS,
     grade,
     make_board,
@@ -110,7 +110,7 @@ def test_grade():
 def test_benchmark_specs_registered():
     """The 2×2 decision matrix lives in its OWN spec set (its own page), not
     in the general /benchmark suite."""
-    from benchmark_runner import BENCHMARK_SPECS, KANBAN_BENCHMARK_SPECS, SPEC_SETS
+    from benchmarks.runner import BENCHMARK_SPECS, KANBAN_BENCHMARK_SPECS, SPEC_SETS
 
     names = [name for name, _cls, _kw in KANBAN_BENCHMARK_SPECS]
     assert names == ["kanban_md_struct", "kanban_json_struct",
@@ -130,7 +130,7 @@ def test_collect_targets_spec_set_aware(monkeypatch):
     from types import SimpleNamespace
     from uuid import uuid4
 
-    import benchmark_runner as br
+    import benchmarks.runner as br
 
     struct_only = SimpleNamespace(uuid=uuid4(), effective_display_name="struct only")
     tools_only = SimpleNamespace(uuid=uuid4(), effective_display_name="tools only")

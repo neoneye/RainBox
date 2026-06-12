@@ -1,6 +1,6 @@
 """Child process that runs the `/benchmark_basic` suite for ONE target.
 
-Spawned per row by BenchmarkRunner via benchmark_subprocess.stream_target_
+Spawned per row by BenchmarkRunner via benchmarks.subproc.stream_target_
 subprocess so the row can be SIGKILLed mid-trial (a runaway model otherwise
 pegs CPU/GPU until the provider times out).
 
@@ -36,9 +36,9 @@ def main() -> None:
 
     from uuid import UUID
 
-    import benchmark as B
+    import benchmarks.basic as B
     import llm
-    from benchmark_runner import SPEC_SETS
+    from benchmarks.runner import SPEC_SETS
     from db import make_app
 
     target_uuid = UUID(req["target_uuid"])

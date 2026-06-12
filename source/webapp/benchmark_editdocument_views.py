@@ -8,7 +8,7 @@ import json
 
 from flask import Response, jsonify, render_template_string, request
 
-from benchmark_editdocument import EDIT_DOCUMENT_TESTS
+from benchmarks.editdocument import EDIT_DOCUMENT_TESTS
 
 from .core import app, benchmark_editdocument_runner
 

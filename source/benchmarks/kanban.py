@@ -17,7 +17,7 @@ wrong-card and malformed-id errors are precisely the blast-radius failures
 the board exists to prevent.
 
 Two benchmark classes × two context formats = the 2×2 decision matrix,
-registered in benchmark_runner.KANBAN_BENCHMARK_SPECS and runnable from
+registered in benchmarks.runner.KANBAN_BENCHMARK_SPECS and runnable from
 /benchmark_kanban:
 
   - BenchmarkKanbanOpStructured(context_format='markdown'|'json') —
@@ -28,10 +28,10 @@ registered in benchmark_runner.KANBAN_BENCHMARK_SPECS and runnable from
     ids (requires a function-calling target).
 
 CLI demo:
-    python3 benchmark_kanban.py <uuid>                    # structured, markdown
-    python3 benchmark_kanban.py <uuid> --json             # structured, JSON
-    python3 benchmark_kanban.py <uuid> --tools            # tools, markdown
-    python3 benchmark_kanban.py <uuid> --tools --json     # tools, JSON
+    python3 -m benchmarks.kanban <uuid>                    # structured, markdown
+    python3 -m benchmarks.kanban <uuid> --json             # structured, JSON
+    python3 -m benchmarks.kanban <uuid> --tools            # tools, markdown
+    python3 -m benchmarks.kanban <uuid> --tools --json     # tools, JSON
 """
 
 import json
@@ -46,7 +46,7 @@ from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.core.llms import ChatMessage, MessageRole
 from pydantic import BaseModel, Field
 
-from benchmark import (
+from benchmarks.basic import (
     TIMEOUT_ABORT_THRESHOLD,
     TOOL_CALL_TIMEOUT,
     BenchmarkResult,
@@ -447,7 +447,7 @@ if __name__ == "__main__":
     use_json = "--json" in argv
     argv = [a for a in argv if a not in ("--tools", "--json")]
     if not argv:
-        print("usage: python3 benchmark_kanban.py <target-uuid> [--tools] [--json]")
+        print("usage: python3 -m benchmarks.kanban <target-uuid> [--tools] [--json]")
         sys.exit(1)
     app = db.make_app()
     with app.app_context():

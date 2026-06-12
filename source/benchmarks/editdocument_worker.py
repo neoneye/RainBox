@@ -1,6 +1,6 @@
 """Child process that runs the `/benchmark_editdocument` suite for ONE target.
 
-Spawned per row by BenchmarkEditDocumentRunner via benchmark_subprocess.
+Spawned per row by BenchmarkEditDocumentRunner via benchmarks.subproc.
 stream_target_subprocess so the row can be SIGKILLed mid-trial (a runaway
 model otherwise pegs CPU/GPU until the provider times out).
 
@@ -32,8 +32,8 @@ def main() -> None:
 
     from uuid import UUID
 
-    from benchmark_editdocument import BenchmarkEditDocument
-    from benchmark_editdocument_runner import AGENT_REGISTRY
+    from benchmarks.editdocument import BenchmarkEditDocument
+    from benchmarks.editdocument_runner import AGENT_REGISTRY
     from db import make_app
 
     target_uuid = UUID(req["target_uuid"])

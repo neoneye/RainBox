@@ -4,12 +4,11 @@ Owns a single worker thread and a state dict polled by the webapp. Iterates
 every available target in the /models tree, runs every EditDocumentTest
 against the selected agent (v1, v2, or v3), and streams results into the state.
 
-Mirrors benchmark_runner.BenchmarkRunner's lifecycle (start / stop /
+Mirrors benchmarks.runner.BenchmarkRunner's lifecycle (start / stop /
 get_state) so the webapp's polling code looks the same.
 """
 
 import logging
-import os
 import threading
 import time
 from typing import Any
@@ -18,7 +17,7 @@ from uuid import UUID
 from flask import Flask
 
 import db
-from benchmark_subprocess import stream_target_subprocess
+from benchmarks.subproc import stream_target_subprocess
 from agent_config import (
     EDIT_DOCUMENT_V1_UUID,
     EDIT_DOCUMENT_V2_UUID,
@@ -33,14 +32,12 @@ from agent_edit_document_v3 import EditDocumentAgentV3
 from agent_edit_document_v4 import EditDocumentAgentV4
 from agent_edit_document_v5 import EditDocumentAgentV5
 from agent_edit_document_v6 import EditDocumentAgentV6
-from benchmark_editdocument import EDIT_DOCUMENT_TESTS
+from benchmarks.editdocument import EDIT_DOCUMENT_TESTS
 
 logger = logging.getLogger(__name__)
 
-# Each target runs in this child process so a stuck model can be SIGKILLed.
-_EDITDOC_WORKER = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "benchmark_editdocument_worker.py"
-)
+# Each target runs in its own child process so a stuck model can be SIGKILLed.
+_EDITDOC_WORKER_MODULE = "benchmarks.editdocument_worker"
 
 
 # Agent registry: maps the picker's choice string to the (class, role_uuid, role_name)
@@ -271,7 +268,7 @@ class BenchmarkEditDocumentRunner:
                 # SIGKILL it (closing the provider socket) if the model hangs.
                 request = {"target_uuid": str(t["uuid"]), "agent_choice": agent_choice}
                 killed = stream_target_subprocess(
-                    _EDITDOC_WORKER,
+                    _EDITDOC_WORKER_MODULE,
                     request,
                     lambda ev, _ti=ti: self._apply_event(_ti, ev),
                     self._stop_event,

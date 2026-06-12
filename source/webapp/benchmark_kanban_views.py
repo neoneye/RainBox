@@ -4,7 +4,7 @@
 invocation mechanism) reads as one experiment.
 
 Reuses the shared benchmark-suite page + BenchmarkRunner machinery from
-benchmark_views/benchmark_runner; only the spec set, runner instance, and
+benchmark_views/benchmarks.runner; only the spec set, runner instance, and
 endpoints differ.
 """
 
@@ -12,7 +12,7 @@ import json
 
 from flask import Response, request
 
-from benchmark_runner import KANBAN_BENCHMARK_SPECS
+from benchmarks.runner import KANBAN_BENCHMARK_SPECS
 
 from .benchmark_views import render_benchmark_page
 from .core import app, kanban_benchmark_runner

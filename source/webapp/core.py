@@ -17,7 +17,7 @@ from jinja2 import ChoiceLoader, DictLoader
 from markupsafe import Markup, escape
 from wtforms import StringField
 
-from benchmark_runner import BenchmarkRunner
+from benchmarks.runner import BenchmarkRunner
 from db import (
     AppSetting,
     ChatMessage,
@@ -160,7 +160,7 @@ app.jinja_env.loader = ChoiceLoader(
 benchmark_runner = BenchmarkRunner()
 kanban_benchmark_runner = BenchmarkRunner(spec_set="kanban")
 
-from benchmark_editdocument_runner import BenchmarkEditDocumentRunner
+from benchmarks.editdocument_runner import BenchmarkEditDocumentRunner
 benchmark_editdocument_runner = BenchmarkEditDocumentRunner(app)
 
 

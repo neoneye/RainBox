@@ -1,6 +1,6 @@
 """Benchmark for EditDocumentAgentV1, EditDocumentAgentV2, and later siblings.
 
-Layer 1 of the benchmark stack (mirrors benchmark.py):
+Layer 1 of the benchmark stack (mirrors benchmarks/basic.py):
   - EditDocumentTest: data describing one test case (input + expected output).
   - EDIT_DOCUMENT_TESTS: the seeded list of tests.
   - EditDocumentTrial: per-test result record.
@@ -8,7 +8,7 @@ Layer 1 of the benchmark stack (mirrors benchmark.py):
   - BenchmarkEditDocument: runs every test against one (target, agent).
 
 Layer 2 (background orchestration + state dict the webapp polls) lives in
-benchmark_editdocument_runner.py.
+benchmarks/editdocument_runner.py.
 
 See docs/superpowers/specs/2026-05-30-benchmark-editdocument-design.md.
 """
