@@ -29,7 +29,7 @@ timestamp is UTC (the trailing `Z`); `:` is replaced with `-` because it is not
 allowed in macOS paths.
 
 Usage:
-    python backup_db.py <backup-repo> -r age1...   # or set the env vars below
+    python -m backup.dump <backup-repo> -r age1...   # or set the env vars below
 """
 import argparse
 import logging
@@ -213,6 +213,7 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     parser = argparse.ArgumentParser(
+        prog="python -m backup.dump",
         description="Back up the rainbox database to a zstd+age-encrypted file."
     )
     parser.add_argument(
@@ -263,7 +264,7 @@ def main() -> None:
         parser.error(str(exc))
     print(dest)
 
-    import backup_remote
+    from backup import remote as backup_remote
 
     push = backup_remote.git_push_enabled() if args.git_push is None else args.git_push
     if push:

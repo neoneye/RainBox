@@ -1,4 +1,4 @@
-"""Tests for backup_db.
+"""Tests for backup.dump.
 
 The path-layout tests are pure (no DB). test_backup_database_roundtrip hits the
 live local Postgres (db.psycopg_dsn()) but writes only into pytest's tmp_path,
@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-import backup_db
+from backup import dump as backup_db
 
 
 @pytest.fixture

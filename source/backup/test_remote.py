@@ -1,4 +1,4 @@
-"""Tests for backup_remote (git commit + push of a backup file).
+"""Tests for backup.remote (git commit + push of a backup file).
 
 No DB and no network: a local bare repo stands in for the remote, and a working
 clone is the backup-repo. Everything lives under pytest's tmp_path.
@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-import backup_remote
+from backup import remote as backup_remote
 
 
 def _git(repo, *args):

@@ -1,20 +1,22 @@
 """Upload a finished backup to a remote by committing it into a git repo.
 
-The backup-repo directory (where `backup_db.py` writes `…Z.zstd.age` files) can
+The backup-repo directory (where `backup.dump` writes `…Z.zstd.age` files) can
 itself be a git repo with a remote — e.g.
 `git@github.com:Username/rainbox-backup.git`. "Upload to remote" then
 means: stage just the new backup file, commit it, and `git push`. Because the
-files are already public-key-encrypted ciphertext (see `backup_db.py`), pushing
+files are already public-key-encrypted ciphertext (see `backup.dump`), pushing
 them to untrusted storage like GitHub is safe.
 
 This is opt-in: enabled by `RAINBOX_BACKUP_GIT_PUSH` (truthy) or the
 `--git-push` CLI flag. Pushing needs the running process to have credentials for
 the remote (e.g. an SSH agent/key for an `git@github.com:` remote).
 """
+import argparse
 import logging
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -89,3 +91,43 @@ def git_push_backup(
     _check(_git(repo, ["commit", "-m", f"backup {rel}", "--", rel]), "git commit")
     _check(_git(repo, ["push", remote, "HEAD"]), "git push")
     return f"pushed {rel} to {remote}"
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
+    parser = argparse.ArgumentParser(
+        prog="python -m backup.remote",
+        description=(
+            "Commit and push a backup file into a backup-repo git remote. "
+            "Normally called automatically by python -m backup.dump --git-push, "
+            "but can be invoked standalone to retry a failed upload."
+        ),
+    )
+    parser.add_argument(
+        "backup_repo",
+        help="Backup-repo directory (a git repo with a configured remote).",
+    )
+    parser.add_argument(
+        "backup_file",
+        help="Path to the encrypted backup file to commit and push.",
+    )
+    parser.add_argument(
+        "--remote",
+        default="origin",
+        metavar="REMOTE",
+        help="Git remote name to push to (default: origin).",
+    )
+    args = parser.parse_args()
+
+    try:
+        note = git_push_backup(args.backup_repo, args.backup_file, remote=args.remote)
+        print(note)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

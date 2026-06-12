@@ -524,7 +524,7 @@ def fire_cron_job(job: "CronJob", trigger: str = "scheduled", debug: bool = Fals
             # field, falling back to the RAINBOX_BACKUP_REPO env var. Runs
             # synchronously on the supervisor thread — fine for a local
             # single-user DB; revisit with a worker if dumps grow long.
-            import backup_db
+            from backup import dump as backup_db
             from db.settings import get_setting
 
             # Destination: per-job command overrides the global backup.repo
@@ -558,7 +558,7 @@ def fire_cron_job(job: "CronJob", trigger: str = "scheduled", debug: bool = Fals
             # Optional remote upload: commit+push the (encrypted) file into the
             # backup-repo git repo. The local backup already succeeded, so an
             # upload failure is reported but doesn't fail the fire.
-            import backup_remote
+            from backup import remote as backup_remote
 
             if get_setting("backup.git_push"):
                 try:
