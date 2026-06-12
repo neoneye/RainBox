@@ -54,7 +54,7 @@ from benchmark import (
     _run_agent,
     _target_kind,
 )
-from db_kanban import kanban_render_llm_json, kanban_render_markdown
+from db.kanban import kanban_render_llm_json, kanban_render_markdown
 from llm import prepare_llm
 
 # ---- synthetic board generation ----

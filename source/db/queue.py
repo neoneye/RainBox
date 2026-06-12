@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from db_models import VALID_STATES, Inbox, Journal, State, db
+from db.models import VALID_STATES, Inbox, Journal, State, db
 
 
 def enqueue(agent_uuid: UUID, payload: dict[str, Any]) -> None:

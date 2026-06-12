@@ -25,7 +25,7 @@ from agent_conversation import (
     evaluate_stop,
     next_speaker,
 )
-from db_models import ChatMessage, ConversationRun, Inbox
+from db.models import ChatMessage, ConversationRun, Inbox
 
 MANAGER = CONVERSATION_MANAGER_UUID
 

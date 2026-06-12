@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from db_models import MemoryClaim, MemoryEvidence, db
+from db.models import MemoryClaim, MemoryEvidence, db
 
 
 def create_memory_claim(

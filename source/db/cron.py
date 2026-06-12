@@ -14,7 +14,7 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
-from db_models import (
+from db.models import (
     CRON_ROOM_UUID,
     CRON_SYSTEM_UUID,
     Chatroom,
@@ -34,8 +34,8 @@ BACKUP_CRON_JOB_UUID = UUID("ea97c5b9-a4cd-4553-97d6-d60c5a4f0e81")
 # workspace-shell agent, 'backup' dumps the database in-process (see
 # fire_cron_job). Shared by the tree validator and the upsert.
 CRON_ACTION_TYPES = ("message", "command", "backup")
-from db_queue import enqueue
-from db_chat import post_chat_message, post_cron_event
+from db.queue import enqueue
+from db.chat import post_chat_message, post_cron_event
 
 
 def _cron_last_run_brief(run: "CronRun | None") -> dict[str, Any] | None:
@@ -119,7 +119,7 @@ def cron_load_tree() -> dict[str, Any]:
 
 def cron_is_paused() -> bool:
     """Whether the global cron.paused setting is on (the tick fires nothing)."""
-    from db_settings import get_setting
+    from db.settings import get_setting
 
     return bool(get_setting("cron.paused"))
 
@@ -525,7 +525,7 @@ def fire_cron_job(job: "CronJob", trigger: str = "scheduled", debug: bool = Fals
             # synchronously on the supervisor thread — fine for a local
             # single-user DB; revisit with a worker if dumps grow long.
             import backup_db
-            from db_settings import get_setting
+            from db.settings import get_setting
 
             # Destination: per-job command overrides the global backup.repo
             # setting (which itself resolves DB -> RAINBOX_BACKUP_REPO -> None).
@@ -725,7 +725,7 @@ def cron_tick(now: datetime | None = None) -> int:
     fires at all (schedules don't advance, so resume behaves like
     wake-from-sleep: each due job catches up with at most one fire). Returns
     the number of jobs fired."""
-    from db_settings import get_setting
+    from db.settings import get_setting
 
     if now is None:
         now = datetime.now(UTC)

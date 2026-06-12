@@ -13,7 +13,7 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
-from db_models import ChatMessage, ChatUser, FeedbackEvent, RetrievalEvent, db
+from db.models import ChatMessage, ChatUser, FeedbackEvent, RetrievalEvent, db
 
 logger = logging.getLogger(__name__)
 

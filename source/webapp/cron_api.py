@@ -93,7 +93,7 @@ def cron_pause_resume() -> Response:
     """Global pause/resume: one flag the scheduler checks before firing. It
     never touches per-job/folder enabled flags, so resuming restores the exact
     prior state."""
-    from db_settings import set_setting
+    from db.settings import set_setting
 
     paused = request.path.endswith("/pause")
     set_setting("cron.paused", paused)

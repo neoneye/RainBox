@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 from uuid import UUID
 
-from db_models import (
+from db.models import (
     CAPABILITY_CONSTRAINTS,
     AgentModelBinding,
     ModelConfig,

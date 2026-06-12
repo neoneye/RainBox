@@ -223,7 +223,7 @@ def test_seed_cron_defaults_idempotent(app_ctx):
     """init_db already seeded the System folder + backup job; calling again
     creates no duplicates and never overwrites operator edits (e.g. if the job
     has been enabled in the UI, seed must leave that alone)."""
-    from db_cron import BACKUP_CRON_JOB_UUID, SYSTEM_CRON_FOLDER_UUID
+    from db.cron import BACKUP_CRON_JOB_UUID, SYSTEM_CRON_FOLDER_UUID
 
     job_before = db.db.session.query(db.CronJob).filter_by(uuid=BACKUP_CRON_JOB_UUID).one()
     enabled_before = job_before.enabled

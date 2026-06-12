@@ -13,18 +13,18 @@ import os
 import sqlalchemy as sa
 from flask import Flask
 
-from db_models import *  # noqa: F401,F403  re-export db, models, constants, label helpers, psycopg_dsn
-from db_queue import *  # noqa: F401,F403  re-export queue ops (enqueue, take_item, ...)
-from db_model_config import *  # noqa: F401,F403  re-export model config/overrides/groups/bindings
-from db_chat import *  # noqa: F401,F403  re-export chat rooms/users/messages/NOTIFY/seed helpers
-from db_chat import _chat_event_payload  # noqa: F401  test_db_chat_streaming imports this private helper
-from db_conversation import *  # noqa: F401,F403  re-export conversation_run ops (manager CAS, stop, …)
-from db_memory import *  # noqa: F401,F403  re-export memory claim/evidence ops
-from db_feedback import *  # noqa: F401,F403  re-export feedback + retrieval-telemetry ops
-from db_eval import *  # noqa: F401,F403  re-export eval case/run/result + promotion ops
-from db_cron import *  # noqa: F401,F403  re-export cron tree/scheduler/firing ops
-from db_kanban import *  # noqa: F401,F403  re-export kanban board/task/agent ops
-from db_settings import *  # noqa: F401,F403  re-export app_setting registry/accessors
+from db.models import *  # noqa: F401,F403  re-export db, models, constants, label helpers, psycopg_dsn
+from db.queue import *  # noqa: F401,F403  re-export queue ops (enqueue, take_item, ...)
+from db.model_config import *  # noqa: F401,F403  re-export model config/overrides/groups/bindings
+from db.chat import *  # noqa: F401,F403  re-export chat rooms/users/messages/NOTIFY/seed helpers
+from db.chat import _chat_event_payload  # noqa: F401  test_db_chat_streaming imports this private helper
+from db.conversation import *  # noqa: F401,F403  re-export conversation_run ops (manager CAS, stop, …)
+from db.memory import *  # noqa: F401,F403  re-export memory claim/evidence ops
+from db.feedback import *  # noqa: F401,F403  re-export feedback + retrieval-telemetry ops
+from db.eval import *  # noqa: F401,F403  re-export eval case/run/result + promotion ops
+from db.cron import *  # noqa: F401,F403  re-export cron tree/scheduler/firing ops
+from db.kanban import *  # noqa: F401,F403  re-export kanban board/task/agent ops
+from db.settings import *  # noqa: F401,F403  re-export app_setting registry/accessors
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,9 @@ def make_app() -> Flask:
 
     Used by webapp.py directly and by main.py/agent.py to obtain an
     app context they can push for db.session access."""
-    app = Flask(__name__)
+    import pathlib
+    _root = pathlib.Path(__file__).parent.parent  # source/
+    app = Flask(__name__, static_folder=str(_root / "static"))
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
         "DATABASE_URL", DEFAULT_DATABASE_URL
     )

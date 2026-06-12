@@ -46,7 +46,7 @@ def test_serialization_contains_every_referencable_id(rng, fmt):
     by the production renderers, not a copy). In markdown, agent names render
     inline-ESCAPED (agent_red → agent\\_red — same as production role names
     like workspace_shell), which is part of what the benchmark measures."""
-    from db_kanban import _md_inline
+    from db.kanban import _md_inline
 
     data, agent_names = make_board(rng)
     text = serialize_board(data, agent_names, fmt)

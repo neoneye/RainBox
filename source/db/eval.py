@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from db_models import EvalCase, EvalResult, EvalRun, db
-from db_feedback import get_feedback_event
+from db.models import EvalCase, EvalResult, EvalRun, db
+from db.feedback import get_feedback_event
 
 
 def create_eval_case(

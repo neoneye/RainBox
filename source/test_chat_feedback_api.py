@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 
 import db
-import db_feedback
+from db import feedback as db_feedback
 from db import FeedbackEvent
 
 

@@ -16,7 +16,7 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
-from db_models import ChatMessage, ChatUser, ConversationRun, db
+from db.models import ChatMessage, ChatUser, ConversationRun, db
 
 
 def _wall_clock_anchor() -> dict[str, float]:

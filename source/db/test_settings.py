@@ -9,8 +9,8 @@ import pytest
 import sqlalchemy as sa
 
 import db
-import db_settings
-from db_settings import Setting
+from db import settings as db_settings
+from db.settings import Setting
 
 
 @pytest.fixture
@@ -168,7 +168,7 @@ def test_customize_dir_in_registry():
     """customize.dir: string, env fallback RAINBOX_CUSTOMIZE_DIR, default None,
     not secret — the knob that points rainbox at the operator's private
     customizations directory (Q&A overlay etc.)."""
-    from db_settings import SETTINGS
+    from db.settings import SETTINGS
 
     spec = SETTINGS["customize.dir"]
     assert spec.env == "RAINBOX_CUSTOMIZE_DIR"

@@ -42,7 +42,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from db_models import psycopg_dsn
+from db.models import psycopg_dsn
 
 logger = logging.getLogger(__name__)
 

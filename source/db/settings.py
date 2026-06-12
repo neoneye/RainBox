@@ -22,7 +22,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from db_models import AppSetting, db
+from db.models import AppSetting, db
 
 logger = logging.getLogger(__name__)
 

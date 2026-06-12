@@ -235,7 +235,7 @@ def test_cron_tick_skips_drafts_without_firing(firing):
 
 
 def test_cron_tick_global_pause(firing):
-    from db_settings import set_setting
+    from db.settings import set_setting
 
     past = datetime.now(UTC) - timedelta(minutes=1)
     job = firing(action_type="message", message="paused?", next_run_at=past, name="Pausable")
@@ -253,7 +253,7 @@ def test_cron_tick_global_pause(firing):
 
 
 def test_pause_resume_endpoints(firing):
-    from db_settings import set_setting
+    from db.settings import set_setting
     from webapp.core import app as flask_app
 
     client = flask_app.test_client()

@@ -7,7 +7,7 @@ init_db seeded them.
 import pytest
 
 import db
-import db_settings
+from db import settings as db_settings
 from webapp.core import app
 
 

@@ -12,7 +12,7 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
-from db_models import (
+from db.models import (
     CHAT_NOTIFY_CHANNEL,
     CHAT_NOTIFY_MAX_TEXT,
     CRON_ROOM_UUID,
