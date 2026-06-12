@@ -368,6 +368,7 @@ The demo only exercises `processing → completed`; `failed` and `stopped` exist
 | `providers/` | LM Studio / Ollama / Jan provider registry |
 | `tools/` | the no-LLM workspace_shell command runner |
 | `data/` | the base Q&A knowledge file (`question_answer.jsonl`) |
+| `kokoro_service/`, `whisper_service/`, `telegram_service/` | standalone processes with their own venvs (TTS, STT, Telegram bridge) — the core talks to/with them over HTTP only |
 
 Tests are colocated inside each package next to the modules they test (`<pkg>/test_*.py`); the root `conftest.py` pins every pytest run to the `rainbox_claude` database.
 
