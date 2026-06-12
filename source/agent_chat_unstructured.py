@@ -16,7 +16,7 @@ express "must have", so the must-not-have rule lives here).
 
 Shared with the structured agent: the transcript formatter
 (chat.transcript.format_history) and memory retrieval
-(memory_retrieval.build_chat_memory_block).
+(memory.retrieval.build_chat_memory_block).
 """
 
 import logging

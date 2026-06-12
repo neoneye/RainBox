@@ -12,7 +12,7 @@ webapp/chat_api.py), so its own replies don't re-trigger it.
 This is the structured-output variant (`as_structured_llm`). Its plain-text
 sibling is `UnstructuredChatAgent` in agent_chat_unstructured.py; both share
 the transcript formatter (chat.transcript.format_history) and the memory
-retrieval helper (memory_retrieval.build_chat_memory_block).
+retrieval helper (memory.retrieval.build_chat_memory_block).
 
 Specialized agents live in their own agent_<purpose>.py module; the shared
 base classes (Agent, ModelGroupAgent, StructuredLLMAgent) stay in agent.py.

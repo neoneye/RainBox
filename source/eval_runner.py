@@ -3,7 +3,7 @@ implementation and persist EvalRun + EvalResult rows.
 
 Deterministic-first: chat_reply cases use `case.input["actual_output"]`
 (no live LLM); memory_retrieval cases call
-`memory_retrieval.retrieve_memories(...)`. LLM-as-judge lands in a
+`memory.retrieval.retrieve_memories(...)`. LLM-as-judge lands in a
 later work package.
 
 Scoring policy: each configured criterion (must_include, must_not_include,
