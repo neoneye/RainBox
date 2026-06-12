@@ -15,7 +15,7 @@ the constraint isn't satisfied (the agent_models compatibility filter can only
 express "must have", so the must-not-have rule lives here).
 
 Shared with the structured agent: the transcript formatter
-(chat_transcript.format_history) and memory retrieval
+(chat.transcript.format_history) and memory retrieval
 (memory_retrieval.build_chat_memory_block).
 """
 
