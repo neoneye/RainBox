@@ -218,8 +218,7 @@ def outbound_loop(
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    import requests  # imported here so tests never need it  # noqa: F401
-
+    # Deferred so `import bridge` stays stdlib-only for tests.
     from rainbox_api import RainboxClient
     from telegram_api import TelegramClient
 
