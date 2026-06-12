@@ -8,6 +8,7 @@ sendMessage). All loop logic takes injected client objects so tests use fakes.
 import json
 import logging
 import os
+import re
 import signal
 import threading
 import time
@@ -21,6 +22,15 @@ logger = logging.getLogger(__name__)
 # snapshot+write atomic so one thread's update can't be lost to the other's
 # stale json.dumps or a clobbered temp file.
 _state_lock = threading.Lock()
+
+# requests exception messages embed the full request URL, and Telegram URLs
+# contain the bot token (/bot<token>/...). Redact before logging so a 401 or
+# connection error can never write the credential to the log.
+_TOKEN_URL_RE = re.compile(r"/bot[^/\s]+/")
+
+
+def _redact(text: str) -> str:
+    return _TOKEN_URL_RE.sub("/bot<redacted>/", text)
 
 
 # --- config -------------------------------------------------------------
@@ -187,9 +197,12 @@ def inbound_loop(
             updates = telegram.get_updates(offset=state.get("telegram_offset", 0) + 1)
             process_updates(updates, cfg, state, rainbox, room_uuid, limiter)
             attempt = 0
-        except Exception:
+        except Exception as exc:
             attempt += 1
-            logger.exception("inbound loop error (attempt %d)", attempt)
+            logger.error(
+                "inbound loop error (attempt %d): %s: %s",
+                attempt, type(exc).__name__, _redact(str(exc)),
+            )
             _backoff_wait(attempt, stop)
 
 
@@ -208,9 +221,12 @@ def outbound_loop(
                     outbound_catchup(cfg, state, rainbox, telegram, room_uuid)
                 if stop.is_set():
                     break
-        except Exception:
+        except Exception as exc:
             attempt += 1
-            logger.exception("outbound loop error (attempt %d)", attempt)
+            logger.error(
+                "outbound loop error (attempt %d): %s: %s",
+                attempt, type(exc).__name__, _redact(str(exc)),
+            )
             _backoff_wait(attempt, stop)
         else:
             if not stop.is_set():

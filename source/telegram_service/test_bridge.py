@@ -262,3 +262,24 @@ def test_outbound_loop_catches_up_on_matching_room_event(tmp_path):
     state: dict[str, Any] = {"operator_chat_id": 222, "room_cursor": 0}
     outbound_loop(cfg, state, rainbox, telegram, "room-1", stop)
     assert telegram.sent == [(222, "reply")]
+
+
+def test_loop_errors_never_log_the_bot_token(tmp_path, caplog):
+    """requests exceptions embed the Telegram URL, which contains the bot
+    token — loop error logging must redact it (message and traceback)."""
+
+    cfg = _cfg(tmp_path)
+    stop = threading.Event()
+
+    class ExplodingTelegram(FakeTelegram):
+        def get_updates(self, offset, timeout=50):
+            stop.set()
+            raise RuntimeError(
+                "401 Client Error: Unauthorized for url: "
+                "https://api.telegram.org/bottok/getUpdates?timeout=50"
+            )
+
+    with caplog.at_level("ERROR"):
+        inbound_loop(cfg, {}, FakeRainbox(), ExplodingTelegram(), "room-1", stop)
+    assert "bottok" not in caplog.text
+    assert "bot<redacted>" in caplog.text

@@ -60,6 +60,7 @@ Stop with Ctrl-C.
   latest message; old history is never sent to Telegram.
 - **Text only (v1):** photos/voice/stickers are logged and skipped; replies
   are sent as plain text, chunked at Telegram's 4096-char limit.
+- **Token hygiene:** request errors are logged with the bot token redacted from URLs.
 
 ## Tests
 
