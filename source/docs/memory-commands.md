@@ -5,7 +5,7 @@
 Memory commands let the user directly create, inspect, correct, and remove
 first-class memories.
 
-Commands are parsed by `memory_ops.py` and handled through `QueryAgent` before
+Commands are parsed by `memory/ops.py` and handled through `QueryAgent` before
 the Q&A/vector path is initialized. That means explicit memory operations do not
 depend on LM Studio embeddings or the Q&A registry being available.
 

@@ -363,7 +363,7 @@ Keep everything the prototype already does; add:
 
 ## Review findings (2026-06-10)
 
-A full read of the built system (`db_cron.py`, `webapp/cron_api.py`, `webapp/cron_views.py`, the `main.py` tick) against this design. Summary: **the architecture holds up** — "a cron job is a schedule attached to an action the system already has" kept the backend small, the defensive details are consistently right (validate-before-mutate, upsert preserves `created_at`, a bad cron expression never fires instead of crashing, the tick is self-guarded, fire-at-most-once catch-up, idempotent seeding), and events landing in the `cron` chatroom puts observability where the operator already looks. The gaps below are ordered by how much they block the rest of the brief.
+A full read of the built system (`db/cron.py`, `webapp/cron_api.py`, `webapp/cron_views.py`, the `main.py` tick) against this design. Summary: **the architecture holds up** — "a cron job is a schedule attached to an action the system already has" kept the backend small, the defensive details are consistently right (validate-before-mutate, upsert preserves `created_at`, a bad cron expression never fires instead of crashing, the tick is self-guarded, fire-at-most-once catch-up, idempotent seeding), and events landing in the `cron` chatroom puts observability where the operator already looks. The gaps below are ordered by how much they block the rest of the brief.
 
 ### 1. `cron_run` cannot record an outcome — schema gap blocking steps 3 & 5 — **FIXED 2026-06-10**
 

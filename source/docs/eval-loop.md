@@ -80,12 +80,12 @@ Important fields:
 
 ## Runner
 
-`eval_runner.py` runs active or explicitly selected eval cases.
+`evals/runner.py` runs active or explicitly selected eval cases.
 
 Supported current case types:
 
 - `chat_reply`: scores known output snapshots from `case.input["actual_output"]`.
-- `memory_retrieval`: calls `memory_retrieval.retrieve_memories`.
+- `memory_retrieval`: calls `memory.retrieval.retrieve_memories`.
 
 Supported candidate config keys:
 
@@ -97,7 +97,7 @@ of silently pretending they were evaluated.
 
 ## Comparison And Gate
 
-`eval_compare.py` compares a candidate run against a baseline run.
+`evals/compare.py` compares a candidate run against a baseline run.
 
 Current gate rules:
 
@@ -112,7 +112,7 @@ means.
 
 ## Optimizer
 
-`eval_optimizer.py` tries bounded candidate configurations. It is deliberately
+`evals/optimizer.py` tries bounded candidate configurations. It is deliberately
 not a free-form source or prompt rewriter.
 
 Current candidate matrix:
@@ -129,7 +129,7 @@ Optimizer safety rules are stricter than the basic gate:
 
 ## Production Monitor
 
-`eval_monitor.py` samples recent production chat outputs into an eval run. It is
+`evals/monitor.py` samples recent production chat outputs into an eval run. It is
 a monitoring signal, not a runtime guardrail.
 
 It ignores:

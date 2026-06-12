@@ -5,7 +5,7 @@
 This document maps the important Postgres tables and relationships in
 `rainbox`.
 
-The schema is created by `db.create_all()` from SQLAlchemy models in `db.py`.
+The schema is created by `db.create_all()` from SQLAlchemy models in the `db/` package.
 
 ## Supervisor Tables
 
@@ -33,7 +33,7 @@ Key fields:
 - `routed_at`
 
 The supervisor routes completed, unrouted journal rows to downstream agents
-based on `agent_config.py`.
+based on `agents/config.py`.
 
 ## Model Configuration Tables
 
@@ -100,7 +100,7 @@ Per-room working directory for the deterministic workspace shell agent.
 ### `app_setting`
 
 Operator configuration, addressed by `key` (e.g. `backup.repo`). The code-side
-registry in `db_settings.py` is the source of truth; this table only persists
+registry in `db/settings.py` is the source of truth; this table only persists
 values. Reads resolve **DB value → env var → registry default**. Edited at
 `/settings`, read-only in Flask-Admin. See
 [the configuration proposal](proposals/2026-06-07-user-configuration-in-postgres.md).

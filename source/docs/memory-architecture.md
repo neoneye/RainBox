@@ -8,7 +8,7 @@ what it believes, but also where that belief came from, whether a user confirmed
 it, whether it has been superseded, and whether it is safe to inject into an
 agent prompt.
 
-This is separate from the older Q&A registry in `memory/question_answer.jsonl`.
+This is separate from the older Q&A registry in `data/question_answer.jsonl`.
 The Q&A registry is curated command/answer knowledge for `QueryAgent`; the new
 memory layer is a general-purpose store for remembered claims and their
 evidence.
@@ -17,7 +17,7 @@ evidence.
 
 ### Durable Store
 
-Memory is stored in Postgres through two first-class tables in `db.py`:
+Memory is stored in Postgres through two first-class tables in the `db/` package:
 
 - `memory_claim`
 - `memory_evidence`
@@ -78,7 +78,7 @@ directly relevant.
 
 ### User Operations
 
-Explicit memory commands are handled by `memory_ops.py` and routed through
+Explicit memory commands are handled by `memory/ops.py` and routed through
 `QueryAgent`.
 
 Supported operations include:
@@ -102,7 +102,7 @@ one `superseded`.
 
 ### Retrieval
 
-Runtime retrieval lives in `memory_retrieval.py`.
+Runtime retrieval lives in `memory/retrieval.py`.
 
 The current retrieval strategy is deterministic and intentionally conservative:
 
@@ -146,7 +146,7 @@ When `ChatAgent` injects memories, it also posts a diagnostic chat row:
 
 That row records the query, journal id, memory UUIDs, retrieval reasons,
 confidence, and provenance labels. The user can later ask which memories were
-used, and `memory_ops.py` reads the latest `debug-memory` row to explain the
+used, and `memory/ops.py` reads the latest `debug-memory` row to explain the
 previous answer.
 
 ### Relevance Telemetry
@@ -213,15 +213,15 @@ The memory system is now connected to an eval loop.
 
 Feedback can be promoted into `EvalCase` rows. Downvotes default to regression
 cases; upvotes default to train cases. Eval cases can then be run through
-`eval_runner.py`, producing:
+`evals/runner.py`, producing:
 
 - `EvalRun`
 - `EvalResult`
 - summary metrics
 - pass/fail status per case
 
-`eval_compare.py` compares candidate runs against baselines and applies a
-regression gate. `eval_optimizer.py` can run bounded candidate configurations
+`evals/compare.py` compares candidate runs against baselines and applies a
+regression gate. `evals/optimizer.py` can run bounded candidate configurations
 and select a safe candidate when the gate rules and optimizer-specific rules are
 satisfied.
 

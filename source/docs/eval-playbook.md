@@ -36,19 +36,19 @@ Activate the case only when it expresses a behavior worth preserving or fixing.
 Run all active cases:
 
 ```bash
-venv/bin/python eval_runner.py --active
+venv/bin/python -m evals.runner --active
 ```
 
 Run regression cases only:
 
 ```bash
-venv/bin/python eval_runner.py --active --split regression
+venv/bin/python -m evals.runner --active --split regression
 ```
 
 Run one case:
 
 ```bash
-venv/bin/python eval_runner.py --case <eval-case-uuid>
+venv/bin/python -m evals.runner --case <eval-case-uuid>
 ```
 
 ## 4. Mark Or Select A Baseline
@@ -61,7 +61,7 @@ Baselines should be stable and should include the important active cases.
 ## 5. Compare Candidate Runs
 
 ```bash
-venv/bin/python eval_compare.py \
+venv/bin/python -m evals.compare \
   --baseline <baseline-run-uuid> \
   --candidate <candidate-run-uuid>
 ```
@@ -76,7 +76,7 @@ The next hardening target is to also fail on candidate-only cases.
 
 ## 6. Run Optimizer Candidates
 
-Use `eval_optimizer.py` from Python or a small wrapper to generate and run
+Use `evals/optimizer.py` from Python or a small wrapper to generate and run
 bounded candidate configs.
 
 Current meaningful knob:
@@ -92,7 +92,7 @@ Misnamed or unsupported keys should appear in `unsupported_config_keys`.
 ## 7. Monitor Production Samples
 
 ```bash
-venv/bin/python eval_monitor.py --recent-chat --limit 50
+venv/bin/python -m evals.monitor --recent-chat --limit 50
 ```
 
 This samples recent agent `kind="message"` rows. It ignores human and diagnostic

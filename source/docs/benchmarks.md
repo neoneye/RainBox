@@ -7,11 +7,11 @@ background runner, and live-updating results grid:
 
 - **`/benchmark`** — coding/format probes (base64 decode/encode, reverse
   string, reverse list, tool ordering, tool routing) across every tuned
-  model. Code: `benchmark.py`, `benchmark_runner.py`,
+  model. Code: `benchmarks/basic.py`, `benchmarks/runner.py`,
   `webapp/benchmark_views.py`.
 - **`/benchmark_editdocument`** — runs an edit-document agent (v1–v6) against
   a fixed set of edit tasks and scores the resulting document byte-for-byte.
-  Code: `benchmark_editdocument.py`, `benchmark_editdocument_runner.py`,
+  Code: `benchmarks/editdocument.py`, `benchmarks/editdocument_runner.py`,
   `webapp/benchmark_editdocument_views.py`.
 
 Both share the same shape; this doc covers that shape, and in particular how
@@ -52,7 +52,7 @@ agent supervisor in `main.py`.
   model has gone silent — then it SIGKILLs and reaps the child. Killing the
   process closes its HTTP socket to the provider, so the provider (e.g. Ollama)
   stops generating. Returns `True` if killed, `False` if the row finished.
-- **`benchmark_worker.py` / `benchmark_editdocument_worker.py`** — each runs
+- **`benchmarks/worker.py` / `benchmarks/editdocument_worker.py`** — each runs
   ONE target under a lightweight `db.make_app()` app context (no provider sync,
   no admin) and emits progress events on an isolated stdout fd; the benchmark's
   own output and library chatter is redirected to stderr so it can't corrupt the

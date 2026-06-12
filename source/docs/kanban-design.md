@@ -51,7 +51,7 @@ CRUD.
 - Focus events render newest-first and details are clipped to 200 chars in
   the markdown; for "resume from the trail" (item 3) oldest→newest and a
   larger budget for the last deliverable may read better for small models.
-- 2 pre-existing test failures in `test_query_filter_router_memory_ops.py`
+- 2 pre-existing test failures in `agents/test_query_filter_router_memory_ops.py`
   (`QueryFilterRouterAgent` missing `model_group_uuid`) — unrelated to
   kanban, predate this work, still unfixed.
 - `init_db` migrations were rewritten (commit `b3e8d7fa`) to skip
@@ -62,7 +62,7 @@ CRUD.
 
 ## Architecture
 
-- **Tables** (db_models.py, created by `init_db`'s `create_all()`):
+- **Tables** (`db/models.py`, created by `init_db`'s `create_all()`):
   `kanban_board`, `kanban_column`, `kanban_task`, `kanban_task_event`
   (append-only audit trail). Plain uuid reference columns, no FKs — the
   cron-tables pattern, integrity enforced app-side.
@@ -383,7 +383,7 @@ board protocol.
    the JSON, and pick the correct operation — via structured output vs
    function calling? Reuses the existing eval infrastructure; the result is a
    default, not a permanent commitment, for item 2.
-   *Harness built:* `benchmark_kanban.py` — the 2×2 matrix as four specs on
+   *Harness built:* `benchmarks/kanban.py` — the 2×2 matrix as four specs on
    its own page, **/benchmark_kanban** (`kanban_{md,json}_{struct,tools}`;
    also a CLI). Each trial:
    synthetic board serialized with the production renderers

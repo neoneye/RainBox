@@ -81,25 +81,25 @@ Inspect feedback in Flask-Admin:
 Run active eval cases:
 
 ```bash
-venv/bin/python eval_runner.py --active
+venv/bin/python -m evals.runner --active
 ```
 
 Run a split:
 
 ```bash
-venv/bin/python eval_runner.py --active --split regression
+venv/bin/python -m evals.runner --active --split regression
 ```
 
 Run a specific case:
 
 ```bash
-venv/bin/python eval_runner.py --case <eval-case-uuid>
+venv/bin/python -m evals.runner --case <eval-case-uuid>
 ```
 
 Compare two runs:
 
 ```bash
-venv/bin/python eval_compare.py \
+venv/bin/python -m evals.compare \
   --baseline <baseline-run-uuid> \
   --candidate <candidate-run-uuid>
 ```
@@ -107,7 +107,7 @@ venv/bin/python eval_compare.py \
 Sample recent production chat:
 
 ```bash
-venv/bin/python eval_monitor.py --recent-chat --limit 50
+venv/bin/python -m evals.monitor --recent-chat --limit 50
 ```
 
 ## Database Backup
@@ -118,7 +118,7 @@ public key, so a compromised host can write backups but never decrypt them.
 
 ```bash
 age-keygen -o backup-identity.txt          # one-time, offline; note the age1… public key
-venv/bin/python backup_db.py /path/to/backup-repo -r age1ql3z7h9...
+venv/bin/python -m backup.dump /path/to/backup-repo -r age1ql3z7h9...
 ```
 
 To also push each backup off-machine, make the backup-repo a git repo with a
@@ -135,7 +135,7 @@ backup settings (`backup.repo`, `backup.age_recipient`, `backup.git_push`) from
 Postgres `app_setting` first, then the matching env var, then the default — so
 you can edit them on the **`/settings`** page and they take effect without a
 restart (also visible read-only in Flask-Admin under **Config**). The standalone
-`backup_db.py` CLI is **flags/env
+`python -m backup.dump` CLI is **flags/env
 only by design** — it builds no app context and does not read DB settings, so a
 manual run ignores values edited in the UI. See `docs/backup.md`.
 

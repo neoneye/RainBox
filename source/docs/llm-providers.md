@@ -195,10 +195,10 @@ inference call goes directly to the right backend.
 LLM routes through it, so provider selection (Ollama native wrapper vs
 `ThinkingAwareOpenAILike`) and `ensure_loaded` happen in exactly one place:
 
-- `agent.py` — every `StructuredLLMAgent` subclass via `_structured_call`
-  (covers the edit-document agents and so `benchmark_editdocument`).
-- `benchmark.py`, `query_filter_router_agent.py`, `agent_tool_demo.py`,
-  `agent_mcp.py`.
+- `agents/base.py` — every `StructuredLLMAgent` subclass via `_structured_call`
+  (covers the edit-document agents and so `benchmarks/editdocument.py`).
+- `benchmarks/basic.py`, `agents/query_filter_router.py`, `agents/tool_demo.py`,
+  `agents/mcp.py`.
 - The `/models` page probes (`test_chat`, `test_structured_output`,
   `stream_test_streaming`, `test_tool_call`) via `_resolve_test_target`.
 
@@ -258,7 +258,7 @@ chat / structured / tool probes each run in a **throwaway subprocess** the
 web layer can SIGKILL, mirroring how the supervisor (`main.py`) kills hung
 agents:
 
-- `models_test_worker.py` reads `{action, provider_id, model, arguments}`
+- `llm/models_test_worker.py` reads `{action, provider_id, model, arguments}`
   on stdin, runs `llm.run_named_test(...)`, and writes exactly one JSON
   result line to stdout. The test's own output and library chatter are
   redirected to stderr (which the parent discards) so they can't corrupt
@@ -296,7 +296,7 @@ probe paths pick the new provider up automatically.
 
 ## Known limitations
 
-- **Embeddings stay LM Studio-only.** `query_kb_helpers.py` hardcodes
+- **Embeddings stay LM Studio-only.** `agents/query_kb_helpers.py` hardcodes
   `http://127.0.0.1:1234/v1`; switching the embedding provider would
   invalidate stored vectors, so it's out of scope for the multi-provider
   abstraction.

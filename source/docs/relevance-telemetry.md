@@ -22,7 +22,7 @@ from events.
 ### Chat Memory Retrieval
 
 `ChatAgent` retrieves first-class memory claims through
-`memory_retrieval.retrieve_memories`.
+`memory.retrieval.retrieve_memories`.
 
 For each memory returned, it writes:
 

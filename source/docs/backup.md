@@ -27,7 +27,7 @@ configured, a backup refuses to run rather than write plaintext, and if
 encryption errors it fails loudly — a backup is never silently written
 unencrypted.
 
-Code: `backup_db.py` (the dump + encryption) and `db_cron.py` (the `backup` cron
+Code: `backup/dump.py` (the dump + encryption) and `db/cron.py` (the `backup` cron
 action + the seeded daily job).
 
 ## One-time key setup (do this offline)
@@ -64,7 +64,7 @@ export RAINBOX_BACKUP_AGE_RECIPIENT=age1...      # your age public key
 export RAINBOX_BACKUP_GIT_PUSH=1                 # commit + push to GitHub
 
 # one-off backup (writes the encrypted file, commits it, pushes):
-venv/bin/python backup_db.py
+venv/bin/python -m backup.dump
 
 # or scheduled: set those three vars in the app's environment, run
 # `python main.py`, then enable /cron -> System -> "Database backup".
@@ -104,12 +104,12 @@ Example — a backup taken 2026-01-01 22:39:06 UTC:
 ## Configuration
 
 > **CLI vs. scheduled — where settings come from.** The standalone
-> `backup_db.py` CLI is intentionally **flags/env only**: it builds no app
+> `python -m backup.dump` CLI is intentionally **flags/env only**: it builds no app
 > context, so it does **not** read DB-backed app settings. The **scheduled cron**
 > backup runs inside the app and resolves the backup settings from Postgres
 > (`app_setting`) first, falling back to env, then the default — see
 > "Operator settings (app_setting)" below. So a value you edit in the UI affects
-> nightly backups, **not** a manual `python backup_db.py` run.
+> nightly backups, **not** a manual `python -m backup.dump` run.
 
 **Destination** (the backup-repo directory):
 
@@ -170,12 +170,12 @@ export AGE=/opt/homebrew/bin/age
 
 ```bash
 # Destination + recipient as arguments:
-venv/bin/python backup_db.py /path/to/backup-repo -r age1ql3z7h9...
+venv/bin/python -m backup.dump /path/to/backup-repo -r age1ql3z7h9...
 
 # …or via env vars:
 export RAINBOX_BACKUP_REPO=/path/to/backup-repo
 export RAINBOX_BACKUP_AGE_RECIPIENT=age1ql3z7h9...
-venv/bin/python backup_db.py
+venv/bin/python -m backup.dump
 ```
 
 On success it prints the path of the file it wrote. Tune compression with
@@ -183,7 +183,7 @@ On success it prints the path of the file it wrote. Tune compression with
 
 The CLI reads its config from **flags and env vars only** — it does not consult
 the `app_setting` DB settings (it builds no app context). Settings edited in the
-UI drive the scheduled cron backup, not a manual `backup_db.py` run; pass the
+UI drive the scheduled cron backup, not a manual `python -m backup.dump` run; pass the
 flags/env explicitly here.
 
 The dump streams into a temporary `.part` file in the destination directory and
@@ -198,7 +198,7 @@ which goes through the workspace-shell agent whose allowlist can't run
 `pg_dump`/`zstd`/`age` or write files.
 
 A disabled **"Database backup"** job is seeded under a **System** folder
-(`seed_cron_defaults()` in `db_cron.py`), scheduled daily at **03:30 local
+(`seed_cron_defaults()` in `db/cron.py`), scheduled daily at **03:30 local
 time** (`30 3 * * *`). To turn it on:
 
 1. Configure the recipient: set the `backup.age_recipient` app setting (your
@@ -242,13 +242,13 @@ git init && git remote add origin git@github.com:you/rainbox-backup.git
 
 # then, per backup:
 export RAINBOX_BACKUP_GIT_PUSH=1
-venv/bin/python backup_db.py /path/to/backup-repo -r age1ql3z7h9...
+venv/bin/python -m backup.dump /path/to/backup-repo -r age1ql3z7h9...
 #   …writes the file, then: git add <file> && git commit && git push
 ```
 
 It stages **only the new backup file** (unrelated working-tree changes are left
 alone), commits it as `backup <relpath>`, and pushes the current branch to
-`origin`. Code: `backup_remote.py`.
+`origin`. Code: `backup/remote.py`.
 
 - The push uses whatever credentials the running process has. For an
   `git@github.com:` remote that means an SSH key/agent reachable by the app (and
@@ -366,7 +366,7 @@ key — the backups are, by design, unrecoverable without it.)
 The dump runs synchronously on the supervisor thread (fine for a local
 single-user database). A multi-minute dump would delay other cron ticks and
 agent routing while it runs. If your database grows large, move the dump to a
-worker; see the note in `fire_cron_job` (`db_cron.py`).
+worker; see the note in `fire_cron_job` (`db/cron.py`).
 
 ## Limitations
 
@@ -389,5 +389,5 @@ worker; see the note in `fire_cron_job` (`db_cron.py`).
 - `docs/cron-design.md` — the cron scheduler/firing this hooks into.
 - `docs/operator-guide.md` — running the app, general troubleshooting.
 - [age-encryption.org](https://age-encryption.org) — the encryption tool/format.
-- Tests: `test_backup_db.py` (the dump + encryption), `test_cron_backup.py` (the
+- Tests: `backup/test_dump.py` (the dump + encryption), `db/test_cron_backup.py` (the
   cron action).
