@@ -169,6 +169,14 @@ class ModelGroupAgent(Agent):
     try, in priority order, on the journal result.
     """
 
+    def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
+        super().__init__(agent_uuid=agent_uuid, name=name, send=send)
+        # Safe defaults so the instance is well-formed before setup() resolves
+        # the binding from the database — handle() paths that don't need a
+        # model group (e.g. memory commands) must work on a bare instance.
+        self.model_group_uuid: UUID | None = None
+        self.candidate_model_uuids: list[UUID] = []
+
     def setup(self) -> None:
         self.model_group_uuid: UUID | None = None
         self.candidate_model_uuids: list[UUID] = []
