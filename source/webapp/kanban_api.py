@@ -5,7 +5,7 @@ debounced PUT) guarded like the cron tree PUT — the payload must echo the
 `version` token it hydrated with (stale → 409, re-hydrate instead of
 clobbering) and declare its deletions (`deletes`, refusing a truncated
 payload). The markdown endpoint serves the canonical LLM-facing serialization
-generated from DB state (spoof-resistant escaping in db_kanban).
+generated from DB state (spoof-resistant escaping in db.kanban).
 
 Tasks: the narrow, uuid-addressed agent operations (claim / move / events /
 complete) — these are the robust write path the board exists for

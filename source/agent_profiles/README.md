@@ -4,10 +4,10 @@ File-backed persona / conversation data for the persona + agent-to-agent
 conversation feature (see `docs/proposals/2026-06-08-persona-prompts-and-agent-conversations.md`).
 
 - `personas.jsonl` — one persona record per line. Each maps a runnable
-  `agent_uuid` (declared in `agent_config.py`) to a display name and a system
+  `agent_uuid` (declared in `agents/config.py`) to a display name and a system
   prompt file. Fields: `id` (stable persona id), `slug`, `name`, `description`,
   `system_prompt_path` (relative to this dir), `agent_kind` (the Python agent
-  class to run), `agent_role` (the supervisor role name in `agent_config.py`),
+  class to run), `agent_role` (the supervisor role name in `agents/config.py`),
   `agent_uuid` (runnable identity), `tags`, `enabled`.
 - `prompts/*.system.md` — the persona system prompts, plain Markdown so they
   diff and review well. Keep a literal stop token (`DONE`) and a termination

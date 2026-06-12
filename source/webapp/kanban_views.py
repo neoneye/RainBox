@@ -1,10 +1,10 @@
 """The /kanban page (HTML shell + CSS; logic in static/kanban.js).
 
 Multiple kanban boards backed by Postgres (kanban_board/column/task/
-task_event via db_kanban + webapp/kanban_api.py) — the database-backed
+task_event via db.kanban + webapp/kanban_api.py) — the database-backed
 coordination primitive from docs/plan.md: agents track progress here because
 markdown todo-list editing is too fragile for small models. Each task carries
-a uuid and is assigned to an agent (agent_config uuid — stable across role
+a uuid and is assigned to an agent (agents/config.py uuid — stable across role
 renames). A board serializes to markdown server-side (the page's "Markdown"
 button; GET /kanban/api/board/<uuid>/markdown) so LLMs get context about what
 they are working on, with tasks referenced by uuid. See docs/kanban-design.md

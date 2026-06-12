@@ -2,7 +2,7 @@
 
 These are pure functions — no database or LM Studio needed:
 
-    python -m pytest test_chat_transcript.py -v
+    python -m pytest chat/test_transcript.py -v
 """
 
 from datetime import datetime

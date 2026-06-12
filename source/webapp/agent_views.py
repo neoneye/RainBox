@@ -39,7 +39,7 @@ AGENT_MODELS_TEMPLATE: str = """
 {% include "_nav.html" %}
 <div class="pp-content">
 <h1>Agent models</h1>
-<p>Agents and their pipeline topology live in <code>agent_config.py</code>. This page only
+<p>Agents and their pipeline topology live in <code>agents/config.py</code>. This page only
 controls which <b>model group</b> each agent runs &mdash; a prioritized fallback list
 (try the first model, fall back to the next on failure), e.g. a fast/low-quality
 group vs a slow/high-quality one. Stored in <code>agent_model_binding</code>, editable

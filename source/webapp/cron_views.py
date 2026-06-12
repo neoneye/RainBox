@@ -5,7 +5,7 @@ execute a command, organized in a folder tree. This module only renders the
 page shell; **persistence is real** — the browser-side state (`cronFolders` /
 `cronRowsState`) hydrates from and saves to `GET`/`PUT /cron/api/tree`
 (`webapp/cron_api.py` → `db.cron_load_tree`/`cron_save_tree`), so edits survive
-a refresh. Scheduled firing is the supervisor loop's cron tick (db_cron).
+a refresh. Scheduled firing is the supervisor loop's cron tick (db.cron).
 
 UI scope is **desktop-first** (tablet acceptable); small-phone layouts are a
 non-goal for now.
