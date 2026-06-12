@@ -51,6 +51,7 @@ def spawn(name: str, params: AgentConfigEntry) -> Agent:
         sys.executable, "-m", "agents",
         "--socket-fd", str(agent_sock.fileno()),
     ]
+    # Make the source root importable in the child regardless of its CWD.
     env = dict(os.environ)
     env["PYTHONPATH"] = ROOT_DIR + (
         os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else ""

@@ -1,9 +1,9 @@
-"""Shared KB / vector-store / match plumbing used by `query_agent.py` and
-`query_filter_router_agent.py`. Extracted to avoid `query_filter_router_agent`
+"""Shared KB / vector-store / match plumbing used by `agents/query.py` and
+`agents/query_filter_router.py`. Extracted to avoid `agents/query_filter_router`
 importing underscore-prefixed names across module boundaries (the prior
 pattern).
 
-The names retain their leading underscores from the original `query_agent.py`
+The names retain their leading underscores from the original `agents/query.py`
 because the existing call sites already use them with that convention. Both
 caller modules import them explicitly — that's the public API of this module.
 """

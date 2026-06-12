@@ -1,7 +1,7 @@
 """File-backed persona loader.
 
 A persona is behavior-as-data: a display name plus a system prompt, mapped to a
-runnable `agent_uuid` (declared in `agent_config.py`). Phase 0 reads
+runnable `agent_uuid` (declared in `agents/config.py`). Phase 0 reads
 `agent_profiles/personas.jsonl` and the referenced prompt files directly; a later
 phase swaps this for a Postgres-backed query while keeping the same `Persona`
 shape and `resolve_persona_for_agent` entry point.

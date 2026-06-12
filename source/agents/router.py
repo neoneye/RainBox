@@ -1,17 +1,17 @@
 """Router agent — a specialized StructuredLLMAgent (structured output only).
 
-Based on agent_chat.py: it reads one chatroom's message history (room_uuid from
-the inbox payload) and renders it as the same IRC-style transcript the chat agent
-uses. But instead of replying, it *triages* the Current message into a routing
-decision via structured output (`as_structured_llm`) — a short subject summary
-and whether the message requires an action. It does NOT use a FunctionAgent or
-any tools.
+Based on agents/chat_structured.py and agents/chat_unstructured.py: it reads one
+chatroom's message history (room_uuid from the inbox payload) and renders it as
+the same IRC-style transcript the chat agents use. But instead of replying, it
+*triages* the Current message into a routing decision via structured output
+(`as_structured_llm`) — a short subject summary and whether the message requires
+an action. It does NOT use a FunctionAgent or any tools.
 
 The decision is posted back into the room as a JSON message (visible live via
 SSE) and also returned on the journal result.
 
-Specialized agents live in their own agent_<purpose>.py / *_agent.py module; the
-shared base classes (Agent, ModelGroupAgent, StructuredLLMAgent) stay in agent.py.
+Specialized agents live in their own agents/<purpose>.py module; the shared base
+classes (Agent, ModelGroupAgent, StructuredLLMAgent) stay in agents/base.py.
 """
 
 import json

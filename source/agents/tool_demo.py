@@ -1,6 +1,6 @@
 """Tool-demo agent — a chat agent that answers with a LlamaIndex FunctionAgent.
 
-Based on agent_chat.py, but instead of a single structured-output call it runs a
+Based on agents/chat_structured.py, but instead of a single structured-output call it runs a
 llama_index `FunctionAgent` equipped with a `multiply` tool. It reads one
 chatroom's history (room_uuid from the inbox payload), feeds that transcript to
 the FunctionAgent as the user message, lets the model call `multiply` as needed,

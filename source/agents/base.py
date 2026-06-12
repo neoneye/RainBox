@@ -1,23 +1,25 @@
 # KNOWN ISSUES (verified, deferred — fix another day)
+# (The config-read socket-remainder issue lives atop agents/__main__.py.)
 #
-# 2. The streaming wall-clock `deadline` is a SOFT bound. The
+# 1. The streaming wall-clock `deadline` is a SOFT bound. The
 #    `if time.monotonic() > deadline` check in _structured_call (and in
-#    agent_chat_unstructured._stream_reply) sits between generator yields, so
+#    agents/chat_unstructured._stream_reply) sits between generator yields, so
 #    it cannot fire while a single `next()` is blocked on a network read. It is
 #    not unbounded, though — a stalled read is bounded by the httpx read
 #    timeout (OpenAILike.timeout, default 60s; llm.py), and a wedged process is
-#    bounded by the supervisor's heartbeat SIGKILL (HEARTBEAT_TIMEOUT=60s,
-#    main.py:118). So a strict in-process bound (asyncio/signal/thread) is
+#    bounded by the supervisor's heartbeat SIGKILL (HEARTBEAT_TIMEOUT in
+#    main.py). So a strict in-process bound (asyncio/signal/thread) is
 #    redundant here. Two real follow-ups remain:
 #      - OpenAILike.max_retries defaults to 3 and prepare_llm doesn't override
 #        it on the agent path, so a flaky connection retries 3x before
 #        surfacing, diluting the deadline (the /models probes already pass
 #        max_retries=0). Consider max_retries=0 for agent calls and let the
 #        model-group fallback own retries.
-#      - The agent emits NO heartbeat during an LLM call (main.py:26-28), so a
-#        reasoning model that streams for >60s is SIGKILLed mid-reply.
-#        _stream_reply already flushes to the DB ~every 150ms; those flushes
-#        could double as heartbeats to keep slow reasoning models alive.
+#      - The agent emits NO heartbeat during an LLM call (the heartbeat thread
+#        in agents/base.py _handle_with_heartbeat), so a reasoning model that
+#        streams for >60s is SIGKILLed mid-reply. _stream_reply already flushes
+#        to the DB ~every 150ms; those flushes could double as heartbeats to
+#        keep slow reasoning models alive.
 
 import json
 import logging
@@ -56,9 +58,9 @@ class Agent:
     """
 
     # How often the background heartbeat fires while handle() runs. Must stay
-    # well under the supervisor's HEARTBEAT_TIMEOUT (60s, main.py) so a slow turn
-    # (e.g. a reasoning model thinking for >60s) isn't SIGKILLed. Class attribute
-    # so tests can shrink it.
+    # well under the supervisor's HEARTBEAT_TIMEOUT in main.py (60s) so a slow
+    # turn (e.g. a reasoning model thinking for >60s) isn't SIGKILLed. Class
+    # attribute so tests can shrink it.
     HEARTBEAT_INTERVAL: float = 20.0
 
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
@@ -107,7 +109,7 @@ class Agent:
         NotImplementedError. This functional default is what lets the no-LLM
         pipeline run end-to-end: ModelGroupAgent (below) inherits and extends it,
         and roles with no specialized class (dreamer/critic/verifier — not in
-        agent.py's agent_classes map) dispatch straight to that default.
+        agents/__main__.py's agent_classes dict) dispatch straight to that default.
         """
         time.sleep(1)  # stub: stand-in for real work, exercises the drain loop
         return {"ok": True}

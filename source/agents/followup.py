@@ -1,7 +1,7 @@
 """Follow-up classifier agent — a specialized StructuredLLMAgent.
 
-Specialized agents live in their own `agent_<purpose>.py` module; the shared
-base classes (Agent, ModelGroupAgent, StructuredLLMAgent) stay in agent.py.
+Specialized agents live in their own `agents/<purpose>.py` module; the shared
+base classes (Agent, ModelGroupAgent, StructuredLLMAgent) stay in agents/base.py.
 """
 
 import json

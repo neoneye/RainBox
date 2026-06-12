@@ -1,17 +1,19 @@
 """Agent child-process entrypoint: spawned by the supervisor as
 `python -m agents --socket-fd N`.
 
-KNOWN ISSUES (point 1):
-# 1. Config-read discards the socket remainder. main() reads the config line
-#    with `config_line, _ = buf.split("\n", 1)` and drops `_`. This is safe
-#    *today* only because (a) the supervisor sends exactly one newline-
-#    terminated config message and never writes to the agent again
-#    (main.py:56), and (b) the agent never reads `sock` again — run() pulls
-#    work from Postgres (db.take_item), and the socket is used only for
-#    outbound status (sock.sendall). If either ever changes (supervisor sends
-#    follow-up commands, or the agent starts reading the socket), bytes that
-#    arrived in the same recv() as the config line would be lost; keep the
-#    remainder then.
+KNOWN ISSUE (verified, deferred):
+Config-read discards the socket remainder. main() reads the config line
+with `config_line, _ = buf.split("\n", 1)` and drops `_`. This is safe
+*today* only because (a) the supervisor sends exactly one newline-
+terminated config message and never writes to the agent again
+(the config sendall in main.py spawn()), and (b) the agent never reads
+`sock` again — run() pulls work from Postgres (db.take_item), and the
+socket is used only for outbound status (sock.sendall). If either ever
+changes (supervisor sends follow-up commands, or the agent starts reading
+the socket), bytes that arrived in the same recv() as the config line
+would be lost; keep the remainder then.
+
+(Further known issues about the streaming deadline live atop agents/base.py.)
 """
 import argparse
 import json

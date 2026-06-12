@@ -8,8 +8,8 @@ class AgentConfigEntry(TypedDict):
     next: UUID | None
     # Which Python agent class to run. Defaults to the role name (so existing
     # roles are unchanged). Lets many roles (e.g. persona_egon, persona_benny)
-    # share one implementation class (chat_unstructured). agent.py dispatches on
-    # config.get("agent_kind", config["name"]).
+    # share one implementation class (chat_unstructured). agents/__main__.py
+    # dispatches on config.get("agent_kind", config["name"]).
     agent_kind: NotRequired[str]
     # True for agents that drive tool/function calls (e.g. ToolDemoAgent). The
     # /agent_models page only offers groups that require function calling to
