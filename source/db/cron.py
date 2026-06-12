@@ -2,7 +2,7 @@
 
 Split out of db.py. Holds the cron folder/job/run tree (load/validate/save),
 schedule computation, and job firing/tick (fire_cron_job, cron_tick, ...).
-Firing posts to chat (db_chat) and enqueues workspace-shell commands (db_queue).
+Firing posts to chat (db.chat) and enqueues workspace-shell commands (db.queue).
 Re-exported from db for import compatibility.
 """
 import hashlib

@@ -1,4 +1,4 @@
-"""Tests for db_settings (the app_setting registry + accessors).
+"""Tests for db.settings (the app_setting registry + accessors).
 
 Hits the live local Postgres. Each test that writes a setting resets it to NULL
 in teardown so the shared app_setting rows are left as init_db seeded them. A

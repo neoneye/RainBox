@@ -1,14 +1,14 @@
 """Database facade.
 
-This module used to hold every model and helper. It is being split by
-responsibility into focused modules (db_models, db_queue, db_model_config,
-db_chat, db_memory, db_feedback, db_eval, db_cron). The implementations live in
-those modules; this file re-exports their public names so existing
-`import db` / `from db import X` call sites keep working unchanged, and still
-owns the app/db lifecycle (make_app, init_db, reset_demo_data).
+This package's submodules are db.models, db.queue, db.model_config, db.chat,
+db.conversation, db.memory, db.feedback, db.eval, db.cron, db.kanban,
+db.settings. This `__init__` is the facade that re-exports their public names
+so callers can simply `import db`; it also owns the app/db lifecycle
+(make_app, init_db, reset_demo_data).
 """
 import logging
 import os
+from pathlib import Path
 
 import sqlalchemy as sa
 from flask import Flask
@@ -17,7 +17,7 @@ from db.models import *  # noqa: F401,F403  re-export db, models, constants, lab
 from db.queue import *  # noqa: F401,F403  re-export queue ops (enqueue, take_item, ...)
 from db.model_config import *  # noqa: F401,F403  re-export model config/overrides/groups/bindings
 from db.chat import *  # noqa: F401,F403  re-export chat rooms/users/messages/NOTIFY/seed helpers
-from db.chat import _chat_event_payload  # noqa: F401  test_db_chat_streaming imports this private helper
+from db.chat import _chat_event_payload  # noqa: F401  db/test_chat_streaming.py imports this private helper
 from db.conversation import *  # noqa: F401,F403  re-export conversation_run ops (manager CAS, stop, …)
 from db.memory import *  # noqa: F401,F403  re-export memory claim/evidence ops
 from db.feedback import *  # noqa: F401,F403  re-export feedback + retrieval-telemetry ops
@@ -34,8 +34,9 @@ def make_app() -> Flask:
 
     Used by webapp.py directly and by main.py/agent.py to obtain an
     app context they can push for db.session access."""
-    import pathlib
-    _root = pathlib.Path(__file__).parent.parent  # source/
+    _root = Path(__file__).parent.parent  # source/
+    # Flask(__name__) inside a package resolves root_path to db/, so the
+    # static folder must be anchored explicitly to the source root.
     app = Flask(__name__, static_folder=str(_root / "static"))
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
         "DATABASE_URL", DEFAULT_DATABASE_URL

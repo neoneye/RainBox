@@ -896,7 +896,7 @@ class AppSetting(db.Model):
     """Operator-set configuration, addressed by `key` (e.g. "backup.repo").
 
     `value` is always stored as text (NULL = unset). `value_type`, `secret`, and
-    `description` are a *seeded cache* of the code-side registry in db_settings
+    `description` are a *seeded cache* of the code-side registry in db.settings
     (reconciled on startup) — never an independent source of truth. No `uuid`:
     rows are addressed by `key` and never FK-referenced or deep-linked. See
     docs/proposals/2026-06-07-user-configuration-in-postgres.md."""

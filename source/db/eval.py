@@ -2,7 +2,7 @@
 
 Split out of db.py. Holds eval case/run/result CRUD plus the feedback->eval
 promotion helper (promote_feedback_to_eval_case, which reads a stored
-FeedbackEvent via db_feedback). Re-exported from db for import compatibility.
+FeedbackEvent via db.feedback). Re-exported from db for import compatibility.
 """
 from datetime import UTC, datetime
 from typing import Any

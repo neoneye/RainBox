@@ -1,4 +1,4 @@
-"""Tests for the 'backup' cron action type (db_cron).
+"""Tests for the 'backup' cron action type (db.cron).
 
 Hits the live local Postgres. The firing tests insert a cron job directly (not
 via cron_save_tree, so the real tree is untouched) and tear down every row they
@@ -144,7 +144,7 @@ def test_fire_backup_job_without_recipient_posts_error(firing, tmp_path, monkeyp
 
 def test_cron_backup_uses_db_settings_not_just_env(firing, tmp_path, tmp_path_factory, monkeypatch):
     """The cron path resolves recipient/destination through db.get_setting, so a
-    value set in the DB (with env unset) drives the backup."""
+    value set in the DB (with env unset) drives the backup via db.settings."""
     import re
     import subprocess
 
