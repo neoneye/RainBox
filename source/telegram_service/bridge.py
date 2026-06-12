@@ -17,6 +17,11 @@ from typing import Any, Mapping
 
 logger = logging.getLogger(__name__)
 
+# Both worker threads persist the shared state dict; the lock makes each
+# snapshot+write atomic so one thread's update can't be lost to the other's
+# stale json.dumps or a clobbered temp file.
+_state_lock = threading.Lock()
+
 
 # --- config -------------------------------------------------------------
 
@@ -62,9 +67,10 @@ def load_state(path: Path) -> dict[str, Any]:
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
     """Atomic write (temp + rename) so a crash never truncates the state."""
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state))
-    os.replace(tmp, path)
+    with _state_lock:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state))
+        os.replace(tmp, path)
 
 
 # --- logging helper -----------------------------------------------------
