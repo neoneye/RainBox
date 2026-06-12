@@ -837,9 +837,17 @@ def _resolve_test_target(
     abort(400, "unknown target")
 
 
-_TEST_WORKER = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models_test_worker.py"
-)
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _worker_env() -> dict[str, str]:
+    """Env for spawned worker subprocesses: make the source root importable
+    regardless of the parent's CWD."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = _ROOT_DIR + (
+        os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else ""
+    )
+    return env
 
 
 @app.route("/models/api/test", methods=["POST"])
@@ -848,7 +856,7 @@ def models_test_api() -> Response:
     page can show a live elapsed counter and a Stop button.
 
     The probe is one blocking LLM call, which can't be cancelled in-process — so
-    it runs in a throwaway subprocess (models_test_worker.py). While it runs we
+    it runs in a throwaway subprocess (llm.models_test_worker). While it runs we
     emit `{"running": true, "elapsed": s}` heartbeats; the final line is the
     worker's result tagged `done`. Each heartbeat yield is where a client
     disconnect surfaces as GeneratorExit, which runs the finally below and
@@ -865,10 +873,11 @@ def models_test_api() -> Response:
 
     def generate():
         proc = subprocess.Popen(
-            [sys.executable, _TEST_WORKER],
+            [sys.executable, "-m", "llm.models_test_worker"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            env=_worker_env(),
         )
         t0 = time.monotonic()
         try:
