@@ -1,3 +1,5 @@
+![RainBox banner](docs/media/rainbox-banner.jpg)
+
 # RainBox
 
 `rainbox` is short to type constantly, but long enough to avoid the worst four-letter collision problem. It contains `ai`, hints at `brainbox` without saying “brain,” and still feels like a local machine: a box where experiments, agents, private chats, and background jobs can live.
