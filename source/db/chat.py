@@ -112,6 +112,41 @@ def get_room_member_uuids(room_uuid: UUID) -> list[UUID]:
     return [r.user_uuid for r in rows]
 
 
+def add_room_member(room_uuid: UUID, user_uuid: UUID) -> bool:
+    """Add a user to a room. Idempotent: returns True if a new membership row
+    was created, False if the user was already a member (no duplicate inserted).
+    The (room_uuid, user_uuid) unique index also guards against duplicates."""
+    existing = (
+        db.session.query(ChatroomMember)
+        .filter(
+            ChatroomMember.room_uuid == room_uuid,
+            ChatroomMember.user_uuid == user_uuid,
+        )
+        .first()
+    )
+    if existing is not None:
+        return False
+    db.session.add(ChatroomMember(room_uuid=room_uuid, user_uuid=user_uuid))
+    db.session.commit()
+    return True
+
+
+def remove_room_member(room_uuid: UUID, user_uuid: UUID) -> bool:
+    """Remove a user from a room. Returns True if a membership row was deleted,
+    False if the user wasn't a member. Messages are untouched (chat_message has
+    no FK on sender_uuid), so a removed agent's history stays in the room."""
+    deleted = (
+        db.session.query(ChatroomMember)
+        .filter(
+            ChatroomMember.room_uuid == room_uuid,
+            ChatroomMember.user_uuid == user_uuid,
+        )
+        .delete()
+    )
+    db.session.commit()
+    return deleted > 0
+
+
 def create_chatroom(
     name: str, created_by: UUID, member_uuids: list[UUID]
 ) -> Chatroom:
