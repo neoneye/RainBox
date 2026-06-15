@@ -195,7 +195,7 @@ This section is the work list.
 |-----------|-----------------------------|----------------------------------------------|-----------------------------------------------------|-------|--------------|
 | `/chat`   | `webapp/chat_template.py`   | ✅ `ui-modal`, `ui-modal-backdrop`           | **single** shared backdrop                          | `h3`  | **yes**      |
 | `/cron`   | `webapp/cron_views.py`      | `cron-modal-backdrop`, `cron-as-modal`, `cron-edit-modal` | **multiple** per-group backdrops (`cron-edit-backdrop`, `cron-delete-backdrop`, `cron-desc-backdrop`, `cron-folder-backdrop`) | mixed | no |
-| `/kanban` | `webapp/kanban_views.py`    | `kb-modal`, `kb-backdrop`, `kb-row`          | **single** shared backdrop                          | `h2`  | no           |
+| `/kanban` | `kanban_views.py` + `static/kanban.js` | ✅ `ui-modal`, `ui-modal-backdrop` (`kb-row` kept internal) | **single** shared backdrop          | `h3`  | **yes**      |
 
 ### Changes required to converge
 
@@ -228,14 +228,14 @@ modal JS is inline in this file, so it was a single-file change.
    Edit schedule/action = value changed from loaded; Delete = confirm box
    non-empty).
 
-**`/kanban` (`webapp/kanban_views.py`)** — single backdrop already; rename + behavior.
-
-8. Rename `kb-modal` → `ui-modal`, `kb-backdrop` → `ui-modal-backdrop`, and
-   map `kb-row` onto the standard body/`.modal-actions` layout.
-9. Switch titles from `h2` to `h3` (or update this doc if `h2` is preferred —
-   pick one and make every page match).
-10. Add the dirty-guarded backdrop-click / Esc dismissal for the board, task,
-    markdown, and confirm modals.
+**`/kanban` (`webapp/kanban_views.py` + `static/kanban.js`)** — ✅ **Done.**
+Renamed `kb-modal` → `ui-modal` and `kb-backdrop` → `ui-modal-backdrop`
+(id + class), switched modal titles `h2` → `h3`, and added the dirty-guarded
+backdrop-click / Esc dismissal (board + task modals guard on their text fields;
+the read-only markdown view and the confirm modal are never dirty). The `kb-row`
+form-row layout was kept as a page-internal class, now scoped under `.ui-modal`.
+The markup/CSS lives in `kanban_views.py` but the modal JS is in
+`static/kanban.js`, so this spanned two files.
 
 ### Sequencing
 

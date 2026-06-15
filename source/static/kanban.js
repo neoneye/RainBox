@@ -454,15 +454,49 @@ function kbMoveTask(taskUuid, toColumnUuid, beforeTaskUuid){
 
 // ---- overlays ----
 function kbOpenModal(id){
-  document.getElementById('kb-backdrop').hidden = false;
+  document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById(id).hidden = false;
 }
 function kbCloseModals(){
-  document.getElementById('kb-backdrop').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
   ['kb-board-modal','kb-task-modal','kb-md-modal','kb-confirm-modal'].forEach(id =>
     document.getElementById(id).hidden = true);
+  // Forget the opened-with snapshots so a future open starts fresh.
+  kbBoardModalOpenedWith = null;
+  kbTaskModalOpenedWith = null;
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') kbCloseModals(); });
+
+// ---- dirty-guarded dismissal (backdrop click / Esc) ----
+// Cancel buttons always close (inline onclick="kbCloseModals()"). The two
+// ACCIDENTAL dismiss paths below only close when the open modal is "clean":
+// the user hasn't changed the value(s) it was opened with. Mirrors /chat's
+// openModalDirty / dismissOpenModalIfClean.
+//
+// Opened-with snapshots, captured at the end of each open fn (empty string on
+// a create modal, the existing value on an edit modal).
+let kbBoardModalOpenedWith = null;  // {name, desc} while kb-board-modal is open
+let kbTaskModalOpenedWith = null;   // {title, desc} while kb-task-modal is open
+function kbModalDirty(){
+  // Board modal: name or description differs from what it was opened with.
+  if (!document.getElementById('kb-board-modal').hidden){
+    const w = kbBoardModalOpenedWith || {name: '', desc: ''};
+    return document.getElementById('kb-b-name').value !== w.name
+        || document.getElementById('kb-b-desc').value !== w.desc;
+  }
+  // Task modal: title or description differs from what it was opened with.
+  if (!document.getElementById('kb-task-modal').hidden){
+    const w = kbTaskModalOpenedWith || {title: '', desc: ''};
+    return document.getElementById('kb-t-title').value !== w.title
+        || document.getElementById('kb-t-desc').value !== w.desc;
+  }
+  // Markdown modal (read-only view) and confirm modal (no data entry) are
+  // never dirty.
+  return false;
+}
+function kbDismissIfClean(){
+  if (!kbModalDirty()) kbCloseModals();
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') kbDismissIfClean(); });
 
 // Board create/edit share one modal; kbEditingBoard picks the mode.
 function kbNewBoard(){
@@ -473,6 +507,7 @@ function kbNewBoard(){
   document.getElementById('kb-b-save').textContent = 'Create board';
   document.getElementById('kb-b-err').textContent = '';
   kbOpenModal('kb-board-modal');
+  kbBoardModalOpenedWith = {name: '', desc: ''};  // create: empty = clean
   document.getElementById('kb-b-name').focus();
 }
 function kbEditBoard(){
@@ -484,6 +519,10 @@ function kbEditBoard(){
   document.getElementById('kb-b-save').textContent = 'Save';
   document.getElementById('kb-b-err').textContent = '';
   kbOpenModal('kb-board-modal');
+  kbBoardModalOpenedWith = {  // edit: snapshot the loaded values
+    name: document.getElementById('kb-b-name').value,
+    desc: document.getElementById('kb-b-desc').value,
+  };
 }
 async function kbSaveBoardModal(){
   const name = document.getElementById('kb-b-name').value.trim();
@@ -580,6 +619,7 @@ function kbNewTask(columnUuid){
   document.getElementById('kb-t-events').hidden = true;
   document.getElementById('kb-t-err').textContent = '';
   kbOpenModal('kb-task-modal');
+  kbTaskModalOpenedWith = {title: '', desc: ''};  // create: empty = clean
   document.getElementById('kb-t-title').focus();
 }
 function kbEditTask(uuid){
@@ -609,6 +649,10 @@ function kbEditTask(uuid){
   }
   document.getElementById('kb-t-err').textContent = '';
   kbOpenModal('kb-task-modal');
+  kbTaskModalOpenedWith = {  // edit: snapshot the loaded values
+    title: document.getElementById('kb-t-title').value,
+    desc: document.getElementById('kb-t-desc').value,
+  };
   kbLoadTaskEvents(uuid);
 }
 // The task's audit trail (kanban_task_event): created/claimed/moved/done/
@@ -765,9 +809,9 @@ function kbRenderSidebarDev(el){
   });
 }
 
-// Clicking the backdrop dismisses overlays (a stray click never destroys
-// typed data inside the modal itself).
-document.getElementById('kb-backdrop').addEventListener('click', kbCloseModals);
+// Clicking the backdrop dismisses overlays, but only when clean — a stray
+// click never destroys typed data inside the modal itself.
+document.getElementById('ui-modal-backdrop').addEventListener('click', kbDismissIfClean);
 
 // ---- init ----
 (async function kbInit(){

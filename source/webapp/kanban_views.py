@@ -124,20 +124,20 @@ KANBAN_TEMPLATE = """
   .kb-agent.kb-unassigned{color:#6b7280;background:#f3f4f6;font-weight:400}
   /* Overlays — custom in-page modals; the page uses NO native prompt/confirm/
      alert (a browser can permanently suppress those). */
-  .kb-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1500}
-  .kb-backdrop[hidden]{display:none}
-  .kb-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1600;
+  .ui-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1500}
+  .ui-modal-backdrop[hidden]{display:none}
+  .ui-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1600;
     width:min(560px,92vw);max-height:90vh;overflow:auto;background:#fff;border-radius:10px;
     box-shadow:0 12px 40px rgba(0,0,0,0.3);padding:22px 24px}
-  .kb-modal[hidden]{display:none}
-  .kb-modal h2{margin:0 0 0.6em;font-size:1.2rem}
-  .kb-modal .kb-row{margin:0.6em 0;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
-  .kb-modal label{font-weight:600;font-size:0.9rem;display:inline-flex;flex-direction:column;gap:3px}
-  .kb-modal input[type=text],.kb-modal select{font-family:inherit;font-size:0.9rem;padding:5px 7px;font-weight:400;min-width:260px}
-  .kb-modal textarea{font-family:inherit;font-size:0.9rem;font-weight:400;padding:5px 7px;width:100%;
+  .ui-modal[hidden]{display:none}
+  .ui-modal h3{margin:0 0 0.6em;font-size:1.2rem}
+  .ui-modal .kb-row{margin:0.6em 0;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  .ui-modal label{font-weight:600;font-size:0.9rem;display:inline-flex;flex-direction:column;gap:3px}
+  .ui-modal input[type=text],.ui-modal select{font-family:inherit;font-size:0.9rem;padding:5px 7px;font-weight:400;min-width:260px}
+  .ui-modal textarea{font-family:inherit;font-size:0.9rem;font-weight:400;padding:5px 7px;width:100%;
     min-height:5em;resize:vertical;box-sizing:border-box}
-  .kb-modal button:disabled{opacity:0.45;cursor:not-allowed}
-  .kb-modal .err{color:#991b1b;font-weight:600;font-size:0.85rem}
+  .ui-modal button:disabled{opacity:0.45;cursor:not-allowed}
+  .ui-modal .err{color:#991b1b;font-weight:600;font-size:0.85rem}
   /* Markdown view: monospace block + copy. */
   #kb-md-pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:14px;font-size:0.8rem;
     overflow:auto;max-height:55vh;white-space:pre-wrap;font-family:ui-monospace,monospace}
@@ -180,11 +180,11 @@ KANBAN_TEMPLATE = """
 <aside id="kb-sidebar" class="kb-sidebar"></aside>
 </div>
 
-<div id="kb-backdrop" class="kb-backdrop" hidden></div>
+<div id="ui-modal-backdrop" class="ui-modal-backdrop" hidden></div>
 
 <!-- Board create/edit -->
-<div id="kb-board-modal" class="kb-modal" hidden>
-  <h2 id="kb-board-modal-title">New board</h2>
+<div id="kb-board-modal" class="ui-modal" hidden>
+  <h3 id="kb-board-modal-title">New board</h3>
   <div class="kb-row">
     <label style="width:100%">Name <input type="text" id="kb-b-name" autocomplete="off" placeholder="board name"></label>
   </div>
@@ -200,8 +200,8 @@ KANBAN_TEMPLATE = """
 </div>
 
 <!-- Task create/edit -->
-<div id="kb-task-modal" class="kb-modal" hidden>
-  <h2 id="kb-task-modal-title">New task</h2>
+<div id="kb-task-modal" class="ui-modal" hidden>
+  <h3 id="kb-task-modal-title">New task</h3>
   <div class="kb-row">
     <label style="width:100%">Title <input type="text" id="kb-t-title" autocomplete="off" placeholder="what needs doing (required)"></label>
   </div>
@@ -228,8 +228,8 @@ KANBAN_TEMPLATE = """
 </div>
 
 <!-- Serialization view (markdown / json — the LLM-facing read views) -->
-<div id="kb-md-modal" class="kb-modal" style="width:min(760px,94vw)" hidden>
-  <h2 id="kb-md-title">Markdown</h2>
+<div id="kb-md-modal" class="ui-modal" style="width:min(760px,94vw)" hidden>
+  <h3 id="kb-md-title">Markdown</h3>
   <div class="muted" style="margin-bottom:8px">The LLM-facing serialization of this board; tasks carry their uuid.</div>
   <pre id="kb-md-pre"></pre>
   <div class="kb-row">
@@ -239,8 +239,8 @@ KANBAN_TEMPLATE = """
 </div>
 
 <!-- Generic confirm overlay (the page bans native dialogs) -->
-<div id="kb-confirm-modal" class="kb-modal" hidden>
-  <h2 id="kb-confirm-title">Delete?</h2>
+<div id="kb-confirm-modal" class="ui-modal" hidden>
+  <h3 id="kb-confirm-title">Delete?</h3>
   <div class="kb-row" id="kb-confirm-text"></div>
   <div class="kb-row">
     <button id="kb-confirm-yes" class="kb-danger">Delete</button>
