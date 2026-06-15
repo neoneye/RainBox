@@ -5,8 +5,10 @@ LISTEN/NOTIFY helpers, per-room workspace-shell state, default seeding
 (seed_chat_defaults), and the cron-events helper (post_cron_event). Re-exported
 from db for import compatibility.
 """
+import hashlib
 import json
 import logging
+from collections import defaultdict
 from typing import Any
 from uuid import UUID
 
@@ -21,6 +23,7 @@ from db.models import (
     ChatMessage,
     ChatUser,
     Chatroom,
+    ChatroomFolder,
     ChatroomMember,
     FeedbackEvent,
     WorkspaceShellState,
@@ -165,10 +168,304 @@ def create_chatroom(
     return room
 
 
+class ChatTreeError(ValueError):
+    """A chat folder/room tree payload failed structural validation (bad uuid,
+    dangling/cyclic folder ref, unknown room folderId, missing/unknown room).
+    Callers turn this into a 4xx rather than a 500."""
+
+
+class ChatTreeConflict(Exception):
+    """The chat tree changed since the caller hydrated (stale base_version on
+    save). Callers map this to HTTP 409 so the client re-hydrates instead of
+    clobbering another writer's changes."""
+
+
+def _to_uuid(value: Any) -> UUID | None:
+    """Parse to a UUID (normalizing case/format) or None. Lets callers key
+    dedup/reference checks on the normalized value (mirrors db.cron._to_uuid;
+    duplicated here to avoid a db.chat <-> db.cron import cycle)."""
+    try:
+        return UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def create_chatroom_folder(name: str, parent_uuid: UUID | None = None) -> ChatroomFolder:
+    """Create a left-panel folder. New folders are appended after existing
+    siblings under the same parent (position = current sibling count)."""
+    sibling_count = db.session.execute(
+        sa.select(sa.func.count()).select_from(ChatroomFolder)
+        .where(ChatroomFolder.parent_uuid.is_(parent_uuid) if parent_uuid is None
+               else ChatroomFolder.parent_uuid == parent_uuid)
+    ).scalar() or 0
+    folder = ChatroomFolder(name=name, parent_uuid=parent_uuid, position=int(sibling_count))
+    db.session.add(folder)
+    db.session.commit()
+    return folder
+
+
+def list_chatroom_folders() -> list[dict[str, Any]]:
+    """All folders as {id, name, parentId}, ordered by (position, id)."""
+    folders = db.session.execute(
+        sa.select(ChatroomFolder).order_by(ChatroomFolder.position, ChatroomFolder.id)
+    ).scalars().all()
+    return [
+        {
+            "id": str(f.uuid),
+            "name": f.name,
+            "parentId": str(f.parent_uuid) if f.parent_uuid else None,
+        }
+        for f in folders
+    ]
+
+
+def chat_tree_version() -> str:
+    """Opaque version token over the user-managed tree fields only (folder:
+    uuid/name/parentId/position; room: uuid/folderId/position). Volatile fields
+    (a room's message count / last id) are excluded, so a new message never
+    invalidates an open page — only a structural edit by another writer does.
+    The page hydrates with this token and echoes it on PUT (409 if stale)."""
+    folders = db.session.execute(
+        sa.select(ChatroomFolder).order_by(ChatroomFolder.uuid)
+    ).scalars().all()
+    rooms = db.session.execute(
+        sa.select(Chatroom).order_by(Chatroom.uuid)
+    ).scalars().all()
+    payload = [
+        [[str(f.uuid), f.name,
+          str(f.parent_uuid) if f.parent_uuid else None, f.position]
+         for f in folders],
+        [[str(r.uuid),
+          str(r.folder_uuid) if r.folder_uuid else None, r.position]
+         for r in rooms],
+    ]
+    blob = json.dumps(payload, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def chat_load_tree() -> dict[str, Any]:
+    """The whole left-panel tree: folders, rooms (with member_count/last id +
+    folderId, reusing list_chatrooms), and the version token."""
+    return {
+        "folders": list_chatroom_folders(),
+        "rooms": list_chatrooms(),
+        "version": chat_tree_version(),
+    }
+
+
+def validate_chat_tree(
+    folders: list[dict[str, Any]], rooms: list[dict[str, Any]]
+) -> None:
+    """Structural integrity check for an incoming chat tree, run before any DB
+    write (mirrors validate_cron_tree). Rejects bad uuids, duplicate/dangling/
+    cyclic folder refs, a room folderId that names no folder in the payload, and
+    a room uuid that collides with a folder id (a node is identified globally by
+    uuid). Does NOT touch the DB; raises ChatTreeError on the first problem."""
+    if not isinstance(folders, list):
+        raise ChatTreeError(f"'folders' must be a list, got {type(folders).__name__}")
+    if not isinstance(rooms, list):
+        raise ChatTreeError(f"'rooms' must be a list, got {type(rooms).__name__}")
+    parent_of: dict[UUID, UUID | None] = {}
+    for f in folders:
+        if not isinstance(f, dict):
+            raise ChatTreeError(f"folder entry must be an object, got {type(f).__name__}")
+        fid = _to_uuid(f.get("id"))
+        if fid is None:
+            raise ChatTreeError(f"folder id is not a uuid: {f.get('id')!r}")
+        if fid in parent_of:
+            raise ChatTreeError(f"duplicate folder id: {fid}")
+        if not isinstance(f.get("name", ""), str):
+            raise ChatTreeError(f"folder {fid} name must be a string")
+        pid_raw = f.get("parentId")
+        if pid_raw is None:
+            pid: UUID | None = None
+        else:
+            pid = _to_uuid(pid_raw)
+            if pid is None:
+                raise ChatTreeError(f"folder {fid} parentId is not a uuid: {pid_raw!r}")
+        parent_of[fid] = pid
+    for fid, pid in parent_of.items():
+        if pid is not None and pid not in parent_of:
+            raise ChatTreeError(f"folder {fid} references missing parent {pid}")
+    # Acyclic: walking parents from any folder must terminate at a root.
+    for start in parent_of:
+        seen: set[UUID] = set()
+        cur = parent_of[start]
+        while cur is not None:
+            if cur == start or cur in seen:
+                raise ChatTreeError(f"folder cycle detected involving {start}")
+            seen.add(cur)
+            cur = parent_of.get(cur)
+    room_uuids: set[UUID] = set()
+    for r in rooms:
+        if not isinstance(r, dict):
+            raise ChatTreeError(f"room entry must be an object, got {type(r).__name__}")
+        ru = _to_uuid(r.get("uuid"))
+        if ru is None:
+            raise ChatTreeError(f"room uuid is not a uuid: {r.get('uuid')!r}")
+        if ru in room_uuids:
+            raise ChatTreeError(f"duplicate room uuid: {ru}")
+        if ru in parent_of:
+            raise ChatTreeError(f"room uuid {ru} collides with a folder id")
+        room_uuids.add(ru)
+        fld_raw = r.get("folderId")
+        if fld_raw is not None:
+            fld = _to_uuid(fld_raw)
+            if fld is None:
+                raise ChatTreeError(f"room {ru} folderId is not a uuid: {fld_raw!r}")
+            if fld not in parent_of:
+                raise ChatTreeError(f"room {ru} references missing folder {fld}")
+
+
+def chat_save_tree(
+    folders: list[dict[str, Any]], rooms: list[dict[str, Any]],
+    *, base_version: str | None = None,
+) -> None:
+    """Upsert the left-panel tree. Folders are created/updated/reordered by
+    uuid (list order becomes `position`); a folder uuid absent from the payload
+    is deleted (only ever an emptied folder — room placement is reassigned
+    first by the caller). Rooms are NEVER created or deleted here: only their
+    `folder_uuid` + `position` change, and the payload MUST list exactly the
+    existing rooms. A missing room would otherwise be silently dropped (and its
+    messages with it via cascade) on a truncated payload — destructive folder/
+    room deletion goes through the dedicated endpoints instead.
+
+    base_version, when given, is the chat_tree_version() the caller hydrated
+    with: a stale token raises ChatTreeConflict (HTTP 409 upstream) — checked
+    before structural validation so a concurrent edit surfaces as 409, not 400.
+    Validates structure next (raises ChatTreeError before any mutation)."""
+    if base_version is not None and base_version != chat_tree_version():
+        raise ChatTreeConflict("chat tree changed since it was loaded")
+    validate_chat_tree(folders, rooms)
+    existing_f = {
+        f.uuid: f for f in db.session.execute(sa.select(ChatroomFolder)).scalars().all()
+    }
+    existing_r = {
+        r.uuid: r for r in db.session.execute(sa.select(Chatroom)).scalars().all()
+    }
+    incoming_rooms = {UUID(r["uuid"]) for r in rooms}
+    missing = set(existing_r) - incoming_rooms
+    if missing:
+        raise ChatTreeError(
+            f"chat tree save omitted {len(missing)} existing room(s) — refusing "
+            f"(the tree save never deletes rooms)"
+        )
+    unknown = incoming_rooms - set(existing_r)
+    if unknown:
+        raise ChatTreeError(f"chat tree save references {len(unknown)} unknown room(s)")
+    # Folders: update existing by uuid, insert new, delete the rest.
+    seen_f: set[UUID] = set()
+    for i, f in enumerate(folders):
+        fu = UUID(f["id"])
+        seen_f.add(fu)
+        row = existing_f.get(fu)
+        if row is None:
+            row = ChatroomFolder(uuid=fu)
+            db.session.add(row)
+        row.name = f.get("name", "")
+        row.parent_uuid = UUID(f["parentId"]) if f.get("parentId") else None
+        row.position = i
+    for fu, row in existing_f.items():
+        if fu not in seen_f:
+            db.session.delete(row)
+    # Rooms: only placement + order (never name/membership/messages).
+    for i, r in enumerate(rooms):
+        row = existing_r[UUID(r["uuid"])]
+        row.folder_uuid = UUID(r["folderId"]) if r.get("folderId") else None
+        row.position = i
+    db.session.commit()
+
+
+def _descendant_chatroom_folder_uuids(folder_uuid: UUID) -> list[UUID]:
+    """`folder_uuid` plus every folder nested under it (any depth). Cycle-guarded
+    via a visited set so a malformed parent loop can't spin forever."""
+    children: dict[UUID | None, list[UUID]] = defaultdict(list)
+    for f in db.session.execute(sa.select(ChatroomFolder)).scalars().all():
+        children[f.parent_uuid].append(f.uuid)
+    result: list[UUID] = []
+    seen: set[UUID] = set()
+    stack = [folder_uuid]
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        result.append(cur)
+        stack.extend(children.get(cur, []))
+    return result
+
+
+def chatroom_folder_delete_preview(folder_uuid: UUID) -> dict[str, Any]:
+    """Authoritative rollup for the delete-confirm dialog: the folder's name and
+    the total chatrooms + messages that a recursive delete would remove (across
+    all nested subfolders). Raises LookupError if the folder is gone."""
+    folder = db.session.execute(
+        sa.select(ChatroomFolder).where(ChatroomFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+    if folder is None:
+        raise LookupError(f"chatroom folder {folder_uuid} not found")
+    folder_uuids = _descendant_chatroom_folder_uuids(folder_uuid)
+    room_uuids = db.session.execute(
+        sa.select(Chatroom.uuid).where(Chatroom.folder_uuid.in_(folder_uuids))
+    ).scalars().all()
+    message_count = 0
+    if room_uuids:
+        message_count = int(db.session.execute(
+            sa.select(sa.func.count()).select_from(ChatMessage)
+            .where(ChatMessage.room_uuid.in_(room_uuids))
+        ).scalar() or 0)
+    return {
+        "folder_name": folder.name,
+        "room_count": len(room_uuids),
+        "message_count": message_count,
+    }
+
+
+def delete_chatroom_folder(folder_uuid: UUID) -> None:
+    """Recursively delete a folder: every nested subfolder, every chatroom in
+    that subtree, and (via the chatroom row's ON DELETE CASCADE) those rooms'
+    messages, members, and workspace-shell state. Raises LookupError if the
+    folder is gone. This is the destructive op the type-to-confirm dialog
+    guards — chat_save_tree never deletes rooms."""
+    folder = db.session.execute(
+        sa.select(ChatroomFolder).where(ChatroomFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+    if folder is None:
+        raise LookupError(f"chatroom folder {folder_uuid} not found")
+    folder_uuids = _descendant_chatroom_folder_uuids(folder_uuid)
+    rooms = db.session.execute(
+        sa.select(Chatroom).where(Chatroom.folder_uuid.in_(folder_uuids))
+    ).scalars().all()
+    for room in rooms:
+        db.session.delete(room)  # cascades messages + members + workspace_shell_state
+    db.session.execute(
+        sa.delete(ChatroomFolder).where(ChatroomFolder.uuid.in_(folder_uuids))
+    )
+    db.session.commit()
+
+
+def chatroom_delete_preview(room_uuid: UUID) -> dict[str, Any]:
+    """Rollup for a single-room delete-confirm dialog: the room's name and how
+    many messages it holds. Raises LookupError if the room is gone."""
+    room = get_chatroom(room_uuid)
+    if room is None:
+        raise LookupError(f"chatroom {room_uuid} not found")
+    message_count = int(db.session.execute(
+        sa.select(sa.func.count()).select_from(ChatMessage)
+        .where(ChatMessage.room_uuid == room_uuid)
+    ).scalar() or 0)
+    return {"room_name": room.name, "message_count": message_count}
+
+
 def list_chatrooms() -> list[dict[str, Any]]:
-    """Rooms for the left panel, with member count and last-message id (the
-    client uses last-message id to know whether a room has anything newer)."""
-    rooms = db.session.query(Chatroom).order_by(Chatroom.created_at.asc()).all()
+    """Rooms for the left panel, ordered by saved position (then id), each with
+    member count, last-message id, and its folder placement (folderId, null =
+    top level)."""
+    rooms = (
+        db.session.query(Chatroom)
+        .order_by(Chatroom.position.asc(), Chatroom.id.asc())
+        .all()
+    )
     member_counts = dict(
         db.session.query(ChatroomMember.room_uuid, sa.func.count())
         .group_by(ChatroomMember.room_uuid)
@@ -185,6 +482,7 @@ def list_chatrooms() -> list[dict[str, Any]]:
             "name": r.name,
             "member_count": int(member_counts.get(r.uuid, 0)),
             "last_message_id": int(last_ids.get(r.uuid) or 0),
+            "folderId": str(r.folder_uuid) if r.folder_uuid else None,
         }
         for r in rooms
     ]

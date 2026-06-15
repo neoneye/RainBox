@@ -124,6 +124,27 @@ def _add_column_if_missing(table: str, column: str, ddl: str) -> None:
             sa.text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {ddl}"))
 
 
+def _backfill_chatroom_positions() -> None:
+    """One-time: give existing chatrooms a `position` reflecting their current
+    visible order (created_at, then id) so adding the column doesn't visibly
+    reshuffle the left panel. Idempotent: runs only while every row still shares
+    one position value (the freshly-migrated state — COUNT(DISTINCT position) <=
+    1); once positions diverge (a real reorder, or this backfill) it's a no-op,
+    so a later reorder is never clobbered."""
+    distinct = db.session.execute(
+        sa.text("SELECT COUNT(DISTINCT position) FROM chatroom")
+    ).scalar()
+    if (distinct or 0) > 1:
+        return
+    db.session.execute(sa.text(
+        "UPDATE chatroom c SET position = sub.rn FROM ("
+        "  SELECT id, (ROW_NUMBER() OVER (ORDER BY created_at, id) - 1) AS rn"
+        "  FROM chatroom"
+        ") sub WHERE c.id = sub.id"
+    ))
+    db.session.commit()
+
+
 def _constraint_def(name: str) -> str | None:
     row = db.session.execute(
         sa.text("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
@@ -247,6 +268,12 @@ def init_db(app: Flask) -> None:
                                "claimed_at TIMESTAMPTZ")
         _add_column_if_missing("kanban_task", "claim_expires_at",
                                "claim_expires_at TIMESTAMPTZ")
+        # Chat-folder columns (added after chatroom's first cut). New table
+        # chatroom_folder is created by create_all() above.
+        _add_column_if_missing("chatroom", "folder_uuid", "folder_uuid UUID")
+        _add_column_if_missing("chatroom", "position",
+                               "position INTEGER NOT NULL DEFAULT 0")
+        _backfill_chatroom_positions()
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(

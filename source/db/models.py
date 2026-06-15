@@ -498,9 +498,37 @@ class Chatroom(db.Model):
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text)
     created_by: Mapped[UUID] = mapped_column()  # chat_user.uuid (the human)
+    # Left-panel folder placement (mirrors cron's folder tree). null = top level;
+    # plain col, no FK (house style — app-side validation). `position` orders
+    # rooms within their folder (or among top-level rooms).
+    folder_uuid: Mapped[UUID | None] = mapped_column(default=None)
+    position: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+class ChatroomFolder(db.Model):
+    """A left-panel folder grouping chatrooms (and other folders). Mirrors
+    CronFolder minus the scheduling-only fields (description/enabled): chat
+    folders are purely organizational. parent_uuid is a plain uuid column (no
+    FK, app-side validation — the cron/kanban house style); null = root.
+    position orders folders within their parent."""
+
+    __tablename__ = "chatroom_folder"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")
+    parent_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = root; plain col, no FK
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("chatroom_folder_children", "parent_uuid", "position"),)
 
 
 class ChatroomMember(db.Model):

@@ -71,6 +71,46 @@ CHAT_TEMPLATE: str = """
   .room-menu .item:hover{background:#eef0f6}
   .room-menu .item.danger{color:#b91c1c}
 
+  /* ---- folder tree (ported from /cron) ---- */
+  #rooms ul{list-style:none;margin:0;padding:0}
+  #rooms ul ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
+  .chat-node{position:relative;display:flex;align-items:center;gap:0.4em;width:100%;
+             padding:0.4em 0.6em;border-radius:6px;cursor:pointer;color:#333;font-size:0.9rem}
+  .chat-node:hover{background:#eef0f6}
+  .chat-node.sel{background:#e3ebfb}
+  .chat-ficon{display:inline-flex;width:1.05em;height:1.05em;color:#6b7280;flex:0 0 auto}
+  .chat-ficon svg{width:100%;height:100%}
+  .chat-folder-label{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+  /* drag feedback (ported from cron) */
+  .chat-dragging{opacity:0.4}
+  .chat-drop-target{outline:2px solid #2563eb;outline-offset:-2px}
+  .chat-drop-before{box-shadow:inset 0 2px 0 #2563eb}
+  .chat-drop-after{box-shadow:inset 0 -2px 0 #2563eb}
+  .chat-root-drop{margin:0.4em 0.3em 0;padding:0.4em;border:1px dashed #cbd5e1;border-radius:6px;
+                  color:#94a3b8;font-size:0.78rem;text-align:center;display:none}
+  .rooms.dragging-on .chat-root-drop{display:block}
+  .chat-root-drop.over{border-color:#2563eb;color:#2563eb;background:#eff6ff}
+  .new-folder-btn{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+                  padding:0.25em 0.6em;cursor:pointer;font:inherit;font-size:0.78rem;margin-left:0.4em}
+  .new-folder-btn:hover{border-color:#2563eb;color:#2563eb}
+  /* modal (folder create + delete-confirm) */
+  .chat-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:1500}
+  .chat-modal-backdrop[hidden]{display:none}
+  .chat-modal{position:fixed;z-index:1600;left:50%;top:50%;transform:translate(-50%,-50%);
+              background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.25);
+              padding:1.2em 1.3em;width:min(420px,92vw)}
+  .chat-modal[hidden]{display:none}
+  .chat-modal h3{margin:0 0 0.6em;font-size:1.05rem}
+  .chat-modal p{margin:0 0 0.8em;color:#444;font-size:0.9rem;line-height:1.45}
+  .chat-modal input[type=text]{width:100%;box-sizing:border-box;padding:0.5em;border:1px solid #ccc;
+                               border-radius:6px;font:inherit}
+  .chat-modal .modal-actions{display:flex;justify-content:flex-end;gap:0.5em;margin-top:1em}
+  .chat-modal button{border:none;border-radius:6px;padding:0.45em 1em;cursor:pointer;font:inherit}
+  .chat-modal .btn-cancel{background:#e5e7eb;color:#374151}
+  .chat-modal .btn-primary{background:#2563eb;color:#fff}
+  .chat-modal .btn-danger{background:#dc2626;color:#fff}
+  .chat-modal button:disabled{opacity:0.5;cursor:default}
+
   .room-main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
   .room-title{padding:0.6em 1em;border-bottom:1px solid #eee;font-weight:600;display:flex;align-items:center;gap:0.6em}
   .room-title input#room-title-name{flex:1 1 auto;font:inherit;font-size:1.05em;font-weight:600;
@@ -150,7 +190,10 @@ CHAT_TEMPLATE: str = """
   <div class="rooms">
     <div class="rooms-head">
       <span class="title">Rooms</span>
-      <button class="new-room-btn" id="new-room-btn" type="button">+ New room</button>
+      <span>
+        <button class="new-folder-btn" id="new-folder-btn" type="button">+ Folder</button>
+        <button class="new-room-btn" id="new-room-btn" type="button">+ New room</button>
+      </span>
     </div>
     <form class="new-room hidden" id="new-room">
       <input type="text" id="room-name" placeholder="Room name" autocomplete="off" required>
@@ -161,6 +204,7 @@ CHAT_TEMPLATE: str = """
       <div class="actions"><button type="submit">Create</button></div>
     </form>
     <div id="rooms"></div>
+    <div class="chat-root-drop" id="chat-root-drop">Move to top level</div>
   </div>
   <div class="room-main">
     <div class="room-title" id="room-title">
@@ -178,6 +222,28 @@ CHAT_TEMPLATE: str = """
       <button type="submit">Send</button>
     </form>
   </div>
+  <div class="chat-modal-backdrop" id="chat-modal-backdrop" hidden></div>
+
+  <div class="chat-modal" id="chat-folder-modal" hidden>
+    <h3 id="chat-folder-title">New folder</h3>
+    <input type="text" id="chat-folder-input" placeholder="Folder name" autocomplete="off">
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="chat-folder-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="chat-folder-create" disabled>Create</button>
+    </div>
+  </div>
+
+  <div class="chat-modal" id="chat-delete-modal" hidden>
+    <h3 id="chat-delete-title">Delete</h3>
+    <p id="chat-delete-msg"></p>
+    <p style="margin-bottom:0.3em">Type <strong id="chat-delete-name"></strong> to confirm:</p>
+    <input type="text" id="chat-delete-input" autocomplete="off">
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="chat-delete-cancel">Cancel</button>
+      <button type="button" class="btn-danger" id="chat-delete-confirm" disabled>Delete</button>
+    </div>
+  </div>
+
   <div class="room-sidebar" id="room-sidebar"></div>
 </div>
 
@@ -208,8 +274,26 @@ const agentListEl = document.getElementById('agent-list');
 const LUCIDE_COPY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const LUCIDE_THUMBS_UP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/><path d="M7 10v12"/></svg>';
 const LUCIDE_THUMBS_DOWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/></svg>';
+const CHAT_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+const CHAT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>';
 
 let rooms = [];                 // [{uuid, name, member_count, last_message_id}]
+let folders = [];               // [{id, name, parentId}]
+let treeVersion = null;         // optimistic-concurrency token from /chat/api/tree
+let dragNode = null;            // {type:'folder'|'room', id} during a drag
+const FOLDER_EXPAND_KEY = 'chat.expandedFolders';
+let expandedFolders = {};       // folderId -> false when collapsed (default expanded)
+try {
+  const saved = JSON.parse(localStorage.getItem(FOLDER_EXPAND_KEY) || '{}');
+  if (saved && typeof saved === 'object') expandedFolders = saved;
+} catch (e) {}
+function saveExpandState(){
+  try { localStorage.setItem(FOLDER_EXPAND_KEY, JSON.stringify(expandedFolders)); } catch (e) {}
+}
+function folderById(id){ return folders.find(f => f.id === id) || null; }
+function childFolders(parentId){ return folders.filter(f => (f.parentId || null) === parentId); }
+function roomsInFolder(id){ return rooms.filter(r => (r.folderId || null) === id); }
+function isExpanded(id){ return expandedFolders[id] !== false; }
 let currentRoom = null;         // uuid of the open room
 let lastId = 0;                 // highest message id rendered in currentRoom
 let renderedIds = new Set();    // message ids already in the log (dedup)
@@ -537,41 +621,312 @@ function makeMessage(m){
 
 function renderRooms(){
   roomsEl.innerHTML = '';
-  if (!rooms.length){
+  if (!rooms.length && !folders.length){
     const p = document.createElement('p');
     p.className = 'note';
     p.textContent = 'No rooms yet — create one above.';
     roomsEl.appendChild(p);
     return;
   }
-  rooms.forEach(r => {
-    const isActive = r.uuid === currentRoom;
-    const row = document.createElement('div');
-    row.className = 'room-row' + (isActive ? ' active' : '');
-    const btn = document.createElement('button');
-    btn.className = 'room' + (isActive ? ' active' : '');
-    btn.type = 'button';
-    btn.dataset.room = r.uuid;
-    const name = document.createElement('span');
-    name.className = 'room-name';
-    name.textContent = '# ' + r.name;
-    const sub = document.createElement('span');
-    sub.className = 'room-sub';
-    sub.textContent = r.member_count + (r.member_count === 1 ? ' member' : ' members');
-    btn.appendChild(name);
-    btn.appendChild(sub);
-    const n = unread[r.uuid] || 0;
-    if (n > 0){
-      const dot = document.createElement('span');
-      dot.className = 'unread';
-      dot.textContent = n;
-      btn.appendChild(dot);
-    }
-    btn.addEventListener('click', () => selectRoom(r.uuid));
-    row.appendChild(btn);
-    if (isActive) row.appendChild(buildRoomMenu(r.uuid));
-    roomsEl.appendChild(row);
+  const rootUl = document.createElement('ul');
+  childFolders(null).forEach(f => rootUl.appendChild(folderLi(f)));
+  roomsInFolder(null).forEach(r => {
+    const li = document.createElement('li');
+    li.appendChild(roomNode(r));
+    rootUl.appendChild(li);
   });
+  roomsEl.appendChild(rootUl);
+}
+
+// A folder row: the folder icon flips open when expanded and the folder has
+// children. Click toggles expand/collapse. Ported from cronFolderLi.
+function folderLi(f){
+  const li = document.createElement('li');
+  const kids = childFolders(f.id);
+  const kidRooms = roomsInFolder(f.id);
+  const hasKids = (kids.length + kidRooms.length) > 0;
+  const expanded = isExpanded(f.id);
+  const node = document.createElement('div');
+  node.className = 'chat-node';
+  const icon = document.createElement('span');
+  icon.className = 'chat-ficon';
+  icon.innerHTML = (expanded && hasKids) ? CHAT_ICON_FOLDER_OPEN : CHAT_ICON_FOLDER;
+  const label = document.createElement('span');
+  label.className = 'chat-folder-label';
+  label.textContent = f.name;
+  node.appendChild(icon);
+  node.appendChild(label);
+  node.title = f.name;
+  node.addEventListener('click', () => {
+    expandedFolders[f.id] = !isExpanded(f.id);
+    saveExpandState();
+    renderRooms();
+  });
+  makeDraggable(node, 'folder', f.id);
+  makeFolderDrop(node, f.id);
+  node.appendChild(buildFolderMenu(f.id));
+  li.appendChild(node);
+  if (expanded && hasKids){
+    const ul = document.createElement('ul');
+    kids.forEach(c => ul.appendChild(folderLi(c)));
+    kidRooms.forEach(r => { const rli = document.createElement('li'); rli.appendChild(roomNode(r)); ul.appendChild(rli); });
+    li.appendChild(ul);
+  }
+  return li;
+}
+
+// A room row — keeps the existing .room-row/.room markup (name, sub, unread,
+// kebab) so selection/menus look identical to today, wrapped for drag-drop.
+function roomNode(r){
+  const isActive = r.uuid === currentRoom;
+  const row = document.createElement('div');
+  row.className = 'room-row' + (isActive ? ' active' : '');
+  const btn = document.createElement('button');
+  btn.className = 'room' + (isActive ? ' active' : '');
+  btn.type = 'button';
+  btn.dataset.room = r.uuid;
+  const name = document.createElement('span');
+  name.className = 'room-name';
+  name.textContent = '# ' + r.name;
+  const sub = document.createElement('span');
+  sub.className = 'room-sub';
+  sub.textContent = r.member_count + (r.member_count === 1 ? ' member' : ' members');
+  btn.appendChild(name);
+  btn.appendChild(sub);
+  const n = unread[r.uuid] || 0;
+  if (n > 0){
+    const dot = document.createElement('span');
+    dot.className = 'unread';
+    dot.textContent = n;
+    btn.appendChild(dot);
+  }
+  btn.addEventListener('click', () => selectRoom(r.uuid));
+  row.appendChild(btn);
+  if (isActive) row.appendChild(buildRoomMenu(r.uuid));
+  makeDraggable(row, 'room', r.uuid);
+  makeRoomDrop(row, r.uuid);
+  return row;
+}
+
+// ---- drag & drop (ported from static/cron.js) ----
+function folderInSubtree(candidateId, rootId){
+  let cur = folderById(candidateId);
+  while (cur){
+    if (cur.id === rootId) return true;
+    cur = cur.parentId ? folderById(cur.parentId) : null;
+  }
+  return false;
+}
+function moveFolder(folderId, targetParentId, atStart){
+  targetParentId = targetParentId || null;
+  if (folderId === targetParentId) return;
+  if (targetParentId && folderInSubtree(targetParentId, folderId)) return;  // no cycles
+  const f = folderById(folderId);
+  if (!f) return;
+  f.parentId = targetParentId;
+  folders = folders.filter(x => x.id !== folderId);
+  if (atStart){
+    const i = folders.findIndex(x => (x.parentId || null) === targetParentId);
+    if (i < 0) folders.push(f); else folders.splice(i, 0, f);
+  } else {
+    let at = folders.length;
+    for (let i = folders.length - 1; i >= 0; i--){
+      if ((folders[i].parentId || null) === targetParentId){ at = i + 1; break; }
+    }
+    folders.splice(at, 0, f);
+  }
+  saveTree();
+}
+function moveFolderBeside(folderId, targetFolderId, after){
+  if (folderId === targetFolderId) return;
+  const target = folderById(targetFolderId);
+  if (!target) return;
+  const newParent = target.parentId || null;
+  if (newParent && folderInSubtree(newParent, folderId)) return;  // no cycles
+  const f = folderById(folderId);
+  if (!f) return;
+  f.parentId = newParent;
+  folders = folders.filter(x => x.id !== folderId);
+  const ti = folders.findIndex(x => x.id === targetFolderId);
+  if (ti < 0) folders.push(f);
+  else folders.splice(after ? ti + 1 : ti, 0, f);
+  saveTree();
+}
+function moveRoom(roomUuid, targetFolderId, beforeRoomUuid){
+  targetFolderId = targetFolderId || null;
+  const idx = rooms.findIndex(r => r.uuid === roomUuid);
+  if (idx < 0) return;
+  const room = rooms.splice(idx, 1)[0];
+  room.folderId = targetFolderId;
+  let insertAt = beforeRoomUuid ? rooms.findIndex(r => r.uuid === beforeRoomUuid) : -1;
+  if (insertAt < 0){
+    insertAt = rooms.length;
+    for (let i = rooms.length - 1; i >= 0; i--){
+      if ((rooms[i].folderId || null) === targetFolderId){ insertAt = i + 1; break; }
+    }
+  }
+  rooms.splice(insertAt, 0, room);
+  saveTree();
+}
+function makeDraggable(el, type, id){
+  el.draggable = true;
+  el.addEventListener('dragstart', e => {
+    dragNode = {type: type, id: id};
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);  // Firefox needs data to start a drag
+    el.classList.add('chat-dragging');
+    document.querySelector('.rooms').classList.add('dragging-on');  // reveal root drop zone
+    e.stopPropagation();
+  });
+  el.addEventListener('dragend', () => {
+    dragNode = null;
+    document.querySelector('.rooms').classList.remove('dragging-on');
+    renderRooms();
+  });
+}
+function dropInto(folderId, atStart){
+  if (!dragNode) return;
+  const dragged = dragNode;
+  if (dragged.type === 'room'){
+    let beforeUuid = null;
+    if (atStart){
+      const first = rooms.find(r =>
+        (r.folderId || null) === (folderId || null) && r.uuid !== dragged.id);
+      beforeUuid = first ? first.uuid : null;
+    }
+    moveRoom(dragged.id, folderId, beforeUuid);
+  } else {
+    moveFolder(dragged.id, folderId, atStart);
+  }
+  if (folderId){ expandedFolders[folderId] = true; saveExpandState(); }
+  dragNode = null;
+  renderRooms();
+}
+function makeFolderDrop(node, folderId){
+  const zoneOf = e => {
+    if (dragNode && dragNode.type === 'room') return 'into';
+    const r = node.getBoundingClientRect();
+    const y = e.clientY - r.top;
+    if (y < r.height / 3) return 'before';
+    if (y > r.height * 2 / 3) return 'after';
+    return 'into';
+  };
+  const okFor = z => {
+    if (!dragNode) return false;
+    if (dragNode.type === 'room') return z === 'into';
+    if (folderId === dragNode.id) return false;
+    if (z === 'into') return !folderInSubtree(folderId, dragNode.id);
+    const t = folderById(folderId);
+    const np = t ? (t.parentId || null) : null;
+    return !(np && folderInSubtree(np, dragNode.id));
+  };
+  const clear = () => node.classList.remove('chat-drop-before', 'chat-drop-after', 'chat-drop-target');
+  node.addEventListener('dragover', e => {
+    if (!dragNode) return;
+    e.stopPropagation();
+    const z = zoneOf(e);
+    if (!okFor(z)){ clear(); return; }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    node.classList.toggle('chat-drop-before', z === 'before');
+    node.classList.toggle('chat-drop-after', z === 'after');
+    node.classList.toggle('chat-drop-target', z === 'into');
+  });
+  node.addEventListener('dragleave', clear);
+  node.addEventListener('drop', e => {
+    if (!dragNode) return;
+    e.stopPropagation();
+    const z = zoneOf(e);
+    if (!okFor(z)){ clear(); return; }
+    e.preventDefault();
+    clear();
+    if (z === 'into'){
+      dropInto(folderId, false);
+    } else {
+      moveFolderBeside(dragNode.id, folderId, z === 'after');
+      dragNode = null;
+      renderRooms();
+    }
+  });
+}
+function makeRoomDrop(node, roomUuid){
+  const isAfter = e => {
+    const r = node.getBoundingClientRect();
+    return (e.clientY - r.top) > r.height / 2;
+  };
+  node.addEventListener('dragover', e => {
+    if (!dragNode) return;
+    e.preventDefault(); e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    const after = isAfter(e);
+    node.classList.toggle('chat-drop-after', after);
+    node.classList.toggle('chat-drop-before', !after);
+  });
+  node.addEventListener('dragleave', () => node.classList.remove('chat-drop-before', 'chat-drop-after'));
+  node.addEventListener('drop', e => {
+    if (!dragNode) return;
+    e.preventDefault(); e.stopPropagation();
+    const after = isAfter(e);
+    node.classList.remove('chat-drop-before', 'chat-drop-after');
+    dropOnRoom(roomUuid, after);
+  });
+}
+function dropOnRoom(targetUuid, after){
+  if (!dragNode) return;
+  if (dragNode.type === 'room' && dragNode.id === targetUuid) return;  // onto itself
+  const dragged = dragNode;
+  const target = rooms.find(r => r.uuid === targetUuid);
+  const targetFolder = target ? (target.folderId || null) : null;
+  if (dragged.type === 'room'){
+    let beforeUuid = targetUuid;
+    if (after){
+      const ti = rooms.findIndex(r => r.uuid === targetUuid);
+      beforeUuid = (ti + 1 < rooms.length) ? rooms[ti + 1].uuid : null;
+    }
+    if (beforeUuid === dragged.id) beforeUuid = null;
+    moveRoom(dragged.id, targetFolder, beforeUuid);
+  } else {
+    moveFolder(dragged.id, targetFolder);
+  }
+  dragNode = null;
+  renderRooms();
+}
+function wireRootDrop(el, atStart){
+  el.addEventListener('dragover', e => {
+    if (dragNode){ e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; el.classList.add('over'); }
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('over'));
+  el.addEventListener('drop', e => {
+    if (dragNode){ e.preventDefault(); e.stopPropagation(); el.classList.remove('over'); dropInto(null, atStart); }
+  });
+}
+
+// ---- persistence: debounced PUT of the whole tree ----
+let saveTimer = null;
+function saveTree(){
+  renderRooms();
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveTreePush, 300);
+}
+async function saveTreePush(){
+  if (!treeVersion){ await loadRooms(currentRoom); return; }  // no token -> re-hydrate, never blind-PUT
+  const body = {
+    folders: folders.map(f => ({id: f.id, name: f.name, parentId: f.parentId || null})),
+    rooms: rooms.map(r => ({uuid: r.uuid, folderId: r.folderId || null})),
+    version: treeVersion,
+  };
+  try {
+    const resp = await fetch('/chat/api/tree', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (resp.status === 409){ await loadRooms(currentRoom); return; }  // stale -> re-hydrate
+    if (!resp.ok) throw new Error(data.error || ('PUT /chat/api/tree -> ' + resp.status));
+    treeVersion = data.version || treeVersion;
+  } catch (e) {
+    await loadRooms(currentRoom);  // recover to server truth on any error
+  }
 }
 
 // The selected room's overflow (...) menu. Rename/Mute/Archive are placeholders
@@ -620,29 +975,186 @@ function buildRoomMenu(roomUuid){
   return wrap;
 }
 
+// Folder kebab: Rename + Delete. Always visible (folders have no "active"
+// state like rooms). Reuses the room-menu styles.
+function buildFolderMenu(folderId){
+  const wrap = document.createElement('div');
+  wrap.className = 'room-actions';
+  wrap.style.display = 'flex';  // folders show the kebab unconditionally
+  const kebab = document.createElement('button');
+  kebab.type = 'button';
+  kebab.className = 'room-kebab';
+  kebab.setAttribute('aria-label', 'Folder actions');
+  const menu = document.createElement('div');
+  menu.className = 'room-menu';
+  menu.setAttribute('role', 'menu');
+  menu.hidden = true;
+  [['Rename', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'item' + (mod ? ' ' + mod : '');
+    item.setAttribute('role', 'menuitem');
+    item.textContent = label;
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden = true;
+      if (label === 'Delete') confirmDeleteFolder(folderId);
+      else if (label === 'Rename') renameFolder(folderId);
+    });
+    menu.appendChild(item);
+  });
+  kebab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = menu.hidden;
+    document.querySelectorAll('.room-menu').forEach(m => { m.hidden = true; });
+    if (willOpen){
+      const rect = kebab.getBoundingClientRect();
+      menu.style.left = rect.left + 'px';
+      menu.style.top = (rect.bottom + 4) + 'px';
+      menu.hidden = false;
+    }
+  });
+  wrap.appendChild(kebab);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
+// Inline-rename a folder: reuse the folder-create modal in "rename" mode.
+function renameFolder(folderId){
+  const f = folderById(folderId);
+  if (!f) return;
+  openFolderModal({mode: 'rename', folderId: folderId, current: f.name});
+}
+
+// ---- folder create / rename modal ----
+let folderModalState = null;  // {mode:'create'|'rename', folderId?, parentId?, current?}
+function openFolderModal(opts){
+  folderModalState = opts || {mode: 'create', parentId: null};
+  document.getElementById('chat-folder-title').textContent =
+    folderModalState.mode === 'rename' ? 'Rename folder' : 'New folder';
+  const input = document.getElementById('chat-folder-input');
+  input.value = folderModalState.current || '';
+  document.getElementById('chat-folder-create').textContent =
+    folderModalState.mode === 'rename' ? 'Rename' : 'Create';
+  document.getElementById('chat-folder-create').disabled = !input.value.trim();
+  document.getElementById('chat-modal-backdrop').hidden = false;
+  document.getElementById('chat-folder-modal').hidden = false;
+  input.focus();
+  input.select();
+}
+function closeFolderModal(){
+  document.getElementById('chat-folder-modal').hidden = true;
+  document.getElementById('chat-modal-backdrop').hidden = true;
+  folderModalState = null;
+}
+async function confirmFolderModal(){
+  const name = document.getElementById('chat-folder-input').value.trim();
+  if (!name || !folderModalState) return;
+  if (folderModalState.mode === 'rename'){
+    const f = folderById(folderModalState.folderId);
+    if (f){ f.name = name; saveTree(); }   // rename persists via the tree PUT
+    closeFolderModal();
+    return;
+  }
+  // create: POST, then re-hydrate so the new folder gets a server position.
+  try {
+    const resp = await fetch('/chat/api/folders', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name}),
+    });
+    if (!resp.ok) throw new Error('POST /chat/api/folders -> ' + resp.status);
+  } catch (e) { alert(e); return; }
+  closeFolderModal();
+  await loadRooms(currentRoom);
+}
+document.getElementById('new-folder-btn').addEventListener('click', () => openFolderModal({mode: 'create', parentId: null}));
+document.getElementById('chat-folder-cancel').addEventListener('click', closeFolderModal);
+document.getElementById('chat-folder-create').addEventListener('click', confirmFolderModal);
+document.getElementById('chat-folder-input').addEventListener('input', e => {
+  document.getElementById('chat-folder-create').disabled = !e.target.value.trim();
+});
+document.getElementById('chat-folder-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ e.preventDefault(); confirmFolderModal(); }
+});
+
+// ---- type-to-confirm destructive delete (folder or room) ----
+let deleteModalState = null;  // {kind:'folder'|'room', id, name}
+function fmtCount(n){ return Number(n).toLocaleString(); }
+function openDeleteModal(state, message, confirmName){
+  deleteModalState = state;
+  document.getElementById('chat-delete-title').textContent =
+    state.kind === 'folder' ? 'Delete folder' : 'Delete room';
+  document.getElementById('chat-delete-msg').textContent = message;
+  document.getElementById('chat-delete-name').textContent = confirmName;
+  const input = document.getElementById('chat-delete-input');
+  input.value = '';
+  const confirmBtn = document.getElementById('chat-delete-confirm');
+  confirmBtn.disabled = true;
+  input.oninput = () => { confirmBtn.disabled = (input.value !== confirmName); };
+  document.getElementById('chat-modal-backdrop').hidden = false;
+  document.getElementById('chat-delete-modal').hidden = false;
+  input.focus();
+}
+function closeDeleteModal(){
+  document.getElementById('chat-delete-modal').hidden = true;
+  document.getElementById('chat-modal-backdrop').hidden = true;
+  deleteModalState = null;
+}
+async function confirmDeleteFolder(folderId){
+  const f = folderById(folderId);
+  if (!f) return;
+  let preview;
+  try {
+    preview = await getJSON('/chat/api/folders/' + folderId + '/delete-preview');
+  } catch (e) { alert(e); return; }
+  const msg = 'Are you sure you want to delete ' +
+    fmtCount(preview.room_count) + (preview.room_count === 1 ? ' chatroom' : ' chatrooms') +
+    ' containing ' + fmtCount(preview.message_count) +
+    (preview.message_count === 1 ? ' message' : ' messages') + '? This cannot be undone.';
+  openDeleteModal({kind: 'folder', id: folderId, name: f.name}, msg, f.name);
+}
 async function deleteRoom(uuid){
   const room = rooms.find(r => r.uuid === uuid);
-  const label = room ? '# ' + room.name : 'this room';
-  if (!confirm('Delete ' + label + ' and all its messages? This cannot be undone.')) return;
+  if (!room) return;
+  let preview;
   try {
-    const r = await fetch('/chat/api/rooms/' + uuid, { method: 'DELETE' });
-    if (!r.ok) throw new Error('DELETE ' + uuid + ' -> ' + r.status);
+    preview = await getJSON('/chat/api/rooms/' + uuid + '/delete-preview');
   } catch (e) { alert(e); return; }
-  rooms = rooms.filter(x => x.uuid !== uuid);
-  delete unread[uuid];
-  if (currentRoom === uuid){
-    currentRoom = null;
-    if (rooms[0]){ await selectRoom(rooms[0].uuid); return; }
-    // No rooms left: clear the main pane and drop ?room= from the URL.
+  const msg = 'Are you sure you want to delete # ' + preview.room_name + ' containing ' +
+    fmtCount(preview.message_count) +
+    (preview.message_count === 1 ? ' message' : ' messages') + '? This cannot be undone.';
+  openDeleteModal({kind: 'room', id: uuid, name: preview.room_name}, msg, preview.room_name);
+}
+async function performConfirmedDelete(){
+  if (!deleteModalState) return;
+  const {kind, id} = deleteModalState;
+  const url = kind === 'folder' ? '/chat/api/folders/' + id : '/chat/api/rooms/' + id;
+  try {
+    const r = await fetch(url, {method: 'DELETE'});
+    if (!r.ok) throw new Error('DELETE ' + url + ' -> ' + r.status);
+  } catch (e) { alert(e); return; }
+  if (kind === 'room') delete unread[id];
+  closeDeleteModal();
+  // Was the open room removed? Directly (room delete) or because its folder
+  // (which may have held it) was deleted. Clear currentRoom BEFORE re-hydrating
+  // so loadRooms doesn't try to reselect the now-deleted room — it auto-selects
+  // rooms[0] in a single pass.
+  const hadOpenRoom = currentRoom;
+  if (kind === 'room' && currentRoom === id) currentRoom = null;
+  await loadRooms(currentRoom);
+  // If the open room is gone after re-hydration (room delete, or a folder
+  // delete that contained it) and nothing got auto-selected, clear the pane.
+  if (hadOpenRoom && !rooms.some(r => r.uuid === hadOpenRoom) && !currentRoom){
     titleNameEl.value = '';
     log.innerHTML = '';
-    const url = new URL(window.location);
-    url.searchParams.delete('room');
-    history.replaceState(null, '', url);
+    const url2 = new URL(window.location);
+    url2.searchParams.delete('room');
+    history.replaceState(null, '', url2);
     renderSidebar();
   }
-  renderRooms();
 }
+document.getElementById('chat-delete-cancel').addEventListener('click', closeDeleteModal);
+document.getElementById('chat-delete-confirm').addEventListener('click', performConfirmedDelete);
 
 // Dismiss any open room overflow menu on an outside click or Escape.
 document.addEventListener('click', () => {
@@ -685,7 +1197,10 @@ async function fetchNew(uuid){
 }
 
 async function loadRooms(selectUuid){
-  rooms = await getJSON('/chat/api/rooms');
+  const tree = await getJSON('/chat/api/tree');
+  folders = (tree && tree.folders) || [];
+  rooms = (tree && tree.rooms) || [];
+  treeVersion = (tree && tree.version) || null;
   renderRooms();
   let target = selectUuid || currentRoom;
   // Fall back to the first room if the requested one is missing (e.g. a stale
@@ -987,6 +1502,19 @@ document.addEventListener('visibilitychange', () => {
   });
   fetchNew(currentRoom);
 });
+
+// Root drop targets: the "Move to top level" zone + empty space in the rooms
+// panel both move a dragged node to the root level.
+wireRootDrop(document.getElementById('chat-root-drop'), false);
+(function wireRoomsContainerRootDrop(){
+  const panel = document.querySelector('.rooms');
+  panel.addEventListener('dragover', e => {
+    if (dragNode){ e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+  });
+  panel.addEventListener('drop', e => {
+    if (dragNode){ e.preventDefault(); dropInto(null, false); }
+  });
+})();
 
 loadRooms(new URLSearchParams(window.location.search).get('room'));
 startStream();
