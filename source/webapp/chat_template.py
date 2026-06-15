@@ -12,6 +12,7 @@ dir) and to preserve the no-store fast-iteration workflow.
 CHAT_TEMPLATE: str = """
 <!doctype html>
 <title>Chat &mdash; rainbox</title>
+<link rel="stylesheet" href="/static/ui-modal.css">
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
   .chat-split{display:grid;grid-template-columns:260px 1fr;grid-template-rows:1fr;flex:1 1 auto;min-height:0}
@@ -89,23 +90,9 @@ CHAT_TEMPLATE: str = """
   .new-folder-btn{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
                   padding:0.25em 0.6em;cursor:pointer;font:inherit;font-size:0.78rem;margin-left:0.4em}
   .new-folder-btn:hover{border-color:#2563eb;color:#2563eb}
-  /* modal (folder create + delete-confirm) */
-  .ui-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:1500}
-  .ui-modal-backdrop[hidden]{display:none}
-  .ui-modal{position:fixed;z-index:1600;left:50%;top:50%;transform:translate(-50%,-50%);
-              background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.25);
-              padding:1.2em 1.3em;width:min(420px,92vw)}
-  .ui-modal[hidden]{display:none}
-  .ui-modal h3{margin:0 0 0.6em;font-size:1.05rem}
-  .ui-modal p{margin:0 0 0.8em;color:#444;font-size:0.9rem;line-height:1.45}
+  /* modal: shared base lives in /static/ui-modal.css; only chat-specific bits here */
   .ui-modal input[type=text]{width:100%;box-sizing:border-box;padding:0.5em;border:1px solid #ccc;
                                border-radius:6px;font:inherit}
-  .ui-modal .modal-actions{display:flex;justify-content:flex-end;gap:0.5em;margin-top:1em}
-  .ui-modal button{border:none;border-radius:6px;padding:0.45em 1em;cursor:pointer;font:inherit}
-  .ui-modal .btn-cancel{background:#e5e7eb;color:#374151}
-  .ui-modal .btn-primary{background:#2563eb;color:#fff}
-  .ui-modal .btn-danger{background:#dc2626;color:#fff}
-  .ui-modal button:disabled{opacity:0.5;cursor:default}
   .ui-modal .agents{display:flex;flex-direction:column;gap:0.25em;margin:0.6em 0;max-height:30vh;overflow:auto}
   .ui-modal .agents .lbl{color:#888;font-size:0.75rem;margin-bottom:0.1em}
   .ui-modal .agents label{font-size:0.85rem;color:#333;display:flex;align-items:center;gap:0.4em}

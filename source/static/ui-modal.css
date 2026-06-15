@@ -1,0 +1,18 @@
+/* Shared UI-modal pattern — canonical base for /chat, /cron, /kanban.
+   See docs/ui-modals.md. Linked by each page; page-specific form-field
+   styling (.agents / .brow / .kb-row, compact inputs, the cron builder
+   width, etc.) stays in that page's own <style>. */
+.ui-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:1500}
+.ui-modal-backdrop[hidden]{display:none}
+.ui-modal{position:fixed;z-index:1600;left:50%;top:50%;transform:translate(-50%,-50%);
+          background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.25);
+          padding:1.2em 1.3em;width:min(420px,92vw)}
+.ui-modal[hidden]{display:none}
+.ui-modal h3{margin:0 0 0.6em;font-size:1.05rem}
+.ui-modal p{margin:0 0 0.8em;color:#444;font-size:0.9rem;line-height:1.45}
+.ui-modal .modal-actions{display:flex;justify-content:flex-end;gap:0.5em;margin-top:1em}
+.ui-modal button{border:none;border-radius:6px;padding:0.45em 1em;cursor:pointer;font:inherit}
+.ui-modal .btn-cancel{background:#e5e7eb;color:#374151}
+.ui-modal .btn-primary{background:#2563eb;color:#fff}
+.ui-modal .btn-danger{background:#dc2626;color:#fff}
+.ui-modal button:disabled{opacity:0.5;cursor:default}
