@@ -1133,20 +1133,24 @@ async function performConfirmedDelete(){
     const r = await fetch(url, {method: 'DELETE'});
     if (!r.ok) throw new Error('DELETE ' + url + ' -> ' + r.status);
   } catch (e) { alert(e); return; }
-  const deletingCurrentRoom = (kind === 'room' && currentRoom === id);
+  if (kind === 'room') delete unread[id];
   closeDeleteModal();
-  await loadRooms(deletingCurrentRoom ? null : currentRoom);
-  if (deletingCurrentRoom){
-    currentRoom = null;
-    if (rooms[0]){ await selectRoom(rooms[0].uuid); }
-    else {
-      titleNameEl.value = '';
-      log.innerHTML = '';
-      const url2 = new URL(window.location);
-      url2.searchParams.delete('room');
-      history.replaceState(null, '', url2);
-      renderSidebar();
-    }
+  // Was the open room removed? Directly (room delete) or because its folder
+  // (which may have held it) was deleted. Clear currentRoom BEFORE re-hydrating
+  // so loadRooms doesn't try to reselect the now-deleted room — it auto-selects
+  // rooms[0] in a single pass.
+  const hadOpenRoom = currentRoom;
+  if (kind === 'room' && currentRoom === id) currentRoom = null;
+  await loadRooms(currentRoom);
+  // If the open room is gone after re-hydration (room delete, or a folder
+  // delete that contained it) and nothing got auto-selected, clear the pane.
+  if (hadOpenRoom && !rooms.some(r => r.uuid === hadOpenRoom) && !currentRoom){
+    titleNameEl.value = '';
+    log.innerHTML = '';
+    const url2 = new URL(window.location);
+    url2.searchParams.delete('room');
+    history.replaceState(null, '', url2);
+    renderSidebar();
   }
 }
 document.getElementById('chat-delete-cancel').addEventListener('click', closeDeleteModal);
