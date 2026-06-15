@@ -708,6 +708,227 @@ function roomNode(r){
   return row;
 }
 
+// ---- drag & drop (ported from static/cron.js) ----
+function folderInSubtree(candidateId, rootId){
+  let cur = folderById(candidateId);
+  while (cur){
+    if (cur.id === rootId) return true;
+    cur = cur.parentId ? folderById(cur.parentId) : null;
+  }
+  return false;
+}
+function moveFolder(folderId, targetParentId, atStart){
+  targetParentId = targetParentId || null;
+  if (folderId === targetParentId) return;
+  if (targetParentId && folderInSubtree(targetParentId, folderId)) return;  // no cycles
+  const f = folderById(folderId);
+  if (!f) return;
+  f.parentId = targetParentId;
+  folders = folders.filter(x => x.id !== folderId);
+  if (atStart){
+    const i = folders.findIndex(x => (x.parentId || null) === targetParentId);
+    if (i < 0) folders.push(f); else folders.splice(i, 0, f);
+  } else {
+    let at = folders.length;
+    for (let i = folders.length - 1; i >= 0; i--){
+      if ((folders[i].parentId || null) === targetParentId){ at = i + 1; break; }
+    }
+    folders.splice(at, 0, f);
+  }
+  saveTree();
+}
+function moveFolderBeside(folderId, targetFolderId, after){
+  if (folderId === targetFolderId) return;
+  const target = folderById(targetFolderId);
+  if (!target) return;
+  const newParent = target.parentId || null;
+  if (newParent && folderInSubtree(newParent, folderId)) return;  // no cycles
+  const f = folderById(folderId);
+  if (!f) return;
+  f.parentId = newParent;
+  folders = folders.filter(x => x.id !== folderId);
+  const ti = folders.findIndex(x => x.id === targetFolderId);
+  if (ti < 0) folders.push(f);
+  else folders.splice(after ? ti + 1 : ti, 0, f);
+  saveTree();
+}
+function moveRoom(roomUuid, targetFolderId, beforeRoomUuid){
+  targetFolderId = targetFolderId || null;
+  const idx = rooms.findIndex(r => r.uuid === roomUuid);
+  if (idx < 0) return;
+  const room = rooms.splice(idx, 1)[0];
+  room.folderId = targetFolderId;
+  let insertAt = beforeRoomUuid ? rooms.findIndex(r => r.uuid === beforeRoomUuid) : -1;
+  if (insertAt < 0){
+    insertAt = rooms.length;
+    for (let i = rooms.length - 1; i >= 0; i--){
+      if ((rooms[i].folderId || null) === targetFolderId){ insertAt = i + 1; break; }
+    }
+  }
+  rooms.splice(insertAt, 0, room);
+  saveTree();
+}
+function makeDraggable(el, type, id){
+  el.draggable = true;
+  el.addEventListener('dragstart', e => {
+    dragNode = {type: type, id: id};
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);  // Firefox needs data to start a drag
+    el.classList.add('chat-dragging');
+    document.querySelector('.rooms').classList.add('dragging-on');  // reveal root drop zone
+    e.stopPropagation();
+  });
+  el.addEventListener('dragend', () => {
+    dragNode = null;
+    document.querySelector('.rooms').classList.remove('dragging-on');
+    renderRooms();
+  });
+}
+function dropInto(folderId, atStart){
+  if (!dragNode) return;
+  const dragged = dragNode;
+  if (dragged.type === 'room'){
+    let beforeUuid = null;
+    if (atStart){
+      const first = rooms.find(r =>
+        (r.folderId || null) === (folderId || null) && r.uuid !== dragged.id);
+      beforeUuid = first ? first.uuid : null;
+    }
+    moveRoom(dragged.id, folderId, beforeUuid);
+  } else {
+    moveFolder(dragged.id, folderId, atStart);
+  }
+  if (folderId){ expandedFolders[folderId] = true; saveExpandState(); }
+  dragNode = null;
+  renderRooms();
+}
+function makeFolderDrop(node, folderId){
+  const zoneOf = e => {
+    if (dragNode && dragNode.type === 'room') return 'into';
+    const r = node.getBoundingClientRect();
+    const y = e.clientY - r.top;
+    if (y < r.height / 3) return 'before';
+    if (y > r.height * 2 / 3) return 'after';
+    return 'into';
+  };
+  const okFor = z => {
+    if (!dragNode) return false;
+    if (dragNode.type === 'room') return z === 'into';
+    if (folderId === dragNode.id) return false;
+    if (z === 'into') return !folderInSubtree(folderId, dragNode.id);
+    const t = folderById(folderId);
+    const np = t ? (t.parentId || null) : null;
+    return !(np && folderInSubtree(np, dragNode.id));
+  };
+  const clear = () => node.classList.remove('chat-drop-before', 'chat-drop-after', 'chat-drop-target');
+  node.addEventListener('dragover', e => {
+    if (!dragNode) return;
+    e.stopPropagation();
+    const z = zoneOf(e);
+    if (!okFor(z)){ clear(); return; }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    node.classList.toggle('chat-drop-before', z === 'before');
+    node.classList.toggle('chat-drop-after', z === 'after');
+    node.classList.toggle('chat-drop-target', z === 'into');
+  });
+  node.addEventListener('dragleave', clear);
+  node.addEventListener('drop', e => {
+    if (!dragNode) return;
+    e.stopPropagation();
+    const z = zoneOf(e);
+    if (!okFor(z)){ clear(); return; }
+    e.preventDefault();
+    clear();
+    if (z === 'into'){
+      dropInto(folderId, false);
+    } else {
+      moveFolderBeside(dragNode.id, folderId, z === 'after');
+      dragNode = null;
+      renderRooms();
+    }
+  });
+}
+function makeRoomDrop(node, roomUuid){
+  const isAfter = e => {
+    const r = node.getBoundingClientRect();
+    return (e.clientY - r.top) > r.height / 2;
+  };
+  node.addEventListener('dragover', e => {
+    if (!dragNode) return;
+    e.preventDefault(); e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    const after = isAfter(e);
+    node.classList.toggle('chat-drop-after', after);
+    node.classList.toggle('chat-drop-before', !after);
+  });
+  node.addEventListener('dragleave', () => node.classList.remove('chat-drop-before', 'chat-drop-after'));
+  node.addEventListener('drop', e => {
+    if (!dragNode) return;
+    e.preventDefault(); e.stopPropagation();
+    const after = isAfter(e);
+    node.classList.remove('chat-drop-before', 'chat-drop-after');
+    dropOnRoom(roomUuid, after);
+  });
+}
+function dropOnRoom(targetUuid, after){
+  if (!dragNode) return;
+  if (dragNode.type === 'room' && dragNode.id === targetUuid) return;  // onto itself
+  const dragged = dragNode;
+  const target = rooms.find(r => r.uuid === targetUuid);
+  const targetFolder = target ? (target.folderId || null) : null;
+  if (dragged.type === 'room'){
+    let beforeUuid = targetUuid;
+    if (after){
+      const ti = rooms.findIndex(r => r.uuid === targetUuid);
+      beforeUuid = (ti + 1 < rooms.length) ? rooms[ti + 1].uuid : null;
+    }
+    if (beforeUuid === dragged.id) beforeUuid = null;
+    moveRoom(dragged.id, targetFolder, beforeUuid);
+  } else {
+    moveFolder(dragged.id, targetFolder);
+  }
+  dragNode = null;
+  renderRooms();
+}
+function wireRootDrop(el, atStart){
+  el.addEventListener('dragover', e => {
+    if (dragNode){ e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; el.classList.add('over'); }
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('over'));
+  el.addEventListener('drop', e => {
+    if (dragNode){ e.preventDefault(); e.stopPropagation(); el.classList.remove('over'); dropInto(null, atStart); }
+  });
+}
+
+// ---- persistence: debounced PUT of the whole tree ----
+let saveTimer = null;
+function saveTree(){
+  renderRooms();
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveTreePush, 300);
+}
+async function saveTreePush(){
+  if (!treeVersion){ await loadRooms(currentRoom); return; }  // no token -> re-hydrate, never blind-PUT
+  const body = {
+    folders: folders.map(f => ({id: f.id, name: f.name, parentId: f.parentId || null})),
+    rooms: rooms.map(r => ({uuid: r.uuid, folderId: r.folderId || null})),
+    version: treeVersion,
+  };
+  try {
+    const resp = await fetch('/chat/api/tree', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (resp.status === 409){ await loadRooms(currentRoom); return; }  // stale -> re-hydrate
+    if (!resp.ok) throw new Error(data.error || ('PUT /chat/api/tree -> ' + resp.status));
+    treeVersion = data.version || treeVersion;
+  } catch (e) {
+    await loadRooms(currentRoom);  // recover to server truth on any error
+  }
+}
+
 // The selected room's overflow (...) menu. Rename/Mute/Archive are placeholders
 // (they just close the menu); Delete confirms and removes the room.
 function buildRoomMenu(roomUuid){
@@ -1175,6 +1396,19 @@ document.addEventListener('visibilitychange', () => {
   });
   fetchNew(currentRoom);
 });
+
+// Root drop targets: the "Move to top level" zone + empty space in the rooms
+// panel both move a dragged node to the root level.
+wireRootDrop(document.getElementById('chat-root-drop'), false);
+(function wireRoomsContainerRootDrop(){
+  const panel = document.querySelector('.rooms');
+  panel.addEventListener('dragover', e => {
+    if (dragNode){ e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+  });
+  panel.addEventListener('drop', e => {
+    if (dragNode){ e.preventDefault(); dropInto(null, false); }
+  });
+})();
 
 loadRooms(new URLSearchParams(window.location.search).get('room'));
 startStream();
