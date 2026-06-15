@@ -488,6 +488,46 @@ def list_chatrooms() -> list[dict[str, Any]]:
     ]
 
 
+def list_chatroom_details() -> list[dict[str, Any]]:
+    """Per-room stats for the folder-contents table: the room's agent member
+    names (non-human members), its message count, and its last-message time.
+    Fetched lazily on folder selection (kept out of list_chatrooms so the
+    frequently re-fetched tree load stays light). One query per aggregate."""
+    agents_by_room: dict[UUID, list[str]] = defaultdict(list)
+    for room_uuid, name in (
+        db.session.query(ChatroomMember.room_uuid, ChatUser.name)
+        .join(ChatUser, ChatUser.uuid == ChatroomMember.user_uuid)
+        .filter(ChatUser.user_type != "human")
+        .order_by(ChatroomMember.room_uuid, ChatUser.name.asc(), ChatUser.id.asc())
+        .all()
+    ):
+        agents_by_room[room_uuid].append(name)
+    message_counts = dict(
+        db.session.query(ChatMessage.room_uuid, sa.func.count(ChatMessage.id))
+        .group_by(ChatMessage.room_uuid)
+        .all()
+    )
+    last_at = dict(
+        db.session.query(ChatMessage.room_uuid, sa.func.max(ChatMessage.created_at))
+        .group_by(ChatMessage.room_uuid)
+        .all()
+    )
+    rooms = db.session.query(Chatroom).all()
+    return [
+        {
+            "uuid": str(r.uuid),
+            "agents": agents_by_room.get(r.uuid, []),
+            "message_count": int(message_counts.get(r.uuid, 0)),
+            "last_message_at": (
+                last_at[r.uuid].strftime("%Y-%m-%d %H:%M")
+                if last_at.get(r.uuid) is not None
+                else None
+            ),
+        }
+        for r in rooms
+    ]
+
+
 def list_room_messages(room_uuid: UUID, after_id: int = 0) -> list[dict[str, Any]]:
     """Messages in a room with id > after_id, oldest first, sender resolved.
     Each row also carries the latest user feedback rating ("upvote" /

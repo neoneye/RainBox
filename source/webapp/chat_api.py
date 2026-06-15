@@ -93,6 +93,14 @@ def chat_rooms() -> Response | tuple[Response, int]:
     return jsonify(db.list_chatrooms())
 
 
+@app.route("/chat/api/rooms/details")
+def chat_room_details() -> Response:
+    """Per-room agent names, message count, and last-message time, for all
+    rooms. Fetched lazily when a folder is selected (the folder-contents
+    table); kept separate from the tree load to keep that light."""
+    return jsonify(db.list_chatroom_details())
+
+
 @app.route("/chat/api/tree", methods=["GET", "PUT"])
 def chat_tree() -> Response | tuple[Response, int]:
     """The left-panel folder/room tree. GET hydrates {folders, rooms, version};

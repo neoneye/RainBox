@@ -68,7 +68,13 @@ CHAT_TEMPLATE: str = """
   .chat-node{position:relative;display:flex;align-items:center;gap:0.4em;width:100%;
              padding:0.4em 0.6em;border-radius:6px;cursor:pointer;color:#333;font-size:0.9rem}
   .chat-node:hover{background:#eef0f6}
-  .chat-node.sel{background:#e3ebfb}
+  .chat-node.sel{background:#dbeafe;font-weight:600}
+  /* Folder kebab: hidden by default, shown when the folder is selected or hovered
+     (mirrors the rooms' active-only kebab). The kebab lives in a .room-actions
+     wrap appended directly inside .chat-node by buildFolderMenu. */
+  .chat-node > .room-actions{visibility:hidden}
+  .chat-node.sel > .room-actions{visibility:visible}
+  .chat-node:hover > .room-actions{visibility:visible}
   .chat-ficon{display:inline-flex;width:1.05em;height:1.05em;color:#6b7280;flex:0 0 auto}
   .chat-ficon svg{width:100%;height:100%}
   .chat-folder-label{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
@@ -177,6 +183,24 @@ CHAT_TEMPLATE: str = """
   .compose button{padding:0.5em 1.2em;font-size:1rem;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
   .compose button:hover{background:#1d4ed8}
   .compose button:disabled{background:#9db4e8;cursor:default}
+
+  /* Folder-contents table (shown in room-main instead of a chat). The chat-log
+     and compose set display:flex at class specificity, which beats the UA
+     [hidden]{display:none}, so the hidden attribute needs explicit rules to
+     actually hide them when the folder table takes over the pane. */
+  .chat-log[hidden]{display:none}
+  .compose[hidden]{display:none}
+  .folder-detail{flex:1 1 auto;overflow:auto;padding:1em}
+  .folder-detail h2{margin:0 0 0.8em;font-size:1.1rem;color:#1a1a2e}
+  .folder-detail table{width:100%;border-collapse:collapse;font-size:0.9rem}
+  .folder-detail th,.folder-detail td{text-align:left;padding:0.45em 0.7em;border-bottom:1px solid #eee;vertical-align:top}
+  .folder-detail th{color:#6b7280;font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.03em}
+  .folder-detail td.fd-num{text-align:right;white-space:nowrap}
+  .folder-detail .fd-name{white-space:nowrap}
+  .folder-detail .fd-icon{color:#6b7280;margin-right:0.3em}
+  .folder-detail a.fd-details{color:#2563eb;cursor:pointer;text-decoration:none}
+  .folder-detail a.fd-details:hover{text-decoration:underline}
+  .folder-detail .fd-empty{color:#888;font-style:italic}
 </style>
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
@@ -203,6 +227,15 @@ CHAT_TEMPLATE: str = """
       </select>
     </div>
     <div class="chat-log" id="chat-log"></div>
+    <div class="folder-detail" id="folder-detail" hidden>
+      <h2 id="folder-detail-title"></h2>
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Agents</th><th class="fd-num">Messages</th><th>Last message</th><th></th></tr>
+        </thead>
+        <tbody id="folder-detail-rows"></tbody>
+      </table>
+    </div>
     <form class="compose" id="compose" onsubmit="return false;">
       <textarea id="msg-input" rows="1" placeholder="Write a message…  (Enter to send, Shift+Enter for newline)"></textarea>
       <button type="submit">Send</button>
@@ -292,6 +325,8 @@ function childFolders(parentId){ return folders.filter(f => (f.parentId || null)
 function roomsInFolder(id){ return rooms.filter(r => (r.folderId || null) === id); }
 function isExpanded(id){ return expandedFolders[id] !== false; }
 let currentRoom = null;         // uuid of the open room
+let selectedFolder = null;      // folder id whose contents table is shown (null = none)
+let roomDetailsMap = new Map(); // room uuid -> {agents, message_count, last_message_at}
 let lastId = 0;                 // highest message id rendered in currentRoom
 let renderedIds = new Set();    // message ids already in the log (dedup)
 let streamingBase = {};         // message id -> last full row dict (for live in-place updates)
@@ -635,6 +670,129 @@ function renderRooms(){
   roomsEl.appendChild(rootUl);
 }
 
+// ---- folder-contents table (right pane) ----
+// Show the folder-contents table in room-main, hiding the chat. Sets the title
+// to the selected folder's name, then fetches fresh room stats and renders the
+// recursive subtree. Mirrors /cron's folder-details pane.
+async function showFolderDetail(){
+  if (selectedFolder === null){ hideFolderDetail(); return; }
+  const detail = document.getElementById('folder-detail');
+  document.getElementById('chat-log').hidden = true;
+  document.getElementById('compose').hidden = true;
+  detail.hidden = false;
+  const f = folderById(selectedFolder);
+  document.getElementById('folder-detail-title').textContent =
+    f ? ('Folder: ' + f.name) : 'Folder';
+  // Refetch on each selection so counts/times stay current.
+  try {
+    const details = await getJSON('/chat/api/rooms/details');
+    roomDetailsMap = new Map((details || []).map(d => [d.uuid, d]));
+  } catch (e) {
+    roomDetailsMap = new Map();
+  }
+  if (selectedFolder === null) return;  // user navigated away while fetching
+  renderFolderDetailRows();
+}
+
+// Restore the chat view (called when a room is opened).
+function hideFolderDetail(){
+  document.getElementById('folder-detail').hidden = true;
+  document.getElementById('chat-log').hidden = false;
+  document.getElementById('compose').hidden = false;
+}
+
+// Render the selected folder's recursive subtree as depth-indented rows.
+function renderFolderDetailRows(){
+  const tbody = document.getElementById('folder-detail-rows');
+  tbody.innerHTML = '';
+  const rootFolders = childFolders(selectedFolder);
+  const rootRooms = roomsInFolder(selectedFolder);
+  if (!rootFolders.length && !rootRooms.length){
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'fd-empty';
+    td.textContent = 'empty folder';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+  // Pre-order walk: each folder's rooms, then recurse into its subfolders.
+  const walk = (folderId, depth) => {
+    childFolders(folderId).forEach(sub => {
+      tbody.appendChild(folderDetailFolderRow(sub, depth));
+      walk(sub.id, depth + 1);
+    });
+    roomsInFolder(folderId).forEach(r => {
+      tbody.appendChild(folderDetailRoomRow(r, depth));
+    });
+  };
+  walk(selectedFolder, 0);
+}
+
+function fdIndent(depth){ return '\\u00A0\\u00A0'.repeat(depth); }
+
+function fdDetailsLink(onClick){
+  const a = document.createElement('a');
+  a.className = 'fd-details';
+  a.textContent = 'Details';
+  a.addEventListener('click', onClick);
+  return a;
+}
+
+// A subfolder row: name (indented) + Details link that drills into it.
+function folderDetailFolderRow(f, depth){
+  const tr = document.createElement('tr');
+  const nameTd = document.createElement('td');
+  nameTd.className = 'fd-name';
+  const indent = document.createElement('span');
+  indent.textContent = fdIndent(depth);
+  const ic = document.createElement('span');
+  ic.className = 'fd-icon';
+  ic.innerHTML = CHAT_ICON_FOLDER;
+  nameTd.appendChild(indent);
+  nameTd.appendChild(ic);
+  nameTd.appendChild(document.createTextNode(' ' + f.name));
+  tr.appendChild(nameTd);
+  tr.appendChild(document.createElement('td'));               // agents (blank)
+  const mTd = document.createElement('td'); mTd.className = 'fd-num'; tr.appendChild(mTd);  // messages (blank)
+  tr.appendChild(document.createElement('td'));               // last message (blank)
+  const actTd = document.createElement('td');
+  actTd.appendChild(fdDetailsLink(() => {
+    selectedFolder = f.id;
+    currentRoom = null;
+    renderRooms();
+    showFolderDetail();
+  }));
+  tr.appendChild(actTd);
+  return tr;
+}
+
+// A room row: # name (indented) + agents + message count + last message time,
+// plus a Details link that opens the chatroom (reuses selectRoom).
+function folderDetailRoomRow(r, depth){
+  const d = roomDetailsMap.get(r.uuid) || {};
+  const tr = document.createElement('tr');
+  const nameTd = document.createElement('td');
+  nameTd.className = 'fd-name';
+  nameTd.textContent = fdIndent(depth) + '# ' + r.name;
+  tr.appendChild(nameTd);
+  const agentsTd = document.createElement('td');
+  agentsTd.textContent = (d.agents || []).join(', ');
+  tr.appendChild(agentsTd);
+  const mTd = document.createElement('td');
+  mTd.className = 'fd-num';
+  mTd.textContent = (d.message_count != null) ? d.message_count : '';
+  tr.appendChild(mTd);
+  const lastTd = document.createElement('td');
+  lastTd.textContent = d.last_message_at ? d.last_message_at : '—';
+  tr.appendChild(lastTd);
+  const actTd = document.createElement('td');
+  actTd.appendChild(fdDetailsLink(() => { selectRoom(r.uuid); }));
+  tr.appendChild(actTd);
+  return tr;
+}
+
 // A folder row: the folder icon flips open when expanded and the folder has
 // children. Click toggles expand/collapse. Ported from cronFolderLi.
 function folderLi(f){
@@ -644,7 +802,7 @@ function folderLi(f){
   const hasKids = (kids.length + kidRooms.length) > 0;
   const expanded = isExpanded(f.id);
   const node = document.createElement('div');
-  node.className = 'chat-node';
+  node.className = 'chat-node' + (selectedFolder === f.id ? ' sel' : '');
   const icon = document.createElement('span');
   icon.className = 'chat-ficon';
   icon.innerHTML = (expanded && hasKids) ? CHAT_ICON_FOLDER_OPEN : CHAT_ICON_FOLDER;
@@ -655,9 +813,18 @@ function folderLi(f){
   node.appendChild(label);
   node.title = f.name;
   node.addEventListener('click', () => {
-    expandedFolders[f.id] = !isExpanded(f.id);
-    saveExpandState();
+    // First click selects the folder (shows its contents table); clicking the
+    // already-selected folder toggles its expand/collapse (mirrors /cron).
+    const wasSelected = (selectedFolder === f.id);
+    if (wasSelected){
+      expandedFolders[f.id] = !isExpanded(f.id);
+      saveExpandState();
+    } else {
+      selectedFolder = f.id;
+      currentRoom = null;  // a folder and a room are never selected at once
+    }
     renderRooms();
+    showFolderDetail();
   });
   makeDraggable(node, 'folder', f.id);
   makeFolderDrop(node, f.id);
@@ -972,12 +1139,13 @@ function buildRoomMenu(roomUuid){
   return wrap;
 }
 
-// Folder kebab: Rename + Delete. Always visible (folders have no "active"
-// state like rooms). Reuses the room-menu styles.
+// Folder kebab: Rename + Delete. The wrap is laid out (display:flex) but its
+// visibility is governed by CSS — shown only when the folder node is selected
+// (.chat-node.sel) or hovered, mirroring the rooms' active-only kebab.
 function buildFolderMenu(folderId){
   const wrap = document.createElement('div');
   wrap.className = 'room-actions';
-  wrap.style.display = 'flex';  // folders show the kebab unconditionally
+  wrap.style.display = 'flex';  // keep it laid out; CSS controls visibility
   const kebab = document.createElement('button');
   kebab.type = 'button';
   kebab.className = 'room-kebab';
@@ -1163,6 +1331,8 @@ document.addEventListener('keydown', (e) => {
 
 async function selectRoom(uuid){
   currentRoom = uuid;
+  selectedFolder = null;  // opening a room clears any folder selection
+  hideFolderDetail();     // swap the right pane back to the chat view
   unread[uuid] = 0;
   lastId = 0;
   renderedIds = new Set();
