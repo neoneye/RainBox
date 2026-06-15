@@ -121,3 +121,11 @@ def test_add_missing_user_uuid_400(client, room):
         content_type="application/json",
     )
     assert resp.status_code == 400
+
+
+def test_add_unknown_user_404(client, room):
+    flask_client, _app = client
+    room_uuid, _human, _agent_a, _agent_b = room
+    # Valid room, but the user_uuid doesn't belong to any chat_user.
+    resp = _add(flask_client, room_uuid, uuid4())
+    assert resp.status_code == 404
