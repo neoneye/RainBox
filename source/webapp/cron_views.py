@@ -42,25 +42,25 @@ CRON_TEMPLATE = """
   .muted{color:#6b7280;font-size:0.85rem}
   .builder{margin:1em 0;max-width:900px}
   .builder-title{font-weight:700;font-size:1.5rem;margin:0 0 0.6em}
-  /* New cronjob is an overlay: a full-screen backdrop blocks accidental clicks
-     on the tree, with the builder floating as a centered modal card. */
-  .cron-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1500}
-  .cron-modal-backdrop[hidden]{display:none}
-  .builder.cron-as-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1600;
-    margin:0;width:min(640px,92vw);max-width:none;max-height:90vh;overflow:auto;
-    background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.3);padding:22px 24px}
-  /* Job-details edit overlays (Edit schedule / Edit action): small focused
-     modals over their own backdrop, distinct from the New-job builder modal. */
-  .cron-edit-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1600;
-    width:min(560px,92vw);max-height:90vh;overflow:auto;background:#fff;border-radius:10px;
-    box-shadow:0 12px 40px rgba(0,0,0,0.3);padding:22px 24px}
-  .cron-edit-modal[hidden]{display:none}
-  .cron-edit-modal .brow{margin:0.6em 0;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
-  .cron-edit-modal label{font-weight:600;font-size:0.9rem;display:inline-flex;flex-direction:column;gap:3px}
-  .cron-edit-modal select,.cron-edit-modal input[type=text]{font-family:inherit;font-size:0.9rem;padding:5px 7px;font-weight:400}
-  .cron-edit-modal input[type=text]{min-width:220px}
-  .cron-edit-modal textarea{font-family:inherit;font-size:0.9rem;font-weight:400;padding:5px 7px;width:100%;min-height:5em;resize:vertical;box-sizing:border-box}
-  .cron-edit-modal button:disabled{opacity:0.45;cursor:not-allowed}
+  /* App-wide modal pattern (docs/ui-modals.md): one shared backdrop + centered
+     "card" overlays that are siblings of it. The New-job builder and the
+     job-details edit overlays (Edit schedule / Edit action / description /
+     delete / folder) are all .ui-modal cards over the single backdrop. */
+  .ui-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:1500}
+  .ui-modal-backdrop[hidden]{display:none}
+  .ui-modal{position:fixed;z-index:1600;left:50%;top:50%;transform:translate(-50%,-50%);
+    background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.25);
+    padding:1.2em 1.3em;width:min(560px,92vw);max-height:90vh;overflow:auto}
+  .ui-modal[hidden]{display:none}
+  /* The New-job builder is a wider card than the canonical 420px default; keep
+     its original width so its multi-column schedule rows don't get cramped. */
+  .builder.ui-modal{margin:0;max-width:none;width:min(640px,92vw);padding:22px 24px}
+  .ui-modal .brow{margin:0.6em 0;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  .ui-modal label{font-weight:600;font-size:0.9rem;display:inline-flex;flex-direction:column;gap:3px}
+  .ui-modal select,.ui-modal input[type=text]{font-family:inherit;font-size:0.9rem;padding:5px 7px;font-weight:400}
+  .ui-modal input[type=text]{min-width:220px}
+  .ui-modal textarea{font-family:inherit;font-size:0.9rem;font-weight:400;padding:5px 7px;width:100%;min-height:5em;resize:vertical;box-sizing:border-box}
+  .ui-modal button:disabled{opacity:0.45;cursor:not-allowed}
   /* Job details: read-only schedule/action summaries with an Edit button, plus
      an inline description editor. */
   .cron-job-detail[hidden]{display:none}
@@ -239,7 +239,7 @@ CRON_TEMPLATE = """
     <div class="cjd-value" id="cjd-health"></div>
   </div>
 </div>
-<div class="builder" id="cron-builder">
+<div class="builder ui-modal" id="cron-builder">
   <div class="builder-title" id="cron-builder-title"></div>
   <div class="brow" id="cron-name-row">
     <label>Name <input type="text" id="f-name" placeholder="short title (required)"></label>
@@ -303,10 +303,12 @@ CRON_TEMPLATE = """
 </div>
 </section>
 </div>
-<div id="cron-modal-backdrop" class="cron-modal-backdrop" hidden></div>
-<!-- Job-details edit overlays (own backdrop, independent of the New-job modal). -->
-<div id="cron-edit-backdrop" class="cron-modal-backdrop" hidden></div>
-<div id="cron-sched-modal" class="cron-edit-modal" hidden>
+<!-- One shared backdrop for every modal on the page (the New-job builder above
+     and all the edit overlays below); each card is a SIBLING of it so in-card
+     clicks don't bubble to the backdrop's dismiss handler (docs/ui-modals.md). -->
+<div id="ui-modal-backdrop" class="ui-modal-backdrop" hidden></div>
+<!-- Job-details edit overlays. -->
+<div id="cron-sched-modal" class="ui-modal" hidden>
   <div class="builder-title">Edit schedule</div>
   <div class="brow">
     <label>Minute <select id="es-min"></select></label>
@@ -325,7 +327,7 @@ CRON_TEMPLATE = """
     <button onclick="cronCloseEditModals()" style="background:#6b7280">Cancel</button>
   </div>
 </div>
-<div id="cron-action-modal" class="cron-edit-modal" hidden>
+<div id="cron-action-modal" class="ui-modal" hidden>
   <div class="builder-title">Edit action</div>
   <div class="brow">
     <span style="font-weight:600">Action type:</span>
@@ -356,8 +358,7 @@ CRON_TEMPLATE = """
 </div>
 <!-- Delete confirmation (custom overlay, not a native dialog so it can't be
      permanently suppressed by the browser). -->
-<div id="cron-delete-backdrop" class="cron-modal-backdrop" hidden></div>
-<div id="cron-delete-modal" class="cron-edit-modal" hidden>
+<div id="cron-delete-modal" class="ui-modal" hidden>
   <div class="builder-title">Confirm delete</div>
   <div class="brow" id="cron-delete-msg" style="display:block"></div>
   <div class="brow" id="cron-delete-name-row" hidden>
@@ -370,8 +371,7 @@ CRON_TEMPLATE = """
   </div>
 </div>
 <!-- Edit description (folder or job) overlay. -->
-<div id="cron-desc-backdrop" class="cron-modal-backdrop" hidden></div>
-<div id="cron-desc-modal" class="cron-edit-modal" hidden>
+<div id="cron-desc-modal" class="ui-modal" hidden>
   <div class="builder-title">Edit description</div>
   <div class="brow">
     <label style="width:100%">Description
@@ -383,8 +383,7 @@ CRON_TEMPLATE = """
   </div>
 </div>
 <!-- New folder / subfolder name (custom overlay, not a native prompt). -->
-<div id="cron-folder-backdrop" class="cron-modal-backdrop" hidden></div>
-<div id="cron-folder-modal" class="cron-edit-modal" hidden>
+<div id="cron-folder-modal" class="ui-modal" hidden>
   <div class="builder-title" id="cron-folder-title">New folder</div>
   <div class="brow">
     <label style="width:100%">Folder name

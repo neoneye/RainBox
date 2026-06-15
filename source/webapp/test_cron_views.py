@@ -103,9 +103,10 @@ def test_cron_page_has_folder_tree_split():
     assert 'id="cron-builder"' in body
     assert 'id="cron-builder-title"' in body
     assert 'id="cron-table-wrap"' in body
-    # New cronjob opens as a modal overlay over a click-blocking backdrop.
-    assert 'id="cron-modal-backdrop"' in body
-    assert "cron-as-modal" in body
+    # New cronjob opens as a modal overlay over the shared click-blocking
+    # backdrop; the builder card carries the app-wide ui-modal class.
+    assert 'id="ui-modal-backdrop"' in body
+    assert "builder ui-modal" in body
     # Right-pane title reflects what's being viewed.
     assert 'id="cron-pane-title"' in body
     assert "Folder details" in body

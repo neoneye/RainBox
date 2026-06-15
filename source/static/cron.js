@@ -266,8 +266,15 @@ function cronRender(){
   document.getElementById('cancel-btn').style.display = cronCreating ? '' : 'none';
   const builder = document.getElementById('cron-builder');
   builder.hidden = !cronCreating;
-  builder.classList.toggle('cron-as-modal', cronCreating);
-  document.getElementById('cron-modal-backdrop').hidden = !cronCreating;
+  // The builder is statically class="builder ui-modal"; visibility is driven by
+  // its [hidden] attribute. Show the shared backdrop while the builder is open;
+  // when it isn't, leave the backdrop alone if an edit overlay still has it up
+  // (those overlays show/hide it themselves), else hide it.
+  if (cronCreating){
+    document.getElementById('ui-modal-backdrop').hidden = false;
+  } else if (!cronAnyEditModalOpen()){
+    document.getElementById('ui-modal-backdrop').hidden = true;
+  }
   const bt = document.getElementById('cron-builder-title');
   bt.textContent = 'New job';
   bt.hidden = !cronCreating;
@@ -412,14 +419,24 @@ function cronEdit(uuid){
   cronRender();
 }
 // ---- Job-details edit overlays (Edit schedule / Edit action) ----
+// All modals share one #ui-modal-backdrop (docs/ui-modals.md): every open shows
+// it, every close hides it.
 function cronOpenEditModal(id){
-  document.getElementById('cron-edit-backdrop').hidden = false;
+  document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById(id).hidden = false;
 }
 function cronCloseEditModals(){
-  document.getElementById('cron-edit-backdrop').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
   ['cron-sched-modal', 'cron-action-modal'].forEach(id =>
     document.getElementById(id).hidden = true);
+}
+// True when any of the edit/delete/desc/folder overlays is currently open (the
+// builder is tracked separately via cronCreating). Used so cronRender doesn't
+// yank the shared backdrop out from under an open overlay.
+function cronAnyEditModalOpen(){
+  return ['cron-sched-modal', 'cron-action-modal', 'cron-delete-modal',
+          'cron-desc-modal', 'cron-folder-modal']
+    .some(id => !document.getElementById(id).hidden);
 }
 function cronEditSchedule(){
   const r = cronRowsState.find(x => x.uuid === cronEditUuid);
@@ -611,16 +628,20 @@ function cronCurrentDescNode(){
   if (cronSelectedFolder !== null) return cronFolderById(cronSelectedFolder);
   return null;
 }
+// Loaded value of the description when the overlay opened, so backdrop/Esc
+// dismissal can tell whether the user changed anything.
+let cronDescOrig = '';
 function cronEditDescription(){
   const node = cronCurrentDescNode();
   if (!node) return;
-  document.getElementById('cron-desc-input').value = node.description || '';
-  document.getElementById('cron-desc-backdrop').hidden = false;
+  cronDescOrig = node.description || '';
+  document.getElementById('cron-desc-input').value = cronDescOrig;
+  document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('cron-desc-modal').hidden = false;
   document.getElementById('cron-desc-input').focus();
 }
 function cronCloseDescModal(){
-  document.getElementById('cron-desc-backdrop').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('cron-desc-modal').hidden = true;
 }
 function cronSaveDescription(){
@@ -1023,10 +1044,30 @@ function cronNewJob(preferFolderId){
   document.getElementById('form-err').textContent = '';
   cronRenderTree();
   cronRender();
+  // Snapshot the freshly-defaulted builder so backdrop/Esc dismissal can tell
+  // whether the user has since changed any field (see cronBuilderSnapshot).
+  cronBuilderOrig = cronBuilderSnapshot();
   const nameEl = document.getElementById('f-name');
   nameEl.focus();
   nameEl.select();  // highlight the default so it's easy to overwrite
 }
+// A stable string of the builder's user-editable fields, used to detect whether
+// the New-job builder is "dirty" (changed from the snapshot taken when opened).
+function cronBuilderSnapshot(){
+  return JSON.stringify({
+    name: document.getElementById('f-name').value,
+    desc: document.getElementById('f-desc').value,
+    cron: cronCurrent(),
+    tz: document.getElementById('f-tz').value,
+    folder: document.getElementById('f-folder').value,
+    atype: cronActiveType(),
+    target: document.getElementById('f-target').value,
+    message: document.getElementById('f-message').value,
+    command: document.getElementById('f-command').value,
+    retries: document.getElementById('f-retries').value,
+  });
+}
+let cronBuilderOrig = '';
 // New folder via a custom overlay (a native prompt can be permanently
 // suppressed by the browser). asSub=true nests under the selected folder.
 let cronAddFolderAsSub = false;
@@ -1036,12 +1077,12 @@ function cronAddFolder(asSub){
   const input = document.getElementById('cron-folder-input');
   input.value = '';
   document.getElementById('cron-folder-create').disabled = true;
-  document.getElementById('cron-folder-backdrop').hidden = false;
+  document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('cron-folder-modal').hidden = false;
   input.focus();
 }
 function cronCloseFolderModal(){
-  document.getElementById('cron-folder-backdrop').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('cron-folder-modal').hidden = true;
 }
 function cronAddFolderConfirm(){
@@ -1109,12 +1150,12 @@ function cronOpenDeleteModal(opts){
   } else {
     nameRow.hidden = true; btn.disabled = false;
   }
-  document.getElementById('cron-delete-backdrop').hidden = false;
+  document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('cron-delete-modal').hidden = false;
   if (cronDeleteRequireName) input.focus();
 }
 function cronCloseDeleteModal(){
-  document.getElementById('cron-delete-backdrop').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('cron-delete-modal').hidden = true;
   cronDeleteOnConfirm = null;
   cronDeleteRequireName = null;
@@ -1517,6 +1558,59 @@ async function cronSavePush(){
     if (cronSaveQueued){ cronSaveQueued = false; cronSavePush(); }
   }
 }
+
+// ---- dirty-guarded dismissal (docs/ui-modals.md) --------------------------
+// Cancel buttons always close (handled by each modal's own close fn). The
+// accidental exits — clicking the shared backdrop or pressing Esc — only
+// dismiss when the open modal is "clean" (the user hasn't entered/changed
+// anything), so an errant click/keystroke can't discard typed-in data.
+function cronOpenModalDirty(){
+  // New-job builder: dirty if any field differs from the snapshot at open.
+  if (cronCreating){
+    return cronBuilderSnapshot() !== cronBuilderOrig;
+  }
+  // Edit schedule: cron/timezone changed from the loaded job (same signal the
+  // Save button uses).
+  if (!document.getElementById('cron-sched-modal').hidden){
+    return cronCurrentFrom('es') !== cronSchedOrigCron
+      || document.getElementById('es-tz').value !== cronSchedOrigTz;
+  }
+  // Edit action: any action field changed from the loaded job.
+  if (!document.getElementById('cron-action-modal').hidden){
+    return cronEditActiveType() !== cronActionOrig.type
+      || document.getElementById('ea-target').value.trim() !== cronActionOrig.target
+      || document.getElementById('ea-message').value.trim() !== cronActionOrig.message
+      || document.getElementById('ea-command').value.trim() !== cronActionOrig.command
+      || (parseInt(document.getElementById('ea-retries').value, 10) || 0) !== cronActionOrig.retries;
+  }
+  // Edit description: textarea changed from the loaded value.
+  if (!document.getElementById('cron-desc-modal').hidden){
+    return document.getElementById('cron-desc-input').value !== cronDescOrig;
+  }
+  // New folder / subfolder: dirty once the name input is non-empty.
+  if (!document.getElementById('cron-folder-modal').hidden){
+    return document.getElementById('cron-folder-input').value.trim() !== '';
+  }
+  // Delete: dirty only when the type-to-confirm box is in use and non-empty;
+  // a plain yes/no delete is never dirty.
+  if (!document.getElementById('cron-delete-modal').hidden){
+    return cronDeleteRequireName
+      ? document.getElementById('cron-delete-input').value.trim() !== '' : false;
+  }
+  return false;
+}
+function cronCloseOpenModal(){
+  // Close whichever single modal is open; each close fn clears its own state.
+  if (cronCreating){ cronCancelEdit(); return; }
+  if (!document.getElementById('cron-sched-modal').hidden){ cronCloseEditModals(); return; }
+  if (!document.getElementById('cron-action-modal').hidden){ cronCloseEditModals(); return; }
+  if (!document.getElementById('cron-desc-modal').hidden){ cronCloseDescModal(); return; }
+  if (!document.getElementById('cron-folder-modal').hidden){ cronCloseFolderModal(); return; }
+  if (!document.getElementById('cron-delete-modal').hidden){ cronCloseDeleteModal(); return; }
+}
+function cronDismissIfClean(){ if (!cronOpenModalDirty()) cronCloseOpenModal(); }
+document.getElementById('ui-modal-backdrop').addEventListener('click', cronDismissIfClean);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') cronDismissIfClean(); });
 
 // ---- initial paint (after hydrating from the backend) ----
 cronInitTreeDnD();
