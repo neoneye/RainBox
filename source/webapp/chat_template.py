@@ -17,7 +17,7 @@ CHAT_TEMPLATE: str = """
   .chat-split{display:grid;grid-template-columns:260px 1fr;grid-template-rows:1fr;flex:1 1 auto;min-height:0}
   .chat-split.sidebar-open{grid-template-columns:260px 1fr 240px}
 
-  .rooms{overflow:auto;min-height:0;border-right:1px solid #ddd;background:#fbfbfb;padding:0.5em}
+  .rooms{overflow:auto;min-height:0;border-right:1px solid #ddd;background:#fbfbfb;padding:0.5em;font-size:0.9rem}
   .rooms-head{display:flex;align-items:center;justify-content:space-between;padding:0.2em 0.4em 0.5em}
   .rooms-head .title{font-weight:600;color:#333;font-size:0.9rem}
   .new-room-btn{border:none;background:#2563eb;color:#fff;border-radius:6px;padding:0.25em 0.7em;cursor:pointer;font:inherit;font-size:0.8rem}
@@ -29,7 +29,7 @@ CHAT_TEMPLATE: str = """
         padding:0.5em 0.7em;border-radius:6px;font:inherit;color:#333}
   .room:hover{background:#eef0f6}
   .room.active{background:#e3ebfb}
-  .room-name{display:block;font-weight:600}
+  .room-name{display:block}
   .unread{position:absolute;right:0.5em;top:50%;transform:translateY(-50%);background:#ef4444;color:#fff;
           border-radius:999px;font-size:0.7rem;min-width:1.4em;height:1.4em;display:inline-flex;
           align-items:center;justify-content:center;padding:0 0.35em}
@@ -76,7 +76,7 @@ CHAT_TEMPLATE: str = """
   .chat-node:hover > .room-actions{visibility:visible}
   .chat-ficon{display:inline-flex;width:1.05em;height:1.05em;color:#6b7280;flex:0 0 auto}
   .chat-ficon svg{width:100%;height:100%}
-  .chat-folder-label{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+  .chat-folder-label{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* drag feedback (ported from cron) */
   .chat-dragging{opacity:0.4}
   .chat-drop-target{outline:2px solid #2563eb;outline-offset:-2px}
