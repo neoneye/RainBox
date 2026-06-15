@@ -73,15 +73,22 @@ def test_folder_delete_preview_and_delete(app_ctx):
     db.db.session.execute(sa.update(Chatroom).where(Chatroom.uuid == room.uuid)
                           .values(folder_uuid=folder.uuid))
     db.db.session.commit()
-    room_uuid = room.uuid  # capture before ORM session is invalidated by HTTP call
-    db.post_chat_message(room_uuid, human.uuid, "hi")
-    preview = client.get(f"/chat/api/folders/{folder.uuid}/delete-preview").get_json()
-    assert preview["room_count"] == 1 and preview["message_count"] == 1
-    resp = client.delete(f"/chat/api/folders/{folder.uuid}")
-    assert resp.status_code == 200
-    db.db.session.expire_all()  # flush ORM identity-map cache after HTTP-layer delete
-    assert db.db.session.execute(
-        sa.select(Chatroom).where(Chatroom.uuid == room_uuid)).scalar_one_or_none() is None
+    room_uuid = room.uuid      # capture before ORM session is invalidated by HTTP call
+    folder_uuid = folder.uuid  # capture before ORM session is invalidated by HTTP call
+    try:
+        db.post_chat_message(room_uuid, human.uuid, "hi")
+        preview = client.get(f"/chat/api/folders/{folder_uuid}/delete-preview").get_json()
+        assert preview["room_count"] == 1 and preview["message_count"] == 1
+        resp = client.delete(f"/chat/api/folders/{folder_uuid}")
+        assert resp.status_code == 200
+        db.db.session.expire_all()  # flush ORM identity-map cache after HTTP-layer delete
+        assert db.db.session.execute(
+            sa.select(Chatroom).where(Chatroom.uuid == room_uuid)).scalar_one_or_none() is None
+    finally:
+        db.db.session.expire_all()
+        db.db.session.execute(sa.delete(Chatroom).where(Chatroom.uuid == room_uuid))
+        db.db.session.execute(sa.delete(ChatroomFolder).where(ChatroomFolder.uuid == folder_uuid))
+        db.db.session.commit()
 
 
 def test_folder_delete_unknown_is_404(app_ctx):
