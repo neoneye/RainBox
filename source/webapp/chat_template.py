@@ -1438,6 +1438,14 @@ document.getElementById('chat-room-input').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); confirmRoomModal(); }
 });
 
+// Click the shared backdrop (outside any open card) to dismiss whichever
+// chat modal is currently open. Each close fn clears its own modal state.
+document.getElementById('chat-modal-backdrop').addEventListener('click', () => {
+  if (!document.getElementById('chat-folder-modal').hidden) closeFolderModal();
+  if (!document.getElementById('chat-delete-modal').hidden) closeDeleteModal();
+  if (!document.getElementById('chat-room-modal').hidden) closeRoomModal();
+});
+
 // Live updates: the server pushes {room_uuid, message_id} on every new message.
 // EventSource ignores `:` comment lines (the keepalives), so only real messages
 // reach onmessage.
