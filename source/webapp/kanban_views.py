@@ -39,6 +39,7 @@ def _kanban_js_version() -> int:
 KANBAN_TEMPLATE = """
 <!doctype html>
 <title>Kanban &mdash; rainbox</title>
+<link rel="stylesheet" href="/static/ui-modal.css">
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
   .muted{color:#6b7280;font-size:0.85rem}
@@ -123,20 +124,17 @@ KANBAN_TEMPLATE = """
   .kb-agent{font-size:0.74rem;font-weight:600;color:#3730a3;background:#e0e7ff;border-radius:999px;padding:2px 9px}
   .kb-agent.kb-unassigned{color:#6b7280;background:#f3f4f6;font-weight:400}
   /* Overlays — custom in-page modals; the page uses NO native prompt/confirm/
-     alert (a browser can permanently suppress those). */
-  .ui-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1500}
-  .ui-modal-backdrop[hidden]{display:none}
-  .ui-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1600;
-    width:min(560px,92vw);max-height:90vh;overflow:auto;background:#fff;border-radius:10px;
-    box-shadow:0 12px 40px rgba(0,0,0,0.3);padding:22px 24px}
-  .ui-modal[hidden]{display:none}
-  .ui-modal h3{margin:0 0 0.6em;font-size:1.2rem}
+     alert (a browser can permanently suppress those). Base modal rules
+     (backdrop, card, h3, buttons) come from the shared /static/ui-modal.css;
+     only the page-specific form-field styling stays here. */
+  /* Kanban cards are wider than the canonical 420px and scroll when tall (the
+     task modal carries a history list), so keep that sizing as a page override. */
+  .ui-modal{width:min(560px,92vw);max-height:90vh;overflow:auto}
   .ui-modal .kb-row{margin:0.6em 0;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
   .ui-modal label{font-weight:600;font-size:0.9rem;display:inline-flex;flex-direction:column;gap:3px}
   .ui-modal input[type=text],.ui-modal select{font-family:inherit;font-size:0.9rem;padding:5px 7px;font-weight:400;min-width:260px}
   .ui-modal textarea{font-family:inherit;font-size:0.9rem;font-weight:400;padding:5px 7px;width:100%;
     min-height:5em;resize:vertical;box-sizing:border-box}
-  .ui-modal button:disabled{opacity:0.45;cursor:not-allowed}
   .ui-modal .err{color:#991b1b;font-weight:600;font-size:0.85rem}
   /* Markdown view: monospace block + copy. */
   #kb-md-pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:14px;font-size:0.8rem;
@@ -192,10 +190,10 @@ KANBAN_TEMPLATE = """
     <label style="width:100%">Description <textarea id="kb-b-desc" rows="3"
       placeholder="optional — included in the markdown serialization as context for the LLM"></textarea></label>
   </div>
-  <div class="kb-row">
-    <button id="kb-b-save" onclick="kbSaveBoardModal()">Create board</button>
-    <button class="kb-secondary" onclick="kbCloseModals()">Cancel</button>
-    <span class="err" id="kb-b-err"></span>
+  <span class="err" id="kb-b-err"></span>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="kbCloseModals()">Cancel</button>
+    <button id="kb-b-save" class="btn-primary" onclick="kbSaveBoardModal()">Create board</button>
   </div>
 </div>
 
@@ -215,13 +213,13 @@ KANBAN_TEMPLATE = """
   </div>
   <div class="kb-row muted" id="kb-t-uuid-row" hidden>Task uuid: <code id="kb-t-uuid"></code></div>
   <div class="kb-row muted" id="kb-t-claim" hidden></div>
-  <div class="kb-row">
-    <button id="kb-t-save" onclick="kbSaveTaskModal()">Create task</button>
-    <button class="kb-secondary" onclick="kbCloseModals()">Cancel</button>
-    <button id="kb-t-run" onclick="kbEnqueueTask()" hidden
+  <span class="err" id="kb-t-err"></span>
+  <div class="modal-actions">
+    <button id="kb-t-delete" class="btn-danger" onclick="kbConfirmDeleteTask()" hidden>Delete</button>
+    <button class="btn-cancel" onclick="kbCloseModals()">Cancel</button>
+    <button id="kb-t-run" class="btn-primary" onclick="kbEnqueueTask()" hidden
       title="Enqueue the assigned agent to execute this task now">Run</button>
-    <button id="kb-t-delete" class="kb-danger" onclick="kbConfirmDeleteTask()" hidden>Delete</button>
-    <span class="err" id="kb-t-err"></span>
+    <button id="kb-t-save" class="btn-primary" onclick="kbSaveTaskModal()">Create task</button>
   </div>
   <!-- Audit trail (kanban_task_event): UI saves + agent operations alike. -->
   <div id="kb-t-events" hidden></div>
@@ -232,9 +230,9 @@ KANBAN_TEMPLATE = """
   <h3 id="kb-md-title">Markdown</h3>
   <div class="muted" style="margin-bottom:8px">The LLM-facing serialization of this board; tasks carry their uuid.</div>
   <pre id="kb-md-pre"></pre>
-  <div class="kb-row">
-    <button onclick="kbCopyShownSerialization()">Copy</button>
-    <button class="kb-secondary" onclick="kbCloseModals()">Close</button>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="kbCloseModals()">Close</button>
+    <button class="btn-primary" onclick="kbCopyShownSerialization()">Copy</button>
   </div>
 </div>
 
@@ -242,9 +240,9 @@ KANBAN_TEMPLATE = """
 <div id="kb-confirm-modal" class="ui-modal" hidden>
   <h3 id="kb-confirm-title">Delete?</h3>
   <div class="kb-row" id="kb-confirm-text"></div>
-  <div class="kb-row">
-    <button id="kb-confirm-yes" class="kb-danger">Delete</button>
-    <button class="kb-secondary" onclick="kbCloseModals()">Cancel</button>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="kbCloseModals()">Cancel</button>
+    <button id="kb-confirm-yes" class="btn-danger">Delete</button>
   </div>
 </div>
 
