@@ -61,3 +61,48 @@ def test_backfill_is_noop_when_positions_already_distinct(app_ctx):
     finally:
         s.execute(sa.delete(Chatroom).where(Chatroom.uuid.in_([r1.uuid, r2.uuid])))
         s.commit()
+
+
+def test_create_and_list_folders(app_ctx):
+    s = db.db.session
+    f = db.create_chatroom_folder("Work")
+    sub = db.create_chatroom_folder("Sub", parent_uuid=f.uuid)
+    try:
+        ids = {row["id"] for row in db.list_chatroom_folders()}
+        assert str(f.uuid) in ids and str(sub.uuid) in ids
+        sub_row = next(r for r in db.list_chatroom_folders() if r["id"] == str(sub.uuid))
+        assert sub_row["parentId"] == str(f.uuid)
+        assert sub_row["name"] == "Sub"
+    finally:
+        s.execute(sa.delete(ChatroomFolder).where(
+            ChatroomFolder.uuid.in_([f.uuid, sub.uuid])))
+        s.commit()
+
+
+def test_load_tree_shape_and_version_ignores_messages(app_ctx):
+    s = db.db.session
+    human = db.get_human_user()
+    f = db.create_chatroom_folder("TreeFolder")
+    room = db.create_chatroom(f"tree-{uuid4().hex[:6]}", human.uuid, [])
+    s.execute(sa.update(Chatroom).where(Chatroom.uuid == room.uuid).values(
+        folder_uuid=f.uuid))
+    s.commit()
+    try:
+        tree = db.chat_load_tree()
+        assert {"folders", "rooms", "version"} <= set(tree)
+        assert any(r["uuid"] == str(room.uuid) and r["folderId"] == str(f.uuid)
+                   for r in tree["rooms"])
+        assert all("member_count" in r and "folderId" in r for r in tree["rooms"])
+        v1 = db.chat_tree_version()
+        # A new message must NOT change the structural version token.
+        db.post_chat_message(room.uuid, human.uuid, "hello")
+        assert db.chat_tree_version() == v1
+        # A structural change (reparent) MUST change it.
+        s.execute(sa.update(Chatroom).where(Chatroom.uuid == room.uuid).values(
+            folder_uuid=None))
+        s.commit()
+        assert db.chat_tree_version() != v1
+    finally:
+        s.execute(sa.delete(Chatroom).where(Chatroom.uuid == room.uuid))
+        s.execute(sa.delete(ChatroomFolder).where(ChatroomFolder.uuid == f.uuid))
+        s.commit()

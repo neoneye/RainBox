@@ -5,6 +5,7 @@ LISTEN/NOTIFY helpers, per-room workspace-shell state, default seeding
 (seed_chat_defaults), and the cron-events helper (post_cron_event). Re-exported
 from db for import compatibility.
 """
+import hashlib
 import json
 import logging
 from typing import Any
@@ -21,6 +22,7 @@ from db.models import (
     ChatMessage,
     ChatUser,
     Chatroom,
+    ChatroomFolder,
     ChatroomMember,
     FeedbackEvent,
     WorkspaceShellState,
@@ -165,10 +167,100 @@ def create_chatroom(
     return room
 
 
+class ChatTreeError(ValueError):
+    """A chat folder/room tree payload failed structural validation (bad uuid,
+    dangling/cyclic folder ref, unknown room folderId, missing/unknown room).
+    Callers turn this into a 4xx rather than a 500."""
+
+
+class ChatTreeConflict(Exception):
+    """The chat tree changed since the caller hydrated (stale base_version on
+    save). Callers map this to HTTP 409 so the client re-hydrates instead of
+    clobbering another writer's changes."""
+
+
+def _to_uuid(value: Any) -> UUID | None:
+    """Parse to a UUID (normalizing case/format) or None. Lets callers key
+    dedup/reference checks on the normalized value (mirrors db.cron._to_uuid;
+    duplicated here to avoid a db.chat <-> db.cron import cycle)."""
+    try:
+        return UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def create_chatroom_folder(name: str, parent_uuid: UUID | None = None) -> ChatroomFolder:
+    """Create a left-panel folder. New folders are appended after existing
+    siblings under the same parent (position = current sibling count)."""
+    sibling_count = db.session.execute(
+        sa.select(sa.func.count()).select_from(ChatroomFolder)
+        .where(ChatroomFolder.parent_uuid.is_(parent_uuid) if parent_uuid is None
+               else ChatroomFolder.parent_uuid == parent_uuid)
+    ).scalar() or 0
+    folder = ChatroomFolder(name=name, parent_uuid=parent_uuid, position=int(sibling_count))
+    db.session.add(folder)
+    db.session.commit()
+    return folder
+
+
+def list_chatroom_folders() -> list[dict[str, Any]]:
+    """All folders as {id, name, parentId}, ordered by (position, id)."""
+    folders = db.session.execute(
+        sa.select(ChatroomFolder).order_by(ChatroomFolder.position, ChatroomFolder.id)
+    ).scalars().all()
+    return [
+        {
+            "id": str(f.uuid),
+            "name": f.name,
+            "parentId": str(f.parent_uuid) if f.parent_uuid else None,
+        }
+        for f in folders
+    ]
+
+
+def chat_tree_version() -> str:
+    """Opaque version token over the user-managed tree fields only (folder:
+    uuid/name/parentId/position; room: uuid/folderId/position). Volatile fields
+    (a room's message count / last id) are excluded, so a new message never
+    invalidates an open page — only a structural edit by another writer does.
+    The page hydrates with this token and echoes it on PUT (409 if stale)."""
+    folders = db.session.execute(
+        sa.select(ChatroomFolder).order_by(ChatroomFolder.uuid)
+    ).scalars().all()
+    rooms = db.session.execute(
+        sa.select(Chatroom).order_by(Chatroom.uuid)
+    ).scalars().all()
+    payload = [
+        [[str(f.uuid), f.name,
+          str(f.parent_uuid) if f.parent_uuid else None, f.position]
+         for f in folders],
+        [[str(r.uuid),
+          str(r.folder_uuid) if r.folder_uuid else None, r.position]
+         for r in rooms],
+    ]
+    blob = json.dumps(payload, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def chat_load_tree() -> dict[str, Any]:
+    """The whole left-panel tree: folders, rooms (with member_count/last id +
+    folderId, reusing list_chatrooms), and the version token."""
+    return {
+        "folders": list_chatroom_folders(),
+        "rooms": list_chatrooms(),
+        "version": chat_tree_version(),
+    }
+
+
 def list_chatrooms() -> list[dict[str, Any]]:
-    """Rooms for the left panel, with member count and last-message id (the
-    client uses last-message id to know whether a room has anything newer)."""
-    rooms = db.session.query(Chatroom).order_by(Chatroom.created_at.asc()).all()
+    """Rooms for the left panel, ordered by saved position (then id), each with
+    member count, last-message id, and its folder placement (folderId, null =
+    top level)."""
+    rooms = (
+        db.session.query(Chatroom)
+        .order_by(Chatroom.position.asc(), Chatroom.id.asc())
+        .all()
+    )
     member_counts = dict(
         db.session.query(ChatroomMember.room_uuid, sa.func.count())
         .group_by(ChatroomMember.room_uuid)
@@ -185,6 +277,7 @@ def list_chatrooms() -> list[dict[str, Any]]:
             "name": r.name,
             "member_count": int(member_counts.get(r.uuid, 0)),
             "last_message_id": int(last_ids.get(r.uuid) or 0),
+            "folderId": str(r.folder_uuid) if r.folder_uuid else None,
         }
         for r in rooms
     ]
