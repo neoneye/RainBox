@@ -143,7 +143,7 @@ CRON_TEMPLATE = """
   .cron-tree-actions{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
   .cron-tree-actions button{padding:3px 8px;font-size:0.75rem}
   .cron-tree-list,.cron-tree-list ul{list-style:none;margin:0;padding:0}
-  .cron-tree-list ul{padding-left:20px}
+  .cron-tree-list ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
   .cron-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:6px 0}
   /* Only visible while a node is being dragged — an explicit root drop target. */
   .cron-root-drop{display:none;margin-top:8px;padding:8px;border:1px dashed #93c5fd;border-radius:6px;color:#2563eb;font-size:0.82rem;text-align:center;-webkit-user-select:none;user-select:none}
