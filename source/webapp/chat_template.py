@@ -30,7 +30,6 @@ CHAT_TEMPLATE: str = """
   .room:hover{background:#eef0f6}
   .room.active{background:#e3ebfb}
   .room-name{display:block;font-weight:600}
-  .room-sub{display:block;font-size:0.78rem;color:#888}
   .unread{position:absolute;right:0.5em;top:50%;transform:translateY(-50%);background:#ef4444;color:#fff;
           border-radius:999px;font-size:0.7rem;min-width:1.4em;height:1.4em;display:inline-flex;
           align-items:center;justify-content:center;padding:0 0.35em}
@@ -851,12 +850,8 @@ function roomNode(r){
   btn.dataset.room = r.uuid;
   const name = document.createElement('span');
   name.className = 'room-name';
-  name.textContent = '# ' + r.name;
-  const sub = document.createElement('span');
-  sub.className = 'room-sub';
-  sub.textContent = r.member_count + (r.member_count === 1 ? ' member' : ' members');
+  name.textContent = r.name;
   btn.appendChild(name);
-  btn.appendChild(sub);
   const n = unread[r.uuid] || 0;
   if (n > 0){
     const dot = document.createElement('span');
