@@ -85,6 +85,7 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .member-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:0.45em}
   .room-sidebar .member-list li{display:flex;align-items:center;gap:0.5em;font-size:0.9rem;color:#333}
   .room-sidebar .member-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .room-sidebar .member-list li label.member-toggle{display:flex;align-items:center;gap:0.5em;flex:1 1 auto;cursor:pointer;margin:0}
   .room-sidebar .stat{display:flex;justify-content:space-between;padding:0.35em 0;font-size:0.9rem;border-bottom:1px solid #eee}
   .rename-room{font-size:0.78rem;font-weight:500;color:#6c757d;background:none;border:1px solid #ccc;border-radius:6px;padding:0.2em 0.7em;cursor:pointer}
   .rename-room:hover{color:#1a1a2e;border-color:#1a1a2e}
@@ -746,10 +747,16 @@ async function renderSidebar(){
 
 async function renderMembers(){
   const room = currentRoom;
-  let members;
-  try { members = await getJSON('/chat/api/rooms/' + room + '/members'); }
-  catch (_) { return; }
+  let members, agents;
+  try {
+    [members, agents] = await Promise.all([
+      getJSON('/chat/api/rooms/' + room + '/members'),
+      getJSON('/chat/api/agents'),
+    ]);
+  } catch (_) { return; }
   if (room !== currentRoom || sidebarMode !== 'members') return;  // changed while loading
+  const memberUuids = new Set(members.map(m => m.uuid));
+  const humans = members.filter(m => m.user_type === 'human');
   sidebarEl.innerHTML = '';
   const h = document.createElement('h3');
   h.className = 'sidebar-title';
@@ -757,7 +764,8 @@ async function renderMembers(){
   sidebarEl.appendChild(h);
   const ul = document.createElement('ul');
   ul.className = 'member-list';
-  members.forEach(m => {
+  // Humans: always members, rendered read-only (no toggle).
+  humans.forEach(m => {
     const li = document.createElement('li');
     const name = document.createElement('span');
     name.className = 'member-name';
@@ -769,7 +777,55 @@ async function renderMembers(){
     li.appendChild(badge);
     ul.appendChild(li);
   });
+  // Agents: every agent is a checkbox; checked = member. Toggling adds/removes live.
+  agents.forEach(a => {
+    const li = document.createElement('li');
+    const label = document.createElement('label');
+    label.className = 'member-toggle';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = a.uuid;
+    cb.checked = memberUuids.has(a.uuid);
+    cb.addEventListener('change', () => toggleMember(room, a.uuid, cb));
+    const name = document.createElement('span');
+    name.className = 'member-name';
+    name.textContent = a.name;
+    label.appendChild(cb);
+    label.appendChild(name);
+    li.appendChild(label);
+    ul.appendChild(li);
+  });
   sidebarEl.appendChild(ul);
+}
+
+// Add (checkbox now checked) or remove (now unchecked) an agent from a room.
+// Optimistic: the checkbox is already flipped; on failure we revert it.
+async function toggleMember(room, agentUuid, cb){
+  const wantMember = cb.checked;
+  cb.disabled = true;
+  try {
+    let resp;
+    if (wantMember){
+      resp = await fetch('/chat/api/rooms/' + room + '/members', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({user_uuid: agentUuid}),
+      });
+    } else {
+      resp = await fetch('/chat/api/rooms/' + room + '/members/' + agentUuid, {
+        method: 'DELETE',
+      });
+    }
+    if (!resp.ok) throw new Error('member toggle -> ' + resp.status);
+    // Reflect the new count in the left room list locally (no full reload).
+    const r = rooms.find(x => x.uuid === room);
+    if (r){ r.member_count += wantMember ? 1 : -1; renderRooms(); }
+    // Rebuild the panel so the heading count stays accurate (also re-enables).
+    if (room === currentRoom && sidebarMode === 'members') renderMembers();
+  } catch (e) {
+    cb.checked = !wantMember;  // revert on failure
+    cb.disabled = false;
+  }
 }
 
 function statRow(label, value){

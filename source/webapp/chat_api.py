@@ -115,12 +115,43 @@ def delete_chat_room(room_uuid: str) -> Response:
     return jsonify({"uuid": str(ruuid), "deleted": True})
 
 
-@app.route("/chat/api/rooms/<room_uuid>/members")
+@app.route("/chat/api/rooms/<room_uuid>/members", methods=["GET", "POST"])
 def chat_room_members(room_uuid: str) -> Response:
     ruuid = _parse_uuid(room_uuid)
     if db.get_chatroom(ruuid) is None:
         abort(404, "room not found")
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        raw = data.get("user_uuid")
+        if not raw:
+            abort(400, "user_uuid required")
+        uuser = _parse_uuid(raw)
+        if db.get_chat_user(uuser) is None:
+            abort(404, "user not found")
+        added = db.add_room_member(ruuid, uuser)
+        return jsonify(
+            {"room_uuid": str(ruuid), "user_uuid": str(uuser), "added": added}
+        )
     return jsonify(db.list_room_members(ruuid))
+
+
+@app.route(
+    "/chat/api/rooms/<room_uuid>/members/<user_uuid>", methods=["DELETE"]
+)
+def remove_chat_room_member(room_uuid: str, user_uuid: str) -> Response:
+    ruuid = _parse_uuid(room_uuid)
+    if db.get_chatroom(ruuid) is None:
+        abort(404, "room not found")
+    uuser = _parse_uuid(user_uuid)
+    target = db.get_chat_user(uuser)
+    # Defense-in-depth: the UI never offers to remove the human, but reject it
+    # here too so a room can't be orphaned by a hand-crafted request.
+    if target is not None and target.user_type == "human":
+        abort(409, "cannot remove the human from a room")
+    removed = db.remove_room_member(ruuid, uuser)
+    return jsonify(
+        {"room_uuid": str(ruuid), "user_uuid": str(uuser), "removed": removed}
+    )
 
 
 @app.route("/chat/api/agents")
