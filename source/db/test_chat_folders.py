@@ -194,8 +194,8 @@ def test_recursive_delete_preview_and_delete(app_ctx):
     s = db.db.session
     human = db.get_human_user()
     # parent -> child folder; one room in each; an unrelated top-level room.
-    parent = db.create_chatroom_folder("svf-parent")
-    child = db.create_chatroom_folder("svf-child", parent_uuid=parent.uuid)
+    parent = db.create_chatroom_folder("delf-parent")
+    child = db.create_chatroom_folder("delf-child", parent_uuid=parent.uuid)
     r_parent = db.create_chatroom(f"rp-{uuid4().hex[:6]}", human.uuid, [])
     r_child = db.create_chatroom(f"rc-{uuid4().hex[:6]}", human.uuid, [])
     r_other = db.create_chatroom(f"ro-{uuid4().hex[:6]}", human.uuid, [])
@@ -207,7 +207,7 @@ def test_recursive_delete_preview_and_delete(app_ctx):
     db.post_chat_message(r_child.uuid, human.uuid, "three")
     try:
         preview = db.chatroom_folder_delete_preview(parent.uuid)
-        assert preview["folder_name"] == "svf-parent"
+        assert preview["folder_name"] == "delf-parent"
         assert preview["room_count"] == 2          # r_parent + r_child
         assert preview["message_count"] == 3       # 1 + 2
         db.delete_chatroom_folder(parent.uuid)
@@ -219,7 +219,14 @@ def test_recursive_delete_preview_and_delete(app_ctx):
         folder_ids = {f["id"] for f in db.list_chatroom_folders()}
         assert str(parent.uuid) not in folder_ids and str(child.uuid) not in folder_ids
     finally:
-        s.execute(sa.delete(Chatroom).where(Chatroom.uuid == r_other.uuid))
+        # Defensive cleanup: remove this test's folders + rooms even if an
+        # assertion failed before delete_chatroom_folder ran, so nothing leaks
+        # (a leaked folder + surviving room would orphan the room and break the
+        # save-tree tests, which validate every room's folderId).
+        s.execute(sa.delete(Chatroom).where(
+            Chatroom.uuid.in_([r_parent.uuid, r_child.uuid, r_other.uuid])))
+        s.execute(sa.delete(ChatroomFolder).where(
+            ChatroomFolder.uuid.in_([parent.uuid, child.uuid])))
         s.commit()
 
 
