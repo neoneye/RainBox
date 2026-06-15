@@ -1444,10 +1444,30 @@ function closeOpenChatModal(){
   if (!document.getElementById('chat-delete-modal').hidden) closeDeleteModal();
   if (!document.getElementById('chat-room-modal').hidden) closeRoomModal();
 }
-// Dismiss by clicking the shared backdrop (outside any open card) or pressing Esc.
-document.getElementById('chat-modal-backdrop').addEventListener('click', closeOpenChatModal);
+// Has the user typed/checked anything in the currently open modal? If so we
+// refuse the accidental dismiss paths (outside-click / Esc) so no input is lost.
+function openChatModalDirty(){
+  if (!document.getElementById('chat-folder-modal').hidden){
+    return document.getElementById('chat-folder-input').value !== ((folderModalState && folderModalState.current) || '');
+  }
+  if (!document.getElementById('chat-delete-modal').hidden){
+    return document.getElementById('chat-delete-input').value !== '';
+  }
+  if (!document.getElementById('chat-room-modal').hidden){
+    return document.getElementById('chat-room-input').value !== ''
+      || agentListEl.querySelectorAll('input:checked').length > 0;
+  }
+  return false;
+}
+// Dismiss by clicking the shared backdrop (outside any open card) or pressing
+// Esc — but only when the modal is untouched, so an accidental click/keystroke
+// can't discard typed-in data. The Cancel button stays an explicit way out.
+function dismissOpenChatModalIfClean(){
+  if (!openChatModalDirty()) closeOpenChatModal();
+}
+document.getElementById('chat-modal-backdrop').addEventListener('click', dismissOpenChatModalIfClean);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeOpenChatModal();
+  if (e.key === 'Escape') dismissOpenChatModalIfClean();
 });
 
 // Live updates: the server pushes {room_uuid, message_id} on every new message.
