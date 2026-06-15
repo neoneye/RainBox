@@ -68,12 +68,12 @@ CHAT_TEMPLATE: str = """
              padding:0.4em 0.6em;border-radius:6px;cursor:pointer;color:#333;font-size:0.9rem}
   .chat-node:hover{background:#eef0f6}
   .chat-node.sel{background:#dbeafe;font-weight:600}
-  /* Folder kebab: hidden by default, shown when the folder is selected or hovered
-     (mirrors the rooms' active-only kebab). The kebab lives in a .room-actions
-     wrap appended directly inside .chat-node by buildFolderMenu. */
+  /* Folder kebab: hidden by default, shown only when the folder is selected
+     (mirrors the rooms' active-only kebab and the /cron tree — no hover reveal).
+     The kebab lives in a .room-actions wrap appended directly inside .chat-node
+     by buildFolderMenu. */
   .chat-node > .room-actions{visibility:hidden}
   .chat-node.sel > .room-actions{visibility:visible}
-  .chat-node:hover > .room-actions{visibility:visible}
   .chat-ficon{display:inline-flex;width:1.05em;height:1.05em;color:#6b7280;flex:0 0 auto}
   .chat-ficon svg{width:100%;height:100%}
   .chat-folder-label{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
