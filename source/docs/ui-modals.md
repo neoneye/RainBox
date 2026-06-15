@@ -77,8 +77,7 @@ cards at `1600`, so a card always renders above the scrim.
           padding:1.2em 1.3em;width:min(420px,92vw)}
 .ui-modal[hidden]{display:none}
 .ui-modal h3{margin:0 0 0.6em;font-size:1.05rem}
-.ui-modal input[type=text]{width:100%;box-sizing:border-box;padding:0.5em;border:1px solid #ccc;
-                           border-radius:6px;font:inherit}
+.ui-modal p{margin:0 0 0.8em;color:#444;font-size:0.9rem;line-height:1.45}
 .ui-modal .modal-actions{display:flex;justify-content:flex-end;gap:0.5em;margin-top:1em}
 .ui-modal button{border:none;border-radius:6px;padding:0.45em 1em;cursor:pointer;font:inherit}
 .ui-modal .btn-cancel{background:#e5e7eb;color:#374151}
