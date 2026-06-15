@@ -64,7 +64,7 @@ CHAT_TEMPLATE: str = """
   /* ---- folder tree (ported from /cron) ---- */
   #rooms ul{list-style:none;margin:0;padding:0}
   #rooms ul ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
-  .chat-node{position:relative;display:flex;align-items:center;gap:0.4em;width:100%;
+  .chat-node{position:relative;display:flex;align-items:center;gap:0.4em;width:100%;box-sizing:border-box;
              padding:0.4em 0.6em;border-radius:6px;cursor:pointer;color:#333;font-size:0.9rem}
   .chat-node:hover{background:#eef0f6}
   .chat-node.sel{background:#dbeafe;font-weight:600}
