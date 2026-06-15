@@ -106,3 +106,37 @@ def test_load_tree_shape_and_version_ignores_messages(app_ctx):
         s.execute(sa.delete(Chatroom).where(Chatroom.uuid == room.uuid))
         s.execute(sa.delete(ChatroomFolder).where(ChatroomFolder.uuid == f.uuid))
         s.commit()
+
+
+def test_validate_rejects_bad_structures(app_ctx):
+    rid = str(uuid4())
+    fid = str(uuid4())
+    # dangling folder parent
+    with pytest.raises(db.ChatTreeError):
+        db.validate_chat_tree([{"id": fid, "name": "F", "parentId": str(uuid4())}], [])
+    # folder cycle (a -> b -> a)
+    a, b = str(uuid4()), str(uuid4())
+    with pytest.raises(db.ChatTreeError):
+        db.validate_chat_tree(
+            [{"id": a, "name": "A", "parentId": b},
+             {"id": b, "name": "B", "parentId": a}], [])
+    # room references a missing folder
+    with pytest.raises(db.ChatTreeError):
+        db.validate_chat_tree([], [{"uuid": rid, "folderId": str(uuid4())}])
+    # room uuid collides with a folder id
+    with pytest.raises(db.ChatTreeError):
+        db.validate_chat_tree([{"id": fid, "name": "F", "parentId": None}],
+                              [{"uuid": fid, "folderId": None}])
+    # duplicate folder id
+    with pytest.raises(db.ChatTreeError):
+        db.validate_chat_tree([{"id": fid, "name": "A", "parentId": None},
+                               {"id": fid, "name": "B", "parentId": None}], [])
+
+
+def test_validate_accepts_a_well_formed_tree(app_ctx):
+    fid = str(uuid4())
+    db.validate_chat_tree(
+        [{"id": fid, "name": "Work", "parentId": None}],
+        [{"uuid": str(uuid4()), "folderId": fid},
+         {"uuid": str(uuid4()), "folderId": None}],
+    )  # no exception

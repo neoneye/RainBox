@@ -252,6 +252,70 @@ def chat_load_tree() -> dict[str, Any]:
     }
 
 
+def validate_chat_tree(
+    folders: list[dict[str, Any]], rooms: list[dict[str, Any]]
+) -> None:
+    """Structural integrity check for an incoming chat tree, run before any DB
+    write (mirrors validate_cron_tree). Rejects bad uuids, duplicate/dangling/
+    cyclic folder refs, a room folderId that names no folder in the payload, and
+    a room uuid that collides with a folder id (a node is identified globally by
+    uuid). Does NOT touch the DB; raises ChatTreeError on the first problem."""
+    if not isinstance(folders, list):
+        raise ChatTreeError(f"'folders' must be a list, got {type(folders).__name__}")
+    if not isinstance(rooms, list):
+        raise ChatTreeError(f"'rooms' must be a list, got {type(rooms).__name__}")
+    parent_of: dict[UUID, UUID | None] = {}
+    for f in folders:
+        if not isinstance(f, dict):
+            raise ChatTreeError(f"folder entry must be an object, got {type(f).__name__}")
+        fid = _to_uuid(f.get("id"))
+        if fid is None:
+            raise ChatTreeError(f"folder id is not a uuid: {f.get('id')!r}")
+        if fid in parent_of:
+            raise ChatTreeError(f"duplicate folder id: {fid}")
+        if not isinstance(f.get("name", ""), str):
+            raise ChatTreeError(f"folder {fid} name must be a string")
+        pid_raw = f.get("parentId")
+        if pid_raw is None:
+            pid: UUID | None = None
+        else:
+            pid = _to_uuid(pid_raw)
+            if pid is None:
+                raise ChatTreeError(f"folder {fid} parentId is not a uuid: {pid_raw!r}")
+        parent_of[fid] = pid
+    for fid, pid in parent_of.items():
+        if pid is not None and pid not in parent_of:
+            raise ChatTreeError(f"folder {fid} references missing parent {pid}")
+    # Acyclic: walking parents from any folder must terminate at a root.
+    for start in parent_of:
+        seen: set[UUID] = set()
+        cur = parent_of[start]
+        while cur is not None:
+            if cur == start or cur in seen:
+                raise ChatTreeError(f"folder cycle detected involving {start}")
+            seen.add(cur)
+            cur = parent_of.get(cur)
+    room_uuids: set[UUID] = set()
+    for r in rooms:
+        if not isinstance(r, dict):
+            raise ChatTreeError(f"room entry must be an object, got {type(r).__name__}")
+        ru = _to_uuid(r.get("uuid"))
+        if ru is None:
+            raise ChatTreeError(f"room uuid is not a uuid: {r.get('uuid')!r}")
+        if ru in room_uuids:
+            raise ChatTreeError(f"duplicate room uuid: {ru}")
+        if ru in parent_of:
+            raise ChatTreeError(f"room uuid {ru} collides with a folder id")
+        room_uuids.add(ru)
+        fld_raw = r.get("folderId")
+        if fld_raw is not None:
+            fld = _to_uuid(fld_raw)
+            if fld is None:
+                raise ChatTreeError(f"room {ru} folderId is not a uuid: {fld_raw!r}")
+            if fld not in parent_of:
+                raise ChatTreeError(f"room {ru} references missing folder {fld}")
+
+
 def list_chatrooms() -> list[dict[str, Any]]:
     """Rooms for the left panel, ordered by saved position (then id), each with
     member count, last-message id, and its folder placement (folderId, null =
