@@ -8,6 +8,7 @@ from db for import compatibility.
 import hashlib
 import json
 import logging
+from collections import defaultdict
 from typing import Any
 from uuid import UUID
 
@@ -372,6 +373,87 @@ def chat_save_tree(
         row.folder_uuid = UUID(r["folderId"]) if r.get("folderId") else None
         row.position = i
     db.session.commit()
+
+
+def _descendant_chatroom_folder_uuids(folder_uuid: UUID) -> list[UUID]:
+    """`folder_uuid` plus every folder nested under it (any depth). Cycle-guarded
+    via a visited set so a malformed parent loop can't spin forever."""
+    children: dict[UUID | None, list[UUID]] = defaultdict(list)
+    for f in db.session.execute(sa.select(ChatroomFolder)).scalars().all():
+        children[f.parent_uuid].append(f.uuid)
+    result: list[UUID] = []
+    seen: set[UUID] = set()
+    stack = [folder_uuid]
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        result.append(cur)
+        stack.extend(children.get(cur, []))
+    return result
+
+
+def chatroom_folder_delete_preview(folder_uuid: UUID) -> dict[str, Any]:
+    """Authoritative rollup for the delete-confirm dialog: the folder's name and
+    the total chatrooms + messages that a recursive delete would remove (across
+    all nested subfolders). Raises LookupError if the folder is gone."""
+    folder = db.session.execute(
+        sa.select(ChatroomFolder).where(ChatroomFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+    if folder is None:
+        raise LookupError(f"chatroom folder {folder_uuid} not found")
+    folder_uuids = _descendant_chatroom_folder_uuids(folder_uuid)
+    room_uuids = db.session.execute(
+        sa.select(Chatroom.uuid).where(Chatroom.folder_uuid.in_(folder_uuids))
+    ).scalars().all()
+    message_count = 0
+    if room_uuids:
+        message_count = int(db.session.execute(
+            sa.select(sa.func.count()).select_from(ChatMessage)
+            .where(ChatMessage.room_uuid.in_(room_uuids))
+        ).scalar() or 0)
+    return {
+        "folder_name": folder.name,
+        "room_count": len(room_uuids),
+        "message_count": message_count,
+    }
+
+
+def delete_chatroom_folder(folder_uuid: UUID) -> None:
+    """Recursively delete a folder: every nested subfolder, every chatroom in
+    that subtree, and (via the chatroom row's ON DELETE CASCADE) those rooms'
+    messages, members, and workspace-shell state. Raises LookupError if the
+    folder is gone. This is the destructive op the type-to-confirm dialog
+    guards — chat_save_tree never deletes rooms."""
+    folder = db.session.execute(
+        sa.select(ChatroomFolder).where(ChatroomFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+    if folder is None:
+        raise LookupError(f"chatroom folder {folder_uuid} not found")
+    folder_uuids = _descendant_chatroom_folder_uuids(folder_uuid)
+    rooms = db.session.execute(
+        sa.select(Chatroom).where(Chatroom.folder_uuid.in_(folder_uuids))
+    ).scalars().all()
+    for room in rooms:
+        db.session.delete(room)  # cascades messages + members + workspace_shell_state
+    db.session.execute(
+        sa.delete(ChatroomFolder).where(ChatroomFolder.uuid.in_(folder_uuids))
+    )
+    db.session.commit()
+
+
+def chatroom_delete_preview(room_uuid: UUID) -> dict[str, Any]:
+    """Rollup for a single-room delete-confirm dialog: the room's name and how
+    many messages it holds. Raises LookupError if the room is gone."""
+    room = get_chatroom(room_uuid)
+    if room is None:
+        raise LookupError(f"chatroom {room_uuid} not found")
+    message_count = int(db.session.execute(
+        sa.select(sa.func.count()).select_from(ChatMessage)
+        .where(ChatMessage.room_uuid == room_uuid)
+    ).scalar() or 0)
+    return {"room_name": room.name, "message_count": message_count}
 
 
 def list_chatrooms() -> list[dict[str, Any]]:

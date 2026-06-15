@@ -188,3 +188,48 @@ def test_save_tree_refuses_to_drop_a_room(two_rooms):
 def test_save_tree_409_on_stale_version(two_rooms):
     with pytest.raises(db.ChatTreeConflict):
         db.chat_save_tree([], _all_rooms_payload(), base_version="staleversion0000")
+
+
+def test_recursive_delete_preview_and_delete(app_ctx):
+    s = db.db.session
+    human = db.get_human_user()
+    # parent -> child folder; one room in each; an unrelated top-level room.
+    parent = db.create_chatroom_folder("svf-parent")
+    child = db.create_chatroom_folder("svf-child", parent_uuid=parent.uuid)
+    r_parent = db.create_chatroom(f"rp-{uuid4().hex[:6]}", human.uuid, [])
+    r_child = db.create_chatroom(f"rc-{uuid4().hex[:6]}", human.uuid, [])
+    r_other = db.create_chatroom(f"ro-{uuid4().hex[:6]}", human.uuid, [])
+    s.execute(sa.update(Chatroom).where(Chatroom.uuid == r_parent.uuid).values(folder_uuid=parent.uuid))
+    s.execute(sa.update(Chatroom).where(Chatroom.uuid == r_child.uuid).values(folder_uuid=child.uuid))
+    s.commit()
+    db.post_chat_message(r_parent.uuid, human.uuid, "one")
+    db.post_chat_message(r_child.uuid, human.uuid, "two")
+    db.post_chat_message(r_child.uuid, human.uuid, "three")
+    try:
+        preview = db.chatroom_folder_delete_preview(parent.uuid)
+        assert preview["folder_name"] == "svf-parent"
+        assert preview["room_count"] == 2          # r_parent + r_child
+        assert preview["message_count"] == 3       # 1 + 2
+        db.delete_chatroom_folder(parent.uuid)
+        # Both folders + both contained rooms gone; the unrelated room survives.
+        remaining = {r["uuid"] for r in db.list_chatrooms()}
+        assert str(r_parent.uuid) not in remaining
+        assert str(r_child.uuid) not in remaining
+        assert str(r_other.uuid) in remaining
+        folder_ids = {f["id"] for f in db.list_chatroom_folders()}
+        assert str(parent.uuid) not in folder_ids and str(child.uuid) not in folder_ids
+    finally:
+        s.execute(sa.delete(Chatroom).where(Chatroom.uuid == r_other.uuid))
+        s.commit()
+
+
+def test_chatroom_delete_preview(app_ctx):
+    human = db.get_human_user()
+    room = db.create_chatroom(f"dp-{uuid4().hex[:6]}", human.uuid, [])
+    db.post_chat_message(room.uuid, human.uuid, "x")
+    try:
+        preview = db.chatroom_delete_preview(room.uuid)
+        assert preview["room_name"] == room.name
+        assert preview["message_count"] == 1
+    finally:
+        db.delete_chatroom(room.uuid)
