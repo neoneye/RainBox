@@ -93,6 +93,76 @@ def chat_rooms() -> Response | tuple[Response, int]:
     return jsonify(db.list_chatrooms())
 
 
+@app.route("/chat/api/tree", methods=["GET", "PUT"])
+def chat_tree() -> Response | tuple[Response, int]:
+    """The left-panel folder/room tree. GET hydrates {folders, rooms, version};
+    PUT bulk-saves folder placement + room ordering (version-guarded). The PUT
+    never creates or deletes rooms — folder/room deletion has dedicated
+    endpoints (mirrors /cron/api/tree, but without room destruction)."""
+    if request.method == "PUT":
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+        version = data.get("version")
+        if not isinstance(version, str) or not version:
+            return jsonify({"ok": False,
+                            "error": "missing tree 'version' (hydrate via GET first)"}), 400
+        try:
+            db.chat_save_tree(data.get("folders", []), data.get("rooms", []),
+                              base_version=version)
+        except db.ChatTreeConflict as exc:
+            return jsonify({"ok": False, "error": str(exc),
+                            "version": db.chat_tree_version()}), 409
+        except db.ChatTreeError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, "version": db.chat_tree_version()})
+    return jsonify(db.chat_load_tree())
+
+
+@app.route("/chat/api/folders", methods=["POST"])
+def chat_create_folder() -> tuple[Response, int]:
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        abort(400, "folder name required")
+    parent_raw = data.get("parent_uuid")
+    parent_uuid = _parse_uuid(parent_raw) if parent_raw else None
+    folder = db.create_chatroom_folder(name, parent_uuid)
+    return jsonify({
+        "id": str(folder.uuid),
+        "name": folder.name,
+        "parentId": str(folder.parent_uuid) if folder.parent_uuid else None,
+    }), 201
+
+
+@app.route("/chat/api/folders/<folder_uuid>/delete-preview")
+def chat_folder_delete_preview(folder_uuid: str) -> Response:
+    fuuid = _parse_uuid(folder_uuid)
+    try:
+        return jsonify(db.chatroom_folder_delete_preview(fuuid))
+    except LookupError:
+        abort(404, "folder not found")
+
+
+@app.route("/chat/api/folders/<folder_uuid>", methods=["DELETE"])
+def chat_delete_folder(folder_uuid: str) -> Response:
+    fuuid = _parse_uuid(folder_uuid)
+    try:
+        db.delete_chatroom_folder(fuuid)
+    except LookupError:
+        abort(404, "folder not found")
+    return jsonify({"id": str(fuuid), "deleted": True})
+
+
+@app.route("/chat/api/rooms/<room_uuid>/delete-preview")
+def chat_room_delete_preview(room_uuid: str) -> Response:
+    ruuid = _parse_uuid(room_uuid)
+    try:
+        return jsonify(db.chatroom_delete_preview(ruuid))
+    except LookupError:
+        abort(404, "room not found")
+
+
 @app.route("/chat/api/rooms/<room_uuid>/rename", methods=["POST"])
 def rename_chat_room(room_uuid: str) -> Response:
     ruuid = _parse_uuid(room_uuid)

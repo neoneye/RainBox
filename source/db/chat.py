@@ -330,12 +330,13 @@ def chat_save_tree(
     messages with it via cascade) on a truncated payload — destructive folder/
     room deletion goes through the dedicated endpoints instead.
 
-    Validates first (raises ChatTreeError before any mutation). base_version,
-    when given, is the chat_tree_version() the caller hydrated with: a stale
-    token raises ChatTreeConflict (HTTP 409 upstream)."""
-    validate_chat_tree(folders, rooms)
+    base_version, when given, is the chat_tree_version() the caller hydrated
+    with: a stale token raises ChatTreeConflict (HTTP 409 upstream) — checked
+    before structural validation so a concurrent edit surfaces as 409, not 400.
+    Validates structure next (raises ChatTreeError before any mutation)."""
     if base_version is not None and base_version != chat_tree_version():
         raise ChatTreeConflict("chat tree changed since it was loaded")
+    validate_chat_tree(folders, rooms)
     existing_f = {
         f.uuid: f for f in db.session.execute(sa.select(ChatroomFolder)).scalars().all()
     }
