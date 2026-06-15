@@ -85,25 +85,25 @@ CHAT_TEMPLATE: str = """
                   padding:0.25em 0.6em;cursor:pointer;font:inherit;font-size:0.78rem;margin-left:0.4em}
   .new-folder-btn:hover{border-color:#2563eb;color:#2563eb}
   /* modal (folder create + delete-confirm) */
-  .chat-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:1500}
-  .chat-modal-backdrop[hidden]{display:none}
-  .chat-modal{position:fixed;z-index:1600;left:50%;top:50%;transform:translate(-50%,-50%);
+  .ui-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:1500}
+  .ui-modal-backdrop[hidden]{display:none}
+  .ui-modal{position:fixed;z-index:1600;left:50%;top:50%;transform:translate(-50%,-50%);
               background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.25);
               padding:1.2em 1.3em;width:min(420px,92vw)}
-  .chat-modal[hidden]{display:none}
-  .chat-modal h3{margin:0 0 0.6em;font-size:1.05rem}
-  .chat-modal p{margin:0 0 0.8em;color:#444;font-size:0.9rem;line-height:1.45}
-  .chat-modal input[type=text]{width:100%;box-sizing:border-box;padding:0.5em;border:1px solid #ccc;
+  .ui-modal[hidden]{display:none}
+  .ui-modal h3{margin:0 0 0.6em;font-size:1.05rem}
+  .ui-modal p{margin:0 0 0.8em;color:#444;font-size:0.9rem;line-height:1.45}
+  .ui-modal input[type=text]{width:100%;box-sizing:border-box;padding:0.5em;border:1px solid #ccc;
                                border-radius:6px;font:inherit}
-  .chat-modal .modal-actions{display:flex;justify-content:flex-end;gap:0.5em;margin-top:1em}
-  .chat-modal button{border:none;border-radius:6px;padding:0.45em 1em;cursor:pointer;font:inherit}
-  .chat-modal .btn-cancel{background:#e5e7eb;color:#374151}
-  .chat-modal .btn-primary{background:#2563eb;color:#fff}
-  .chat-modal .btn-danger{background:#dc2626;color:#fff}
-  .chat-modal button:disabled{opacity:0.5;cursor:default}
-  .chat-modal .agents{display:flex;flex-direction:column;gap:0.25em;margin:0.6em 0;max-height:30vh;overflow:auto}
-  .chat-modal .agents .lbl{color:#888;font-size:0.75rem;margin-bottom:0.1em}
-  .chat-modal .agents label{font-size:0.85rem;color:#333;display:flex;align-items:center;gap:0.4em}
+  .ui-modal .modal-actions{display:flex;justify-content:flex-end;gap:0.5em;margin-top:1em}
+  .ui-modal button{border:none;border-radius:6px;padding:0.45em 1em;cursor:pointer;font:inherit}
+  .ui-modal .btn-cancel{background:#e5e7eb;color:#374151}
+  .ui-modal .btn-primary{background:#2563eb;color:#fff}
+  .ui-modal .btn-danger{background:#dc2626;color:#fff}
+  .ui-modal button:disabled{opacity:0.5;cursor:default}
+  .ui-modal .agents{display:flex;flex-direction:column;gap:0.25em;margin:0.6em 0;max-height:30vh;overflow:auto}
+  .ui-modal .agents .lbl{color:#888;font-size:0.75rem;margin-bottom:0.1em}
+  .ui-modal .agents label{font-size:0.85rem;color:#333;display:flex;align-items:center;gap:0.4em}
 
   .room-main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
   .room-title{padding:0.6em 1em;border-bottom:1px solid #eee;font-weight:600;display:flex;align-items:center;gap:0.6em}
@@ -208,9 +208,9 @@ CHAT_TEMPLATE: str = """
       <button type="submit">Send</button>
     </form>
   </div>
-  <div class="chat-modal-backdrop" id="chat-modal-backdrop" hidden></div>
+  <div class="ui-modal-backdrop" id="ui-modal-backdrop" hidden></div>
 
-  <div class="chat-modal" id="chat-folder-modal" hidden>
+  <div class="ui-modal" id="chat-folder-modal" hidden>
     <h3 id="chat-folder-title">New folder</h3>
     <input type="text" id="chat-folder-input" placeholder="Folder name" autocomplete="off">
     <div class="modal-actions">
@@ -219,7 +219,7 @@ CHAT_TEMPLATE: str = """
     </div>
   </div>
 
-  <div class="chat-modal" id="chat-delete-modal" hidden>
+  <div class="ui-modal" id="chat-delete-modal" hidden>
     <h3 id="chat-delete-title">Delete</h3>
     <p id="chat-delete-msg"></p>
     <p style="margin-bottom:0.3em">Type <strong id="chat-delete-name"></strong> to confirm:</p>
@@ -230,7 +230,7 @@ CHAT_TEMPLATE: str = """
     </div>
   </div>
 
-  <div class="chat-modal" id="chat-room-modal" hidden>
+  <div class="ui-modal" id="chat-room-modal" hidden>
     <h3>New chatroom</h3>
     <input type="text" id="chat-room-input" placeholder="Room name" autocomplete="off">
     <div class="agents">
@@ -1034,14 +1034,14 @@ function openFolderModal(opts){
   document.getElementById('chat-folder-create').textContent =
     folderModalState.mode === 'rename' ? 'Rename' : 'Create';
   document.getElementById('chat-folder-create').disabled = !input.value.trim();
-  document.getElementById('chat-modal-backdrop').hidden = false;
+  document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('chat-folder-modal').hidden = false;
   input.focus();
   input.select();
 }
 function closeFolderModal(){
   document.getElementById('chat-folder-modal').hidden = true;
-  document.getElementById('chat-modal-backdrop').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
   folderModalState = null;
 }
 async function confirmFolderModal(){
@@ -1088,13 +1088,13 @@ function openDeleteModal(state, message, confirmName){
   const confirmBtn = document.getElementById('chat-delete-confirm');
   confirmBtn.disabled = true;
   input.oninput = () => { confirmBtn.disabled = (input.value !== confirmName); };
-  document.getElementById('chat-modal-backdrop').hidden = false;
+  document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('chat-delete-modal').hidden = false;
   input.focus();
 }
 function closeDeleteModal(){
   document.getElementById('chat-delete-modal').hidden = true;
-  document.getElementById('chat-modal-backdrop').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
   deleteModalState = null;
 }
 async function confirmDeleteFolder(folderId){
@@ -1407,13 +1407,13 @@ async function openRoomModal(){
   if (!agentsLoaded) await loadAgents();
   agentListEl.querySelectorAll('input:checked').forEach(cb => { cb.checked = false; });
   document.getElementById('chat-room-create').disabled = true;
-  document.getElementById('chat-modal-backdrop').hidden = false;
+  document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('chat-room-modal').hidden = false;
   input.focus();
 }
 function closeRoomModal(){
   document.getElementById('chat-room-modal').hidden = true;
-  document.getElementById('chat-modal-backdrop').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
 }
 async function confirmRoomModal(){
   const input = document.getElementById('chat-room-input');
@@ -1439,14 +1439,14 @@ document.getElementById('chat-room-input').addEventListener('keydown', e => {
 });
 
 // Close whichever chat modal is open; each close fn clears its own state.
-function closeOpenChatModal(){
+function closeOpenModal(){
   if (!document.getElementById('chat-folder-modal').hidden) closeFolderModal();
   if (!document.getElementById('chat-delete-modal').hidden) closeDeleteModal();
   if (!document.getElementById('chat-room-modal').hidden) closeRoomModal();
 }
 // Has the user typed/checked anything in the currently open modal? If so we
 // refuse the accidental dismiss paths (outside-click / Esc) so no input is lost.
-function openChatModalDirty(){
+function openModalDirty(){
   if (!document.getElementById('chat-folder-modal').hidden){
     return document.getElementById('chat-folder-input').value !== ((folderModalState && folderModalState.current) || '');
   }
@@ -1462,12 +1462,12 @@ function openChatModalDirty(){
 // Dismiss by clicking the shared backdrop (outside any open card) or pressing
 // Esc — but only when the modal is untouched, so an accidental click/keystroke
 // can't discard typed-in data. The Cancel button stays an explicit way out.
-function dismissOpenChatModalIfClean(){
-  if (!openChatModalDirty()) closeOpenChatModal();
+function dismissOpenModalIfClean(){
+  if (!openModalDirty()) closeOpenModal();
 }
-document.getElementById('chat-modal-backdrop').addEventListener('click', dismissOpenChatModalIfClean);
+document.getElementById('ui-modal-backdrop').addEventListener('click', dismissOpenModalIfClean);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') dismissOpenChatModalIfClean();
+  if (e.key === 'Escape') dismissOpenModalIfClean();
 });
 
 // Live updates: the server pushes {room_uuid, message_id} on every new message.

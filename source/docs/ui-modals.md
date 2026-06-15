@@ -7,10 +7,10 @@ opening, closing, and guarding dismissal. The same UX is meant to apply on
 added later.
 
 This document is the **canonical spec** for that pattern, written against a
-neutral `ui-modal` naming. It is page-agnostic: no single page "owns" it. Today
-each page still ships its own divergent prefix (`chat-modal`, `cron-modal` /
-`cron-edit-modal`, `kb-modal`) — converging them onto `ui-modal` is tracked in
-[Adopting the standard](#adopting-the-standard) at the bottom.
+neutral `ui-modal` naming. It is page-agnostic: no single page "owns" it.
+`/chat` already uses it; `/cron` and `/kanban` still ship their own prefixes
+(`cron-modal` / `cron-edit-modal`, `kb-modal`) — converging them onto `ui-modal`
+is tracked in [Adopting the standard](#adopting-the-standard) at the bottom.
 
 There are no third-party libraries and no `<dialog>` element — it's plain DOM,
 which keeps the idle-tab guarantees in
@@ -18,10 +18,10 @@ which keeps the idle-tab guarantees in
 native `prompt`/`confirm`/`alert` dialogs that `/kanban` and `/cron` already
 ban.
 
-> The most complete current implementation lives in `webapp/chat_template.py`
-> (under the soon-to-be-renamed `chat-modal` prefix) — it is the only one with
-> the dirty-guarded dismissal described below. Use it as the working reference
-> while reading the `ui-modal` snippets here.
+> The reference implementation lives in `webapp/chat_template.py` — `/chat`
+> already uses the `ui-modal` naming and the dirty-guarded dismissal described
+> below, with its modal JS inline in that file. Use it as the working reference
+> while reading the snippets here.
 
 ## The three pieces
 
@@ -193,7 +193,7 @@ This section is the work list.
 
 | Page      | Source                      | Prefix(es)                                   | Backdrop                                            | Title | Dirty-guard? |
 |-----------|-----------------------------|----------------------------------------------|-----------------------------------------------------|-------|--------------|
-| `/chat`   | `webapp/chat_template.py`   | `chat-modal`, `chat-modal-backdrop`          | **single** shared backdrop                          | `h3`  | **yes**      |
+| `/chat`   | `webapp/chat_template.py`   | ✅ `ui-modal`, `ui-modal-backdrop`           | **single** shared backdrop                          | `h3`  | **yes**      |
 | `/cron`   | `webapp/cron_views.py`      | `cron-modal-backdrop`, `cron-as-modal`, `cron-edit-modal` | **multiple** per-group backdrops (`cron-edit-backdrop`, `cron-delete-backdrop`, `cron-desc-backdrop`, `cron-folder-backdrop`) | mixed | no |
 | `/kanban` | `webapp/kanban_views.py`    | `kb-modal`, `kb-backdrop`, `kb-row`          | **single** shared backdrop                          | `h2`  | no           |
 
@@ -209,13 +209,11 @@ This section is the work list.
    (`.modal-actions` with trailing primary button). `/kanban` currently uses
    `h2` + `kb-row`; `/cron` is mixed.
 
-**`/chat` (`webapp/chat_template.py`)** — closest to the standard; mostly a rename.
-
-3. Rename `chat-modal` → `ui-modal` and `chat-modal-backdrop` → `ui-modal-backdrop`
-   across CSS, markup, and the JS `getElementById('chat-modal-backdrop')` /
-   `chat-*-modal` references (~27 occurrences).
-4. Rename the dismissal helpers `closeOpenChatModal` / `openChatModalDirty` /
-   `dismissOpenChatModalIfClean` to the page-neutral names used here.
+**`/chat` (`webapp/chat_template.py`)** — ✅ **Done.** Renamed `chat-modal` →
+`ui-modal` and `chat-modal-backdrop` → `ui-modal-backdrop` across CSS, markup,
+and JS, and renamed the dismissal helpers to the page-neutral names
+(`closeOpenModal` / `openModalDirty` / `dismissOpenModalIfClean`). `/chat`'s
+modal JS is inline in this file, so it was a single-file change.
 
 **`/cron` (`webapp/cron_views.py`)** — most divergent; structural change.
 
