@@ -24,15 +24,6 @@ CHAT_TEMPLATE: str = """
   .new-room-btn:hover{background:#1d4ed8}
   .rooms .note{margin:0.2em 0.4em 0.6em;color:#888;font-size:0.78rem}
 
-  .new-room{padding:0.5em;margin:0 0.3em 0.6em;border:1px solid #e5e7eb;border-radius:8px;background:#fff}
-  .new-room.hidden{display:none}
-  .new-room input[type=text]{width:100%;box-sizing:border-box;padding:0.4em;border:1px solid #ccc;border-radius:6px;font:inherit}
-  .new-room .agents{display:flex;flex-direction:column;gap:0.25em;margin:0.6em 0;max-height:30vh;overflow:auto}
-  .new-room .agents .lbl{color:#888;font-size:0.75rem;margin-bottom:0.1em}
-  .new-room .agents label{font-size:0.85rem;color:#333;display:flex;align-items:center;gap:0.4em}
-  .new-room .actions{display:flex;justify-content:flex-end}
-  .new-room button[type=submit]{border:none;background:#2563eb;color:#fff;border-radius:6px;padding:0.35em 0.9em;cursor:pointer;font:inherit}
-  .new-room button[type=submit]:hover{background:#1d4ed8}
 
   .room{position:relative;display:block;width:100%;text-align:left;border:none;background:none;cursor:pointer;
         padding:0.5em 0.7em;border-radius:6px;font:inherit;color:#333}
@@ -110,6 +101,9 @@ CHAT_TEMPLATE: str = """
   .chat-modal .btn-primary{background:#2563eb;color:#fff}
   .chat-modal .btn-danger{background:#dc2626;color:#fff}
   .chat-modal button:disabled{opacity:0.5;cursor:default}
+  .chat-modal .agents{display:flex;flex-direction:column;gap:0.25em;margin:0.6em 0;max-height:30vh;overflow:auto}
+  .chat-modal .agents .lbl{color:#888;font-size:0.75rem;margin-bottom:0.1em}
+  .chat-modal .agents label{font-size:0.85rem;color:#333;display:flex;align-items:center;gap:0.4em}
 
   .room-main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
   .room-title{padding:0.6em 1em;border-bottom:1px solid #eee;font-weight:600;display:flex;align-items:center;gap:0.6em}
@@ -195,14 +189,6 @@ CHAT_TEMPLATE: str = """
         <button class="new-room-btn" id="new-room-btn" type="button">+ New room</button>
       </span>
     </div>
-    <form class="new-room hidden" id="new-room">
-      <input type="text" id="room-name" placeholder="Room name" autocomplete="off" required>
-      <div class="agents">
-        <span class="lbl">Add agents</span>
-        <div id="agent-list"></div>
-      </div>
-      <div class="actions"><button type="submit">Create</button></div>
-    </form>
     <div id="rooms"></div>
     <div class="chat-root-drop" id="chat-root-drop">Move to top level</div>
   </div>
@@ -244,6 +230,19 @@ CHAT_TEMPLATE: str = """
     </div>
   </div>
 
+  <div class="chat-modal" id="chat-room-modal" hidden>
+    <h3>New chatroom</h3>
+    <input type="text" id="chat-room-input" placeholder="Room name" autocomplete="off">
+    <div class="agents">
+      <span class="lbl">Add agents</span>
+      <div id="agent-list"></div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="chat-room-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="chat-room-create" disabled>Create</button>
+    </div>
+  </div>
+
   <div class="room-sidebar" id="room-sidebar"></div>
 </div>
 
@@ -264,8 +263,6 @@ const splitEl = document.querySelector('.chat-split');
 const form = document.getElementById('compose');
 const input = document.getElementById('msg-input');
 const newRoomBtn = document.getElementById('new-room-btn');
-const newRoomForm = document.getElementById('new-room');
-const roomNameInput = document.getElementById('room-name');
 const agentListEl = document.getElementById('agent-list');
 
 // Lucide icons (https://lucide.dev/) — inline SVG so `stroke="currentColor"`
@@ -1403,30 +1400,42 @@ async function loadAgents(){
   agentsLoaded = true;
 }
 
-newRoomBtn.addEventListener('click', async () => {
-  newRoomForm.classList.toggle('hidden');
-  if (!newRoomForm.classList.contains('hidden')){
-    if (!agentsLoaded) await loadAgents();
-    roomNameInput.focus();
-  }
-});
-
-newRoomForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const name = roomNameInput.value.trim();
-  // The `required` attribute already blocks an empty name with native validation,
-  // but double-check defensively.
-  if (!name){ roomNameInput.focus(); return; }
+// ---- new chatroom modal ----
+async function openRoomModal(){
+  const input = document.getElementById('chat-room-input');
+  input.value = '';
+  if (!agentsLoaded) await loadAgents();
+  agentListEl.querySelectorAll('input:checked').forEach(cb => { cb.checked = false; });
+  document.getElementById('chat-room-create').disabled = true;
+  document.getElementById('chat-modal-backdrop').hidden = false;
+  document.getElementById('chat-room-modal').hidden = false;
+  input.focus();
+}
+function closeRoomModal(){
+  document.getElementById('chat-room-modal').hidden = true;
+  document.getElementById('chat-modal-backdrop').hidden = true;
+}
+async function confirmRoomModal(){
+  const input = document.getElementById('chat-room-input');
+  const name = input.value.trim();
+  if (!name){ input.focus(); return; }
   const member_uuids = Array.from(agentListEl.querySelectorAll('input:checked')).map(cb => cb.value);
   try {
     const res = await postJSON('/chat/api/rooms', { name, member_uuids });
-    roomNameInput.value = '';
-    agentListEl.querySelectorAll('input:checked').forEach(cb => { cb.checked = false; });
-    newRoomForm.classList.add('hidden');
+    closeRoomModal();
     await loadRooms(res.uuid);
   } catch (err) {
     alert('Create room failed: ' + err);
   }
+}
+newRoomBtn.addEventListener('click', openRoomModal);
+document.getElementById('chat-room-cancel').addEventListener('click', closeRoomModal);
+document.getElementById('chat-room-create').addEventListener('click', confirmRoomModal);
+document.getElementById('chat-room-input').addEventListener('input', e => {
+  document.getElementById('chat-room-create').disabled = !e.target.value.trim();
+});
+document.getElementById('chat-room-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ e.preventDefault(); confirmRoomModal(); }
 });
 
 // Live updates: the server pushes {room_uuid, message_id} on every new message.
