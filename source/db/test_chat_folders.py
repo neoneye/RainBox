@@ -140,3 +140,51 @@ def test_validate_accepts_a_well_formed_tree(app_ctx):
         [{"uuid": str(uuid4()), "folderId": fid},
          {"uuid": str(uuid4()), "folderId": None}],
     )  # no exception
+
+
+@pytest.fixture
+def two_rooms(app_ctx):
+    """Two fresh top-level rooms. Yields (room_a_uuid, room_b_uuid)."""
+    s = db.db.session
+    human = db.get_human_user()
+    a = db.create_chatroom(f"sv-a-{uuid4().hex[:6]}", human.uuid, [])
+    b = db.create_chatroom(f"sv-b-{uuid4().hex[:6]}", human.uuid, [])
+    try:
+        yield a.uuid, b.uuid
+    finally:
+        s.execute(sa.delete(Chatroom).where(Chatroom.uuid.in_([a.uuid, b.uuid])))
+        s.execute(sa.delete(ChatroomFolder).where(ChatroomFolder.name.like("svf-%")))
+        s.commit()
+
+
+def _all_rooms_payload(extra_overrides=None):
+    """Every existing room as {uuid, folderId}, so a save never omits a room.
+    extra_overrides: {room_uuid_str: folderId} to set placement for some."""
+    overrides = extra_overrides or {}
+    return [
+        {"uuid": r["uuid"], "folderId": overrides.get(r["uuid"], r["folderId"])}
+        for r in db.list_chatrooms()
+    ]
+
+
+def test_save_tree_moves_room_into_folder(two_rooms):
+    a, b = two_rooms
+    fid = str(uuid4())
+    folders = [{"id": fid, "name": "svf-work", "parentId": None}]
+    rooms = _all_rooms_payload({str(a): fid})
+    db.chat_save_tree(folders, rooms, base_version=db.chat_tree_version())
+    moved = next(r for r in db.list_chatrooms() if r["uuid"] == str(a))
+    assert moved["folderId"] == fid
+
+
+def test_save_tree_refuses_to_drop_a_room(two_rooms):
+    a, b = two_rooms
+    # Payload omitting room b would silently delete it -> must raise.
+    rooms = [r for r in _all_rooms_payload() if r["uuid"] != str(b)]
+    with pytest.raises(db.ChatTreeError):
+        db.chat_save_tree([], rooms, base_version=db.chat_tree_version())
+
+
+def test_save_tree_409_on_stale_version(two_rooms):
+    with pytest.raises(db.ChatTreeConflict):
+        db.chat_save_tree([], _all_rooms_payload(), base_version="staleversion0000")

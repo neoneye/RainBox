@@ -316,6 +316,64 @@ def validate_chat_tree(
                 raise ChatTreeError(f"room {ru} references missing folder {fld}")
 
 
+def chat_save_tree(
+    folders: list[dict[str, Any]], rooms: list[dict[str, Any]],
+    *, base_version: str | None = None,
+) -> None:
+    """Upsert the left-panel tree. Folders are created/updated/reordered by
+    uuid (list order becomes `position`); a folder uuid absent from the payload
+    is deleted (only ever an emptied folder — room placement is reassigned
+    first by the caller). Rooms are NEVER created or deleted here: only their
+    `folder_uuid` + `position` change, and the payload MUST list exactly the
+    existing rooms. A missing room would otherwise be silently dropped (and its
+    messages with it via cascade) on a truncated payload — destructive folder/
+    room deletion goes through the dedicated endpoints instead.
+
+    Validates first (raises ChatTreeError before any mutation). base_version,
+    when given, is the chat_tree_version() the caller hydrated with: a stale
+    token raises ChatTreeConflict (HTTP 409 upstream)."""
+    validate_chat_tree(folders, rooms)
+    if base_version is not None and base_version != chat_tree_version():
+        raise ChatTreeConflict("chat tree changed since it was loaded")
+    existing_f = {
+        f.uuid: f for f in db.session.execute(sa.select(ChatroomFolder)).scalars().all()
+    }
+    existing_r = {
+        r.uuid: r for r in db.session.execute(sa.select(Chatroom)).scalars().all()
+    }
+    incoming_rooms = {UUID(r["uuid"]) for r in rooms}
+    missing = set(existing_r) - incoming_rooms
+    if missing:
+        raise ChatTreeError(
+            f"chat tree save omitted {len(missing)} existing room(s) — refusing "
+            f"(the tree save never deletes rooms)"
+        )
+    unknown = incoming_rooms - set(existing_r)
+    if unknown:
+        raise ChatTreeError(f"chat tree save references {len(unknown)} unknown room(s)")
+    # Folders: update existing by uuid, insert new, delete the rest.
+    seen_f: set[UUID] = set()
+    for i, f in enumerate(folders):
+        fu = UUID(f["id"])
+        seen_f.add(fu)
+        row = existing_f.get(fu)
+        if row is None:
+            row = ChatroomFolder(uuid=fu)
+            db.session.add(row)
+        row.name = f.get("name", "")
+        row.parent_uuid = UUID(f["parentId"]) if f.get("parentId") else None
+        row.position = i
+    for fu, row in existing_f.items():
+        if fu not in seen_f:
+            db.session.delete(row)
+    # Rooms: only placement + order (never name/membership/messages).
+    for i, r in enumerate(rooms):
+        row = existing_r[UUID(r["uuid"])]
+        row.folder_uuid = UUID(r["folderId"]) if r.get("folderId") else None
+        row.position = i
+    db.session.commit()
+
+
 def list_chatrooms() -> list[dict[str, Any]]:
     """Rooms for the left panel, ordered by saved position (then id), each with
     member count, last-message id, and its folder placement (folderId, null =
