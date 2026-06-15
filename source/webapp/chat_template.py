@@ -1026,29 +1026,131 @@ function renameFolder(folderId){
   openFolderModal({mode: 'rename', folderId: folderId, current: f.name});
 }
 
+// ---- folder create / rename modal ----
+let folderModalState = null;  // {mode:'create'|'rename', folderId?, parentId?, current?}
+function openFolderModal(opts){
+  folderModalState = opts || {mode: 'create', parentId: null};
+  document.getElementById('chat-folder-title').textContent =
+    folderModalState.mode === 'rename' ? 'Rename folder' : 'New folder';
+  const input = document.getElementById('chat-folder-input');
+  input.value = folderModalState.current || '';
+  document.getElementById('chat-folder-create').textContent =
+    folderModalState.mode === 'rename' ? 'Rename' : 'Create';
+  document.getElementById('chat-folder-create').disabled = !input.value.trim();
+  document.getElementById('chat-modal-backdrop').hidden = false;
+  document.getElementById('chat-folder-modal').hidden = false;
+  input.focus();
+  input.select();
+}
+function closeFolderModal(){
+  document.getElementById('chat-folder-modal').hidden = true;
+  document.getElementById('chat-modal-backdrop').hidden = true;
+  folderModalState = null;
+}
+async function confirmFolderModal(){
+  const name = document.getElementById('chat-folder-input').value.trim();
+  if (!name || !folderModalState) return;
+  if (folderModalState.mode === 'rename'){
+    const f = folderById(folderModalState.folderId);
+    if (f){ f.name = name; saveTree(); }   // rename persists via the tree PUT
+    closeFolderModal();
+    return;
+  }
+  // create: POST, then re-hydrate so the new folder gets a server position.
+  try {
+    const resp = await fetch('/chat/api/folders', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name}),
+    });
+    if (!resp.ok) throw new Error('POST /chat/api/folders -> ' + resp.status);
+  } catch (e) { alert(e); return; }
+  closeFolderModal();
+  await loadRooms(currentRoom);
+}
+document.getElementById('new-folder-btn').addEventListener('click', () => openFolderModal({mode: 'create', parentId: null}));
+document.getElementById('chat-folder-cancel').addEventListener('click', closeFolderModal);
+document.getElementById('chat-folder-create').addEventListener('click', confirmFolderModal);
+document.getElementById('chat-folder-input').addEventListener('input', e => {
+  document.getElementById('chat-folder-create').disabled = !e.target.value.trim();
+});
+document.getElementById('chat-folder-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ e.preventDefault(); confirmFolderModal(); }
+});
+
+// ---- type-to-confirm destructive delete (folder or room) ----
+let deleteModalState = null;  // {kind:'folder'|'room', id, name}
+function fmtCount(n){ return Number(n).toLocaleString(); }
+function openDeleteModal(state, message, confirmName){
+  deleteModalState = state;
+  document.getElementById('chat-delete-title').textContent =
+    state.kind === 'folder' ? 'Delete folder' : 'Delete room';
+  document.getElementById('chat-delete-msg').textContent = message;
+  document.getElementById('chat-delete-name').textContent = confirmName;
+  const input = document.getElementById('chat-delete-input');
+  input.value = '';
+  const confirmBtn = document.getElementById('chat-delete-confirm');
+  confirmBtn.disabled = true;
+  input.oninput = () => { confirmBtn.disabled = (input.value !== confirmName); };
+  document.getElementById('chat-modal-backdrop').hidden = false;
+  document.getElementById('chat-delete-modal').hidden = false;
+  input.focus();
+}
+function closeDeleteModal(){
+  document.getElementById('chat-delete-modal').hidden = true;
+  document.getElementById('chat-modal-backdrop').hidden = true;
+  deleteModalState = null;
+}
+async function confirmDeleteFolder(folderId){
+  const f = folderById(folderId);
+  if (!f) return;
+  let preview;
+  try {
+    preview = await getJSON('/chat/api/folders/' + folderId + '/delete-preview');
+  } catch (e) { alert(e); return; }
+  const msg = 'Are you sure you want to delete ' +
+    fmtCount(preview.room_count) + (preview.room_count === 1 ? ' chatroom' : ' chatrooms') +
+    ' containing ' + fmtCount(preview.message_count) +
+    (preview.message_count === 1 ? ' message' : ' messages') + '? This cannot be undone.';
+  openDeleteModal({kind: 'folder', id: folderId, name: f.name}, msg, f.name);
+}
 async function deleteRoom(uuid){
   const room = rooms.find(r => r.uuid === uuid);
-  const label = room ? '# ' + room.name : 'this room';
-  if (!confirm('Delete ' + label + ' and all its messages? This cannot be undone.')) return;
+  if (!room) return;
+  let preview;
   try {
-    const r = await fetch('/chat/api/rooms/' + uuid, { method: 'DELETE' });
-    if (!r.ok) throw new Error('DELETE ' + uuid + ' -> ' + r.status);
+    preview = await getJSON('/chat/api/rooms/' + uuid + '/delete-preview');
   } catch (e) { alert(e); return; }
-  rooms = rooms.filter(x => x.uuid !== uuid);
-  delete unread[uuid];
-  if (currentRoom === uuid){
-    currentRoom = null;
-    if (rooms[0]){ await selectRoom(rooms[0].uuid); return; }
-    // No rooms left: clear the main pane and drop ?room= from the URL.
-    titleNameEl.value = '';
-    log.innerHTML = '';
-    const url = new URL(window.location);
-    url.searchParams.delete('room');
-    history.replaceState(null, '', url);
-    renderSidebar();
-  }
-  renderRooms();
+  const msg = 'Are you sure you want to delete # ' + preview.room_name + ' containing ' +
+    fmtCount(preview.message_count) +
+    (preview.message_count === 1 ? ' message' : ' messages') + '? This cannot be undone.';
+  openDeleteModal({kind: 'room', id: uuid, name: preview.room_name}, msg, preview.room_name);
 }
+async function performConfirmedDelete(){
+  if (!deleteModalState) return;
+  const {kind, id} = deleteModalState;
+  const url = kind === 'folder' ? '/chat/api/folders/' + id : '/chat/api/rooms/' + id;
+  try {
+    const r = await fetch(url, {method: 'DELETE'});
+    if (!r.ok) throw new Error('DELETE ' + url + ' -> ' + r.status);
+  } catch (e) { alert(e); return; }
+  const deletingCurrentRoom = (kind === 'room' && currentRoom === id);
+  closeDeleteModal();
+  await loadRooms(deletingCurrentRoom ? null : currentRoom);
+  if (deletingCurrentRoom){
+    currentRoom = null;
+    if (rooms[0]){ await selectRoom(rooms[0].uuid); }
+    else {
+      titleNameEl.value = '';
+      log.innerHTML = '';
+      const url2 = new URL(window.location);
+      url2.searchParams.delete('room');
+      history.replaceState(null, '', url2);
+      renderSidebar();
+    }
+  }
+}
+document.getElementById('chat-delete-cancel').addEventListener('click', closeDeleteModal);
+document.getElementById('chat-delete-confirm').addEventListener('click', performConfirmedDelete);
 
 // Dismiss any open room overflow menu on an outside click or Escape.
 document.addEventListener('click', () => {
