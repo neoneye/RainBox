@@ -6,11 +6,10 @@ opening, closing, and guarding dismissal. The same UX is meant to apply on
 **every** page that needs a dialog — `/chat`, `/cron`, `/kanban`, and anything
 added later.
 
-This document is the **canonical spec** for that pattern, written against a
-neutral `ui-modal` naming. It is page-agnostic: no single page "owns" it.
-`/chat` already uses it; `/cron` and `/kanban` still ship their own prefixes
-(`cron-modal` / `cron-edit-modal`, `kb-modal`) — converging them onto `ui-modal`
-is tracked in [Adopting the standard](#adopting-the-standard) at the bottom.
+This document is the **canonical spec** for that pattern. It is page-agnostic:
+no single page "owns" it — `/chat`, `/cron`, and `/kanban` all use the
+`ui-modal` naming and the behavior described here. Where each page's markup and
+JS live is in [Per-page notes](#per-page-notes) at the bottom.
 
 There are no third-party libraries and no `<dialog>` element — it's plain DOM,
 which keeps the idle-tab guarantees in
@@ -18,10 +17,9 @@ which keeps the idle-tab guarantees in
 native `prompt`/`confirm`/`alert` dialogs that `/kanban` and `/cron` already
 ban.
 
-> The reference implementation lives in `webapp/chat_template.py` — `/chat`
-> already uses the `ui-modal` naming and the dirty-guarded dismissal described
-> below, with its modal JS inline in that file. Use it as the working reference
-> while reading the snippets here.
+> The clearest reference is `webapp/chat_template.py`: its modal markup, CSS,
+> and JS are all inline in one file, so you can read the whole pattern
+> end-to-end. Use it alongside the snippets here.
 
 ## The three pieces
 
@@ -182,87 +180,34 @@ This is also why a **single** shared backdrop is preferred over one backdrop per
 modal: with sibling cards, one scrim and one pair of dismiss handlers cover
 every dialog on the page.
 
-## Adopting the standard
+## Per-page notes
 
-All three pages now use the `ui-modal` naming and the dirty-guarded dismissal.
-This section records where each started and what changed, so the convergence is
-auditable.
+All three pages implement the pattern above. They differ only in where the code
+lives:
 
-A wrinkle worth knowing before adding the next modal: the pages keep their modal
-JS in different places. `/chat`'s is inline in `chat_template.py`, while
-`/kanban` and `/cron` load theirs from `static/kanban.js` and `static/cron.js`.
-On those two pages a new modal is a two-file change — markup/CSS in the view,
-behavior in the static JS — and `/cron` also has assertions in
-`webapp/test_cron_views.py` that reference modal markup, so update them in step.
+| Page      | Markup + CSS              | Modal JS           |
+|-----------|---------------------------|--------------------|
+| `/chat`   | `webapp/chat_template.py` | inline (same file) |
+| `/cron`   | `webapp/cron_views.py`    | `static/cron.js`   |
+| `/kanban` | `webapp/kanban_views.py`  | `static/kanban.js` |
 
-### Where each page stands today
+So on `/chat` a new modal is a one-file change, while on `/cron` and `/kanban`
+it is two files — markup/CSS in the view, behavior in the static JS. `/cron`
+also has assertions in `webapp/test_cron_views.py` that reference modal markup;
+keep them in sync.
 
-| Page      | Source                      | Prefix(es)                                   | Backdrop                                            | Title | Dirty-guard? |
-|-----------|-----------------------------|----------------------------------------------|-----------------------------------------------------|-------|--------------|
-| `/chat`   | `webapp/chat_template.py`   | ✅ `ui-modal`, `ui-modal-backdrop`           | **single** shared backdrop                          | `h3`  | **yes**      |
-| `/cron`   | `cron_views.py` + `static/cron.js` | ✅ `ui-modal`, `ui-modal-backdrop` (was 5 backdrops) | **single** shared backdrop (collapsed from 5) | — | **yes** |
-| `/kanban` | `kanban_views.py` + `static/kanban.js` | ✅ `ui-modal`, `ui-modal-backdrop` (`kb-row` kept internal) | **single** shared backdrop          | `h3`  | **yes**      |
+### Known inconsistencies (optional cleanups)
 
-### Changes required to converge
+The shared contract — `.ui-modal` / `.ui-modal-backdrop` classes, a single
+backdrop, dirty-guarded dismissal — holds on every page. A few cosmetic details
+still vary; none affects behavior:
 
-**Shared / design-system level**
-
-1. Pick one home for the canonical CSS block (a shared `<style>` partial or a
-   small static stylesheet) so all three pages link the same `.ui-modal*` rules
-   instead of each re-declaring them. Until that exists, copy the CSS block
-   above into each page verbatim under the `ui-modal` prefix.
-2. Standardize the card title tag (this doc uses `h3`) and the action row
-   (`.modal-actions` with trailing primary button). `/kanban` currently uses
-   `h2` + `kb-row`; `/cron` is mixed.
-
-**`/chat` (`webapp/chat_template.py`)** — ✅ **Done.** Renamed `chat-modal` →
-`ui-modal` and `chat-modal-backdrop` → `ui-modal-backdrop` across CSS, markup,
-and JS, and renamed the dismissal helpers to the page-neutral names
-(`closeOpenModal` / `openModalDirty` / `dismissOpenModalIfClean`). `/chat`'s
-modal JS is inline in this file, so it was a single-file change.
-
-**`/cron` (`webapp/cron_views.py` + `static/cron.js` + `webapp/test_cron_views.py`)** — ✅ **Done.**
-
-5. Collapsed the **five** per-group backdrops (`cron-modal-backdrop`,
-   `cron-edit-backdrop`, `cron-delete-backdrop`, `cron-desc-backdrop`,
-   `cron-folder-backdrop`) into **one** shared `ui-modal-backdrop`, every card a
-   sibling of it. All `getElementById('cron-*-backdrop')` calls in `cron.js`
-   were repointed to the single backdrop.
-6. Renamed `cron-as-modal` / `cron-edit-modal` cards to `ui-modal` (the New-job
-   builder is `class="builder ui-modal"`, keeping a `.builder.ui-modal` rule for
-   its wider `min(640px,92vw)` so it doesn't shrink to the 420px default). The
-   `cron-as-modal` class toggle in `cron.js` was removed since the class is now
-   static.
-7. Added the dirty-guarded backdrop-click / Esc dismissal: New-job builder dirty
-   when any field changed from its snapshot; Edit schedule/action/description
-   dirty when changed from the loaded value; New folder dirty when the name box
-   is non-empty; Delete dirty only when its type-to-confirm box is non-empty.
-   The pre-existing kebab-menu Esc handler in `cron.js` was left intact.
-8. Updated `test_cron_views.py` assertions from the old `cron-modal-backdrop` /
-   `cron-as-modal` tokens to `ui-modal-backdrop` / `builder ui-modal`.
-
-(`/cron`'s modals use their own title markup rather than `h2`/`h3`, so the
-title-tag standardization didn't apply here.)
-
-**`/kanban` (`webapp/kanban_views.py` + `static/kanban.js`)** — ✅ **Done.**
-Renamed `kb-modal` → `ui-modal` and `kb-backdrop` → `ui-modal-backdrop`
-(id + class), switched modal titles `h2` → `h3`, and added the dirty-guarded
-backdrop-click / Esc dismissal (board + task modals guard on their text fields;
-the read-only markdown view and the confirm modal are never dirty). The `kb-row`
-form-row layout was kept as a page-internal class, now scoped under `.ui-modal`.
-The markup/CSS lives in `kanban_views.py` but the modal JS is in
-`static/kanban.js`, so this spanned two files.
-
-### Remaining cosmetic follow-ups (optional)
-
-The structural + behavioral convergence (shared `ui-modal` classes, single
-backdrop, dirty-guarded dismissal) is complete on all three pages. Left as
-optional polish, none of which changes behavior:
-
-- A single shared home for the `.ui-modal*` CSS (a partial or static stylesheet)
-  instead of each page re-declaring the block.
-- Unifying the action-button row on `.modal-actions` + `.btn-*` everywhere
-  (`/kanban` still uses its internal `kb-row`; `/cron` keeps its own builder
-  layout).
-- A consistent title tag across pages (`/chat` and `/kanban` use `h3`; `/cron`
-  uses its own title markup).
+- The `.ui-modal*` CSS is re-declared per page rather than living in one shared
+  partial or stylesheet.
+- Action-button layout: `/chat` uses `.modal-actions`; `/kanban` keeps an
+  internal `kb-row`; `/cron`'s New-job builder has its own layout.
+- Card titles: `/chat` and `/kanban` use `<h3>`; `/cron` uses its own title
+  markup.
+- `/cron`'s New-job builder is intentionally wider than the 420px default
+  (`min(640px,92vw)` via a `.builder.ui-modal` rule) — see the wider-card note
+  under [The CSS](#2-the-css).
