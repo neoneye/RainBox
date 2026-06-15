@@ -60,6 +60,11 @@ backdrop CSS (`.ui-modal-backdrop[hidden]{display:none}`) and the card CSS
 
 ### 2. The CSS
 
+This canonical block lives in **`static/ui-modal.css`**, linked once per page
+(`<link rel="stylesheet" href="/static/ui-modal.css">`). Pages keep only their
+own form-field styling (`.agents` / `.brow` / `.kb-row`, compact inputs) and any
+size override inline, after the link so it wins on equal specificity.
+
 The backdrop is a fixed full-viewport scrim; each card is fixed and centered
 via the `translate(-50%,-50%)` trick. The backdrop sits at `z-index:1500`, the
 cards at `1600`, so a card always renders above the scrim.
@@ -182,32 +187,30 @@ every dialog on the page.
 
 ## Per-page notes
 
-All three pages implement the pattern above. They differ only in where the code
+All three pages implement the pattern above: shared `static/ui-modal.css`,
+`<h3>` titles, and right-aligned `.modal-actions` with `.btn-cancel` /
+`.btn-primary` / `.btn-danger`. They differ only in where the page-specific code
 lives:
 
-| Page      | Markup + CSS              | Modal JS           |
+| Page      | Markup + page CSS         | Modal JS           |
 |-----------|---------------------------|--------------------|
 | `/chat`   | `webapp/chat_template.py` | inline (same file) |
 | `/cron`   | `webapp/cron_views.py`    | `static/cron.js`   |
 | `/kanban` | `webapp/kanban_views.py`  | `static/kanban.js` |
 
 So on `/chat` a new modal is a one-file change, while on `/cron` and `/kanban`
-it is two files — markup/CSS in the view, behavior in the static JS. `/cron`
-also has assertions in `webapp/test_cron_views.py` that reference modal markup;
-keep them in sync.
+it is two files — markup + page CSS in the view, behavior in the static JS.
+`/cron` also has assertions in `webapp/test_cron_views.py` that reference modal
+markup; keep them in sync.
 
-### Known inconsistencies (optional cleanups)
+### Intentional per-page variations
 
-The shared contract — `.ui-modal` / `.ui-modal-backdrop` classes, a single
-backdrop, dirty-guarded dismissal — holds on every page. A few cosmetic details
-still vary; none affects behavior:
+These stay per-page by design — not inconsistencies to fix:
 
-- The `.ui-modal*` CSS is re-declared per page rather than living in one shared
-  partial or stylesheet.
-- Action-button layout: `/chat` uses `.modal-actions`; `/kanban` keeps an
-  internal `kb-row`; `/cron`'s New-job builder has its own layout.
-- Card titles: `/chat` and `/kanban` use `<h3>`; `/cron` uses its own title
-  markup.
-- `/cron`'s New-job builder is intentionally wider than the 420px default
-  (`min(640px,92vw)` via a `.builder.ui-modal` rule) — see the wider-card note
-  under [The CSS](#2-the-css).
+- **Form-field rows** keep page-local layout classes: `/chat` `.agents`,
+  `/cron` `.brow`, `/kanban` `.kb-row`. Only the *action-button* row is the
+  shared `.modal-actions`.
+- **Card size.** The shared default is `width:min(420px,92vw)`. `/cron`'s
+  New-job builder overrides to `min(640px,92vw)` (`.builder.ui-modal`, scrollable
+  for its multi-column schedule); `/kanban` cards override to `min(560px,92vw)`
+  and scroll when tall (the task modal carries a history list).
