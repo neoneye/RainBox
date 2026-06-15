@@ -71,6 +71,46 @@ CHAT_TEMPLATE: str = """
   .room-menu .item:hover{background:#eef0f6}
   .room-menu .item.danger{color:#b91c1c}
 
+  /* ---- folder tree (ported from /cron) ---- */
+  #rooms ul{list-style:none;margin:0;padding:0}
+  #rooms ul ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
+  .chat-node{position:relative;display:flex;align-items:center;gap:0.4em;width:100%;
+             padding:0.4em 0.6em;border-radius:6px;cursor:pointer;color:#333;font-size:0.9rem}
+  .chat-node:hover{background:#eef0f6}
+  .chat-node.sel{background:#e3ebfb}
+  .chat-ficon{display:inline-flex;width:1.05em;height:1.05em;color:#6b7280;flex:0 0 auto}
+  .chat-ficon svg{width:100%;height:100%}
+  .chat-folder-label{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+  /* drag feedback (ported from cron) */
+  .chat-dragging{opacity:0.4}
+  .chat-drop-target{outline:2px solid #2563eb;outline-offset:-2px}
+  .chat-drop-before{box-shadow:inset 0 2px 0 #2563eb}
+  .chat-drop-after{box-shadow:inset 0 -2px 0 #2563eb}
+  .chat-root-drop{margin:0.4em 0.3em 0;padding:0.4em;border:1px dashed #cbd5e1;border-radius:6px;
+                  color:#94a3b8;font-size:0.78rem;text-align:center;display:none}
+  .rooms.dragging-on .chat-root-drop{display:block}
+  .chat-root-drop.over{border-color:#2563eb;color:#2563eb;background:#eff6ff}
+  .new-folder-btn{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+                  padding:0.25em 0.6em;cursor:pointer;font:inherit;font-size:0.78rem;margin-left:0.4em}
+  .new-folder-btn:hover{border-color:#2563eb;color:#2563eb}
+  /* modal (folder create + delete-confirm) */
+  .chat-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:1500}
+  .chat-modal-backdrop[hidden]{display:none}
+  .chat-modal{position:fixed;z-index:1600;left:50%;top:50%;transform:translate(-50%,-50%);
+              background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.25);
+              padding:1.2em 1.3em;width:min(420px,92vw)}
+  .chat-modal[hidden]{display:none}
+  .chat-modal h3{margin:0 0 0.6em;font-size:1.05rem}
+  .chat-modal p{margin:0 0 0.8em;color:#444;font-size:0.9rem;line-height:1.45}
+  .chat-modal input[type=text]{width:100%;box-sizing:border-box;padding:0.5em;border:1px solid #ccc;
+                               border-radius:6px;font:inherit}
+  .chat-modal .modal-actions{display:flex;justify-content:flex-end;gap:0.5em;margin-top:1em}
+  .chat-modal button{border:none;border-radius:6px;padding:0.45em 1em;cursor:pointer;font:inherit}
+  .chat-modal .btn-cancel{background:#e5e7eb;color:#374151}
+  .chat-modal .btn-primary{background:#2563eb;color:#fff}
+  .chat-modal .btn-danger{background:#dc2626;color:#fff}
+  .chat-modal button:disabled{opacity:0.5;cursor:default}
+
   .room-main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
   .room-title{padding:0.6em 1em;border-bottom:1px solid #eee;font-weight:600;display:flex;align-items:center;gap:0.6em}
   .room-title input#room-title-name{flex:1 1 auto;font:inherit;font-size:1.05em;font-weight:600;
@@ -150,7 +190,10 @@ CHAT_TEMPLATE: str = """
   <div class="rooms">
     <div class="rooms-head">
       <span class="title">Rooms</span>
-      <button class="new-room-btn" id="new-room-btn" type="button">+ New room</button>
+      <span>
+        <button class="new-folder-btn" id="new-folder-btn" type="button">+ Folder</button>
+        <button class="new-room-btn" id="new-room-btn" type="button">+ New room</button>
+      </span>
     </div>
     <form class="new-room hidden" id="new-room">
       <input type="text" id="room-name" placeholder="Room name" autocomplete="off" required>
@@ -161,6 +204,7 @@ CHAT_TEMPLATE: str = """
       <div class="actions"><button type="submit">Create</button></div>
     </form>
     <div id="rooms"></div>
+    <div class="chat-root-drop" id="chat-root-drop">Move to top level</div>
   </div>
   <div class="room-main">
     <div class="room-title" id="room-title">
@@ -178,6 +222,28 @@ CHAT_TEMPLATE: str = """
       <button type="submit">Send</button>
     </form>
   </div>
+  <div class="chat-modal-backdrop" id="chat-modal-backdrop" hidden></div>
+
+  <div class="chat-modal" id="chat-folder-modal" hidden>
+    <h3 id="chat-folder-title">New folder</h3>
+    <input type="text" id="chat-folder-input" placeholder="Folder name" autocomplete="off">
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="chat-folder-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="chat-folder-create" disabled>Create</button>
+    </div>
+  </div>
+
+  <div class="chat-modal" id="chat-delete-modal" hidden>
+    <h3 id="chat-delete-title">Delete</h3>
+    <p id="chat-delete-msg"></p>
+    <p style="margin-bottom:0.3em">Type <strong id="chat-delete-name"></strong> to confirm:</p>
+    <input type="text" id="chat-delete-input" autocomplete="off">
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="chat-delete-cancel">Cancel</button>
+      <button type="button" class="btn-danger" id="chat-delete-confirm" disabled>Delete</button>
+    </div>
+  </div>
+
   <div class="room-sidebar" id="room-sidebar"></div>
 </div>
 
