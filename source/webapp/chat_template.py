@@ -274,8 +274,26 @@ const agentListEl = document.getElementById('agent-list');
 const LUCIDE_COPY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const LUCIDE_THUMBS_UP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/><path d="M7 10v12"/></svg>';
 const LUCIDE_THUMBS_DOWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/></svg>';
+const CHAT_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+const CHAT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>';
 
 let rooms = [];                 // [{uuid, name, member_count, last_message_id}]
+let folders = [];               // [{id, name, parentId}]
+let treeVersion = null;         // optimistic-concurrency token from /chat/api/tree
+let dragNode = null;            // {type:'folder'|'room', id} during a drag
+const FOLDER_EXPAND_KEY = 'chat.expandedFolders';
+let expandedFolders = {};       // folderId -> false when collapsed (default expanded)
+try {
+  const saved = JSON.parse(localStorage.getItem(FOLDER_EXPAND_KEY) || '{}');
+  if (saved && typeof saved === 'object') expandedFolders = saved;
+} catch (e) {}
+function saveExpandState(){
+  try { localStorage.setItem(FOLDER_EXPAND_KEY, JSON.stringify(expandedFolders)); } catch (e) {}
+}
+function folderById(id){ return folders.find(f => f.id === id) || null; }
+function childFolders(parentId){ return folders.filter(f => (f.parentId || null) === parentId); }
+function roomsInFolder(id){ return rooms.filter(r => (r.folderId || null) === id); }
+function isExpanded(id){ return expandedFolders[id] !== false; }
 let currentRoom = null;         // uuid of the open room
 let lastId = 0;                 // highest message id rendered in currentRoom
 let renderedIds = new Set();    // message ids already in the log (dedup)
@@ -603,41 +621,91 @@ function makeMessage(m){
 
 function renderRooms(){
   roomsEl.innerHTML = '';
-  if (!rooms.length){
+  if (!rooms.length && !folders.length){
     const p = document.createElement('p');
     p.className = 'note';
     p.textContent = 'No rooms yet — create one above.';
     roomsEl.appendChild(p);
     return;
   }
-  rooms.forEach(r => {
-    const isActive = r.uuid === currentRoom;
-    const row = document.createElement('div');
-    row.className = 'room-row' + (isActive ? ' active' : '');
-    const btn = document.createElement('button');
-    btn.className = 'room' + (isActive ? ' active' : '');
-    btn.type = 'button';
-    btn.dataset.room = r.uuid;
-    const name = document.createElement('span');
-    name.className = 'room-name';
-    name.textContent = '# ' + r.name;
-    const sub = document.createElement('span');
-    sub.className = 'room-sub';
-    sub.textContent = r.member_count + (r.member_count === 1 ? ' member' : ' members');
-    btn.appendChild(name);
-    btn.appendChild(sub);
-    const n = unread[r.uuid] || 0;
-    if (n > 0){
-      const dot = document.createElement('span');
-      dot.className = 'unread';
-      dot.textContent = n;
-      btn.appendChild(dot);
-    }
-    btn.addEventListener('click', () => selectRoom(r.uuid));
-    row.appendChild(btn);
-    if (isActive) row.appendChild(buildRoomMenu(r.uuid));
-    roomsEl.appendChild(row);
+  const rootUl = document.createElement('ul');
+  childFolders(null).forEach(f => rootUl.appendChild(folderLi(f)));
+  roomsInFolder(null).forEach(r => {
+    const li = document.createElement('li');
+    li.appendChild(roomNode(r));
+    rootUl.appendChild(li);
   });
+  roomsEl.appendChild(rootUl);
+}
+
+// A folder row: the folder icon flips open when expanded and the folder has
+// children. Click toggles expand/collapse. Ported from cronFolderLi.
+function folderLi(f){
+  const li = document.createElement('li');
+  const kids = childFolders(f.id);
+  const kidRooms = roomsInFolder(f.id);
+  const hasKids = (kids.length + kidRooms.length) > 0;
+  const expanded = isExpanded(f.id);
+  const node = document.createElement('div');
+  node.className = 'chat-node';
+  const icon = document.createElement('span');
+  icon.className = 'chat-ficon';
+  icon.innerHTML = (expanded && hasKids) ? CHAT_ICON_FOLDER_OPEN : CHAT_ICON_FOLDER;
+  const label = document.createElement('span');
+  label.className = 'chat-folder-label';
+  label.textContent = f.name;
+  node.appendChild(icon);
+  node.appendChild(label);
+  node.title = f.name;
+  node.addEventListener('click', () => {
+    expandedFolders[f.id] = !isExpanded(f.id);
+    saveExpandState();
+    renderRooms();
+  });
+  makeDraggable(node, 'folder', f.id);
+  makeFolderDrop(node, f.id);
+  node.appendChild(buildFolderMenu(f.id));
+  li.appendChild(node);
+  if (expanded && hasKids){
+    const ul = document.createElement('ul');
+    kids.forEach(c => ul.appendChild(folderLi(c)));
+    kidRooms.forEach(r => { const rli = document.createElement('li'); rli.appendChild(roomNode(r)); ul.appendChild(rli); });
+    li.appendChild(ul);
+  }
+  return li;
+}
+
+// A room row — keeps the existing .room-row/.room markup (name, sub, unread,
+// kebab) so selection/menus look identical to today, wrapped for drag-drop.
+function roomNode(r){
+  const isActive = r.uuid === currentRoom;
+  const row = document.createElement('div');
+  row.className = 'room-row' + (isActive ? ' active' : '');
+  const btn = document.createElement('button');
+  btn.className = 'room' + (isActive ? ' active' : '');
+  btn.type = 'button';
+  btn.dataset.room = r.uuid;
+  const name = document.createElement('span');
+  name.className = 'room-name';
+  name.textContent = '# ' + r.name;
+  const sub = document.createElement('span');
+  sub.className = 'room-sub';
+  sub.textContent = r.member_count + (r.member_count === 1 ? ' member' : ' members');
+  btn.appendChild(name);
+  btn.appendChild(sub);
+  const n = unread[r.uuid] || 0;
+  if (n > 0){
+    const dot = document.createElement('span');
+    dot.className = 'unread';
+    dot.textContent = n;
+    btn.appendChild(dot);
+  }
+  btn.addEventListener('click', () => selectRoom(r.uuid));
+  row.appendChild(btn);
+  if (isActive) row.appendChild(buildRoomMenu(r.uuid));
+  makeDraggable(row, 'room', r.uuid);
+  makeRoomDrop(row, r.uuid);
+  return row;
 }
 
 // The selected room's overflow (...) menu. Rename/Mute/Archive are placeholders
@@ -684,6 +752,57 @@ function buildRoomMenu(roomUuid){
   wrap.appendChild(kebab);
   wrap.appendChild(menu);
   return wrap;
+}
+
+// Folder kebab: Rename + Delete. Always visible (folders have no "active"
+// state like rooms). Reuses the room-menu styles.
+function buildFolderMenu(folderId){
+  const wrap = document.createElement('div');
+  wrap.className = 'room-actions';
+  wrap.style.display = 'flex';  // folders show the kebab unconditionally
+  const kebab = document.createElement('button');
+  kebab.type = 'button';
+  kebab.className = 'room-kebab';
+  kebab.setAttribute('aria-label', 'Folder actions');
+  const menu = document.createElement('div');
+  menu.className = 'room-menu';
+  menu.setAttribute('role', 'menu');
+  menu.hidden = true;
+  [['Rename', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'item' + (mod ? ' ' + mod : '');
+    item.setAttribute('role', 'menuitem');
+    item.textContent = label;
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden = true;
+      if (label === 'Delete') confirmDeleteFolder(folderId);
+      else if (label === 'Rename') renameFolder(folderId);
+    });
+    menu.appendChild(item);
+  });
+  kebab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = menu.hidden;
+    document.querySelectorAll('.room-menu').forEach(m => { m.hidden = true; });
+    if (willOpen){
+      const rect = kebab.getBoundingClientRect();
+      menu.style.left = rect.left + 'px';
+      menu.style.top = (rect.bottom + 4) + 'px';
+      menu.hidden = false;
+    }
+  });
+  wrap.appendChild(kebab);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
+// Inline-rename a folder: reuse the folder-create modal in "rename" mode.
+function renameFolder(folderId){
+  const f = folderById(folderId);
+  if (!f) return;
+  openFolderModal({mode: 'rename', folderId: folderId, current: f.name});
 }
 
 async function deleteRoom(uuid){
@@ -751,7 +870,10 @@ async function fetchNew(uuid){
 }
 
 async function loadRooms(selectUuid){
-  rooms = await getJSON('/chat/api/rooms');
+  const tree = await getJSON('/chat/api/tree');
+  folders = (tree && tree.folders) || [];
+  rooms = (tree && tree.rooms) || [];
+  treeVersion = (tree && tree.version) || null;
   renderRooms();
   let target = selectUuid || currentRoom;
   // Fall back to the first room if the requested one is missing (e.g. a stale
