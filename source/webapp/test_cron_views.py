@@ -107,6 +107,17 @@ def test_cron_page_has_folder_tree_split():
     # backdrop; the builder card carries the app-wide ui-modal class.
     assert 'id="ui-modal-backdrop"' in body
     assert "builder ui-modal" in body
+    # Modals use the shared modal stylesheet + the unified title/action pattern
+    # (docs/ui-modals.md): an <h3> title and a right-aligned .modal-actions row
+    # with cancel-then-primary buttons carrying .btn-* classes. The old
+    # .builder-title div + inline-styled action buttons are gone.
+    assert '<link rel="stylesheet" href="/static/ui-modal.css">' in body
+    assert '<h3 id="cron-builder-title">' in body
+    assert 'class="modal-actions"' in body
+    assert 'class="btn-primary"' in body
+    assert 'class="btn-cancel"' in body
+    assert 'class="btn-danger"' in body  # destructive delete-confirm button
+    assert 'class="builder-title"' not in body
     # Right-pane title reflects what's being viewed.
     assert 'id="cron-pane-title"' in body
     assert "Folder details" in body

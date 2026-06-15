@@ -37,30 +37,25 @@ def _cron_js_version() -> int:
 CRON_TEMPLATE = """
 <!doctype html>
 <title>Cron &mdash; rainbox</title>
+<link rel="stylesheet" href="/static/ui-modal.css">
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
   .muted{color:#6b7280;font-size:0.85rem}
   .builder{margin:1em 0;max-width:900px}
-  .builder-title{font-weight:700;font-size:1.5rem;margin:0 0 0.6em}
   /* App-wide modal pattern (docs/ui-modals.md): one shared backdrop + centered
      "card" overlays that are siblings of it. The New-job builder and the
      job-details edit overlays (Edit schedule / Edit action / description /
-     delete / folder) are all .ui-modal cards over the single backdrop. */
-  .ui-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:1500}
-  .ui-modal-backdrop[hidden]{display:none}
-  .ui-modal{position:fixed;z-index:1600;left:50%;top:50%;transform:translate(-50%,-50%);
-    background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.25);
-    padding:1.2em 1.3em;width:min(560px,92vw);max-height:90vh;overflow:auto}
-  .ui-modal[hidden]{display:none}
+     delete / folder) are all .ui-modal cards over the single backdrop.
+     The base .ui-modal-backdrop / .ui-modal / [hidden] / button:disabled rules
+     live in /static/ui-modal.css; only cron-specific overrides remain below. */
   /* The New-job builder is a wider card than the canonical 420px default; keep
      its original width so its multi-column schedule rows don't get cramped. */
-  .builder.ui-modal{margin:0;max-width:none;width:min(640px,92vw);padding:22px 24px}
+  .builder.ui-modal{margin:0;max-width:none;width:min(640px,92vw);padding:22px 24px;max-height:90vh;overflow:auto}
   .ui-modal .brow{margin:0.6em 0;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
   .ui-modal label{font-weight:600;font-size:0.9rem;display:inline-flex;flex-direction:column;gap:3px}
   .ui-modal select,.ui-modal input[type=text]{font-family:inherit;font-size:0.9rem;padding:5px 7px;font-weight:400}
   .ui-modal input[type=text]{min-width:220px}
   .ui-modal textarea{font-family:inherit;font-size:0.9rem;font-weight:400;padding:5px 7px;width:100%;min-height:5em;resize:vertical;box-sizing:border-box}
-  .ui-modal button:disabled{opacity:0.45;cursor:not-allowed}
   /* Job details: read-only schedule/action summaries with an Edit button, plus
      an inline description editor. */
   .cron-job-detail[hidden]{display:none}
@@ -240,7 +235,7 @@ CRON_TEMPLATE = """
   </div>
 </div>
 <div class="builder ui-modal" id="cron-builder">
-  <div class="builder-title" id="cron-builder-title"></div>
+  <h3 id="cron-builder-title"></h3>
   <div class="brow" id="cron-name-row">
     <label>Name <input type="text" id="f-name" placeholder="short title (required)"></label>
   </div>
@@ -286,10 +281,10 @@ CRON_TEMPLATE = """
       <option value="5">5&times;</option><option value="10">10&times;</option>
     </select></label>
   </div>
-  <div class="brow">
-    <button id="add-btn" onclick="cronAddOrUpdate()">Create job</button>
-    <button id="cancel-btn" onclick="cronCancelEdit()" style="display:none;background:#6b7280">Cancel</button>
+  <div class="modal-actions">
     <span class="err" id="form-err"></span>
+    <button id="cancel-btn" class="btn-cancel" onclick="cronCancelEdit()" style="display:none">Cancel</button>
+    <button id="add-btn" class="btn-primary" onclick="cronAddOrUpdate()">Create job</button>
   </div>
 </div>
 
@@ -309,7 +304,7 @@ CRON_TEMPLATE = """
 <div id="ui-modal-backdrop" class="ui-modal-backdrop" hidden></div>
 <!-- Job-details edit overlays. -->
 <div id="cron-sched-modal" class="ui-modal" hidden>
-  <div class="builder-title">Edit schedule</div>
+  <h3>Edit schedule</h3>
   <div class="brow">
     <label>Minute <select id="es-min"></select></label>
     <label>Hour <select id="es-hour"></select></label>
@@ -322,13 +317,13 @@ CRON_TEMPLATE = """
     </select></label>
   </div>
   <div class="brow">Schedule: <code id="es-cron-string">* * * * *</code> <span class="muted" id="es-cron-hint"></span></div>
-  <div class="brow">
-    <button id="es-save" onclick="cronSaveSchedule()">Save</button>
-    <button onclick="cronCloseEditModals()" style="background:#6b7280">Cancel</button>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="cronCloseEditModals()">Cancel</button>
+    <button id="es-save" class="btn-primary" onclick="cronSaveSchedule()">Save</button>
   </div>
 </div>
 <div id="cron-action-modal" class="ui-modal" hidden>
-  <div class="builder-title">Edit action</div>
+  <h3>Edit action</h3>
   <div class="brow">
     <span style="font-weight:600">Action type:</span>
     <label style="flex-direction:row;align-items:center;gap:5px;font-weight:400">
@@ -350,48 +345,48 @@ CRON_TEMPLATE = """
       <option value="5">5&times;</option><option value="10">10&times;</option>
     </select></label>
   </div>
-  <div class="brow">
-    <button id="ea-save" onclick="cronSaveAction()">Save</button>
-    <button onclick="cronCloseEditModals()" style="background:#6b7280">Cancel</button>
+  <div class="modal-actions">
     <span class="err" id="ea-err"></span>
+    <button class="btn-cancel" onclick="cronCloseEditModals()">Cancel</button>
+    <button id="ea-save" class="btn-primary" onclick="cronSaveAction()">Save</button>
   </div>
 </div>
 <!-- Delete confirmation (custom overlay, not a native dialog so it can't be
      permanently suppressed by the browser). -->
 <div id="cron-delete-modal" class="ui-modal" hidden>
-  <div class="builder-title">Confirm delete</div>
+  <h3>Confirm delete</h3>
   <div class="brow" id="cron-delete-msg" style="display:block"></div>
   <div class="brow" id="cron-delete-name-row" hidden>
     <label style="width:100%">Type the folder name to confirm
       <input type="text" id="cron-delete-input" autocomplete="off"></label>
   </div>
-  <div class="brow">
-    <button id="cron-delete-confirm" style="background:#b91c1c">Delete</button>
-    <button onclick="cronCloseDeleteModal()" style="background:#6b7280">Cancel</button>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="cronCloseDeleteModal()">Cancel</button>
+    <button id="cron-delete-confirm" class="btn-danger">Delete</button>
   </div>
 </div>
 <!-- Edit description (folder or job) overlay. -->
 <div id="cron-desc-modal" class="ui-modal" hidden>
-  <div class="builder-title">Edit description</div>
+  <h3>Edit description</h3>
   <div class="brow">
     <label style="width:100%">Description
       <textarea id="cron-desc-input" rows="6" placeholder="optional notes"></textarea></label>
   </div>
-  <div class="brow">
-    <button onclick="cronSaveDescription()">Save</button>
-    <button onclick="cronCloseDescModal()" style="background:#6b7280">Cancel</button>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="cronCloseDescModal()">Cancel</button>
+    <button class="btn-primary" onclick="cronSaveDescription()">Save</button>
   </div>
 </div>
 <!-- New folder / subfolder name (custom overlay, not a native prompt). -->
 <div id="cron-folder-modal" class="ui-modal" hidden>
-  <div class="builder-title" id="cron-folder-title">New folder</div>
+  <h3 id="cron-folder-title">New folder</h3>
   <div class="brow">
     <label style="width:100%">Folder name
       <input type="text" id="cron-folder-input" autocomplete="off" placeholder="folder name"></label>
   </div>
-  <div class="brow">
-    <button id="cron-folder-create" onclick="cronAddFolderConfirm()">Create</button>
-    <button onclick="cronCloseFolderModal()" style="background:#6b7280">Cancel</button>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="cronCloseFolderModal()">Cancel</button>
+    <button id="cron-folder-create" class="btn-primary" onclick="cronAddFolderConfirm()">Create</button>
   </div>
 </div>
 
