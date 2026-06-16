@@ -755,14 +755,14 @@ function folderDetailFolderRow(f, depth){
   return tr;
 }
 
-// A room row: # name (indented) + agents + message count + last message time,
+// A room row: name (indented) + agents + message count + last message time,
 // plus a Details link that opens the chatroom (reuses selectRoom).
 function folderDetailRoomRow(r, depth){
   const d = roomDetailsMap.get(r.uuid) || {};
   const tr = document.createElement('tr');
   const nameTd = document.createElement('td');
   nameTd.className = 'fd-name';
-  nameTd.textContent = fdIndent(depth) + '# ' + r.name;
+  nameTd.textContent = fdIndent(depth) + r.name;
   tr.appendChild(nameTd);
   const agentsTd = document.createElement('td');
   agentsTd.textContent = (d.agents || []).join(', ');
