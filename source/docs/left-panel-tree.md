@@ -184,9 +184,11 @@ is the nicer UX; do that on new pages.
   collision check in §1/§9), restoring it on load by trying folder-by-id then
   item-by-id (`cronSyncUrl`/init `static/cron.js:893-899,1625-1633`). The root
   "All X" node has no uuid, so it maps to **no `?id=`** (the default view) —
-  don't invent an `?id=all`. `/kanban` first shipped separate
-  `?board=`/`?folder=`/`?folder=all` params and had to collapse them to `?id=`.
-  `/chat` does no deep-linking.
+  don't invent an `?id=all`. All three pages now use this single-`?id=` form;
+  both `/kanban` (which first shipped `?board=`/`?folder=`/`?folder=all`) and
+  `/chat` (which first shipped `?room=` only, with folders not deep-linked) were
+  reworked to it. So: **use one `?id=` from the start, covering folder *and*
+  item, and don't add per-kind params.**
 
 ## 6. Drag-and-drop reorder / nest
 
@@ -223,12 +225,26 @@ depth counter, then render depth-indented rows:
 Each row has a **Details** link: on a **subfolder** row it drills in (re-selects
 that folder); on a **leaf** row it opens the item (the normal item view). Columns
 are page-specific (chat: Name / Agents / Messages / Last message; cron: Active /
-id / Name / Schedule / Next / Health / Command / Description).
+id / Name / Schedule / Next / Health / Command / Description). **Show the leaf's
+plain name in the Name column** — the same string the tree shows, with no
+view-specific decoration (`/chat` prefixed room names with `# ` here and it had
+to be removed; the tree itself never prefixed them).
 
 The right pane shows exactly one of: an item view, or the folder table — toggle
 visibility with the `hidden` attribute. Note: if the panes set `display` at
 class specificity, the bare `hidden` attribute won't hide them — add explicit
 `.pane[hidden]{display:none}` rules (this bit `/chat`'s chat-log/compose).
+
+**Hide the ENTIRE item view, not just its body — or the previous item's data
+leaks into the folder view.** The item view is usually several sibling elements:
+a header/title bar, the body, a footer/compose, *and* a secondary right sidebar.
+`/chat` first hid only the chat-log + compose, so selecting a folder still showed
+the last room's **name in the title-bar input** and its **members/stats in the
+right sidebar**. Fix: on folder-select, hide every item-view element (title bar
+included — add its own `[hidden]{display:none}` if it's `display:flex`) and
+re-render the secondary sidebar (with no item selected it should clear itself —
+`/chat`'s `renderSidebar()` early-returns to empty when `currentRoom` is null).
+On item-select, restore them all (`hideFolderDetail` mirrors `showFolderDetail`).
 
 ## 8. Gotchas
 
@@ -244,6 +260,9 @@ class specificity, the bare `hidden` attribute won't hide them — add explicit
 - **Re-hydrate on any save failure** (409 *or* network error) so the client
   converges to server truth instead of drifting.
 - **Kebab only on the selected node, not on hover** — matches across pages.
+- **Folder view must hide ALL item chrome (title/header, body, footer, right
+  sidebar), not just the body** — else the previously-open item's name/members/
+  stats leak into the folder view. This was a real `/chat` bug (see §7).
 
 ## 9. Porting checklist (e.g. `/kanban`: folders → boards)
 
@@ -266,7 +285,9 @@ class specificity, the bare `hidden` attribute won't hide them — add explicit
    never per-kind params.
 6. **Drag-drop:** folder 3-zone (before/after/into) + leaf 2-zone + root drop;
    `folderInSubtree` cycle guard; auto-expand on drop; debounced save.
-7. **Detail pane:** flatten subtree with depth; depth-indented rows; per-row
-   Details link (folder drills in, item opens); `hidden`-attr pane toggle (+
-   explicit `[hidden]{display:none}` if the pane sets `display`).
+7. **Detail pane:** flatten subtree with depth; depth-indented rows (plain item
+   names, no view-specific decoration); per-row Details link (folder drills in,
+   item opens); `hidden`-attr pane toggle (+ explicit `[hidden]{display:none}`
+   if the pane sets `display`). **Hide the WHOLE item view (title bar, body,
+   footer, right sidebar) on folder-select**, or stale item info leaks (§7).
 8. **Modals** for folder create/rename/delete per [`ui-modals.md`](ui-modals.md).
