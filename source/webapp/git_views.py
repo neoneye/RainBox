@@ -39,8 +39,9 @@ GIT_TEMPLATE = """
   .git-actions button:hover{background:#1d4ed8}
   /* Hairline dividers between the root node, the actions, and the tree (like /cron). */
   .git-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:0}
-  .git-tree-list,.git-tree-list ul{list-style:none;margin:0;padding-left:14px}
-  #git-tree-root{padding-left:0}
+  /* Nested items indent past the parent's label with a guide line, like /cron. */
+  .git-tree-list,.git-tree-list ul{list-style:none;margin:0;padding:0}
+  .git-tree-list ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
   .git-node,.git-repo-node{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:5px;cursor:pointer;position:relative}
   .git-node:hover,.git-repo-node:hover{background:#f3f4f6}
   .git-node.sel,.git-repo-node.sel{background:#dbeafe}
