@@ -975,6 +975,43 @@ class AppSetting(db.Model):
     )
 
 
+class GitFolder(db.Model):
+    __tablename__ = "git_folder"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")  # notes about the child nodes
+    parent_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = root; plain col, no FK
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("git_folder_children", "parent_uuid", "position"),)
+
+
+class GitRepo(db.Model):
+    __tablename__ = "git_repo"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")  # RainBox display name; freely editable
+    folder_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = unfiled at root; plain col, no FK
+    path: Mapped[str] = mapped_column(Text, default="")  # absolute filesystem path; set at add, immutable for now
+    description: Mapped[str] = mapped_column(Text, default="")
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("git_repo_in_folder", "folder_uuid", "position"),)
+
+
 def psycopg_dsn() -> str:
     """The DATABASE_URL as a plain libpq DSN (no SQLAlchemy `+psycopg` driver
     tag), for opening a raw psycopg connection — used by the chat SSE stream to

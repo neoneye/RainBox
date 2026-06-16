@@ -32,6 +32,8 @@ from db import (
     EvalResult,
     EvalRun,
     FeedbackEvent,
+    GitFolder,
+    GitRepo,
     Inbox,
     Journal,
     KanbanBoard,
@@ -106,6 +108,7 @@ NAV_TEMPLATE = """
     <a href="{{ url_for('conversation_page') }}" class="{{ 'pp-active' if request.endpoint == 'conversation_page' }}">Conversations</a>
     <a href="{{ url_for('cron_page') }}" class="{{ 'pp-active' if request.endpoint == 'cron_page' }}">Cron</a>
     <a href="{{ url_for('kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'kanban_page' }}">Kanban</a>
+    <a href="{{ url_for('git_page') }}" class="{{ 'pp-active' if request.endpoint == 'git_page' }}">Git</a>
     <a href="{{ url_for('settings_page') }}" class="{{ 'pp-active' if request.endpoint == 'settings_page' }}">Settings</a>
     <details class="pp-dd {{ 'pp-active' if request.endpoint in ('models_page', 'modelgroups_page', 'agent_models_page') }}">
       <summary>Models &#9662;</summary>
@@ -649,6 +652,61 @@ class CronRunView(ModelView):
 admin.add_view(CronFolderView(CronFolder, db, category="Cron"))
 admin.add_view(CronJobView(CronJob, db, category="Cron"))
 admin.add_view(CronRunView(CronRun, db, category="Cron"))
+
+
+# Git tables backing the /git page (folder tree + repos). Same low-level
+# inspection role as the Cron/Kanban categories; the curated surface is /git.
+def _git_open_link(view, context, model, name):
+    """Virtual column linking to the /git page deep-linked to this node, so an
+    operator can jump from the admin row straight to the folder/repo there."""
+    return Markup(f'<a href="/git?id={escape(model.uuid)}">inspect ↗</a>')
+
+
+def _git_folder_label(view, context, model, name):
+    """Render a folder-uuid column (a repo's `folder_uuid` or a folder's
+    `parent_uuid`) as a truncated uuid (full on hover) with the folder's name
+    below. Plain columns (no FK), so look the folder up by uuid."""
+    fid = getattr(model, name)
+    if not fid:
+        return ""
+    full = str(fid)
+    short = Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
+    folder = db.session.query(GitFolder).filter_by(uuid=fid).first()
+    return Markup(f"{short}<br>{escape(folder.name)}") if folder else short
+
+
+class GitFolderView(ModelView):
+    column_list = (
+        "git_link", "position", "uuid", "name", "description", "parent_uuid",
+        "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"git_link": "Git page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "parent_uuid": _git_folder_label,
+        "git_link": _git_open_link,
+    }
+
+
+class GitRepoView(ModelView):
+    column_list = (
+        "git_link", "position", "uuid", "name", "folder_uuid", "path",
+        "description", "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"git_link": "Git page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "folder_uuid": _git_folder_label,
+        "git_link": _git_open_link,
+    }
+
+
+admin.add_view(GitFolderView(GitFolder, db, category="Git"))
+admin.add_view(GitRepoView(GitRepo, db, category="Git"))
 
 
 # Kanban tables backing the /kanban page (boards + columns + tasks + the
