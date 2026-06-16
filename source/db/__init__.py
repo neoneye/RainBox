@@ -268,6 +268,10 @@ def init_db(app: Flask) -> None:
                                "claimed_at TIMESTAMPTZ")
         _add_column_if_missing("kanban_task", "claim_expires_at",
                                "claim_expires_at TIMESTAMPTZ")
+        # kanban board folders (the left-panel tree, added after the board
+        # table's first cut). New table kanban_board_folder is created by
+        # create_all() above; the placement column is back-filled here.
+        _add_column_if_missing("kanban_board", "folder_uuid", "folder_uuid UUID")
         # Chat-folder columns (added after chatroom's first cut). New table
         # chatroom_folder is created by create_all() above.
         _add_column_if_missing("chatroom", "folder_uuid", "folder_uuid UUID")

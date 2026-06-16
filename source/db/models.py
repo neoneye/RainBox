@@ -295,6 +295,7 @@ class KanbanBoard(db.Model):
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text, default="")
     description: Mapped[str] = mapped_column(Text, default="")
+    folder_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = unfiled/root; plain col, no FK
     position: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
@@ -303,6 +304,34 @@ class KanbanBoard(db.Model):
         DateTime(timezone=True), default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
+    # No index on folder_uuid: the column is ALTER-added to the pre-existing
+    # kanban_board table, and create_all() never indexes an existing table, so
+    # an __table_args__ index would exist only on fresh DBs (dev/prod drift).
+    # Boards are few; the scan is cheap. Mirrors the index-less Chatroom.folder_uuid.
+
+
+class KanbanBoardFolder(db.Model):
+    """An organizational folder in the /kanban left-panel tree (folders →
+    boards). Purely organizational: boards reference a folder by a plain
+    `folder_uuid` column and folders nest via `parent_uuid` — both plain uuid
+    columns with no FK (the cron/chat folder pattern; app-side validation in
+    validate_kanban_tree catches dangling/cyclic refs)."""
+
+    __tablename__ = "kanban_board_folder"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    parent_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = root; plain col, no FK
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("kanban_board_folder_children", "parent_uuid", "position"),)
 
 
 class KanbanColumn(db.Model):
