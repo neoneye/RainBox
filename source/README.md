@@ -92,7 +92,7 @@ python3 main.py --force-lmstudio-model-sync
 
 In a browser:
 
-- `http://127.0.0.1:5000/` — index, with a **Run demo** button (resets demo data and seeds 5 dreamer tasks). The supervisor's next tick (within ~1 s) spawns dreamer, which drains and feeds critic, which feeds verifier.
+- `http://127.0.0.1:5000/` — index, with a **Run demo** button (resets demo data and seeds 5 dreamer tasks). The supervisor's next tick (within ~5 s when idle — it backs off its poll when there's no work — then ~1 s while the pipeline is active) spawns dreamer, which drains and feeds critic, which feeds verifier.
 - `http://127.0.0.1:5000/agent/<role>` — per-agent page with a JSON form to enqueue a single message into that agent's inbox.
 - `http://127.0.0.1:5000/models` — split-view tree of synced model configs and their overrides; create/test/delete overrides here. Each config/override has a **Test connection** section with three probes: **Test chat** (a plain completion — system "answer with 'pong'", user "ping" — that passes if the reply contains "pong", and shows the full reply); **Test structured output** (a JSON-schema ping via `as_structured_llm`); and **Test function calling** (enabled only when `is_function_calling_model` is true) which runs a `FunctionAgent` that must forward a random number to a `send_number` tool, verifying function calling actually works. The probes run in place via a JSON endpoint (`/models/api/test`). A base config's detail page also shows a **Model info (LM Studio)** section — type, arch, quantization, context length, and `capabilities` — pulled live from LM Studio's native `/api/v0/models` REST API (so it works against a remote LM Studio), with distinct messages for a deleted-but-reachable model vs an unreachable server.
 - `http://127.0.0.1:5000/modelgroups` — define named, priority-ordered groups of models/overrides (`Edit priority list` opens `/modelgrouppriorities`). A group can carry a **function-calling constraint** (a checkbox on the new-group form): then only models/overrides that resolve to `is_function_calling_model=true` may be members (the priority editor disables the rest, and the server rejects them).
@@ -380,7 +380,7 @@ A candid assessment of this code as the basis for an AI-agent system.
 
 - **Process isolation per agent.** Most agent frameworks are in-process Python — one tool hang or OOM and the whole supervisor goes. This design doesn't have that failure class.
 - **Watchdog + `SIGKILL`** is the correct shape for LLM workloads where infinite loops and stuck subprocess tools are real concerns.
-- **Event-driven idle posture** — `select` blocks in the kernel until the next deadline or socket event, and the supervisor only spawns agents when work appears. Zero CPU when nothing's happening.
+- **Low idle footprint** — `select` blocks in the kernel until the next deadline or socket event, and the supervisor only spawns agents when work appears. Inbox discovery is poll-based, so an idle supervisor still wakes on a timer; it backs that off to `IDLE_TICK_TIMEOUT` (5 s) when there are no live agents or pending work, keeping at-rest CPU minimal. (A `LISTEN/NOTIFY` wakeup on the inbox — as chat already uses — would take it to truly zero; see follow-ups.)
 - **Small surface area** — POSIX primitives, no workflow framework, the whole thing is readable end-to-end.
 
 ### What's right (runtime layer)
