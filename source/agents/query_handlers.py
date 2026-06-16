@@ -364,6 +364,59 @@ def get_git_overview(ctx: QueryContext) -> str:
     return "\n".join(lines).strip()
 
 
+def get_cron_overview(ctx: QueryContext) -> str:
+    """Markdown overview of the cron jobs curated on the /cron page, grouped by
+    folder. For each job: active/inactive, schedule (cron expr + timezone), uuid
+    and next run. Reads the persisted tree (db.cron_load_tree); the scheduler
+    owns next_run_at, so this just reports what's stored."""
+    try:
+        tree = db.cron_load_tree()
+    except Exception as e:
+        return f"(could not load cron tree: {type(e).__name__}: {e})"
+    folders = tree.get("folders", [])
+    jobs = tree.get("jobs", [])
+    if not jobs:
+        return "No cron jobs are configured yet. Add some at http://127.0.0.1:5000/cron"
+
+    # Resolve a job's folder to a breadcrumb label ("Parent / Child").
+    by_id = {f["id"]: f for f in folders}
+
+    def folder_label(fid: str | None) -> str:
+        parts: list[str] = []
+        seen: set[str] = set()
+        while fid and fid in by_id and fid not in seen:
+            seen.add(fid)
+            node = by_id[fid]
+            parts.append(node["name"])
+            fid = node.get("parentId")
+        return " / ".join(reversed(parts))
+
+    # Group jobs by folder, preserving the page's saved order.
+    groups: dict[str, list] = {}
+    for j in jobs:
+        label = folder_label(j.get("folderId")) or "(ungrouped)"
+        groups.setdefault(label, []).append(j)
+
+    noun = "cron job" if len(jobs) == 1 else "cron jobs"
+    header = f"**{len(jobs)} {noun}** — http://127.0.0.1:5000/cron"
+    if tree.get("paused"):
+        header += "  ⏸ (globally paused — nothing fires)"
+    lines = [header, ""]
+    for label, items in groups.items():
+        lines.append(f"### {label}")
+        for j in items:
+            state = "active" if j.get("enabled") else "inactive"
+            sched = j.get("cron") or "(no schedule)"
+            if j.get("timezone"):
+                sched += f" [{j['timezone']}]"
+            lines.append(f"- **{j['name']}** — {state}")
+            lines.append(f"  - schedule: `{sched}`")
+            lines.append(f"  - next run: {j.get('next_run_at') or '—'}")
+            lines.append(f"  - uuid: `{j['uuid']}`")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def get_cwd(ctx: QueryContext) -> str:
     return str(_REPO_DIR)
 
@@ -572,6 +625,7 @@ HANDLERS = {
     "get_last_git_commit": get_last_git_commit,
     "get_git_remote": get_git_remote,
     "get_git_overview": get_git_overview,
+    "get_cron_overview": get_cron_overview,
     "get_cwd": get_cwd,
     "get_runtime_info": get_runtime_info,
     "get_test_status": get_test_status,
