@@ -618,8 +618,8 @@ function kbOpenModal(id){
 }
 function kbCloseModals(){
   document.getElementById('ui-modal-backdrop').hidden = true;
-  ['kb-board-modal','kb-task-modal','kb-md-modal','kb-confirm-modal'].forEach(id =>
-    document.getElementById(id).hidden = true);
+  ['kb-board-modal','kb-folder-modal','kb-task-modal','kb-md-modal','kb-confirm-modal']
+    .forEach(id => document.getElementById(id).hidden = true);
   // Forget the opened-with snapshots so a future open starts fresh.
   kbBoardModalOpenedWith = null;
   kbTaskModalOpenedWith = null;
@@ -995,11 +995,132 @@ document.getElementById('ui-modal-backdrop').addEventListener('click', kbDismiss
 })();
 
 // ---- placeholders filled in by later tasks ----
-function kbRenderFolderView(){}
+// Depth-first flatten of a folder's subtree → [{kind:'folder'|'board', node, depth}].
+// 'all' flattens from the root (parentId/folderId === null).
+function kbFlattenTree(rootId){
+  const out = [];
+  const walk = (parentId, depth) => {
+    kbChildFolders(parentId).forEach(f => {
+      out.push({kind: 'folder', node: f, depth});
+      walk(f.uuid, depth + 1);
+    });
+    kbBoardsInFolder(parentId).forEach(b =>
+      out.push({kind: 'board', node: b, depth}));
+  };
+  walk(rootId === 'all' ? null : rootId, 0);
+  return out;
+}
+function kbRenderFolderView(){
+  if (kbSelectedFolder === null) return;
+  const f = kbSelectedFolder === 'all' ? null : kbFolderById(kbSelectedFolder);
+  document.getElementById('kb-folder-view-name').textContent =
+    kbSelectedFolder === 'all' ? 'All boards' : (f ? f.name : '(folder)');
+  const body = document.getElementById('kb-folder-view-body');
+  const rows = kbFlattenTree(kbSelectedFolder);
+  if (!rows.length){
+    body.innerHTML = '<div class="muted">This folder is empty.</div>';
+    return;
+  }
+  const table = document.createElement('table');
+  table.className = 'kb-folder-table';
+  table.innerHTML =
+    '<thead><tr><th>Name</th><th>Tasks</th><th></th></tr></thead><tbody></tbody>';
+  const tbody = table.querySelector('tbody');
+  rows.forEach(({kind, node, depth}) => {
+    const tr = document.createElement('tr');
+    const nameTd = document.createElement('td');
+    nameTd.style.paddingLeft = (8 + depth * 18) + 'px';
+    const nameWrap = document.createElement('span');
+    nameWrap.className = 'kb-ft-name';
+    nameWrap.textContent = (kind === 'folder' ? '\u{1F4C1} ' : '\u{1F4CB} ');
+    const label = document.createElement('span');
+    label.textContent = node.name || (kind === 'folder' ? '(unnamed)' : '(unnamed board)');
+    nameWrap.appendChild(label);
+    nameTd.appendChild(nameWrap);
+    const countTd = document.createElement('td');
+    countTd.textContent = kind === 'board' ? node.taskCount : '';
+    const linkTd = document.createElement('td');
+    const link = document.createElement('button');
+    link.className = 'kb-ft-link';
+    link.textContent = kind === 'folder' ? 'Open folder' : 'Open board';
+    link.addEventListener('click', () =>
+      kind === 'folder' ? kbSelectFolder(node.uuid) : kbSelectBoard(node.uuid));
+    linkTd.appendChild(link);
+    tr.appendChild(nameTd); tr.appendChild(countTd); tr.appendChild(linkTd);
+    tbody.appendChild(tr);
+  });
+  body.replaceChildren(table);
+}
 function kbWireFolderDrag(node, folderId){}
 function kbWireBoardDrag(node, boardId){}
 function kbWireRootDrop(){}
-function kbNewFolder(parentId){}
-function kbRenameFolder(folderId){}
-function kbSaveFolderModal(){}
-function kbConfirmDeleteFolder(folderId){}
+// Folder create + rename share one modal; kbRenamingFolder picks the mode.
+function kbNewFolder(parentId){
+  kbRenamingFolder = null;
+  kbFolderModalParent = (typeof parentId === 'string') ? parentId : null;
+  document.getElementById('kb-folder-modal-title').textContent =
+    kbFolderModalParent ? 'New subfolder' : 'New folder';
+  document.getElementById('kb-f-name').value = '';
+  document.getElementById('kb-f-save').textContent = 'Create folder';
+  document.getElementById('kb-f-err').textContent = '';
+  kbOpenModal('kb-folder-modal');
+  document.getElementById('kb-f-name').focus();
+}
+function kbRenameFolder(folderId){
+  const f = kbFolderById(folderId);
+  if (!f) return;
+  kbRenamingFolder = folderId;
+  document.getElementById('kb-folder-modal-title').textContent = 'Rename folder';
+  document.getElementById('kb-f-name').value = f.name;
+  document.getElementById('kb-f-save').textContent = 'Save';
+  document.getElementById('kb-f-err').textContent = '';
+  kbOpenModal('kb-folder-modal');
+  document.getElementById('kb-f-name').focus();
+}
+async function kbSaveFolderModal(){
+  const name = document.getElementById('kb-f-name').value.trim();
+  if (!name){
+    document.getElementById('kb-f-err').textContent = 'Name is required.'; return;
+  }
+  if (kbRenamingFolder){
+    const f = kbFolderById(kbRenamingFolder);
+    if (f){ f.name = name; kbSaveTree(); }
+    kbCloseModals();
+    kbRenderTree();
+    if (kbSelectedFolder) kbRenderFolderView();
+    return;
+  }
+  // Create server-side (the server assigns the uuid + position).
+  try {
+    const r = await fetch('/kanban/api/folders', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, parentId: kbFolderModalParent}),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok){
+      document.getElementById('kb-f-err').textContent = (j && j.error) || 'Create failed.';
+      return;
+    }
+    kbCloseModals();
+    if (kbFolderModalParent){ kbExpanded[kbFolderModalParent] = true; kbSaveExpanded(); }
+    await kbLoadIndex();   // re-hydrate so the new folder + fresh version land
+    kbRenderTree();
+  } catch (e) {
+    document.getElementById('kb-f-err').textContent = 'Network error.';
+  }
+}
+function kbConfirmDeleteFolder(folderId){
+  const f = kbFolderById(folderId);
+  if (!f) return;
+  kbConfirm('Delete folder?',
+    '“' + f.name + '” will be deleted. Any boards and subfolders inside it ' +
+    'move up one level — boards and their tasks are NOT deleted.',
+    async () => {
+      const r = await fetch('/kanban/api/folders/' + encodeURIComponent(folderId),
+                            {method: 'DELETE'}).catch(() => null);
+      if (!r || !r.ok){ kbToast('Delete failed.'); return; }
+      if (kbSelectedFolder === folderId) kbSelectedFolder = null;
+      await kbLoadIndex();
+      kbRender();
+    });
+}
