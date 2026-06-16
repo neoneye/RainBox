@@ -184,9 +184,11 @@ is the nicer UX; do that on new pages.
   collision check in §1/§9), restoring it on load by trying folder-by-id then
   item-by-id (`cronSyncUrl`/init `static/cron.js:893-899,1625-1633`). The root
   "All X" node has no uuid, so it maps to **no `?id=`** (the default view) —
-  don't invent an `?id=all`. `/kanban` first shipped separate
-  `?board=`/`?folder=`/`?folder=all` params and had to collapse them to `?id=`.
-  `/chat` does no deep-linking.
+  don't invent an `?id=all`. All three pages now use this single-`?id=` form;
+  both `/kanban` (which first shipped `?board=`/`?folder=`/`?folder=all`) and
+  `/chat` (which first shipped `?room=` only, with folders not deep-linked) were
+  reworked to it. So: **use one `?id=` from the start, covering folder *and*
+  item, and don't add per-kind params.**
 
 ## 6. Drag-and-drop reorder / nest
 
