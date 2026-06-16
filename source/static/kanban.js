@@ -991,10 +991,13 @@ document.getElementById('kb-all-boards').addEventListener('click', () => kbSelec
     kbSelectFolder(wantId);
   } else if (wantId && kbBoards.some(b => b.uuid === wantId)){
     await kbSelectBoard(wantId);
-  } else if (kbBoards.length){
-    await kbSelectBoard(kbBoards[0].uuid);
   } else {
-    kbRender();
+    // Default to the top-most board in render order (depth-first, subfolders
+    // before boards) — NOT kbBoards[0], which is global position order and can
+    // sit below entire folders in the tree.
+    const firstBoard = kbFlattenTree('all').find(n => n.kind === 'board');
+    if (firstBoard) await kbSelectBoard(firstBoard.node.uuid);
+    else kbRender();
   }
 })();
 

@@ -310,6 +310,18 @@ function saveExpandState(){
 function folderById(id){ return folders.find(f => f.id === id) || null; }
 function childFolders(parentId){ return folders.filter(f => (f.parentId || null) === parentId); }
 function roomsInFolder(id){ return rooms.filter(r => (r.folderId || null) === id); }
+// The top-most room in left-panel render order: depth-first, subfolders before
+// rooms (mirrors renderRooms). Used as the default selection — NOT rooms[0],
+// which is global position order and can sit below entire folders in the tree.
+function firstRoomInTree(parentId){
+  parentId = parentId || null;
+  for (const f of childFolders(parentId)){
+    const r = firstRoomInTree(f.id);
+    if (r) return r;
+  }
+  const rs = roomsInFolder(parentId);
+  return rs.length ? rs[0].uuid : null;
+}
 function isExpanded(id){ return expandedFolders[id] !== false; }
 let currentRoom = null;         // uuid of the open room
 let selectedFolder = null;      // folder id whose contents table is shown (null = none)
@@ -1383,10 +1395,10 @@ async function loadRooms(selectUuid){
     return;
   }
   let target = selectUuid || currentRoom;
-  // Fall back to the first room if the requested one is missing (e.g. a stale
-  // ?id= uuid for a deleted room).
+  // Fall back to the top-most room in the hierarchy when nothing is requested,
+  // or when the requested one is missing (e.g. a stale ?id= for a deleted room).
   if (!target || !rooms.some(r => r.uuid === target)){
-    target = rooms[0] && rooms[0].uuid;
+    target = firstRoomInTree(null);
   }
   if (target) await selectRoom(target);
   else chatSyncUrl();  // nothing to open (no rooms) — clear a stale ?id=
