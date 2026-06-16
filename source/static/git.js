@@ -275,8 +275,9 @@ function gitFolderLi(f){
   node.addEventListener('click', () => gitFolderClick(f.id));
   gitMakeDraggable(node, 'folder', f.id);
   gitMakeFolderDrop(node, f.id);
-  // The kebab (actions) only appears on the selected node, to keep the tree uncluttered.
-  if (selected) gitMakeKebab(node, {
+  // Kebab is rendered on every row but only shown (via CSS) on the selected one,
+  // so row heights stay consistent — matches /cron.
+  gitMakeKebab(node, {
     onNewRepo: () => gitNewRepo(f.id),
     onNewSubfolder: () => gitNewSubfolder(f.id),
     onRename: () => gitKebabRename('folder', f.id),
@@ -301,8 +302,8 @@ function gitRepoNode(r){
   n.addEventListener('click', () => gitSelectRepo(r.uuid));
   gitMakeDraggable(n, 'repo', r.uuid);
   gitMakeRepoDrop(n, r.uuid);
-  // The kebab (actions) only appears on the selected node, to keep the tree uncluttered.
-  if (selected) gitMakeKebab(n, { onRename: () => gitKebabRename('repo', r.uuid) });
+  // Kebab on every row, shown (via CSS) only on the selected one — matches /cron.
+  gitMakeKebab(n, { onRename: () => gitKebabRename('repo', r.uuid) });
   return n;
 }
 // Kebab "Rename" selects the node and focuses the right-pane rename field.

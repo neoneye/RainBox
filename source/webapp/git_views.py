@@ -42,16 +42,26 @@ GIT_TEMPLATE = """
   /* Nested items indent past the parent's label with a guide line, like /cron. */
   .git-tree-list,.git-tree-list ul{list-style:none;margin:0;padding:0}
   .git-tree-list ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
-  .git-node,.git-repo-node{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:5px;cursor:pointer;position:relative}
-  .git-node:hover,.git-repo-node:hover{background:#f3f4f6}
-  .git-node.sel,.git-repo-node.sel{background:#dbeafe}
-  .git-ficon{display:inline-flex;color:#6b7280}
-  .git-ficon svg{width:16px;height:16px;vertical-align:middle}
-  .git-kebab{margin-left:auto;border:0;background:transparent;cursor:pointer;font-size:1.1rem;line-height:1;padding:0 4px;color:#6b7280}
-  .git-kebab::before{content:"\\22EF"}
-  .git-menu{position:fixed;z-index:50;background:#fff;border:1px solid #d1d5db;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);min-width:140px;padding:4px}
-  .git-menu .item{display:block;width:100%;text-align:left;border:0;background:transparent;padding:6px 10px;cursor:pointer;font:inherit;border-radius:4px}
-  .git-menu .item:hover{background:#f3f4f6}
+  /* Tree node rows — folder + leaf — copied from /cron's .cron-node/.cron-job-node. */
+  .git-node,.git-repo-node{-webkit-user-select:none;user-select:none}
+  .git-node{display:flex;align-items:center;gap:4px;padding:8px 4px;border-radius:4px;cursor:pointer;white-space:nowrap}
+  .git-node:hover{background:#f1f5f9}
+  .git-node.sel{background:#dbeafe;font-weight:600}
+  .git-ficon{display:inline-flex;align-items:center;color:#6b7280}
+  .git-ficon svg{width:15px;height:15px;display:block}
+  .git-repo-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151}
+  .git-repo-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .git-repo-node:hover{background:#f1f5f9}
+  .git-repo-node.sel{background:#dbeafe;font-weight:600}
+  /* kebab (3-dot overflow) — hidden until the row is selected; rounded hover. */
+  .git-kebab{margin-left:auto;flex:0 0 auto;border:none;background:none;cursor:pointer;color:#6b7280;width:1.4rem;height:1.4rem;padding:0;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;visibility:hidden}
+  .git-node.sel .git-kebab,.git-repo-node.sel .git-kebab{visibility:visible}
+  .git-kebab::before{content:"";width:3px;height:3px;border-radius:50%;background:currentColor;box-shadow:-5px 0 0 currentColor,5px 0 0 currentColor}
+  .git-kebab:hover{background:#d2ddf6;color:#1a1a2e}
+  .git-menu{position:fixed;z-index:1000;min-width:150px;background:#fff;border:1px solid #d1d5db;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.14);padding:0.25em;display:flex;flex-direction:column}
+  .git-menu[hidden]{display:none}
+  .git-menu .item{text-align:left;border:none;background:none;cursor:pointer;font:inherit;font-size:0.85rem;color:#333;padding:0.45em 0.6em;border-radius:6px}
+  .git-menu .item:hover{background:#eef0f6}
   .git-pane-title{font-weight:600;font-size:1.1rem;margin-bottom:8px}
   #git-node-rename{margin:8px 0;display:flex;gap:6px}
   #git-node-rename input{font:inherit;padding:4px 6px}
@@ -66,10 +76,13 @@ GIT_TEMPLATE = """
   .git-root-drop{display:none;margin-top:8px;padding:8px;border:1px dashed #93c5fd;border-radius:6px;color:#2563eb;font-size:0.82rem;text-align:center;-webkit-user-select:none;user-select:none}
   .git-tree.git-dragging-on .git-root-drop{display:block}
   .git-root-drop.over{background:#eff6ff;border-color:#2563eb}
-  .git-dragging{opacity:0.5}
-  .git-drop-target{outline:2px solid #3b82f6;outline-offset:-2px}
-  .git-drop-before{box-shadow:inset 0 2px 0 #3b82f6}
-  .git-drop-after{box-shadow:inset 0 -2px 0 #3b82f6}
+  /* drag-and-drop affordances — children don't eat drag events; kebab/menu stay clickable. */
+  .git-node>*,.git-repo-node>*{pointer-events:none}
+  .git-node>.git-kebab,.git-node>.git-menu,.git-repo-node>.git-kebab,.git-repo-node>.git-menu{pointer-events:auto}
+  .git-drop-target{outline:2px solid #2563eb;outline-offset:-2px}
+  .git-drop-before{box-shadow:inset 0 2px 0 0 #2563eb}
+  .git-drop-after{box-shadow:inset 0 -2px 0 0 #2563eb}
+  .git-dragging{opacity:0.4}
   .ui-modal label{display:flex;flex-direction:column;gap:3px;font-weight:600;font-size:0.9rem;margin:8px 0}
   .ui-modal input[type=text],.ui-modal textarea{font:inherit;font-weight:400;padding:5px 7px;width:100%;box-sizing:border-box}
   .ui-modal textarea{min-height:5em;resize:vertical}
