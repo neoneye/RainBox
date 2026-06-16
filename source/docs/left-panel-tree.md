@@ -121,6 +121,21 @@ double-descendant selector skips the root `<ul>`):
 `<ul class="cron-tree-list">`, so `.cron-tree-list ul` matches only nested
 lists). The folder icon swaps open/closed based on `isExpanded && hasChildren`.
 
+**Icons — match `/chat` exactly; don't invent your own.** This bit `/kanban`
+(emoji + a caret were used, then reworked):
+- **Use the shared inline Lucide folder SVGs**, not emoji. `/chat` defines
+  `CHAT_ICON_FOLDER` (closed) and `CHAT_ICON_FOLDER_OPEN` (open) verbatim from
+  lucide.dev (`chat_template.py:293-294`); copy those two constants. They're
+  `stroke="currentColor"` and sized by the wrapper span
+  (`.chat-ficon{width:1.05em;height:1.05em}` + `.chat-ficon svg{width:100%}`),
+  so they inherit row colour/size.
+- **The folder icon IS the expand indicator** — it flips open↔closed on
+  `isExpanded && hasChildren`. Do **not** add a separate twisty/caret (▾/▸)
+  column; neither `/chat` nor `/cron` has one.
+- **Leaf items carry no icon.** `/chat` rooms and `/cron` jobs render name-only;
+  a leaf icon looks wrong next to the folders.
+- A root "All X" node is name-only too (see §5).
+
 ## 4. Expand / collapse state
 
 A plain map keyed by folder id, **default expanded**:
@@ -152,9 +167,26 @@ is the nicer UX; do that on new pages.
 - **Root pseudo-node (optional).** `/cron` has a static `#cron-all-jobs` node
   where `selectedFolder === null` shows the whole flattened tree. `/chat` has no
   such node (nothing selected → no table). Add one if "show everything" is useful.
-- **URL deep-linking (optional).** `/cron` mirrors the selection to `?id=<uuid>`
-  (`cronSyncUrl`, `static/cron.js:893-899`) and restores it on load. `/chat` does
-  not.
+  **It is a static element in the markup, NOT the first row of the rendered
+  tree** — render only toggles its `.sel` class and a one-time listener wires
+  its click (`cron.js:1019,1449`). `/kanban` first rendered it as the top tree
+  `<li>`, then had to move it out to match the sidebar layout below.
+- **Sidebar layout — copy `/cron`'s chrome order exactly** (`cron_views.py:186-200`):
+  the static "All X" node, an `<hr class="*-tree-sep">`, the action buttons
+  (`+ Folder` / `+ Item`), another `<hr>`, then the tree `<ul>`, then the
+  drag-only root-drop strip. Separator rule:
+  `.*-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:6px 0}`. Don't
+  put the action buttons at the very top with no separators — that diverges from
+  `/cron` and was a `/kanban` rework.
+- **URL deep-linking — one `?id=<uuid>` param, not per-kind params.** `/cron`
+  mirrors the selection to a single `?id=<uuid>` that addresses **either** a
+  folder or an item (uuids are globally unique across kinds — see the validator
+  collision check in §1/§9), restoring it on load by trying folder-by-id then
+  item-by-id (`cronSyncUrl`/init `static/cron.js:893-899,1625-1633`). The root
+  "All X" node has no uuid, so it maps to **no `?id=`** (the default view) —
+  don't invent an `?id=all`. `/kanban` first shipped separate
+  `?board=`/`?folder=`/`?folder=all` params and had to collapse them to `?id=`.
+  `/chat` does no deep-linking.
 
 ## 6. Drag-and-drop reorder / nest
 
@@ -224,11 +256,14 @@ class specificity, the bare `hidden` attribute won't hide them — add explicit
    `expanded` map (persist to localStorage), `selectedFolder`, open-item id,
    `dragState`, `treeVersion`.
 4. **Render:** recursive `folderLi`/`itemNode`; nested `<ul>`; the `ul ul`
-   border-left guide; open/closed folder icon; `box-sizing:border-box` on the
-   node row.
+   border-left guide; `box-sizing:border-box` on the node row. **Icons: the two
+   shared Lucide folder SVGs (open/closed, flipping on `isExpanded &&
+   hasChildren`) — no emoji, no twisty caret, no leaf icon (see §3).**
 5. **Selection:** select-first/toggle-expand; `.sel` highlight; kebab only on
-   selected; folder-vs-item mutual exclusivity. Consider a root "All" node and
-   `?id=` deep-linking.
+   selected; folder-vs-item mutual exclusivity. **Sidebar layout = `/cron`'s
+   chrome:** static "All X" node → `<hr>` → action buttons → `<hr>` → tree (§5).
+   **Deep-link with one `?id=<uuid>`** (folder or item; "All X" → no param),
+   never per-kind params.
 6. **Drag-drop:** folder 3-zone (before/after/into) + leaf 2-zone + root drop;
    `folderInSubtree` cycle guard; auto-expand on drop; debounced save.
 7. **Detail pane:** flatten subtree with depth; depth-indented rows; per-row
