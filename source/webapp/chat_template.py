@@ -176,6 +176,7 @@ CHAT_TEMPLATE: str = """
      actually hide them when the folder table takes over the pane. */
   .chat-log[hidden]{display:none}
   .compose[hidden]{display:none}
+  .room-title[hidden]{display:none}
   .folder-detail{flex:1 1 auto;overflow:auto;padding:1em}
   .folder-detail h2{margin:0 0 0.8em;font-size:1.1rem;color:#1a1a2e}
   .folder-detail table{width:100%;border-collapse:collapse;font-size:0.9rem}
@@ -665,6 +666,11 @@ async function showFolderDetail(){
   const detail = document.getElementById('folder-detail');
   document.getElementById('chat-log').hidden = true;
   document.getElementById('compose').hidden = true;
+  // Hide the room title bar + clear the right sidebar so no chatroom info
+  // (name, members, stats) leaks into the folder view — currentRoom is null
+  // here, so renderSidebar() empties it.
+  document.getElementById('room-title').hidden = true;
+  renderSidebar();
   detail.hidden = false;
   const f = folderById(selectedFolder);
   document.getElementById('folder-detail-title').textContent =
@@ -685,6 +691,7 @@ function hideFolderDetail(){
   document.getElementById('folder-detail').hidden = true;
   document.getElementById('chat-log').hidden = false;
   document.getElementById('compose').hidden = false;
+  document.getElementById('room-title').hidden = false;
 }
 
 // Render the selected folder's recursive subtree as depth-indented rows.
