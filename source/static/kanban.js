@@ -20,16 +20,52 @@
 'use strict';
 
 // ---- state ----
-let kbIndex = [];          // sidebar: [{uuid, name, taskCount}]
-let kbCurrent = null;      // the loaded board payload (see shape above)
-let kbSelected = null;     // selected board uuid
+// Tree state: two flat arrays + parent/folder pointers (the left-panel-tree
+// pattern). Children are computed on demand by filtering.
+let kbFolders = [];        // [{uuid, name, description, parentId, position}]
+let kbBoards = [];         // [{uuid, name, folderId, position, taskCount}]
+let kbTreeVersion = '';    // optimistic-concurrency token for the tree PUT
+let kbCurrent = null;      // the loaded board payload (board CONTENTS)
+let kbSelected = null;     // selected board uuid (null when a folder is selected)
+let kbSelectedFolder = null; // selected folder uuid, or 'all' (root node), or null
 let kbEditingTask = null;  // task uuid while the task modal edits (null = create)
 let kbModalColumn = null;  // column uuid the task modal creates into
 let kbEditingBoard = false;// board modal mode: false = create, true = edit selected
-let kbDrag = null;         // task uuid while a card is dragged
+let kbDrag = null;         // task uuid while a card is dragged (in-board)
+let kbDragTree = null;     // {type:'folder'|'board', id} while a tree node is dragged
+let kbFolderModalParent = null; // parent for a new subfolder (null = root)
+let kbRenamingFolder = null;    // folder uuid while the folder modal renames (null = create)
+
+// Expand/collapse state, default-expanded, persisted to localStorage.
+const KB_EXPAND_KEY = 'kanban.expandedFolders';
+let kbExpanded = {};       // folderId -> false when collapsed
+try {
+  const saved = JSON.parse(localStorage.getItem(KB_EXPAND_KEY) || '{}');
+  if (saved && typeof saved === 'object') kbExpanded = saved;
+} catch (e) { /* storage unavailable: default expanded */ }
+function kbSaveExpanded(){
+  try { localStorage.setItem(KB_EXPAND_KEY, JSON.stringify(kbExpanded)); } catch (e) {}
+}
+const kbIsExpanded = (id) => kbExpanded[id] !== false;
+const kbChildFolders = (parentId) => kbFolders
+  .filter(f => (f.parentId || null) === parentId)
+  .sort((a, b) => a.position - b.position);
+const kbBoardsInFolder = (id) => kbBoards
+  .filter(b => (b.folderId || null) === id)
+  .sort((a, b) => a.position - b.position);
+const kbFolderById = (id) => kbFolders.find(f => f.uuid === id) || null;
+const kbFolderHasChildren = (id) =>
+  kbChildFolders(id).length > 0 || kbBoardsInFolder(id).length > 0;
 // Deletions since the last successful save are tracked PER BOARD (a
 // `pendingDeletes` counter on the board payload object), so a board switch
 // can't misattribute them.
+
+// Folder icons — the SAME inline Lucide SVGs /chat uses (chat_template.py
+// CHAT_ICON_FOLDER / CHAT_ICON_FOLDER_OPEN), so the tree looks identical across
+// pages: the closed folder flips to the open one when expanded. Leaf items
+// (boards) carry NO icon, matching /chat's rooms.
+const KB_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+const KB_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>';
 
 function escapeHtml(s){
   return (s || '').replace(/[&<>"]/g, c =>
@@ -54,11 +90,53 @@ function kbToast(text){
 
 // ---- persistence: hydrate from / save to the backend ----
 async function kbLoadIndex(){
+  // Hydrate the whole tree (folders + board placement + counts + version).
   try {
-    const r = await fetch('/kanban/api/boards');
+    const r = await fetch('/kanban/api/tree');
     const data = await r.json();
-    kbIndex = (data && data.boards) || [];
-  } catch (e) { kbIndex = []; }
+    kbFolders = (data && data.folders) || [];
+    kbBoards = (data && data.boards) || [];
+    kbTreeVersion = (data && data.version) || '';
+  } catch (e) { kbFolders = []; kbBoards = []; kbTreeVersion = ''; }
+}
+
+// Debounced, serialized tree PUT — same shape as the board kbSave chain. On
+// 409 or network failure we re-hydrate so the client converges to server truth.
+let kbTreeSaveTimer = null;
+let kbTreeSaveChain = Promise.resolve();
+function kbSaveTree(){
+  clearTimeout(kbTreeSaveTimer);
+  kbTreeSaveTimer = setTimeout(kbTreeSavePush, 250);
+}
+function kbTreeSavePush(){
+  clearTimeout(kbTreeSaveTimer);
+  kbTreeSaveTimer = null;
+  kbTreeSaveChain = kbTreeSaveChain.then(kbDoSaveTree);
+  return kbTreeSaveChain;
+}
+async function kbDoSaveTree(){
+  const body = {
+    folders: kbFolders.map(f => ({uuid: f.uuid, name: f.name,
+      description: f.description || '', parentId: f.parentId || null})),
+    boards: kbBoards.map(b => ({uuid: b.uuid, folderId: b.folderId || null})),
+    version: kbTreeVersion,
+  };
+  try {
+    const r = await fetch('/kanban/api/tree', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => null);
+    if (r.status === 409){
+      await kbLoadIndex();
+      kbRenderTree();
+      kbToast('Tree changed elsewhere — reloaded.');
+    } else if (!r.ok){
+      kbToast('Tree save refused: ' + ((j && j.error) || ('HTTP ' + r.status)));
+    } else {
+      kbTreeVersion = (j && j.version) || kbTreeVersion;
+    }
+  } catch (e) { /* network error: next edit retries */ }
 }
 async function kbLoadBoard(uuid){
   try {
@@ -149,14 +227,17 @@ async function kbReloadCurrent(){
   await kbLoadIndex();
   kbRender();
 }
-// Keep the sidebar entry for `board` in step without a full refetch.
+// Keep the tree's board entry (name + count) in step with a board-contents
+// save without a full refetch — these fields are NOT in the tree version, so
+// they're synced here client-side.
 function kbRefreshIndexCounts(board){
+  board = board || kbCurrent;
   if (!board) return;
-  const entry = kbIndex.find(b => b.uuid === board.uuid);
+  const entry = kbBoards.find(b => b.uuid === board.uuid);
   if (entry){
     entry.name = board.name;
     entry.taskCount = board.tasks.length;
-    kbRenderBoardList();
+    kbRenderTree();
   }
 }
 
@@ -233,32 +314,101 @@ async function kbDuplicateBoard(uuid){
   kbRender();
 }
 
+// Recursive tree: an "All boards" root node, then top-level folders, then
+// unfiled boards. Folders emit a node row and (when expanded + non-empty) a
+// nested <ul> of child folders followed by their boards.
+function kbRenderTree(){ kbRenderBoardList(); }  // alias kept for old callers
 function kbRenderBoardList(){
-  const ul = document.getElementById('kb-board-list');
-  ul.innerHTML = '';
-  kbIndex.forEach(b => {
-    const li = document.createElement('li');
-    li.className = 'kb-board-item' + (b.uuid === kbSelected ? ' sel' : '');
-    const name = document.createElement('span');
-    name.className = 'kb-board-name';
-    name.textContent = (b.name || '(unnamed board)') + ' (' + b.taskCount + ')';
-    li.title = b.name;
-    li.appendChild(name);
-    li.addEventListener('click', () => kbSelectBoard(b.uuid));
-    // The kebab is only visible (CSS) while this item is selected, so its
-    // actions always target the loaded board.
-    kbMakeKebab(li, [
-      ['Duplicate', '', () => kbDuplicateBoard(b.uuid)],
-      ['Delete', 'danger', () => kbConfirmDeleteBoard()],
-    ]);
-    ul.appendChild(li);
-  });
+  // The static "All boards" node lives above the action buttons (like /cron's
+  // "All jobs"); just highlight it here when selected.
+  document.getElementById('kb-all-boards').className =
+    'kb-node' + (kbSelectedFolder === 'all' ? ' sel' : '');
+  const root = document.getElementById('kb-tree-root');
+  root.innerHTML = '';
+  const ul = document.createElement('ul');
+  kbChildFolders(null).forEach(f => ul.appendChild(kbFolderLi(f)));
+  kbBoardsInFolder(null).forEach(b => ul.appendChild(kbBoardNode(b)));
+  root.appendChild(ul);
+  kbWireRootDrop();
+}
+
+function kbFolderLi(f){
+  const li = document.createElement('li');
+  const node = document.createElement('div');
+  const expanded = kbIsExpanded(f.uuid);
+  const hasKids = kbFolderHasChildren(f.uuid);
+  node.className = 'kb-node' + (f.uuid === kbSelectedFolder ? ' sel' : '');
+  node.draggable = true;
+  node.innerHTML =
+    '<span class="kb-ficon">' + (expanded && hasKids ? KB_ICON_FOLDER_OPEN : KB_ICON_FOLDER) + '</span>' +
+    '<span class="kb-node-name"></span>';
+  node.querySelector('.kb-node-name').textContent = f.name || '(unnamed)';
+  node.title = f.name;
+  node.addEventListener('click', () => kbFolderClick(f.uuid));
+  kbMakeKebab(node, [
+    ['Rename', '', () => kbRenameFolder(f.uuid)],
+    ['New subfolder', '', () => kbNewFolder(f.uuid)],
+    ['Delete', 'danger', () => kbConfirmDeleteFolder(f.uuid)],
+  ]);
+  kbWireFolderDrag(node, f.uuid);
+  li.appendChild(node);
+  if (expanded && hasKids){
+    const sub = document.createElement('ul');
+    kbChildFolders(f.uuid).forEach(c => sub.appendChild(kbFolderLi(c)));
+    kbBoardsInFolder(f.uuid).forEach(b => sub.appendChild(kbBoardNode(b)));
+    li.appendChild(sub);
+  }
+  return li;
+}
+
+function kbBoardNode(b){
+  const li = document.createElement('li');
+  const node = document.createElement('div');
+  node.className = 'kb-node' + (b.uuid === kbSelected ? ' sel' : '');
+  node.draggable = true;
+  // No icon on leaf boards — matches /chat's room rows.
+  node.innerHTML = '<span class="kb-node-name"></span>';
+  node.querySelector('.kb-node-name').textContent =
+    (b.name || '(unnamed board)') + ' (' + b.taskCount + ')';
+  node.title = b.name;
+  node.addEventListener('click', () => kbSelectBoard(b.uuid));
+  kbMakeKebab(node, [
+    ['Duplicate', '', () => kbDuplicateBoard(b.uuid)],
+    ['Delete', 'danger', () => kbConfirmDeleteBoard(b.uuid)],
+  ]);
+  kbWireBoardDrag(node, b.uuid);
+  li.appendChild(node);
+  return li;
+}
+
+// Folder click: select-first, then toggle-expand on a second click of the
+// already-selected folder (the chat/cron behavior).
+function kbFolderClick(folderId){
+  if (kbSelectedFolder === folderId){
+    kbExpanded[folderId] = !kbIsExpanded(folderId);
+    kbSaveExpanded();
+    kbRenderTree();
+    return;
+  }
+  kbSelectFolder(folderId);
+}
+function kbSelectFolder(folderId){
+  kbFlushSave();                 // persist any board edit in the debounce window
+  kbSelectedFolder = folderId;   // 'all' or a uuid
+  kbSelected = null;             // folder-selected and board-open are exclusive
+  kbCurrent = null;
+  kbRenderTree();
+  kbRenderFolderView();
+  kbRenderBoard();               // hides the board canvas
+  kbSyncUrl();
 }
 
 function kbRenderBoard(){
   const board = kbCurrent;
-  document.getElementById('kb-empty').hidden = !!board;
+  const folderShown = !board && kbSelectedFolder !== null;
+  document.getElementById('kb-empty').hidden = !!board || folderShown;
   document.getElementById('kb-board').hidden = !board;
+  document.getElementById('kb-folder-view').hidden = !folderShown;
   kbRenderSidebar();  // stats track every board change (and close on no board)
   if (!board) return;
   document.getElementById('kb-board-name').textContent = board.name;
@@ -414,16 +564,28 @@ function kbRenderSidebar(){
 }
 
 function kbRender(){
-  kbRenderBoardList();
+  kbRenderTree();
   kbRenderBoard();
+  kbRenderFolderView();
   kbSyncUrl();
 }
 
-// Deep link: ?board=<uuid> selects a board; selection mirrors into the URL.
+// The id of the node currently inspected (board > folder > none). The root
+// "All boards" pseudo-node has no uuid, so it deep-links to no ?id= (the
+// default view) — mirrors /cron's "All jobs".
+function kbCurrentSelectionId(){
+  if (kbSelected) return kbSelected;
+  if (kbSelectedFolder && kbSelectedFolder !== 'all') return kbSelectedFolder;
+  return null;
+}
+// Deep link: a single ?id=<uuid> mirrors the selected board or folder, like
+// /cron (e.g. /kanban?id=<uuid>). A shareable link to the node being inspected.
 function kbSyncUrl(){
   const url = new URL(window.location);
-  if (kbSelected) url.searchParams.set('board', kbSelected);
-  else url.searchParams.delete('board');
+  url.searchParams.delete('board');  // migrate off the old dual params
+  url.searchParams.delete('folder');
+  const id = kbCurrentSelectionId();
+  if (id) url.searchParams.set('id', id); else url.searchParams.delete('id');
   history.replaceState(null, '', url);
 }
 
@@ -431,6 +593,7 @@ function kbSyncUrl(){
 async function kbSelectBoard(uuid){
   kbFlushSave();  // an edit inside the debounce window must not be dropped
   kbSelected = uuid;
+  kbSelectedFolder = null;  // board-open and folder-selected are exclusive
   kbCurrent = await kbLoadBoard(uuid);
   if (!kbCurrent){ kbSelected = null; kbToast('Board could not be loaded.'); }
   kbRender();
@@ -459,8 +622,8 @@ function kbOpenModal(id){
 }
 function kbCloseModals(){
   document.getElementById('ui-modal-backdrop').hidden = true;
-  ['kb-board-modal','kb-task-modal','kb-md-modal','kb-confirm-modal'].forEach(id =>
-    document.getElementById(id).hidden = true);
+  ['kb-board-modal','kb-folder-modal','kb-task-modal','kb-md-modal','kb-confirm-modal']
+    .forEach(id => document.getElementById(id).hidden = true);
   // Forget the opened-with snapshots so a future open starts fresh.
   kbBoardModalOpenedWith = null;
   kbTaskModalOpenedWith = null;
@@ -570,11 +733,15 @@ function kbConfirm(title, text, onYes){
   kbOpenModal('kb-confirm-modal');
 }
 
-function kbConfirmDeleteBoard(){
-  if (!kbCurrent) return;
-  const board = kbCurrent;
+function kbConfirmDeleteBoard(uuid){
+  // From the board header (no arg) or a tree kebab (uuid). Resolve to a board:
+  // prefer the explicit uuid, else the loaded board.
+  const board = uuid
+    ? (kbBoards.find(b => b.uuid === uuid) || kbCurrent)
+    : kbCurrent;
+  if (!board) return;
   kbConfirm('Delete board?',
-    '“' + board.name + '” and its ' + board.tasks.length + ' task(s) will be deleted.',
+    '“' + board.name + '” and its ' + (board.tasks ? board.tasks.length : board.taskCount) + ' task(s) will be deleted.',
     async () => {
       kbCancelSave(board.uuid);  // a pending save would just race the DELETE
       const r = await fetch('/kanban/api/board/' + encodeURIComponent(board.uuid),
@@ -583,7 +750,7 @@ function kbConfirmDeleteBoard(){
       kbSelected = null;
       kbCurrent = null;
       await kbLoadIndex();
-      if (kbIndex.length) await kbSelectBoard(kbIndex[0].uuid);
+      if (kbBoards.length) await kbSelectBoard(kbBoards[0].uuid);
       else kbRender();
     });
 }
@@ -812,13 +979,320 @@ function kbRenderSidebarDev(el){
 // Clicking the backdrop dismisses overlays, but only when clean — a stray
 // click never destroys typed data inside the modal itself.
 document.getElementById('ui-modal-backdrop').addEventListener('click', kbDismissIfClean);
+// The static "All boards" root node selects the whole-tree view (no uuid).
+document.getElementById('kb-all-boards').addEventListener('click', () => kbSelectFolder('all'));
 
 // ---- init ----
 (async function kbInit(){
   await kbLoadIndex();
-  const want = new URLSearchParams(window.location.search).get('board');
-  const first = (want && kbIndex.some(b => b.uuid === want)) ? want
-              : (kbIndex.length ? kbIndex[0].uuid : null);
-  if (first) await kbSelectBoard(first);
-  else kbRender();
+  // Deep link: ?id=<uuid> selects that folder or board on load (mirrors /cron).
+  const wantId = new URLSearchParams(window.location.search).get('id');
+  if (wantId && kbFolders.some(f => f.uuid === wantId)){
+    kbSelectFolder(wantId);
+  } else if (wantId && kbBoards.some(b => b.uuid === wantId)){
+    await kbSelectBoard(wantId);
+  } else if (kbBoards.length){
+    await kbSelectBoard(kbBoards[0].uuid);
+  } else {
+    kbRender();
+  }
 })();
+
+// ---- folder-contents detail pane + folder modals + tree drag-and-drop ----
+// Depth-first flatten of a folder's subtree → [{kind:'folder'|'board', node, depth}].
+// 'all' flattens from the root (parentId/folderId === null).
+function kbFlattenTree(rootId){
+  const out = [];
+  const walk = (parentId, depth) => {
+    kbChildFolders(parentId).forEach(f => {
+      out.push({kind: 'folder', node: f, depth});
+      walk(f.uuid, depth + 1);
+    });
+    kbBoardsInFolder(parentId).forEach(b =>
+      out.push({kind: 'board', node: b, depth}));
+  };
+  walk(rootId === 'all' ? null : rootId, 0);
+  return out;
+}
+function kbRenderFolderView(){
+  if (kbSelectedFolder === null) return;
+  const f = kbSelectedFolder === 'all' ? null : kbFolderById(kbSelectedFolder);
+  document.getElementById('kb-folder-view-name').textContent =
+    kbSelectedFolder === 'all' ? 'All boards' : (f ? f.name : '(folder)');
+  const body = document.getElementById('kb-folder-view-body');
+  const rows = kbFlattenTree(kbSelectedFolder);
+  if (!rows.length){
+    body.innerHTML = '<div class="muted">This folder is empty.</div>';
+    return;
+  }
+  const table = document.createElement('table');
+  table.className = 'kb-folder-table';
+  table.innerHTML =
+    '<thead><tr><th>Name</th><th>Tasks</th><th></th></tr></thead><tbody></tbody>';
+  const tbody = table.querySelector('tbody');
+  rows.forEach(({kind, node, depth}) => {
+    const tr = document.createElement('tr');
+    const nameTd = document.createElement('td');
+    nameTd.style.paddingLeft = (8 + depth * 18) + 'px';
+    const nameWrap = document.createElement('span');
+    nameWrap.className = 'kb-ft-name';
+    if (kind === 'folder'){
+      const ic = document.createElement('span');
+      ic.className = 'kb-ficon';
+      ic.innerHTML = KB_ICON_FOLDER;  // folder icon; boards (leaves) get none
+      nameWrap.appendChild(ic);
+    }
+    const label = document.createElement('span');
+    label.textContent = node.name || (kind === 'folder' ? '(unnamed)' : '(unnamed board)');
+    nameWrap.appendChild(label);
+    nameTd.appendChild(nameWrap);
+    const countTd = document.createElement('td');
+    countTd.textContent = kind === 'board' ? node.taskCount : '';
+    const linkTd = document.createElement('td');
+    const link = document.createElement('button');
+    link.className = 'kb-ft-link';
+    link.textContent = kind === 'folder' ? 'Open folder' : 'Open board';
+    link.addEventListener('click', () =>
+      kind === 'folder' ? kbSelectFolder(node.uuid) : kbSelectBoard(node.uuid));
+    linkTd.appendChild(link);
+    tr.appendChild(nameTd); tr.appendChild(countTd); tr.appendChild(linkTd);
+    tbody.appendChild(tr);
+  });
+  body.replaceChildren(table);
+}
+// True if `rootId` is `candidateId` or lives anywhere in its subtree — used to
+// refuse nesting a folder inside itself/its descendants (the DB validator
+// enforces it again server-side).
+function kbFolderInSubtree(candidateId, rootId){
+  if (candidateId === rootId) return true;
+  return kbChildFolders(rootId).some(c => kbFolderInSubtree(candidateId, c.uuid));
+}
+// Reorder `arr` so `movedId` sits just before `beforeId` (or at end if null),
+// then renumber `position` within each parent group from the new array order.
+function kbReorderSiblings(arr, keyOf, movedId, beforeId){
+  const moved = arr.find(x => x.uuid === movedId);
+  if (!moved) return;
+  const rest = arr.filter(x => x.uuid !== movedId);
+  let idx = rest.length;
+  if (beforeId){
+    const i = rest.findIndex(x => x.uuid === beforeId);
+    if (i >= 0) idx = i;
+  }
+  rest.splice(idx, 0, moved);
+  const counters = {};
+  rest.forEach(x => {
+    const k = keyOf(x) || 'root';
+    counters[k] = (counters[k] || 0);
+    x.position = counters[k]++;
+  });
+  arr.length = 0; arr.push(...rest);
+}
+
+function kbWireBoardDrag(node, boardId){
+  node.addEventListener('dragstart', e => {
+    kbDragTree = {type: 'board', id: boardId};
+    e.dataTransfer.effectAllowed = 'move';
+    e.stopPropagation();
+    document.getElementById('kb-side').classList.add('dragging-on');
+  });
+  node.addEventListener('dragend', () => kbEndTreeDrag());
+  // A board node is a 2-zone (before/after) reorder target within its folder.
+  node.addEventListener('dragover', e => {
+    if (!kbDragTree) return;
+    e.preventDefault(); e.stopPropagation();
+    const after = kbPointerAfter(node, e);
+    node.classList.toggle('kb-drop-after', after);
+    node.classList.toggle('kb-drop-before', !after);
+  });
+  node.addEventListener('dragleave', () =>
+    node.classList.remove('kb-drop-before', 'kb-drop-after'));
+  node.addEventListener('drop', e => {
+    if (!kbDragTree) return;
+    e.preventDefault(); e.stopPropagation();
+    const after = kbPointerAfter(node, e);
+    node.classList.remove('kb-drop-before', 'kb-drop-after');
+    const target = kbBoards.find(b => b.uuid === boardId);
+    kbDropAsSibling(target ? (target.folderId || null) : null, boardId, after);
+  });
+}
+
+function kbWireFolderDrag(node, folderId){
+  node.addEventListener('dragstart', e => {
+    kbDragTree = {type: 'folder', id: folderId};
+    e.dataTransfer.effectAllowed = 'move';
+    e.stopPropagation();
+    document.getElementById('kb-side').classList.add('dragging-on');
+  });
+  node.addEventListener('dragend', () => kbEndTreeDrag());
+  // A folder node is a 3-zone target: top=before, bottom=after, middle=into.
+  node.addEventListener('dragover', e => {
+    if (!kbDragTree) return;
+    e.preventDefault(); e.stopPropagation();
+    const zone = kbFolderZone(node, e);
+    node.classList.toggle('kb-drop-before', zone === 'before');
+    node.classList.toggle('kb-drop-after', zone === 'after');
+    node.classList.toggle('kb-drop-into', zone === 'into');
+  });
+  node.addEventListener('dragleave', () =>
+    node.classList.remove('kb-drop-before', 'kb-drop-after', 'kb-drop-into'));
+  node.addEventListener('drop', e => {
+    if (!kbDragTree) return;
+    e.preventDefault(); e.stopPropagation();
+    const zone = kbFolderZone(node, e);
+    node.classList.remove('kb-drop-before', 'kb-drop-after', 'kb-drop-into');
+    if (zone === 'into') kbDropInto(folderId);
+    else {
+      const target = kbFolderById(folderId);
+      kbDropAsSibling(target ? (target.parentId || null) : null, folderId, zone === 'after');
+    }
+  });
+}
+
+function kbWireRootDrop(){
+  const strip = document.getElementById('kb-root-drop');
+  if (!strip) return;
+  strip.ondragover = e => { if (kbDragTree){ e.preventDefault(); strip.classList.add('kb-drop-into'); } };
+  strip.ondragleave = () => strip.classList.remove('kb-drop-into');
+  strip.ondrop = e => {
+    if (!kbDragTree) return;
+    e.preventDefault();
+    strip.classList.remove('kb-drop-into');
+    kbDropInto(null);   // move to top level
+  };
+}
+
+// ---- drag geometry + apply ----
+function kbPointerAfter(node, e){
+  const r = node.getBoundingClientRect();
+  return (e.clientY - r.top) > r.height / 2;
+}
+function kbFolderZone(node, e){
+  const r = node.getBoundingClientRect();
+  const y = e.clientY - r.top;
+  if (y < r.height / 3) return 'before';
+  if (y > r.height * 2 / 3) return 'after';
+  return 'into';
+}
+function kbEndTreeDrag(){
+  kbDragTree = null;
+  document.getElementById('kb-side').classList.remove('dragging-on');
+  document.querySelectorAll('.kb-drop-before, .kb-drop-after, .kb-drop-into')
+    .forEach(x => x.classList.remove('kb-drop-before', 'kb-drop-after', 'kb-drop-into'));
+}
+// Nest the dragged node INTO folder `destId` (null = top level).
+function kbDropInto(destId){
+  const d = kbDragTree;
+  if (!d) return;
+  if (d.type === 'folder'){
+    if (destId && kbFolderInSubtree(destId, d.id)){
+      kbToast('Cannot move a folder into itself.'); return;
+    }
+    const f = kbFolderById(d.id);
+    if (f) f.parentId = destId;
+    kbReorderSiblings(kbFolders, x => x.parentId, d.id, null);
+  } else {
+    const b = kbBoards.find(x => x.uuid === d.id);
+    if (b) b.folderId = destId;
+    kbReorderSiblings(kbBoards, x => x.folderId, d.id, null);
+  }
+  if (destId){ kbExpanded[destId] = true; kbSaveExpanded(); }
+  kbSaveTree();
+  kbRenderTree();
+}
+// Place the dragged node as a sibling before/after `siblingId` under `parentId`.
+function kbDropAsSibling(parentId, siblingId, after){
+  const d = kbDragTree;
+  if (!d || d.id === siblingId) return;
+  if (d.type === 'folder'){
+    if (parentId && kbFolderInSubtree(parentId, d.id)){
+      kbToast('Cannot move a folder into itself.'); return;
+    }
+    const f = kbFolderById(d.id);
+    if (f) f.parentId = parentId;
+    const ordered = kbChildFolders(parentId).map(x => x.uuid);
+    kbReorderSiblings(kbFolders, x => x.parentId, d.id, kbNeighbor(ordered, siblingId, after));
+  } else {
+    const b = kbBoards.find(x => x.uuid === d.id);
+    if (b) b.folderId = parentId;
+    const ordered = kbBoardsInFolder(parentId).map(x => x.uuid);
+    kbReorderSiblings(kbBoards, x => x.folderId, d.id, kbNeighbor(ordered, siblingId, after));
+  }
+  kbSaveTree();
+  kbRenderTree();
+}
+// The uuid to insert BEFORE so the moved node lands before/after `siblingId`.
+function kbNeighbor(orderedIds, siblingId, after){
+  if (!after) return siblingId;
+  const i = orderedIds.indexOf(siblingId);
+  return (i >= 0 && i + 1 < orderedIds.length) ? orderedIds[i + 1] : null;
+}
+// Folder create + rename share one modal; kbRenamingFolder picks the mode.
+function kbNewFolder(parentId){
+  kbRenamingFolder = null;
+  kbFolderModalParent = (typeof parentId === 'string') ? parentId : null;
+  document.getElementById('kb-folder-modal-title').textContent =
+    kbFolderModalParent ? 'New subfolder' : 'New folder';
+  document.getElementById('kb-f-name').value = '';
+  document.getElementById('kb-f-save').textContent = 'Create folder';
+  document.getElementById('kb-f-err').textContent = '';
+  kbOpenModal('kb-folder-modal');
+  document.getElementById('kb-f-name').focus();
+}
+function kbRenameFolder(folderId){
+  const f = kbFolderById(folderId);
+  if (!f) return;
+  kbRenamingFolder = folderId;
+  document.getElementById('kb-folder-modal-title').textContent = 'Rename folder';
+  document.getElementById('kb-f-name').value = f.name;
+  document.getElementById('kb-f-save').textContent = 'Save';
+  document.getElementById('kb-f-err').textContent = '';
+  kbOpenModal('kb-folder-modal');
+  document.getElementById('kb-f-name').focus();
+}
+async function kbSaveFolderModal(){
+  const name = document.getElementById('kb-f-name').value.trim();
+  if (!name){
+    document.getElementById('kb-f-err').textContent = 'Name is required.'; return;
+  }
+  if (kbRenamingFolder){
+    const f = kbFolderById(kbRenamingFolder);
+    if (f){ f.name = name; kbSaveTree(); }
+    kbCloseModals();
+    kbRenderTree();
+    if (kbSelectedFolder) kbRenderFolderView();
+    return;
+  }
+  // Create server-side (the server assigns the uuid + position).
+  try {
+    const r = await fetch('/kanban/api/folders', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, parentId: kbFolderModalParent}),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok){
+      document.getElementById('kb-f-err').textContent = (j && j.error) || 'Create failed.';
+      return;
+    }
+    kbCloseModals();
+    if (kbFolderModalParent){ kbExpanded[kbFolderModalParent] = true; kbSaveExpanded(); }
+    await kbLoadIndex();   // re-hydrate so the new folder + fresh version land
+    kbRenderTree();
+  } catch (e) {
+    document.getElementById('kb-f-err').textContent = 'Network error.';
+  }
+}
+function kbConfirmDeleteFolder(folderId){
+  const f = kbFolderById(folderId);
+  if (!f) return;
+  kbConfirm('Delete folder?',
+    '“' + f.name + '” will be deleted. Any boards and subfolders inside it ' +
+    'move up one level — boards and their tasks are NOT deleted.',
+    async () => {
+      const r = await fetch('/kanban/api/folders/' + encodeURIComponent(folderId),
+                            {method: 'DELETE'}).catch(() => null);
+      if (!r || !r.ok){ kbToast('Delete failed.'); return; }
+      if (kbSelectedFolder === folderId) kbSelectedFolder = null;
+      await kbLoadIndex();
+      kbRender();
+    });
+}

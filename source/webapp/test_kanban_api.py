@@ -736,3 +736,63 @@ def test_focus_query_param_on_serialization_endpoints(app_ctx):
         assert client.get(f"{base}/markdown").status_code == 200  # default intact
     finally:
         db.kanban_delete_board(bu)
+
+
+# ---- folder tree API ----
+
+def test_tree_get_and_put_roundtrip(board):
+    client = _client()
+    folder = db.kanban_create_folder("api folder")
+    try:
+        tree = client.get("/kanban/api/tree").get_json()
+        assert any(f["uuid"] == folder["uuid"] for f in tree["folders"])
+        # File the board under the folder via PUT.
+        body = {"folders": tree["folders"],
+                "boards": [{**b, "folderId": folder["uuid"]} if b["uuid"] == board["uuid"]
+                           else b for b in tree["boards"]],
+                "version": tree["version"]}
+        resp = client.put("/kanban/api/tree", json=body)
+        assert resp.status_code == 200 and isinstance(resp.get_json()["version"], str)
+        out = client.get("/kanban/api/tree").get_json()
+        assert next(b for b in out["boards"] if b["uuid"] == board["uuid"])["folderId"] == folder["uuid"]
+    finally:
+        db.kanban_delete_folder(_u(folder["uuid"]))
+
+
+def test_tree_put_missing_version_400_and_stale_409(board):
+    client = _client()
+    tree = client.get("/kanban/api/tree").get_json()
+    assert client.put("/kanban/api/tree",
+                      json={"folders": tree["folders"], "boards": tree["boards"]}
+                      ).status_code == 400
+    # Rotate the version out from under us.
+    f = db.kanban_create_folder("rotate")
+    try:
+        resp = client.put("/kanban/api/tree",
+                          json={**tree, "folders": tree["folders"], "boards": tree["boards"]})
+        assert resp.status_code == 409 and isinstance(resp.get_json()["version"], str)
+    finally:
+        db.kanban_delete_folder(_u(f["uuid"]))
+
+
+def test_folder_create_and_delete_endpoints(app_ctx):
+    client = _client()
+    r = client.post("/kanban/api/folders", json={"name": "made via api"})
+    assert r.status_code == 200 and r.get_json()["folder"]["name"] == "made via api"
+    fu = r.get_json()["folder"]["uuid"]
+    assert client.delete(f"/kanban/api/folders/{fu}").status_code == 200
+    assert client.delete(f"/kanban/api/folders/{fu}").status_code == 404
+    assert client.post("/kanban/api/folders", json={"name": "  "}).status_code == 400
+
+
+def test_board_create_honors_folderId(app_ctx):
+    client = _client()
+    f = client.post("/kanban/api/folders", json={"name": "dest"}).get_json()["folder"]
+    r = client.post("/kanban/api/boards", json={"name": "filed", "folderId": f["uuid"]})
+    bu = r.get_json()["board"]["uuid"]
+    try:
+        placed = next(b for b in db.kanban_load_tree()["boards"] if b["uuid"] == bu)
+        assert placed["folderId"] == f["uuid"]
+    finally:
+        db.kanban_delete_board(_u(bu))
+        db.kanban_delete_folder(_u(f["uuid"]))
