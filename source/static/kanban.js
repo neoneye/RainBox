@@ -578,13 +578,22 @@ function kbRender(){
   kbSyncUrl();
 }
 
-// Deep link: ?board=<uuid> selects a board; selection mirrors into the URL.
+// The id of the node currently inspected (board > folder > none). The root
+// "All boards" pseudo-node has no uuid, so it deep-links to no ?id= (the
+// default view) — mirrors /cron's "All jobs".
+function kbCurrentSelectionId(){
+  if (kbSelected) return kbSelected;
+  if (kbSelectedFolder && kbSelectedFolder !== 'all') return kbSelectedFolder;
+  return null;
+}
+// Deep link: a single ?id=<uuid> mirrors the selected board or folder, like
+// /cron (e.g. /kanban?id=<uuid>). A shareable link to the node being inspected.
 function kbSyncUrl(){
   const url = new URL(window.location);
-  url.searchParams.delete('board');
+  url.searchParams.delete('board');  // migrate off the old dual params
   url.searchParams.delete('folder');
-  if (kbSelected) url.searchParams.set('board', kbSelected);
-  else if (kbSelectedFolder) url.searchParams.set('folder', kbSelectedFolder);
+  const id = kbCurrentSelectionId();
+  if (id) url.searchParams.set('id', id); else url.searchParams.delete('id');
   history.replaceState(null, '', url);
 }
 
@@ -982,14 +991,12 @@ document.getElementById('ui-modal-backdrop').addEventListener('click', kbDismiss
 // ---- init ----
 (async function kbInit(){
   await kbLoadIndex();
-  const params = new URLSearchParams(window.location.search);
-  const wantBoard = params.get('board');
-  const wantFolder = params.get('folder');
-  if (wantBoard && kbBoards.some(b => b.uuid === wantBoard)){
-    await kbSelectBoard(wantBoard);
-  } else if (wantFolder === 'all' ||
-             (wantFolder && kbFolders.some(f => f.uuid === wantFolder))){
-    kbSelectFolder(wantFolder);
+  // Deep link: ?id=<uuid> selects that folder or board on load (mirrors /cron).
+  const wantId = new URLSearchParams(window.location.search).get('id');
+  if (wantId && kbFolders.some(f => f.uuid === wantId)){
+    kbSelectFolder(wantId);
+  } else if (wantId && kbBoards.some(b => b.uuid === wantId)){
+    await kbSelectBoard(wantId);
   } else if (kbBoards.length){
     await kbSelectBoard(kbBoards[0].uuid);
   } else {
