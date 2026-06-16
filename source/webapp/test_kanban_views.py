@@ -75,7 +75,7 @@ def test_kanban_page_has_boards_and_columns():
     assert "function kbNewBoard" in body
     assert "function kbSelectBoard" in body
     assert "function kbConfirmDeleteBoard" in body
-    assert "searchParams.set('board'" in body
+    assert "searchParams.set('id'" in body  # single ?id= deep-link, like /cron
     assert "+ Add task" in body
     # Kebab (3-dot) menu on the selected board item: Duplicate / Delete
     # (mirrors the cron tree's and chat room list's kebab).
