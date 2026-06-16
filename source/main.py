@@ -28,8 +28,25 @@ from webapp.core import sync_models_from_providers  # noqa: E402
 # work (an LLM call), which easily takes more than a few seconds.
 HEARTBEAT_TIMEOUT: float = 60.0
 TICK_TIMEOUT: float = 1.0
+# When fully idle (no live agents, no pending work) the loop has nothing to
+# multiplex, so its select() timeout is the *only* thing setting how often it
+# re-queries Postgres. At TICK_TIMEOUT that's ~2 queries/second forever (visible
+# as ~1% CPU at rest). Back off to this longer interval when idle; a cold-idle
+# supervisor then picks up freshly-enqueued work within IDLE_TICK_TIMEOUT
+# instead of ~1s — the trade we accept to stop the idle polling.
+IDLE_TICK_TIMEOUT: float = 5.0
 CRON_TICK_INTERVAL: float = 5.0  # how often to check for due cron jobs (cron granularity is 1 min)
 ROOT_DIR: str = os.path.dirname(os.path.abspath(__file__))
+
+
+def _select_timeout(num_agents: int, found_work: bool) -> float:
+    """How long the supervisor's select() should block this pass.
+
+    Poll fast while there's something to service — any agent is alive (we're
+    multiplexing its socket and watching its heartbeat) or the just-finished
+    pass found inbox/routing/cron work — so spawns and routing stay responsive.
+    Otherwise back off so an idle supervisor isn't hammering Postgres."""
+    return TICK_TIMEOUT if (num_agents > 0 or found_work) else IDLE_TICK_TIMEOUT
 
 
 class Agent(TypedDict):
@@ -84,17 +101,20 @@ def supervisor_loop(stop_event: threading.Event) -> None:
         while not stop_event.is_set():
             # Cron scheduler pass (throttled). Self-guarded: a cron bug must not
             # take down the supervisor thread.
+            found_work = False
             if time.monotonic() - last_cron_tick >= CRON_TICK_INTERVAL:
                 last_cron_tick = time.monotonic()
                 try:
                     n = db.cron_tick()
                     if n:
+                        found_work = True
                         logger.info("cron: fired %d due job(s)", n)
                 except Exception:
                     logger.exception("cron tick failed")
                     db.db.session.rollback()
 
             for journal_row in db.fetch_unrouted_terminal():
+                found_work = True
                 src_role = uuid_to_role.get(journal_row["agent_uuid"])
                 # Dynamic return address (set by the conversation manager in the
                 # turn payload, copied to result["_routing"] by Agent.run) takes
@@ -124,13 +144,19 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                 db.mark_routed(journal_row["id"])
 
             uuids_with_work = db.agent_uuids_with_work()
+            if uuids_with_work:
+                found_work = True
             for name, params in agent_config.items():
                 if params["uuid"] in uuids_with_work and name not in agents:
                     ag = spawn(name, params)
                     agents[name] = ag
                     sel.register(ag["sock"], selectors.EVENT_READ, name)
 
-            for key, _ in sel.select(timeout=TICK_TIMEOUT):
+            # Block until an agent's socket is readable or the timeout elapses.
+            # With agents alive their sockets wake us; when idle the timeout is
+            # the only pacing, so back it off (see _select_timeout) to stop the
+            # at-rest Postgres polling.
+            for key, _ in sel.select(timeout=_select_timeout(len(agents), found_work)):
                 name = key.data
                 ag = agents[name]
                 chunk = ag["sock"].recv(4096)
