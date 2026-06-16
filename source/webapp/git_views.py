@@ -31,14 +31,14 @@ GIT_TEMPLATE = """
   body{font-family:system-ui,sans-serif;margin:0;padding:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
   .muted{color:#6b7280;font-size:0.85rem}
   .git-split{flex:1;display:grid;grid-template-columns:260px 1fr;min-height:0}
-  .git-tree{border-right:1px solid #e5e7eb;background:#fbfbfb;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:6px}
+  .git-tree{overflow:auto;min-height:0;border-right:1px solid #e5e7eb;background:#fbfbfb;padding:10px;font-size:0.9rem}
   .git-main{overflow:auto;padding:16px 20px}
   .git-actions{display:flex;gap:6px}
   /* Small blue pill buttons, matching /cron's tree-action buttons. */
   .git-actions button{padding:3px 8px;font-size:0.75rem;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer}
   .git-actions button:hover{background:#1d4ed8}
   /* Hairline dividers between the root node, the actions, and the tree (like /cron). */
-  .git-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:0}
+  .git-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:6px 0}
   /* Nested items indent past the parent's label with a guide line, like /cron. */
   .git-tree-list,.git-tree-list ul{list-style:none;margin:0;padding:0}
   .git-tree-list ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
@@ -62,9 +62,10 @@ GIT_TEMPLATE = """
   .git-repo-head{margin:10px 0;display:flex;flex-direction:column;gap:4px}
   .git-flist{list-style:none;margin:6px 0;padding:0}
   .git-flist li{padding:2px 0;display:flex;align-items:center;gap:6px}
-  .git-root-drop{margin-top:auto;border:1px dashed #cbd5e1;border-radius:6px;padding:8px;text-align:center;color:#94a3b8;font-size:0.85rem;display:none}
+  /* Drag-only "move to top level" strip, sitting right under the tree (like /cron). */
+  .git-root-drop{display:none;margin-top:8px;padding:8px;border:1px dashed #93c5fd;border-radius:6px;color:#2563eb;font-size:0.82rem;text-align:center;-webkit-user-select:none;user-select:none}
   .git-tree.git-dragging-on .git-root-drop{display:block}
-  .git-root-drop.over{background:#eff6ff;border-color:#3b82f6;color:#3b82f6}
+  .git-root-drop.over{background:#eff6ff;border-color:#2563eb}
   .git-dragging{opacity:0.5}
   .git-drop-target{outline:2px solid #3b82f6;outline-offset:-2px}
   .git-drop-before{box-shadow:inset 0 2px 0 #3b82f6}
@@ -90,7 +91,7 @@ GIT_TEMPLATE = """
     </div>
     <hr class="git-tree-sep">
     <ul class="git-tree-list" id="git-tree-root"></ul>
-    <div class="git-root-drop" id="git-root-drop">Move to top level</div>
+    <div class="git-root-drop" id="git-root-drop">&#10515; Move to top level</div>
   </div>
   <div class="git-main" id="git-main">
     <div class="git-pane-title" id="git-pane-title"></div>
