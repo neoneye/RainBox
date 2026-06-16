@@ -410,6 +410,8 @@ def get_cron_overview(ctx: QueryContext) -> str:
             if j.get("timezone"):
                 sched += f" [{j['timezone']}]"
             lines.append(f"- **{j['name']}** — {'active' if enabled else 'inactive'}")
+            if j.get("description"):
+                lines.append(f"  - {j['description']}")
             lines.append(f"  - schedule: `{sched}`")
             if enabled:  # an inactive job never fires, so next-run is meaningless
                 lines.append(f"  - next run: {j.get('next_run_at') or '—'}")
