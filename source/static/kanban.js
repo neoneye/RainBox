@@ -994,7 +994,7 @@ document.getElementById('ui-modal-backdrop').addEventListener('click', kbDismiss
   }
 })();
 
-// ---- placeholders filled in by later tasks ----
+// ---- folder-contents detail pane + folder modals + tree drag-and-drop ----
 // Depth-first flatten of a folder's subtree → [{kind:'folder'|'board', node, depth}].
 // 'all' flattens from the root (parentId/folderId === null).
 function kbFlattenTree(rootId){
