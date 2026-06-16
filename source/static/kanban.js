@@ -319,25 +319,17 @@ async function kbDuplicateBoard(uuid){
 // nested <ul> of child folders followed by their boards.
 function kbRenderTree(){ kbRenderBoardList(); }  // alias kept for old callers
 function kbRenderBoardList(){
+  // The static "All boards" node lives above the action buttons (like /cron's
+  // "All jobs"); just highlight it here when selected.
+  document.getElementById('kb-all-boards').className =
+    'kb-node' + (kbSelectedFolder === 'all' ? ' sel' : '');
   const root = document.getElementById('kb-tree-root');
   root.innerHTML = '';
   const ul = document.createElement('ul');
-  ul.appendChild(kbAllBoardsNode());
   kbChildFolders(null).forEach(f => ul.appendChild(kbFolderLi(f)));
   kbBoardsInFolder(null).forEach(b => ul.appendChild(kbBoardNode(b)));
   root.appendChild(ul);
   kbWireRootDrop();
-}
-
-function kbAllBoardsNode(){
-  const li = document.createElement('li');
-  const node = document.createElement('div');
-  node.className = 'kb-node' + (kbSelectedFolder === 'all' ? ' sel' : '');
-  node.innerHTML = '<span class="kb-ficon">' + KB_ICON_FOLDER_OPEN + '</span>' +
-    '<span class="kb-node-name">All boards</span>';
-  node.addEventListener('click', () => kbSelectFolder('all'));
-  li.appendChild(node);
-  return li;
 }
 
 function kbFolderLi(f){
@@ -987,6 +979,8 @@ function kbRenderSidebarDev(el){
 // Clicking the backdrop dismisses overlays, but only when clean — a stray
 // click never destroys typed data inside the modal itself.
 document.getElementById('ui-modal-backdrop').addEventListener('click', kbDismissIfClean);
+// The static "All boards" root node selects the whole-tree view (no uuid).
+document.getElementById('kb-all-boards').addEventListener('click', () => kbSelectFolder('all'));
 
 // ---- init ----
 (async function kbInit(){

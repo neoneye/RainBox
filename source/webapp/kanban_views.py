@@ -65,8 +65,9 @@ KANBAN_TEMPLATE = """
   .kb-sidebar-mode{font:inherit;font-size:0.8rem;color:#6c757d;border:1px solid #ccc;border-radius:6px;
     padding:0.2em 0.4em;background:#fff;cursor:pointer;margin-left:auto}
   .kb-side{overflow:auto;min-height:0;border-right:1px solid #e5e7eb;background:#fbfbfb;padding:10px;font-size:0.9rem}
-  .kb-side-head{display:flex;gap:6px;margin-bottom:8px}
+  .kb-side-head{display:flex;gap:6px}
   .kb-side-head button{padding:3px 10px;font-size:0.8rem}
+  .kb-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:6px 0}
   /* Tree: nested <ul>s. Indentation + guide line are pure CSS on NESTED lists
      only (the double-descendant selector skips the root list). */
   .kb-tree-list{list-style:none;margin:0;padding:0}
@@ -182,10 +183,15 @@ KANBAN_TEMPLATE = """
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="kb-split">
 <aside class="kb-side" id="kb-side">
+  <!-- Static "All boards" root above the action buttons, then the tree —
+       same arrangement as /cron's "All jobs". -->
+  <div id="kb-all-boards" class="kb-node"><span class="kb-node-name">All boards</span></div>
+  <hr class="kb-tree-sep">
   <div class="kb-side-head">
     <button onclick="kbNewBoard()">+ Board</button>
     <button class="kb-secondary" onclick="kbNewFolder()">+ Folder</button>
   </div>
+  <hr class="kb-tree-sep">
   <div id="kb-tree-root" class="kb-tree-list"></div>
   <div id="kb-root-drop" class="kb-root-drop">Move to top level</div>
 </aside>
