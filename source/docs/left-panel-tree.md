@@ -1,10 +1,14 @@
 # Left-panel folder tree (nested hierarchy pattern)
 
 Several pages have a left panel that shows a **tree of folders** (which nest
-arbitrarily deep) containing **leaf items**. `/chat` (folders → chatrooms) and
-`/cron` (folders → jobs) both implement it; this doc describes the shared
-pattern and the two reference implementations so a third page (e.g. `/kanban`:
-folders → boards) can be built without re-deriving it.
+arbitrarily deep) containing **leaf items**. `/chat` (folders → chatrooms),
+`/cron` (folders → jobs), and `/kanban` (folders → boards) all implement it;
+this doc describes the shared pattern and the reference implementations.
+`/kanban` is the placement-only variant whose tree layer (folders + board
+placement) is kept separate from board contents: `webapp/kanban_views.py`
+(markup + CSS), `static/kanban.js` (tree JS), `webapp/kanban_api.py` +
+`db/kanban.py` (`kanban_load_tree`/`kanban_save_tree`/`kanban_tree_version`/
+`validate_kanban_tree`, folder create + reparenting delete).
 
 Folder create/rename/delete dialogs use the app-wide modal pattern — see
 [`ui-modals.md`](ui-modals.md).
