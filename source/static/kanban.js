@@ -1051,9 +1051,172 @@ function kbRenderFolderView(){
   });
   body.replaceChildren(table);
 }
-function kbWireFolderDrag(node, folderId){}
-function kbWireBoardDrag(node, boardId){}
-function kbWireRootDrop(){}
+// True if `rootId` is `candidateId` or lives anywhere in its subtree — used to
+// refuse nesting a folder inside itself/its descendants (the DB validator
+// enforces it again server-side).
+function kbFolderInSubtree(candidateId, rootId){
+  if (candidateId === rootId) return true;
+  return kbChildFolders(rootId).some(c => kbFolderInSubtree(candidateId, c.uuid));
+}
+// Reorder `arr` so `movedId` sits just before `beforeId` (or at end if null),
+// then renumber `position` within each parent group from the new array order.
+function kbReorderSiblings(arr, keyOf, movedId, beforeId){
+  const moved = arr.find(x => x.uuid === movedId);
+  if (!moved) return;
+  const rest = arr.filter(x => x.uuid !== movedId);
+  let idx = rest.length;
+  if (beforeId){
+    const i = rest.findIndex(x => x.uuid === beforeId);
+    if (i >= 0) idx = i;
+  }
+  rest.splice(idx, 0, moved);
+  const counters = {};
+  rest.forEach(x => {
+    const k = keyOf(x) || 'root';
+    counters[k] = (counters[k] || 0);
+    x.position = counters[k]++;
+  });
+  arr.length = 0; arr.push(...rest);
+}
+
+function kbWireBoardDrag(node, boardId){
+  node.addEventListener('dragstart', e => {
+    kbDragTree = {type: 'board', id: boardId};
+    e.dataTransfer.effectAllowed = 'move';
+    e.stopPropagation();
+    document.getElementById('kb-side').classList.add('dragging-on');
+  });
+  node.addEventListener('dragend', () => kbEndTreeDrag());
+  // A board node is a 2-zone (before/after) reorder target within its folder.
+  node.addEventListener('dragover', e => {
+    if (!kbDragTree) return;
+    e.preventDefault(); e.stopPropagation();
+    const after = kbPointerAfter(node, e);
+    node.classList.toggle('kb-drop-after', after);
+    node.classList.toggle('kb-drop-before', !after);
+  });
+  node.addEventListener('dragleave', () =>
+    node.classList.remove('kb-drop-before', 'kb-drop-after'));
+  node.addEventListener('drop', e => {
+    if (!kbDragTree) return;
+    e.preventDefault(); e.stopPropagation();
+    const after = kbPointerAfter(node, e);
+    node.classList.remove('kb-drop-before', 'kb-drop-after');
+    const target = kbBoards.find(b => b.uuid === boardId);
+    kbDropAsSibling(target ? (target.folderId || null) : null, boardId, after);
+  });
+}
+
+function kbWireFolderDrag(node, folderId){
+  node.addEventListener('dragstart', e => {
+    kbDragTree = {type: 'folder', id: folderId};
+    e.dataTransfer.effectAllowed = 'move';
+    e.stopPropagation();
+    document.getElementById('kb-side').classList.add('dragging-on');
+  });
+  node.addEventListener('dragend', () => kbEndTreeDrag());
+  // A folder node is a 3-zone target: top=before, bottom=after, middle=into.
+  node.addEventListener('dragover', e => {
+    if (!kbDragTree) return;
+    e.preventDefault(); e.stopPropagation();
+    const zone = kbFolderZone(node, e);
+    node.classList.toggle('kb-drop-before', zone === 'before');
+    node.classList.toggle('kb-drop-after', zone === 'after');
+    node.classList.toggle('kb-drop-into', zone === 'into');
+  });
+  node.addEventListener('dragleave', () =>
+    node.classList.remove('kb-drop-before', 'kb-drop-after', 'kb-drop-into'));
+  node.addEventListener('drop', e => {
+    if (!kbDragTree) return;
+    e.preventDefault(); e.stopPropagation();
+    const zone = kbFolderZone(node, e);
+    node.classList.remove('kb-drop-before', 'kb-drop-after', 'kb-drop-into');
+    if (zone === 'into') kbDropInto(folderId);
+    else {
+      const target = kbFolderById(folderId);
+      kbDropAsSibling(target ? (target.parentId || null) : null, folderId, zone === 'after');
+    }
+  });
+}
+
+function kbWireRootDrop(){
+  const strip = document.getElementById('kb-root-drop');
+  if (!strip) return;
+  strip.ondragover = e => { if (kbDragTree){ e.preventDefault(); strip.classList.add('kb-drop-into'); } };
+  strip.ondragleave = () => strip.classList.remove('kb-drop-into');
+  strip.ondrop = e => {
+    if (!kbDragTree) return;
+    e.preventDefault();
+    strip.classList.remove('kb-drop-into');
+    kbDropInto(null);   // move to top level
+  };
+}
+
+// ---- drag geometry + apply ----
+function kbPointerAfter(node, e){
+  const r = node.getBoundingClientRect();
+  return (e.clientY - r.top) > r.height / 2;
+}
+function kbFolderZone(node, e){
+  const r = node.getBoundingClientRect();
+  const y = e.clientY - r.top;
+  if (y < r.height / 3) return 'before';
+  if (y > r.height * 2 / 3) return 'after';
+  return 'into';
+}
+function kbEndTreeDrag(){
+  kbDragTree = null;
+  document.getElementById('kb-side').classList.remove('dragging-on');
+  document.querySelectorAll('.kb-drop-before, .kb-drop-after, .kb-drop-into')
+    .forEach(x => x.classList.remove('kb-drop-before', 'kb-drop-after', 'kb-drop-into'));
+}
+// Nest the dragged node INTO folder `destId` (null = top level).
+function kbDropInto(destId){
+  const d = kbDragTree;
+  if (!d) return;
+  if (d.type === 'folder'){
+    if (destId && kbFolderInSubtree(destId, d.id)){
+      kbToast('Cannot move a folder into itself.'); return;
+    }
+    const f = kbFolderById(d.id);
+    if (f) f.parentId = destId;
+    kbReorderSiblings(kbFolders, x => x.parentId, d.id, null);
+  } else {
+    const b = kbBoards.find(x => x.uuid === d.id);
+    if (b) b.folderId = destId;
+    kbReorderSiblings(kbBoards, x => x.folderId, d.id, null);
+  }
+  if (destId){ kbExpanded[destId] = true; kbSaveExpanded(); }
+  kbSaveTree();
+  kbRenderTree();
+}
+// Place the dragged node as a sibling before/after `siblingId` under `parentId`.
+function kbDropAsSibling(parentId, siblingId, after){
+  const d = kbDragTree;
+  if (!d || d.id === siblingId) return;
+  if (d.type === 'folder'){
+    if (parentId && kbFolderInSubtree(parentId, d.id)){
+      kbToast('Cannot move a folder into itself.'); return;
+    }
+    const f = kbFolderById(d.id);
+    if (f) f.parentId = parentId;
+    const ordered = kbChildFolders(parentId).map(x => x.uuid);
+    kbReorderSiblings(kbFolders, x => x.parentId, d.id, kbNeighbor(ordered, siblingId, after));
+  } else {
+    const b = kbBoards.find(x => x.uuid === d.id);
+    if (b) b.folderId = parentId;
+    const ordered = kbBoardsInFolder(parentId).map(x => x.uuid);
+    kbReorderSiblings(kbBoards, x => x.folderId, d.id, kbNeighbor(ordered, siblingId, after));
+  }
+  kbSaveTree();
+  kbRenderTree();
+}
+// The uuid to insert BEFORE so the moved node lands before/after `siblingId`.
+function kbNeighbor(orderedIds, siblingId, after){
+  if (!after) return siblingId;
+  const i = orderedIds.indexOf(siblingId);
+  return (i >= 0 && i + 1 < orderedIds.length) ? orderedIds[i + 1] : null;
+}
 // Folder create + rename share one modal; kbRenamingFolder picks the mode.
 function kbNewFolder(parentId){
   kbRenamingFolder = null;
