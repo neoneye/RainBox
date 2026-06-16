@@ -7,10 +7,12 @@ CLI. Status comes from LM Studio's REST API; mutations go through the
 CLI.
 """
 
+import atexit
 import json
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -54,6 +56,72 @@ def _lms_path() -> str:
         "could not find the `lms` CLI on PATH or in ~/.cache/lm-studio/bin/; "
         "install LM Studio's CLI or set $LMS to its path"
     )
+
+
+# How long any `lms` subcommand may run before we give up and kill it. The CLI
+# normally finishes in seconds (a cold GPU model load is the slow case); without
+# a bound, a wedged call — e.g. the LM Studio server dying mid-load — spins
+# indefinitely, and if RainBox then exits the child reparents to launchd/init
+# and burns CPU forever. That orphan is exactly what this guards against.
+_LMS_OP_TIMEOUT: float = 180.0
+
+# Live `lms` children, killed on interpreter exit so a graceful shutdown never
+# leaves one behind. SIGKILL of RainBox itself can't be caught, so this is
+# best-effort cleanup; the timeout above is the real backstop.
+_LIVE_LMS_PROCS: set[subprocess.Popen] = set()
+
+
+def _kill_lms_group(proc: subprocess.Popen) -> None:
+    """SIGKILL the child's whole process group (it is started in its own
+    session), falling back to the bare pid if the group is already gone — so a
+    timed-out `lms` can't leave grandchildren spinning."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
+def _cleanup_lms_procs() -> None:
+    """atexit hook: take down any `lms` child still running at shutdown."""
+    for proc in list(_LIVE_LMS_PROCS):
+        if proc.poll() is None:
+            _kill_lms_group(proc)
+        _LIVE_LMS_PROCS.discard(proc)
+
+
+atexit.register(_cleanup_lms_procs)
+
+
+def _run_lms(args: list[str], *, timeout: float = _LMS_OP_TIMEOUT) -> str:
+    """Run an `lms` subcommand bounded by `timeout` and return its stdout.
+
+    Mirrors ``subprocess.run(..., check=True)`` (raises CalledProcessError on a
+    non-zero exit, TimeoutExpired on overrun) but starts the child in its own
+    session so a timeout can SIGKILL the entire process group — subprocess's own
+    timeout handling only kills the direct child. Tracks the child so the atexit
+    hook can reap it if RainBox exits mid-call."""
+    proc = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
+    )
+    _LIVE_LMS_PROCS.add(proc)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _log.warning(
+            "lm_studio: `%s` exceeded %.0fs — killing it", " ".join(args), timeout
+        )
+        _kill_lms_group(proc)
+        proc.communicate()  # reap the killed child so it isn't left a zombie
+        raise
+    finally:
+        _LIVE_LMS_PROCS.discard(proc)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, args, out, err)
+    return out
 
 
 def _list_native_models_via_api() -> list[dict[str, Any]]:
@@ -159,23 +227,17 @@ class _LMStudioProvider:
                 "lm_studio: unloading %s (loaded ctx=%s < required %d)",
                 identifier, inst.get("loaded_context_length"), context_window,
             )
-            subprocess.run(
-                [lms, "unload", str(identifier)],
-                check=True, capture_output=True, text=True,
-            )
+            _run_lms([lms, "unload", str(identifier)])
         _log.info(
             "lm_studio: loading %s with context-length=%d ttl=%ds",
             model, context_window, ttl_seconds,
         )
-        subprocess.run(
-            [
-                lms, "load", model,
-                "--context-length", str(context_window),
-                "--gpu", "max",
-                "--ttl", str(ttl_seconds),
-            ],
-            check=True, capture_output=True, text=True,
-        )
+        _run_lms([
+            lms, "load", model,
+            "--context-length", str(context_window),
+            "--gpu", "max",
+            "--ttl", str(ttl_seconds),
+        ])
 
 
 PROVIDER: Provider = _LMStudioProvider()
