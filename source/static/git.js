@@ -245,7 +245,8 @@ function gitFolderLi(f){
   const hasKids = (kids.length + repos.length) > 0;
   const expanded = gitIsExpanded(f.id);
   const node = document.createElement('div');
-  node.className = 'git-node' + ((gitSelectedFolder === f.id && !gitSelectedRepo) ? ' sel' : '');
+  const selected = (gitSelectedFolder === f.id && !gitSelectedRepo);
+  node.className = 'git-node' + (selected ? ' sel' : '');
   const icon = document.createElement('span');
   icon.className = 'git-ficon';
   icon.innerHTML = (expanded && hasKids) ? GIT_ICON_FOLDER_OPEN : GIT_ICON_FOLDER;
@@ -256,7 +257,8 @@ function gitFolderLi(f){
   node.addEventListener('click', () => gitFolderClick(f.id));
   gitMakeDraggable(node, 'folder', f.id);
   gitMakeFolderDrop(node, f.id);
-  gitMakeKebab(node, {
+  // The kebab (actions) only appears on the selected node, to keep the tree uncluttered.
+  if (selected) gitMakeKebab(node, {
     onNewRepo: () => gitNewRepo(f.id),
     onNewSubfolder: () => gitNewSubfolder(f.id),
     onRename: () => gitKebabRename('folder', f.id),
@@ -272,7 +274,8 @@ function gitFolderLi(f){
 }
 function gitRepoNode(r){
   const n = document.createElement('div');
-  n.className = 'git-repo-node' + (gitSelectedRepo === r.uuid ? ' sel' : '');
+  const selected = (gitSelectedRepo === r.uuid);
+  n.className = 'git-repo-node' + (selected ? ' sel' : '');
   n.title = r.path || r.name;
   const icon = document.createElement('span'); icon.className = 'git-ficon'; icon.innerHTML = GIT_ICON_REPO;
   const label = document.createElement('span'); label.className = 'git-repo-label'; label.textContent = r.name;
@@ -280,7 +283,8 @@ function gitRepoNode(r){
   n.addEventListener('click', () => gitSelectRepo(r.uuid));
   gitMakeDraggable(n, 'repo', r.uuid);
   gitMakeRepoDrop(n, r.uuid);
-  gitMakeKebab(n, { onRename: () => gitKebabRename('repo', r.uuid) });
+  // The kebab (actions) only appears on the selected node, to keep the tree uncluttered.
+  if (selected) gitMakeKebab(n, { onRename: () => gitKebabRename('repo', r.uuid) });
   return n;
 }
 // Kebab "Rename" selects the node and focuses the right-pane rename field.
