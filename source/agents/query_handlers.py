@@ -420,6 +420,73 @@ def get_cron_overview(ctx: QueryContext) -> str:
     return "\n".join(lines).strip()
 
 
+def get_kanban_overview(ctx: QueryContext) -> str:
+    """Markdown overview of the /kanban page: every board grouped by folder,
+    each with its task count and a per-column breakdown (task titles, with an
+    @ marker for assigned tasks). Reads the persisted tree + per-board contents
+    (db.kanban_load_tree / db.kanban_load_board)."""
+    try:
+        tree = db.kanban_load_tree()
+    except Exception as e:
+        return f"(could not load kanban tree: {type(e).__name__}: {e})"
+    folders = tree.get("folders", [])
+    boards = tree.get("boards", [])
+    if not boards:
+        return "No kanban boards exist yet. Create one at http://127.0.0.1:5000/kanban"
+
+    # Resolve a board's folder to a breadcrumb label ("Parent / Child").
+    by_id = {f["uuid"]: f for f in folders}
+
+    def folder_label(fid: str | None) -> str:
+        parts: list[str] = []
+        seen: set[str] = set()
+        while fid and fid in by_id and fid not in seen:
+            seen.add(fid)
+            node = by_id[fid]
+            parts.append(node["name"])
+            fid = node.get("parentId")
+        return " / ".join(reversed(parts))
+
+    # Group boards by folder, preserving the page's saved order.
+    groups: dict[str, list] = {}
+    for b in boards:
+        label = folder_label(b.get("folderId")) or "(ungrouped)"
+        groups.setdefault(label, []).append(b)
+
+    total_tasks = sum(b.get("taskCount", 0) for b in boards)
+    bnoun = "board" if len(boards) == 1 else "boards"
+    tnoun = "task" if total_tasks == 1 else "tasks"
+    lines = [
+        f"**{len(boards)} kanban {bnoun}, {total_tasks} {tnoun}** — http://127.0.0.1:5000/kanban",
+        "",
+    ]
+    for label, items in groups.items():
+        lines.append(f"### {label}")
+        for b in items:
+            count = b.get("taskCount", 0)
+            lines.append(f"- **{b['name']}** — {count} task(s)")
+            try:
+                data = db.kanban_load_board(UUID(b["uuid"]))
+            except Exception:
+                data = None
+            if not data:
+                continue
+            tasks_by_col: dict[str, list] = {}
+            for t in data["tasks"]:
+                tasks_by_col.setdefault(t["columnUuid"], []).append(t)
+            for col in data["columns"]:
+                col_tasks = tasks_by_col.get(col["uuid"], [])
+                if not col_tasks:
+                    lines.append(f"  - {col['name']} (0): _(empty)_")
+                    continue
+                titles = ", ".join(
+                    t["title"] + (" @" if t.get("agentUuid") else "") for t in col_tasks
+                )
+                lines.append(f"  - {col['name']} ({len(col_tasks)}): {titles}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def get_cwd(ctx: QueryContext) -> str:
     return str(_REPO_DIR)
 
@@ -629,6 +696,7 @@ HANDLERS = {
     "get_git_remote": get_git_remote,
     "get_git_overview": get_git_overview,
     "get_cron_overview": get_cron_overview,
+    "get_kanban_overview": get_kanban_overview,
     "get_cwd": get_cwd,
     "get_runtime_info": get_runtime_info,
     "get_test_status": get_test_status,
