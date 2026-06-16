@@ -509,10 +509,9 @@ def get_test_status(ctx: QueryContext) -> str:
 # --- project ------------------------------------------------------------------
 
 
-def get_current_project(ctx: QueryContext) -> str:
-    """The chatroom name is the "current project" the user is in (since the chat
-    is organised per project/topic). Fall back to the repo dir when there's no
-    room context."""
+def get_current_chatroom(ctx: QueryContext) -> str:
+    """The name of the chatroom the question was asked in. Fall back to the repo
+    dir when there's no room context."""
     try:
         room = db.db.session.query(db.Chatroom).filter_by(uuid=ctx.room_uuid).first()
         if room and room.name:
@@ -732,7 +731,7 @@ HANDLERS = {
     "get_runtime_info": get_runtime_info,
     "get_test_status": get_test_status,
     # project
-    "get_current_project": get_current_project,
+    "get_current_chatroom": get_current_chatroom,
     "list_chatrooms": list_chatrooms,
     "get_todo_list": get_todo_list,
     "get_outdated_dependencies": get_outdated_dependencies,

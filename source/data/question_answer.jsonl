@@ -23,7 +23,7 @@
 {"id": "dev.cwd", "kind": "dynamic", "questions": ["what's the working directory?", "current directory", "where is the shell?"], "handler": "get_cwd"}
 {"id": "dev.runtime", "kind": "dynamic", "questions": ["what python version?", "which venv?", "what interpreter is active?"], "handler": "get_runtime_info"}
 {"id": "dev.tests", "kind": "dynamic", "questions": ["are tests passing?", "test status", "did the last test run pass?"], "handler": "get_test_status"}
-{"id": "project.current", "kind": "dynamic", "questions": ["What are we currently working on?", "What is the current project?"], "handler": "get_current_project"}
+{"id": "chat.current", "kind": "dynamic", "questions": ["What chatroom is this?", "What is the current chatroom?", "Which chat room am I in?", "current chatroom"], "handler": "get_current_chatroom"}
 {"id": "chat.list", "kind": "dynamic", "questions": ["What chatrooms are there?", "list chatrooms", "what chat rooms do I have", "show my chatrooms", "chatrooms", "chat rooms"], "handler": "list_chatrooms"}
 {"id": "project.todos", "kind": "dynamic", "questions": ["todo", "todos", "What is on the todo list?", "What should we do next?", "Pending tasks"], "handler": "get_todo_list"}
 {"id": "project.dependencies", "kind": "dynamic", "questions": ["What packages are outdated?", "Check dependencies", "Are our libraries up to date?"], "handler": "get_outdated_dependencies"}
