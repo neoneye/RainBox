@@ -226,3 +226,15 @@ def test_save_tree_stale_version_conflicts(app_ctx):
                     if x["uuid"] == f["uuid"])["name"] == "theirs"
     finally:
         db.kanban_delete_folder(_u(f["uuid"]))
+
+
+def test_create_board_into_folder(app_ctx):
+    f = db.kanban_create_folder("dest")
+    b = db.kanban_create_board("filed at birth", folder_uuid=_u(f["uuid"]))
+    try:
+        placed = next(x for x in db.kanban_load_tree()["boards"]
+                      if x["uuid"] == b["uuid"])
+        assert placed["folderId"] == f["uuid"]
+    finally:
+        db.kanban_delete_board(_u(b["uuid"]))
+        db.kanban_delete_folder(_u(f["uuid"]))

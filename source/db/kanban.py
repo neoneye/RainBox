@@ -66,15 +66,18 @@ def _to_uuid(value: Any) -> UUID | None:
 
 # ---- boards: create / delete / list / load / version ----
 
-def kanban_create_board(name: str, description: str = "") -> dict[str, Any]:
-    """Create a board with the default columns; returns the load payload."""
+def kanban_create_board(name: str, description: str = "",
+                        folder_uuid: UUID | None = None) -> dict[str, Any]:
+    """Create a board with the default columns; returns the load payload.
+    `folder_uuid` files it under a tree folder (None = unfiled/root)."""
     if not isinstance(name, str) or not name.strip():
         raise KanbanError("board name is required")
     position = db.session.execute(
         sa.select(sa.func.coalesce(sa.func.max(KanbanBoard.position), -1))
     ).scalar_one() + 1
     board = KanbanBoard(uuid=uuid4(), name=name.strip(),
-                        description=str(description or ""), position=position)
+                        description=str(description or ""), position=position,
+                        folder_uuid=folder_uuid)
     db.session.add(board)
     for i, col_name in enumerate(KANBAN_DEFAULT_COLUMNS):
         db.session.add(KanbanColumn(uuid=uuid4(), board_uuid=board.uuid,
