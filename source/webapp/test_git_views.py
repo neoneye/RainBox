@@ -26,3 +26,11 @@ def test_nav_has_git_link():
     body = app.test_client().get("/git").get_data(as_text=True)
     assert ">Git<" in body
     assert "pp-active" in body
+
+
+def test_js_has_core_markers():
+    b = _body()
+    for marker in ["gitLoadTree", "gitRenderTree", "gitRepoNode",
+                   "gitAddRepoConfirm", "/git/api/check-path",
+                   "gitLoadRepoDetail", "gitSavePush"]:
+        assert marker in b, f"missing JS marker: {marker}"
