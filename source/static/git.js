@@ -275,12 +275,9 @@ function gitFolderLi(f){
   gitMakeDraggable(node, 'folder', f.id);
   gitMakeFolderDrop(node, f.id);
   // Kebab is rendered on every row but only shown (via CSS) on the selected one,
-  // so row heights stay consistent — matches /cron.
-  gitMakeKebab(node, {
-    onNewRepo: () => gitNewRepo(f.id),
-    onNewSubfolder: () => gitNewSubfolder(f.id),
-    onRename: () => gitKebabRename('folder', f.id),
-  });
+  // so row heights stay consistent — matches /cron. Folders offer Rename only;
+  // add a repo/subfolder via the "+ Repo"/"+ Folder" buttons.
+  gitMakeKebab(node, { onRename: () => gitKebabRename('folder', f.id) });
   li.appendChild(node);
   if (expanded && hasKids){
     const ul = document.createElement('ul');
@@ -311,8 +308,8 @@ function gitKebabRename(type, id){
   const field = document.getElementById('git-rename-field');
   if (field){ field.focus(); field.select(); }
 }
-// 3-dot overflow menu. opts: { onNewRepo?, onNewSubfolder?, onRename? }.
-// Folders get all three; repos get rename only. No Delete (deferred).
+// 3-dot overflow menu. opts: { onRename? }. Folders and repos both offer Rename
+// only; add repos/folders via the "+ Repo"/"+ Folder" buttons. No Delete (deferred).
 function gitMakeKebab(node, opts){
   opts = opts || {};
   const kebab = document.createElement('button');
@@ -321,8 +318,6 @@ function gitMakeKebab(node, opts){
   const menu = document.createElement('div');
   menu.className = 'git-menu'; menu.setAttribute('role', 'menu'); menu.hidden = true;
   const items = [];
-  if (opts.onNewRepo) items.push(['New repo', opts.onNewRepo]);
-  if (opts.onNewSubfolder) items.push(['New subfolder', opts.onNewSubfolder]);
   if (opts.onRename) items.push(['Rename', opts.onRename]);
   items.forEach(spec => {
     const item = document.createElement('button');
@@ -372,8 +367,6 @@ function gitAddFolderConfirm(){
   gitSelectFolder(id);
   gitSave();
 }
-function gitNewSubfolder(folderId){ gitSelectFolder(folderId); gitAddFolder(true); }
-function gitNewRepo(folderId){ gitSelectFolder(folderId); gitAddRepo(); }
 function gitAddRepo(){
   document.getElementById('git-repo-name').value = '';
   document.getElementById('git-repo-path').value = '';
