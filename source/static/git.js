@@ -86,6 +86,21 @@ function gitRender(){
 // The contents table: the DIRECT children (subfolders + repos) of the selected
 // folder, or of the root when nothing/`All repositories` is selected. Hidden
 // while a repo is selected (the repo detail pane shows instead).
+// Depth-first list of everything under parentId (null = whole tree), in the
+// same order as the left tree, each row tagged with its nesting `depth` — like
+// /cron's cronFlattenTree (docs/left-panel-tree.md §7).
+function gitFlattenTree(parentId){
+  parentId = parentId || null;
+  const out = [];
+  const walk = (f, depth) => {
+    out.push({kind: 'folder', node: f, depth: depth});
+    gitChildFolders(f.id).forEach(c => walk(c, depth + 1));
+    gitReposInFolder(f.id).forEach(r => out.push({kind: 'repo', node: r, depth: depth + 1}));
+  };
+  gitChildFolders(parentId).forEach(f => walk(f, 0));
+  gitReposInFolder(parentId).forEach(r => out.push({kind: 'repo', node: r, depth: 0}));
+  return out;
+}
 function gitRenderContents(){
   const wrap = document.getElementById('git-table-wrap');
   const repoView = !!gitSelectedRepo;
@@ -93,29 +108,32 @@ function gitRenderContents(){
   if (repoView) return;
   const tb = document.getElementById('git-rows');
   tb.innerHTML = '';
-  const folders = gitChildFolders(gitSelectedFolder);
-  const repos = gitReposInFolder(gitSelectedFolder);
-  if (!folders.length && !repos.length){
+  // The selected folder's whole subtree (or the entire tree at the root),
+  // depth-first and depth-indented, mirroring the left tree.
+  const nodes = gitFlattenTree(gitSelectedFolder);
+  if (!nodes.length){
     tb.innerHTML = '<tr><td colspan="5"><i>' +
       (gitSelectedFolder === null ? 'no repositories yet' : 'empty folder') + '</i></td></tr>';
     return;
   }
-  folders.forEach(f => {
+  nodes.forEach(item => {
+    const pad = 9 + item.depth * 20;  // indent the name cell by nesting depth, like the tree
     const tr = document.createElement('tr');
-    tr.innerHTML =
-      '<td class="git-name-cell"><span class="git-ficon">' + GIT_ICON_FOLDER + '</span> ' + gitEscapeHtml(f.name) + '</td>' +
-      '<td>Folder</td><td></td><td>' + gitEscapeHtml(f.description || '') + '</td>' +
-      '<td><a href="#" class="row-open">Open</a></td>';
-    tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); gitSelectFolder(f.id); });
-    tb.appendChild(tr);
-  });
-  repos.forEach(r => {
-    const tr = document.createElement('tr');
-    tr.innerHTML =
-      '<td class="git-name-cell"><span class="git-ficon">' + GIT_ICON_REPO + '</span> ' + gitEscapeHtml(r.name) + '</td>' +
-      '<td>Repo</td><td><code>' + gitEscapeHtml(r.path) + '</code></td><td>' + gitEscapeHtml(r.description || '') + '</td>' +
-      '<td><a href="#" class="row-open">Open</a></td>';
-    tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); gitSelectRepo(r.uuid); });
+    if (item.kind === 'folder'){
+      const f = item.node;
+      tr.innerHTML =
+        '<td class="git-name-cell" style="padding-left:' + pad + 'px"><span class="git-ficon">' + GIT_ICON_FOLDER + '</span> ' + gitEscapeHtml(f.name) + '</td>' +
+        '<td>Folder</td><td></td><td>' + gitEscapeHtml(f.description || '') + '</td>' +
+        '<td><a href="#" class="row-open">Open</a></td>';
+      tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); gitSelectFolder(f.id); });
+    } else {
+      const r = item.node;
+      tr.innerHTML =
+        '<td class="git-name-cell" style="padding-left:' + pad + 'px"><span class="git-ficon">' + GIT_ICON_REPO + '</span> ' + gitEscapeHtml(r.name) + '</td>' +
+        '<td>Repo</td><td><code>' + gitEscapeHtml(r.path) + '</code></td><td>' + gitEscapeHtml(r.description || '') + '</td>' +
+        '<td><a href="#" class="row-open">Open</a></td>';
+      tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); gitSelectRepo(r.uuid); });
+    }
     tb.appendChild(tr);
   });
 }
