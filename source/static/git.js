@@ -375,7 +375,12 @@ function gitAddFolderConfirm(){
   gitSelectFolder(id);
   gitSave();
 }
+// The Name field auto-fills from the Path's last component until the user edits
+// Name themselves; this flag stops the auto-fill once they've typed their own.
+let gitRepoNameEdited = false;
+function gitRepoBasename(p){ return (p || '').split('/').filter(Boolean).pop() || ''; }
 function gitAddRepo(){
+  gitRepoNameEdited = false;
   document.getElementById('git-repo-name').value = '';
   document.getElementById('git-repo-path').value = '';
   document.getElementById('git-repo-err').textContent = '';
@@ -846,6 +851,16 @@ document.getElementById('git-folder-input').addEventListener('keydown', e => {
 });
 document.getElementById('git-repo-path').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); gitAddRepoConfirm(); }
+});
+// Auto-fill Name from the Path's last component while the user types the path,
+// unless they've already edited Name themselves.
+document.getElementById('git-repo-path').addEventListener('input', () => {
+  if (gitRepoNameEdited) return;
+  document.getElementById('git-repo-name').value =
+    gitRepoBasename(document.getElementById('git-repo-path').value.trim());
+});
+document.getElementById('git-repo-name').addEventListener('input', () => {
+  gitRepoNameEdited = true;
 });
 document.getElementById('ui-modal-backdrop').addEventListener('click', gitDismissIfClean);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') gitDismissIfClean(); });

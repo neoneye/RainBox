@@ -134,8 +134,8 @@ GIT_TEMPLATE = """
 
 <div class="ui-modal" id="git-repo-modal" hidden>
   <h3>Add repository</h3>
-  <label>Name (optional)<input type="text" id="git-repo-name" placeholder="display name"></label>
   <label>Path<input type="text" id="git-repo-path" placeholder="/path/to/existing/repo"></label>
+  <label>Name (optional)<input type="text" id="git-repo-name" placeholder="defaults to the folder name"></label>
   <div class="err" id="git-repo-err"></div>
   <div class="modal-actions">
     <button class="btn-primary" id="git-repo-create" onclick="gitAddRepoConfirm()">Add</button>
