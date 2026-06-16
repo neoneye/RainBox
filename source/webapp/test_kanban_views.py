@@ -70,7 +70,7 @@ def test_kanban_page_has_right_sidebar_picker():
 
 def test_kanban_page_has_boards_and_columns():
     body = _body()
-    assert 'id="kb-board-list"' in body
+    assert 'id="kb-tree-root"' in body
     assert ">+ Board<" in body
     assert "function kbNewBoard" in body
     assert "function kbSelectBoard" in body

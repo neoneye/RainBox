@@ -67,17 +67,44 @@ KANBAN_TEMPLATE = """
   .kb-side{overflow:auto;min-height:0;border-right:1px solid #e5e7eb;background:#fbfbfb;padding:10px;font-size:0.9rem}
   .kb-side-head{display:flex;gap:6px;margin-bottom:8px}
   .kb-side-head button{padding:3px 10px;font-size:0.8rem}
-  .kb-board-list{list-style:none;margin:0;padding:0}
-  .kb-board-item{display:flex;align-items:center;gap:4px;padding:8px 6px;border-radius:6px;cursor:pointer;
-    -webkit-user-select:none;user-select:none;white-space:nowrap}
-  .kb-board-item:hover{background:#f1f5f9}
-  .kb-board-item.sel{background:#dbeafe;font-weight:600}
-  .kb-board-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* kebab (3-dot overflow) menu on the selected board item — same pattern as
+  /* Tree: nested <ul>s. Indentation + guide line are pure CSS on NESTED lists
+     only (the double-descendant selector skips the root list). */
+  .kb-tree-list{list-style:none;margin:0;padding:0}
+  .kb-tree-list ul{list-style:none;margin:0;padding:0}
+  .kb-tree-list ul ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
+  .kb-node{box-sizing:border-box;display:flex;align-items:center;gap:4px;padding:6px;border-radius:6px;
+    cursor:pointer;-webkit-user-select:none;user-select:none;white-space:nowrap}
+  .kb-node:hover{background:#f1f5f9}
+  .kb-node.sel{background:#dbeafe;font-weight:600}
+  .kb-node.kb-drop-into{outline:2px dashed #2563eb;outline-offset:-2px}
+  .kb-node.kb-drop-before{box-shadow:inset 0 2px 0 0 #2563eb}
+  .kb-node.kb-drop-after{box-shadow:inset 0 -2px 0 0 #2563eb}
+  .kb-twisty{flex:0 0 auto;width:1rem;text-align:center;color:#6b7280;font-size:0.8rem}
+  .kb-node-icon{flex:0 0 auto}
+  .kb-node-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* "All boards" root pseudo-node + the drag-only "move to top level" strip. */
+  .kb-root-drop{margin:6px 0;padding:7px 6px;border:1px dashed #cbd5e1;border-radius:6px;color:#64748b;
+    font-size:0.82rem;text-align:center;display:none}
+  .kb-side.dragging-on .kb-root-drop{display:block}
+  .kb-side.dragging-on .kb-root-drop.kb-drop-into{outline:2px dashed #2563eb;background:#eff6ff}
+  /* Folder-contents detail table (shown in the main area when a folder is
+     selected, instead of the board canvas). */
+  .kb-folder-table{width:100%;border-collapse:collapse;font-size:0.88rem}
+  .kb-folder-table th{text-align:left;color:#6b7280;font-weight:600;font-size:0.78rem;
+    text-transform:uppercase;letter-spacing:0.03em;padding:6px 8px;border-bottom:1px solid #e5e7eb}
+  .kb-folder-table td{padding:6px 8px;border-bottom:1px solid #f1f5f9}
+  .kb-folder-table tr:hover td{background:#f8fafc}
+  .kb-ft-name{display:flex;align-items:center;gap:6px}
+  .kb-ft-link{color:#2563eb;cursor:pointer;background:none;border:none;font:inherit;padding:0}
+  .kb-ft-link:hover{text-decoration:underline}
+  /* The two main panes (board canvas vs folder table) toggle via `hidden`;
+     this makes the bare attribute win even though panes set display. */
+  .kb-main [hidden]{display:none}
+  /* kebab (3-dot overflow) menu on the selected tree node — same pattern as
      the cron tree's and the chat room list's. */
   .kb-kebab{margin-left:auto;flex:0 0 auto;border:none;background:none;cursor:pointer;color:#6b7280;
     width:1.4rem;height:1.4rem;padding:0;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;visibility:hidden}
-  .kb-board-item.sel .kb-kebab{visibility:visible}
+  .kb-node.sel .kb-kebab{visibility:visible}
   .kb-kebab::before{content:"";width:3px;height:3px;border-radius:50%;background:currentColor;
     box-shadow:-5px 0 0 currentColor,5px 0 0 currentColor}
   .kb-kebab:hover{background:#d2ddf6;color:#1a1a2e}
@@ -153,14 +180,22 @@ KANBAN_TEMPLATE = """
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="kb-split">
-<aside class="kb-side">
+<aside class="kb-side" id="kb-side">
   <div class="kb-side-head">
     <button onclick="kbNewBoard()">+ Board</button>
+    <button class="kb-secondary" onclick="kbNewFolder()">+ Folder</button>
   </div>
-  <ul id="kb-board-list" class="kb-board-list"></ul>
+  <div id="kb-tree-root" class="kb-tree-list"></div>
+  <div id="kb-root-drop" class="kb-root-drop">Move to top level</div>
 </aside>
 <section class="kb-main">
   <div id="kb-empty" class="muted">No boards yet &mdash; create one with &ldquo;+ Board&rdquo;.</div>
+  <div id="kb-folder-view" hidden>
+    <div class="kb-board-head">
+      <span id="kb-folder-view-name" class="kb-board-title"></span>
+    </div>
+    <div id="kb-folder-view-body"></div>
+  </div>
   <div id="kb-board" hidden>
     <div class="kb-board-head">
       <span id="kb-board-name" class="kb-board-title"></span>
@@ -194,6 +229,19 @@ KANBAN_TEMPLATE = """
   <div class="modal-actions">
     <button class="btn-cancel" onclick="kbCloseModals()">Cancel</button>
     <button id="kb-b-save" class="btn-primary" onclick="kbSaveBoardModal()">Create board</button>
+  </div>
+</div>
+
+<!-- Folder create/rename -->
+<div id="kb-folder-modal" class="ui-modal" hidden>
+  <h3 id="kb-folder-modal-title">New folder</h3>
+  <div class="kb-row">
+    <label style="width:100%">Name <input type="text" id="kb-f-name" autocomplete="off" placeholder="folder name"></label>
+  </div>
+  <span class="err" id="kb-f-err"></span>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="kbCloseModals()">Cancel</button>
+    <button id="kb-f-save" class="btn-primary" onclick="kbSaveFolderModal()">Create folder</button>
   </div>
 </div>
 
