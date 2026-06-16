@@ -405,13 +405,14 @@ def get_cron_overview(ctx: QueryContext) -> str:
     for label, items in groups.items():
         lines.append(f"### {label}")
         for j in items:
-            state = "active" if j.get("enabled") else "inactive"
+            enabled = j.get("enabled")
             sched = j.get("cron") or "(no schedule)"
             if j.get("timezone"):
                 sched += f" [{j['timezone']}]"
-            lines.append(f"- **{j['name']}** — {state}")
+            lines.append(f"- **{j['name']}** — {'active' if enabled else 'inactive'}")
             lines.append(f"  - schedule: `{sched}`")
-            lines.append(f"  - next run: {j.get('next_run_at') or '—'}")
+            if enabled:  # an inactive job never fires, so next-run is meaningless
+                lines.append(f"  - next run: {j.get('next_run_at') or '—'}")
             lines.append(f"  - uuid: `{j['uuid']}`")
         lines.append("")
     return "\n".join(lines).strip()
