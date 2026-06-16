@@ -259,6 +259,109 @@ def kanban_load_tree() -> dict[str, Any]:
     }
 
 
+def validate_kanban_tree(
+    folders: list[dict[str, Any]], boards: list[dict[str, Any]]
+) -> None:
+    """Structural integrity check for an incoming tree, run before any write.
+    Raises KanbanError on the first problem; does not touch the DB. uuids are
+    normalized so case/format-variant spellings of the same id collide here."""
+    if not isinstance(folders, list):
+        raise KanbanError(f"'folders' must be a list, got {type(folders).__name__}")
+    if not isinstance(boards, list):
+        raise KanbanError(f"'boards' must be a list, got {type(boards).__name__}")
+    parent_of: dict[UUID, UUID | None] = {}
+    for f in folders:
+        if not isinstance(f, dict):
+            raise KanbanError(f"folder entry must be an object, got {type(f).__name__}")
+        fid = _to_uuid(f.get("uuid"))
+        if fid is None:
+            raise KanbanError(f"folder uuid is not a uuid: {f.get('uuid')!r}")
+        if fid in parent_of:
+            raise KanbanError(f"duplicate folder uuid: {fid}")
+        if not isinstance(f.get("name", ""), str):
+            raise KanbanError(f"folder {fid} name must be a string")
+        if not isinstance(f.get("description", ""), str):
+            raise KanbanError(f"folder {fid} description must be a string")
+        pid_raw = f.get("parentId")
+        if pid_raw is None:
+            pid: UUID | None = None
+        else:
+            pid = _to_uuid(pid_raw)
+            if pid is None:
+                raise KanbanError(f"folder {fid} parentId is not a uuid: {pid_raw!r}")
+        parent_of[fid] = pid
+    for fid, pid in parent_of.items():
+        if pid is not None and pid not in parent_of:
+            raise KanbanError(f"folder {fid} references missing parent {pid}")
+    # Acyclic: walking parents from any folder must terminate at a root.
+    for start in parent_of:
+        seen: set[UUID] = set()
+        cur = parent_of[start]
+        while cur is not None:
+            if cur == start or cur in seen:
+                raise KanbanError(f"folder cycle detected involving {start}")
+            seen.add(cur)
+            cur = parent_of.get(cur)
+    board_uuids: set[UUID] = set()
+    for b in boards:
+        if not isinstance(b, dict):
+            raise KanbanError(f"board entry must be an object, got {type(b).__name__}")
+        bu = _to_uuid(b.get("uuid"))
+        if bu is None:
+            raise KanbanError(f"board uuid is not a uuid: {b.get('uuid')!r}")
+        if bu in board_uuids:
+            raise KanbanError(f"duplicate board uuid: {bu}")
+        # uuids are globally unique across kinds: a node is deep-linked by uuid,
+        # so a board sharing a folder's uuid would make the link ambiguous.
+        if bu in parent_of:
+            raise KanbanError(f"board uuid {bu} collides with a folder uuid")
+        board_uuids.add(bu)
+        fld_raw = b.get("folderId")
+        if fld_raw is not None:
+            fld = _to_uuid(fld_raw)
+            if fld is None:
+                raise KanbanError(f"board {bu} folderId is not a uuid: {fld_raw!r}")
+            if fld not in parent_of:
+                raise KanbanError(f"board {bu} references missing folder {fld}")
+
+
+def kanban_save_tree(
+    folders: list[dict[str, Any]], boards: list[dict[str, Any]],
+    *, base_version: str | None = None,
+) -> None:
+    """Placement-only save of the tree: upsert folder name/description/parent/
+    position and update each board's folder_uuid/position from list order.
+    NEVER creates or deletes boards, and does not delete folders (deletion is
+    kanban_delete_folder). A folder present in the DB but absent from the
+    payload is left untouched. Validates first (KanbanError before any write);
+    a stale base_version raises KanbanConflict."""
+    validate_kanban_tree(folders, boards)
+    if base_version is not None and base_version != kanban_tree_version():
+        raise KanbanConflict("kanban tree changed since it was loaded")
+    existing_f = {f.uuid: f for f in db.session.execute(
+        sa.select(KanbanBoardFolder)).scalars().all()}
+    existing_b = {b.uuid: b for b in db.session.execute(
+        sa.select(KanbanBoard)).scalars().all()}
+    for i, f in enumerate(folders):
+        fu = _to_uuid(f["uuid"])
+        row = existing_f.get(fu)
+        if row is None:
+            row = KanbanBoardFolder(uuid=fu)
+            db.session.add(row)
+        row.name = f.get("name", "")
+        row.description = f.get("description", "")
+        row.parent_uuid = _to_uuid(f["parentId"]) if f.get("parentId") else None
+        row.position = i
+    for i, b in enumerate(boards):
+        bu = _to_uuid(b["uuid"])
+        row = existing_b.get(bu)
+        if row is None:
+            continue  # placement-only: never create a board here
+        row.folder_uuid = _to_uuid(b["folderId"]) if b.get("folderId") else None
+        row.position = i
+    db.session.commit()
+
+
 def _board_rows(board_uuid: UUID):
     columns = db.session.execute(
         sa.select(KanbanColumn).where(KanbanColumn.board_uuid == board_uuid)

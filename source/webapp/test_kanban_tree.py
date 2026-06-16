@@ -142,3 +142,87 @@ def test_tree_version_excludes_board_name_and_taskcount(board):
         "tasks": [{"uuid": str(uuid4()), "columnUuid": todo, "title": "t",
                    "description": "", "agentUuid": None}]})
     assert db.kanban_load_tree()["version"] == v0
+
+
+def test_validate_rejects_dangling_and_cyclic_and_dups(app_ctx):
+    good = str(uuid4())
+    # Dangling folder parent.
+    with pytest.raises(db.KanbanError):
+        db.validate_kanban_tree([{"uuid": good, "name": "x", "parentId": str(uuid4())}], [])
+    # Cycle: a -> b -> a.
+    a, b = str(uuid4()), str(uuid4())
+    with pytest.raises(db.KanbanError):
+        db.validate_kanban_tree(
+            [{"uuid": a, "name": "a", "parentId": b},
+             {"uuid": b, "name": "b", "parentId": a}], [])
+    # Board folderId references a missing folder.
+    with pytest.raises(db.KanbanError):
+        db.validate_kanban_tree([], [{"uuid": str(uuid4()), "folderId": str(uuid4())}])
+    # Duplicate folder uuid.
+    with pytest.raises(db.KanbanError):
+        db.validate_kanban_tree(
+            [{"uuid": a, "name": "a", "parentId": None},
+             {"uuid": a, "name": "dup", "parentId": None}], [])
+    # Board uuid collides with a folder uuid (deep links are by uuid).
+    with pytest.raises(db.KanbanError):
+        db.validate_kanban_tree(
+            [{"uuid": a, "name": "a", "parentId": None}],
+            [{"uuid": a, "folderId": None}])
+
+
+def test_save_tree_round_trips_placement(app_ctx):
+    f1 = db.kanban_create_folder("one")
+    f2 = db.kanban_create_folder("two")
+    b1 = db.kanban_create_board("b1")
+    b2 = db.kanban_create_board("b2")
+    try:
+        # Nest f2 under f1; file b1 under f2, b2 under f1; reorder folders.
+        db.kanban_save_tree(
+            folders=[{"uuid": f2["uuid"], "name": "two", "parentId": None},
+                     {"uuid": f1["uuid"], "name": "one-renamed", "parentId": f2["uuid"]}],
+            boards=[{"uuid": b2["uuid"], "folderId": f1["uuid"]},
+                    {"uuid": b1["uuid"], "folderId": f2["uuid"]}])
+        tree = db.kanban_load_tree()
+        f1_out = next(f for f in tree["folders"] if f["uuid"] == f1["uuid"])
+        assert f1_out["name"] == "one-renamed" and f1_out["parentId"] == f2["uuid"]
+        assert next(b for b in tree["boards"] if b["uuid"] == b1["uuid"])["folderId"] == f2["uuid"]
+        # Position reflects payload order (f2 before f1).
+        assert f1_out["position"] == 1
+    finally:
+        db.kanban_delete_board(_u(b1["uuid"]))
+        db.kanban_delete_board(_u(b2["uuid"]))
+        db.kanban_delete_folder(_u(f1["uuid"]))
+        db.kanban_delete_folder(_u(f2["uuid"]))
+
+
+def test_save_tree_never_deletes_boards(app_ctx):
+    """Placement-only: a board absent from the payload is NOT deleted."""
+    f = db.kanban_create_folder("f")
+    keep = db.kanban_create_board("keep")
+    absent = db.kanban_create_board("absent from payload")
+    try:
+        db.kanban_save_tree(
+            folders=[{"uuid": f["uuid"], "name": "f", "parentId": None}],
+            boards=[{"uuid": keep["uuid"], "folderId": f["uuid"]}])
+        assert db.kanban_load_board(_u(absent["uuid"])) is not None  # survives
+    finally:
+        db.kanban_delete_board(_u(keep["uuid"]))
+        db.kanban_delete_board(_u(absent["uuid"]))
+        db.kanban_delete_folder(_u(f["uuid"]))
+
+
+def test_save_tree_stale_version_conflicts(app_ctx):
+    f = db.kanban_create_folder("f")
+    try:
+        v0 = db.kanban_load_tree()["version"]
+        # Another writer renames the folder, rotating the version.
+        db.kanban_save_tree(folders=[{"uuid": f["uuid"], "name": "theirs", "parentId": None}],
+                            boards=[])
+        with pytest.raises(db.KanbanConflict):
+            db.kanban_save_tree(
+                folders=[{"uuid": f["uuid"], "name": "mine", "parentId": None}],
+                boards=[], base_version=v0)
+        assert next(x for x in db.kanban_load_tree()["folders"]
+                    if x["uuid"] == f["uuid"])["name"] == "theirs"
+    finally:
+        db.kanban_delete_folder(_u(f["uuid"]))
