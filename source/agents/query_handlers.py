@@ -510,15 +510,27 @@ def get_test_status(ctx: QueryContext) -> str:
 
 
 def get_current_chatroom(ctx: QueryContext) -> str:
-    """The name of the chatroom the question was asked in. Fall back to the repo
-    dir when there's no room context."""
+    """Markdown info about the chatroom the question was asked in: its name,
+    uuid, and members (name + uuid). Falls back to the repo dir when there's no
+    room context."""
     try:
         room = db.db.session.query(db.Chatroom).filter_by(uuid=ctx.room_uuid).first()
-        if room and room.name:
-            return room.name
     except Exception:
-        pass
-    return _REPO_DIR.name
+        room = None
+    if room is None or not room.name:
+        return _REPO_DIR.name
+
+    lines = [f"**{room.name}**", f"- uuid: `{room.uuid}`"]
+    try:
+        members = db.list_room_members(room.uuid)
+    except Exception as e:
+        members = None
+        lines.append(f"- (could not list members: {type(e).__name__}: {e})")
+    if members is not None:
+        lines.append(f"- {len(members)} member(s):")
+        for m in members:
+            lines.append(f"  - {m['name']} — `{m['uuid']}`")
+    return "\n".join(lines)
 
 
 def list_chatrooms(ctx: QueryContext) -> str:
