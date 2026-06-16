@@ -34,7 +34,8 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 
-from db.models import KanbanBoard, KanbanColumn, KanbanTask, KanbanTaskEvent, db
+from db.models import (KanbanBoard, KanbanBoardFolder, KanbanColumn,
+                       KanbanTask, KanbanTaskEvent, db)
 
 KANBAN_DEFAULT_COLUMNS = ("To do", "In progress", "Done")
 
@@ -150,6 +151,60 @@ def kanban_list_boards() -> list[dict[str, Any]]:
     ).all()}
     return [{"uuid": str(b.uuid), "name": b.name,
              "taskCount": counts.get(b.uuid, 0)} for b in boards]
+
+
+# ---- folder tree: create / delete / load / version / validate / save ----
+# A separate concern from board CONTENTS (columns/tasks): this layer manages
+# folders and which folder each board sits in. The save is placement-only (the
+# /chat shape) — it never creates or deletes boards, and folder create/delete
+# have their own endpoints (delete reparents, never cascades to boards).
+
+def _folder_brief(f: "KanbanBoardFolder") -> dict[str, Any]:
+    return {"uuid": str(f.uuid), "name": f.name, "description": f.description,
+            "parentId": str(f.parent_uuid) if f.parent_uuid else None,
+            "position": f.position}
+
+
+def kanban_create_folder(
+    name: str, parent_uuid: UUID | None = None, description: str = "",
+) -> dict[str, Any]:
+    """Create a folder (appended after its siblings); returns its brief dict."""
+    if not isinstance(name, str) or not name.strip():
+        raise KanbanError("folder name is required")
+    position = db.session.execute(
+        sa.select(sa.func.coalesce(sa.func.max(KanbanBoardFolder.position), -1))
+        .where(KanbanBoardFolder.parent_uuid == parent_uuid)
+    ).scalar_one() + 1
+    folder = KanbanBoardFolder(uuid=uuid4(), name=name.strip(),
+                               description=str(description or ""),
+                               parent_uuid=parent_uuid, position=position)
+    db.session.add(folder)
+    db.session.commit()
+    return _folder_brief(folder)
+
+
+def kanban_delete_folder(folder_uuid: UUID) -> bool:
+    """Delete a folder NON-DESTRUCTIVELY: its direct child folders and boards
+    reparent up to the deleted folder's own parent (root if it had none), then
+    the folder row is removed. Boards (and their columns/tasks) are never
+    deleted by a folder delete. False if the folder doesn't exist."""
+    folder = db.session.execute(
+        sa.select(KanbanBoardFolder).where(KanbanBoardFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+    if folder is None:
+        return False
+    grandparent = folder.parent_uuid
+    db.session.execute(
+        sa.update(KanbanBoardFolder)
+        .where(KanbanBoardFolder.parent_uuid == folder_uuid)
+        .values(parent_uuid=grandparent))
+    db.session.execute(
+        sa.update(KanbanBoard)
+        .where(KanbanBoard.folder_uuid == folder_uuid)
+        .values(folder_uuid=grandparent))
+    db.session.delete(folder)
+    db.session.commit()
+    return True
 
 
 def _board_rows(board_uuid: UUID):
