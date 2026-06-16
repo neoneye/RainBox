@@ -316,6 +316,54 @@ def get_git_remote(ctx: QueryContext) -> str:
     return url
 
 
+def get_git_overview(ctx: QueryContext) -> str:
+    """Markdown overview of the git repositories curated on the /git page,
+    grouped by their folder. Reads the persisted tree (db.git_load_tree); does
+    not shell out to git, so it reflects what the operator tracks rather than
+    just this checkout."""
+    try:
+        tree = db.git_load_tree()
+    except Exception as e:
+        return f"(could not load git tree: {type(e).__name__}: {e})"
+    folders = tree.get("folders", [])
+    repos = tree.get("repos", [])
+    if not repos:
+        return "No git repositories are tracked yet. Add some at http://127.0.0.1:5000/git"
+
+    # Resolve a repo's folder to a breadcrumb label ("Parent / Child").
+    by_id = {f["id"]: f for f in folders}
+
+    def folder_label(fid: str | None) -> str:
+        parts: list[str] = []
+        seen: set[str] = set()
+        while fid and fid in by_id and fid not in seen:
+            seen.add(fid)
+            node = by_id[fid]
+            parts.append(node["name"])
+            fid = node.get("parentId")
+        return " / ".join(reversed(parts))
+
+    # Group repos by folder, preserving the page's saved order.
+    groups: dict[str, list] = {}
+    for r in repos:
+        label = folder_label(r.get("folderId")) or "(ungrouped)"
+        groups.setdefault(label, []).append(r)
+
+    noun = "repository" if len(repos) == 1 else "repositories"
+    lines = [f"**{len(repos)} git {noun}** — http://127.0.0.1:5000/git", ""]
+    for label, items in groups.items():
+        lines.append(f"### {label}")
+        for r in items:
+            bits = [f"- **{r['name']}**"]
+            if r.get("path"):
+                bits.append(f" — `{r['path']}`")
+            if r.get("description"):
+                bits.append(f": {r['description']}")
+            lines.append("".join(bits))
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def get_cwd(ctx: QueryContext) -> str:
     return str(_REPO_DIR)
 
@@ -523,6 +571,7 @@ HANDLERS = {
     "get_git_status": get_git_status,
     "get_last_git_commit": get_last_git_commit,
     "get_git_remote": get_git_remote,
+    "get_git_overview": get_git_overview,
     "get_cwd": get_cwd,
     "get_runtime_info": get_runtime_info,
     "get_test_status": get_test_status,
