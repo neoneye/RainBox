@@ -275,9 +275,12 @@ function gitFolderLi(f){
   gitMakeDraggable(node, 'folder', f.id);
   gitMakeFolderDrop(node, f.id);
   // Kebab is rendered on every row but only shown (via CSS) on the selected one,
-  // so row heights stay consistent — matches /cron. Folders offer Rename only;
-  // add a repo/subfolder via the "+ Repo"/"+ Folder" buttons.
-  gitMakeKebab(node, { onRename: () => gitKebabRename('folder', f.id) });
+  // so row heights stay consistent — matches /cron. Add a repo/subfolder via the
+  // "+ Repo"/"+ Folder" buttons.
+  gitMakeKebab(node, {
+    onRename: () => gitKebabRename('folder', f.id),
+    onDelete: () => gitConfirmDeleteFolder(f.id),
+  });
   li.appendChild(node);
   if (expanded && hasKids){
     const ul = document.createElement('ul');
@@ -299,7 +302,10 @@ function gitRepoNode(r){
   gitMakeDraggable(n, 'repo', r.uuid);
   gitMakeRepoDrop(n, r.uuid);
   // Kebab on every row, shown (via CSS) only on the selected one — matches /cron.
-  gitMakeKebab(n, { onRename: () => gitKebabRename('repo', r.uuid) });
+  gitMakeKebab(n, {
+    onRename: () => gitKebabRename('repo', r.uuid),
+    onDelete: () => gitConfirmDeleteRepo(r.uuid),
+  });
   return n;
 }
 // Kebab "Rename" selects the node and focuses the right-pane rename field.
@@ -318,10 +324,12 @@ function gitMakeKebab(node, opts){
   const menu = document.createElement('div');
   menu.className = 'git-menu'; menu.setAttribute('role', 'menu'); menu.hidden = true;
   const items = [];
-  if (opts.onRename) items.push(['Rename', opts.onRename]);
+  if (opts.onRename) items.push(['Rename', opts.onRename, '']);
+  if (opts.onDelete) items.push(['Delete', opts.onDelete, 'danger']);
   items.forEach(spec => {
     const item = document.createElement('button');
-    item.type = 'button'; item.className = 'item'; item.setAttribute('role', 'menuitem');
+    item.type = 'button'; item.className = 'item' + (spec[2] ? ' ' + spec[2] : '');
+    item.setAttribute('role', 'menuitem');
     item.textContent = spec[0];
     item.addEventListener('click', e => { e.stopPropagation(); menu.hidden = true; spec[1](); });
     menu.appendChild(item);
@@ -618,6 +626,120 @@ function gitInitTreeDnD(){
   });
 }
 
+// ---- delete (removes nodes from RainBox's DB only — never touches the repo on
+// disk). Uses the same whole-tree save + declared-deletes tripwire as /cron:
+// removed rows are absent from the next PUT, and gitPendingDeletes tells the
+// server how many deletions to expect. ----
+let gitDeleteOnConfirm = null;
+let gitDeleteRequireName = null;
+function gitOpenDeleteModal(opts){
+  gitDeleteOnConfirm = opts.onConfirm;
+  gitDeleteRequireName = opts.requireName || null;
+  document.getElementById('git-delete-title').textContent = opts.title || 'Delete';
+  document.getElementById('git-delete-msg').textContent = opts.message;
+  const nameRow = document.getElementById('git-delete-name-row');
+  const input = document.getElementById('git-delete-input');
+  const btn = document.getElementById('git-delete-confirm');
+  if (gitDeleteRequireName){
+    nameRow.hidden = false;
+    document.getElementById('git-delete-name').textContent = gitDeleteRequireName;
+    input.value = ''; btn.disabled = true;
+  } else {
+    nameRow.hidden = true; btn.disabled = false;
+  }
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('git-delete-modal').hidden = false;
+  if (gitDeleteRequireName) input.focus();
+}
+function gitCloseDeleteModal(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('git-delete-modal').hidden = true;
+  gitDeleteOnConfirm = null;
+  gitDeleteRequireName = null;
+}
+function gitDeleteUpdateState(){
+  const input = document.getElementById('git-delete-input');
+  document.getElementById('git-delete-confirm').disabled =
+    gitDeleteRequireName ? (input.value.trim() !== gitDeleteRequireName) : false;
+}
+function gitConfirmDeleteRepo(uuid){
+  const r = gitRepoByUuid(uuid);
+  if (!r) return;
+  gitOpenDeleteModal({
+    title: 'Delete repository',
+    message: 'Remove "' + r.name + '" from RainBox? This does not delete the repository from disk.',
+    onConfirm: () => gitDeleteRepo(uuid),
+  });
+}
+function gitConfirmDeleteFolder(id){
+  const f = gitFolderById(id);
+  if (!f) return;
+  const sub = gitFlattenTree(f.id);
+  const folderCount = sub.filter(n => n.kind === 'folder').length;
+  const repoCount = sub.filter(n => n.kind === 'repo').length;
+  if (folderCount + repoCount === 0){
+    gitOpenDeleteModal({
+      title: 'Delete folder',
+      message: 'Delete empty folder "' + f.name + '"?',
+      onConfirm: () => gitDeleteFolderById(f.id),
+    });
+    return;
+  }
+  const parts = [];
+  if (folderCount) parts.push(folderCount + (folderCount === 1 ? ' subfolder' : ' subfolders'));
+  if (repoCount) parts.push(repoCount + (repoCount === 1 ? ' repository' : ' repositories'));
+  gitOpenDeleteModal({
+    title: 'Delete folder',
+    message: 'Are you sure you want to delete folder "' + f.name + '" containing ' +
+      parts.join(' and ') + '? The repositories are not deleted from disk. This cannot be undone.',
+    requireName: f.name,
+    onConfirm: () => gitDeleteFolderById(f.id),
+  });
+}
+function gitDeleteRepo(uuid){
+  const before = gitRepos.length;
+  gitRepos = gitRepos.filter(r => r.uuid !== uuid);
+  gitPendingDeletes += before - gitRepos.length;  // declare to the save's tripwire
+  if (gitSelectedRepo === uuid) gitSelectedRepo = null;
+  gitRenderTree();
+  gitRender();
+  gitSave();
+}
+function gitDeleteFolderById(id){
+  const f = gitFolderById(id);
+  if (!f) return;
+  // Cascade: this folder + every descendant folder + every repo inside any of them.
+  const folderIds = new Set([f.id]);
+  let grew = true;
+  while (grew){
+    grew = false;
+    gitFolders.forEach(c => {
+      if (folderIds.has(c.parentId) && !folderIds.has(c.id)){ folderIds.add(c.id); grew = true; }
+    });
+  }
+  const beforeF = gitFolders.length, beforeR = gitRepos.length;
+  gitFolders = gitFolders.filter(x => !folderIds.has(x.id));
+  gitRepos = gitRepos.filter(r => !folderIds.has(r.folderId));
+  gitPendingDeletes += (beforeF - gitFolders.length) + (beforeR - gitRepos.length);
+  if (gitSelectedRepo && !gitRepoByUuid(gitSelectedRepo)) gitSelectedRepo = null;
+  if (folderIds.has(gitSelectedFolder)) gitSelectedFolder = f.parentId || null;
+  gitRenderTree();
+  gitRender();
+  gitSave();
+}
+document.getElementById('git-delete-input').addEventListener('input', gitDeleteUpdateState);
+document.getElementById('git-delete-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('git-delete-confirm').disabled){
+    e.preventDefault();
+    document.getElementById('git-delete-confirm').click();
+  }
+});
+document.getElementById('git-delete-confirm').addEventListener('click', () => {
+  const fn = gitDeleteOnConfirm;
+  gitCloseDeleteModal();
+  if (fn) fn();
+});
+
 // ---- persistence ----
 async function gitLoadTree(){
   try {
@@ -695,12 +817,19 @@ function gitOpenModalDirty(){
   if (!document.getElementById('git-desc-modal').hidden){
     return document.getElementById('git-desc-input').value !== gitDescOrig;
   }
+  // Delete: dirty only when the type-to-confirm box is in use and non-empty;
+  // a plain yes/no delete is never dirty.
+  if (!document.getElementById('git-delete-modal').hidden){
+    return gitDeleteRequireName
+      ? document.getElementById('git-delete-input').value.trim() !== '' : false;
+  }
   return false;
 }
 function gitCloseOpenModal(){
   if (!document.getElementById('git-folder-modal').hidden){ gitCloseFolderModal(); return; }
   if (!document.getElementById('git-repo-modal').hidden){ gitCloseRepoModal(); return; }
   if (!document.getElementById('git-desc-modal').hidden){ gitCloseDescModal(); return; }
+  if (!document.getElementById('git-delete-modal').hidden){ gitCloseDeleteModal(); return; }
 }
 function gitDismissIfClean(){ if (!gitOpenModalDirty()) gitCloseOpenModal(); }
 

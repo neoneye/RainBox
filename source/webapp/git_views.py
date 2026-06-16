@@ -62,6 +62,7 @@ GIT_TEMPLATE = """
   .git-menu[hidden]{display:none}
   .git-menu .item{text-align:left;border:none;background:none;cursor:pointer;font:inherit;font-size:0.85rem;color:#333;padding:0.45em 0.6em;border-radius:6px}
   .git-menu .item:hover{background:#eef0f6}
+  .git-menu .item.danger{color:#b91c1c}
   .git-pane-title{font-weight:600;font-size:1.1rem;margin-bottom:8px}
   #git-node-rename{margin:8px 0;display:flex;gap:6px}
   #git-node-rename input{font:inherit;padding:4px 6px}
@@ -148,6 +149,19 @@ GIT_TEMPLATE = """
   <div class="modal-actions">
     <button class="btn-primary" onclick="gitSaveDescription()">Save</button>
     <button class="btn-cancel" onclick="gitCloseDescModal()">Cancel</button>
+  </div>
+</div>
+
+<div class="ui-modal" id="git-delete-modal" hidden>
+  <h3 id="git-delete-title">Delete</h3>
+  <p id="git-delete-msg"></p>
+  <div id="git-delete-name-row" hidden>
+    <p style="margin-bottom:0.3em">Type <strong id="git-delete-name"></strong> to confirm:</p>
+    <input type="text" id="git-delete-input" autocomplete="off">
+  </div>
+  <div class="modal-actions">
+    <button type="button" class="btn-cancel" onclick="gitCloseDeleteModal()">Cancel</button>
+    <button type="button" class="btn-danger" id="git-delete-confirm">Delete</button>
   </div>
 </div>
 
