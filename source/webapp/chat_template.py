@@ -749,6 +749,7 @@ function folderDetailFolderRow(f, depth){
     currentRoom = null;
     renderRooms();
     showFolderDetail();
+    chatSyncUrl();
   }));
   tr.appendChild(actTd);
   return tr;
@@ -811,6 +812,7 @@ function folderLi(f){
     }
     renderRooms();
     showFolderDetail();
+    chatSyncUrl();
   });
   makeDraggable(node, 'folder', f.id);
   makeFolderDrop(node, f.id);
@@ -1288,15 +1290,14 @@ async function performConfirmedDelete(){
   // rooms[0] in a single pass.
   const hadOpenRoom = currentRoom;
   if (kind === 'room' && currentRoom === id) currentRoom = null;
+  if (kind === 'folder' && selectedFolder === id) selectedFolder = null;
   await loadRooms(currentRoom);
+  chatSyncUrl();  // reflect the post-delete selection (clears a stale ?id=)
   // If the open room is gone after re-hydration (room delete, or a folder
   // delete that contained it) and nothing got auto-selected, clear the pane.
   if (hadOpenRoom && !rooms.some(r => r.uuid === hadOpenRoom) && !currentRoom){
     titleNameEl.value = '';
     log.innerHTML = '';
-    const url2 = new URL(window.location);
-    url2.searchParams.delete('room');
-    history.replaceState(null, '', url2);
     renderSidebar();
   }
 }
@@ -1311,6 +1312,22 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') document.querySelectorAll('.room-menu').forEach(m => { m.hidden = true; });
 });
 
+// The id of the node currently inspected (room > folder > none). A single
+// ?id=<uuid> mirrors it (like /cron's ?id=), addressing either a room or a
+// folder — uuids are globally unique across kinds.
+function chatCurrentSelectionId(){
+  if (currentRoom) return currentRoom;
+  if (selectedFolder) return selectedFolder;
+  return null;
+}
+function chatSyncUrl(){
+  const url = new URL(window.location);
+  url.searchParams.delete('room');  // migrate off the old per-kind param
+  const id = chatCurrentSelectionId();
+  if (id) url.searchParams.set('id', id); else url.searchParams.delete('id');
+  history.replaceState(null, '', url);
+}
+
 async function selectRoom(uuid){
   currentRoom = uuid;
   selectedFolder = null;  // opening a room clears any folder selection
@@ -1320,10 +1337,7 @@ async function selectRoom(uuid){
   renderedIds = new Set();
   streamingBase = {};
   expandedSections = new Set();
-  // Remember the active room in the URL so a reload reopens it.
-  const url = new URL(window.location);
-  url.searchParams.set('room', uuid);
-  history.replaceState(null, '', url);
+  chatSyncUrl();          // mirror the open room into ?id= so a reload reopens it
   renderRooms();
   const room = rooms.find(r => r.uuid === uuid);
   titleNameEl.value = room ? room.name : '';
@@ -1351,13 +1365,24 @@ async function loadRooms(selectUuid){
   rooms = (tree && tree.rooms) || [];
   treeVersion = (tree && tree.version) || null;
   renderRooms();
+  // A deep-linked id may name a FOLDER (?id=<folder>) — select its contents
+  // table instead of a room.
+  if (selectUuid && folders.some(f => f.id === selectUuid)){
+    selectedFolder = selectUuid;
+    currentRoom = null;
+    renderRooms();
+    showFolderDetail();
+    chatSyncUrl();
+    return;
+  }
   let target = selectUuid || currentRoom;
   // Fall back to the first room if the requested one is missing (e.g. a stale
-  // ?room= uuid for a deleted room).
+  // ?id= uuid for a deleted room).
   if (!target || !rooms.some(r => r.uuid === target)){
     target = rooms[0] && rooms[0].uuid;
   }
   if (target) await selectRoom(target);
+  else chatSyncUrl();  // nothing to open (no rooms) — clear a stale ?id=
 }
 
 async function send(){
@@ -1709,7 +1734,8 @@ wireRootDrop(document.getElementById('chat-root-drop'), false);
   });
 })();
 
-loadRooms(new URLSearchParams(window.location.search).get('room'));
+// Deep link: ?id=<uuid> reopens that room or folder on load (mirrors /cron).
+loadRooms(new URLSearchParams(window.location.search).get('id'));
 startStream();
 </script>
 """
