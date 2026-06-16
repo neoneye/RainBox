@@ -20,7 +20,6 @@ let gitDrag = null;            // {type:'folder'|'repo', id} while a node is dra
 // ---- inlined Lucide icons (https://lucide.dev), self-contained ----
 const GIT_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
 const GIT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>';
-const GIT_ICON_REPO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>';
 
 // ---- lookups ----
 function gitFolderById(id){ return gitFolders.find(f => f.id === id) || null; }
@@ -122,14 +121,14 @@ function gitRenderContents(){
     if (item.kind === 'folder'){
       const f = item.node;
       tr.innerHTML =
-        '<td class="git-name-cell" style="padding-left:' + pad + 'px"><span class="git-ficon">' + GIT_ICON_FOLDER + '</span> ' + gitEscapeHtml(f.name) + '</td>' +
+        '<td class="git-name-cell" style="padding-left:' + pad + 'px">' + gitEscapeHtml(f.name) + '</td>' +
         '<td>Folder</td><td></td><td>' + gitEscapeHtml(f.description || '') + '</td>' +
         '<td><a href="#" class="row-open">Open</a></td>';
       tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); gitSelectFolder(f.id); });
     } else {
       const r = item.node;
       tr.innerHTML =
-        '<td class="git-name-cell" style="padding-left:' + pad + 'px"><span class="git-ficon">' + GIT_ICON_REPO + '</span> ' + gitEscapeHtml(r.name) + '</td>' +
+        '<td class="git-name-cell" style="padding-left:' + pad + 'px">' + gitEscapeHtml(r.name) + '</td>' +
         '<td>Repo</td><td><code>' + gitEscapeHtml(r.path) + '</code></td><td>' + gitEscapeHtml(r.description || '') + '</td>' +
         '<td><a href="#" class="row-open">Open</a></td>';
       tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); gitSelectRepo(r.uuid); });
