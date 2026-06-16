@@ -277,9 +277,9 @@ function gitRepoNode(r){
   const selected = (gitSelectedRepo === r.uuid);
   n.className = 'git-repo-node' + (selected ? ' sel' : '');
   n.title = r.path || r.name;
-  const icon = document.createElement('span'); icon.className = 'git-ficon'; icon.innerHTML = GIT_ICON_REPO;
+  // No repo icon in the tree — every leaf here is a git repo, so the icon is noise.
   const label = document.createElement('span'); label.className = 'git-repo-label'; label.textContent = r.name;
-  n.appendChild(icon); n.appendChild(label);
+  n.appendChild(label);
   n.addEventListener('click', () => gitSelectRepo(r.uuid));
   gitMakeDraggable(n, 'repo', r.uuid);
   gitMakeRepoDrop(n, r.uuid);
