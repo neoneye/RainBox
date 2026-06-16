@@ -35,9 +35,15 @@ def kanban_boards() -> tuple[Response, int] | Response:
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+        folder = None
+        if data.get("folderId") is not None:
+            folder = _uuid_or_none(str(data.get("folderId")))
+            if folder is None:
+                return jsonify({"ok": False, "error": "'folderId' must be a uuid"}), 400
         try:
             board = db.kanban_create_board(data.get("name", ""),
-                                           data.get("description", ""))
+                                           data.get("description", ""),
+                                           folder_uuid=folder)
         except db.KanbanError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": True, "board": board})
@@ -255,3 +261,61 @@ def kanban_task_events(task_uuid: str) -> tuple[Response, int] | Response:
     if events is None:
         return jsonify({"ok": False, "error": "task not found"}), 404
     return jsonify({"events": events})
+
+
+# ---- folder tree (the left-panel hierarchy) ----
+
+@app.route("/kanban/api/tree", methods=["GET", "PUT"])
+def kanban_tree() -> tuple[Response, int] | Response:
+    """Hydrate / placement-only save the folder tree (folders + board
+    placement). The PUT echoes the version token GET returned; a stale token
+    is a 409 and the page re-hydrates instead of clobbering another writer."""
+    if request.method == "PUT":
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+        version = data.get("version")
+        if not isinstance(version, str) or not version:
+            return jsonify({"ok": False, "error":
+                            "missing tree 'version' (hydrate via GET first)"}), 400
+        try:
+            db.kanban_save_tree(data.get("folders", []), data.get("boards", []),
+                                base_version=version)
+        except db.KanbanConflict as exc:
+            return jsonify({"ok": False, "error": str(exc),
+                            "version": db.kanban_tree_version()}), 409
+        except db.KanbanError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, "version": db.kanban_tree_version()})
+    return jsonify(db.kanban_load_tree())
+
+
+@app.route("/kanban/api/folders", methods=["POST"])
+def kanban_folders() -> tuple[Response, int] | Response:
+    """Create a folder; returns it. Body: {name, parentId?, description?}."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+    parent = None
+    if data.get("parentId") is not None:
+        parent = _uuid_or_none(str(data.get("parentId")))
+        if parent is None:
+            return jsonify({"ok": False, "error": "'parentId' must be a uuid"}), 400
+    try:
+        folder = db.kanban_create_folder(data.get("name", ""), parent,
+                                         data.get("description", ""))
+    except db.KanbanError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "folder": folder})
+
+
+@app.route("/kanban/api/folders/<folder_uuid>", methods=["DELETE"])
+def kanban_folder_delete(folder_uuid: str) -> tuple[Response, int] | Response:
+    """Delete a folder; its child folders + boards reparent up one level
+    (boards are never deleted). 404 if the folder doesn't exist."""
+    fu = _uuid_or_none(folder_uuid)
+    if fu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    if not db.kanban_delete_folder(fu):
+        return jsonify({"ok": False, "error": "folder not found"}), 404
+    return jsonify({"ok": True})
