@@ -110,3 +110,35 @@ def test_delete_folder_reparents_children_and_keeps_boards(app_ctx):
     finally:
         db.kanban_delete_board(_u(board["uuid"]))
         db.kanban_delete_folder(_u(parent["uuid"]))
+
+
+def test_load_tree_shape(board):
+    f = db.kanban_create_folder("Inbox")
+    try:
+        tree = db.kanban_load_tree()
+        assert isinstance(tree["version"], str) and tree["version"]
+        folder = next(x for x in tree["folders"] if x["uuid"] == f["uuid"])
+        assert set(folder) == {"uuid", "name", "description", "parentId", "position"}
+        b = next(x for x in tree["boards"] if x["uuid"] == board["uuid"])
+        assert set(b) == {"uuid", "name", "folderId", "position", "taskCount"}
+        assert b["folderId"] is None and b["taskCount"] == 0
+    finally:
+        db.kanban_delete_folder(_u(f["uuid"]))
+
+
+def test_tree_version_excludes_board_name_and_taskcount(board):
+    """A board rename (board PUT) and a new task (agent op) must NOT bump the
+    tree version — those are not structural tree fields, or the tree would 409
+    on every background board/task change."""
+    bu = _u(board["uuid"])
+    v0 = db.kanban_load_tree()["version"]
+    # Rename the board via the board-contents save: tree version unchanged.
+    db.kanban_save_board(bu, {**board, "name": "renamed"})
+    assert db.kanban_load_tree()["version"] == v0
+    # Add a task via the board-contents save: tree version unchanged.
+    todo = board["columns"][0]["uuid"]
+    after = db.kanban_load_board(bu)
+    db.kanban_save_board(bu, {**after,
+        "tasks": [{"uuid": str(uuid4()), "columnUuid": todo, "title": "t",
+                   "description": "", "agentUuid": None}]})
+    assert db.kanban_load_tree()["version"] == v0

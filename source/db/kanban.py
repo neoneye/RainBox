@@ -207,6 +207,58 @@ def kanban_delete_folder(folder_uuid: UUID) -> bool:
     return True
 
 
+def kanban_tree_version() -> str:
+    """Opaque optimistic-concurrency token for the TREE (folders + board
+    placement), over STRUCTURAL fields only — folder (uuid,name,parentId,
+    position) and board (uuid,folderId,position). Board NAME and TASK COUNT are
+    excluded on purpose: a board rename goes through the board PUT and agents
+    add tasks in the background; including either would 409 the next tree save
+    on every such event (the cron/chat 'exclude volatile fields' rule). The
+    displayed name/count are kept in sync client-side instead."""
+    folders = db.session.execute(
+        sa.select(KanbanBoardFolder).order_by(KanbanBoardFolder.uuid)
+    ).scalars().all()
+    boards = db.session.execute(
+        sa.select(KanbanBoard).order_by(KanbanBoard.uuid)
+    ).scalars().all()
+    payload = [
+        [[str(f.uuid), f.name, f.description,
+          str(f.parent_uuid) if f.parent_uuid else None, f.position]
+         for f in folders],
+        [[str(b.uuid), str(b.folder_uuid) if b.folder_uuid else None, b.position]
+         for b in boards],
+    ]
+    blob = json.dumps(payload, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def kanban_load_tree() -> dict[str, Any]:
+    """The /kanban left-panel tree: folders + boards (with task counts), each
+    list in saved order. The page hydrates from this and PUTs it back. Board
+    contents (columns/tasks) are NOT here — those load per-board."""
+    folders = db.session.execute(
+        sa.select(KanbanBoardFolder)
+        .order_by(KanbanBoardFolder.position, KanbanBoardFolder.id)
+    ).scalars().all()
+    boards = db.session.execute(
+        sa.select(KanbanBoard).order_by(KanbanBoard.position, KanbanBoard.id)
+    ).scalars().all()
+    counts = {b: n for b, n in db.session.execute(
+        sa.select(KanbanTask.board_uuid, sa.func.count())
+        .group_by(KanbanTask.board_uuid)
+    ).all()}
+    return {
+        "folders": [_folder_brief(f) for f in folders],
+        "boards": [
+            {"uuid": str(b.uuid), "name": b.name,
+             "folderId": str(b.folder_uuid) if b.folder_uuid else None,
+             "position": b.position, "taskCount": counts.get(b.uuid, 0)}
+            for b in boards
+        ],
+        "version": kanban_tree_version(),
+    }
+
+
 def _board_rows(board_uuid: UUID):
     columns = db.session.execute(
         sa.select(KanbanColumn).where(KanbanColumn.board_uuid == board_uuid)
