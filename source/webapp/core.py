@@ -22,6 +22,7 @@ from db import (
     AppSetting,
     ChatMessage,
     Chatroom,
+    ChatroomFolder,
     ChatroomMember,
     ChatUser,
     CronFolder,
@@ -34,6 +35,7 @@ from db import (
     Inbox,
     Journal,
     KanbanBoard,
+    KanbanBoardFolder,
     KanbanColumn,
     KanbanTask,
     KanbanTaskEvent,
@@ -355,10 +357,83 @@ class ChatMessageView(ModelView):
 
 
 admin.add_view(ModelConfigOverrideView(ModelConfigOverride, db, category="Config"))
-admin.add_view(ModelView(ChatUser, db, category="Chat"))
+
+
+# Shared admin display helpers, used by the Chatroom-folder view just below and
+# the Cron/Kanban views further down (defined here so the Chat folder can be
+# registered at the head of the Chat menu). `CRON_TYPE_FORMATTERS` keeps the
+# datetime cells compact; `_fmt_short_uuid` truncates uuid columns.
+def _fmt_cron_datetime(view, value, name):
+    """Compact datetime for the admin lists: drop sub-seconds and put a space
+    before the timezone (e.g. '2026-06-05 23:57:30 +02:00') so the cell
+    word-wraps nicely instead of showing a huge microsecond string."""
+    if value is None:
+        return ""
+    out = value.strftime("%Y-%m-%d %H:%M:%S")
+    off = value.strftime("%z")  # e.g. '+0200'
+    if off:
+        out += " " + off[:3] + ":" + off[3:]  # '+02:00'
+    return out
+
+
+CRON_TYPE_FORMATTERS = dict(BASE_FORMATTERS)
+CRON_TYPE_FORMATTERS[datetime] = _fmt_cron_datetime
+
+
+def _fmt_short_uuid(view, context, model, name):
+    """Show only the first 6 chars of a uuid, full value on hover, so the column
+    stays narrow."""
+    value = getattr(model, name)
+    if not value:
+        return ""
+    full = str(value)
+    return Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
+
+
+# ChatroomFolder backs the /chat left-panel folder tree (folders → rooms). Same
+# low-level inspection role as Chatroom itself; the curated surface is the /chat
+# page. Registered first below so it heads the Chat menu, above the rooms it
+# organizes. parent_uuid is a plain self-referencing column (no FK).
+def _chat_folder_label(view, context, model, name):
+    """Render a chatroom-folder uuid column (a folder's `parent_uuid`) as a
+    truncated uuid (full on hover) on one line and the folder's name below.
+    parent_uuid is a plain self-referencing column (no FK), so look it up by
+    uuid."""
+    fid = getattr(model, name)
+    if not fid:
+        return ""
+    full = str(fid)
+    short = Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
+    folder = db.session.query(ChatroomFolder).filter_by(uuid=fid).first()
+    return Markup(f"{short}<br>{escape(folder.name)}") if folder else short
+
+
+def _chat_folder_open_link(view, context, model, name):
+    """Virtual column linking to /chat deep-linked to this folder. /chat takes a
+    single ?id=<uuid> that resolves to either a folder or a room (like /cron)."""
+    return Markup(f'<a href="/chat?id={escape(model.uuid)}">inspect ↗</a>')
+
+
+class ChatroomFolderView(ModelView):
+    column_list = ("chat_link", "position", "uuid", "name", "parent_uuid",
+                   "created_at", "updated_at")
+    column_default_sort = ("position", False)
+    column_labels = {"chat_link": "Chat page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "parent_uuid": _chat_folder_label,
+        "chat_link": _chat_folder_open_link,
+    }
+
+
+# Chat menu order: folder → room → message first (the everyday browse path),
+# then the supporting tables. Flask-Admin orders a category by add_view order.
+admin.add_view(ChatroomFolderView(ChatroomFolder, db, category="Chat"))
 admin.add_view(ModelView(Chatroom, db, category="Chat"))
-admin.add_view(ChatroomMemberView(ChatroomMember, db, category="Chat"))
 admin.add_view(ChatMessageView(ChatMessage, db, category="Chat"))
+admin.add_view(ModelView(ChatUser, db, category="Chat"))
+admin.add_view(ChatroomMemberView(ChatroomMember, db, category="Chat"))
 admin.add_view(WorkspaceShellStateView(WorkspaceShellState, db, category="Chat"))
 admin.add_view(QueryAgentKbView(QueryAgentKb, db, category="Chat"))
 
@@ -460,34 +535,8 @@ admin.add_view(EvalResultView(EvalResult, db, category="Feedback"))
 
 
 # Cron tables backing the /cron page (folder tree + jobs, + the future run log).
-def _fmt_cron_datetime(view, value, name):
-    """Compact datetime for the cron admin lists: drop sub-seconds and put a
-    space before the timezone (e.g. '2026-06-05 23:57:30 +02:00') so the cell
-    word-wraps nicely instead of showing a huge microsecond string."""
-    if value is None:
-        return ""
-    out = value.strftime("%Y-%m-%d %H:%M:%S")
-    off = value.strftime("%z")  # e.g. '+0200'
-    if off:
-        out += " " + off[:3] + ":" + off[3:]  # '+02:00'
-    return out
-
-
-# datetime columns on the cron views use the compact format above.
-CRON_TYPE_FORMATTERS = dict(BASE_FORMATTERS)
-CRON_TYPE_FORMATTERS[datetime] = _fmt_cron_datetime
-
-
-def _fmt_short_uuid(view, context, model, name):
-    """Show only the first 6 chars of a uuid, full value on hover, so the column
-    stays narrow."""
-    value = getattr(model, name)
-    if not value:
-        return ""
-    full = str(value)
-    return Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
-
-
+# The shared display helpers (_fmt_short_uuid / CRON_TYPE_FORMATTERS) are defined
+# up by the Chat section so the Chatroom-folder view can reuse them.
 def _cron_open_link(view, context, model, name):
     """Virtual column linking to the /cron page deep-linked to this node, so an
     operator can jump from the admin row straight to the folder/job there."""
@@ -667,6 +716,39 @@ def _kanban_agent_label(view, context, model, name):
         f"{short}<br><i>(unknown agent)</i>")
 
 
+def _kanban_folder_label(view, context, model, name):
+    """Render a kanban-folder uuid column (a folder's `parent_uuid`) as a
+    truncated uuid (full on hover) on one line and the folder's name below.
+    parent_uuid is a plain self-referencing column (no FK), so look it up by
+    uuid."""
+    fid = getattr(model, name)
+    if not fid:
+        return ""
+    full = str(fid)
+    short = Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
+    folder = db.session.query(KanbanBoardFolder).filter_by(uuid=fid).first()
+    return Markup(f"{short}<br>{escape(folder.name)}") if folder else short
+
+
+def _kanban_folder_open_link(view, context, model, name):
+    """Virtual column linking to /kanban deep-linked to this folder. /kanban
+    takes a single ?id=<uuid> that resolves to either a folder or a board."""
+    return Markup(f'<a href="/kanban?id={escape(model.uuid)}">inspect ↗</a>')
+
+
+class KanbanBoardFolderView(ModelView):
+    column_list = ("kanban_link", "position", "uuid", "name", "description",
+                   "parent_uuid", "created_at", "updated_at")
+    column_default_sort = ("position", False)
+    column_labels = {"kanban_link": "Kanban page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "parent_uuid": _kanban_folder_label,
+        "kanban_link": _kanban_folder_open_link,
+    }
+
+
 class KanbanBoardView(ModelView):
     column_list = ("kanban_link", "position", "uuid", "name", "description",
                    "created_at", "updated_at")
@@ -721,6 +803,7 @@ class KanbanTaskEventView(ModelView):
     }
 
 
+admin.add_view(KanbanBoardFolderView(KanbanBoardFolder, db, category="Kanban"))
 admin.add_view(KanbanBoardView(KanbanBoard, db, category="Kanban"))
 admin.add_view(KanbanColumnView(KanbanColumn, db, category="Kanban"))
 admin.add_view(KanbanTaskView(KanbanTask, db, category="Kanban"))

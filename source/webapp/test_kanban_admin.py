@@ -40,6 +40,29 @@ def board(app_ctx):
         db.kanban_delete_board(UUID(b["uuid"]))
 
 
+@pytest.fixture
+def board_folder(app_ctx):
+    parent = db.kanban_create_folder("Admin parent folder")
+    child = db.kanban_create_folder("Admin child folder",
+                                    parent_uuid=UUID(parent["uuid"]))
+    try:
+        yield child
+    finally:
+        db.kanban_delete_folder(UUID(child["uuid"]))
+        db.kanban_delete_folder(UUID(parent["uuid"]))
+
+
+def test_admin_kanban_board_folder_renders(board_folder):
+    """Render the KanbanBoardFolder admin list with real rows: the folder name,
+    the deep link, and the parent_uuid resolving to the parent folder's name."""
+    resp = flask_app.test_client().get("/admin/kanbanboardfolder/")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Admin child folder" in body
+    assert "Admin parent folder" in body            # parent_uuid renders the name
+    assert f'/kanban?id={board_folder["uuid"]}' in body  # deep link to the page
+
+
 @pytest.mark.parametrize("path", [
     "/admin/kanbanboard/", "/admin/kanbancolumn/",
     "/admin/kanbantask/", "/admin/kanbantaskevent/",
