@@ -79,8 +79,9 @@ KANBAN_TEMPLATE = """
   .kb-node.kb-drop-into{outline:2px dashed #2563eb;outline-offset:-2px}
   .kb-node.kb-drop-before{box-shadow:inset 0 2px 0 0 #2563eb}
   .kb-node.kb-drop-after{box-shadow:inset 0 -2px 0 0 #2563eb}
-  .kb-twisty{flex:0 0 auto;width:1rem;text-align:center;color:#6b7280;font-size:0.8rem}
-  .kb-node-icon{flex:0 0 auto}
+  /* Folder icon (inline SVG), sized to the row's font — same as /chat's .chat-ficon. */
+  .kb-ficon{display:inline-flex;width:1.05em;height:1.05em;color:#6b7280;flex:0 0 auto}
+  .kb-ficon svg{width:100%;height:100%}
   .kb-node-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* "All boards" root pseudo-node + the drag-only "move to top level" strip. */
   .kb-root-drop{margin:6px 0;padding:7px 6px;border:1px dashed #cbd5e1;border-radius:6px;color:#64748b;
