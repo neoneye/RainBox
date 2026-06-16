@@ -364,6 +364,15 @@ function isNearBottom(){
   return log.scrollHeight - log.scrollTop - log.clientHeight < 80;
 }
 
+// Pin the log to its newest message. Sets the scroll now AND again on the next
+// frame: opening the room can resize the log a beat later (the sidebar toggling
+// narrows it and rewraps text taller, images finishing load, etc.), and a
+// single post-append scroll would land a line short of the true bottom.
+function scrollLogToBottom(){
+  log.scrollTop = log.scrollHeight;
+  requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+}
+
 // Insert a message node, or replace it in place if its id is already shown.
 // Used for live streaming updates (the same row's text grows over time).
 function upsertMessage(m){
@@ -1365,8 +1374,9 @@ async function selectRoom(uuid){
   const msgs = await getJSON('/chat/api/rooms/' + uuid + '/messages?after=0');
   if (uuid !== currentRoom) return;  // room switched while loading
   msgs.forEach(appendMessage);
-  log.scrollTop = log.scrollHeight;
-  renderSidebar();  // members/stats reflect the now-open room
+  renderSidebar();  // members/stats reflect the now-open room — resizes the log,
+                    // so toggle it BEFORE scrolling or we land a line short.
+  scrollLogToBottom();
 }
 
 async function fetchNew(uuid){
@@ -1374,7 +1384,7 @@ async function fetchNew(uuid){
   const msgs = await getJSON('/chat/api/rooms/' + uuid + '/messages?after=' + lastId);
   if (uuid !== currentRoom || !msgs.length) return;  // re-check after await
   msgs.forEach(appendMessage);
-  log.scrollTop = log.scrollHeight;
+  scrollLogToBottom();
   if (sidebarMode === 'stats') renderStats();  // keep the live message count fresh
 }
 
