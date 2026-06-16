@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give the `/kanban` left panel the same nested folder-tree `/chat` and `/cron` have (folders → boards), as a full port of the pattern in `docs/left-panel-tree.md`.
+**Goal:** Give the `/kanban` left panel the same nested folder-tree `/chat` and `/cron` have (folders → boards), as a full port of the pattern in `docs/ui-left-panel-tree.md`.
 
 **Architecture:** A new **tree layer** (folders + which folder each board sits in + ordering) saves through a placement-only `GET/PUT /kanban/api/tree`, completely separate from the existing per-board contents save (`PUT /kanban/api/board/<uuid>`, untouched). Folder create/delete get their own endpoints; folder delete reparents children (never deletes boards). The frontend gains a recursive tree render, drag-and-drop, a folder-contents detail table, and a static "All boards" root node.
 
@@ -2001,7 +2001,7 @@ git commit -m "feat(kanban): tree drag-and-drop (folder 3-zone, board 2-zone, ro
 ## Task 11: Final verification + docs
 
 **Files:**
-- Modify: `docs/left-panel-tree.md` (mark `/kanban` as a third implementation)
+- Modify: `docs/ui-left-panel-tree.md` (mark `/kanban` as a third implementation)
 
 - [ ] **Step 1: Run the full backend suite**
 
@@ -2019,7 +2019,7 @@ Load `/kanban`, exercise end to end: create folders + subfolders; create a board
 
 - [ ] **Step 4: Update the pattern doc**
 
-In `docs/left-panel-tree.md`, update the intro so `/kanban` is listed as a built reference rather than a hypothetical. Replace:
+In `docs/ui-left-panel-tree.md`, update the intro so `/kanban` is listed as a built reference rather than a hypothetical. Replace:
 
 ```
 `/chat` (folders → chatrooms) and
@@ -2043,7 +2043,7 @@ tree layer (folders + board placement) is separate from board contents:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/left-panel-tree.md
+git add docs/ui-left-panel-tree.md
 git commit -m "docs(kanban): record the kanban tree as a third reference implementation"
 ```
 

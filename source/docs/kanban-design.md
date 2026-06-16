@@ -71,7 +71,7 @@ CRUD.
   agent operations. **API** (`webapp/kanban_api.py`).
 - **Page** (`webapp/kanban_views.py` shell + `static/kanban.js` logic):
   a left-panel folder tree (folders → boards; the shared pattern in
-  `docs/left-panel-tree.md`) with per-node kebab menus, columns/cards with
+  `docs/ui-left-panel-tree.md`) with per-node kebab menus, columns/cards with
   drag-and-drop, modal CRUD, the task's audit trail + lease state in the edit
   modal, serialization view/copy, and a `?id=<uuid>` deep link (board or
   folder). House rules: desktop-first, no native dialogs, mtime cache-buster.

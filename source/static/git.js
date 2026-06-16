@@ -87,7 +87,7 @@ function gitRender(){
 // while a repo is selected (the repo detail pane shows instead).
 // Depth-first list of everything under parentId (null = whole tree), in the
 // same order as the left tree, each row tagged with its nesting `depth` — like
-// /cron's cronFlattenTree (docs/left-panel-tree.md §7).
+// /cron's cronFlattenTree (docs/ui-left-panel-tree.md §7).
 function gitFlattenTree(parentId){
   parentId = parentId || null;
   const out = [];

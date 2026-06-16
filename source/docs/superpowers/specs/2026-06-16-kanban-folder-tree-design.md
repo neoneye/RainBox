@@ -2,7 +2,7 @@
 
 Give the `/kanban` left panel the same nested folder-tree the `/chat` and
 `/cron` pages have (folders → leaf items), as documented in
-[`docs/left-panel-tree.md`](../../left-panel-tree.md). Here the leaf item is a
+[`docs/ui-left-panel-tree.md`](../../ui-left-panel-tree.md). Here the leaf item is a
 **board**: folders nest arbitrarily deep and contain boards. This is a **full
 port** of the pattern (matching `/cron`, the fuller reference): nested folders,
 drag-and-drop reorder/nest, expand-state persisted to `localStorage`, deep
