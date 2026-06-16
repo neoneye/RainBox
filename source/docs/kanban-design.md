@@ -70,10 +70,11 @@ CRUD.
   bulk per-board save for the page, the markdown/JSON serializers, and the
   agent operations. **API** (`webapp/kanban_api.py`).
 - **Page** (`webapp/kanban_views.py` shell + `static/kanban.js` logic):
-  boards sidebar with a kebab menu, columns/cards with drag-and-drop, modal
-  CRUD, the task's audit trail + lease state in the edit modal, serialization
-  view/copy, `?board=<uuid>` deep link. House rules: desktop-first, no native
-  dialogs, mtime cache-buster.
+  a left-panel folder tree (folders → boards; the shared pattern in
+  `docs/left-panel-tree.md`) with per-node kebab menus, columns/cards with
+  drag-and-drop, modal CRUD, the task's audit trail + lease state in the edit
+  modal, serialization view/copy, and a `?id=<uuid>` deep link (board or
+  folder). House rules: desktop-first, no native dialogs, mtime cache-buster.
 
 ## Two write surfaces
 
