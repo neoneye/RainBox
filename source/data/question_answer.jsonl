@@ -18,7 +18,7 @@
 {"id": "dev.git_log", "kind": "dynamic", "questions": ["what was the last commit?", "git log", "show recent commits", "commit history"], "handler": "get_last_git_commit"}
 {"id": "dev.git_remote", "kind": "dynamic", "questions": ["git remote", "where is origin?", "what's the upstream URL?"], "handler": "get_git_remote"}
 {"id": "dev.git_overview", "kind": "dynamic", "questions": ["git overview", "what are my repositories", "local git repositories", "list my git repos", "what repositories do I have", "show my git repositories", "overview of my repos", "what repos are tracked", "my git repos", "git repos"], "handler": "get_git_overview"}
-{"id": "dev.cron_overview", "kind": "dynamic", "questions": ["cron overview", "what are my cronjobs", "cronjob", "cronjobs", "what are my cron jobs", "list my cron jobs", "show my cron jobs", "scheduled jobs", "what jobs are scheduled", "my cronjobs", "cron jobs", "overview of cron"], "handler": "get_cron_overview"}
+{"id": "dev.cron_overview", "kind": "dynamic", "questions": ["cron overview", "what are my cronjobs", "cronjob", "cronjobs", "what are my cron jobs", "list my cron jobs", "show my cron jobs", "scheduled jobs", "what jobs are scheduled", "my cronjobs", "cron jobs", "overview of cron", "list cronjobs"], "handler": "get_cron_overview"}
 {"id": "dev.cwd", "kind": "dynamic", "questions": ["what's the working directory?", "current directory", "where is the shell?"], "handler": "get_cwd"}
 {"id": "dev.runtime", "kind": "dynamic", "questions": ["what python version?", "which venv?", "what interpreter is active?"], "handler": "get_runtime_info"}
 {"id": "dev.tests", "kind": "dynamic", "questions": ["are tests passing?", "test status", "did the last test run pass?"], "handler": "get_test_status"}
