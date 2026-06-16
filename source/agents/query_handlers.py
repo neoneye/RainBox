@@ -522,15 +522,46 @@ def get_current_project(ctx: QueryContext) -> str:
     return _REPO_DIR.name
 
 
-def list_projects(ctx: QueryContext) -> str:
-    """Treat each chatroom as a "project" the operator is tracking."""
+def list_chatrooms(ctx: QueryContext) -> str:
+    """List the chat rooms grouped by the folder they sit in (the /chat
+    left-panel tree). These are chatrooms — folders of chatrooms — not
+    "projects"; reads db.chat_load_tree."""
     try:
-        names = [r.name for r in db.db.session.query(db.Chatroom).order_by(db.Chatroom.created_at.asc()).all()]
+        tree = db.chat_load_tree()
     except Exception as e:
         return f"(could not list chatrooms: {type(e).__name__}: {e})"
-    if not names:
+    folders = tree.get("folders", [])
+    rooms = tree.get("rooms", [])
+    if not rooms:
         return "No chatrooms yet."
-    return f"{len(names)} project(s):\n" + "\n".join(f"- {n}" for n in names)
+
+    # Resolve a room's folder to a breadcrumb label ("Parent / Child").
+    by_id = {f["id"]: f for f in folders}
+
+    def folder_label(fid: str | None) -> str:
+        parts: list[str] = []
+        seen: set[str] = set()
+        while fid and fid in by_id and fid not in seen:
+            seen.add(fid)
+            node = by_id[fid]
+            parts.append(node["name"])
+            fid = node.get("parentId")
+        return " / ".join(reversed(parts))
+
+    # Group rooms by folder, preserving the page's saved order.
+    groups: dict[str, list] = {}
+    for r in rooms:
+        label = folder_label(r.get("folderId")) or "(top level)"
+        groups.setdefault(label, []).append(r)
+
+    noun = "chatroom" if len(rooms) == 1 else "chatrooms"
+    lines = [f"**{len(rooms)} {noun}** — http://127.0.0.1:5000/chat", ""]
+    for label, items in groups.items():
+        lines.append(f"### {label}")
+        for r in items:
+            lines.append(f"- **{r['name']}** — {r.get('member_count', 0)} member(s)")
+        lines.append("")
+    return "\n".join(lines).strip()
 
 
 def get_todo_list(ctx: QueryContext) -> str:
@@ -702,7 +733,7 @@ HANDLERS = {
     "get_test_status": get_test_status,
     # project
     "get_current_project": get_current_project,
-    "list_projects": list_projects,
+    "list_chatrooms": list_chatrooms,
     "get_todo_list": get_todo_list,
     "get_outdated_dependencies": get_outdated_dependencies,
     # meta
