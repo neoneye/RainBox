@@ -269,6 +269,67 @@ On item-select, restore them all (`hideFolderDetail` mirrors `showFolderDetail`)
   sidebar), not just the body** — else the previously-open item's name/members/
   stats leak into the folder view. This was a real `/chat` bug (see §7).
 
+### Hard-won from the `/git` build (CSS/layout — copy `/cron` rule-for-rule)
+
+`/git` re-derived the tree from `/cron`'s *JS* but hand-wrote its *CSS/layout*,
+and a dozen "tiny" divergences piled up. The meta-lesson: **the layout is part
+of the spec — diff your tree CSS against `/cron`'s rule-by-rule, don't eyeball
+it.** Specific traps that each shipped before being caught:
+
+- **The tree panel is block flow, NOT flex.** `/git` set the container
+  `display:flex;flex-direction:column` and gave the root-drop strip
+  `margin-top:auto` — which shoved the "move to top level" strip to the bottom
+  of the sidebar, far from the tree, so a leaf **could not be dragged to top
+  level at all**. `/cron`'s `.cron-tree` is plain `overflow:auto;min-height:0`;
+  the root-drop strip sits in normal flow right under the `<ul>`
+  (`margin-top:8px`). With block flow, the `*-tree-sep` dividers need their own
+  `margin:6px 0` (don't lean on a flex `gap`). Real `/git` bug.
+- **Don't invent node spacing/sizes — folder and leaf rows differ.** `/cron`:
+  folder `.cron-node{padding:8px 4px}` vs leaf `.cron-job-node{padding:4px 4px}`
+  (folders are taller), `gap:4px`, `border-radius:4px`, hover `#f1f5f9`, icon
+  `15px`, panel `background:#fbfbfb`. `/git` guessed uniform `3px 6px`, `gap:6px`,
+  radius `5px`, `16px` icons, white panel — every one read as subtly off.
+- **Selected row = tint AND bold, on folder AND leaf.** Copying
+  `background:#dbeafe` while forgetting `font-weight:600` makes selection look
+  weak. Both `.node.sel` and `.leaf.sel` need it (§5 says so; `/git` still
+  missed it).
+- **Render the kebab on every row and show it via CSS `visibility` — do NOT
+  conditionally create it in JS.** `/git` first created the kebab only on the
+  selected node, but the kebab is `1.4rem` tall, so the selected row jumped
+  taller than its neighbours. `/cron` renders it on every row at
+  `visibility:hidden` and flips `.sel .kebab{visibility:visible}` — constant row
+  height.
+- **Kebab dots = a `box-shadow` triple-dot, not a unicode glyph.** Use
+  `.kebab::before{content:"";width:3px;height:3px;border-radius:50%;
+  box-shadow:-5px 0 0 currentColor,5px 0 0 currentColor}` + a `border-radius`
+  hover box (`:hover{background:#d2ddf6}`). A `content:"\22EF"` glyph has no
+  hover target and — inside a Python `"""…"""` template — `\22` is an *octal
+  escape* (a control char), so it silently renders garbage unless you write
+  `\\22EF`. The box-shadow form sidesteps both.
+- **Drag needs `pointer-events:none` on the node's children** (with
+  `pointer-events:auto` restored on the kebab + menu), or the icon/label
+  swallow `dragover`/`drop` and dropping onto a row mis-fires. `/cron` has
+  `.node>*{pointer-events:none}`.
+- **Page chrome the panel sits in:** add `<style>.pp-nav{margin-bottom:0}</style>`
+  *after* the `{% include "_nav.html" %}` (the shared nav sets
+  `margin-bottom:1.5em`, which otherwise opens a big gap above the split), tint
+  the tree `background:#fbfbfb`, and style the `+ Folder`/`+ Item` buttons (don't
+  leave them as default grey browser buttons). `/git` missed all three.
+- **The folder detail table is the RECURSIVE subtree, not direct children**
+  (§7). `/git` first shipped direct-children-only and it diverged from
+  `/cron`/`/chat`; use the depth-first `flattenTree` with depth-indented rows.
+
+### Hard-won — process, not code
+
+- **Verify drag-drop and selection in a REAL browser, never by asserting "it
+  mirrors `/cron`".** The root-drop bug above shipped *because* the JS was a
+  faithful copy of `/cron` — the fault was in the CSS layout, invisible to any
+  "the code matches" review. Drive the live page (headless Chrome + the
+  DevTools Protocol works with no extra deps) and actually drag a leaf to the
+  root strip, open a kebab on the selected row, and type-to-confirm a delete.
+  Marker-string tests and code-diffing reviewers both passed this page while it
+  was visibly broken.
+
 ## 9. Porting checklist (e.g. `/kanban`: folders → boards)
 
 1. **DB:** folder + item tables with `parent_uuid`/`folder_uuid` (null = root) +
