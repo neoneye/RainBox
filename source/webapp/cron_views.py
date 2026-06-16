@@ -153,7 +153,7 @@ CRON_TEMPLATE = """
   .cron-job-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151}
   .cron-job-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cron-job-node:hover{background:#f1f5f9}
-  .cron-job-node.sel{background:#dbeafe}
+  .cron-job-node.sel{background:#dbeafe;font-weight:600}  /* match the selected folder/node */
   /* Dim only the label (not the whole node) so the kebab menu, which is a
      child of the node, isn't rendered semi-transparent via inherited opacity. */
   .cron-job-node.off .cron-job-label{opacity:0.5}
