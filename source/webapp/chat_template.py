@@ -29,7 +29,7 @@ CHAT_TEMPLATE: str = """
   .room{position:relative;display:block;width:100%;text-align:left;border:none;background:none;cursor:pointer;
         padding:0.5em 0.7em;border-radius:6px;font:inherit;color:#333}
   .room:hover{background:#eef0f6}
-  .room.active{background:#e3ebfb}
+  .room.active{background:#e3ebfb;font-weight:600}  /* match the selected folder/kanban node */
   .room-name{display:block}
   .unread{position:absolute;right:0.5em;top:50%;transform:translateY(-50%);background:#ef4444;color:#fff;
           border-radius:999px;font-size:0.7rem;min-width:1.4em;height:1.4em;display:inline-flex;
