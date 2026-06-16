@@ -156,8 +156,13 @@ is the nicer UX; do that on new pages.
   *selects* it (shows its contents in the right pane); clicking the
   already-selected folder toggles its expand/collapse. `chat_template.py:801-814`
   / `cronFolderClick` `static/cron.js:857-871`.
-- **Selected highlight** is `.sel` on the folder node (`background:#dbeafe;
-  font-weight:600`).
+- **Selected highlight** is a tint **and bold** — `background:#dbeafe;
+  font-weight:600` — on the `.sel` folder node. **Apply the same to the selected
+  leaf row, not just folders.** `/chat` and `/cron` first bolded only folders
+  (their room/job rows changed background only), so a selected leaf didn't read
+  as selected; both were fixed to add `font-weight:600` to `.room.active` /
+  `.cron-job-node.sel`. `/kanban` shares one `.kb-node.sel` for folders and
+  boards, so it bolds both by construction — the simplest way to not miss it.
 - **Kebab visible only on the selected/active node** (`.chat-node.sel >
   .room-actions`, `.cron-node.sel .cron-kebab`) — never on hover. Leaf items
   show their kebab only when active/open.
