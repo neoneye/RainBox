@@ -37,6 +37,8 @@ GIT_TEMPLATE = """
   /* Small blue pill buttons, matching /cron's tree-action buttons. */
   .git-actions button{padding:3px 8px;font-size:0.75rem;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer}
   .git-actions button:hover{background:#1d4ed8}
+  /* Hairline dividers between the root node, the actions, and the tree (like /cron). */
+  .git-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:0}
   .git-tree-list,.git-tree-list ul{list-style:none;margin:0;padding-left:14px}
   #git-tree-root{padding-left:0}
   .git-node,.git-repo-node{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:5px;cursor:pointer;position:relative}
@@ -80,10 +82,12 @@ GIT_TEMPLATE = """
 <div class="git-split" id="git-split">
   <div class="git-tree" id="git-tree">
     <div class="git-node" id="git-all">All repositories</div>
+    <hr class="git-tree-sep">
     <div class="git-actions">
       <button onclick="gitAddFolder(false)">+ Folder</button>
       <button onclick="gitAddRepo()">+ Repo</button>
     </div>
+    <hr class="git-tree-sep">
     <ul class="git-tree-list" id="git-tree-root"></ul>
     <div class="git-root-drop" id="git-root-drop">Move to top level</div>
   </div>
