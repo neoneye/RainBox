@@ -1,10 +1,11 @@
 # Rainbox improvements — informed by Hermes Agent (2026-06-19)
 
 **Context:** Comparison of rainbox against [Hermes Agent](https://github.com/NousResearch/hermes-agent)
-(Nous Research's self-improving personal agent). Goal is **not** for rainbox to become
-Hermes — the goal is a personal assistant whose implementation the operator fully
-understands and owns. This document collects insights from multiple assistants so we can
-refine on the combined view.
+(Nous Research's self-improving personal agent), with security design pressure drawn from the
+[OpenClaw CIK safety analysis](https://arxiv.org/abs/2604.04759). Goal is **not** for rainbox
+to become either of them — the goal is a personal assistant whose implementation the operator
+fully understands and owns. This document collects insights from multiple assistants so we
+can refine on the combined view.
 
 ---
 
@@ -253,8 +254,16 @@ Everything downstream is sequenced; the only commitment needed now is PR 1.
   if a known-simple task takes more than N steps.
 - **Trace-in-`journal.result` becomes unqueryable.** This is the pre-agreed trigger to split
   into `assistant_run`/`assistant_step` tables — watch for it in Phase 2–3, don't pre-build.
-- **Model-proposed skills quietly steer future behavior.** Mitigation: candidate→active
-  lifecycle with operator activation; never inject an unactivated skill into a prompt.
+- **Knowledge poisoning (the CIK dimension that actually applies here).** Memory or skill
+  content gets inserted once and silently reused later — the OpenClaw analysis found
+  poisoning any single capability/identity/knowledge dimension lifts attack success from
+  ~25% to 64–74%. For a local single-operator box, *knowledge* is the live dimension because
+  memory + model-proposed skills are exactly what Phases 2–3 build (capability and identity
+  matter only once a second, externally-reachable channel exists — see the Security watchlist).
+  Mitigations: model-proposed skills use a candidate→active lifecycle with operator
+  activation and never inject unactivated; an adversarial eval case asserts that a poisoned
+  memory/skill cannot expand the allowed-action set; provenance is required on every claim so
+  a poisoned fact is traceable to its source.
 - **Semantic retrieval surfaces sensitive/forbidden memory.** Mitigation: scope/sensitivity/
   expiry filters run *before* ranking, and an eval case asserts forbidden claims never
   appear regardless of similarity score.
@@ -262,60 +271,45 @@ Everything downstream is sequenced; the only commitment needed now is PR 1.
   Phase 4 extends rather than introduces it — keep the enum the single dispatch gate from
   day one.
 
-### OpenClaw-specific watchlist
+### Security watchlist (CIK)
 
-OpenClaw's current design and the recent OpenClaw safety papers point to a few concerns
-that are not the main Rainbox roadmap, but should shape the implementation before the
-assistant grows beyond local chat.
+The OpenClaw safety analysis ([*Your Agent, Their Asset*](https://arxiv.org/abs/2604.04759))
+frames persistent-agent risk along three dimensions — **C**apability, **I**dentity,
+**K**nowledge — and shows poisoning any one of them is enough to dominate an agent. That
+study targets OpenClaw (full local system access, reachable from messaging apps, wired to
+Gmail/Stripe/filesystem), a far larger attack surface than a local single-operator rainbox.
+So this is *design pressure*, not roadmap — and it is deliberately right-sized to rainbox's
+actual threat model rather than imported wholesale.
 
-**1. Channel identity and DM safety.**
-Every non-local channel should normalize sender identity, trust level, room mapping, and
-activation policy before its messages can trigger the assistant. The Telegram bridge already
-has an allowlist; generalize that pattern before adding email, Signal, webhooks, or public
-DMs.
+**Applies now — Knowledge.** This is the only CIK dimension live for a local single-operator
+box, because memory + model-proposed skills are exactly what Phases 2–3 build. It is handled
+as a first-class item in **Risks and mitigations** above (candidate→active skill lifecycle,
+an adversarial eval that a poisoned memory/skill cannot expand the action set, required
+provenance). Keep it there; do not let it become a parallel governance track.
 
-**2. Session model.**
-Rainbox has chatrooms, but the assistant needs an explicit session model: what state belongs
-to one room, one external sender, one project, one workflow run, or one workspace. This is
-especially important once multiple channels can reach the same assistant or the same
-operator can run separate project contexts.
+**Contingent on a second, externally-reachable gateway — Capability & Identity.** These only
+become real if rainbox ever adds a channel beyond the existing allowlisted Telegram bridge,
+which the [Non-goals](#non-goals) currently reject. Recorded here so the design doesn't
+foreclose them, *not* scheduled:
 
-**3. Capability / Identity / Knowledge threat tests.**
-OpenClaw analyses frame persistent-agent risk around capability, identity, and knowledge.
-Rainbox should add small adversarial tests for each dimension:
+- *Identity:* normalize sender identity, trust level, and room/session mapping per channel
+  before its messages can trigger the assistant; generalize the Telegram allowlist pattern.
+- *Session model:* make explicit what state belongs to one room / sender / project / run /
+  workspace — matters once multiple channels reach the same assistant.
+- *Capability:* an adversarial test that a prompt, skill, or MCP tool cannot widen the
+  allowed-action set (the Phase 1 action enum is the enforcement point).
 
-- capability poisoning: a prompt, skill, or MCP tool tries to expand allowed actions
-- identity spoofing: an external sender claims to be the operator or another trusted peer
-- knowledge poisoning: bad memory or skill content gets inserted and reused later
+**Already covered elsewhere — do not duplicate.** Budgets/step-caps live in
+**Risks and mitigations**; `/stop`, interrupt, compression, and the runtime dashboard are
+**Phase 6**; `rainbox doctor` and its subsystem checks are **Phase 4**; the forensic-grade
+trace (who triggered it, which memories/skills/capabilities were in play, what ran, what was
+observed) is the **North star** "what did it just do, with what, and why?" contract plus the
+**Durable traces** refinement. These are referenced, not restated.
 
-These tests fit naturally after Phase 1's action enum and before Phase 5 write actions.
-
-**4. Budgets and activation controls.**
-Max steps are not enough. Runs should eventually track time, tool-call, token, model-effort,
-and cost budgets. Operator controls like `/status`, `/stop`, `/trace`, `/compact`,
-`/usage`, and activation modes (`mention` vs `always`) are small but important for a
-personal assistant that may be reachable from messaging apps.
-
-**5. Onboarding and doctor as product surfaces.**
-`rainbox doctor` appears in Phase 4, but the lesson from OpenClaw is that setup health is
-part of the product, not just a developer convenience. The doctor should eventually check
-database, pgvector, model providers, model-group bindings, workspace shell, backup, cron,
-MCP, channel allowlists, and remote-exposure risk.
-
-**6. Normalized external-event input.**
-Cron and Telegram should not be one-off pathways forever. A future gateway layer should turn
-chat messages, cron fires, email events, calendar reminders, and webhooks into a normalized
-assistant input envelope with source, identity, trust, room/session, payload, and replay id.
-
-**7. Forensic trace quality.**
-The trace should be good enough to reconstruct who triggered a run, which identity was
-trusted, which memories and skills were injected, which capabilities were offered, which
-action ran, what output was observed, and what final answer was posted. This is stronger
-than "debug logging"; it is the audit contract for a personal assistant.
-
-These items should not block PR 1. They are design pressure: PR 1 should avoid choices that
-make them hard later, especially around action dispatch, trace shape, and sender/session
-identity.
+**The one PR-1 obligation:** avoid choices that make the contingent items expensive later —
+specifically, keep action dispatch gated through the enum, keep the trace shape rich enough
+to carry a future `source`/`identity`/`session`, and don't hard-code "the only sender is the
+local operator" into the dispatch path. That costs nothing now and preserves the option.
 
 ### Phase 0/1 detail
 
