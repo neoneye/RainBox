@@ -262,6 +262,61 @@ Everything downstream is sequenced; the only commitment needed now is PR 1.
   Phase 4 extends rather than introduces it — keep the enum the single dispatch gate from
   day one.
 
+### OpenClaw-specific watchlist
+
+OpenClaw's current design and the recent OpenClaw safety papers point to a few concerns
+that are not the main Rainbox roadmap, but should shape the implementation before the
+assistant grows beyond local chat.
+
+**1. Channel identity and DM safety.**
+Every non-local channel should normalize sender identity, trust level, room mapping, and
+activation policy before its messages can trigger the assistant. The Telegram bridge already
+has an allowlist; generalize that pattern before adding email, Signal, webhooks, or public
+DMs.
+
+**2. Session model.**
+Rainbox has chatrooms, but the assistant needs an explicit session model: what state belongs
+to one room, one external sender, one project, one workflow run, or one workspace. This is
+especially important once multiple channels can reach the same assistant or the same
+operator can run separate project contexts.
+
+**3. Capability / Identity / Knowledge threat tests.**
+OpenClaw analyses frame persistent-agent risk around capability, identity, and knowledge.
+Rainbox should add small adversarial tests for each dimension:
+
+- capability poisoning: a prompt, skill, or MCP tool tries to expand allowed actions
+- identity spoofing: an external sender claims to be the operator or another trusted peer
+- knowledge poisoning: bad memory or skill content gets inserted and reused later
+
+These tests fit naturally after Phase 1's action enum and before Phase 5 write actions.
+
+**4. Budgets and activation controls.**
+Max steps are not enough. Runs should eventually track time, tool-call, token, model-effort,
+and cost budgets. Operator controls like `/status`, `/stop`, `/trace`, `/compact`,
+`/usage`, and activation modes (`mention` vs `always`) are small but important for a
+personal assistant that may be reachable from messaging apps.
+
+**5. Onboarding and doctor as product surfaces.**
+`rainbox doctor` appears in Phase 4, but the lesson from OpenClaw is that setup health is
+part of the product, not just a developer convenience. The doctor should eventually check
+database, pgvector, model providers, model-group bindings, workspace shell, backup, cron,
+MCP, channel allowlists, and remote-exposure risk.
+
+**6. Normalized external-event input.**
+Cron and Telegram should not be one-off pathways forever. A future gateway layer should turn
+chat messages, cron fires, email events, calendar reminders, and webhooks into a normalized
+assistant input envelope with source, identity, trust, room/session, payload, and replay id.
+
+**7. Forensic trace quality.**
+The trace should be good enough to reconstruct who triggered a run, which identity was
+trusted, which memories and skills were injected, which capabilities were offered, which
+action ran, what output was observed, and what final answer was posted. This is stronger
+than "debug logging"; it is the audit contract for a personal assistant.
+
+These items should not block PR 1. They are design pressure: PR 1 should avoid choices that
+make them hard later, especially around action dispatch, trace shape, and sender/session
+identity.
+
 ### Phase 0/1 detail
 
 Phase 0 is not a separate long prelude. Some eval cases can be written before the assistant
