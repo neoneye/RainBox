@@ -821,9 +821,15 @@ Registry record shape:
   "timeout_seconds": 10,
   "output_cap_chars": 6000,
   "enabled": true,
-  "prompt_exposed": true
+  "prompt_exposed": true,
+  "adapter": null
 }
 ```
+
+`adapter` is `null` for rainbox-native capabilities (memory, kanban, cron - see
+*Adapter boundary* below) and names the owning adapter for external ones
+(e.g. `"mcp:github"`). Dispatch routes a non-null `adapter` capability through
+that adapter's contract rather than a direct rainbox call.
 
 Keep two concepts separate: `family` is the **grouping** a capability belongs to
 (`query`, `memory`, `kanban`, `cron`, `workspace`, `document`, `mcp`) and is the
@@ -855,6 +861,29 @@ Done when:
 - MCP tools cannot bypass the registry.
 - Write-capable actions cannot be added without metadata and tests.
 - The operator can inspect the currently enabled assistant powers.
+
+### Adapter boundary (external systems)
+
+The architectural line that keeps rainbox small: **rainbox orchestrates external
+systems through narrow adapters; it does not reimplement or own their internal
+logic.** It must never grow a shadow copy of another system's artifact graph,
+regenerate that system's internal steps, or patch that system's objects directly.
+It asks the adapter what is available and operates through the adapter's public
+contract.
+
+A read-only adapter exposes a small uniform surface - `status`, `list`, `read`,
+`search`, `summarize` - and a write-capable one adds `propose`, `dry_run`, and
+`execute_approved`. Each adapter command is just a capability in the registry with
+a non-null `adapter` field, so it inherits the same risk-tier, approval, trace,
+and enable/disable machinery as everything else. No bespoke per-system controller.
+
+Scope note: this applies to *genuinely external* systems. Rainbox-native
+subsystems (memory, kanban, cron, the workspace) are direct capabilities with
+`adapter: null` - they are rainbox's own, not things to wrap. **MCP is the first
+and primary adapter**; git is a natural second. This boundary is later-phase
+direction (read-only adapters before write adapters, generalizing the existing
+"MCP last, one tool at a time" rule) and does not change the build-ready PR 1-4
+slice.
 
 ---
 
@@ -1064,6 +1093,9 @@ Done when:
 - Depending on hosted memory products such as mem0, supermemory, or honcho.
 - Letting MCP tools or model-written skills silently expand authority.
 - Treating `workspace_shell` as a generic code sandbox.
+- Owning the internal logic of external systems rainbox orchestrates - no shadow
+  artifact graphs, no regenerating another system's internal steps. Reach them
+  through narrow adapters (see *Adapter boundary*), not bespoke domain controllers.
 - Adding a large governance UI before there is assistant behavior worth
   governing.
 - Making a framework own the core assistant loop in a way rainbox cannot inspect
