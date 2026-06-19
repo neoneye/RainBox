@@ -460,6 +460,32 @@ Why the others lose:
   rainbox already has the database/worker shape needed to copy the useful
   pattern locally.
 
+### What these systems still get wrong (design pressure)
+
+A cross-model review (mem0 / supermemory / honcho) confirms none of them fully
+solves a few problems. These are not reasons to avoid the ideas; they are reasons
+rainbox's existing choices are the right ones, and each maps to a Phase 3
+acceptance test:
+
+- **Extraction can hallucinate or capture noise.** Mitigation rainbox already
+  has: provenance via `MemoryEvidence`, plus candidate-before-active so a derived
+  or extracted fact is reviewable, not silently trusted.
+- **Retrieval can return stale or contradictory context** under heavy or long
+  histories. Mitigation: pre-rank expiry/scope/sensitivity filters, plus
+  detect-and-surface contradictions instead of silent merges.
+- **Governance and right-to-be-forgotten usually need manual work** in these
+  tools. This is a rainbox strength, not a gap: `forget`/`correct`, sensitivity,
+  scope, and expiry are first-class in the schema - keep them enforced in
+  retrieval, not just at write time.
+- **Deep causal/temporal "what-if" reasoning is out of scope** for all three. Do
+  not expect the profile or retrieval layer to do it.
+
+Net: the shared limitations argue for rainbox's provenance-first,
+human-in-the-loop, filter-before-rank design - which Phase 3 already encodes. Add
+one eval per bullet where it is testable: no unactivated extracted fact
+influences an answer; expired or out-of-scope claims never surface; a flagged
+contradiction is surfaced rather than silently resolved.
+
 ### Contradiction handling
 
 Split detection from mutation:
@@ -629,7 +655,11 @@ really assistant-like.
 Recommended order:
 
 1. **Memory and skill candidates** - high personal-assistant value, low blast
-   radius if they remain candidates until confirmation.
+   radius if they remain candidates until confirmation. Note: writing *inert
+   candidates* is allowed earlier (Phase 2 stores candidate skills, Phase 3.5
+   proposes inferred claims) precisely because they cannot affect behavior until
+   activated. Phase 5 is where the assistant gains the *activation/confirmation*
+   write path, not the first place a candidate row is created.
 2. **Kanban work events** - existing typed APIs and review semantics make this
    a good bounded write family.
 3. **Cron/reminders** - strong personal value, but require careful dry-run,
