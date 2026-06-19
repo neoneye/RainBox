@@ -1473,10 +1473,23 @@ painful. A hand-authored eval case should be stored as:
 ```
 
 Current caveat: the DB check constraint only allows `chat_reply`,
-`memory_retrieval`, `query_answer`, and `tool_output`. For PRs 1-4, reuse
-`tool_output` for assistant-loop control-flow tests. If assistant evals become a
-first-class surface, migrate the constraint to add `assistant_loop`,
-`skill_injection`, and `write_action`.
+`memory_retrieval`, `query_answer`, and `tool_output` (verified:
+`eval_case_case_type_check`). For PRs 1-4, reuse `tool_output` for assistant-loop
+control-flow tests. If assistant evals become a first-class surface, migrate the
+constraint to add `assistant_loop`, `skill_injection`, and `write_action`.
+
+Two verified mechanics worth pinning here:
+
+- **A `case_type` value is a CHECK constraint, not a column** - it cannot use
+  `_add_column_if_missing`. Changing it means DROP + ADD the constraint,
+  idempotently. `init_db()` already has the precedent: guard with
+  `_constraint_def("eval_case_case_type_check") is not None` before dropping,
+  then re-add with the widened `CHECK (...)`.
+- **PR-1 loop tests are pytest, not `eval_case` rows.** The deterministic
+  fake-model loop tests (the seam below) live in-repo as pytest and need no DB.
+  The `eval_case`/`eval_run`/`eval_result` tables are the *optional* hand-authored
+  regression layer driven by the eval runner. Do not block PR 1 on writing
+  `eval_case` rows; the JSON shape above is for that later regression layer.
 
 ### Draft: memory embedding storage and ranking
 
@@ -1540,6 +1553,21 @@ entity_boost =
 Keep confidence and scope as tie-breakers after the score, not hidden score
 multipliers in v1. If evals show the weighted formula is brittle, try reciprocal
 rank fusion later; do not start there.
+
+Two gaps the table alone leaves open:
+
+- **Population/sync.** Define when a `memory_embedding` row is written: (1) a
+  one-shot backfill over active claims when the feature ships, and (2) on every
+  transition that makes a claim `active` (new claim, confirm, correct). A claim
+  with no embedding row yet falls back to lexical-only retrieval - never an
+  error, just lower recall until the backfill catches it. Embeddings for claims
+  that leave `active` can be pruned lazily (the hard filter already excludes
+  them from results, so this is housekeeping, not correctness).
+- **Similarity normalization.** pgvector's cosine operator (`<=>`) returns
+  *distance* in `[0,2]`, not a `[0,1]` similarity. Pin the conversion explicitly
+  - `vector_similarity_0_to_1 = 1 - (cosine_distance / 2)` - so the merge weights
+  above behave and nobody accidentally ranks by raw distance (which inverts the
+  order).
 
 ### Draft: skills metadata and dedup
 
