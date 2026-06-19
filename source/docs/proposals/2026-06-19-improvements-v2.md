@@ -16,6 +16,46 @@ implementation the operator understands. It should borrow useful ideas from
 Hermes, OpenClaw, mem0, supermemory, and honcho, but it should not become any of
 those systems.
 
+## Document status (2026-06-20)
+
+This document is no longer just a brainstorm. It has three maturity levels:
+
+| Area | Status | What that means |
+|---|---|---|
+| Roadmap direction | **Decided** | The phase order and major choices are stable enough to implement against. |
+| PRs 1-4 | **Build-ready spec** | The first slice has concrete loop shape, fake-model seam, trace tables, helper names, prompt assembly, tests, and file placement. Start coding here. |
+| PRs 5-10 and later phases | **Roadmap plus draft defaults** | The direction is decided, but several details remain draft/range/missing until their phase is next. |
+| Concrete schemas in prose | **Illustrative unless promoted** | The assistant contracts are binding; field names and table sketches should be refined by the PR that implements them. |
+
+The practical status is: **stop polishing before PR 1.** The first implementation
+branch can start now. Further document work should be phase-local: when a phase
+is next, promote its draft defaults into final spec text, resolve its open
+questions, then implement.
+
+Known rough edges in this document:
+
+- It is intentionally dense. It now mixes roadmap, spec, decision log, draft
+  schemas, and implementation notes in one file. That is useful before PR 1, but
+  later phases may deserve smaller phase-specific spec files.
+- Some later-phase gaps are listed as **range/missing** even though a draft
+  answer exists below. That is deliberate: a draft answer is not binding until a
+  phase owner promotes it.
+- The first-slice trace schema is more concrete than the later schemas. Do not
+  infer the same confidence level for `memory_embedding`, `assistant_control`,
+  or `assistant_write_intent`; those are drafts.
+- UI details are still thin. The doc says chat should render assistant traces,
+  but it does not fully specify the Flask/Admin/chat rendering behavior.
+- Eval runner behavior is only partly specified. PR 1 uses pytest/fake-model
+  tests; the optional `eval_case` regression layer needs more spec before it is
+  treated as a product surface.
+- Prompt budgeting starts with character caps. That is good enough for PRs 1-4,
+  but a tokenizer-aware budgeter is still future work.
+- Schema evolution is documented around the current `init_db()` pattern, not a
+  dedicated migration framework. If rainbox adopts Alembic or similar later,
+  this section should be updated.
+- The v1 brainstorm may still contain stale wording about LM Studio embeddings;
+  v2 follows the current Ollama `nomic-embed-text` path.
+
 ## Executive decision summary
 
 The roadmap has one recommended path:
@@ -1907,6 +1947,47 @@ implementation and still has a **range** or **missing** item. Use this shape:
 Open questions should be temporary. If a question survives a phase PR, either
 move it to a later phase explicitly or make the conservative default the
 decision.
+
+---
+
+## Further document improvements
+
+Do not improve this file by continuing broad critique loops. Improve it only
+when a phase is about to be implemented or when implementation proves a claim
+wrong.
+
+Recommended next document edits:
+
+1. **Before PR 1:** no more roadmap edits required. If anything changes, keep it
+   limited to test names or helper names discovered while writing PR 1.
+2. **After PRs 1-4 land:** replace the PR 1-4 concrete spec with links to the
+   actual files/tests, and mark any deviations from this proposal in the
+   decision ledger.
+3. **Before PR 6 (skills):** promote the draft skills metadata/dedup rules to a
+   final spec, or explicitly choose a different loader shape.
+4. **Before PR 7 (semantic memory):** promote or revise the `memory_embedding`
+   table, embedding sync policy, merge formula, and prompt caps.
+5. **Before PR 8 (registry):** pin the enabled/disabled config location and the
+   exact `Capability` dataclass shape.
+6. **Before PR 9 (writes):** finalize the write-intent/approval schema and the
+   undo data required for log-and-undo writes.
+7. **Before PR 10 (steerability):** finalize the control-channel table, poll
+   cadence, and stopped/failed/killed UI behavior.
+8. **When stale source references are found:** update v1 or add a short errata
+   note rather than letting v2 inherit obsolete assumptions.
+
+Good cleanup once implementation begins:
+
+- Split phase-specific build specs out of this file if it becomes hard to scan.
+- Replace draft table sketches with links to SQLAlchemy models once implemented.
+- Keep the **Assistant contracts** section stable; most other sections may
+  evolve as code lands.
+- Maintain an explicit open-question table instead of scattering unresolved
+  questions across prose.
+
+The document should become less speculative over time, not longer by default.
+Every new paragraph should either unlock the next PR, record a verified
+implementation fact, or retire an obsolete assumption.
 
 ---
 
