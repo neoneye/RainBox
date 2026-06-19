@@ -130,125 +130,67 @@ assistant loop; skills plug into it naturally.
 
 ---
 
-## Codex
+## Codex refinements
 
-### Self-assessment after Claude's critique
+Codex's useful additions are implementation constraints that keep the Hermes-inspired
+pieces rainbox-native:
 
-Claude's critique is fair. Codex added useful substance, but it also overstepped the
-document process by filling the "Combined refinement" section before a true joint pass. That
-section should not pretend to be the reconciled view yet. The correction is to keep Codex's
-roadmap as a **Codex proposed synthesis** and restore the combined section to an explicit
-pending reconciliation.
+- **Durable traces.** Assistant runs should record the user request, model plan, chosen
+  action, normalized arguments, observation/result, and final/blocked state. Start in
+  `journal.result` or a `debug-assistant` chat row; split into `assistant_run` /
+  `assistant_step` tables only when the trace becomes hard to query, link, or resume.
+- **Primitive action registry early.** Phase 1 needs a code-enforced allowed-action enum
+  (`reply`, `query_memory`, `workspace_read_command`, etc.). That is the seed of the
+  capability registry. The full control plane - UI badges, write/network/secret metadata,
+  approvals, MCP policy, and `rainbox doctor` - can wait until the assistant has useful
+  capabilities to control.
+- **Reviewed procedural skills.** Human-authored skills can be active immediately.
+  Model-proposed skills should start as candidates with source run/journal metadata, then be
+  activated, edited, rejected, or superseded by the operator.
+- **Shared retrieval path.** Skills can start with lexical retrieval, then move onto the
+  same semantic retrieval work as factual memory. Do not build separate skill and memory
+  retrievers unless their behavior truly diverges.
+- **Decision by cost and reuse.** Each phase should state what it reuses, what is net-new,
+  and rough size. For a solo developer, this matters as much as conceptual priority.
 
-The critique also catches a real prioritization error. Codex put the capability registry too
-early in the phase list while the final recommendation put it later. For a single-operator
-personal assistant, the cognition layer should come first: assistant loop, skills, semantic
-memory. The capability control plane matters, but it should arrive as the assistant's power
-expands, not as ceremony before the assistant feels useful.
+---
 
-The part Codex should not give up: some form of registry exists from day one. The Phase 1
-assistant needs a code-enforced allowed-action set (`reply`, `query_memory`,
-`workspace_read_command`, etc.) or it has no safe dispatch model. What should wait is the
-larger control plane: UI badges, write/network/secret metadata, `rainbox doctor`, approval
-policies, and MCP policy. In short: **primitive action registry early, formal capability
-registry later.**
+## Combined recommendation
 
-### What Codex adds
+### Decisions
 
-**1. Durable assistant traces.**
-Hermes' iterative loop is worth copying, but not as an opaque long-lived process. In
-rainbox, an assistant run should leave a step trace:
+- **First cognition primitive:** ReAct loop first. It is the cheaper walking skeleton, fits
+  chat, produces a natural step trace, and reuses existing structured-output / FunctionAgent
+  patterns. Revisit tool-via-code as an accelerator once read-only traces and workflow evals
+  exist.
+- **Capability registry timing:** primitive allowed-action enum in Phase 1; formal
+  capability registry in Phase 4.
+- **Skill retrieval:** lexical first, semantic upgrade shared with factual memory in Phase
+  3.
+- **Review UI:** follow-on, not a gate. Flask-Admin plus chat commands are enough until
+  semantic retrieval proves it needs a purpose-built review surface.
+- **First PR:** assistant walking skeleton. It gives the most personal-assistant value for
+  the least irreversible design risk.
 
-- user request
-- model plan
-- chosen action
-- normalized arguments
-- observation/result
-- final answer or blocked state
+### Roadmap
 
-The first implementation can store this inside `journal.result` or a `debug-assistant` chat
-row. Split it into `assistant_run` / `assistant_step` tables only when the JSON becomes hard
-to query, link, or resume. That avoids building schema before the shape of real runs is
-known.
+| Phase | Goal | Reuse | Net-new | Done when | Size |
+|---|---|---|---|---|---|
+| 0/1 | Assistant walking skeleton with a tiny eval baseline | Chat responder enqueue path, journal/debug rows, structured-output agent patterns, workspace shell, memory retrieval/commands, existing eval/benchmark harness | New `assistant` role, bounded loop, primitive action enum, trace format, fake-model tests, initial read-only actions | One user message can drive at least two model/tool iterations; trace is inspectable; at least the cold eval cases are baselined | M/L, roughly 1-2 weeks |
+| 2 | Procedural skills MVP | `customize.dir` overlay pattern, markdown files, retrieval telemetry patterns | Skill loader, lexical skill retrieval, prompt formatting, optional candidate metadata | A human-authored skill changes assistant behavior in a traceable way; model-proposed skills can be stored for review | S/M, roughly 2-4 days |
+| 3 | Semantic memory and shared retrieval upgrade | Existing pgvector/embedding path for Q&A, memory claim/evidence schema, retrieval telemetry | Embeddings for memory claims and skills, merge lexical/vector results, compact user profile view | Semantic retrieval improves an eval case without forbidden/sensitive exposure; skills and facts share the retrieval path where practical | M, roughly 1 week |
+| 4 | Formal capability registry and approvals | Phase 1 action enum, workspace-shell policy style, settings/admin patterns | Capability metadata, confirmation/dry-run flags, operator visibility, `rainbox doctor`, MCP policy hardening | Assistant can only call registered capabilities; operator can inspect what it is allowed to do | L, roughly 2-3 weeks if UI/doctor/MCP are included |
+| 5 | Controlled write actions | Cron APIs, kanban APIs, patch/document agents, memory commands | One write family at a time with trace, dry-run or confirmation, and rollback/review path | Assistant completes one real personal workflow end to end with the write visible and reviewable | M per action family |
+| 6 | Steerability and runtime visibility | Supervisor heartbeats, chat/SSE, journal, existing process watchdog | `/stop`, interrupt/redirect, context compression, long-call progress heartbeats, runtime dashboard | Active runs can be stopped or redirected without corrupting trace; long calls no longer look dead | M/L |
 
-**2. Reviewed procedural skills.**
-Hermes' self-written skills are the best idea to steal, but rainbox should make skill
-lifecycle inspectable. Human-authored skills can be active immediately. Model-proposed
-skills should start as candidates with source run/journal metadata, then be activated,
-edited, rejected, or superseded by the operator. A possible middle ground for later is
-"auto-active only for read-only/dry-run skills after they pass a test," but the first version
-should keep activation explicit.
+### Phase 0/1 detail
 
-**3. Capability control plane grows out of the allowed-action list.**
-A typed capability registry is still the best new idea Codex adds: it lets the assistant
-prompt be generated from owned capabilities rather than a hand-written list of tools. But it
-should grow in layers:
+Phase 0 is not a separate long prelude. Some eval cases can be written before the assistant
+exists, such as memory answers or repo inspection using existing agents/tools. Trace-specific
+cases, such as "which memory/tool did you use?", should be co-developed with the assistant
+skeleton because the trace format does not exist yet.
 
-- Phase 1: an enum/registry of allowed assistant actions used by dispatch and tests.
-- Later: metadata for write/network/secret behavior, dry-run, confirmation, timeouts,
-  output caps, UI visibility, and `rainbox doctor`.
-
-This avoids retrofitting permissions after write actions exist, without front-loading an
-enterprise policy framework before the assistant has real daily use.
-
-**4. Eval wiring before judging the loop.**
-Rainbox already has eval and benchmark machinery. The next step is not a new eval platform,
-but a tiny set of assistant-workflow cases: repo inspection, memory answer, cron dry-run,
-kanban read/update, and "which memory/tool did you use?" That gives the assistant loop,
-skills, and semantic memory something concrete to prove against.
-
-**5. Cost and risk should be visible.**
-For a solo developer, the roadmap needs rough sizing. A "later" item that costs a day is
-different from a "later" item that costs multiple weeks. The proposed phases below include
-order-of-magnitude estimates, not commitments.
-
-### Open fork: ReAct loop vs tool-via-code first
-
-Claude's roadmap assumes a ReAct-style assistant loop first. That is probably right for
-assistant feel, but it is not the only rainbox-native path.
-
-**ReAct loop first** means the model repeatedly chooses one typed action, observes the
-result, and decides the next step. It is easier to constrain, easier to render as a chat
-trace, and fits the existing FunctionAgent/structured-output paths. It may cost more model
-round-trips and can feel verbose.
-
-**Tool-via-code first** means the model writes a small inspectable script that calls
-rainbox-owned functions, then the system runs that script in a constrained environment. This
-is attractive for a developer-operator: fewer round-trips, concrete code to inspect, and
-better composition for multi-step local tasks. It also creates a bigger execution-safety
-problem earlier.
-
-This fork should remain genuinely open for the joint pass. The decision test:
-
-- choose ReAct first if the priority is chat-native assistant feel, tighter action control,
-  and reuse of structured-output agent patterns;
-- choose tool-via-code first if the priority is developer legibility, fewer model
-  round-trips, and concrete artifacts the operator can inspect;
-- choose a hybrid if the first ReAct loop can delegate one step to an inspectable generated
-  script that only calls read-only rainbox APIs.
-
-### Codex proposed synthesis
-
-This is Codex's proposed ordering, not the final combined roadmap.
-
-#### Phase 0 - wire a tiny assistant eval set
-
-Use the existing eval/benchmark machinery to create cases for:
-
-- answering from memory
-- inspecting the repo and summarizing
-- creating a cron/reminder dry-run
-- reading or updating a kanban card
-- explaining which memory/tool was used
-
-**Done when:** at least three assistant workflows have repeatable baseline cases.
-
-**Rough size:** S (half day to one day) if this reuses existing eval paths; M if new case
-types are needed.
-
-#### Phase 1 - assistant walking skeleton
-
-Add `assistant` as a chat responder with a bounded loop and read-only actions:
+Initial action set:
 
 - `reply`
 - `ask_clarifying_question`
@@ -256,110 +198,21 @@ Add `assistant` as a chat responder with a bounded loop and read-only actions:
 - `workspace_read_command`
 - `kanban_read`
 
-Persist a trace in the existing journal/debug surfaces. Keep max steps low, e.g. 4-6. The
-allowed actions should already be represented as a small code-side registry/enum; the later
-capability registry formalizes metadata and operator controls around that primitive list.
+Keep max steps low, e.g. 4-6. Do not start with broad MCP, file writes, or cron mutation.
 
-**Done when:** one user message can produce at least two model/tool iterations and the trace
-is inspectable.
+### Tool-via-code follow-up
 
-**Rough size:** M (two to four days) for ReAct with fake-model tests; similar or slightly
-larger for tool-via-code because the sandbox/API boundary needs sharper design.
+Tool-via-code remains attractive for this project because the operator is a developer and
+inspectable scripts may be easier to trust than many small hidden tool calls. Defer it only
+because the first sandbox/API boundary is easier to validate once the ReAct loop has traces,
+evals, and a primitive capability registry. The first useful hybrid is a ReAct action that
+generates and runs a read-only script against a narrow rainbox API surface.
 
-#### Phase 2 - procedural skills MVP
+### Non-goals
 
-Load active markdown skills from `<customize.dir>/skills/` and retrieve them into the
-assistant prompt. Start with human-authored skills so retrieval, formatting, and telemetry
-can be validated before model-written skills enter the loop. Then add model-proposed
-candidate skills. Retrieval can start lexical/token-overlap here; Phase 3 should upgrade the
-same retrieval path for both skills and factual memory rather than build two unrelated
-retrievers.
-
-**Done when:** a skill changes assistant behavior in a traceable way, and a proposed skill
-can be reviewed before activation.
-
-**Rough size:** S/M (one to three days) for file loading + lexical retrieval + trace
-telemetry; M if candidate metadata is persisted in a new table rather than sidecar files.
-
-#### Phase 3 - semantic memory and user profile
-
-Keep Postgres claim/evidence as the source of truth. Add pgvector retrieval for memory
-claims, merge lexical and semantic results, and generate a compact profile view from
-confirmed high-value claims. Use the same retrieval upgrade for skills where possible.
-
-A dedicated memory review UI is valuable, but it is separable scope. Treat it as a follow-on
-slice unless semantic retrieval immediately surfaces trust problems that cannot be operated
-through Flask-Admin and chat commands.
-
-**Done when:** semantic memory improves an eval case without exposing forbidden/sensitive
-memories, and the operator can inspect/correct the relevant memory.
-
-**Rough size:** M (two to five days) for embedding and retrieval changes; separate M/L for a
-purpose-built review UI.
-
-#### Phase 4 - capability registry and approvals
-
-Now formalize the primitive allowed-action registry from Phase 1 into a fuller capability
-surface. Start with the capabilities already used by phases 1-3, then add flags for
-write/network/secret behavior, confirmation, timeout/output caps, and dry-run support.
-`rainbox doctor` is new scope here, not an existing command.
-
-**Done when:** the assistant cannot call unregistered capabilities, and the operator can see
-what the assistant is allowed to do.
-
-**Rough size:** M/L (four to eight days) depending on whether this is only code-side
-metadata or includes UI, doctor checks, and MCP policy.
-
-#### Phase 5 - controlled write actions
-
-Add write-capable actions one family at a time:
-
-- create/update reminders and cron jobs
-- update kanban cards
-- propose document/file patches
-- write memory or skill candidates
-- use explicitly enabled MCP tools
-
-**Done when:** the assistant can complete one real personal workflow end to end with the
-write visible in the trace and either reversible, dry-run-first, or confirmed.
-
-**Rough size:** M per action family. Cron and kanban are likely cheaper because rainbox
-already has typed APIs; MCP and file/document edits are riskier.
-
-#### Phase 6 - steerability and runtime visibility
-
-Add interrupt/redirect, `/stop`, context compression, long-model-call heartbeats, and a
-runtime dashboard once assistant runs last long enough for those controls to matter.
-
-**Done when:** an in-progress assistant run can be stopped or redirected without corrupting
-the trace, and long calls no longer look like dead processes.
-
-**Rough size:** M/L. Heartbeats are likely smaller; interrupt/redirect and a real runtime
-dashboard are larger because they cross supervisor, chat, and UI concerns.
-
-### Codex's first PR recommendation
-
-The first PR should not be the capability registry. It should be a narrow assistant walking
-skeleton with trace persistence and fake-model tests. The next two should be skills MVP and
-semantic memory wiring. The control plane follows once the assistant has enough useful
-capabilities to control.
-
----
-
-## Combined refinement (Claude + Codex)
-
-> **TODO:** Reconcile Claude's roadmap, Codex's proposed synthesis, and Claude's critique
-> into a single final sequence.
->
-> Open questions for the joint pass:
->
-> - Should the first cognition primitive be a ReAct loop, tool-via-code, or a small hybrid?
-> - Where exactly does the capability registry begin: Phase 1 allowed-action enum only, or
->   a fuller registry before skills/semantic memory?
-> - Should skill retrieval start lexical and upgrade with memory retrieval, or should the
->   semantic retrieval work move earlier to serve both skills and facts?
-> - Is a memory/skill review UI required before semantic retrieval, or can it follow after
->   the retrieval behavior is proven?
-> - Which first PR gives the highest personal-assistant value for the least implementation
->   risk?
-> - Which items are S/M/L enough to fit the operator's current appetite?
+- Do not clone Hermes' gateway breadth.
+- Do not add many execution backends before there is one good local loop.
+- Do not let MCP tools silently expand assistant authority.
+- Do not let model-written skills affect future behavior without a visible lifecycle.
+- Do not build a large governance UI before the assistant has enough useful behavior to
+  govern.
