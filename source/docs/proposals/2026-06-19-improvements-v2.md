@@ -1123,6 +1123,14 @@ class AssistantAgent(ModelGroupAgent):
 
 Production `_decide_next_step()` performs the structured-output model call,
 using the same model-group fallback style as `StructuredLLMAgent._structured_call`.
+
+Verified-against-code note: `_structured_call` currently lives on
+`StructuredLLMAgent` (`agents/base.py:250`), so `AssistantAgent(ModelGroupAgent)`
+cannot inherit it. PR 2 should extract the structured-call-with-group-fallback
+logic down to `ModelGroupAgent` (or a small shared mixin) and have both
+`StructuredLLMAgent.handle()` and `AssistantAgent._decide_next_step()` call it -
+not copy-paste it. This refactor is part of PR 2, not a later cleanup.
+
 Tests monkeypatch this method with a scripted provider:
 
 ```python
@@ -1148,9 +1156,13 @@ For PRs 1-4:
   and no function-calling requirement.
 - Add `AssistantAgent` to `agents/__main__.py` dispatch like the other
   specialized agents.
-- Add the assistant UUID to `CHAT_RESPONDER_UUIDS`, so it is triggered only when
-  it is a member of a chat room and a human posts there. Do not make it a global
-  singleton agent.
+- Add the assistant UUID to `CHAT_RESPONDER_UUIDS` **in `webapp/chat_api.py`**
+  (not `agents/config.py` - that tuple lives in the web layer). Verified
+  mechanism: `_maybe_trigger_chat_agents()` enqueues a responder only if it is
+  both in `CHAT_RESPONDER_UUIDS` *and* a member of the room, and only when a
+  *human* posts. That human-only guard already prevents self-retrigger, so the
+  assistant posting its own trace rows and final reply will not loop. Do not make
+  it a global singleton agent.
 - Leave the default model binding empty. Tests use the fake-model seam; live use
   requires the operator to bind the assistant to a structured-output model group
   through the existing agent-model binding UI.
@@ -1189,7 +1201,14 @@ Implementation rule:
 - `(journal_id, step_index)` is the logical grouping key for all events in a
   step. It is not a database uniqueness constraint because `planned`,
   `running`, `observed`, and `failed` are separate append-only events.
-- Ordering comes from `chat_message.id` / `created_at`.
+- Ordering comes from `chat_message.id` / `created_at` (verified: `id` is the
+  autoincrement primary key the chat already uses as its ordering cursor).
+- Load-bearing detail: keep `kind="debug-assistant"`, **never `"progress"`**.
+  `post_chat_message` deletes the sender's own `kind="progress"` rows in the room
+  whenever it posts a terminal reply (`kind="message"`/`"notice"`). Trace events
+  must survive the final reply, so they must not use the auto-reaped `progress`
+  kind. The UI already folds away non-`message` kinds, so `debug-assistant` rows
+  stay inspectable without cluttering the chat.
 - Redaction v1: PRs 1-4 have no secret-carrying actions, so persist args
   verbatim for those actions. When a later capability sets `secrets=true`,
   redaction becomes mandatory before this helper is called.
