@@ -52,10 +52,14 @@ the phase choices:
 - `QueryAgent` already has a pgvector Q&A path plus read-only dynamic handlers
   such as git status. A useful first assistant should reuse that instead of
   trying to make `workspace_shell` do everything.
-- Memory already has the right core shape: `MemoryClaim` includes scope,
-  status, sensitivity, expiry, structured subject/predicate/object fields, and
-  provenance via `MemoryEvidence`. Retrieval is the weak part: current fact
-  retrieval is deterministic token overlap.
+- Memory already has the right core shape: `MemoryClaim` includes `scope`,
+  `status`, `sensitivity`, `expires_at`, structured `subject`/`predicate`/`object`
+  fields, and provenance via `MemoryEvidence`. (Verified column names, so the
+  spec uses them verbatim: `status` is one of
+  `candidate`/`active`/`superseded`/`rejected`/`expired`; `scope` is
+  `global`/`agent`/`room`/`project`; `sensitivity` is `public`/`private`/`secret`.)
+  Retrieval is the weak part: current fact retrieval is deterministic token
+  overlap.
 - `<customize.dir>` overlay loading exists for specific things like `mcp.json`
   and Q&A data, but there is no generic skills subtree loader yet.
 - Chat SSE / Postgres `LISTEN/NOTIFY` currently pushes chat changes to browsers.
@@ -82,6 +86,16 @@ with prompt text.
 
 These are the "personal assistant but understandable" guardrails. The roadmap
 can change phase boundaries, but these contracts should remain stable.
+
+**These contracts are the single source of truth for invariants.** The phase
+gates, per-phase "Done when" lists, decision ledger, and verification checklist
+restate slices of them for convenience; if any of those drifts from a contract,
+the contract wins. Likewise, every *concrete shape* later in this doc - the
+`assistant_step` JSON, the skill frontmatter, the registry record, the approval
+and run state machines - is an **illustrative starting point, not a binding
+schema**. Field names and the `.v1` tags are sketches; expect the first PR to
+refine them. A shape may change freely as long as it still satisfies the
+contracts above.
 
 ---
 
@@ -749,7 +763,7 @@ Registry record shape:
 ```json
 {
   "name": "query_qa",
-  "family": "read",
+  "family": "query",
   "description": "Answer from the Q&A registry and read-only dynamic handlers.",
   "read": true,
   "write": false,
@@ -763,6 +777,13 @@ Registry record shape:
   "prompt_exposed": true
 }
 ```
+
+Keep two concepts separate: `family` is the **grouping** a capability belongs to
+(`query`, `memory`, `kanban`, `cron`, `workspace`, `document`, `mcp`) and is the
+same word Phase 5 uses for write-family rollout; the `read`/`write`/`network`/
+`secrets` booleans are the **permission flags**. Do not encode permission in the
+family value (no `family: "read"`); a read-only query tool and a kanban writer
+can share neither field by accident.
 
 The registry is not just UI metadata. Dispatch must reject disabled or unknown
 capabilities even if the model emits a valid-looking action name.
@@ -1040,6 +1061,103 @@ changed, or deleted as code lands.
    metadata before it is exposed.
 10. **Steerability:** interrupts use an agent-visible control path; SSE remains
     the browser update mechanism.
+
+---
+
+## What is still missing to make this an actionable spec
+
+This document is a decided *roadmap*, not yet a buildable *spec*. The difference
+is that a spec leaves no open decision between "read it" and "write the code." The
+items below are the gaps that still force a developer to make a judgment call
+mid-implementation. Each must be pinned to a single concrete answer (not a range)
+before its phase can be coded straight through. Status: **decided** = answer is
+fixed; **range** = doc gives options but not a choice; **missing** = not addressed.
+
+### Loop and dispatch (blocks PR 2 and PR 4)
+
+- **Step-decision schema** *(missing)* - the exact Pydantic model the LLM must
+  emit to choose a step: e.g. `{thought: str, action: <enum>, args: object}`.
+  This is the heart of the loop; without it the loop cannot be written.
+- **Action interface** *(missing)* - the Python signature every action
+  implements: input args type, return/observation type, declared error type, and
+  how `output_cap_chars`/`timeout_seconds` are enforced at the call site.
+- **Assistant agent placement** *(range)* - where the `assistant` class sits in
+  the existing `Agent` / `ModelGroupAgent` / `StructuredLLMAgent` hierarchy, and
+  what its `handle()` does turn-by-turn.
+- **Model binding** *(missing)* - which model group the `assistant` role binds to
+  by default (`agent_models`), and whether the loop requires function-calling or
+  pure structured output.
+- **Enablement** *(missing)* - the flag/config that turns the assistant role on,
+  and whether it is a chat responder per room or a single global agent.
+
+### Eval harness (blocks PR 1 - the linchpin)
+
+- **Fake-model seam** *(missing)* - the exact injection point where a test
+  substitutes a scripted sequence of model outputs for the live LLM call. Every
+  deterministic loop test depends on this one seam; it must be specified before
+  PR 1.
+- **Acceptance-case format** *(range)* - each eval in the catalog needs a
+  concrete given/when/then and assertion, not just a name.
+
+### Trace and persistence (blocks PR 3)
+
+- **Trace write helper** *(missing)* - the concrete `db` helper that writes a
+  `debug-assistant` row keyed by `(journal_id, step_index)`, and the chat-render
+  query that reads them back in order.
+- **Redaction rule** *(range)* - which actions can carry secrets and the exact
+  point args are redacted before persistence (the JSON sketch mentions it but
+  defines no rule).
+
+### Memory and retrieval (blocks PR 7)
+
+- **Embedding storage** *(range)* - decide now: a `vector` column on
+  `memory_claim` vs a separate `memory_embedding` table; the doc says "smallest
+  schema" but a spec must choose one.
+- **Embedding model + index** *(missing)* - which embedding model (presumably the
+  Q&A `nomic-embed-text` path), the vector dimension, the pgvector index type
+  (hnsw vs ivfflat), and the distance operator.
+- **Merge formula** *(missing)* - "merge into one score" needs an actual strategy
+  (weighted sum vs reciprocal-rank-fusion), the weights or RRF constant, the
+  candidate `k`, and the prompt-injection budget caps as numbers.
+
+### Skills (blocks PR 6)
+
+- **Metadata home** *(range)* - frontmatter vs sidecar JSON is left open; pick one
+  for v1 (the doc leans frontmatter - make it the decision).
+- **Skill id / dedup rule** *(missing)* - how `id` collisions and `supersedes`
+  chains resolve at load time.
+
+### Registry and control (blocks PR 8 and PR 10)
+
+- **Registry source of truth** *(range)* - is the registry a Python list of
+  dataclasses, a DB table, or a config file? The prompt catalog is generated from
+  whichever this is.
+- **Control channel** *(range)* - the "control row" needs a concrete home: a new
+  table vs a chat row `kind`, plus the poll cadence the loop uses between steps.
+- **Approval persistence** *(missing)* - where the `proposed -> confirmed -> ...`
+  state lives (table + columns) and how a confirmed intent is bound immutably to
+  the exact payload.
+
+### Cross-cutting
+
+- **Migrations** *(missing)* - every new column/table above needs a migration;
+  none are written.
+- **Open questions that are still genuinely undecided** *(missing)* - collect them
+  in one place so a spec author knows exactly what to resolve first.
+
+### Minimum needed to start PR 1-4 (the conservative first slice)
+
+Most of the above is deferrable. To begin the first slice safely, only these
+must be pinned first:
+
+1. Step-decision schema.
+2. Action interface signature.
+3. Fake-model seam.
+4. Trace write helper + `(journal_id, step_index)` key.
+
+With those four decided, PRs 1-4 (eval harness -> talk-only assistant -> durable
+trace -> read-only actions) can be written straight through. Everything past PR 4
+can stay a roadmap until its phase is next.
 
 ---
 
