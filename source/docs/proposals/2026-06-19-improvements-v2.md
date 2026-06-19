@@ -53,8 +53,10 @@ Known rough edges in this document:
 - Schema evolution is documented around the current `init_db()` pattern, not a
   dedicated migration framework. If rainbox adopts Alembic or similar later,
   this section should be updated.
-- The v1 brainstorm may still contain stale wording about LM Studio embeddings;
-  v2 follows the current Ollama `nomic-embed-text` path.
+- Checked (2026-06-20): the v1 brainstorm has no stale embedding wording - its
+  only LM Studio reference is the provider-list row, which is correct. Both v1
+  and v2 follow the current Ollama `nomic-embed-text` path
+  (`agents/query_kb_helpers.py`).
 
 ## Executive decision summary
 
