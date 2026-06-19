@@ -199,7 +199,7 @@ core thesis.
 |---|---|---|---|---|---|
 | 0/1 | Assistant walking skeleton with a tiny eval baseline | Chat responder enqueue path, journal/debug rows, structured-output agent patterns, workspace shell, memory retrieval/commands, existing eval/benchmark harness | New `assistant` role, bounded loop, primitive action enum, trace format, fake-model tests, initial read-only actions | One user message can drive at least two model/tool iterations; trace is inspectable; at least the cold eval cases are baselined | M/L, roughly 1-2 weeks |
 | 2 | Procedural skills MVP | `customize.dir` overlay pattern, markdown files, retrieval telemetry patterns | Skill loader, lexical skill retrieval, prompt formatting, optional candidate metadata | A human-authored skill changes assistant behavior in a traceable way; model-proposed skills can be stored for review | S/M, roughly 2-4 days |
-| 3 | Semantic memory and shared retrieval upgrade | Existing pgvector/embedding path for Q&A, memory claim/evidence schema, retrieval telemetry | Embeddings for memory claims and skills, merge lexical/vector results, compact user profile view | Semantic retrieval improves an eval case without forbidden/sensitive exposure; skills and facts share the retrieval path where practical | M, roughly 1 week |
+| 3 | Semantic memory and shared retrieval upgrade | Existing pgvector/embedding path for Q&A, memory claim/evidence schema, retrieval telemetry, chat users/rooms | Embeddings for memory claims and skills, merge lexical/vector/entity/temporal signals, compact static/dynamic user profile, lightweight session context | Semantic retrieval improves an eval case without forbidden/sensitive exposure; skills and facts share the retrieval path where practical | M/L, roughly 1-2 weeks |
 | 4 | Formal capability registry and approvals | Phase 1 action enum, workspace-shell policy style, settings/admin patterns | Capability metadata, confirmation/dry-run flags, operator visibility, `rainbox doctor`, MCP policy hardening | Assistant can only call registered capabilities; operator can inspect what it is allowed to do | L, roughly 2-3 weeks if UI/doctor/MCP are included |
 | 5 | Controlled write actions | Cron APIs, kanban APIs, patch/document agents, memory commands | One write family at a time with trace, dry-run or confirmation, and rollback/review path | Assistant completes one real personal workflow end to end with the write visible and reviewable | M per action family |
 | 6 | Steerability and runtime visibility | Supervisor heartbeats, chat/SSE, journal, existing process watchdog | `/stop`, interrupt/redirect, context compression, long-call progress heartbeats, runtime dashboard | Active runs can be stopped or redirected without corrupting trace; long calls no longer look dead | M/L |
@@ -227,6 +227,47 @@ The sequence is driven by dependencies and by risk-per-phase, not by conceptual 
 Read the column dependencies as: every phase reuses the *Reuse* column and ships only the
 *Net-new* column. If a phase's Net-new list grows past what one PR can hold, split it — do
 not let a phase silently absorb the next one's scope.
+
+### Memory-system influences
+
+Supermemory, Mem0, and Honcho are useful references for Phase 3, but should not become
+dependencies yet. Rainbox already has the core thing worth protecting: a Postgres
+claim/evidence memory model with provenance, lifecycle state, sensitivity, telemetry, and an
+eval loop. The missing work is retrieval quality, profile synthesis, and session semantics.
+
+**Supermemory-style context stack.**
+Steal the shape, not the service: automatic candidate extraction, static/dynamic user
+profiles, hybrid "personal memory + project docs" retrieval, contradiction/update handling,
+expiry/forgetting, and memory benchmarks. Rainbox already has explicit evidence and expiry;
+the Phase 3 upgrade should add a `profile.static` / `profile.dynamic` equivalent and a
+single assistant context query that can return both remembered facts and relevant project
+knowledge.
+
+**Mem0-style retrieval signals.**
+Mem0's useful lesson is that memory retrieval should not be just vector search. Add entity
+linking and temporal ranking as additional signals alongside lexical and vector similarity:
+who/what the memory is about, whether it supersedes another fact, how recent it is, and
+whether it matches the current room/project scope. Keep deterministic filters
+(status/expiry/sensitivity/scope) before any ranking.
+
+**Honcho-style peer/session model.**
+Honcho's strongest fit is its explicit model of peers and sessions, not its storage backend.
+Rainbox already has `chat_user`, chatrooms, membership, and persona work; Phase 3 should
+define the minimum assistant-session vocabulary: operator profile, agent profile, room or
+project session, and prompt-ready session summary. Defer Honcho-style cross-peer modelling
+("what agent X believes about user Y") until there are multiple real peers that need it.
+
+**Benchmarks.**
+Use LongMemEval/LoCoMo/ConvoMem/MemoryBench as inspiration, not as a required imported test
+suite. Phase 0/1 should add a few tiny local cases now: temporal update ("I moved from A to
+B"), contradiction/supersession, project-scoped recall, sensitive-memory exclusion, and
+skill-vs-fact retrieval. Expand only after the assistant loop exists.
+
+**Explicit non-goal.**
+Do not replace rainbox memory with Supermemory/Mem0/Honcho wholesale. Hosted APIs and broad
+connectors would weaken the "I know the implementation" goal. A future optional MCP/client
+adapter is fine for experiments, but the durable source of truth should remain rainbox's own
+tables and files.
 
 ### First PR scope (the only thing that needs to be decided to start)
 
