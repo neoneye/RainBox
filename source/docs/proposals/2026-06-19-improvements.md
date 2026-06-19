@@ -132,295 +132,179 @@ assistant loop; skills plug into it naturally.
 
 ## Codex
 
-### Self-assessment
+### Self-assessment after Claude's critique
 
-Claude's diagnosis is stronger than Codex's first pass. The important product gap is not
-another admin page or another hardening layer; it is that rainbox does not yet have a
-first-class assistant that can stay with a task, use tools over several steps, learn a
-procedure, and reuse that procedure later. Claude's "infrastructure ahead, cognition
-behind" framing is the right center of gravity.
+Claude's critique is fair. Codex added useful substance, but it also overstepped the
+document process by filling the "Combined refinement" section before a true joint pass. That
+section should not pretend to be the reconciled view yet. The correction is to keep Codex's
+roadmap as a **Codex proposed synthesis** and restore the combined section to an explicit
+pending reconciliation.
 
-Codex's contribution is still useful, but it belongs as the *operating model around* that
-assistant loop: authority boundaries, capability inventory, approvals, runtime visibility,
-MCP policy, eval gates, and memory review. Those are what keep a Hermes-inspired assistant
-compatible with rainbox's actual goal: a personal assistant whose behavior is inspectable
-and whose implementation remains legible to its operator.
+The critique also catches a real prioritization error. Codex put the capability registry too
+early in the phase list while the final recommendation put it later. For a single-operator
+personal assistant, the cognition layer should come first: assistant loop, skills, semantic
+memory. The capability control plane matters, but it should arrive as the assistant's power
+expands, not as ceremony before the assistant feels useful.
 
 ### What Codex adds
 
-**1. The assistant loop must be durable, not just iterative.**
-Do not import Hermes' shape literally as one long-running opaque process. In rainbox, the
-assistant should be an iterative agent whose *steps* are persisted:
+**1. Durable assistant traces.**
+Hermes' iterative loop is worth copying, but not as an opaque long-lived process. In
+rainbox, an assistant run should leave a step trace:
 
 - user request
 - model plan
-- selected tool/capability
+- chosen action
 - normalized arguments
-- approval decision when required
 - observation/result
 - final answer or blocked state
 
-The existing `journal` table can carry the first version, but the design should quickly
-grow a step-level ledger (`assistant_run` / `assistant_step` or equivalent) if the JSON
-inside one journal row becomes hard to inspect. The invariant is simple: if the process dies,
-the operator can see exactly which step ran last and what it observed.
+The first implementation can store this inside `journal.result` or a `debug-assistant` chat
+row. Split it into `assistant_run` / `assistant_step` tables only when the JSON becomes hard
+to query, link, or resume. That avoids building schema before the shape of real runs is
+known.
 
-**2. Skills should be proposed first, active second.**
-Hermes' self-written skills are the best idea to steal, but rainbox should not silently let
-a model install new behavior into its future prompt. Treat generated skills like memory
-candidates:
+**2. Reviewed procedural skills.**
+Hermes' self-written skills are the best idea to steal, but rainbox should make skill
+lifecycle inspectable. Human-authored skills can be active immediately. Model-proposed
+skills should start as candidates with source run/journal metadata, then be activated,
+edited, rejected, or superseded by the operator. A possible middle ground for later is
+"auto-active only for read-only/dry-run skills after they pass a test," but the first version
+should keep activation explicit.
 
-- write the skill as a candidate in `<customize.dir>/skills/`
-- store metadata: source run/journal id, task summary, tool calls used, model, created_at
-- require human activation before retrieval injects it into the assistant prompt
-- keep rejected and superseded skills for audit
-- add a "run this skill in dry-run mode" test hook before activation
+**3. Capability control plane, later and lighter.**
+A typed capability registry is still the best new idea Codex adds: it lets the assistant
+prompt be generated from owned capabilities rather than a hand-written list of tools. But it
+should start small and follow actual assistant needs. Register capabilities as they are
+exposed to the assistant; do not build an enterprise policy framework before the assistant
+has real daily use.
 
-This preserves the useful learning loop without giving the model unreviewed authority over
-future behavior.
+**4. Eval wiring before judging the loop.**
+Rainbox already has eval and benchmark machinery. The next step is not a new eval platform,
+but a tiny set of assistant-workflow cases: repo inspection, memory answer, cron dry-run,
+kanban read/update, and "which memory/tool did you use?" That gives the assistant loop,
+skills, and semantic memory something concrete to prove against.
 
-**3. Capability boundaries are the missing control plane.**
-The assistant loop should not see "all Python functions" or "all MCP tools." It should see a
-small catalog of typed capabilities. Each capability declares:
+### Open fork: ReAct loop vs tool-via-code first
 
-- read/write/network/secret behavior
-- whether it can run unattended
-- whether it requires confirmation
-- timeout and output limits
-- redaction rules
-- eval coverage or a manual-test requirement
+Claude's roadmap assumes a ReAct-style assistant loop first. That is probably right for
+assistant feel, but it is not the only rainbox-native path.
 
-That catalog can drive the prompt, UI badges, `rainbox doctor`, cron validation, and tests.
-It also gives the operator a concise answer to "what can my assistant actually do?"
+**ReAct loop first** means the model repeatedly chooses one typed action, observes the
+result, and decides the next step. It is easier to constrain, easier to render as a chat
+trace, and fits the existing FunctionAgent/structured-output paths. It may cost more model
+round-trips and can feel verbose.
 
-**4. Personal usefulness should come from narrow owned workflows.**
-Do not chase Hermes' 20-platform gateway breadth. Rainbox should get good at a small number
-of personal workflows:
+**Tool-via-code first** means the model writes a small inspectable script that calls
+rainbox-owned functions, then the system runs that script in a constrained environment. This
+is attractive for a developer-operator: fewer round-trips, concrete code to inspect, and
+better composition for multi-step local tasks. It also creates a bigger execution-safety
+problem earlier.
 
-- answer questions about the local machine and projects
-- remember and retrieve operator preferences
-- inspect repos safely
-- manage reminders/cron jobs
-- update kanban/task state
-- draft or propose file/document edits
-- talk through Telegram or one other chosen gateway
+Codex's proposed resolution: start with a small ReAct loop because it is the safer walking
+skeleton, but evaluate tool-via-code as the first major accelerator once the assistant has
+read-only traces and a few workflow evals. Do not treat ReAct as a permanent architectural
+commitment.
 
-Each workflow should be backed by tests and audit rows. Breadth comes later only when a real
-daily workflow asks for it.
+### Codex proposed synthesis
 
-**5. Safety work should enable autonomy, not postpone it.**
-Capability registry, runtime dashboard, long-call heartbeats, MCP policy, and memory review
-are not the main product. They are the scaffolding that makes a real assistant loop safe
-enough to run unattended for bounded tasks. Build them alongside the assistant, not as a
-separate prelude that delays the useful part indefinitely.
+This is Codex's proposed ordering, not the final combined roadmap.
+
+#### Phase 0 - wire a tiny assistant eval set
+
+Use the existing eval/benchmark machinery to create cases for:
+
+- answering from memory
+- inspecting the repo and summarizing
+- creating a cron/reminder dry-run
+- reading or updating a kanban card
+- explaining which memory/tool was used
+
+**Done when:** at least three assistant workflows have repeatable baseline cases.
+
+#### Phase 1 - assistant walking skeleton
+
+Add `assistant` as a chat responder with a bounded loop and read-only actions:
+
+- `reply`
+- `ask_clarifying_question`
+- `query_memory`
+- `workspace_read_command`
+- `kanban_read`
+
+Persist a trace in the existing journal/debug surfaces. Keep max steps low, e.g. 4-6.
+
+**Done when:** one user message can produce at least two model/tool iterations and the trace
+is inspectable.
+
+#### Phase 2 - procedural skills MVP
+
+Load active markdown skills from `<customize.dir>/skills/` and retrieve them into the
+assistant prompt. Start with human-authored skills so retrieval, formatting, and telemetry
+can be validated before model-written skills enter the loop. Then add model-proposed
+candidate skills.
+
+**Done when:** a skill changes assistant behavior in a traceable way, and a proposed skill
+can be reviewed before activation.
+
+#### Phase 3 - semantic memory and user profile
+
+Keep Postgres claim/evidence as the source of truth. Add pgvector retrieval for memory
+claims, merge lexical and semantic results, and generate a compact profile view from
+confirmed high-value claims. A dedicated memory review UI belongs here, because semantic
+memory without review becomes hard to trust.
+
+**Done when:** semantic memory improves an eval case without exposing forbidden/sensitive
+memories, and the operator can inspect/correct the relevant memory.
+
+#### Phase 4 - capability registry and approvals
+
+Now formalize the capability surface exposed to the assistant. Start with the capabilities
+already used by phases 1-3, then add flags for write/network/secret behavior,
+confirmation, timeout/output caps, and dry-run support. `rainbox doctor` is new scope here,
+not an existing command.
+
+**Done when:** the assistant cannot call unregistered capabilities, and the operator can see
+what the assistant is allowed to do.
+
+#### Phase 5 - controlled write actions
+
+Add write-capable actions one family at a time:
+
+- create/update reminders and cron jobs
+- update kanban cards
+- propose document/file patches
+- write memory or skill candidates
+- use explicitly enabled MCP tools
+
+**Done when:** the assistant can complete one real personal workflow end to end with the
+write visible in the trace and either reversible, dry-run-first, or confirmed.
+
+#### Phase 6 - steerability and runtime visibility
+
+Add interrupt/redirect, `/stop`, context compression, long-model-call heartbeats, and a
+runtime dashboard once assistant runs last long enough for those controls to matter.
+
+**Done when:** an in-progress assistant run can be stopped or redirected without corrupting
+the trace, and long calls no longer look like dead processes.
+
+### Codex's first PR recommendation
+
+The first PR should not be the capability registry. It should be a narrow assistant walking
+skeleton with trace persistence and fake-model tests. The next two should be skills MVP and
+semantic memory wiring. The control plane follows once the assistant has enough useful
+capabilities to control.
 
 ---
 
 ## Combined refinement (Claude + Codex)
 
-### North star
-
-Rainbox should become a **durable local personal assistant**:
-
-- it can do multi-step work, not just answer one prompt
-- it learns reusable procedures, but only in inspectable form
-- it remembers facts with provenance and correction paths
-- it acts through typed, bounded capabilities
-- every non-trivial action leaves a ledger row the operator can inspect
-
-That is the useful overlap with Hermes. The non-overlap is just as important: rainbox should
-not become a broad hosted gateway, a framework dependency pile, or a black-box autonomous
-process.
-
-### Architecture choice
-
-Build one new first-class `assistant` agent, but make it rainbox-native:
-
-```text
-chat message
--> assistant_run
--> assistant_step(plan)
--> assistant_step(tool_call / observation)*
--> assistant_step(final / blocked)
--> chat reply
-```
-
-The loop can start with a bounded max-step count and a small toolset. The first useful
-version does not need parallel subagents, tool-via-code, or autonomous skill writing. It
-only needs to demonstrate: "I can plan, inspect, use one or two owned tools, observe, and
-answer with a trace."
-
-### Prioritized roadmap
-
-#### Phase 0 - sharpen the baseline
-
-Before adding the loop, make a tiny evaluation set for the workflows that should improve:
-
-- "answer from memory"
-- "inspect repo and summarize"
-- "create a reminder/cron dry-run"
-- "update a kanban card"
-- "explain which memory/tool was used"
-
-This prevents the assistant loop from being judged by vibes. It also gives later skills and
-memory retrieval changes something to prove against.
-
-**Done when:** there are active eval cases or benchmark scripts for at least three real
-assistant workflows, and a baseline run is recorded.
-
-#### Phase 1 - iterative assistant walking skeleton
-
-Add `assistant` as a chat responder with a bounded ReAct-style loop:
-
-- model proposes the next step as structured output
-- allowed actions are initially small: `reply`, `ask_clarifying_question`, `query_memory`,
-  `workspace_read_command`, maybe `kanban_read`
-- tool observations are appended to the step transcript
-- final answer links to a trace/debug row
-- max steps defaults low, e.g. 4-6
-
-Do not start with broad MCP or write actions. The goal is to make rainbox feel like an
-assistant while keeping the first version easy to reason about.
-
-**Done when:** a single user message can trigger at least two model/tool iterations, the
-trace is inspectable from chat/admin, and a crashed run can be diagnosed from persisted
-state.
-
-#### Phase 2 - capability registry and approval policy
-
-Introduce a code-side capability registry before the assistant gains more power. Register
-workspace shell commands, memory operations, cron actions, kanban operations, backup, MCP
-servers/tools, and any gateway actions.
-
-Each capability should declare:
-
-- id and display name
-- owner module
-- read/write/network/secret flags
-- default enabled state
-- requires confirmation
-- timeout/output caps
-- dry-run support
-- eval/manual-test coverage
-
-The assistant prompt should be generated from enabled capabilities, not hand-written lists.
-
-**Done when:** the assistant cannot call an unregistered capability; `/settings` or an admin
-view can show the active capability surface; `rainbox doctor` can report unsafe or
-misconfigured capabilities.
-
-#### Phase 3 - procedural skills as reviewed artifacts
-
-Add Hermes-style skills, but with rainbox's provenance model:
-
-- skill files live in `<customize.dir>/skills/`
-- metadata tracks status: `candidate`, `active`, `superseded`, `rejected`
-- the assistant may propose a skill after a successful run
-- the operator activates, edits, or rejects it
-- active skills are retrieved by lexical/semantic match and injected into the assistant
-  prompt
-- skill use emits telemetry like memory retrieval
-
-Start with human-authored skills before allowing model-proposed candidates. That validates
-the retrieval and prompt format without letting the model write future behavior too early.
-
-**Done when:** a hand-authored skill changes assistant behavior in a traceable way, and a
-model-proposed skill can be reviewed before activation.
-
-#### Phase 4 - semantic memory and user profile
-
-Keep the existing claim/evidence schema. Upgrade retrieval:
-
-- embed active memory claims using pgvector
-- merge lexical and vector candidates
-- keep scope, sensitivity, expiry, and provenance filters first
-- add a compact `USER` profile view generated from confirmed high-value claims
-- add a memory review UI for candidates, active claims, evidence, correction, and
-  sensitivity
-
-Avoid a flat `MEMORY.md` fact store. Files are appropriate for procedural skills; Postgres
-is better for sourced personal facts.
-
-**Done when:** semantic retrieval improves at least one eval case without increasing
-forbidden/sensitive memory exposure, and the operator can inspect or correct the memory from
-a purpose-built UI.
-
-#### Phase 5 - controlled write actions
-
-After the assistant can read, plan, and use skills, add write-capable actions one family at
-a time:
-
-- create/update reminders and cron jobs
-- update kanban cards
-- propose document/file patches
-- write memory candidates
-- run MCP tools that have explicit policy
-
-Every write action should support either dry-run, confirmation, or both. Cron and gateway
-actions should default to confirmation until the operator deliberately marks a capability as
-safe for unattended use.
-
-**Done when:** the assistant can complete one real personal workflow end to end, with the
-write action visible in the trace and reversible or reviewable by the operator.
-
-#### Phase 6 - steerability and compression
-
-Once runs last long enough to matter, add:
-
-- interrupt-and-redirect from a new chat message
-- `/stop` for active assistant runs
-- `/compress` or automatic context summaries for long rooms
-- long-running model heartbeats
-- runtime dashboard with PID, current step, model/provider, heartbeat age, kill/retry
-
-This is when rainbox starts matching the lived feel of Hermes without losing its own
-supervisor model.
-
-**Done when:** an in-progress assistant run can be stopped or redirected without corrupting
-the ledger, and long model calls no longer look like dead processes.
-
-### First three PRs
-
-**PR 1: `assistant` walking skeleton.**
-One bounded loop, read-only capabilities, persisted trace, chat integration, and tests with
-fake model outputs.
-
-**PR 2: capability registry.**
-Register current built-in capabilities, expose them in a simple admin/settings view, and
-make the assistant consume only registered capabilities.
-
-**PR 3: reviewed skills MVP.**
-Load active markdown skills from `<customize.dir>/skills/`, retrieve them for assistant
-prompts, and add candidate metadata/status even if the first skills are human-authored.
-
-### Design invariants
-
-- A model may propose actions; code enforces allowed actions.
-- A model may propose skills; the operator activates them.
-- Memory facts stay in Postgres with evidence, not flat files.
-- Procedural skills may be files because inspectability and portability matter there.
-- All write/network/secret capabilities are explicit and visible.
-- The assistant loop is bounded by step count, timeout, and capability policy.
-- Every assistant answer that used tools or memory has an inspectable trace.
-- Evals gate changes to memory retrieval, skills, and assistant prompts.
-
-### What this deliberately rejects
-
-- cloning Hermes' gateway breadth
-- adding many execution backends before there is one good local loop
-- letting MCP tools silently expand the assistant's authority
-- self-modifying prompts or skills without review
-- optimizing for impressive demos over repeatable personal workflows
-
-### Final recommendation
-
-Adopt Claude's ordering, but with Codex's guardrails:
-
-1. Build the iterative assistant loop.
-2. Add reviewed procedural skills.
-3. Improve semantic memory and user profile retrieval.
-4. Add capability registry, approvals, and runtime visibility as the control plane.
-5. Expand write actions only after traces, evals, and review flows exist.
-
-That sequence turns rainbox from an agent runtime into a personal assistant without giving
-up the core advantage it already has: the operator can see how it works.
+> **TODO:** Reconcile Claude's roadmap, Codex's proposed synthesis, and Claude's critique
+> into a single final sequence. The current tentative ordering is:
+>
+> 1. assistant loop
+> 2. procedural skills
+> 3. semantic memory / user profile
+> 4. capability registry and approvals
+> 5. controlled write actions
+> 6. steerability, compression, and runtime visibility
