@@ -16,6 +16,25 @@ implementation the operator understands. It should borrow useful ideas from
 Hermes, OpenClaw, mem0, supermemory, and honcho, but it should not become any of
 those systems.
 
+## Executive decision summary
+
+The roadmap has one recommended path:
+
+- Build a rainbox-owned ReAct loop first, not tool-via-code and not an external
+  framework-owned loop.
+- Persist assistant steps during the loop, before and after actions. Final
+  `journal.result` is a summary, not the trace.
+- Treat the Phase 1 action enum as the primitive capability registry; Phase 4
+  adds metadata and operator controls.
+- Store skills as editable files plus small status/provenance metadata. Only
+  active skills are injected.
+- Upgrade memory with hybrid retrieval and pre-rank filters before adding
+  heavier inference or rerank machinery.
+- Add write actions one family at a time, with dry-run/confirm, trace, and
+  registry metadata.
+- Add stop/redirect through an agent-visible control path, not by pretending the
+  existing browser SSE path can interrupt running agents.
+
 ---
 
 ## Current implementation facts this roadmap must respect
@@ -42,6 +61,27 @@ the phase choices:
 - Chat SSE / Postgres `LISTEN/NOTIFY` currently pushes chat changes to browsers.
   It is useful for UI updates, but it is not by itself an interrupt channel into
   an already-running agent.
+
+---
+
+## Assistant contracts
+
+These contracts are stronger than any individual implementation choice. If a
+future phase violates one, the phase should be redesigned rather than patched
+with prompt text.
+
+| Contract | Meaning | First proven |
+|---|---|---|
+| **Authority is code-owned** | The model can request only capabilities exposed by code. Skills, memory, prompts, and MCP servers cannot expand the action set. | Phase 1 |
+| **Trace before action** | Before a tool/action starts, the assistant commits the planned step and arguments. After it finishes, it commits the observation. | Phase 1 |
+| **Candidates are inert** | Model-created skills, inferred facts, corrections, and plans do not affect future behavior until active/confirmed. | Phase 2 |
+| **Filter before rank** | Secret, expired, rejected, or out-of-scope memories are removed before vector/full-text ranking. | Phase 3 |
+| **Every influence is explainable** | An answer that used a memory, skill, tool, profile fact, or write approval can point to the persisted row/file/step that influenced it. | Phase 3 |
+| **Writes are family-scoped** | No blanket mutation switch. Each write family owns its validator, dry-run/confirm path, trace shape, and tests. | Phase 5 |
+| **Stop is stateful** | A stopped run records why and where it stopped; it is not just a killed process with missing context. | Phase 6 |
+
+These are the "personal assistant but understandable" guardrails. The roadmap
+can change phase boundaries, but these contracts should remain stable.
 
 ---
 
@@ -108,6 +148,26 @@ Ordering rationale:
 
 ---
 
+## Phase gates
+
+Each phase should leave behind one hard artifact, not just a prose decision.
+
+| Phase | Hard artifact | Gate before moving on |
+|---|---|---|
+| 0 | deterministic eval/fake-model harness | a regression fails if trace shape, forbidden-memory filtering, or action dispatch breaks |
+| 1 | assistant role with read-only loop | a killed run leaves the last committed step visible |
+| 2 | skills loader and candidate lifecycle | an unactivated model-written skill cannot enter the assistant prompt |
+| 3 | hybrid memory/profile context builder | secret/expired/out-of-scope claims are filtered before ranking and tested |
+| 3.5 | optional deriver agent | every inferred claim has evidence and can be rejected |
+| 4 | formal capability registry | disabling a capability removes it from both prompt and dispatch |
+| 5 | first write family | dry-run/confirm and trace are enforced by code, not prompt discipline |
+| 6 | control channel and runtime view | `/stop` leaves a clean stopped trace, not just a dead child process |
+
+If a phase cannot meet its gate cheaply, split it. Do not continue by weakening
+the contract.
+
+---
+
 ## Phase 0 - Eval and acceptance spine
 
 ### Problem
@@ -159,6 +219,20 @@ Phase 0 deliverables:
   helpers before the full assistant exists.
 - A written rule: every new action family in Phase 5 must add at least one
   dry-run/confirm/trace test.
+
+### Minimum eval catalog
+
+| Case | Purpose | Can be written before Phase 1? |
+|---|---|---|
+| memory exact answer | protects current `remember` / `recall` behavior | yes |
+| forbidden secret memory | proves sensitivity filtering is enforced before prompt injection | yes |
+| query project status | proves QueryAgent handler reuse remains available | yes |
+| two-step assistant trace | proves model -> action -> observation -> reply loop shape | no, co-develop with Phase 1 |
+| step cap | proves infinite loops stop deterministically | no, co-develop with Phase 1 |
+| failed action trace | proves errors are persisted and visible | no, co-develop with Phase 1 |
+| unactivated skill | proves candidate skills are inert | no, Phase 2 |
+| hybrid retrieval regression | proves semantic retrieval improves recall without leaking forbidden claims | no, Phase 3 |
+| write dry-run/confirm | proves a write family cannot mutate silently | no, Phase 5 |
 
 Done when:
 
@@ -276,6 +350,31 @@ Pre-agreed trigger for `assistant_run` / `assistant_step` tables:
 
 Until then, `debug-assistant` plus final `journal.result` is simpler.
 
+The `debug-assistant` JSON payload should be intentionally stable:
+
+```json
+{
+  "schema": "assistant_step.v1",
+  "journal_id": 123,
+  "step_index": 2,
+  "status": "running",
+  "action": "query_qa",
+  "args": {"query": "git status"},
+  "model": {"group_uuid": "...", "model_uuid": "..."},
+  "observation_preview": null,
+  "error": null
+}
+```
+
+Rules:
+
+- `planned` or `running` is committed before dispatch.
+- `observed`, `failed`, or `final` is committed after dispatch or final answer.
+- Arguments are redacted before persistence if a future action can carry
+  secrets.
+- The final journal summary links back to step indexes rather than duplicating
+  every observation.
+
 ### First PR scope
 
 Build:
@@ -354,6 +453,29 @@ Use markdown for the skill body and frontmatter or sidecar JSON for metadata:
 - `created_by`: `human` or `assistant`
 - `supersedes`
 - optional smoke-test command or eval case
+
+Preferred file shape:
+
+```markdown
+---
+id: summarize-pr-review
+status: active
+created_by: human
+source_journal_id:
+source_step_id:
+supersedes:
+retrieval_tags: [github, review, pull-request]
+---
+
+# Summarize a PR review
+
+Use when the operator asks for a review summary. First list blocking findings,
+then open questions, then a short change summary.
+```
+
+Use frontmatter unless queryability becomes painful. If the operator needs a
+review dashboard with filtering/sorting across many skills, add a DB index row
+later; do not start there.
 
 Only `active` skills are eligible for prompt injection. Model-written skills
 start as `candidate`, and activation is an operator decision.
@@ -444,6 +566,22 @@ Retrieval B is the right first semantic upgrade:
 - Use structured `subject`, `predicate`, and `object` fields for exact/entity
   boosts.
 - Record retrieval telemetry for retrieved and injected claims.
+
+Retrieval pipeline contract:
+
+1. Build a query from the latest user request plus a small amount of room/task
+   context.
+2. Apply hard filters: active status, allowed scope, non-expired, allowed
+   sensitivity.
+3. Score candidates with vector similarity, full-text/lexical match, and
+   structured subject/object boosts.
+4. Merge scores into a small candidate list with reasons attached.
+5. Apply budget caps before prompt injection.
+6. Record retrieved and injected claims in telemetry.
+7. Render the prompt block with provenance tags, not just raw facts.
+
+The output should be auditable enough that a bad answer can be traced to either
+retrieval, ranking, prompt injection, or model reasoning.
 
 Profile A is the right first user-model step. It should produce a compact block
 from already-active memories and recent context, with source references. It
@@ -606,6 +744,29 @@ Registry fields should be boring and explicit:
 - whether it is exposed to the assistant prompt
 - docs/prompt description
 
+Registry record shape:
+
+```json
+{
+  "name": "query_qa",
+  "family": "read",
+  "description": "Answer from the Q&A registry and read-only dynamic handlers.",
+  "read": true,
+  "write": false,
+  "network": false,
+  "secrets": false,
+  "confirm_required": false,
+  "dry_run": false,
+  "timeout_seconds": 10,
+  "output_cap_chars": 6000,
+  "enabled": true,
+  "prompt_exposed": true
+}
+```
+
+The registry is not just UI metadata. Dispatch must reject disabled or unknown
+capabilities even if the model emits a valid-looking action name.
+
 `rainbox doctor` belongs here only in minimal form: parse configs, list enabled
 capabilities, show missing model/embedding/MCP prerequisites, and report stale
 or invalid skill metadata. A polished subsystem-health UI is later scope.
@@ -677,6 +838,18 @@ Each write family must define:
 - rollback or review path where possible
 - unattended eligibility default, which should start as false
 
+### Approval state machine
+
+- `proposed` - assistant generated a write intent and dry-run/preview.
+- `confirmed` - operator approved this exact intent.
+- `executing` - dispatcher is running the write.
+- `completed` - write finished and trace links to the result.
+- `failed` - write failed with error and no hidden retry.
+- `rejected` - operator rejected or edited the proposal.
+
+Do not let the assistant mutate the payload after confirmation. A changed
+payload is a new proposal.
+
 Done when:
 
 - The assistant can perform at least one useful write family end to end.
@@ -726,6 +899,19 @@ control path:
 - A redirect can be represented as a new user message/control row that the loop
   consumes before the next step.
 - SSE remains useful for displaying progress/control changes in the UI.
+
+### Run state machine
+
+- `running` - normal loop execution.
+- `stopping` - operator requested stop; loop should finish the current safe
+  boundary and stop before the next action.
+- `stopped` - clean terminal state with reason and last completed step.
+- `failed` - terminal error, with trace and exception summary.
+- `killed` - watchdog or operator killed the process; trace may show only the
+  last committed `running` step.
+
+`killed` is allowed as an emergency outcome, but the product path should prefer
+`stopped`.
 
 Progress-aware heartbeat should include enough state to distinguish:
 
@@ -780,21 +966,53 @@ Done when:
 
 ---
 
-## First implementation slice
+## Implementation PR stack
 
-The first code slice should be Phase 0 plus the smallest useful Phase 1:
+The roadmap should begin with a deliberately narrow stack. Each PR should leave
+the system shippable; none should require write actions or MCP.
 
-1. Add deterministic fake-model tests for loop control and trace persistence.
-2. Add the `assistant` role and bounded loop.
-3. Add read-only actions: `reply`, `ask_clarifying_question`, `query_memory`,
-   `query_qa`, `workspace_read_command`, and `kanban_read`.
-4. Persist each step as `debug-assistant` before/after action execution.
-5. Use `journal.result` only as the final summary, not as the only trace store.
-6. Prove a killed run leaves the current committed step visible.
+| PR | Scope | Must include | Must not include |
+|---|---|---|---|
+| 1 | Eval harness | fake-model fixture, existing memory/query regression cases, helper to assert trace events | assistant runtime |
+| 2 | Assistant role and loop | `assistant` config/dispatch, bounded loop, `reply`, `ask_clarifying_question`, fake-model tests | live LLM dependency |
+| 3 | Step trace persistence | `debug-assistant` schema, before/after action commits, final `journal.result` summary | new assistant tables |
+| 4 | Read-only actions | `query_memory`, `query_qa`, `workspace_read_command`, `kanban_read`, dispatch tests | writes, generated code, MCP |
+| 5 | Chat/UI visibility | render assistant debug rows clearly enough to inspect plan/action/observation | polished dashboard |
+| 6 | Skills MVP | loader, active/candidate lifecycle, frontmatter metadata, lexical retrieval | semantic skill retriever |
+| 7 | Hybrid memory retrieval | memory embeddings, hard filters, full-text/entity boosts, telemetry/evals | LLM rerank |
+| 8 | Minimal registry | formal metadata over existing action enum, disabled-capability enforcement | approval UI complexity |
+| 9 | First write family | memory/skill candidates or kanban events with dry-run/confirm | blanket write enable |
+| 10 | Runtime controls | `/stop` control row, step-boundary stop, progress-aware heartbeat | supervisor rewrite |
 
-This slice gives rainbox a real assistant skeleton without write risk, without a
-new generated-code sandbox, and without pretending the later control plane is
-already built.
+Recommended first slice:
+
+1. PR 1 proves the test harness can fail for broken existing behavior.
+2. PR 2 adds an assistant that can only talk and ask clarifying questions.
+3. PR 3 makes the trace durable before any nontrivial tool dispatch exists.
+4. PR 4 adds the useful read-only tools.
+
+This order is intentionally conservative: do not add more assistant power until
+the trace exists and the tests can prove it.
+
+---
+
+## Decision ledger
+
+These decisions are considered settled for v2 unless implementation facts
+invalidate them:
+
+| Decision | Chosen | Revisit only if |
+|---|---|---|
+| First assistant primitive | rainbox-owned ReAct loop | a framework can prove step-at-a-time durable tracing with less code |
+| Generated code | defer; new runner required | Phase 1 loop is useful and read-only generated scripts have a clear sandbox |
+| Trace storage | `debug-assistant` rows plus final `journal.result` | query/filter/resume needs exceed chat-row JSON |
+| First action set | read-only enum including `query_qa` | a fake-model eval shows a smaller set is still useful |
+| Skill storage | markdown plus frontmatter/sidecar metadata | operator review requires DB filtering at scale |
+| Skill activation | candidate before active | tests and policy exist for narrow auto-activation |
+| Memory retrieval | hybrid vector/full-text/entity with hard pre-filters | native full-text cannot meet recall evals |
+| Profile deriver | defer by default | one-shot profile demonstrably goes stale or misses important inferred context |
+| Registry timing | primitive in Phase 1, formal in Phase 4 | write actions need to move earlier, which they should not |
+| Interrupts | agent-visible control path | supervisor gets redesigned for unrelated reasons |
 
 ---
 
