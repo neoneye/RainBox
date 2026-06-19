@@ -1017,6 +1017,193 @@ the trace exists and the tests can prove it.
 
 ---
 
+## PR 1-4 concrete spec
+
+This section pins the choices needed to write the first slice without another
+planning pass. These are implementation decisions for PRs 1-4; later
+phases may revise them only by preserving the assistant contracts above.
+
+### Step-decision schema
+
+Use one structured model for the first loop. Keep action-specific typing inside
+the dispatcher for now; do not build a union of per-action Pydantic models until
+the action surface grows.
+
+```python
+class AssistantActionName(str, Enum):
+    REPLY = "reply"
+    ASK_CLARIFYING_QUESTION = "ask_clarifying_question"
+    QUERY_MEMORY = "query_memory"
+    QUERY_QA = "query_qa"
+    WORKSPACE_READ_COMMAND = "workspace_read_command"
+    KANBAN_READ = "kanban_read"
+
+
+class AssistantStepDecision(BaseModel):
+    reason: str = Field(
+        description="Brief operator-facing rationale for this step, not hidden chain-of-thought."
+    )
+    action: AssistantActionName
+    args: dict[str, Any] = Field(default_factory=dict)
+```
+
+Validation rule: the loop rejects an action before dispatch if required args are
+missing, unknown args are risky, or the action is not in the enum. The first
+validator can be a small explicit `match action:` block:
+
+- `reply`: requires `message`.
+- `ask_clarifying_question`: requires `question`.
+- `query_memory`: requires `query`.
+- `query_qa`: requires `query`.
+- `workspace_read_command`: requires `command`.
+- `kanban_read`: accepts optional `board_uuid`, `task_uuid`, or empty args for
+  the current board summary.
+
+Use `reason`, not `thought`, so the model produces a concise audit note rather
+than private chain-of-thought. The trace should show this rationale.
+
+### Action interface
+
+Represent actions as ordinary Python callables behind a tiny protocol. The
+dispatcher owns validation, timeout, output caps, and trace boundaries; actions
+just perform one bounded read and return an observation.
+
+```python
+@dataclass(frozen=True)
+class AssistantActionContext:
+    journal_id: int
+    room_uuid: UUID
+    agent_uuid: UUID
+    step_index: int
+
+
+@dataclass(frozen=True)
+class AssistantObservation:
+    ok: bool
+    text: str
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+AssistantAction = Callable[
+    [AssistantActionContext, dict[str, Any]],
+    AssistantObservation,
+]
+```
+
+Dispatcher rules for PR 4:
+
+- Validate args before calling the action.
+- Catch exceptions and turn them into `AssistantObservation(ok=False, text=...)`
+  after writing a failed trace event.
+- Apply the output cap after the action returns. Store a truncated
+  `observation_preview` in trace and keep any larger structured data out of the
+  prompt unless the action explicitly allows it.
+- Do not let actions post final assistant replies directly. Terminal reply
+  actions return text to the loop, and the loop posts the final chat message.
+
+### Fake-model seam
+
+The assistant should be a specialized `ModelGroupAgent`, not a
+`StructuredLLMAgent`, because it needs multiple structured calls inside one
+`handle()`.
+
+The only live-model seam is:
+
+```python
+class AssistantAgent(ModelGroupAgent):
+    def _decide_next_step(
+        self,
+        *,
+        transcript: str,
+        scratchpad: list[dict[str, Any]],
+        step_index: int,
+    ) -> AssistantStepDecision:
+        ...
+```
+
+Production `_decide_next_step()` performs the structured-output model call,
+using the same model-group fallback style as `StructuredLLMAgent._structured_call`.
+Tests monkeypatch this method with a scripted provider:
+
+```python
+def scripted_decisions(*decisions: AssistantStepDecision):
+    queue = list(decisions)
+
+    def fake_decide_next_step(**_kwargs):
+        assert queue, "assistant requested more decisions than expected"
+        return queue.pop(0)
+
+    return fake_decide_next_step
+```
+
+This seam is the linchpin for PR 1 and PR 2: deterministic tests should exercise
+the loop, step cap, validation, dispatch, and trace shape without LM Studio,
+network, or a live model.
+
+### Agent placement, binding, and enablement
+
+For PRs 1-4:
+
+- Add `assistant` to `agents/config.py` with `requires_structured_output=True`
+  and no function-calling requirement.
+- Add `AssistantAgent` to `agents/__main__.py` dispatch like the other
+  specialized agents.
+- Add the assistant UUID to `CHAT_RESPONDER_UUIDS`, so it is triggered only when
+  it is a member of a chat room and a human posts there. Do not make it a global
+  singleton agent.
+- Leave the default model binding empty. Tests use the fake-model seam; live use
+  requires the operator to bind the assistant to a structured-output model group
+  through the existing agent-model binding UI.
+
+This keeps enablement local and inspectable: adding the assistant to a room is
+the opt-in switch for that room, and model binding stays in the existing
+operator-controlled model configuration path.
+
+### Trace write helper
+
+Use append-only chat debug rows for PR 3. The helper belongs in the assistant
+module first; move it into `db` only if another subsystem needs it.
+
+```python
+def post_assistant_trace(
+    *,
+    room_uuid: UUID,
+    agent_uuid: UUID,
+    journal_id: int,
+    step_index: int,
+    status: Literal["planned", "running", "observed", "failed", "final"],
+    action: str | None,
+    reason: str | None = None,
+    args: dict[str, Any] | None = None,
+    observation_preview: str | None = None,
+    error: str | None = None,
+) -> ChatMessage:
+    ...
+```
+
+Implementation rule:
+
+- It calls `db.post_chat_message(..., content_type="json", kind="debug-assistant")`.
+- The JSON payload includes `schema`, `journal_id`, `step_index`, `status`,
+  `action`, `reason`, `args`, `observation_preview`, and `error`.
+- `(journal_id, step_index)` is the logical grouping key for all events in a
+  step. It is not a database uniqueness constraint because `planned`,
+  `running`, `observed`, and `failed` are separate append-only events.
+- Ordering comes from `chat_message.id` / `created_at`.
+- Redaction v1: PRs 1-4 have no secret-carrying actions, so persist args
+  verbatim for those actions. When a later capability sets `secrets=true`,
+  redaction becomes mandatory before this helper is called.
+
+PR 3 acceptance tests should assert:
+
+- a `running` event is committed before the action returns;
+- a successful action writes `observed`;
+- a failed action writes `failed`;
+- final reply writes `final` and then the user-visible assistant message;
+- `journal.result` summarizes final state but is not the only trace source.
+
+---
+
 ## Decision ledger
 
 These decisions are considered settled for v2 unless implementation facts
@@ -1064,49 +1251,53 @@ changed, or deleted as code lands.
 
 ---
 
-## What is still missing to make this an actionable spec
+## What is still missing to make the full roadmap actionable
 
-This document is a decided *roadmap*, not yet a buildable *spec*. The difference
-is that a spec leaves no open decision between "read it" and "write the code." The
-items below are the gaps that still force a developer to make a judgment call
-mid-implementation. Each must be pinned to a single concrete answer (not a range)
-before its phase can be coded straight through. Status: **decided** = answer is
-fixed; **range** = doc gives options but not a choice; **missing** = not addressed.
+PRs 1-4 now have a concrete starting spec above. The rest of this document is
+still a decided *roadmap*, not yet a buildable spec for every phase. The
+difference is that a spec leaves no open decision between "read it" and "write
+the code." The items below are the gaps that still force a developer to make a
+judgment call mid-implementation. Each must be pinned to a single concrete
+answer before its phase can be coded straight through.
 
-### Loop and dispatch (blocks PR 2 and PR 4)
+Status: **decided** = answer is fixed in this doc; **range** = doc gives options
+but not a choice; **missing** = not addressed.
 
-- **Step-decision schema** *(missing)* - the exact Pydantic model the LLM must
-  emit to choose a step: e.g. `{thought: str, action: <enum>, args: object}`.
-  This is the heart of the loop; without it the loop cannot be written.
-- **Action interface** *(missing)* - the Python signature every action
-  implements: input args type, return/observation type, declared error type, and
-  how `output_cap_chars`/`timeout_seconds` are enforced at the call site.
-- **Assistant agent placement** *(range)* - where the `assistant` class sits in
-  the existing `Agent` / `ModelGroupAgent` / `StructuredLLMAgent` hierarchy, and
-  what its `handle()` does turn-by-turn.
-- **Model binding** *(missing)* - which model group the `assistant` role binds to
-  by default (`agent_models`), and whether the loop requires function-calling or
-  pure structured output.
-- **Enablement** *(missing)* - the flag/config that turns the assistant role on,
-  and whether it is a chat responder per room or a single global agent.
+### Loop and dispatch (pinned for PR 2 and PR 4)
 
-### Eval harness (blocks PR 1 - the linchpin)
+- **Step-decision schema** *(decided for PR 1-4)* - use
+  `AssistantStepDecision(reason, action, args)` with `AssistantActionName`.
+- **Action interface** *(decided for PR 1-4)* - use
+  `AssistantActionContext`, `AssistantObservation`, and action callables; the
+  dispatcher owns validation, timeout, output caps, and trace boundaries.
+- **Assistant agent placement** *(decided for PR 1-4)* - implement
+  `AssistantAgent` as a specialized `ModelGroupAgent`, not a
+  `StructuredLLMAgent`, because it needs multiple structured calls inside one
+  `handle()`.
+- **Model binding** *(decided for PR 1-4)* - the assistant declares
+  `requires_structured_output=True`, requires no function calling, and has no
+  default live binding. Tests use the fake-model seam; live use requires the
+  operator to bind a structured-output model group.
+- **Enablement** *(decided for PR 1-4)* - the assistant is a room-member chat
+  responder via `CHAT_RESPONDER_UUIDS`, not a global singleton.
 
-- **Fake-model seam** *(missing)* - the exact injection point where a test
-  substitutes a scripted sequence of model outputs for the live LLM call. Every
-  deterministic loop test depends on this one seam; it must be specified before
-  PR 1.
+### Eval harness (fake-model seam pinned for PR 1)
+
+- **Fake-model seam** *(decided for PR 1-4)* - monkeypatch
+  `AssistantAgent._decide_next_step(...)` with a scripted sequence of
+  `AssistantStepDecision` objects.
 - **Acceptance-case format** *(range)* - each eval in the catalog needs a
   concrete given/when/then and assertion, not just a name.
 
-### Trace and persistence (blocks PR 3)
+### Trace and persistence (pinned for PR 3)
 
-- **Trace write helper** *(missing)* - the concrete `db` helper that writes a
-  `debug-assistant` row keyed by `(journal_id, step_index)`, and the chat-render
-  query that reads them back in order.
-- **Redaction rule** *(range)* - which actions can carry secrets and the exact
-  point args are redacted before persistence (the JSON sketch mentions it but
-  defines no rule).
+- **Trace write helper** *(decided for PR 1-4)* - use an assistant-local
+  `post_assistant_trace(...)` helper that writes append-only `debug-assistant`
+  chat rows. `(journal_id, step_index)` is the logical step grouping key, not a
+  uniqueness constraint.
+- **Redaction rule** *(decided for PR 1-4; range for later)* - PRs 1-4 expose no
+  secret-carrying actions, so args persist verbatim. Later capabilities with
+  `secrets=true` must redact before calling the trace helper.
 
 ### Memory and retrieval (blocks PR 7)
 
@@ -1145,19 +1336,20 @@ fixed; **range** = doc gives options but not a choice; **missing** = not address
 - **Open questions that are still genuinely undecided** *(missing)* - collect them
   in one place so a spec author knows exactly what to resolve first.
 
-### Minimum needed to start PR 1-4 (the conservative first slice)
+### Minimum needed to start PR 1-4
 
-Most of the above is deferrable. To begin the first slice safely, only these
-must be pinned first:
+The conservative first-slice blockers are now pinned in **PR 1-4 concrete spec**:
 
 1. Step-decision schema.
 2. Action interface signature.
 3. Fake-model seam.
-4. Trace write helper + `(journal_id, step_index)` key.
+4. Trace write helper + `(journal_id, step_index)` logical key.
+5. Assistant placement and structured-output binding requirement.
+6. Room-member chat responder enablement.
 
-With those four decided, PRs 1-4 (eval harness -> talk-only assistant -> durable
-trace -> read-only actions) can be written straight through. Everything past PR 4
-can stay a roadmap until its phase is next.
+With those decisions pinned, PRs 1-4 (eval harness -> talk-only assistant -> durable
+trace -> read-only actions) can be written straight through. Remaining gaps are
+phase-local and can stay roadmap until their phase is next.
 
 ---
 
