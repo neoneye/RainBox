@@ -30,7 +30,8 @@ The roadmap has one recommended path:
   active skills are injected.
 - Upgrade memory with hybrid retrieval and pre-rank filters before adding
   heavier inference or rerank machinery.
-- Add write actions one family at a time, with dry-run/confirm, trace, and
+- Add write actions one family at a time, risk-tiered (log-and-undo for low-risk
+  internal writes, dry-run/confirm for high-blast-radius ones), with trace and
   registry metadata.
 - Add stop/redirect through an agent-visible control path, not by pretending the
   existing browser SSE path can interrupt running agents.
@@ -81,8 +82,9 @@ with prompt text.
 | **Candidates are inert** | Model-created skills, inferred facts, corrections, and plans do not affect future behavior until active/confirmed. | Phase 2 |
 | **Filter before rank** | Secret, expired, rejected, or out-of-scope memories are removed before vector/full-text ranking. | Phase 3 |
 | **Every influence is explainable** | An answer that used a memory, skill, tool, profile fact, or write approval can point to the persisted row/file/step that influenced it. | Phase 3 |
-| **Writes are family-scoped** | No blanket mutation switch. Each write family owns its validator, dry-run/confirm path, trace shape, and tests. | Phase 5 |
+| **Writes are family-scoped and risk-tiered** | No blanket mutation switch. Each write family owns its validator, trace shape, tests, and an approval tier - log-and-undo for low-risk internal writes, dry-run/confirm for high-blast-radius or outward-facing ones. | Phase 5 |
 | **Stop is stateful** | A stopped run records why and where it stopped; it is not just a killed process with missing context. | Phase 6 |
+| **Context is budgeted** | Everything injected into a prompt (skills, profile, memory, action catalog, conversation) lives under an explicit token budget with per-section caps. Local models have small windows (8k-32k) and degrade when stuffed ("lost in the middle"), so budgeting is enforced from Phase 1, not deferred to a compression phase. | Phase 1 |
 
 These are the "personal assistant but understandable" guardrails. The roadmap
 can change phase boundaries, but these contracts should remain stable.
@@ -152,7 +154,7 @@ Ordering rationale:
 | Phase | Reuse now | Net-new work |
 |---|---|---|
 | 0 | existing pytest style, fake model patterns, retrieval telemetry, feedback/eval hooks | assistant-specific fake-model fixtures and acceptance cases |
-| 1 | chat enqueue path, agent config/dispatch, structured output patterns, memory retrieval, QueryAgent handlers, workspace command policy | assistant loop, action enum, explicit step trace writer |
+| 1 | chat enqueue path, agent config/dispatch, structured output patterns, memory retrieval, QueryAgent handlers, workspace command policy | assistant loop, action enum, `assistant_run`/`assistant_step` tables + step writer, prompt token budget |
 | 2 | `<customize.dir>` overlay pattern, markdown/operator workflow, retrieval telemetry pattern | skills loader, status metadata, candidate review flow |
 | 3 | Q&A pgvector/embedding path, MemoryClaim schema, RetrievalEvent telemetry | memory embeddings, merged ranking, profile prompt block |
 | 3.5 | normal agent process model, `inferred_by_model` evidence kind | schedule/drip mechanism, derivation prompts, dedupe/conflict policy |
@@ -342,52 +344,47 @@ prevents the assistant from feeling weaker than the existing QueryAgent.
 
 ### Phase 1 trace storage
 
-Use Postgres from the beginning, but do not add assistant-specific tables yet.
+**Decision (revised):** build dedicated `assistant_run` / `assistant_step`
+tables in PR 3 as the durable, queryable source of truth. Do not store the trace
+as JSON inside `chat_message`.
 
-Recommended v1 trace shape:
+Why this reverses the earlier "chat rows first" pin: the doc's own deferral
+trigger was "the operator needs to query/filter traces by action or status" -
+and that need arrives on *day one* of debugging the ReAct loop ("how often does
+`query_qa` fail?", "which step caps out?"). A JSON-in-`chat_message.text`
+approach answers those only via full scans and JSON extraction, and it conflates
+two different domain entities (a human message vs a machine step trace), making
+the context builder filter trace rows out of every prompt. The migration is
+cheap (~15 minutes); pay it now.
 
-- Persist a `debug-assistant` chat row for each step transition:
-  `planned`, `running`, `observed`, `failed`, or `final`.
-- Store a final JSON string summary in `journal.result` when the agent exits.
-- Commit the step trace before the action starts and after the observation is
-  available. If the process is killed mid-action, the operator should at least
-  see which step/action was in progress.
+Minimal schema (illustrative, not binding):
 
-Do not rely on `journal.result` alone for mid-run durability. It is a text
-column and the base agent only writes it when `handle()` exits.
-
-Pre-agreed trigger for `assistant_run` / `assistant_step` tables:
-
-- The operator needs to query/filter traces by action or status.
-- Resume-from-step becomes real, not just inspect-last-step.
-- Trace rows need foreign keys to action outputs, files, or approval records.
-
-Until then, `debug-assistant` plus final `journal.result` is simpler.
-
-The `debug-assistant` JSON payload should be intentionally stable:
-
-```json
-{
-  "schema": "assistant_step.v1",
-  "journal_id": 123,
-  "step_index": 2,
-  "status": "running",
-  "action": "query_qa",
-  "args": {"query": "git status"},
-  "model": {"group_uuid": "...", "model_uuid": "..."},
-  "observation_preview": null,
-  "error": null
-}
-```
+- `assistant_run`: `id`, `journal_id`, `room_uuid`, `agent_uuid`, `status`
+  (`running`/`stopped`/`failed`/`killed`/`finished`), `started_at`,
+  `finished_at`, `final_summary`.
+- `assistant_step`: `id`, `run_id` (FK), `step_index`, `phase`
+  (`planned`/`running`/`observed`/`failed`/`final`), `action`, `reason`,
+  `args` (JSONB), `observation_preview`, `error`, `model_group_uuid`,
+  `created_at`. Append-only: one row per transition, so a killed mid-action run
+  still shows the last committed `running` row.
 
 Rules:
 
-- `planned` or `running` is committed before dispatch.
-- `observed`, `failed`, or `final` is committed after dispatch or final answer.
-- Arguments are redacted before persistence if a future action can carry
-  secrets.
-- The final journal summary links back to step indexes rather than duplicating
-  every observation.
+- `planned`/`running` is committed before dispatch; `observed`/`failed`/`final`
+  after. `journal.result` holds only a short final summary (it is a `Text`
+  column the base agent writes solely on `handle()` exit, so it cannot be the
+  mid-run trace - the tables are).
+- `args` is JSONB so the operator can index/filter by action and argument shape
+  without full scans.
+- Arguments are redacted before persistence once any action sets `secrets=true`.
+
+**Chat stays the inline view, not the store.** The chat UI still renders the
+trace inline (operators want to see the agent's steps in the conversation), but
+it renders *from* the tables - either by reading them or via a thin
+`kind="debug-assistant"` pointer row that carries only `run_id`/`step_index`,
+not the whole payload. Keep `kind="debug-assistant"` (never `"progress"`): the UI
+folds non-`message` kinds away, and `post_chat_message` reaps the sender's
+`progress` rows on a terminal reply, which must not destroy the trace pointers.
 
 ### First PR scope
 
@@ -580,6 +577,13 @@ Retrieval B is the right first semantic upgrade:
 - Use structured `subject`, `predicate`, and `object` fields for exact/entity
   boosts.
 - Record retrieval telemetry for retrieved and injected claims.
+
+Scope/sizing honesty: the **M/L** estimate is the *minimal* build - pgvector +
+Postgres `tsvector` + a `subject`/`object` exact-match boost, combined with a
+simple weighted merge. A *full* hybrid engine (reciprocal-rank fusion, entity
+graphs, BM25, learned weights) is a much larger project and is explicitly **not**
+Phase 3; add those pieces one at a time only if an eval shows the minimal blend
+misses recall. Do not start Phase 3 by building the maximal search stack.
 
 Retrieval pipeline contract:
 
@@ -788,6 +792,16 @@ can share neither field by accident.
 The registry is not just UI metadata. Dispatch must reject disabled or unknown
 capabilities even if the model emits a valid-looking action name.
 
+**The registry stays code-level, not a database/UI subsystem.** For a solo
+operator this is a Python object - a list/dict of `Capability` dataclasses (or a
+decorator that registers each action callable into the same enum from Phase 1) -
+read at startup, used to generate the prompt catalog and gate dispatch. Do *not*
+build a DB-backed registry table, an admin CRUD UI, roles, or per-channel ACLs;
+that is enterprise governance with no payoff for one user. Enabled/disabled state
+can be a config value or a settings row; the catalog itself lives in code where
+it is diffable and obviously correct. The JSON above is just the shape of one
+such dataclass, not a table schema.
+
 `rainbox doctor` belongs here only in minimal form: parse configs, list enabled
 capabilities, show missing model/embedding/MCP prerequisites, and report stale
 or invalid skill metadata. A polished subsystem-health UI is later scope.
@@ -851,15 +865,31 @@ Recommended order:
 5. **MCP tools** - last, one server/tool at a time, because the surface is
    externally supplied and easy to over-grant.
 
-Each write family must define:
+### Approval by risk tier (not blanket confirm)
 
-- dry-run output or confirmation text
-- exact persisted trace shape
-- failure behavior
-- rollback or review path where possible
-- unattended eligibility default, which should start as false
+This is a single-operator, local-first tool, largely air-gapped from money and
+the public internet. Forcing a manual "approve" on every kanban move or reminder
+is alert fatigue - it turns the assistant into a chat-driven GUI. Since
+**trace-before-action already guarantees auditability**, default approval is set
+by *blast radius*, not applied uniformly:
 
-### Approval state machine
+- **Log-and-undo tier (default for low-risk internal writes):** kanban work
+  events, reminders/cron, memory/skill candidate creation. These execute
+  immediately, write a trace, and expose an undo/revert. No pre-confirmation.
+  They are reversible local state, and the trace is the audit trail.
+- **Confirm tier (default for high-blast-radius or outward-facing writes):**
+  file/document patches, MCP tool calls, activating a skill or confirming a
+  memory that *steers future behavior*, and anything `network=true` or
+  `secrets=true`. These require the dry-run/confirm path below.
+
+The tier is a per-capability default in the registry (Phase 4), and the operator
+can move a capability between tiers. "Unattended eligibility" is then just:
+log-and-undo capabilities are unattended by default; confirm-tier ones are not.
+
+Each write family must define: its tier, the trace shape, failure behavior, and
+a rollback/undo (log-and-undo tier) or dry-run/confirm text (confirm tier).
+
+### Approval state machine (confirm tier only)
 
 - `proposed` - assistant generated a write intent and dry-run/preview.
 - `confirmed` - operator approved this exact intent.
@@ -869,15 +899,18 @@ Each write family must define:
 - `rejected` - operator rejected or edited the proposal.
 
 Do not let the assistant mutate the payload after confirmation. A changed
-payload is a new proposal.
+payload is a new proposal. Log-and-undo writes skip `proposed`/`confirmed` and
+go straight to `executing` -> `completed`/`failed`, with `undone` as an extra
+terminal state.
 
 Done when:
 
-- The assistant can perform at least one useful write family end to end.
-- The operator sees the planned write before it runs unless that capability was
-  explicitly approved for unattended use.
-- The registry enforces the same policy the prompt describes.
-- Downvotes or failed confirmations can become eval cases.
+- The assistant can perform at least one log-and-undo family and one confirm-tier
+  family end to end.
+- A confirm-tier write is never executed without an approved proposal; a
+  log-and-undo write always lands a reversible trace.
+- The registry enforces the same tier the prompt describes.
+- Downvotes, failed confirmations, or undos can become eval cases.
 
 ---
 
@@ -969,6 +1002,14 @@ Done when:
   them or a later policy allows a narrow unattended path.
 - **Bound everything.** Step count, timeout, output length, retrieved memories,
   injected skills, and enabled capabilities all need caps.
+- **Budget the prompt from day one.** The assistant assembles its prompt from a
+  fixed token budget with per-section caps (system/instructions, action catalog,
+  memory, skills, profile, conversation). Phase 1 starts with a trivial budget
+  (instructions + action catalog + recent turns); every later phase that adds an
+  injected section must declare its cap and a drop/trim order, not just append.
+  This is a hard requirement because rainbox targets local models with small
+  context windows, where over-stuffing both overflows the window and degrades
+  reasoning.
 - **Evals gate risky changes.** Retrieval, skills, registry policy, and write
   families must add regression tests before becoming default behavior.
 
@@ -996,7 +1037,7 @@ the system shippable; none should require write actions or MCP.
 |---|---|---|---|
 | 1 | Eval harness | fake-model fixture, existing memory/query regression cases, helper to assert trace events | assistant runtime |
 | 2 | Assistant role and loop | `assistant` config/dispatch, bounded loop, `reply`, `ask_clarifying_question`, fake-model tests | live LLM dependency |
-| 3 | Step trace persistence | `debug-assistant` schema, before/after action commits, final `journal.result` summary | new assistant tables |
+| 3 | Step trace persistence | `assistant_run`/`assistant_step` tables + migration, before/after action commits, thin chat pointer row, final `journal.result` summary | resume-from-step, approval FKs, dashboards |
 | 4 | Read-only actions | `query_memory`, `query_qa`, `workspace_read_command`, `kanban_read`, dispatch tests | writes, generated code, MCP |
 | 5 | Chat/UI visibility | render assistant debug rows clearly enough to inspect plan/action/observation | polished dashboard |
 | 6 | Skills MVP | loader, active/candidate lifecycle, frontmatter metadata, lexical retrieval | semantic skill retriever |
@@ -1061,6 +1102,17 @@ validator can be a small explicit `match action:` block:
 
 Use `reason`, not `thought`, so the model produces a concise audit note rather
 than private chain-of-thought. The trace should show this rationale.
+
+Why structured output, not native function-calling, for the decision step: this
+`AssistantStepDecision` is emitted via the provider's **grammar-constrained
+structured-output mode** (`as_structured_llm`), not freeform string parsing - on
+local models served by LM Studio/Jan/Ollama, constrained decoding is at least as
+reliable as function-calling and more uniformly supported. rainbox also has its
+own evidence: its kanban benchmark (2026-06-11) found *markdown context +
+structured output beats JSON and function calling on reliability and speed* for
+local models. Function-calling stays available as a per-capability/per-model
+option once the registry exists (Phase 4), for models where it benchmarks better -
+but it is not the default, and rainbox still owns the loop either way.
 
 ### Action interface
 
@@ -1173,53 +1225,54 @@ operator-controlled model configuration path.
 
 ### Trace write helper
 
-Use append-only chat debug rows for PR 3. The helper belongs in the assistant
-module first; move it into `db` only if another subsystem needs it.
+PR 3 writes to the `assistant_step` table (the source of truth), and posts a thin
+`debug-assistant` chat row only so the trace renders inline. The helper belongs
+in `db` (it touches the new tables alongside the existing chat helper).
 
 ```python
-def post_assistant_trace(
+def append_assistant_step(
     *,
-    room_uuid: UUID,
-    agent_uuid: UUID,
-    journal_id: int,
+    run_id: int,
     step_index: int,
-    status: Literal["planned", "running", "observed", "failed", "final"],
+    phase: Literal["planned", "running", "observed", "failed", "final"],
     action: str | None,
     reason: str | None = None,
     args: dict[str, Any] | None = None,
     observation_preview: str | None = None,
     error: str | None = None,
-) -> ChatMessage:
+    model_group_uuid: UUID | None = None,
+) -> AssistantStep:
+    """Append one step-transition row, then post a thin debug-assistant chat
+    pointer row (run_id + step_index, not the full payload) for inline display."""
     ...
 ```
 
-Implementation rule:
+Implementation rules:
 
-- It calls `db.post_chat_message(..., content_type="json", kind="debug-assistant")`.
-- The JSON payload includes `schema`, `journal_id`, `step_index`, `status`,
-  `action`, `reason`, `args`, `observation_preview`, and `error`.
-- `(journal_id, step_index)` is the logical grouping key for all events in a
-  step. It is not a database uniqueness constraint because `planned`,
-  `running`, `observed`, and `failed` are separate append-only events.
-- Ordering comes from `chat_message.id` / `created_at` (verified: `id` is the
-  autoincrement primary key the chat already uses as its ordering cursor).
-- Load-bearing detail: keep `kind="debug-assistant"`, **never `"progress"`**.
-  `post_chat_message` deletes the sender's own `kind="progress"` rows in the room
-  whenever it posts a terminal reply (`kind="message"`/`"notice"`). Trace events
-  must survive the final reply, so they must not use the auto-reaped `progress`
-  kind. The UI already folds away non-`message` kinds, so `debug-assistant` rows
-  stay inspectable without cluttering the chat.
-- Redaction v1: PRs 1-4 have no secret-carrying actions, so persist args
-  verbatim for those actions. When a later capability sets `secrets=true`,
-  redaction becomes mandatory before this helper is called.
+- The row is committed to `assistant_step` first; the chat pointer is posted in
+  the same transaction via
+  `db.post_chat_message(..., content_type="json", kind="debug-assistant")`
+  carrying only `{run_id, step_index}`.
+- `(run_id, step_index)` groups the events of one step; rows are append-only
+  (`planned`, `running`, `observed`, `failed` are separate rows), so there is no
+  uniqueness constraint on the pair. Ordering is `assistant_step.id` /
+  `created_at`.
+- Keep the pointer's `kind="debug-assistant"`, **never `"progress"`**:
+  `post_chat_message` reaps the sender's `progress` rows on a terminal reply, and
+  the UI already folds non-`message` kinds away - so the pointer stays
+  inspectable and is never auto-destroyed when the final answer posts.
+- Redaction v1: PRs 1-4 have no secret-carrying actions, so persist `args`
+  verbatim. When a later capability sets `secrets=true`, redaction is mandatory
+  before this helper is called.
+- `journal.result` stores only the short final summary; the tables are the trace.
 
 PR 3 acceptance tests should assert:
 
-- a `running` event is committed before the action returns;
-- a successful action writes `observed`;
-- a failed action writes `failed`;
-- final reply writes `final` and then the user-visible assistant message;
-- `journal.result` summarizes final state but is not the only trace source.
+- a `running` row lands in `assistant_step` before the action returns;
+- a successful action appends `observed`; a failed action appends `failed`;
+- final reply appends `final`, then posts the user-visible assistant message;
+- the trace is queryable by `action`/`phase` without scanning chat history;
+- `journal.result` summarizes final state but is not the trace source.
 
 ---
 
@@ -1232,7 +1285,7 @@ invalidate them:
 |---|---|---|
 | First assistant primitive | rainbox-owned ReAct loop | a framework can prove step-at-a-time durable tracing with less code |
 | Generated code | defer; new runner required | Phase 1 loop is useful and read-only generated scripts have a clear sandbox |
-| Trace storage | `debug-assistant` rows plus final `journal.result` | query/filter/resume needs exceed chat-row JSON |
+| Trace storage | dedicated `assistant_run`/`assistant_step` tables (source of truth) + thin chat pointer for inline view | a single-table or chat-only shape demonstrably suffices in practice |
 | First action set | read-only enum including `query_qa` | a fake-model eval shows a smaller set is still useful |
 | Skill storage | markdown plus frontmatter/sidecar metadata | operator review requires DB filtering at scale |
 | Skill activation | candidate before active | tests and policy exist for narrow auto-activation |
@@ -1310,10 +1363,11 @@ but not a choice; **missing** = not addressed.
 
 ### Trace and persistence (pinned for PR 3)
 
-- **Trace write helper** *(decided for PR 1-4)* - use an assistant-local
-  `post_assistant_trace(...)` helper that writes append-only `debug-assistant`
-  chat rows. `(journal_id, step_index)` is the logical step grouping key, not a
-  uniqueness constraint.
+- **Trace write helper** *(decided for PR 1-4)* - `db.append_assistant_step(...)`
+  appends to the `assistant_run`/`assistant_step` tables (the source of truth)
+  and posts a thin `debug-assistant` chat pointer row for inline display.
+  `(run_id, step_index)` is the logical step grouping key, not a uniqueness
+  constraint.
 - **Redaction rule** *(decided for PR 1-4; range for later)* - PRs 1-4 expose no
   secret-carrying actions, so args persist verbatim. Later capabilities with
   `secrets=true` must redact before calling the trace helper.
@@ -1339,9 +1393,9 @@ but not a choice; **missing** = not addressed.
 
 ### Registry and control (blocks PR 8 and PR 10)
 
-- **Registry source of truth** *(range)* - is the registry a Python list of
-  dataclasses, a DB table, or a config file? The prompt catalog is generated from
-  whichever this is.
+- **Registry source of truth** *(decided)* - a code-level Python object (list of
+  `Capability` dataclasses / decorator-registered callables), not a DB table or
+  CRUD UI. The prompt catalog is generated from it; enabled/disabled is config.
 - **Control channel** *(range)* - the "control row" needs a concrete home: a new
   table vs a chat row `kind`, plus the poll cadence the loop uses between steps.
 - **Approval persistence** *(missing)* - where the `proposed -> confirmed -> ...`
@@ -1350,8 +1404,9 @@ but not a choice; **missing** = not addressed.
 
 ### Cross-cutting
 
-- **Migrations** *(missing)* - every new column/table above needs a migration;
-  none are written.
+- **Migrations** *(missing)* - every new column/table needs a migration; none
+  are written. The `assistant_run`/`assistant_step` tables are the first one,
+  due in PR 3.
 - **Open questions that are still genuinely undecided** *(missing)* - collect them
   in one place so a spec author knows exactly what to resolve first.
 
@@ -1362,7 +1417,7 @@ The conservative first-slice blockers are now pinned in **PR 1-4 concrete spec**
 1. Step-decision schema.
 2. Action interface signature.
 3. Fake-model seam.
-4. Trace write helper + `(journal_id, step_index)` logical key.
+4. Trace tables + `append_assistant_step(...)` helper + `(run_id, step_index)` key.
 5. Assistant placement and structured-output binding requirement.
 6. Room-member chat responder enablement.
 
