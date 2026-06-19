@@ -56,6 +56,11 @@ pieces:
 
 ### Proposed roadmap
 
+> **Superseded by the [Combined recommendation](#combined-recommendation) below.** This
+> tiered list is kept as the original analysis; the Combined section is the single
+> authoritative plan (it folds these tiers and Codex's refinements into one sequence with
+> sizing). Read this for the *why*, build from the Combined roadmap.
+
 Filter: makes rainbox a better **personal assistant**, fits its **durable / Postgres /
 local-first** architecture, and stays **simple enough to fully understand**. Deliberately
 *not* chasing Hermes' breadth (20 gateways, 6 backends).
@@ -157,6 +162,21 @@ pieces rainbox-native:
 
 ## Combined recommendation
 
+### North star
+
+Rainbox becomes a **durable local personal assistant**: it does multi-step work (not just
+one-shot replies), learns reusable procedures in an inspectable form, remembers facts with
+provenance, acts through bounded actions, and leaves an inspectable trace for every
+non-trivial action. The non-negotiable property — the thing that separates this from
+Hermes — is that the operator can always answer *"what did it just do, with what, and
+why?"* from persisted state.
+
+**Definition of done (v1):** a single chat message can trigger a bounded multi-step run
+that reads memory, inspects the repo, and answers with a trace; at least one human-authored
+skill demonstrably changes behavior; and a crashed run can be diagnosed from the journal.
+Everything past that (write actions, registry, steerability) is hardening and reach, not the
+core thesis.
+
 ### Decisions
 
 - **First cognition primitive:** ReAct loop first. It is the cheaper walking skeleton, fits
@@ -182,6 +202,65 @@ pieces rainbox-native:
 | 4 | Formal capability registry and approvals | Phase 1 action enum, workspace-shell policy style, settings/admin patterns | Capability metadata, confirmation/dry-run flags, operator visibility, `rainbox doctor`, MCP policy hardening | Assistant can only call registered capabilities; operator can inspect what it is allowed to do | L, roughly 2-3 weeks if UI/doctor/MCP are included |
 | 5 | Controlled write actions | Cron APIs, kanban APIs, patch/document agents, memory commands | One write family at a time with trace, dry-run or confirmation, and rollback/review path | Assistant completes one real personal workflow end to end with the write visible and reviewable | M per action family |
 | 6 | Steerability and runtime visibility | Supervisor heartbeats, chat/SSE, journal, existing process watchdog | `/stop`, interrupt/redirect, context compression, long-call progress heartbeats, runtime dashboard | Active runs can be stopped or redirected without corrupting trace; long calls no longer look dead | M/L |
+
+### Why this order
+
+The sequence is driven by dependencies and by risk-per-phase, not by conceptual neatness:
+
+- **Loop before everything** because skills, semantic memory, registry, and write actions
+  all need something that *uses* them; building any of them first means building against a
+  consumer that doesn't exist.
+- **Skills before semantic memory** because skills are valuable even with crude lexical
+  retrieval, and they exercise the prompt-injection/telemetry plumbing that the semantic
+  upgrade then improves — so Phase 2 de-risks Phase 3 rather than the reverse.
+- **Semantic memory before the formal registry** because retrieval quality is what makes the
+  assistant *feel* useful, and the registry is a control plane — it should arrive when there
+  is real power to control, not before.
+- **Registry before write actions** because retrofitting permissions onto an assistant that
+  can already mutate state is the painful ordering. (The Phase 1 action enum is the seed, so
+  this is a formalization, not a from-scratch build.)
+- **Steerability last** because interrupt/redirect and compression only matter once runs are
+  long enough to need stopping — which they aren't until write actions and multi-step depth
+  exist.
+
+Read the column dependencies as: every phase reuses the *Reuse* column and ships only the
+*Net-new* column. If a phase's Net-new list grows past what one PR can hold, split it — do
+not let a phase silently absorb the next one's scope.
+
+### First PR scope (the only thing that needs to be decided to start)
+
+Everything downstream is sequenced; the only commitment needed now is PR 1.
+
+- **Build:** a new `assistant` chat responder running a bounded ReAct loop (max ~4–6 steps)
+  over the read-only action enum below, persisting each step to the existing journal/debug
+  surfaces.
+- **Reuse:** the chat enqueue path, `FunctionAgent`/structured-output patterns, the
+  `workspace_shell` sandbox, and existing memory retrieval.
+- **Test:** drive the loop with fake model outputs (deterministic, no live LLM) so the
+  control flow, action dispatch, step-cap, and trace format are covered without provider
+  flakiness.
+- **Done when:** one user message produces ≥2 model/tool iterations; the full trace
+  (plan → action → args → observation → final) is inspectable from chat or Flask-Admin; and
+  killing the process mid-run leaves a journal state that shows exactly which step ran last.
+- **Explicitly out of scope for PR 1:** any write action, MCP, skills, semantic retrieval,
+  and the formal registry. Resist scope creep here — the value of PR 1 is proving the loop
+  and trace are sound.
+
+### Risks and mitigations
+
+- **The loop rambles / burns steps without converging.** Mitigation: hard step-cap, a
+  required `reply` or `ask_clarifying_question` terminal action, and an eval case that fails
+  if a known-simple task takes more than N steps.
+- **Trace-in-`journal.result` becomes unqueryable.** This is the pre-agreed trigger to split
+  into `assistant_run`/`assistant_step` tables — watch for it in Phase 2–3, don't pre-build.
+- **Model-proposed skills quietly steer future behavior.** Mitigation: candidate→active
+  lifecycle with operator activation; never inject an unactivated skill into a prompt.
+- **Semantic retrieval surfaces sensitive/forbidden memory.** Mitigation: scope/sensitivity/
+  expiry filters run *before* ranking, and an eval case asserts forbidden claims never
+  appear regardless of similarity score.
+- **Registry retrofit pain.** Mitigation: the Phase 1 action enum *is* the registry seed, so
+  Phase 4 extends rather than introduces it — keep the enum the single dispatch gate from
+  day one.
 
 ### Phase 0/1 detail
 
