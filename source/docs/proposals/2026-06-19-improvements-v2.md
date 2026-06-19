@@ -1427,6 +1427,258 @@ phase-local and can stay roadmap until their phase is next.
 
 ---
 
+## Draft answers for remaining spec gaps
+
+This section is a draft, not yet a settled contract. It gives the next spec
+author concrete defaults for the areas above that still say **range** or
+**missing**. Promote a draft answer to the main phase text only after checking it
+against the implementation at that point.
+
+### Draft: acceptance-case format
+
+Use the existing `eval_case` / `eval_run` / `eval_result` tables. Do not add a
+separate eval-case file format for the assistant until the DB shape becomes
+painful. A hand-authored eval case should be stored as:
+
+```json
+{
+  "name": "assistant two-step query then reply",
+  "case_type": "tool_output",
+  "split": "regression",
+  "status": "active",
+  "input": {
+    "agent_role": "assistant",
+    "room_history": [
+      {"sender_type": "human", "text": "what is the current git status?"}
+    ],
+    "scripted_decisions": [
+      {"reason": "Need project status.", "action": "query_qa", "args": {"query": "git status"}},
+      {"reason": "Have enough information.", "action": "reply", "args": {"message": "Working tree ..."}}
+    ]
+  },
+  "expected": {
+    "trace_phases": ["running", "observed", "final"],
+    "actions": ["query_qa", "reply"],
+    "must_include": ["Working tree"],
+    "must_not_include": ["Traceback"]
+  },
+  "rubric": {
+    "assertions": [
+      "trace_contains_actions_in_order",
+      "final_reply_matches_expected",
+      "no_failed_step"
+    ]
+  }
+}
+```
+
+Current caveat: the DB check constraint only allows `chat_reply`,
+`memory_retrieval`, `query_answer`, and `tool_output`. For PRs 1-4, reuse
+`tool_output` for assistant-loop control-flow tests. If assistant evals become a
+first-class surface, migrate the constraint to add `assistant_loop`,
+`skill_injection`, and `write_action`.
+
+### Draft: memory embedding storage and ranking
+
+Pick a separate table, not a vector column on `memory_claim`.
+
+Rationale:
+
+- `MemoryClaim` stays readable in Flask-Admin and normal SQLAlchemy queries.
+- Multiple embedding models or text hashes can coexist during rebuilds.
+- Failed or partial embedding rebuilds do not corrupt the memory source row.
+- The existing Q&A vector table is owned by `PGVectorStore`; memory can use a
+  simpler rainbox-owned table with explicit provenance.
+
+Draft table:
+
+```text
+memory_embedding
+- id
+- uuid
+- memory_uuid
+- model_name
+- embed_dim
+- text_hash
+- embedding vector(768)
+- created_at
+- updated_at
+unique(memory_uuid, model_name, text_hash)
+index: hnsw on embedding vector_cosine_ops when pgvector supports it; otherwise no index until row count justifies ivfflat
+```
+
+Draft model/index choices:
+
+- embedding model: reuse the Q&A path, `nomic-embed-text`
+- runtime: Ollama-compatible OpenAI embeddings endpoint already used by
+  `agents/query_kb_helpers.py`
+- dimension: 768
+- distance: cosine
+- vector candidate count: 40
+- full-text candidate count: 40
+- final injected memories: 6
+- memory prompt budget: 1200 tokens or the smaller per-model cap declared by the
+  prompt-budget builder
+
+Draft merge formula for the minimal Phase 3 build:
+
+```text
+hard_filter = status=active AND scope allowed AND sensitivity allowed AND
+              (expires_at IS NULL OR expires_at > now)
+
+score =
+  0.55 * vector_similarity_0_to_1 +
+  0.30 * full_text_score_0_to_1 +
+  0.15 * entity_boost
+
+entity_boost =
+  1.0 if subject/object exact-match a query entity
+  0.5 if subject/object token-overlap the query
+  0.0 otherwise
+```
+
+Keep confidence and scope as tie-breakers after the score, not hidden score
+multipliers in v1. If evals show the weighted formula is brittle, try reciprocal
+rank fusion later; do not start there.
+
+### Draft: skills metadata and dedup
+
+Use markdown frontmatter for v1. Do not use sidecar JSON unless frontmatter
+causes tooling pain.
+
+Required fields:
+
+```yaml
+id: summarize-pr-review
+status: active
+created_by: human
+source_journal_id:
+source_step_id:
+supersedes:
+retrieval_tags: [github, review, pull-request]
+updated_at: "2026-06-20T00:00:00Z"
+```
+
+Draft load order:
+
+1. Load base skills from the repo skills directory.
+2. Load overlay skills from `<customize.dir>/skills/`.
+3. Normalize `id` as a lowercase slug; reject ids with path separators.
+4. Overlay wins over base for the same id.
+5. A `rejected` overlay skill with the same id suppresses the base skill.
+6. `candidate` skills are visible in review lists but never injected.
+7. `supersedes` hides the predecessor only when the successor is `active`.
+8. Cycles in `supersedes` make all involved skills invalid until fixed.
+9. Duplicate ids inside the same directory are an error, not last-write-wins.
+
+Retrieval v1: lexical match against title, `retrieval_tags`, headings, and first
+paragraph. Semantic skill retrieval waits until the Phase 3 memory retrieval
+upgrade is available.
+
+### Draft: control channel
+
+Use a new DB table rather than a chat row. Chat rows are user/operator
+conversation artifacts; control rows are runtime state.
+
+Draft table:
+
+```text
+assistant_control
+- id
+- uuid
+- run_id
+- command: stop | redirect
+- payload JSONB
+- state: pending | applied | ignored
+- requested_by_uuid
+- created_at
+- applied_at
+- note
+```
+
+Draft behavior:
+
+- `/stop` inserts `command=stop`, `state=pending`.
+- A redirect inserts `command=redirect` with the new instruction in `payload`.
+- The assistant checks for pending controls before each model call and before
+  each action dispatch.
+- PR 10 does not promise mid-LLM interruption. If a model call is already
+  blocked, the supervisor kill path remains the emergency fallback.
+- Applying a control writes an `assistant_step` row with phase `control`.
+
+### Draft: approval persistence
+
+Use a dedicated `assistant_write_intent` table for confirm-tier writes. Do not
+store approvals only in chat messages.
+
+Draft table:
+
+```text
+assistant_write_intent
+- id
+- uuid
+- run_id
+- step_id
+- capability_name
+- payload_hash
+- payload JSONB
+- preview_text
+- state: proposed | confirmed | executing | completed | failed | rejected | undone
+- created_at
+- confirmed_at
+- executed_at
+- completed_at
+- confirmed_by_uuid
+- result JSONB
+```
+
+Rules:
+
+- The hash is computed over canonical JSON for `capability_name + payload`.
+- Confirming approves exactly that hash. Any edited payload creates a new
+  intent.
+- Confirm-tier dispatch refuses to execute unless state is `confirmed` and the
+  current payload hash matches.
+- Log-and-undo writes may skip this table in v1 if their trace includes enough
+  data to undo; use this table only when preview/confirmation is required.
+
+### Draft: migrations and schema changes
+
+Rainbox currently uses SQLAlchemy models plus idempotent startup migrations in
+`db.init_db()`, not a separate Alembic workflow. For assistant schema PRs, use
+that pattern unless the project adopts a migration tool first.
+
+Each schema PR should include:
+
+- SQLAlchemy model definitions.
+- `db.create_all()` coverage for fresh DBs.
+- guarded `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` only when modifying an
+  existing table.
+- constraint migrations when enum/check values change.
+- idempotency tests that call `init_db()` twice against an existing DB with
+  sentinel rows.
+- facade exports from `db/__init__.py` for new helper functions.
+
+The first schema PR is PR 3: `assistant_run` and `assistant_step`, plus
+`db.append_assistant_step(...)`.
+
+### Draft: open-question register
+
+Add an `## Open questions` subsection to this document whenever a phase reaches
+implementation and still has a **range** or **missing** item. Use this shape:
+
+```markdown
+| ID | Phase/PR | Question | Current default | Decision owner | Blocks |
+|---|---|---|---|---|---|
+| OQ-001 | PR 7 | HNSW vs no vector index for memory_embedding? | no index until row count requires it | operator | memory retrieval PR |
+```
+
+Open questions should be temporary. If a question survives a phase PR, either
+move it to a later phase explicitly or make the conservative default the
+decision.
+
+---
+
 ## Sources
 
 See [`2026-06-19-improvements-v1-brainstorm.md`](2026-06-19-improvements-v1-brainstorm.md)
