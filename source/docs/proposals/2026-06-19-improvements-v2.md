@@ -1320,9 +1320,9 @@ Notes:
   steps have no real model.
 - Do not add a uniqueness constraint on `(run_id, step_index)`: every step is
   append-only and normally has multiple rows.
-- If a fresh DB is created, `db.create_all()` should create both tables. If an
-  existing DB starts after the PR, `init_db()` must create or migrate them
-  idempotently.
+- These are new tables, so `db.create_all()` in `init_db()` creates them on both
+  fresh and existing DBs and never touches existing rows. No guarded `ALTER` is
+  needed in PR 3 (see *Verified runtime bindings*).
 
 ### Prompt assembly contract
 
@@ -1355,9 +1355,10 @@ The first loop should look like this structurally:
 
 ```text
 handle(journal_id, payload):
-  room_uuid = payload.room_uuid
+  room_uuid = require_room_uuid(payload)   # payload is a dict: payload["room_uuid"]
   run = start_assistant_run(journal_id, room_uuid, self.agent_uuid, step_limit=6)
-  transcript = build_message_only_transcript(room_uuid)
+  transcript = format_history(                       # chat.transcript.format_history
+    [m for m in db.list_room_messages(room_uuid) if m.kind == "message"])
   scratchpad = []
 
   for step_index in range(run.step_limit):
@@ -1402,6 +1403,39 @@ Important boundaries:
 - Unhandled Python exceptions still let `Agent.run()` mark the journal failed;
   the assistant should also try to mark the `assistant_run` failed before
   re-raising when possible.
+
+### Verified runtime bindings
+
+These tie the skeleton to the real code so PR 1-4 can be written directly:
+
+- **Payload is a dict.** `handle(self, journal_id, payload: dict)` - read
+  `payload.get("room_uuid")` and raise on missing, the same guard
+  `chat_structured.py` uses (`_room_uuid`). The trigger enqueues
+  `{"room_uuid", "message_uuid"}`; like the existing responders, the assistant
+  reads current room history and does not anchor to `message_uuid`.
+- **Transcript reuse.** Build it from `db.list_room_messages(room_uuid)` filtered
+  to `kind == "message"`, rendered with `chat.transcript.format_history` - no new
+  transcript code.
+- **Run-failure handling is explicit.** Wrap the loop body so any exception sets
+  `assistant_run.status = "failed"` (and a final `assistant_step` `failed` row),
+  then re-raise. `Agent.run()` then marks the *journal* failed
+  (`base.py` catch -> `journal_update(..., "failed")`); without the wrapper the
+  run row is left stuck in `running`. The existing `_handle_with_heartbeat`
+  wrapper already keeps slow multi-step runs from being killed by the watchdog.
+- **Helper set in `db/assistant.py`** (re-exported from `db/__init__.py`):
+  `start_assistant_run(journal_id, room_uuid, agent_uuid, step_limit) -> run`,
+  `append_assistant_step(...)` (defined above), and
+  `finish_run(run, status, final_summary=None)`. The loop calls exactly these.
+- **Migration is trivial for new tables.** `assistant_run`/`assistant_step` are
+  brand-new tables, so `db.create_all()` in `init_db()` creates them on both
+  fresh and existing DBs (it only skips *existing* tables; it never wipes them).
+  No `_add_column_if_missing` is needed in PR 3 - that guarded-`ALTER` pattern is
+  only for columns added to these tables in a *later* PR. The idempotency test
+  ("`init_db()` twice preserves a sentinel row") therefore passes by construction.
+- **Final reply posting.** The loop posts the terminal message via
+  `db.post_chat_message(room_uuid, self.agent_uuid, text, content_type, kind="message")`.
+  Because that is a direct DB call (not the HTTP post endpoint), it does not run
+  `_maybe_trigger_chat_agents`, so the assistant never re-triggers itself.
 
 ### PR 1-4 test matrix
 
