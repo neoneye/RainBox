@@ -355,18 +355,19 @@ and that need arrives on *day one* of debugging the ReAct loop ("how often does
 approach answers those only via full scans and JSON extraction, and it conflates
 two different domain entities (a human message vs a machine step trace), making
 the context builder filter trace rows out of every prompt. The migration is
-cheap (~15 minutes); pay it now.
+small enough to pay now.
 
 Minimal schema (illustrative, not binding):
 
-- `assistant_run`: `id`, `journal_id`, `room_uuid`, `agent_uuid`, `status`
-  (`running`/`stopped`/`failed`/`killed`/`finished`), `started_at`,
-  `finished_at`, `final_summary`.
+- `assistant_run`: `id`, `uuid`, `journal_id`, `room_uuid`, `agent_uuid`,
+  `status` (`running`/`stopped`/`failed`/`killed`/`finished`), `step_limit`,
+  `started_at`, `finished_at`, `final_summary`, `metadata` (JSONB).
 - `assistant_step`: `id`, `run_id` (FK), `step_index`, `phase`
-  (`planned`/`running`/`observed`/`failed`/`final`), `action`, `reason`,
-  `args` (JSONB), `observation_preview`, `error`, `model_group_uuid`,
-  `created_at`. Append-only: one row per transition, so a killed mid-action run
-  still shows the last committed `running` row.
+  (`planned`/`running`/`observed`/`failed`/`final`/`control`), `action`,
+  `reason`, `args` (JSONB), `observation_preview`, `error`,
+  `model_group_uuid`, `model_uuid`, `created_at`. Append-only: one row per
+  transition, so a killed mid-action run still shows the last committed
+  `running` row.
 
 Rules:
 
@@ -1273,6 +1274,174 @@ PR 3 acceptance tests should assert:
 - final reply appends `final`, then posts the user-visible assistant message;
 - the trace is queryable by `action`/`phase` without scanning chat history;
 - `journal.result` summarizes final state but is not the trace source.
+
+### PR 3 table sketch
+
+The implementation may adjust names, but the first migration should be close to
+this shape. Keep it small; approval/control/resume columns come later.
+
+```text
+assistant_run
+- id
+- uuid
+- journal_id                     indexed, unique enough for v1 lookup
+- room_uuid
+- agent_uuid
+- status                         running | finished | stopped | failed | killed
+- step_limit                     int, default 6
+- started_at
+- finished_at
+- final_summary
+- metadata JSONB                 empty by default; model/run diagnostics only
+indexes: journal_id, room_uuid + started_at
+
+assistant_step
+- id
+- uuid
+- run_id                         FK assistant_run.id, indexed
+- step_index                     int
+- phase                          planned | running | observed | failed | final | control
+- action                         nullable text
+- reason                         nullable text
+- args JSONB                     empty object by default
+- observation_preview            nullable text
+- error                          nullable text
+- model_group_uuid               nullable UUID
+- model_uuid                     nullable UUID
+- created_at
+indexes: run_id + step_index + id, action + phase, created_at
+```
+
+Notes:
+
+- `phase="control"` is reserved for Phase 6 so the later stop/redirect feature
+  does not need a constraint migration just to record a control event.
+- `model_uuid` is nullable because fake-model tests and pre-model validation
+  steps have no real model.
+- Do not add a uniqueness constraint on `(run_id, step_index)`: every step is
+  append-only and normally has multiple rows.
+- If a fresh DB is created, `db.create_all()` should create both tables. If an
+  existing DB starts after the PR, `init_db()` must create or migrate them
+  idempotently.
+
+### Prompt assembly contract
+
+Prompt assembly is part of the assistant's behavior, not incidental string
+concatenation. For PRs 1-4, keep it deliberately small:
+
+1. System instructions: role, contracts, and the rule that `reason` is an
+   operator-facing rationale, not hidden chain-of-thought.
+2. Action catalog: only the currently enabled read-only enum entries.
+3. Recent conversation: chat messages where `kind == "message"` only. Exclude
+   `debug-*`, `progress`, and `thinking` rows from the model prompt.
+4. Scratchpad: compact summaries of prior assistant steps in this run:
+   `step_index`, `action`, `ok`, and a capped observation preview.
+
+PR 1-4 caps:
+
+- max steps per run: 6
+- max recent chat messages: 30
+- max observation preview per step in the prompt: 1200 characters
+- max total scratchpad characters: 5000
+- max workspace command output passed back to the model: 4000 characters
+
+These are simple character caps, not a final token-budget system. They are good
+enough for the first slice and keep small local models from being drowned by
+trace text. Phase 3 can replace this with a tokenizer-aware budget builder.
+
+### Loop skeleton
+
+The first loop should look like this structurally:
+
+```text
+handle(journal_id, payload):
+  room_uuid = payload.room_uuid
+  run = start_assistant_run(journal_id, room_uuid, self.agent_uuid, step_limit=6)
+  transcript = build_message_only_transcript(room_uuid)
+  scratchpad = []
+
+  for step_index in range(run.step_limit):
+    decision = _decide_next_step(transcript=transcript,
+                                 scratchpad=scratchpad,
+                                 step_index=step_index)
+    append_assistant_step(run, step_index, "planned", decision)
+
+    validation_error = validate_decision(decision)
+    if validation_error:
+      append_assistant_step(run, step_index, "failed", validation_error)
+      scratchpad.append(compact_validation_failure(decision, validation_error))
+      continue
+
+    if decision.action in terminal_actions:
+      append_assistant_step(run, step_index, "final", decision)
+      post_final_chat_message(decision.args)
+      finish_run("finished")
+      return {"ok": True, "assistant_run_id": run.id, "status": "finished"}
+
+    append_assistant_step(run, step_index, "running", decision)
+    observation = dispatch_action(decision.action, decision.args)
+
+    if observation.ok:
+      append_assistant_step(run, step_index, "observed", observation)
+    else:
+      append_assistant_step(run, step_index, "failed", observation)
+
+    scratchpad.append(compact_step(decision, observation))
+
+  post_step_limit_message()
+  finish_run("stopped", final_summary="step limit reached")
+```
+
+Important boundaries:
+
+- The final assistant chat message is posted by the loop, not by actions.
+- Nonterminal action failures do not crash the process by default; they become
+  observations the model can react to until the step cap is reached.
+- Validation failures are traceable failed steps. If the model repeatedly emits
+  invalid decisions, the step cap stops the loop.
+- Unhandled Python exceptions still let `Agent.run()` mark the journal failed;
+  the assistant should also try to mark the `assistant_run` failed before
+  re-raising when possible.
+
+### PR 1-4 test matrix
+
+| PR | Test | Assertion |
+|---|---|---|
+| 1 | scripted decision provider helper | helper returns scripted decisions in order and raises when over-consumed |
+| 1 | existing query/memory smoke cases | current behavior is protected before assistant work starts |
+| 2 | reply-only assistant | one scripted `reply` posts one final message and exits |
+| 2 | clarifying-question assistant | `ask_clarifying_question` is terminal and posts a question |
+| 2 | scripted decision provider exhausts in loop | test fails clearly when the loop asks for an unexpected extra model decision |
+| 2 | step cap | repeated nonterminal decisions stop at the configured limit |
+| 2 | invalid action args | invalid/missing args produce a traceable failed step, not a silent crash |
+| 3 | trace-before-action | `running` is committed before a fake slow action returns |
+| 3 | failed action trace | action exception becomes a `failed` assistant step |
+| 3 | final summary | `journal.result` contains summary/id pointers, not the full trace |
+| 3 | init idempotency | `init_db()` twice preserves a sentinel `assistant_run` row |
+| 4 | `query_qa` action | reuses QueryAgent/query handler path for project-status style questions |
+| 4 | `workspace_read_command` action | allowed read command returns output; forbidden command returns blocked observation |
+| 4 | `query_memory` action | current memory retrieval path returns auditable observation |
+| 4 | `kanban_read` action | reads board/card state without appending kanban events |
+
+### File placement for PR 1-4
+
+Keep the first branch boring and local to the existing module layout:
+
+| Area | File(s) |
+|---|---|
+| assistant agent | `source/agents/assistant.py` |
+| agent config | `source/agents/config.py`, `source/agents/__main__.py` |
+| chat responder trigger | `source/webapp/chat_api.py` (`CHAT_RESPONDER_UUIDS`) |
+| structured-call extraction | `source/agents/base.py` |
+| assistant trace models | `source/db/models.py` |
+| assistant trace helpers | `source/db/assistant.py`, re-exported from `source/db/__init__.py` |
+| assistant tests | `source/agents/test_assistant.py` |
+| trace/db tests | `source/db/test_assistant_trace.py` |
+| eval helper tests | colocate with the helper they exercise; do not require live LLM |
+
+Avoid adding a new package or framework for the assistant. If a helper is only
+used by `AssistantAgent`, keep it in `agents/assistant.py` until a second caller
+exists.
 
 ---
 
