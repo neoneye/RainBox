@@ -199,7 +199,7 @@ core thesis.
 |---|---|---|---|---|---|
 | 0/1 | Assistant walking skeleton with a tiny eval baseline | Chat responder enqueue path, journal/debug rows, structured-output agent patterns, workspace shell, memory retrieval/commands, existing eval/benchmark harness | New `assistant` role, bounded loop, primitive action enum, trace format, fake-model tests, initial read-only actions | One user message can drive at least two model/tool iterations; trace is inspectable; at least the cold eval cases are baselined | M/L, roughly 1-2 weeks |
 | 2 | Procedural skills MVP | `customize.dir` overlay pattern, markdown files, retrieval telemetry patterns | Skill loader, lexical skill retrieval, prompt formatting, optional candidate metadata | A human-authored skill changes assistant behavior in a traceable way; model-proposed skills can be stored for review | S/M, roughly 2-4 days |
-| 3 | Semantic memory and shared retrieval upgrade | Existing pgvector/embedding path for Q&A, memory claim/evidence schema, retrieval telemetry, chat users/rooms | Embeddings for memory claims and skills, merge lexical/vector/entity/temporal signals, compact static/dynamic user profile, lightweight session context | Semantic retrieval improves an eval case without forbidden/sensitive exposure; skills and facts share the retrieval path where practical | M/L, roughly 1-2 weeks |
+| 3 | Semantic memory and shared retrieval upgrade | Existing pgvector/embedding path for Q&A, memory claim/evidence schema, retrieval telemetry, chat users/rooms | Embeddings for memory claims and skills, merge lexical/vector/entity/temporal signals, compact static/dynamic user profile, lightweight session context (concrete recipe: see [Memory systems](#memory-systems--what-to-borrow-mem0--supermemory--honcho)) | Semantic retrieval improves an eval case without forbidden/sensitive exposure; skills and facts share the retrieval path where practical | M/L, roughly 1-2 weeks |
 | 4 | Formal capability registry and approvals | Phase 1 action enum, workspace-shell policy style, settings/admin patterns | Capability metadata, confirmation/dry-run flags, operator visibility, `rainbox doctor`, MCP policy hardening | Assistant can only call registered capabilities; operator can inspect what it is allowed to do | L, roughly 2-3 weeks if UI/doctor/MCP are included |
 | 5 | Controlled write actions | Cron APIs, kanban APIs, patch/document agents, memory commands | One write family at a time with trace, dry-run or confirmation, and rollback/review path | Assistant completes one real personal workflow end to end with the write visible and reviewable | M per action family |
 | 6 | Steerability and runtime visibility | Supervisor heartbeats, chat/SSE, journal, existing process watchdog | `/stop`, interrupt/redirect, context compression, long-call progress heartbeats, runtime dashboard | Active runs can be stopped or redirected without corrupting trace; long calls no longer look dead | M/L |
@@ -385,3 +385,90 @@ generates and runs a read-only script against a narrow rainbox API surface.
 - Do not let model-written skills affect future behavior without a visible lifecycle.
 - Do not build a large governance UI before the assistant has enough useful behavior to
   govern.
+
+---
+
+## Memory systems — what to borrow (mem0 / supermemory / honcho)
+
+Three dedicated memory projects were reviewed to pressure-test rainbox's memory plan. The
+reassuring headline: **rainbox already made the hard, opinionated decisions correctly.** What
+these projects mainly contribute is a concrete *recipe* for the Phase 3 retrieval upgrade,
+plus one optional later phase. None of them is a dependency to adopt — they are local-first
+designs whose good ideas port cleanly because rainbox's stack (Postgres + pgvector + a
+background worker) is nearly identical to theirs.
+
+### One line each
+
+- **[mem0](https://github.com/mem0ai/mem0)** — an extract-facts memory layer. As of April
+  2026 it pivoted to **single-pass ADD-only accumulation** ("memories accumulate; nothing is
+  overwritten"), with **multi-signal retrieval** (semantic + BM25 + entity, scored in
+  parallel) and temporal ranking. Agent-generated facts are first-class.
+- **[supermemory](https://github.com/supermemoryai/supermemory)** — a "memory ≠ RAG" engine:
+  fact memory *and* document retrieval in one query, with automatic expiry, contradiction
+  resolution, and an auto-maintained user profile injected into the prompt. Self-hostable as
+  one binary with local embeddings.
+- **[honcho](https://github.com/plastic-labs/honcho)** — a *theory-of-mind* / user-modeling
+  system: extracts **inferred conclusions** about peers (not just facts), built
+  asynchronously by a background "deriver," queryable via `context()` / `representation()` /
+  `search()` / a natural-language `chat()` (dialectic) endpoint. Runs on **FastAPI +
+  Postgres + pgvector + a background worker** — architecturally a near-twin of rainbox.
+
+### Three things that validate rainbox's existing bets
+
+- **mem0's ADD-only pivot independently validates rainbox's provenance-first model.** Rainbox
+  already never destroys: `memory_claim` + `memory_evidence`, with `correct` superseding
+  rather than overwriting. The most-benchmarked fact-memory layer converged on the same
+  "accumulate, don't overwrite" principle rainbox already shipped.
+- **supermemory's "Memory ≠ RAG" split is the split rainbox already has** — `memory_claim`
+  (facts about the operator) vs the Q&A pgvector store (document/knowledge retrieval). Keep
+  them separate; don't merge them into one index.
+- **Agent-generated facts as first-class** (mem0) is already rainbox's `memory_evidence`
+  kinds (`observed`/`inferred_by_model`/`confirmed_by_user`/`imported`).
+
+So the cognition-layer gap is *not* the memory schema — it is retrieval quality and the
+absence of a user profile, both already in Phase 3.
+
+### Idea-by-idea map
+
+| Idea (source) | Rainbox today | Borrow? | Where |
+|---|---|---|---|
+| Memory ≠ RAG: separate fact memory from doc retrieval (supermemory) | **Already has it** (`memory_claim` vs Q&A pgvector) | Keep the split | — |
+| Accumulate, never overwrite; supersede via evidence (mem0) | **Already has it** (claim + evidence + `correct`) | Keep | — |
+| Agent/inferred facts first-class (mem0) | **Already has it** (evidence kinds) | Keep | — |
+| Multi-signal retrieval: vector + BM25/lexical + entity, merged score (mem0) | Token-overlap only; pgvector for Q&A | **Yes — the concrete recipe** | **Phase 3** |
+| Pre-rank expiry/scope/sensitivity filtering (supermemory auto-forget) | `expiry`/`scope`/`sensitivity` fields exist, not enforced in retrieval | **Yes — cheap, high value** | **Phase 3** (already in Risks: filters before ranking) |
+| Auto contradiction detection ("moved to SF" ⊃ "NYC") (supermemory) | Manual `correct` only | **Yes, lightweight** — *detect & flag*, operator confirms | **Phase 3** detect → **Phase 5** auto-supersede (write action) |
+| Auto-maintained user profile injected into prompt (supermemory/honcho) | None | **Yes** — this is the roadmap's "user model" | **Phase 3** (compact static/dynamic profile) |
+| Inferred *conclusions* about the user, built by an async deriver (honcho) | `inferred_by_model` evidence kind exists; no deriver | **Pattern yes, scope later** — a deriver is just another rainbox agent | **New optional Phase 3.5/7** |
+| NL dialectic query of the user model w/ reasoning levels (honcho) | None | **Skip for v1** — overkill for one operator | Much later / maybe never |
+| Entity graph / linking across memories (mem0) | `subject`/`predicate`/`object` fields exist but aren't linked/traversed | **Later** — S/P/O is the seed; entity *match* (not full graph) is enough for Phase 3 | Phase 3 (match) / later (graph) |
+| Multi-modal ingestion + SaaS connectors: Drive, Gmail, Notion (supermemory) | — | **No** — gateway-breadth equivalent | Non-goal |
+| Managed cloud / external memory API (all three) | — | **No** — local-first | Non-goal |
+
+### The one genuinely new idea: an async user-model deriver (Honcho-style)
+
+Honcho's architecture is the interesting find because it is *rainbox's architecture*:
+Postgres + pgvector + a background worker that asynchronously turns raw messages into
+derived representations. In rainbox terms, a **`profile_deriver` agent** would periodically
+read recent chat/journal rows and emit/refresh `inferred_by_model` claims and a compact
+operator profile — exactly the existing agent pattern, writing into the existing schema. No
+new infrastructure, no dialectic endpoint, no new datastore.
+
+This refines the earlier "skip Honcho's dialectic complexity" note: skip the *dialectic
+query API*, but the *async-derivation pattern* is worth adopting because it costs almost
+nothing on rainbox's stack. Sequence it as an **optional Phase 3.5** (after semantic
+retrieval exists to consume the profile) or fold the first version into Phase 3's
+"compact user profile" as a one-shot summarizer, upgrading to a periodic deriver later.
+
+### Net effect on the roadmap
+
+No phase reordering. Three concrete changes, all inside Phase 3 except one optional add:
+
+1. **Phase 3 retrieval** becomes mem0's recipe explicitly: vector + lexical + entity-match,
+   merged, with expiry/scope/sensitivity filters applied *before* ranking.
+2. **Phase 3 user profile** gains supermemory's "static facts + dynamic recent context"
+   shape, injected into the assistant prompt.
+3. **Contradiction handling** splits cleanly along the existing decision boundary: *detect*
+   in Phase 3 (surface conflicts to the operator), *auto-supersede* only as a Phase 5 write
+   action with the usual dry-run/confirm.
+4. *(Optional)* **`profile_deriver` agent** (Honcho-style async derivation) as Phase 3.5.
