@@ -66,7 +66,7 @@ def test_remember_command_via_query_agent_handle_creates_memory(
         agent_uuid=QUERY_UUID, name="query", send=lambda _: None,
     )
     try:
-        agent.handle(journal_id=0, payload={
+        agent.handle(journal_id=uuid4(), payload={
             "room_uuid": str(room_uuid),
             "message_uuid": str(msg.uuid),
         })
@@ -105,7 +105,7 @@ def test_non_memory_query_falls_through_to_qa_path(
     agent = query_agent.QueryAgent(
         agent_uuid=QUERY_UUID, name="query", send=lambda _: None,
     )
-    agent.handle(journal_id=0, payload={
+    agent.handle(journal_id=uuid4(), payload={
         "room_uuid": str(room_uuid),
         "message_uuid": str(msg.uuid),
     })
@@ -145,7 +145,7 @@ def test_remember_command_does_not_initialize_qa_path(
         agent_uuid=QUERY_UUID, name="query", send=lambda _: None,
     )
     try:
-        agent.handle(journal_id=0, payload={
+        agent.handle(journal_id=uuid4(), payload={
             "room_uuid": str(room_uuid),
             "message_uuid": str(msg.uuid),
         })

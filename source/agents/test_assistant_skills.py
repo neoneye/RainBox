@@ -66,7 +66,7 @@ def test_active_skill_injected_candidate_inert(app_ctx, tmp_path, monkeypatch):
     agent._structured_completion = fake_completion
 
     try:
-        agent.handle(0, {"room_uuid": str(chatroom.uuid)})
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         prompt = captured["user_prompt"]
         assert "Widget how-to" in prompt          # active skill injected
         assert "Inspect widgets carefully" in prompt

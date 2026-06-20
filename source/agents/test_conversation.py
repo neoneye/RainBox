@@ -170,9 +170,10 @@ def test_claim_tick_cas(room):
 def test_advance_is_idempotent(room):
     run = _make_run(room)
     db.mark_conversation_turn_in_flight(run.id, 0, PERSONA_EGON_UUID)
-    assert db.advance_conversation_if_new(run.id, 10, 0) is True
+    j = uuid4()
+    assert db.advance_conversation_if_new(run.id, j, 0) is True
     # replay same completion → no double advance
-    assert db.advance_conversation_if_new(run.id, 10, 0) is False
+    assert db.advance_conversation_if_new(run.id, j, 0) is False
     fresh = db.get_conversation_run(run.id)
     assert fresh.turn == 1 and fresh.active_turn is None
 
@@ -192,19 +193,19 @@ def test_manager_full_two_turn_run(room):
 
     # egon speaks, then its completion routes back
     db.post_chat_message(room.uuid, PERSONA_EGON_UUID, "here is the plan", kind="message")
-    out = mgr.handle(2, {"from": "persona_egon", "from_journal_id": 100,
+    out = mgr.handle(2, {"from": "persona_egon", "from_journal_id": str(uuid4()),
                          "input": {"run_uuid": str(run.id), "turn": 0}, "result": {}})
     assert out["enqueued"] == "benny" and out["turn"] == 1
 
     # benny replies with the stop phrase
     db.post_chat_message(room.uuid, PERSONA_BENNY_UUID, "agreed, first step is X. DONE", kind="message")
-    out = mgr.handle(3, {"from": "persona_benny", "from_journal_id": 101,
+    out = mgr.handle(3, {"from": "persona_benny", "from_journal_id": str(uuid4()),
                          "input": {"run_uuid": str(run.id), "turn": 1}, "result": {}})
     assert out["stopped"] == "stop_phrase"
     assert db.get_conversation_run(run.id).status == "finished"
 
     # replaying benny's completion does not resurrect or advance the run
-    out = mgr.handle(3, {"from": "persona_benny", "from_journal_id": 101,
+    out = mgr.handle(3, {"from": "persona_benny", "from_journal_id": str(uuid4()),
                          "input": {"run_uuid": str(run.id), "turn": 1}, "result": {}})
     assert "skipped" in out
 
@@ -216,11 +217,11 @@ def test_manager_bounded_by_max_turns(room):
     out = mgr.handle(1, {"run_uuid": str(run.id), "kind": "tick", "expected_tick_count": 0})
     assert out["turn"] == 0
     db.post_chat_message(room.uuid, PERSONA_EGON_UUID, "step one", kind="message")
-    out = mgr.handle(2, {"from": "persona_egon", "from_journal_id": 200,
+    out = mgr.handle(2, {"from": "persona_egon", "from_journal_id": str(uuid4()),
                          "input": {"run_uuid": str(run.id), "turn": 0}, "result": {}})
     assert out["turn"] == 1
     db.post_chat_message(room.uuid, PERSONA_BENNY_UUID, "step two", kind="message")
-    out = mgr.handle(3, {"from": "persona_benny", "from_journal_id": 201,
+    out = mgr.handle(3, {"from": "persona_benny", "from_journal_id": str(uuid4()),
                          "input": {"run_uuid": str(run.id), "turn": 1}, "result": {}})
     assert out["stopped"] == "max_turns"
 
@@ -244,7 +245,7 @@ def test_manager_human_interruption_pauses(room):
     human = db.get_human_user()
     db.post_chat_message(room.uuid, human.uuid, "wait, stop", kind="message")
     db.post_chat_message(room.uuid, PERSONA_EGON_UUID, "ok", kind="message")
-    out = mgr.handle(2, {"from": "persona_egon", "from_journal_id": 300,
+    out = mgr.handle(2, {"from": "persona_egon", "from_journal_id": str(uuid4()),
                          "input": {"run_uuid": str(run.id), "turn": 0}, "result": {}})
     assert out["paused"] == "human_interruption"
     assert db.get_conversation_run(run.id).status == "paused"
@@ -259,20 +260,20 @@ def test_failed_turn_retries_then_fails(room):
     mgr.handle(1, {"run_uuid": str(run.id), "kind": "tick", "expected_tick_count": 0})  # egon, turn 0
 
     # egon's turn errors → retried (same speaker, same turn, not advanced)
-    out = mgr.handle(2, {"from": "persona_egon", "from_journal_id": 100, "state": "failed",
+    out = mgr.handle(2, {"from": "persona_egon", "from_journal_id": str(uuid4()), "state": "failed",
                          "input": {"run_uuid": str(run.id), "turn": 0}, "result": {"error": "boom"}})
     assert out["retried"] == "egon" and out["turn"] == 0 and out["attempt"] == 1
     r = db.get_conversation_run(run.id)
     assert r.turn == 0 and r.active_turn == 0 and r.retry_count == 1 and r.status == "running"
 
     # second failure exceeds MAX_TURN_RETRIES → whole run fails
-    out = mgr.handle(3, {"from": "persona_egon", "from_journal_id": 101, "state": "failed",
+    out = mgr.handle(3, {"from": "persona_egon", "from_journal_id": str(uuid4()), "state": "failed",
                          "input": {"run_uuid": str(run.id), "turn": 0}, "result": {"error": "boom"}})
     assert out["failed"] == "turn_failed"
     assert db.get_conversation_run(run.id).status == "failed"
 
     # a duplicate failed delivery is ignored (run already terminal)
-    out = mgr.handle(3, {"from": "persona_egon", "from_journal_id": 101, "state": "failed",
+    out = mgr.handle(3, {"from": "persona_egon", "from_journal_id": str(uuid4()), "state": "failed",
                          "input": {"run_uuid": str(run.id), "turn": 0}, "result": {}})
     assert "skipped" in out
 
@@ -282,11 +283,11 @@ def test_failed_then_success_advances_normally(room):
     mgr = _mgr()
     mgr.handle(1, {"run_uuid": str(run.id), "kind": "tick", "expected_tick_count": 0})
     # fail once → retry
-    mgr.handle(2, {"from": "persona_egon", "from_journal_id": 100, "state": "failed",
+    mgr.handle(2, {"from": "persona_egon", "from_journal_id": str(uuid4()), "state": "failed",
                    "input": {"run_uuid": str(run.id), "turn": 0}, "result": {"error": "x"}})
     # now the retry succeeds → advance to turn 1, retry_count resets
     db.post_chat_message(room.uuid, PERSONA_EGON_UUID, "the plan", kind="message")
-    out = mgr.handle(3, {"from": "persona_egon", "from_journal_id": 102, "state": "completed",
+    out = mgr.handle(3, {"from": "persona_egon", "from_journal_id": str(uuid4()), "state": "completed",
                          "input": {"run_uuid": str(run.id), "turn": 0}, "result": {}})
     assert out["enqueued"] == "benny" and out["turn"] == 1
     assert db.get_conversation_run(run.id).retry_count == 0

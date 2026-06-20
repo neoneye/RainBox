@@ -82,7 +82,7 @@ def test_remember_creates_inert_candidate_and_is_undoable(room):
         _decision(AssistantActionName.REPLY, message="Noted."),
     )
     try:
-        result = agent.handle(0, {"room_uuid": str(room)})
+        result = agent.handle(uuid4(), {"room_uuid": str(room)})
         assert result["status"] == "finished"
         claims = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
         assert len(claims) == 1
@@ -114,7 +114,7 @@ def test_confirm_tier_proposes_without_executing(room):
         _decision(AssistantActionName.REPLY, message="Proposed."),
     )
     try:
-        result = agent.handle(0, {"room_uuid": str(room)})
+        result = agent.handle(uuid4(), {"room_uuid": str(room)})
         # An intent was proposed; the claim was NOT activated inline.
         intents = (
             db.db.session.query(AssistantWriteIntent)
@@ -137,7 +137,7 @@ def test_confirm_then_execute_activates_claim(room):
         _decision(AssistantActionName.REPLY, message="Proposed."),
     )
     try:
-        result = agent.handle(0, {"room_uuid": str(room)})
+        result = agent.handle(uuid4(), {"room_uuid": str(room)})
         intent = (
             db.db.session.query(AssistantWriteIntent)
             .filter(AssistantWriteIntent.run_id == result["assistant_run_id"])
@@ -162,7 +162,7 @@ def test_execute_refused_unless_proposed(room):
         _decision(AssistantActionName.REPLY, message="Proposed."),
     )
     try:
-        result = agent.handle(0, {"room_uuid": str(room)})
+        result = agent.handle(uuid4(), {"room_uuid": str(room)})
         intent = (
             db.db.session.query(AssistantWriteIntent)
             .filter(AssistantWriteIntent.run_id == result["assistant_run_id"])

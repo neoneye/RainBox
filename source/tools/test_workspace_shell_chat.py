@@ -88,7 +88,7 @@ def test_handle_kanban_task_executes_description(kanban_board):
 
     # Success: exit 0 → done column, lease released, full event trail.
     ok_t = add("run pwd", "pwd")
-    out = agent.handle(0, payload(ok_t))
+    out = agent.handle(uuid4(), payload(ok_t))
     assert out["ok"] is True and out["task_ok"] is True
     f = final(ok_t)
     assert f["columnUuid"] == done_col and f["claimedBy"] is None
@@ -101,7 +101,7 @@ def test_handle_kanban_task_executes_description(kanban_board):
 
     # Failure: non-zero exit → stays put, 'failed' with the code, lease released.
     fail_t = add("bad cd", "cd nope_xyz")
-    out = agent.handle(0, payload(fail_t))
+    out = agent.handle(uuid4(), payload(fail_t))
     assert out["ok"] is True and out["task_ok"] is False
     f = final(fail_t)
     assert f["columnUuid"] == todo and f["claimedBy"] is None
@@ -111,22 +111,22 @@ def test_handle_kanban_task_executes_description(kanban_board):
 
     # Blocked command and empty description fail cleanly (lease released).
     blocked_t = add("secret", "cat .env")
-    assert agent.handle(0, payload(blocked_t))["task_ok"] is False
+    assert agent.handle(uuid4(), payload(blocked_t))["task_ok"] is False
     assert "blocked" in next(e for e in db.kanban_task_events(UUID(blocked_t["uuid"]))
                              if e["kind"] == "failed")["detail"]
     empty_t = add("no command", "")
-    assert agent.handle(0, payload(empty_t))["task_ok"] is False
+    assert agent.handle(uuid4(), payload(empty_t))["task_ok"] is False
 
     # Another agent's LIVE lease → clean skip; nothing executed.
     skip_t = add("busy", "pwd")
     db.kanban_claim_task(UUID(skip_t["uuid"]), uuid4())
-    out = agent.handle(0, payload(skip_t))
+    out = agent.handle(uuid4(), payload(skip_t))
     assert out["ok"] is True and "skipped" in out
     assert not any(e["kind"] == "started"
                    for e in db.kanban_task_events(UUID(skip_t["uuid"])))
 
     # A vanished task (deleted between enqueue and execution) → clean skip.
-    out = agent.handle(0, {"task_uuid": str(uuid4()),
+    out = agent.handle(uuid4(), {"task_uuid": str(uuid4()),
                            "board_uuid": b["uuid"], "source": "kanban"})
     assert out["ok"] is True and "skipped" in out
 
@@ -150,20 +150,21 @@ def test_handle_records_cron_run_outcome(chat_room, workspace):
     ok_run, fail_run, blocked_run = runs
     try:
         agent = _agent()
-        agent.handle(71, {"room_uuid": str(room.uuid), "command_text": "cat data.txt",
-                          "cron_run_uuid": str(ok_run.uuid)})
-        agent.handle(72, {"room_uuid": str(room.uuid), "command_text": "cd nope_xyz",
-                          "cron_run_uuid": str(fail_run.uuid)})
-        agent.handle(73, {"room_uuid": str(room.uuid), "command_text": "cat .env",
-                          "cron_run_uuid": str(blocked_run.uuid)})
+        j_ok, j_fail, j_blocked = uuid4(), uuid4(), uuid4()
+        agent.handle(j_ok, {"room_uuid": str(room.uuid), "command_text": "cat data.txt",
+                            "cron_run_uuid": str(ok_run.uuid)})
+        agent.handle(j_fail, {"room_uuid": str(room.uuid), "command_text": "cd nope_xyz",
+                              "cron_run_uuid": str(fail_run.uuid)})
+        agent.handle(j_blocked, {"room_uuid": str(room.uuid), "command_text": "cat .env",
+                                 "cron_run_uuid": str(blocked_run.uuid)})
         for r in runs:
             s.refresh(r)
-        assert ok_run.status == "ok" and ok_run.error == "" and ok_run.journal_id == 71
+        assert ok_run.status == "ok" and ok_run.error == "" and ok_run.journal_id == j_ok
         assert ok_run.finished_at is not None
         assert fail_run.status == "error" and "exit code" in fail_run.error
-        assert fail_run.journal_id == 72
+        assert fail_run.journal_id == j_fail
         assert blocked_run.status == "error" and "blocked" in blocked_run.error
-        assert blocked_run.journal_id == 73
+        assert blocked_run.journal_id == j_blocked
     finally:
         s.execute(sa.delete(db.CronRun).where(
             db.CronRun.uuid.in_([r.uuid for r in runs])))
@@ -187,16 +188,17 @@ def test_handle_debug_dry_runs_without_executing(chat_room, workspace):
     s.add(run)
     s.commit()
     try:
-        out = _agent().handle(91, {"room_uuid": str(room.uuid),
-                                   "command_text": "cat dry.txt",
-                                   "cron_run_uuid": str(run.uuid), "debug": True})
+        j_dry = uuid4()
+        out = _agent().handle(j_dry, {"room_uuid": str(room.uuid),
+                                      "command_text": "cat dry.txt",
+                                      "cron_run_uuid": str(run.uuid), "debug": True})
         assert out.get("debug") is True
         msg = _last(room.uuid)
         assert msg["text"].startswith("[debug] would run")
         assert "cat dry.txt" in msg["text"]
         assert "secret-content" not in msg["text"]  # the command did NOT run
         s.refresh(run)
-        assert run.status == "ok" and run.journal_id == 91
+        assert run.status == "ok" and run.journal_id == j_dry
     finally:
         s.execute(sa.delete(db.CronRun).where(db.CronRun.uuid == run.uuid))
         s.execute(sa.delete(db.ChatMessage).where(
@@ -212,7 +214,7 @@ def test_handle_without_cron_run_uuid_touches_no_runs(chat_room, workspace):
     s = db.db.session
     before = s.query(sa.func.max(db.CronRun.id)).scalar() or 0
     db.post_chat_message(room.uuid, human.uuid, "pwd")
-    _agent().handle(0, {"room_uuid": str(room.uuid)})
+    _agent().handle(uuid4(), {"room_uuid": str(room.uuid)})
     assert (s.query(sa.func.max(db.CronRun.id)).scalar() or 0) == before
 
 
@@ -221,7 +223,7 @@ def test_handle_runs_command_and_posts(chat_room, workspace):
     _, make_file, _ = workspace
     make_file("README.md", "hello ws")
     db.post_chat_message(room.uuid, human.uuid, "cat README.md")
-    _agent().handle(0, {"room_uuid": str(room.uuid)})
+    _agent().handle(uuid4(), {"room_uuid": str(room.uuid)})
     msg = _last(room.uuid)
     assert msg["sender_uuid"] == str(WS_AGENT_UUID)
     assert "hello ws" in msg["text"]
@@ -231,7 +233,7 @@ def test_handle_runs_command_and_posts(chat_room, workspace):
 def test_handle_blocks_sensitive(chat_room):
     room, human = chat_room
     db.post_chat_message(room.uuid, human.uuid, "cat .env")
-    _agent().handle(0, {"room_uuid": str(room.uuid)})
+    _agent().handle(uuid4(), {"room_uuid": str(room.uuid)})
     assert _last(room.uuid)["text"].startswith("[blocked:")
 
 
@@ -241,9 +243,9 @@ def test_handle_cd_persists_between_messages(chat_room, workspace):
     make_dir("sub")
     agent = _agent()
     db.post_chat_message(room.uuid, human.uuid, "cd sub")
-    agent.handle(0, {"room_uuid": str(room.uuid)})
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
     db.post_chat_message(room.uuid, human.uuid, "pwd")
-    agent.handle(0, {"room_uuid": str(room.uuid)})
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
     assert "/sub\n[exit code: 0]" in _last(room.uuid)["text"]
 
 
@@ -252,7 +254,7 @@ def test_handle_persists_cwd_only_not_env(chat_room, workspace):
     _, _, make_dir = workspace
     make_dir("sub")
     db.post_chat_message(room.uuid, human.uuid, "cd sub")
-    _agent().handle(0, {"room_uuid": str(room.uuid)})
+    _agent().handle(uuid4(), {"room_uuid": str(room.uuid)})
     state = db.get_workspace_shell_state(room.uuid)
     assert state is not None
     assert state.cwd.endswith("/sub")
@@ -269,9 +271,9 @@ def test_handle_runs_the_triggering_message_not_latest(chat_room, workspace):
     agent = _agent()
     a = db.post_chat_message(room.uuid, human.uuid, "cat a.txt")
     b = db.post_chat_message(room.uuid, human.uuid, "cat b.txt")
-    agent.handle(0, {"room_uuid": str(room.uuid), "message_uuid": str(a.uuid)})
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid), "message_uuid": str(a.uuid)})
     assert "AAA" in db.list_room_messages(room.uuid)[-1]["text"]
-    agent.handle(0, {"room_uuid": str(room.uuid), "message_uuid": str(b.uuid)})
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid), "message_uuid": str(b.uuid)})
     assert "BBB" in db.list_room_messages(room.uuid)[-1]["text"]
 
 
@@ -280,7 +282,7 @@ def test_handle_wraps_backtick_output_safely(chat_room, workspace):
     _, make_file, _ = workspace
     make_file("ticks.txt", "```")
     db.post_chat_message(room.uuid, human.uuid, "cat ticks.txt")
-    _agent().handle(0, {"room_uuid": str(room.uuid)})
+    _agent().handle(uuid4(), {"room_uuid": str(room.uuid)})
     text = _last(room.uuid)["text"]
     assert text.startswith("````")
     assert text.rstrip().endswith("````")

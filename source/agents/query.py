@@ -59,7 +59,7 @@ class QueryAgent(Agent):
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = room_uuid_from_payload(payload)
         query = command_from_payload(room_uuid, payload)
         if not query:

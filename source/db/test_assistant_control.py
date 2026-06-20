@@ -26,7 +26,7 @@ def app_ctx():
 @pytest.fixture
 def run(app_ctx):
     r = db.start_assistant_run(
-        journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
         yield r
@@ -66,7 +66,7 @@ def test_run_status_allows_stopping(run):
 
 def test_control_cascades_when_run_deleted(app_ctx):
     r = db.start_assistant_run(
-        journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     c = db.create_assistant_control(run_id=r.id, command="stop")
     cid = c.id

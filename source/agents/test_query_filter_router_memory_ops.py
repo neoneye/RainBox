@@ -89,7 +89,7 @@ def test_remember_command_via_filter_router_creates_memory(
         send=lambda *a, **kw: None,
     )
     try:
-        result = agent.handle(journal_id=1, payload={
+        result = agent.handle(journal_id=uuid4(), payload={
             "room_uuid": str(room.uuid),
         })
         assert result.get("ok") is True, result
@@ -134,7 +134,7 @@ def test_non_memory_query_via_filter_router_falls_through(
     )
     try:
         with pytest.raises(RuntimeError, match="test stop after load_kb"):
-            agent.handle(journal_id=1, payload={
+            agent.handle(journal_id=uuid4(), payload={
                 "room_uuid": str(room.uuid),
             })
         assert called["load_kb"] is True, (

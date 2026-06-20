@@ -35,7 +35,7 @@ def _cleanup_run(run_id: int) -> None:
 
 def test_start_assistant_run_creates_running_row(app_ctx):
     run = db.start_assistant_run(
-        journal_id=123, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
         assert run.id is not None
@@ -51,7 +51,7 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
     append_assistant_step returns — before the action's observation is recorded —
     so a kill mid-action still leaves the last committed step."""
     run = db.start_assistant_run(
-        journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
         db.append_assistant_step(
@@ -75,7 +75,7 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
 
 def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
     run = db.start_assistant_run(
-        journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
         db.append_assistant_step(
@@ -102,7 +102,7 @@ def test_append_posts_thin_debug_assistant_chat_pointer(app_ctx):
     assert human is not None
     chatroom = db.create_chatroom(f"trace-ptr-{uuid4().hex[:8]}", human.uuid, [])
     run = db.start_assistant_run(
-        journal_id=1, room_uuid=chatroom.uuid, agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=chatroom.uuid, agent_uuid=uuid4(), step_limit=6
     )
     try:
         db.append_assistant_step(
@@ -129,7 +129,7 @@ def test_append_posts_thin_debug_assistant_chat_pointer(app_ctx):
 
 def test_finish_run_sets_terminal_status_and_summary(app_ctx):
     run = db.start_assistant_run(
-        journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
         db.finish_run(run, "finished", final_summary="all done")
@@ -144,7 +144,7 @@ def test_finish_run_sets_terminal_status_and_summary(app_ctx):
 
 def test_get_assistant_run_returns_row_or_none(app_ctx):
     run = db.start_assistant_run(
-        journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
         assert db.get_assistant_run(run.id) is not None
@@ -155,8 +155,9 @@ def test_get_assistant_run_returns_row_or_none(app_ctx):
 
 def test_init_db_twice_preserves_sentinel_assistant_run(app_ctx):
     """New trace tables are created by create_all and never wiped by a re-init."""
+    sentinel_jid = uuid4()
     sentinel = db.start_assistant_run(
-        journal_id=987654, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=sentinel_jid, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
         db.init_db(app_ctx)
@@ -164,6 +165,6 @@ def test_init_db_twice_preserves_sentinel_assistant_run(app_ctx):
         db.db.session.expire_all()
         reloaded = db.db.session.get(AssistantRun, sentinel.id)
         assert reloaded is not None, "init_db erased existing assistant_run rows"
-        assert reloaded.journal_id == 987654
+        assert reloaded.journal_id == sentinel_jid
     finally:
         _cleanup_run(sentinel.id)

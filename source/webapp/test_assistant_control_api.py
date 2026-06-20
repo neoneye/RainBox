@@ -19,7 +19,7 @@ def client():
 def _run(app):
     with app.app_context():
         return db.start_assistant_run(
-            journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+            journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
         ).id
 
 

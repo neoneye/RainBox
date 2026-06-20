@@ -366,7 +366,7 @@ class EditDocumentAgentV3(StructuredLLMAgent):
             f"Document ({line_count} lines):\n{rendered}"
         )
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         _instructions, document = self._extract_payload(payload)
         line_count = 0 if document == "" else len(document.split("\n"))
 

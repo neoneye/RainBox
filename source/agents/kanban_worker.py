@@ -82,7 +82,7 @@ class KanbanWorkerAgent(StructuredLLMAgent):
             "Produce the deliverable for this task now."
         )
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("source") != "kanban":
             return {"ok": False,
                     "error": "kanban_worker only handles kanban payloads"}

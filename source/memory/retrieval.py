@@ -288,7 +288,7 @@ def retrieve_memories_hybrid(
     room_uuid: UUID | None,
     limit: int = 6,
     include_secret: bool = False,
-    journal_id: int | None = None,
+    journal_id: UUID | None = None,
     embed_fn: Callable[[str], list[float]] | None = None,
 ) -> list[RetrievedMemory]:
     """Multi-signal memory retrieval: hard filters first, then a weighted merge
@@ -381,7 +381,7 @@ def _record_memory_telemetry(
     query: str,
     room_uuid: UUID,
     agent_uuid: UUID,
-    journal_id: int | None,
+    journal_id: UUID | None,
     retrieval_limit: int,
     include_secret: bool,
     memories: list[RetrievedMemory],
@@ -441,7 +441,7 @@ def build_chat_memory_block(
     *,
     agent_uuid: UUID,
     room_uuid: UUID,
-    journal_id: int | None = None,
+    journal_id: UUID | None = None,
     retrieval_limit: int = 6,
     include_secret: bool = False,
 ) -> tuple[str, str, list[RetrievedMemory]]:
@@ -489,7 +489,7 @@ def build_chat_memory_block(
 
 
 def record_memory_use(
-    journal_id: int | None,
+    journal_id: UUID | None,
     room_uuid: UUID | None,
     agent_uuid: UUID,
     query: str,
@@ -505,7 +505,7 @@ def record_memory_use(
         return None
     payload: dict[str, Any] = {
         "query": query,
-        "journal_id": journal_id,
+        "journal_id": str(journal_id) if journal_id is not None else None,
         "memories": [
             {
                 "memory_uuid": str(m.uuid),

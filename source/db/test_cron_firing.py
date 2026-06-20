@@ -183,9 +183,10 @@ def test_fire_command_job_pending_until_outcome_recorded(firing):
     # Async action: the fire returns with the outcome still open.
     assert run.status == "pending" and run.finished_at is None
     # The workspace-shell agent reports back via the run uuid it received.
-    db.cron_record_run_outcome(run.uuid, status="ok", journal_id=12345)
+    jid = uuid4()
+    db.cron_record_run_outcome(run.uuid, status="ok", journal_id=jid)
     db.db.session.refresh(run)
-    assert run.status == "ok" and run.journal_id == 12345
+    assert run.status == "ok" and run.journal_id == jid
     assert run.finished_at is not None
     # An unknown run uuid is a no-op, not an error.
     db.cron_record_run_outcome(uuid4(), status="ok")

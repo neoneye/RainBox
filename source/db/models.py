@@ -183,27 +183,21 @@ class Journal(db.Model):
     """One unit of agent work (state + payload + result), the internal audit log
     of the queue.
 
-    IDENTITY NOTE — why `journal_id` is an int, not a uuid:
-    `journal` is keyed only by an integer autoincrement `id`; unlike almost every
-    other entity it has NO `uuid` column. That int is threaded everywhere as
-    `journal_id` — `Agent.handle(journal_id: int, ...)`, `RetrievalEvent`,
-    `AssistantRun`, the inbox queue. It's an internal, high-churn,
-    ordered-by-`id` work/audit table that is never referenced across systems, so
-    an integer PK was cheap and `id` ordering ("what ran next") is handy.
+    IDENTITY — `journal.id` is a UUID (the `journal_id` threaded everywhere is a
+    UUID). It used to be an integer autoincrement, the one core entity without a
+    uuid; that was changed so the id is globally unique and self-describing — a
+    single `journal_id` grep'd from a log file or backup points at exactly this
+    row without first knowing which table it came from, and it travels across
+    process/payload boundaries unambiguously (no int collisions with other
+    tables' PKs). See the int->uuid migration in `db.init_db`.
 
-    KNOWN INCONSISTENCY / future consideration: this is the odd one out — UUIDs
-    in this schema are reserved for entities referenced across processes or
-    surfaced externally (agents, rooms, messages, memory claims, the assistant_*
-    tables all carry BOTH `id` and `uuid`). A `uuid` here would be stronger: it's
-    globally unique and self-describing, so a single id grep'd in a log file
-    points at exactly this row without first knowing which table it came from,
-    and it can be passed across boundaries unambiguously. Adding a `uuid` column
-    (kept alongside `id`) is a reasonable future change; it was left out here
-    only to match the long-standing convention, not because int is preferable.
+    Consequence: a random uuid is NOT monotonic, so "oldest first" ordering must
+    use a timestamp (`started_at` / `enqueued_at`), never `id`. The queue helpers
+    in `db.queue` order by `started_at`.
     """
 
     __tablename__ = "journal"
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     inbox_id: Mapped[int | None] = mapped_column()
     agent_uuid: Mapped[UUID] = mapped_column()
     enqueued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -296,7 +290,7 @@ class CronRun(db.Model):
         DateTime(timezone=True), default=None
     )
     error: Mapped[str] = mapped_column(Text, default="")
-    journal_id: Mapped[int | None] = mapped_column(default=None)
+    journal_id: Mapped[UUID | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -651,7 +645,7 @@ class ConversationRun(db.Model):
     tick_count: Mapped[int] = mapped_column(default=0)
     participants: Mapped[list] = mapped_column(JSONB, default=list)
     turn_policy: Mapped[dict] = mapped_column(JSONB, default=dict)
-    last_speaker_journal_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    last_speaker_journal_id: Mapped[UUID | None] = mapped_column(nullable=True)
     active_turn: Mapped[int | None] = mapped_column(nullable=True)
     active_speaker_uuid: Mapped[UUID | None] = mapped_column(nullable=True)
     active_turn_enqueued_at: Mapped[datetime | None] = mapped_column(
@@ -830,7 +824,7 @@ class RetrievalEvent(db.Model):
     query: Mapped[str | None] = mapped_column(Text)
     room_uuid: Mapped[UUID | None] = mapped_column()
     agent_uuid: Mapped[UUID | None] = mapped_column()
-    journal_id: Mapped[int | None] = mapped_column()
+    journal_id: Mapped[UUID | None] = mapped_column()
     source: Mapped[str | None] = mapped_column(Text)
     retrieval_rank: Mapped[int | None] = mapped_column()
     retrieval_score: Mapped[float | None] = mapped_column()
@@ -964,7 +958,7 @@ class AssistantRun(db.Model):
     __tablename__ = "assistant_run"
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
-    journal_id: Mapped[int] = mapped_column(index=True)
+    journal_id: Mapped[UUID | None] = mapped_column(index=True)
     room_uuid: Mapped[UUID] = mapped_column()
     agent_uuid: Mapped[UUID] = mapped_column()
     status: Mapped[str] = mapped_column(Text, default="running")

@@ -118,7 +118,7 @@ class RouterAgent(StructuredLLMAgent):
         messages = [m for m in messages if m.get("kind") == "message"]
         return format_history(messages)
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
         user_prompt = self.user_prompt(payload)
         response = cast(RouterResponse, self._structured_call(user_prompt))

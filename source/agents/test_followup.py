@@ -18,6 +18,7 @@ psycopg — `python -m pytest` avoids that.)
 """
 
 import pytest
+from uuid import uuid4
 
 import db
 import providers
@@ -60,7 +61,7 @@ def classifier():
 
 
 def _classify(agent: FollowUpClassifierAgent, message: str) -> str:
-    result = agent.handle(0, {"message": message})
+    result = agent.handle(uuid4(), {"message": message})
     return result["response"]["needs_response"]
 
 

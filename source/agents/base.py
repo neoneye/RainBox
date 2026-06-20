@@ -77,7 +77,7 @@ class Agent:
             self._send(msg)
 
     def _handle_with_heartbeat(
-        self, journal_id: int, payload: dict[str, Any]
+        self, journal_id: UUID, payload: dict[str, Any]
     ) -> dict[str, Any]:
         """Run handle() while a background thread emits periodic heartbeat status
         messages, so the supervisor's silence-watchdog doesn't SIGKILL a long
@@ -88,7 +88,7 @@ class Agent:
         def _beat() -> None:
             while not stop.wait(self.HEARTBEAT_INTERVAL):
                 try:
-                    msg = {"status": "heartbeat", "journal_id": journal_id}
+                    msg = {"status": "heartbeat", "journal_id": str(journal_id)}
                     msg.update(self._heartbeat_extra())
                     self._emit(msg)
                 except Exception:
@@ -111,7 +111,7 @@ class Agent:
     def setup(self) -> None:
         """One-time initialization before the drain loop. Override as needed."""
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         """Process one inbox item; return a JSON-serializable result dict.
 
         INTENTIONAL TEST STUB — do NOT make this abstract / raise
@@ -134,7 +134,7 @@ class Agent:
                 return
             journal_id, payload = item
             self._emit(
-                {"status": "processing", "journal_id": journal_id, "payload": payload}
+                {"status": "processing", "journal_id": str(journal_id), "payload": payload}
             )
             routing = self._routing_from_payload(payload)
             try:
@@ -150,12 +150,12 @@ class Agent:
                 if routing is not None:
                     failed_result["_routing"] = routing
                 db.journal_update(journal_id, "failed", result=failed_result)
-                self._emit({"status": "failed", "journal_id": journal_id, "error": msg})
+                self._emit({"status": "failed", "journal_id": str(journal_id), "error": msg})
                 continue
             if routing is not None and isinstance(result, dict):
                 result = {**result, "_routing": routing}
             db.journal_update(journal_id, "completed", result=result)
-            self._emit({"status": "completed", "journal_id": journal_id})
+            self._emit({"status": "completed", "journal_id": str(journal_id)})
 
     @staticmethod
     def _routing_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -202,7 +202,7 @@ class ModelGroupAgent(Agent):
             len(self.candidate_model_uuids),
         )
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         # INTENTIONAL STUB — keep functional, do NOT make abstract. This is the
         # *default* dispatch for any role without a specialized class, including
         # the dreamer/critic/verifier demo pipeline; raising here would break
@@ -364,6 +364,6 @@ class StructuredLLMAgent(ModelGroupAgent):
             validator=validator,
         )
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         response = self._structured_call(self.user_prompt(payload))
         return {"ok": True, "response": response.model_dump()}

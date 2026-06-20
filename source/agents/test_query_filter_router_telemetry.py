@@ -7,6 +7,8 @@ import pytest
 import db
 from db import RetrievalEvent
 
+_JID = uuid4()  # a stable journal uuid for the asserted-telemetry test
+
 
 @pytest.fixture
 def app_ctx():
@@ -60,7 +62,7 @@ def test_record_filter_events_semantic_path_writes_retrieved_then_accept_reject_
             query="what is fresh_tag?",
             room_uuid=room_uuid,
             agent_uuid=agent_uuid,
-            journal_id=99,
+            journal_id=_JID,
             source="query_filter_router",
             retrieved=retrieved,
             relevant_ids=relevant_ids,
@@ -93,7 +95,7 @@ def test_record_filter_events_semantic_path_writes_retrieved_then_accept_reject_
             assert r.source == "query_filter_router"
             assert r.room_uuid == room_uuid
             assert r.agent_uuid == agent_uuid
-            assert r.journal_id == 99
+            assert r.journal_id == _JID
             assert r.target_type == "qa_entry"
 
         # `retrieved` rows carry rank + score from the input list.
@@ -127,7 +129,7 @@ def test_record_filter_events_exact_match_writes_retrieved_accepted_used(
             query="exact alias query",
             room_uuid=uuid4(),
             agent_uuid=uuid4(),
-            journal_id=1,
+            journal_id=uuid4(),
             source="query_filter_router",
             retrieved=[{"qa_id": qa_id, "rank": 0, "score": 1.0}],
             relevant_ids={qa_id},
@@ -150,7 +152,7 @@ def test_record_filter_events_empty_retrieved_is_a_noop(app_ctx, fresh_tag):
             query="empty",
             room_uuid=uuid4(),
             agent_uuid=uuid4(),
-            journal_id=1,
+            journal_id=uuid4(),
             source="query_filter_router",
             retrieved=[],
             relevant_ids=set(),
@@ -175,7 +177,7 @@ def test_record_filter_events_used_implies_accepted(app_ctx, fresh_tag):
                 query="x",
                 room_uuid=uuid4(),
                 agent_uuid=uuid4(),
-                journal_id=1,
+                journal_id=uuid4(),
                 source="query_filter_router",
                 retrieved=[{"qa_id": qa_id, "rank": 0, "score": 0.5}],
                 relevant_ids=set(),       # empty
@@ -249,7 +251,7 @@ def test_query_filter_used_events_carry_approximation_metadata(
             query="x",
             room_uuid=uuid4(),
             agent_uuid=uuid4(),
-            journal_id=1,
+            journal_id=uuid4(),
             source="query_filter_router",
             retrieved=[{"qa_id": qa_id, "rank": 0, "score": 0.9}],
             relevant_ids={qa_id},

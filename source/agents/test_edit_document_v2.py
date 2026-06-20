@@ -9,6 +9,7 @@ stub `_structured_call` so they don't need LM Studio.
 """
 
 import pytest
+from uuid import uuid4
 from pydantic import ValidationError
 
 from agents.edit_document_v2 import (
@@ -314,7 +315,7 @@ def test_handle_returns_status_comment_and_patches(app_ctx, monkeypatch):
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "TODO\nprint('x')", "instructions": "mark TODO as done"},
     )
     assert result == {
@@ -341,7 +342,7 @@ def test_handle_returns_unclear_with_empty_patches(app_ctx, monkeypatch):
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "def foo():\n    pass", "instructions": "rename the helper"},
     )
     assert result["status"] == "unclear"
@@ -353,14 +354,14 @@ def test_handle_raises_on_missing_document(app_ctx, monkeypatch):
     plan = EditPlanV2(status="done", comment="noop", patches=[])
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     with pytest.raises(ValueError, match="document"):
-        agent.handle(journal_id=0, payload={"instructions": "x"})
+        agent.handle(journal_id=uuid4(), payload={"instructions": "x"})
 
 
 def test_handle_raises_on_missing_instructions(app_ctx, monkeypatch):
     plan = EditPlanV2(status="done", comment="noop", patches=[])
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     with pytest.raises(ValueError, match="instructions"):
-        agent.handle(journal_id=0, payload={"document": "x"})
+        agent.handle(journal_id=uuid4(), payload={"document": "x"})
 
 
 def test_handle_accepts_empty_document_for_generate_from_scratch(app_ctx, monkeypatch):
@@ -378,7 +379,7 @@ def test_handle_accepts_empty_document_for_generate_from_scratch(app_ctx, monkey
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "", "instructions": "write a hello world program"},
     )
     assert result["status"] == "done"
@@ -401,7 +402,7 @@ def test_handle_accepts_whitespace_only_document(app_ctx, monkeypatch):
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "   ", "instructions": "add a comment"},
     )
     assert result["status"] == "done"
@@ -440,7 +441,7 @@ def test_handle_raises_when_validator_rejects_all_models(app_ctx, monkeypatch):
 
     with pytest.raises(RuntimeError, match="end_line"):
         agent.handle(
-            journal_id=0,
+            journal_id=uuid4(),
             payload={"document": "a\nb", "instructions": "edit it"},
         )
 
@@ -472,7 +473,7 @@ def test_handle_passes_validator_to_structured_call(app_ctx, monkeypatch):
     monkeypatch.setattr(agent, "_structured_call", stub)
 
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "TODO", "instructions": "mark done"},
     )
 

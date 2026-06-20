@@ -8,6 +8,7 @@ a discriminated union, plus a NormalizedPatch internal form.
 """
 
 import pytest
+from uuid import uuid4
 from pydantic import ValidationError
 
 from agents.edit_document_v3 import (
@@ -427,7 +428,7 @@ def test_handle_returns_status_comment_and_normalized_replace_lines(app_ctx, mon
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "TODO\nprint('x')", "instructions": "mark TODO as done"},
     )
     assert result == {
@@ -454,7 +455,7 @@ def test_handle_normalizes_append_text(app_ctx, monkeypatch):
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": doc, "instructions": "append X"},
     )
     assert result["patches"] == [
@@ -475,7 +476,7 @@ def test_handle_normalizes_append_newline(app_ctx, monkeypatch):
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": doc, "instructions": "append a newline"},
     )
     assert result["patches"] == [
@@ -495,7 +496,7 @@ def test_handle_normalizes_insert_before(app_ctx, monkeypatch):
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "a\nb\nc\nd\ne", "instructions": "insert X before line 3"},
     )
     assert result["patches"] == [
@@ -511,14 +512,14 @@ def test_handle_raises_on_missing_document(app_ctx, monkeypatch):
     plan = EditPlanV3(patches=[], status="done", comment="noop")
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     with pytest.raises(ValueError, match="document"):
-        agent.handle(journal_id=0, payload={"instructions": "x"})
+        agent.handle(journal_id=uuid4(), payload={"instructions": "x"})
 
 
 def test_handle_raises_on_missing_instructions(app_ctx, monkeypatch):
     plan = EditPlanV3(patches=[], status="done", comment="noop")
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     with pytest.raises(ValueError, match="instructions"):
-        agent.handle(journal_id=0, payload={"document": "x"})
+        agent.handle(journal_id=uuid4(), payload={"document": "x"})
 
 
 def test_handle_raises_when_validator_rejects_all_models(app_ctx, monkeypatch):
@@ -552,7 +553,7 @@ def test_handle_raises_when_validator_rejects_all_models(app_ctx, monkeypatch):
 
     with pytest.raises(RuntimeError, match="end_line"):
         agent.handle(
-            journal_id=0,
+            journal_id=uuid4(),
             payload={"document": "a\nb", "instructions": "edit it"},
         )
 
@@ -582,7 +583,7 @@ def test_handle_passes_validator_to_structured_call(app_ctx, monkeypatch):
     monkeypatch.setattr(agent, "_structured_call", stub)
 
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "TODO", "instructions": "mark done"},
     )
 

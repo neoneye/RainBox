@@ -87,7 +87,7 @@ def test_build_skill_block_records_considered_and_injected(app_ctx, tmp_path):
     )
     room, agent = uuid4(), uuid4()
     block, injected = build_skill_block(
-        "tell me about widget", room_uuid=room, agent_uuid=agent, journal_id=1,
+        "tell me about widget", room_uuid=room, agent_uuid=agent, journal_id=uuid4(),
         base_dir=tmp_path, overlay_dir=None,
     )
     try:
@@ -118,7 +118,7 @@ def test_build_skill_block_excludes_candidates(app_ctx, tmp_path):
     )
     room, agent = uuid4(), uuid4()
     block, injected = build_skill_block(
-        "tell me about zebra", room_uuid=room, agent_uuid=agent, journal_id=1,
+        "tell me about zebra", room_uuid=room, agent_uuid=agent, journal_id=uuid4(),
         base_dir=tmp_path, overlay_dir=None,
     )
     assert block == ""

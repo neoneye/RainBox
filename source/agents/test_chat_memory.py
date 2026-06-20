@@ -201,7 +201,7 @@ def test_handle_posts_debug_memory_row_when_memories_injected(
         agent = StructuredChatAgent(
             agent_uuid=agent_uuid, name="chat_structured", send=lambda _: None,
         )
-        agent.handle(journal_id=0, payload={"room_uuid": str(room_uuid)})
+        agent.handle(journal_id=uuid4(), payload={"room_uuid": str(room_uuid)})
 
         debug_rows = (
             db.db.session.query(ChatMessage)
@@ -241,7 +241,7 @@ def test_handle_does_not_post_debug_memory_when_no_memories(
         agent = StructuredChatAgent(
             agent_uuid=agent_uuid, name="chat_structured", send=lambda _: None,
         )
-        agent.handle(journal_id=0, payload={"room_uuid": str(room_uuid)})
+        agent.handle(journal_id=uuid4(), payload={"room_uuid": str(room_uuid)})
 
         debug_rows = (
             db.db.session.query(ChatMessage)
@@ -359,7 +359,7 @@ def test_chat_memory_retrieval_writes_retrieved_and_used_events(
             query=f"{fresh_subject} hello",
             room_uuid=room_uuid,
             agent_uuid=agent_uuid,
-            journal_id=42,
+            journal_id=uuid4(),
             retrieval_limit=6,
             include_secret=False,
             memories=mems,

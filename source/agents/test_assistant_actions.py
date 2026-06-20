@@ -52,7 +52,7 @@ def _cleanup_subject(subject: str) -> None:
 
 def _ctx() -> AssistantActionContext:
     return AssistantActionContext(
-        journal_id=0, room_uuid=uuid4(), agent_uuid=uuid4(), step_index=0
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_index=0
     )
 
 
@@ -269,7 +269,7 @@ def test_loop_dispatches_read_action_then_replies(room):
         _decision(AssistantActionName.QUERY_MEMORY, query="anything"),
         _decision(AssistantActionName.REPLY, message="All set."),
     )
-    result = agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "finished"
     steps = _steps_for(result["assistant_run_id"])
@@ -288,7 +288,7 @@ def test_loop_records_failed_action_and_continues(room):
         _decision(AssistantActionName.WORKSPACE_READ_COMMAND, command="rm -rf /"),
         _decision(AssistantActionName.REPLY, message="Could not do that."),
     )
-    result = agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "finished"
     steps = _steps_for(result["assistant_run_id"])

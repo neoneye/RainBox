@@ -41,7 +41,7 @@ def test_record_retrieval_event_writes_a_row(app_ctx, fresh_tag):
             query="what time is it",
             room_uuid=uuid4(),
             agent_uuid=uuid4(),
-            journal_id=42,
+            journal_id=uuid4(),
             source="query_filter_router",
             retrieval_rank=0,
             retrieval_score=0.87,

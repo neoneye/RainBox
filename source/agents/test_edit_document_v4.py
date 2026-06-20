@@ -8,6 +8,7 @@ document and an EOF-normalization pass on the returned patches.
 """
 
 import pytest
+from uuid import uuid4
 from pydantic import ValidationError
 
 from agents.edit_document_v4 import (
@@ -402,7 +403,7 @@ def test_handle_returns_status_comment_and_patches(app_ctx, monkeypatch):
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "TODO\nprint('x')", "instructions": "mark TODO as done"},
     )
     # Interior edit, original had no trailing newline -> no mutation.
@@ -427,7 +428,7 @@ def test_handle_replace_final_line_no_trailing_newline_adds_one(app_ctx, monkeyp
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "alpha", "instructions": "x"},
     )
     assert result["patches"] == [
@@ -446,7 +447,7 @@ def test_handle_replace_final_line_with_trailing_newline_no_mutation(app_ctx, mo
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "alpha\n", "instructions": "x"},
     )
     assert result["patches"][0]["replacement"] == "beta"
@@ -463,7 +464,7 @@ def test_handle_append_text_to_no_newline_file(app_ctx, monkeypatch):
     )
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "alpha", "instructions": "x"},
     )
     assert result["patches"] == [
@@ -501,7 +502,7 @@ def test_handle_uses_logical_line_count_for_validation(app_ctx, monkeypatch):
     monkeypatch.setattr(bad_agent, "_structured_call", stub)
     with pytest.raises(RuntimeError, match="start_line"):
         bad_agent.handle(
-            journal_id=0,
+            journal_id=uuid4(),
             payload={"document": "alpha\n", "instructions": "x"},
         )
 
@@ -510,14 +511,14 @@ def test_handle_raises_on_missing_document(app_ctx, monkeypatch):
     plan = EditPlan(patches=[], status="done", comment="noop")
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     with pytest.raises(ValueError, match="document"):
-        agent.handle(journal_id=0, payload={"instructions": "x"})
+        agent.handle(journal_id=uuid4(), payload={"instructions": "x"})
 
 
 def test_handle_raises_on_missing_instructions(app_ctx, monkeypatch):
     plan = EditPlan(patches=[], status="done", comment="noop")
     agent = _stub_agent(app_ctx, monkeypatch, plan)
     with pytest.raises(ValueError, match="instructions"):
-        agent.handle(journal_id=0, payload={"document": "x"})
+        agent.handle(journal_id=uuid4(), payload={"document": "x"})
 
 
 def test_handle_passes_validator_to_structured_call(app_ctx, monkeypatch):
@@ -541,7 +542,7 @@ def test_handle_passes_validator_to_structured_call(app_ctx, monkeypatch):
     agent.candidate_model_uuids = []
     monkeypatch.setattr(agent, "_structured_call", stub)
     result = agent.handle(
-        journal_id=0,
+        journal_id=uuid4(),
         payload={"document": "TODO", "instructions": "mark done"},
     )
     assert result["ok"] is True
