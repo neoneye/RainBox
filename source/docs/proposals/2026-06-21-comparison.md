@@ -16,6 +16,30 @@ repo structure/code surfaces, docs indexes, and, where relevant, architecture
 papers or policy pages. The external landscape changes quickly, so treat this as
 a decision memo dated above, not a permanent market survey.
 
+## Verification status (2026-06-21)
+
+This document was fact-checked against the RainBox source tree and against the
+external projects' public repos/docs on 2026-06-21.
+
+- **RainBox claims:** every internal claim below was confirmed against code, with
+  file/line evidence. See "RainBox baseline" for the concrete pointers added
+  during this pass. Two claims needed sharpening (not correction): the
+  *log-and-undo* tier and the *MCP* surface — both are clarified inline.
+- **External claims:** all eight projects exist as described and the load-bearing
+  facts checked out — Pi's four `@earendil-works/*` packages and its
+  "no built-in permission system" posture; Hermes's gateway, `hermes claw
+  migrate`, and pluggable memory providers (Honcho/Mem0/Supermemory); OpenClaw's
+  channel list, DM pairing, and `non-main` sandbox default; OpenHands arxiv IDs
+  2407.16741 (ICLR 2025) and 2511.03690 (SDK paper); OpenCode's allow/ask/deny
+  permission model with `.env` denied by default; Supermemory, Mem0, and Honcho's
+  feature surfaces, plus Honcho's AGPL-3.0 license and Mem0's arxiv 2504.19413.
+- **Minor external nuances** worth a footnote: Pi's exact event-name list
+  (`agent_start`/`turn_start`/`turn_end`/`agent_end`) is consistent with the
+  documented hook/event system but is not quoted verbatim in the top-level
+  README; Mem0's graph memory was dropped from the v3 OSS rewrite while remaining
+  on the hosted Platform, so "graph memory" is edition-dependent for
+  self-hosters.
+
 ## Executive judgment
 
 RainBox should remain the base if the goal is a personal assistant shaped around
@@ -48,22 +72,38 @@ RainBox today is a local, Postgres-backed assistant workbench:
 - A Flask web UI with group chat, rooms, memberships, SSE via Postgres
   `LISTEN/NOTIFY`, feedback buttons, admin views, model pages, cron pages, and
   kanban.
-- Process-isolated agents spawned by the supervisor with JSONL socket status and
-  watchdog kill behavior.
-- Multiple chat responder agents: structured/unstructured chat, router, Q&A,
+- Process-isolated agents spawned by the supervisor via `os.posix_spawn` over a
+  `socketpair`, with JSONL status/heartbeat messages and a watchdog that
+  `SIGKILL`s on a missed heartbeat (`HEARTBEAT_TIMEOUT = 60.0s`, `source/main.py`).
+- Multiple chat responder agents — the registry in `source/agents/__main__.py`
+  lists ~19 agent types — including structured/unstructured chat, router, Q&A,
   query-router/filter-router, workspace shell, MCP agent, tool demo, and the
   newer `assistant`.
 - Memory tables with claims, evidence, embeddings, lifecycle status, scope,
   sensitivity, expiry, provenance, retrieval telemetry, debug rows, and feedback
-  hooks.
-- A bounded assistant loop with a code-owned capability registry, durable
-  traces, hybrid memory lookup, Q&A lookup, workspace reads, kanban reads, and
-  controlled writes.
-- Write families already implemented: memory, skills, kanban, reminders, and
-  file edits. Writes are tiered as log-and-undo or dry-run/confirm.
-- Evals and monitoring: feedback can be promoted into eval cases; deterministic
-  runners compare candidates against baselines.
-- Encrypted backup support and a `rainbox doctor` operator health check.
+  hooks (`MemoryClaim`, `MemoryEvidence`, `MemoryEmbedding`, `RetrievalEvent`,
+  `FeedbackEvent` in `source/db/models.py`).
+- A bounded assistant loop (`STEP_LIMIT = 6` ReAct steps) with a code-owned
+  capability registry, durable traces (`assistant_run`/`assistant_step`), hybrid
+  memory lookup, Q&A lookup, workspace reads, kanban reads, and controlled writes
+  (`source/agents/assistant.py`). The hybrid retrieval blends vector similarity
+  (0.55), Postgres full-text rank (0.30), and an entity boost (0.15) in
+  `source/memory/retrieval.py:retrieve_memories_hybrid`.
+- Write families already implemented: memory, skills, kanban, reminders (cron),
+  and file edits. Writes are tiered as log-and-undo (execute immediately,
+  reversible) or confirm (dry-run preview → operator approval). The
+  `AssistantWriteIntent` state machine (proposed → confirmed → executing →
+  completed/failed, with a `payload_hash` binding) governs the *confirm* tier;
+  log-and-undo writes run inline and carry their own inverse, so they do not use
+  that table.
+- Evals and monitoring: feedback can be promoted into eval cases
+  (`promote_feedback_to_eval_case`, downvotes default to a `regression` split);
+  deterministic runners score candidates against baselines without a live LLM and
+  gate on regressions (`source/evals/runner.py`, `source/evals/compare.py`).
+- Encrypted backup support (age public-key + zstd, fail-closed, optional git
+  push — `source/docs/backup.md`) and a `rainbox doctor` operator health check
+  (`source/tools/doctor.py`) probing embedder reachability, model groups,
+  capabilities, skills, and MCP.
 
 RainBox's current weakness is not depth of internal mechanics. It is product
 surface and integration reach:
@@ -71,8 +111,15 @@ surface and integration reach:
 - No mature always-on gateway comparable to OpenClaw/Hermes.
 - Telegram exists as a service, but channel UX is not yet the primary product
   shape.
-- Runtime dashboard UI is still missing.
-- External-system/MCP adapters are intentionally deferred.
+- Runtime dashboard UI is still missing (the backend endpoints —
+  `/stop`, `/redirect`, write-intent `confirm/reject/undo` — already exist; only
+  the operator-facing view is unbuilt, tracked as S7).
+- *Governed* external-system/MCP adapters are intentionally deferred. Note the
+  nuance: a standalone `MCPAgent` (`source/agents/mcp.py`, loading servers from
+  `mcp.json`) already runs MCP tools directly as a chat agent. What is deferred
+  is the *assistant adapter boundary* (S9 read-only, S10 write-capable) that
+  would route MCP through the capability registry and write-intent ledger — the
+  `Capability.adapter` field exists but is unused until that lands.
 - Memory is inspectable and safe, but not yet as feature-rich as dedicated
   memory platforms for ingestion, graph reasoning, connectors, or long-context
   benchmarks.
@@ -117,7 +164,10 @@ runtime emits `agent_start`, `turn_start`, message start/update/end events,
 tool execution start/update/end events, `turn_end`, and `agent_end`. Tool
 execution can be parallel or sequential, `beforeToolCall` can block execution
 after argument validation, `afterToolCall` can postprocess results, and callers
-can steer or queue follow-up messages while a run is active.
+can steer or queue follow-up messages while a run is active. (The
+`beforeToolCall`/`afterToolCall` hooks and the turn/tool lifecycle are documented;
+the exact event-name list above is consistent with that system but is not all
+quoted verbatim in the top-level README.)
 
 Fit:
 
@@ -270,7 +320,10 @@ docs distinguish Platform (`MemoryClient`) and OSS (`Memory`) and show simple
 add/search/get/update/delete operations. The docs index covers graph memory,
 entity-scoped memory, filters, advanced retrieval, temporal reasoning, custom
 instructions, feedback, webhooks, MCP, editor integrations, and a local companion
-with Ollama.
+with Ollama. The Mem0 paper is arxiv 2504.19413. Caveat for self-hosters: graph
+memory was dropped from the v3 OSS rewrite and currently lives on the hosted
+Platform, so "graph memory" is edition-dependent — relevant if RainBox wants
+graph reasoning without the managed path.
 
 Fit:
 
