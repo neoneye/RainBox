@@ -14,6 +14,7 @@ from flask import Response, abort, jsonify, request, stream_with_context
 
 import db
 from agents.config import (
+    ASSISTANT_UUID,
     CHAT_STRUCTURED_UUID,
     CHAT_UNSTRUCTURED_UUID,
     MCP_UUID,
@@ -43,6 +44,7 @@ CHAT_RESPONDER_UUIDS = (
     QUERY_ROUTER_UUID,
     QUERY_FILTER_ROUTER_UUID,
     MCP_UUID,
+    ASSISTANT_UUID,
 )
 
 

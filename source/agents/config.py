@@ -58,6 +58,7 @@ EDIT_DOCUMENT_V4_UUID: UUID = UUID("3c1e5a9b-2d4f-4e6a-8b7c-9d0e1f2a3b5c")
 EDIT_DOCUMENT_V5_UUID: UUID = UUID("a20fff6b-afbc-48cb-b35a-b090f7088b39")
 EDIT_DOCUMENT_V6_UUID: UUID = UUID("4bf3271f-a58f-4dd0-a07f-b85dac906cd0")
 MCP_UUID: UUID = UUID("828ae65d-a902-4b4e-bcd3-f761afe23d29")
+ASSISTANT_UUID: UUID = UUID("cad11db6-a8e6-4cdd-a37e-a98bbc53e74d")
 # Persona conversation feature (see docs/proposals/2026-06-08-persona-prompts-...).
 # Persona runnable UUIDs MUST match agent_profiles/personas.jsonl. These roles
 # are deliberately NOT in webapp.chat_api.CHAT_RESPONDER_UUIDS, so a human post
@@ -172,6 +173,12 @@ agent_config: dict[str, AgentConfigEntry] = {
         "description": "chat agent that runs a FunctionAgent with tools sourced from MCP servers (configured in mcp.json + the customize.dir overlay)",
         "next": None,
         "requires_function_calling": True,
+    },
+    "assistant": {
+        "uuid": ASSISTANT_UUID,
+        "requires_structured_output": True,
+        "description": "rainbox-owned ReAct loop: decides one bounded action per step via structured output, observes, and repeats until a terminal reply or the step cap (PR 2: reply/ask_clarifying_question only)",
+        "next": None,
     },
     # --- persona conversation feature (Phase 0 walking skeleton) ---------------
     # Two personas that run the plain-text chat agent (agent_kind) but carry their
