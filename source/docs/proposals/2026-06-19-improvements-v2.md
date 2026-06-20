@@ -117,6 +117,10 @@ These are intentional and supersede the prose where they differ:
 
 ## Where we are going next
 
+> **Superseded:** this doc is frozen. The live, actionable forward plan grounded
+> in the current code is [`2026-06-20-improvements-v3.md`](2026-06-20-improvements-v3.md).
+> The list below is kept as a historical snapshot.
+
 This is the forward plan now that the skeleton is complete.
 
 **Done since the skeleton (all merged to `main`):**
