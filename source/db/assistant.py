@@ -108,6 +108,11 @@ def finish_run(
     return run
 
 
+def get_assistant_run(run_id: int) -> AssistantRun | None:
+    """One run row by id, or None."""
+    return db.session.get(AssistantRun, run_id)
+
+
 def list_assistant_steps(run_id: int) -> list[AssistantStep]:
     """All step rows for a run, in commit order (id ascending)."""
     return (

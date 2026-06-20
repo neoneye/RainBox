@@ -142,6 +142,17 @@ def test_finish_run_sets_terminal_status_and_summary(app_ctx):
         _cleanup_run(run.id)
 
 
+def test_get_assistant_run_returns_row_or_none(app_ctx):
+    run = db.start_assistant_run(
+        journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+    )
+    try:
+        assert db.get_assistant_run(run.id) is not None
+        assert db.get_assistant_run(999999999) is None
+    finally:
+        _cleanup_run(run.id)
+
+
 def test_init_db_twice_preserves_sentinel_assistant_run(app_ctx):
     """New trace tables are created by create_all and never wiped by a re-init."""
     sentinel = db.start_assistant_run(

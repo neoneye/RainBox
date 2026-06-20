@@ -128,6 +128,13 @@ CHAT_TEMPLATE: str = """
   .msg-debug{opacity:0.8;background:#f6f4fb;border:1px dashed #c4b5e0;border-radius:8px;padding:6px 10px}
   .msg-debug .msg-text{font-size:0.85rem;color:#555}
   .msg-kind{font-size:0.66rem;text-transform:uppercase;letter-spacing:0.03em;padding:1px 6px;border-radius:999px;margin-left:0.5em;vertical-align:middle;background:#fde68a;color:#92400e}
+  /* assistant trace step (rendered from assistant_run/assistant_step rows) */
+  .astep-head{font-weight:600;color:#4338ca}
+  .astep-reason{color:#555;margin:2px 0}
+  .astep-observation{margin:2px 0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.8rem;background:#eef2ff;border-radius:6px;padding:4px 8px}
+  .astep-error{margin:2px 0;color:#b91c1c;white-space:pre-wrap}
+  .astep-final{color:#15803d}
+  .astep-label{font-weight:600;text-transform:uppercase;font-size:0.66rem;letter-spacing:0.03em;color:#6366f1}
   .msg-text{line-height:1.5}
   /* Collapsible reasoning ("thinking") rows: a small link-style toggle. */
   .thinking-toggle{margin:2px 0 0;padding:0;background:none;border:none;cursor:pointer;font:inherit;
@@ -531,6 +538,72 @@ function addCopyButton(container, source){
   container.appendChild(btn);
 }
 
+// Assistant trace: a debug-assistant row carries only {run_id, step_index};
+// the step detail lives in the assistant_run/assistant_step tables. Fetch a
+// run's steps once (cached by run_id) and render this step's plan/action/
+// observation inline so the operator can inspect the loop in the conversation.
+const assistantRunCache = {};
+function fetchAssistantRun(runId){
+  if (!assistantRunCache[runId]){
+    assistantRunCache[runId] = fetch('/chat/api/assistant/runs/' + runId)
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null);
+  }
+  return assistantRunCache[runId];
+}
+function astepBlock(label, text){
+  const d = document.createElement('div');
+  d.className = 'astep-' + label;
+  const l = document.createElement('span');
+  l.className = 'astep-label';
+  l.textContent = label + ': ';
+  d.appendChild(l);
+  d.appendChild(document.createTextNode(text));
+  return d;
+}
+function renderAssistantStepRows(stepIndex, rows){
+  const wrap = document.createElement('div');
+  const decision = rows.find(r => r.action) || rows[0] || {};
+  const head = document.createElement('div');
+  head.className = 'astep-head';
+  head.textContent = 'Step ' + stepIndex + (decision.action ? (' · ' + decision.action) : '');
+  wrap.appendChild(head);
+  if (decision.reason){
+    const r = document.createElement('div');
+    r.className = 'astep-reason';
+    r.textContent = decision.reason;
+    wrap.appendChild(r);
+  }
+  rows.forEach(s => {
+    if (s.phase === 'observed' && s.observation_preview){
+      wrap.appendChild(astepBlock('observation', s.observation_preview));
+    } else if (s.phase === 'failed'){
+      wrap.appendChild(astepBlock('error', s.error || s.observation_preview || 'failed'));
+    } else if (s.phase === 'final'){
+      const f = document.createElement('div');
+      f.className = 'astep-final';
+      f.textContent = '→ replied to the user';
+      wrap.appendChild(f);
+    }
+  });
+  return wrap;
+}
+function renderAssistantStepBody(body, text){
+  let ptr = null;
+  try { ptr = JSON.parse(text); } catch(e){}
+  if (!ptr || ptr.run_id == null){ body.textContent = text; return; }
+  const holder = document.createElement('div');
+  holder.textContent = 'assistant step ' + (ptr.step_index != null ? ptr.step_index : '?') + '…';
+  body.appendChild(holder);
+  fetchAssistantRun(ptr.run_id).then(data => {
+    holder.innerHTML = '';
+    if (!data){ holder.textContent = '(assistant step ' + ptr.step_index + ' — details unavailable)'; return; }
+    const rows = (data.steps || []).filter(s => s.step_index === ptr.step_index);
+    if (!rows.length){ holder.textContent = '(no trace for step ' + ptr.step_index + ')'; return; }
+    holder.appendChild(renderAssistantStepRows(ptr.step_index, rows));
+  });
+}
+
 function makeMessage(m){
   const msg = document.createElement('div');
   // Anything other than a real "message" (e.g. the router's "debug-router"
@@ -572,7 +645,11 @@ function makeMessage(m){
 
   const body = document.createElement('div');
   body.className = 'msg-text';
-  if (m.content_type === 'json'){
+  if (m.kind === 'debug-assistant'){
+    // Render the assistant step (plan/action/observation) from the trace tables
+    // rather than the raw {run_id, step_index} pointer.
+    renderAssistantStepBody(body, m.text);
+  } else if (m.content_type === 'json'){
     // Render JSON in a code block. textContent (not innerHTML) keeps it safe.
     const pre = document.createElement('pre');
     const code = document.createElement('code');
