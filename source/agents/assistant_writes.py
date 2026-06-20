@@ -50,6 +50,11 @@ def execute_write_intent(
     if cap.action is None or not cap.write:
         db.set_write_intent_state(intent, "failed", error="capability is not an executable write")
         return AssistantObservation(ok=False, text="capability is not an executable write")
+    if cap.tier != "confirm":
+        db.set_write_intent_state(intent, "failed", error="capability is not confirm-tier")
+        return AssistantObservation(
+            ok=False, text="capability is not confirm-tier; refusing to confirm-execute"
+        )
 
     db.set_write_intent_state(intent, "confirmed", confirmed_by_uuid=confirmed_by_uuid)
     db.set_write_intent_state(intent, "executing")
