@@ -5,11 +5,13 @@ Layered by PR so each slice stays shippable:
 - PR 1 added the *contract* — `AssistantActionName` and `AssistantStepDecision` —
   so the eval harness could drive a deterministic fake model
   (`agents/assistant_fakes.py`) before any live LLM behaviour existed.
-- PR 2 (this) adds `AssistantAgent`: the bounded plan -> act -> observe loop. It
-  enables only the two terminal actions (`reply`, `ask_clarifying_question`);
-  the read-only action dispatcher arrives in PR 4.
-- PR 3 makes the per-step trace durable (dedicated tables); here it lives in
-  `self._steps`, which `_record_step` is the single seam for.
+- PR 2 added `AssistantAgent`: the bounded plan -> act -> observe loop.
+- PR 3 made the per-step trace durable (assistant_run / assistant_step tables).
+- PR 4 (this) adds the read-only actions — `query_memory`, `query_qa`,
+  `workspace_read_command`, `kanban_read` — and the dispatcher that runs them
+  with a trace-before-action `running` row, an output cap, and an observation
+  the loop feeds back to the model. Each action reuses an existing rainbox
+  surface; none writes. Writes/MCP/generated code remain out of scope.
 
 The loop owns validation, the step cap, terminal posting, and trace boundaries;
 the only live-model seam is `_decide_next_step`. See
@@ -20,6 +22,8 @@ still satisfy the assistant contracts.
 """
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, cast
 from uuid import UUID
@@ -108,7 +112,8 @@ _ACTION_HELP: dict[AssistantActionName, str] = {
         'run an allowlisted read-only file-inspection command. args: {"command": "..."}'
     ),
     AssistantActionName.KANBAN_READ: (
-        'read kanban board/card state. args: optional {"board_uuid"|"task_uuid"}'
+        'read kanban board/card state. args: optional {"board_uuid"}; '
+        "empty lists all boards"
     ),
 }
 
@@ -132,6 +137,151 @@ request is ambiguous or missing information, use `ask_clarifying_question`. Only
 use actions from the list below; any other action is rejected."""
 
 
+@dataclass(frozen=True)
+class AssistantActionContext:
+    """What a read action is told about the request it serves. No payload: the
+    loop owns the conversation; an action performs one bounded read."""
+
+    journal_id: int
+    room_uuid: UUID
+    agent_uuid: UUID
+    step_index: int
+
+
+@dataclass(frozen=True)
+class AssistantObservation:
+    """The result of one read action. `text` is fed back to the model (capped by
+    the dispatcher); `data` carries structured detail for the trace, not the
+    prompt."""
+
+    ok: bool
+    text: str
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+AssistantAction = Callable[[AssistantActionContext, dict[str, Any]], AssistantObservation]
+
+
+def _action_query_memory(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Current memory retrieval path. Secrets are never returned to the model
+    (filter-before-rank: include_secret stays False)."""
+    from memory.retrieval import format_memory_context, retrieve_memories
+
+    query = str(args.get("query", "")).strip()
+    memories = retrieve_memories(
+        query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid, include_secret=False
+    )
+    if not memories:
+        return AssistantObservation(ok=True, text="No relevant remembered facts.")
+    return AssistantObservation(
+        ok=True, text=format_memory_context(memories), data={"count": len(memories)}
+    )
+
+
+def _action_query_qa(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Reuse the QueryAgent exact/semantic Q&A pipeline and its read-only dynamic
+    handlers (project status, git status, ...). Module-qualified calls so tests
+    can stub the embedding-dependent internals."""
+    from agents import query_kb_helpers as qkb
+    from agents.query_handlers import QueryContext
+
+    query = str(args.get("query", "")).strip()
+    qkb._load_kb()
+    vs = qkb._vector_store()
+    qkb._ensure_populated(vs)
+    match = qkb._exact_match(query) or qkb._semantic_match(query, vs)
+    if match is None:
+        return AssistantObservation(
+            ok=True, text="No confident Q&A match.", data={"matched": False}
+        )
+    qctx = QueryContext(
+        room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
+    )
+    answer = qkb._resolve_match(match, qctx)
+    return AssistantObservation(
+        ok=True,
+        text=answer,
+        data={"matched": True, "qa_id": match.qa_id, "method": match.method,
+              "score": match.score},
+    )
+
+
+def _action_workspace_read_command(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Run one allowlisted, non-shell argv in the workspace root via the shared
+    command policy + runner. The policy excludes interpreters, mutation, and
+    network tools, so this stays a file-inspection reader — not a git/Python/
+    shell runner."""
+    from tools.command_policy import validate_command
+    from tools.workspace_command_runner import (
+        COMMAND_TIMEOUT,
+        SHELL_ENV,
+        CommandTimeout,
+        run_command_once,
+    )
+    from tools.workspace_policy import SHELL_CWD, DisallowedCommand
+
+    command = str(args.get("command", "")).strip()
+    try:
+        argv = validate_command(command, SHELL_CWD)
+    except DisallowedCommand as e:
+        return AssistantObservation(ok=False, text=f"blocked: {e}")
+    try:
+        result = run_command_once(argv, SHELL_CWD, dict(SHELL_ENV))
+    except CommandTimeout:
+        return AssistantObservation(
+            ok=False, text=f"blocked: timed out after {COMMAND_TIMEOUT:g}s"
+        )
+    except DisallowedCommand as e:
+        return AssistantObservation(ok=False, text=f"blocked: {e}")
+    return AssistantObservation(
+        ok=result.exit_code == 0,
+        text=f"$ {command}\n{result.output}\n[exit code: {result.exit_code}]",
+        data={"exit_code": result.exit_code},
+    )
+
+
+def _action_kanban_read(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Read kanban state without writing events: one board's markdown when a
+    board_uuid is given, otherwise a list of all boards."""
+    board_raw = args.get("board_uuid")
+    if board_raw:
+        try:
+            board_uuid = UUID(str(board_raw))
+        except (ValueError, TypeError):
+            return AssistantObservation(ok=False, text=f"invalid board_uuid: {board_raw!r}")
+        markdown = db.kanban_board_markdown(board_uuid)
+        if markdown is None:
+            return AssistantObservation(ok=False, text="no such kanban board")
+        return AssistantObservation(
+            ok=True, text=markdown, data={"board_uuid": str(board_uuid)}
+        )
+    boards = db.kanban_list_boards()
+    if not boards:
+        return AssistantObservation(ok=True, text="No kanban boards.")
+    lines = ["Kanban boards:"]
+    for b in boards:
+        lines.append(f"- {b.get('name')} ({b.get('uuid')})")
+    return AssistantObservation(ok=True, text="\n".join(lines), data={"count": len(boards)})
+
+
+# Registry of read-only action callables. Phase 4 formalizes this into a
+# capability registry with metadata; for now it is the dispatch table.
+_ACTIONS: dict[AssistantActionName, AssistantAction] = {
+    AssistantActionName.QUERY_MEMORY: _action_query_memory,
+    AssistantActionName.QUERY_QA: _action_query_qa,
+    AssistantActionName.WORKSPACE_READ_COMMAND: _action_workspace_read_command,
+    AssistantActionName.KANBAN_READ: _action_kanban_read,
+}
+
+
 class AssistantAgent(ModelGroupAgent):
     """A bounded ReAct loop: decide a step, validate it, act, observe, repeat
     until a terminal reply or the step cap.
@@ -141,11 +291,10 @@ class AssistantAgent(ModelGroupAgent):
     `handle()`, each reusing the shared model-group fallback via
     `_structured_completion`.
 
-    PR 2 enables only the terminal actions; the read-only action dispatch branch
-    and the `query_*`/`workspace_read_command`/`kanban_read` actions arrive in
-    PR 4. The per-step trace is held in `self._steps` and committed through the
-    `_record_step` seam, which PR 3 swaps for durable `assistant_run` /
-    `assistant_step` rows.
+    PR 4 enables the two terminal actions plus the four read-only actions, each
+    dispatched through `_dispatch_action` with a trace-before-action `running`
+    row and an output cap. The per-step trace is durable via the `_record_step`
+    seam (assistant_run / assistant_step rows). Writes remain out of scope.
     """
 
     # Loop + prompt budget caps (PR 1-4: simple counts/char caps, not a
@@ -153,12 +302,18 @@ class AssistantAgent(ModelGroupAgent):
     STEP_LIMIT: int = 6
     MAX_RECENT_MESSAGES: int = 30
     MAX_SCRATCHPAD_CHARS: int = 5000
+    # The slice of an observation the model/trace see per step. The raw action
+    # output is capped harder (MAX_OBSERVATION_CHARS) before this preview.
+    MAX_OBSERVATION_PREVIEW_CHARS: int = 1200
+    MAX_OBSERVATION_CHARS: int = 4000
 
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
         self.step_limit = self.STEP_LIMIT
-        # PR 2 enables only terminal actions; PR 4 widens this to the read set.
-        self._enabled_actions: frozenset[AssistantActionName] = _TERMINAL_ACTIONS
+        # Terminal actions plus the PR 4 read-only set.
+        self._enabled_actions: frozenset[AssistantActionName] = frozenset(
+            AssistantActionName
+        )
         # In-memory mirror of the trace for fast assertions/diagnostics; the
         # durable source of truth is the assistant_run/assistant_step tables.
         self._steps: list[dict[str, Any]] = []
@@ -211,18 +366,41 @@ class AssistantAgent(ModelGroupAgent):
                     )
                     continue
 
-                # PR 2 enables only terminal actions; PR 4 replaces this assert
-                # with the read-action dispatch branch for non-terminal actions.
-                assert decision.action in _TERMINAL_ACTIONS
-                self._record_step(step_index=step_index, phase="final", decision=decision)
-                text = self._terminal_text(decision)
-                db.post_chat_message(room_uuid, self.agent_uuid, text, kind="message")
-                db.finish_run(run, "finished", final_summary=text[:200])
-                logger.info(
-                    "assistant finished run %s in room %s at step %d",
-                    run.id, room_uuid, step_index,
+                if decision.action in _TERMINAL_ACTIONS:
+                    self._record_step(
+                        step_index=step_index, phase="final", decision=decision
+                    )
+                    text = self._terminal_text(decision)
+                    db.post_chat_message(room_uuid, self.agent_uuid, text, kind="message")
+                    db.finish_run(run, "finished", final_summary=text[:200])
+                    logger.info(
+                        "assistant finished run %s in room %s at step %d",
+                        run.id, room_uuid, step_index,
+                    )
+                    return self._run_result("finished", text[:200])
+
+                # Non-terminal read action: commit the `running` row before the
+                # action runs (so a kill mid-action leaves it), dispatch, then
+                # record the observation and feed a compact form to the model.
+                self._record_step(step_index=step_index, phase="running", decision=decision)
+                action_ctx = AssistantActionContext(
+                    journal_id=journal_id,
+                    room_uuid=room_uuid,
+                    agent_uuid=self.agent_uuid,
+                    step_index=step_index,
                 )
-                return self._run_result("finished", text[:200])
+                observation = self._dispatch_action(action_ctx, decision)
+                preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
+                self._record_step(
+                    step_index=step_index,
+                    phase="observed" if observation.ok else "failed",
+                    decision=decision,
+                    observation_preview=preview,
+                    error=None if observation.ok else preview,
+                )
+                scratchpad.append(
+                    self._compact_step(step_index, decision, observation.ok, preview)
+                )
 
             # Ran out of steps without a terminal action.
             msg = (
@@ -338,6 +516,35 @@ class AssistantAgent(ModelGroupAgent):
         # Validation guarantees the required key is present and non-empty.
         key = "message" if decision.action is AssistantActionName.REPLY else "question"
         return str(decision.args[key]).strip()
+
+    def _dispatch_action(
+        self, ctx: AssistantActionContext, decision: AssistantStepDecision
+    ) -> AssistantObservation:
+        """Run one validated read action. Exceptions become a failed observation
+        (the loop records the failed step); output is capped so a chatty action
+        can't blow the prompt budget."""
+        action_fn = _ACTIONS.get(decision.action)
+        if action_fn is None:
+            return AssistantObservation(
+                ok=False, text=f"action '{decision.action.value}' has no dispatcher"
+            )
+        try:
+            obs = action_fn(ctx, decision.args)
+        except Exception as e:  # an action must never crash the loop
+            logger.warning("assistant action %s failed: %s", decision.action.value, e)
+            return AssistantObservation(ok=False, text=f"{type(e).__name__}: {e}")
+        if len(obs.text) > self.MAX_OBSERVATION_CHARS:
+            obs = AssistantObservation(
+                ok=obs.ok, text=obs.text[: self.MAX_OBSERVATION_CHARS], data=obs.data
+            )
+        return obs
+
+    @staticmethod
+    def _compact_step(
+        step_index: int, decision: AssistantStepDecision, ok: bool, preview: str
+    ) -> str:
+        status = "ok" if ok else "failed"
+        return f"step {step_index}: {decision.action.value} -> {status}: {preview}"
 
     def _record_step(
         self,

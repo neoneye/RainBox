@@ -163,8 +163,13 @@ def test_step_cap_stops_after_step_limit(room):
     result = agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "stopped"
-    # Three planned+failed pairs, no terminal "final".
-    assert _phases(agent) == ["planned", "failed", "planned", "failed", "planned", "failed"]
+    # Three planned/running/observed triples (query_memory is a real read action
+    # in PR 4), no terminal "final".
+    assert _phases(agent) == [
+        "planned", "running", "observed",
+        "planned", "running", "observed",
+        "planned", "running", "observed",
+    ]
     # The user still gets a message explaining the run stopped.
     assert len(_agent_messages(room_uuid)) == 1
 
@@ -301,7 +306,11 @@ def test_killed_mid_run_leaves_last_committed_step_and_marks_run_failed(room):
     def flaky(**_kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            return _query_memory("first")  # disabled -> planned+failed, committed
+            # An invalid reply (missing message) -> planned+failed, committed —
+            # a stable first step independent of which read actions are enabled.
+            return AssistantStepDecision(
+                reason="oops", action=AssistantActionName.REPLY, args={}
+            )
         raise RuntimeError("model exploded")
 
     agent._decide_next_step = flaky
