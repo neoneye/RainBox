@@ -231,17 +231,36 @@ def hard_filtered_claims(
 
 
 def _fulltext_scores(query: str, ids: list[UUID]) -> dict[UUID, float]:
-    """Postgres ts_rank for each candidate (0 when it doesn't match)."""
+    """Postgres ts_rank for each candidate that shares at least one query term.
+
+    Two things matter here:
+    - We OR the query terms (`term1 | term2 | …`) rather than using
+      `plainto_tsquery`, which ANDs them — an AND query would only match a claim
+      containing *every* query word, killing partial-overlap recall.
+    - The `@@` match filter is essential: `ts_rank` returns a tiny non-zero
+      epsilon (~1e-20) even for non-matching documents, so without the filter the
+      caller's max-normalization would turn that uniform epsilon into a full-text
+      score of 1.0 for every claim, and an unrelated query would retrieve the
+      whole active set. With `@@`, only claims sharing a term appear here;
+      everything else is treated as 0 by the caller's `.get(uuid, 0.0)`.
+    """
     if not ids:
         return {}
+    terms = _tokenize(query)
+    if not terms:
+        return {}
+    tsq = " | ".join(sorted(terms))
     stmt = sa.text(
         "SELECT uuid, ts_rank("
         "  to_tsvector('english', coalesce(text,'') || ' ' || "
         "    coalesce(subject,'') || ' ' || coalesce(object,'')),"
-        "  plainto_tsquery('english', :q)) AS rank "
-        "FROM memory_claim WHERE uuid IN :ids"
+        "  to_tsquery('english', :tsq)) AS rank "
+        "FROM memory_claim WHERE uuid IN :ids "
+        "  AND to_tsvector('english', coalesce(text,'') || ' ' || "
+        "      coalesce(subject,'') || ' ' || coalesce(object,'')) "
+        "      @@ to_tsquery('english', :tsq)"
     ).bindparams(sa.bindparam("ids", expanding=True))
-    rows = db.db.session.execute(stmt, {"q": query, "ids": ids}).all()
+    rows = db.db.session.execute(stmt, {"tsq": tsq, "ids": ids}).all()
     return {row[0]: float(row[1]) for row in rows}
 
 
@@ -299,6 +318,7 @@ def retrieve_memories_hybrid(
     include_secret: bool = False,
     journal_id: UUID | None = None,
     embed_fn: Callable[[str], list[float]] | None = None,
+    record_telemetry: bool = True,
 ) -> list[RetrievedMemory]:
     """Multi-signal memory retrieval: hard filters first, then a weighted merge
     of vector similarity, Postgres full-text rank, and a structured
@@ -355,15 +375,16 @@ def retrieve_memories_hybrid(
                 score=round(score, 6),
             )
         )
-        try:
-            db.record_retrieval_event(
-                target_type="memory_claim", target_id=str(claim.uuid),
-                stage="retrieved", query=query, room_uuid=room_uuid,
-                agent_uuid=agent_uuid, journal_id=journal_id, source="memory.hybrid",
-                retrieval_rank=rank, retrieval_score=round(score, 6),
-            )
-        except Exception:
-            logger.warning("memory: failed to record hybrid retrieval telemetry")
+        if record_telemetry:
+            try:
+                db.record_retrieval_event(
+                    target_type="memory_claim", target_id=str(claim.uuid),
+                    stage="retrieved", query=query, room_uuid=room_uuid,
+                    agent_uuid=agent_uuid, journal_id=journal_id, source="memory.hybrid",
+                    retrieval_rank=rank, retrieval_score=round(score, 6),
+                )
+            except Exception:
+                logger.warning("memory: failed to record hybrid retrieval telemetry")
     return out
 
 
@@ -471,12 +492,17 @@ def build_chat_memory_block(
     if not query and messages:
         query = messages[-1].get("text") or ""
 
-    memories = retrieve_memories(
+    # Hybrid retrieval (vector + full-text + entity); telemetry is owned by
+    # _record_memory_telemetry below (chat_memory_retrieval), so suppress
+    # hybrid's own retrieved-event write to avoid double-recording.
+    memories = retrieve_memories_hybrid(
         query,
         agent_uuid=agent_uuid,
         room_uuid=room_uuid,
         limit=retrieval_limit,
         include_secret=include_secret,
+        journal_id=journal_id,
+        record_telemetry=False,
     )
     try:
         _record_memory_telemetry(

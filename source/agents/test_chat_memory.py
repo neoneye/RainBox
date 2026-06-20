@@ -147,13 +147,38 @@ def test_user_prompt_includes_relevant_memory(app_ctx, fresh_subject):
         _cleanup(fresh_subject)
 
 
+def test_user_prompt_includes_profile_block(app_ctx, fresh_subject):
+    """S8: the chat prompt carries the operator profile block, before the
+    transcript (same as the assistant)."""
+    human = db.get_human_user()
+    room_uuid, agent_uuid = _room_with_chat_agent(human.uuid)
+    try:
+        db.create_memory_claim(
+            scope="global", kind="preference",
+            text="Username prefers concise answers.", confidence=1.0,
+            status="active", sensitivity="private", subject=fresh_subject)
+        db.post_chat_message(room_uuid, human.uuid, "anything")
+        agent = StructuredChatAgent(
+            agent_uuid=agent_uuid, name="chat_structured", send=lambda _: None)
+        prompt = agent.user_prompt({"room_uuid": str(room_uuid)})
+        assert "About the operator" in prompt
+        assert prompt.index("About the operator") < prompt.index("Current message:")
+    finally:
+        _cleanup_room(room_uuid, agent_uuid)
+        _cleanup(fresh_subject)
+
+
 def test_user_prompt_omits_irrelevant_memory(app_ctx, fresh_subject):
     human = db.get_human_user()
     assert human is not None
     room_uuid, agent_uuid = _room_with_chat_agent(human.uuid)
     try:
+        # episode_summary is memory-retrievable but NOT profile material, so this
+        # claim only ever appears if the query matches it (it doesn't here). A
+        # fact-with-subject would now be surfaced query-independently by the
+        # always-on profile block, which is a separate concern from this test.
         db.create_memory_claim(
-            scope="global", kind="fact",
+            scope="global", kind="episode_summary",
             text="cats are mammals",
             confidence=1.0, status="active", sensitivity="public",
             subject=fresh_subject,
@@ -165,7 +190,7 @@ def test_user_prompt_omits_irrelevant_memory(app_ctx, fresh_subject):
             agent_uuid=agent_uuid, name="chat_structured", send=lambda _: None,
         )
         prompt = agent.user_prompt({"room_uuid": str(room_uuid)})
-        # No token overlap with "weather Paris today" — memory block omitted.
+        # No overlap with "weather Paris today" — memory block omitted.
         assert "Relevant remembered facts:" not in prompt
         assert "cats are mammals" not in prompt
     finally:
@@ -228,8 +253,10 @@ def test_handle_does_not_post_debug_memory_when_no_memories(
     assert human is not None
     room_uuid, agent_uuid = _room_with_chat_agent(human.uuid)
     try:
+        # A hermetically unmatchable query: hybrid full-text stems real words, so
+        # use nonsense tokens that can't match any claim in the shared test DB.
         db.post_chat_message(
-            room_uuid, human.uuid, "completely unrelated question",
+            room_uuid, human.uuid, "xyzzyqwertz plughfrobnitz",
         )
 
         def fake_structured_call(self, user_prompt):
@@ -476,10 +503,10 @@ def test_chat_memory_telemetry_uses_actual_retrieval_limit():
     # same name appears as `retrieval_limit=<name>` in the immediately
     # following _record_memory_telemetry call.
     m = re.search(
-        r"retrieve_memories\([^)]*limit=(\w+)",
+        r"retrieve_memories_hybrid\([^)]*limit=(\w+)",
         src, re.DOTALL,
     )
-    assert m, "retrieve_memories no longer passes an explicit limit"
+    assert m, "build_chat_memory_block no longer passes an explicit limit to hybrid retrieval"
     limit_local = m.group(1)
     assert re.search(
         rf"_record_memory_telemetry\([^)]*retrieval_limit\s*=\s*{limit_local}",

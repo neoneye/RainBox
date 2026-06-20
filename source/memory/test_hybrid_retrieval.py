@@ -112,6 +112,23 @@ def test_hard_filters_exclude_project_scope(app_ctx, fresh_subject):
         _cleanup(fresh_subject)
 
 
+def test_unrelated_query_retrieves_nothing(app_ctx, fresh_subject):
+    """Regression: Postgres ts_rank returns a uniform ~1e-20 epsilon for
+    non-matching docs; without a `@@` match filter the max-normalization turned
+    that into a full-text score of 1.0 for every claim, so an unrelated query
+    retrieved the entire active set. A query sharing no terms must retrieve none."""
+    _claim(fresh_subject, "the user enjoys running marathons")
+    _claim(fresh_subject, "the deploy host is prod-web-01")
+    try:
+        out = retrieve_memories_hybrid(
+            "xyzzyqwertz plughfrobnitz", agent_uuid=None, room_uuid=None,
+            embed_fn=_boom_embed,
+        )
+        assert out == []
+    finally:
+        _cleanup(fresh_subject)
+
+
 def test_entity_boost_prefers_subject_object_match(app_ctx, fresh_subject):
     # Both mention "capital"; only one has the matching object entity "france".
     # (Use the object column so `subject` stays the cleanup tag.)

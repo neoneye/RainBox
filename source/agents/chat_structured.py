@@ -111,8 +111,10 @@ class StructuredChatAgent(StructuredLLMAgent):
             m for m in db.list_room_messages(room_uuid)
             if m.get("kind") == "message"
         ]
-        # Shared chat memory retrieval (query extraction + retrieval + telemetry).
-        memory_block, query, memories = memory_retrieval.build_chat_memory_block(
+        # Shared chat context: operator profile block + hybrid memory block
+        # (query extraction + retrieval + telemetry).
+        from agents.chat_context import build_chat_context_block
+        context_block, query, memories = build_chat_context_block(
             messages,
             agent_uuid=self.agent_uuid,
             room_uuid=room_uuid,
@@ -125,8 +127,8 @@ class StructuredChatAgent(StructuredLLMAgent):
         self._last_retrieved_memories = memories
 
         transcript = format_history(messages)
-        if memory_block:
-            return f"{memory_block}\n\n{transcript}"
+        if context_block:
+            return f"{context_block}\n\n{transcript}"
         return transcript
 
     @staticmethod
