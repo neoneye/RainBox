@@ -132,7 +132,11 @@ Each card: **Goal · Touches · Decisions to resolve in its spec · Done when ·
 Size (S/M/L) · Depends on.** Write families cluster in S2–S5 and S10; the
 trailing `(v2 …)` notes anchor each to the frozen commitment it carries.
 
-### S1 — Embedding-sync trigger  ·  Size S  ·  Depends on: none
+### S1 — Embedding-sync trigger  ·  ✅ DONE (merged `25feec0`)  ·  Size S
+- **Shipped:** a first-class in-process `memory_sync` cron action resolved like
+  `backup`, plus a seeded ENABLED daily System job; `(embedded, pruned)` posts to
+  the cron event log. Spec:
+  [`../superpowers/specs/2026-06-20-s1-embedding-sync-cron-design.md`](../superpowers/specs/2026-06-20-s1-embedding-sync-cron-design.md).
 - **Goal:** Actually run `sync_memory_embeddings` (backfill active + prune stale)
   on a schedule, closing the one caveat left by the embedding-freshness work.
 - **Touches:** `db/cron.py` (a built-in periodic job), or an admin button in a
