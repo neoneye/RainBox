@@ -93,6 +93,41 @@ def test_move_rejects_column_not_on_board(board):
     assert obs.ok is False
 
 
+def test_undo_moves_task_back_and_marks_undone(board):
+    from agents.assistant_writes import undo_write_intent
+
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID, step_limit=6)
+    task = board["tasks"][0]
+    todo, done = board["columns"][0]["uuid"], board["columns"][1]["uuid"]
+    db.kanban_move_task(UUID(task["uuid"]), UUID(done), actor=str(ASSISTANT_UUID))
+    intent = db.create_write_intent(
+        run_id=run.id, step_index=0, capability_name="kanban_move",
+        payload={"task_uuid": task["uuid"], "column_uuid": done},
+        preview_text="kanban_move: …", room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
+        state="completed",
+        result={"undo": {"capability": "kanban_move",
+                         "payload": {"task_uuid": task["uuid"], "column_uuid": todo}}},
+    )
+    try:
+        obs = undo_write_intent(intent.uuid)
+        assert obs.ok is True
+        assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == todo
+        assert db.get_write_intent(intent.uuid).state == "undone"
+        # Second undo is refused (already undone, not completed).
+        assert undo_write_intent(intent.uuid).ok is False
+    finally:
+        db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.run_id == run.id).delete()
+        db.db.session.query(AssistantRun).filter(AssistantRun.id == run.id).delete()
+        db.db.session.commit()
+
+
+def test_undo_refuses_unknown_intent(app_ctx):
+    from agents.assistant_writes import undo_write_intent
+    assert undo_write_intent(uuid4()).ok is False
+
+
 def test_move_via_loop_lands_completed_undo_ledger(board):
     human = db.get_human_user()
     chatroom = db.create_chatroom(f"mv-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])

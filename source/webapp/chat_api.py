@@ -377,6 +377,15 @@ def reject_assistant_write_intent(intent_uuid: UUID) -> Response:
     return jsonify({"rejected": reject_write_intent(intent_uuid)})
 
 
+@app.route("/chat/api/assistant/write-intents/<uuid:intent_uuid>/undo", methods=["POST"])
+def undo_assistant_write_intent(intent_uuid: UUID) -> Response:
+    """Revert a completed log-and-undo write (e.g. a kanban move)."""
+    from agents.assistant_writes import undo_write_intent
+
+    obs = undo_write_intent(intent_uuid)
+    return jsonify({"ok": obs.ok, "text": obs.text, "data": obs.data})
+
+
 @app.route("/chat/api/messages/<message_uuid>/feedback", methods=["POST"])
 def post_feedback(message_uuid: str) -> Response | tuple[Response, int]:
     """Capture an upvote/downvote on an agent's user-facing chat reply.
