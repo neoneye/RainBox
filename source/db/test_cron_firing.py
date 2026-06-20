@@ -490,6 +490,13 @@ def test_seed_creates_enabled_memory_sync_job(app_ctx):
         uuid=db.MEMORY_SYNC_CRON_JOB_UUID).count() == 1
 
 
+def test_memory_sync_action_type_passes_check_constraint(firing):
+    """The widened cron_job_action_type_check admits 'memory_sync' — inserting a
+    job with it must not raise an IntegrityError."""
+    job = firing(action_type="memory_sync", name="CheckOK")
+    assert job.action_type == "memory_sync"  # committed by the fixture, no raise
+
+
 def test_fire_debug_command_enqueues_with_flag(firing):
     """A command dry-run still goes through the workspace-shell agent (it owns
     the validation), with debug in the payload so it echoes instead of runs."""
