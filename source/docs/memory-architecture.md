@@ -17,10 +17,11 @@ evidence.
 
 ### Durable Store
 
-Memory is stored in Postgres through two first-class tables in the `db/` package:
+Memory is stored in Postgres through first-class tables in the `db/` package:
 
 - `memory_claim`
 - `memory_evidence`
+- `memory_embedding`
 
 `MemoryClaim` is the canonical belief. It holds the text of the memory, its
 kind, scope, lifecycle status, confidence, sensitivity, and optional expiry.
@@ -36,6 +37,12 @@ The important design rule is that provenance is not a mutable field on the
 claim. A claim can have multiple evidence rows. For example, a model-inferred
 candidate can later receive a `confirmed_by_user` evidence row without losing
 the original inference record.
+
+`MemoryEmbedding` is an auxiliary pgvector table for active claims. It stores
+one embedding per `(memory_uuid, model_name, text_hash)` so hybrid retrieval can
+use semantic similarity without changing the claim/evidence source of truth.
+Claims without a current embedding still remain retrievable through lexical and
+entity signals.
 
 ### Claim Lifecycle
 
@@ -102,24 +109,34 @@ one `superseded`.
 
 ### Retrieval
 
-Runtime retrieval lives in `memory/retrieval.py`.
+Runtime retrieval lives in `memory/retrieval.py`. There are currently two
+retrieval paths:
 
-The current retrieval strategy is deterministic and intentionally conservative:
+- `retrieve_memories`: the legacy chat-memory path. It is deterministic and
+  lexical: token overlap against claim text, subject, and object.
+- `retrieve_memories_hybrid`: the assistant action path. It hard-filters first,
+  then blends vector similarity from `memory_embedding`, Postgres full-text rank,
+  and subject/object entity boosts.
+
+Both paths are intentionally conservative:
 
 1. Tokenize the current user message.
 2. Consider only active, non-expired claims.
 3. Exclude secret claims unless explicitly allowed.
-4. Match by token overlap against claim text, subject, and object.
-5. Sort by scope relevance, confidence, and recency.
+4. Apply scope constraints before ranking.
+5. Rank only the remaining allowed claims.
 6. Return a small capped list.
 
-There is no embedding-based memory retrieval yet. That is a deliberate choice:
-the current system is easy to test, explain, and debug.
+Hybrid retrieval is additive, not a global replacement. The chat agents still
+use the legacy lexical path so existing behavior stays simple and explainable;
+the assistant's `query_memory` action uses the hybrid path and degrades to
+lexical/full-text/entity signals when an embedding is missing or the embedder is
+unavailable.
 
 ### Prompt Injection
 
-`ChatAgent.user_prompt` retrieves relevant memories and prepends a compact block
-before the normal IRC-style chat transcript:
+`ChatAgent.user_prompt` retrieves relevant memories with the legacy lexical path
+and prepends a compact block before the normal IRC-style chat transcript:
 
 ```text
 Relevant remembered facts:
@@ -136,6 +153,10 @@ Before building the transcript, `ChatAgent` filters the room history to
 `kind == "message"`. Diagnostic rows such as `debug-memory`, `debug-query`,
 `progress`, and `thinking` are not shown to the model and cannot become the
 current message.
+
+The assistant uses memory differently: its bounded action loop can call
+`query_memory`, which uses `retrieve_memories_hybrid` and returns the formatted
+memory context as an observation inside the persisted assistant trace.
 
 ### Memory-Use Audit
 
@@ -165,6 +186,15 @@ The current chat path injects every retrieved memory, so `retrieved` and `used`
 currently have the same target set. That is an honest first phase: it records
 which memories entered the answer context, but it is not full final-answer
 attribution.
+
+For assistant memory retrieval, `retrieve_memories_hybrid` writes:
+
+- `target_type="memory_claim"`
+- `stage="retrieved"` for each hybrid-ranked memory
+- `source="memory.hybrid"`
+
+The assistant trace then records the action and observation that consumed those
+memories.
 
 The query-filter router also emits retrieval telemetry for Q&A entries:
 
@@ -246,6 +276,7 @@ The project now has several memory-like layers:
 - Journal: durable episodic record of agent work.
 - Q&A registry: curated static/dynamic knowledge for `QueryAgent`.
 - Memory claims/evidence: general long-term memory with provenance.
+- Memory embeddings: semantic index for active memory claims.
 - Workspace shell state: narrow procedural state for shell sessions.
 
 The new memory layer should not replace all of these. It should become the
@@ -260,6 +291,8 @@ The current architecture has a good foundation:
 - User confirmation does not erase earlier evidence.
 - Forget/correct operations are auditable.
 - Retrieval is deterministic and testable.
+- Hybrid retrieval exists for the assistant while chat keeps the simpler legacy
+  path.
 - Sensitive memory has a first-pass safety model.
 - Prompt injection is compact.
 - Diagnostic memory use is inspectable.
@@ -277,14 +310,17 @@ retrieval, feedback, telemetry, and evals all exist in the same loop.
 
 The system is still conservative and incomplete:
 
-- Retrieval is lexical, so it misses semantically related memories with different
-  wording.
+- Chat memory retrieval is still lexical, so normal chat can miss semantically
+  related memories with different wording.
+- Hybrid retrieval is currently additive and mainly used by the assistant; it is
+  not yet the default for every memory consumer.
 - There is no automatic extraction of candidate memories from chat or journal
   rows.
 - There is no conflict detector for competing active claims.
 - `sensitivity` is manually assigned and coarse.
 - There is no dedicated memory management UI beyond Flask-Admin.
-- Memory is only injected into `ChatAgent`, not the other agent types.
+- Memory is injected into `ChatAgent` and available to the assistant through
+  `query_memory`, but not broadly integrated into every agent type.
 - Evidence stores excerpts, but not rich source navigation or source snapshots.
 - The system does not yet summarize episodes from `journal` into reusable
   memories.
@@ -348,10 +384,10 @@ The first version can be simple:
 
 Later, semantic conflict detection can use embeddings or an LLM.
 
-### 4. Add Embeddings As A Secondary Retrieval Channel
+### 4. Expand Hybrid Retrieval Carefully
 
-Lexical retrieval is good for auditability but limited. The next retrieval
-layer should use pgvector, but only after deterministic filters:
+The secondary pgvector retrieval channel exists, but it should keep the same
+guardrails as it spreads beyond the assistant:
 
 1. Filter by status, expiry, sensitivity, scope.
 2. Run vector search over eligible memory claims.
@@ -359,7 +395,10 @@ layer should use pgvector, but only after deterministic filters:
 4. Keep provenance and retrieval reason visible.
 
 This avoids a black-box memory dump. The model should receive only a small set
-of memories, each with an explanation of why it was retrieved.
+of memories, each with an explanation of why it was retrieved. Remaining work is
+mostly adoption and freshness: decide which chat/agent paths should use hybrid
+retrieval, ensure embeddings are current when memories become active or change,
+and keep lexical fallback behavior explicit.
 
 ### 5. Improve Attribution
 

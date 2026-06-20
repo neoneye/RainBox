@@ -11,6 +11,7 @@ for questions like:
 - Which memories are retrieved often?
 - Which memories are injected into chat prompts?
 - Which Q&A entries are rejected by the relevance filter?
+- Which procedural skills were considered or injected into an assistant prompt?
 - Which retrieved targets appear in downvoted answers?
 - Where should we create eval cases before tuning retrieval?
 
@@ -40,6 +41,22 @@ Today every retrieved memory is injected, so `retrieved` and `used` have the
 same target set. Interpret `used` as "entered the answer context", not "proved
 to have influenced the final text".
 
+### Assistant Hybrid Memory Retrieval
+
+The assistant's `query_memory` action uses `retrieve_memories_hybrid`, which
+hard-filters memory claims, then ranks with vector similarity, Postgres
+full-text rank, and subject/object entity boosts.
+
+It writes:
+
+- `target_type="memory_claim"`
+- `stage="retrieved"` for each hybrid-ranked memory returned to the assistant
+- `source="memory.hybrid"`
+
+This records what the hybrid memory action surfaced. The assistant run/step
+trace records the action arguments and observation that consumed the returned
+memory context.
+
 ### Query Filter Router
 
 `QueryFilterRouterAgent` records Q&A retrieval decisions for
@@ -60,6 +77,23 @@ Its `used` rows include:
 
 That metadata is important. It says the candidate was accepted into the final
 answer context, not that final wording causally relied on it.
+
+### Skill Retrieval
+
+The assistant can inject active procedural skills into its prompt. Skill
+retrieval is currently lexical over active skill metadata/body, and candidate
+skills are inert: they load but are not injected.
+
+It writes:
+
+- `target_type="skill"`
+- `target_id=<skill id>`
+- `stage="considered"` for each retrieved/ranked active skill
+- `stage="injected"` for each skill that fits the skill prompt budget
+- `source="skills.retrieval"`
+
+`considered` means the skill was relevant enough to rank. `injected` means it
+entered the prompt context.
 
 ### Feedback Downvotes
 
@@ -87,9 +121,9 @@ earlier turn.
 retrieval_event
 - id
 - uuid
-- target_type        qa_entry | memory_claim
-- target_id          qa_id or memory UUID
-- stage              retrieved | accepted | rejected | used | downvoted
+- target_type        qa_entry | memory_claim | skill
+- target_id          qa_id, memory UUID, or skill id
+- stage              retrieved | accepted | rejected | used | downvoted | considered | injected
 - query
 - room_uuid
 - agent_uuid
@@ -115,6 +149,8 @@ accepted_count = count(stage = accepted)
 rejected_count = count(stage = rejected)
 used_count = count(stage = used)
 downvoted_count = count(stage = downvoted)
+considered_count = count(stage = considered)
+injected_count = count(stage = injected)
 ```
 
 Useful derived rates:
@@ -124,6 +160,7 @@ acceptance_rate = accepted_count / retrieved_count
 rejection_rate = rejected_count / retrieved_count
 usage_rate = used_count / retrieved_count
 downvote_rate = downvoted_count / used_count
+skill_injection_rate = injected_count / considered_count
 ```
 
 Interpretation examples:
@@ -132,6 +169,8 @@ Interpretation examples:
 - high used + high downvoted: target may be stale, broad, wrong, or harmful in
   context.
 - low retrieved + eval expects it: retrieval may be missing important memory.
+- high considered + low injected for skills: the prompt budget may be too tight
+  or too many skills overlap the query.
 - high used + low downvoted: likely useful, but still not proof of causality.
 
 ## Relationship To Feedback And Evals
@@ -157,6 +196,8 @@ eval cases and verify the change.
 
 - `used` means "entered answer context" for chat memory.
 - Query-filter `used` is marked as an accepted-candidate approximation.
+- Skill `injected` means the skill entered the assistant prompt, not that the
+  final answer followed it correctly.
 - Downvotes do not prove the target caused the bad answer.
 - There is no full answer attribution yet.
 - There is no rollup stats table yet; reports should query event rows.
@@ -166,7 +207,7 @@ eval cases and verify the change.
 - Do not treat filter rejection as permanent truth.
 - Do not lower `MemoryClaim.confidence` from relevance counters. Confidence is
   about claim truth; telemetry is about retrieval/usefulness.
-- Do not compare Q&A IDs and memory UUIDs without `target_type`.
+- Do not compare Q&A IDs, memory UUIDs, and skill IDs without `target_type`.
 - Do not optimize on high raw counts without considering exposure volume.
 - Do not treat downvotes as automatic memory deletion signals.
 

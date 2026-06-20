@@ -9,6 +9,11 @@ Commands are parsed by `memory/ops.py` and handled through `QueryAgent` before
 the Q&A/vector path is initialized. That means explicit memory operations do not
 depend on LM Studio embeddings or the Q&A registry being available.
 
+These commands are separate from prompt-time memory retrieval. Normal chat still
+uses the legacy lexical `retrieve_memories` path; the assistant's `query_memory`
+action uses the newer hybrid `retrieve_memories_hybrid` path backed by
+`memory_embedding` when embeddings are available.
+
 ## Commands
 
 ### Remember
@@ -117,7 +122,9 @@ should only be used when directly relevant.
 
 ## Limitations
 
-- Matching is currently lexical.
+- Command parsing and command lookups are currently lexical/exact-match oriented.
+- Normal chat memory retrieval is still lexical; hybrid retrieval is currently
+  additive and mainly used by the assistant.
 - There is no dedicated user-facing memory management UI yet.
 - Conflict detection is basic and should be improved.
 - Automatic memory extraction from chat/journal is not implemented yet.
@@ -128,5 +135,6 @@ Inspect memory state in Flask-Admin:
 
 - `MemoryClaim`
 - `MemoryEvidence`
+- `MemoryEmbedding`
 
 For architecture details, see `docs/memory-architecture.md`.
