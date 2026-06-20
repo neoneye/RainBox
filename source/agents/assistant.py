@@ -617,6 +617,8 @@ class AssistantAgent(ModelGroupAgent):
                     observation = self._propose_write(action_ctx, decision, cap)
                 else:
                     observation = self._dispatch_action(action_ctx, decision)
+                    if cap.write and cap.tier == "log_and_undo" and observation.ok:
+                        self._record_log_and_undo(action_ctx, cap, decision, observation)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._record_step(
                     step_index=step_index,
@@ -843,6 +845,30 @@ class AssistantAgent(ModelGroupAgent):
             text=(f"Proposed (awaiting your confirmation): {preview}. "
                   f"Confirm intent {intent.uuid} to apply."),
             data={"write_intent_uuid": str(intent.uuid), "state": "proposed"},
+        )
+
+    def _record_log_and_undo(
+        self,
+        ctx: AssistantActionContext,
+        cap: "Capability",
+        decision: AssistantStepDecision,
+        observation: AssistantObservation,
+    ) -> None:
+        """Record an executed log-and-undo write as a `completed`, reversible
+        ledger row. Created atomically in `completed` (never `proposed`) so it
+        can't be confirm-executed into a duplicate write; `result["undo"]`
+        carries the inverse op consumed by undo_write_intent."""
+        preview = f"{cap.name.value}: {json.dumps(decision.args, sort_keys=True)}"
+        db.create_write_intent(
+            run_id=self._run.id,
+            step_index=ctx.step_index,
+            capability_name=cap.name.value,
+            payload=decision.args,
+            preview_text=preview,
+            room_uuid=ctx.room_uuid,
+            agent_uuid=ctx.agent_uuid,
+            state="completed",
+            result={"undo": observation.data.get("undo"), "text": observation.text},
         )
 
     def _heartbeat_extra(self) -> dict[str, Any]:

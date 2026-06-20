@@ -9,9 +9,13 @@ from agents.assistant import (
     CAPABILITIES,
     AssistantActionContext,
     AssistantActionName,
+    AssistantAgent,
+    AssistantStepDecision,
     _action_move_kanban_task,
 )
+from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
+from db import AssistantRun, AssistantWriteIntent
 
 
 @pytest.fixture
@@ -87,3 +91,37 @@ def test_move_rejects_column_not_on_board(board):
         _ctx(), {"task_uuid": task["uuid"], "column_uuid": str(uuid4())}
     )
     assert obs.ok is False
+
+
+def test_move_via_loop_lands_completed_undo_ledger(board):
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"mv-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "move it to done")
+    task = board["tasks"][0]
+    done = board["columns"][1]["uuid"]
+
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent._decide_next_step = scripted_decisions(
+        AssistantStepDecision(reason="move", action=AssistantActionName.KANBAN_MOVE,
+                              args={"task_uuid": task["uuid"], "column_uuid": done}),
+        AssistantStepDecision(reason="done", action=AssistantActionName.REPLY,
+                              args={"message": "moved"}),
+    )
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        # Task moved.
+        assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == done
+        # Exactly one ledger row, completed, never proposed, with a working inverse.
+        intents = db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.room_uuid == chatroom.uuid
+        ).all()
+        assert len(intents) == 1
+        assert intents[0].state == "completed"
+        assert intents[0].result["undo"]["payload"]["column_uuid"] == board["columns"][0]["uuid"]
+    finally:
+        db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
