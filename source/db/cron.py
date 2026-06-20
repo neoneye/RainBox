@@ -29,11 +29,13 @@ from db.models import (
 # near-zero) so their short forms are distinguishable in the UI.
 SYSTEM_CRON_FOLDER_UUID = UUID("fc467ea3-5700-42ff-a109-9aa311c1886e")
 BACKUP_CRON_JOB_UUID = UUID("ea97c5b9-a4cd-4553-97d6-d60c5a4f0e81")
+MEMORY_SYNC_CRON_JOB_UUID = UUID("b7e84415-2d1a-4c9f-8f3e-6a0d9c1e2b34")
 
 # Cron action types. 'message' posts to chat, 'command' runs via the
-# workspace-shell agent, 'backup' dumps the database in-process (see
-# fire_cron_job). Shared by the tree validator and the upsert.
-CRON_ACTION_TYPES = ("message", "command", "backup")
+# workspace-shell agent, 'backup' dumps the database in-process, and
+# 'memory_sync' reconciles memory embeddings in-process (all see fire_cron_job).
+# Shared by the tree validator and the upsert.
+CRON_ACTION_TYPES = ("message", "command", "backup", "memory_sync")
 from db.queue import enqueue
 from db.chat import post_chat_message, post_cron_event
 
@@ -567,6 +569,26 @@ def fire_cron_job(job: "CronJob", trigger: str = "scheduled", debug: bool = Fals
                     post_cron_event(f"  ✖ upload failed: {exc}")
             # The local backup succeeded (an upload failure doesn't fail the fire).
             outcome = "ok"
+        elif job.action_type == "memory_sync":
+            # In-process maintenance: backfill embeddings for active claims and
+            # prune stale ones (the workspace-shell allowlist can't reach the
+            # embedder). Sibling of 'backup'; runs synchronously on the
+            # supervisor thread — fine for a local single-user DB. Best-effort
+            # by construction: a missing embedder degrades to lexical-only.
+            from memory.embeddings import sync_memory_embeddings
+
+            if debug:
+                post_cron_event(
+                    f'▶ dry-run "{label}" (memory_sync, {trigger}): would '
+                    "backfill active-claim embeddings and prune stale ones"
+                )
+            else:
+                embedded, pruned = sync_memory_embeddings()
+                post_cron_event(
+                    f'▶ memory_sync "{label}" ({trigger}): '
+                    f"{embedded} embedded, {pruned} pruned"
+                )
+            outcome = "ok"
         else:  # message
             text = (job.message or "").strip() or "(empty message)"
             room = _cron_resolve_target_room(job.target)
@@ -870,5 +892,27 @@ def seed_cron_defaults() -> None:
                 "RAINBOX_BACKUP_GIT_PUSH=1."
             ),
             position=0,
+        ))
+    if db.session.query(CronJob).filter_by(uuid=MEMORY_SYNC_CRON_JOB_UUID).first() is None:
+        # Seeded ENABLED (unlike backup): it needs no destination/secret and is
+        # safe, idempotent maintenance — keeping memory embeddings fresh so
+        # hybrid retrieval doesn't silently degrade to lexical-only.
+        db.session.add(CronJob(
+            uuid=MEMORY_SYNC_CRON_JOB_UUID,
+            name="Memory embedding sync",
+            enabled=True,
+            folder_uuid=SYSTEM_CRON_FOLDER_UUID,
+            cron_expr="15 3 * * *",
+            timezone="localtime",
+            action_type="memory_sync",
+            command="",
+            description=(
+                "Backfill embeddings for active memory claims and prune stale "
+                "ones (in-process). Keeps hybrid memory retrieval fresh between "
+                "writes. Runs daily at 03:15 local time; needs the embedder "
+                "(Ollama nomic-embed-text) reachable — without it, embedding "
+                "degrades to lexical-only and pruning still runs."
+            ),
+            position=1,
         ))
     db.session.commit()

@@ -433,6 +433,63 @@ def test_fire_debug_message_is_dry_run(firing):
     assert "dry hello" not in texts  # the message itself was NOT sent
 
 
+# --- memory_sync action (S1): in-process embedding maintenance ---------------
+
+
+def test_fire_memory_sync_embeds_active_claim(firing, monkeypatch):
+    """A memory_sync job runs sync_memory_embeddings in-process: an active claim
+    gains an embedding and the run resolves 'ok'. Fake embedder — no Ollama."""
+    import memory.embeddings as emb
+    from memory.embeddings import EMBED_MODEL_NAME
+
+    monkeypatch.setattr(emb, "_default_embed", lambda _t: [0.3] * 768)
+    tag = f"cron-sync-{uuid4()}"
+    claim = db.create_memory_claim(
+        scope="global", kind="fact", text="sync me", confidence=0.9,
+        status="active", sensitivity="public", subject=tag,
+    )
+    job = firing(action_type="memory_sync", name="Sync")
+    try:
+        run = db.fire_cron_job(job, trigger="manual")
+        assert run.status == "ok"
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
+    finally:
+        db.db.session.query(db.MemoryClaim).filter(db.MemoryClaim.subject == tag).delete()
+        db.db.session.commit()
+
+
+def test_fire_memory_sync_dry_run_mutates_nothing(firing, monkeypatch):
+    import memory.embeddings as emb
+    from memory.embeddings import EMBED_MODEL_NAME
+
+    monkeypatch.setattr(emb, "_default_embed", lambda _t: [0.3] * 768)
+    tag = f"cron-sync-dry-{uuid4()}"
+    claim = db.create_memory_claim(
+        scope="global", kind="fact", text="do not sync", confidence=0.9,
+        status="active", sensitivity="public", subject=tag,
+    )
+    job = firing(action_type="memory_sync", name="SyncDry")
+    try:
+        run = db.fire_cron_job(job, trigger="manual", debug=True)
+        assert run.status == "ok"
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
+    finally:
+        db.db.session.query(db.MemoryClaim).filter(db.MemoryClaim.subject == tag).delete()
+        db.db.session.commit()
+
+
+def test_seed_creates_enabled_memory_sync_job(app_ctx):
+    db.seed_cron_defaults()  # idempotent; also runs in init_db
+    job = db.db.session.query(db.CronJob).filter_by(
+        uuid=db.MEMORY_SYNC_CRON_JOB_UUID).first()
+    assert job is not None
+    assert job.action_type == "memory_sync"
+    assert job.enabled is True
+    db.seed_cron_defaults()
+    assert db.db.session.query(db.CronJob).filter_by(
+        uuid=db.MEMORY_SYNC_CRON_JOB_UUID).count() == 1
+
+
 def test_fire_debug_command_enqueues_with_flag(firing):
     """A command dry-run still goes through the workspace-shell agent (it owns
     the validation), with debug in the payload so it echoes instead of runs."""
