@@ -229,8 +229,32 @@ def _action_workspace_read_command(
 def _action_kanban_read(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Read kanban state without writing events: one board's markdown when a
-    board_uuid is given, otherwise a list of all boards."""
+    """Read kanban state without writing events: one task's detail + recent
+    events when a task_uuid is given, one board's markdown when a board_uuid is
+    given, otherwise a list of all boards."""
+    task_raw = args.get("task_uuid")
+    if task_raw:
+        try:
+            task_uuid = UUID(str(task_raw))
+        except (ValueError, TypeError):
+            return AssistantObservation(ok=False, text=f"invalid task_uuid: {task_raw!r}")
+        task = db.kanban_get_task(task_uuid)
+        if task is None:
+            return AssistantObservation(ok=False, text="no such kanban task")
+        lines = [
+            f"Task: {task['title']}",
+            f"  board: {task['boardUuid']}  column: {task['columnUuid']}",
+            f"  description: {task['description'] or '(none)'}",
+        ]
+        events = db.kanban_task_events(task_uuid, limit=10) or []
+        if events:
+            lines.append("  recent events (newest first):")
+            for e in events:
+                detail = f": {e['detail']}" if e.get("detail") else ""
+                lines.append(f"    - {e['kind']}{detail}")
+        return AssistantObservation(
+            ok=True, text="\n".join(lines), data={"task_uuid": str(task_uuid)}
+        )
     board_raw = args.get("board_uuid")
     if board_raw:
         try:
@@ -665,9 +689,10 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.KANBAN_READ: Capability(
         name=AssistantActionName.KANBAN_READ, family="kanban",
-        description=('read kanban board/card state. args: optional {"board_uuid"}; '
+        description=('read kanban state. args: optional {"task_uuid"} for one '
+                     'task\'s detail + recent events, {"board_uuid"} for a board; '
                      "empty lists all boards"),
-        optional_args=frozenset({"board_uuid"}), action=_action_kanban_read,
+        optional_args=frozenset({"board_uuid", "task_uuid"}), action=_action_kanban_read,
     ),
     AssistantActionName.REMEMBER: Capability(
         name=AssistantActionName.REMEMBER, family="memory",
