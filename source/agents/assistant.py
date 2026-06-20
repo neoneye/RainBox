@@ -69,6 +69,8 @@ class AssistantActionName(str, Enum):
     KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
     KANBAN_COMPLETE = "kanban_complete"  # log-and-undo: mark a task done
     KANBAN_COMMENT = "kanban_comment"    # log-and-undo: comment on a task
+    KANBAN_CREATE = "kanban_create"            # log-and-undo: create a task
+    KANBAN_DELETE_TASK = "kanban_delete_task"  # internal: create's undo inverse (not prompt-exposed)
 
 
 class AssistantStepDecision(BaseModel):
@@ -400,6 +402,56 @@ def _action_comment_kanban_task(
     )
 
 
+def _action_create_kanban_task(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: create a task in a column. Undo deletes it."""
+    raw_board, raw_col = args.get("board_uuid"), args.get("column_uuid")
+    title = str(args.get("title", "")).strip()
+    description = str(args.get("description", "")).strip()
+    try:
+        board_uuid = UUID(str(raw_board))
+        column_uuid = UUID(str(raw_col))
+    except (ValueError, TypeError):
+        return AssistantObservation(
+            ok=False, text=f"invalid board_uuid/column_uuid: {raw_board!r}, {raw_col!r}"
+        )
+    created = db.kanban_create_task(
+        board_uuid, column_uuid, title=title, description=description,
+        actor=str(ctx.agent_uuid),
+    )
+    if created is None:
+        return AssistantObservation(ok=False, text="no such board or column")
+    return AssistantObservation(
+        ok=True,
+        text=f"Created task '{title}' (undoable — undo deletes it).",
+        data={
+            "task_uuid": created["uuid"],
+            "board_uuid": str(board_uuid),
+            "column_uuid": str(column_uuid),
+            "undo": {"capability": "kanban_delete_task",
+                     "payload": {"task_uuid": created["uuid"]}},
+        },
+    )
+
+
+def _action_delete_kanban_task(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Internal: hard-delete a task. Not prompt-exposed — reached only as the
+    undo-inverse of kanban_create (via undo_write_intent)."""
+    raw = args.get("task_uuid")
+    try:
+        task_uuid = UUID(str(raw))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid task_uuid: {raw!r}")
+    if not db.kanban_delete_task(task_uuid):
+        return AssistantObservation(ok=False, text="no such kanban task")
+    return AssistantObservation(
+        ok=True, text=f"Deleted task {task_uuid}", data={"task_uuid": str(task_uuid)},
+    )
+
+
 @dataclass(frozen=True)
 class Capability:
     """Code-owned metadata + dispatch for one assistant action — the primitive
@@ -508,6 +560,22 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'retraction). args: {"task_uuid": "...", "text": "..."}'),
         required_args=("task_uuid", "text"), action=_action_comment_kanban_task,
         read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_CREATE: Capability(
+        name=AssistantActionName.KANBAN_CREATE, family="kanban",
+        description=('create a kanban task in a column; reversible (undo deletes '
+                     'it). args: {"board_uuid": "...", "column_uuid": "...", '
+                     '"title": "...", optional "description": "..."}'),
+        required_args=("board_uuid", "column_uuid", "title"),
+        optional_args=frozenset({"description"}),
+        action=_action_create_kanban_task,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_DELETE_TASK: Capability(
+        name=AssistantActionName.KANBAN_DELETE_TASK, family="kanban",
+        description="(internal) delete a kanban task — the undo-inverse of kanban_create.",
+        required_args=("task_uuid",), action=_action_delete_kanban_task,
+        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
 }
 
@@ -862,6 +930,10 @@ class AssistantAgent(ModelGroupAgent):
         action = decision.action
         cap = self._caps.get(action)
         if cap is None:
+            return f"action '{action.value}' is not available"
+        if not cap.prompt_exposed:
+            # The model may request only prompt-exposed capabilities; internal
+            # ones (e.g. undo-inverses) are dispatched only by undo_write_intent.
             return f"action '{action.value}' is not available"
         args = decision.args or {}
         for key in cap.required_args:
