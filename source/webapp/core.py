@@ -320,6 +320,24 @@ def _format_sender_name(view, context, model, name):
     return user.name if user else str(model.sender_uuid)
 
 
+def _fmt_copyable_uuid(view, context, model, name):
+    """A row's own uuid shown in full (monospace) with a one-click Copy button —
+    so the operator can grab a precise message reference to share. Unlike the
+    truncate-on-hover formatter used for FK columns, the point here is to copy."""
+    value = getattr(model, name)
+    if not value:
+        return ""
+    full = escape(str(value))  # a uuid has no HTML-special chars; safe to inline
+    return Markup(
+        f'<code>{full}</code> '
+        f'<button type="button" title="Copy uuid" '
+        f"onclick=\"navigator.clipboard.writeText('{full}');"
+        f"this.textContent='✓';setTimeout(()=>this.textContent='⧉',1000)\" "
+        'style="cursor:pointer;border:1px solid #ccc;border-radius:4px;'
+        'background:#fff;font:inherit;padding:0 .35em">⧉</button>'
+    )
+
+
 class QueryAgentKbView(ModelView):
     # LlamaIndex's PGVectorStore owns this table — read-only here so admins
     # can browse the embedded Q&A entries without risking the QueryAgent state.
@@ -336,9 +354,11 @@ class ChatMessageView(ModelView):
     column_default_sort = ("created_at", False)
     # Flask-Admin hides FK columns (room_uuid) from the scaffold, so list columns
     # explicitly. Show the chatroom and sender by name instead of raw uuids.
-    column_list = ("created_at", "room_uuid", "sender_uuid", "kind", "content_type", "text")
-    column_labels = {"room_uuid": "Room", "sender_uuid": "Sender"}
+    column_list = ("created_at", "uuid", "room_uuid", "sender_uuid", "kind",
+                   "content_type", "text")
+    column_labels = {"room_uuid": "Room", "sender_uuid": "Sender", "uuid": "UUID"}
     column_formatters = {
+        "uuid": _fmt_copyable_uuid,
         "room_uuid": _format_room_name,
         "sender_uuid": _format_sender_name,
     }
