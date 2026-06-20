@@ -249,21 +249,19 @@ batches:
   ship stop/redirect/undo + visibility first and drop the remainder into S12 with
   a note — do not silently narrow this bar.)*
 
-### S8 — Unify chat agents with the assistant's memory stack  ·  Size M  ·  Depends on: none  ·  (v2 Phase 3)
-- **Goal:** Biggest remaining recall win: move the chat agents off token-overlap
-  `retrieve_memories` onto `retrieve_memories_hybrid`, and give them the profile
-  block.
-- **Touches:** `memory/retrieval.py` (`build_chat_memory_block`), the chat agents,
-  `user_profile`.
-- **Decisions:** keep `retrieve_memories` for anything, or remove it; profile
-  block for chat agents y/n; **contradiction surfacing** — v2 Phase 3 wants
-  retrieval to *detect and surface* conflicts read-only (e.g. "lives in NYC" vs
-  "moved to SF"), with auto-supersede deferred to a Phase 5 write. Decide here
-  whether to add read-only contradiction surfacing as part of the retrieval
-  rework or split it to S12.
-- **Done when:** chat agents retrieve via hybrid + carry the profile block; recall
-  eval shows no regression and ideally a gain; secret/expired filtering still
-  holds; the contradiction-surfacing decision is recorded (built or deferred).
+### S8 — Unify chat agents with the assistant's memory stack  ·  ✅ DONE (merged `acdbaee`)  ·  Size M  ·  (v2 Phase 3)
+- **Shipped:** both chat agents retrieve via `retrieve_memories_hybrid` and carry
+  the operator profile block, via a shared `agents/chat_context.py` (profile →
+  memory → transcript). Chat telemetry unchanged (`record_telemetry=False` on the
+  chat path). [spec](../superpowers/specs/2026-06-20-s8-chat-unification-design.md)
+- **Bonus — fixed a real hybrid-retrieval bug it surfaced:** Postgres `ts_rank`
+  returns a uniform ~1e-20 epsilon for non-matching docs and `plainto_tsquery`
+  ANDs terms, so an unrelated query used to retrieve the *entire* active set at
+  score 0.3. `_fulltext_scores` now ORs the query terms and gates on `@@` —
+  partial overlap still ranks; zero overlap retrieves nothing. This also fixes the
+  assistant's `query_memory`.
+- **Decisions recorded:** `retrieve_memories` kept (now test-only — removal → S12);
+  profile block added to chat agents; **contradiction surfacing deferred to S12**.
 
 ### S9 — External-system adapter boundary: MCP read-only  ·  Size M/L  ·  Depends on: none  ·  (v2 Phase 4 adapter boundary)
 - **Goal:** Activate `Capability.adapter`: route a non-null `adapter` capability
