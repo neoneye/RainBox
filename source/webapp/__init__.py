@@ -26,6 +26,7 @@ from . import stt_whisper_views  # noqa: F401,E402
 from . import voice_echo_views  # noqa: F401,E402
 from . import cron_views  # noqa: F401,E402
 from . import cron_api  # noqa: F401,E402
+from . import doctor_views  # noqa: F401,E402
 from . import kanban_views  # noqa: F401,E402
 from . import kanban_api  # noqa: F401,E402
 from . import git_views  # noqa: F401,E402
