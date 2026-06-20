@@ -1014,6 +1014,10 @@ class AssistantAgent(ModelGroupAgent):
         except Exception as e:  # an action must never crash the loop
             logger.warning("assistant action %s failed: %s", decision.action.value, e)
             return AssistantObservation(ok=False, text=f"{type(e).__name__}: {e}")
+        # NOTE: this cap also applies to dry-run preview text built via
+        # _propose_write. Fine for short previews (reminders); a future dry_run
+        # capability with a long preview (e.g. an S5 file-patch diff) should
+        # raise its output_cap_chars accordingly.
         if len(obs.text) > cap.output_cap_chars:
             obs = AssistantObservation(
                 ok=obs.ok, text=obs.text[: cap.output_cap_chars], data=obs.data
