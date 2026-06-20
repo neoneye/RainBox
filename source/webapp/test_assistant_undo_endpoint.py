@@ -1,11 +1,10 @@
 """POST /chat/api/assistant/write-intents/<uuid>/undo reverts a kanban move."""
 
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
 import db
-from agents.config import ASSISTANT_UUID
 from webapp.chat_api import app as flask_app
 
 

@@ -207,6 +207,14 @@ do not read as contradictory.
 - Redo-after-undo.
 - Retrofitting `remember` onto the new ledger (it keeps its ad-hoc undo for now).
 - A polished undo button / richer write-ledger UI.
+- **Superseded-move awareness.** Undo replays the stored inverse as a *forward*
+  move back to the original column. If the task was moved again after the
+  recorded move (A→B ledgered, then B→C by anyone), undoing replays "move to A"
+  from wherever it now sits (C→A), not a strict inverse of the recorded
+  transition. This is intentional for this tier — every result is reversible,
+  column-validated, and leaves a `moved` audit event — but a future optimistic
+  "only undo if still in column B" check could make undo a no-op when the task
+  has since moved. Not built now.
 
 ## Done when
 
