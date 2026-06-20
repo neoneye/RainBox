@@ -159,6 +159,11 @@ def _constraint_def(name: str) -> str | None:
 
 def init_db(app: Flask) -> None:
     with app.app_context():
+        # pgvector must exist before create_all() builds the memory_embedding
+        # table's vector column. Idempotent; the operator's DB already uses it
+        # for the Q&A store.
+        db.session.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+        db.session.commit()
         db.create_all()
         # Idempotent column additions for tables that pre-date the column.
         # create_all() never ALTERs existing tables; this catches DBs that
@@ -290,6 +295,43 @@ def init_db(app: Flask) -> None:
                 sa.text(
                     "ALTER TABLE cron_run ADD CONSTRAINT cron_run_status_check "
                     "CHECK (status IN ('pending','ok','error'))"
+                )
+            )
+        # Skills retrieval telemetry reuses retrieval_event; widen the
+        # target_type/stage CHECKs to admit skill 'considered'/'injected' rows.
+        _rt_target = _constraint_def("ck_retrieval_event_target_type")
+        if _rt_target is None or "skill" not in _rt_target:
+            db.session.execute(
+                sa.text("ALTER TABLE retrieval_event DROP CONSTRAINT IF EXISTS ck_retrieval_event_target_type")
+            )
+            db.session.execute(
+                sa.text(
+                    "ALTER TABLE retrieval_event ADD CONSTRAINT ck_retrieval_event_target_type "
+                    "CHECK (target_type IN ('qa_entry','memory_claim','skill'))"
+                )
+            )
+        _rt_stage = _constraint_def("ck_retrieval_event_stage")
+        if _rt_stage is None or "injected" not in _rt_stage:
+            db.session.execute(
+                sa.text("ALTER TABLE retrieval_event DROP CONSTRAINT IF EXISTS ck_retrieval_event_stage")
+            )
+            db.session.execute(
+                sa.text(
+                    "ALTER TABLE retrieval_event ADD CONSTRAINT ck_retrieval_event_stage "
+                    "CHECK (stage IN ('retrieved','accepted','rejected','used',"
+                    "'downvoted','considered','injected'))"
+                )
+            )
+        # Phase 6 adds the transient 'stopping' assistant_run status.
+        _ar_status = _constraint_def("assistant_run_status_check")
+        if _ar_status is not None and "stopping" not in _ar_status:
+            db.session.execute(
+                sa.text("ALTER TABLE assistant_run DROP CONSTRAINT IF EXISTS assistant_run_status_check")
+            )
+            db.session.execute(
+                sa.text(
+                    "ALTER TABLE assistant_run ADD CONSTRAINT assistant_run_status_check "
+                    "CHECK (status IN ('running','stopping','finished','stopped','failed','killed'))"
                 )
             )
         db.session.commit()

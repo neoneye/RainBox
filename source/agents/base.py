@@ -88,7 +88,9 @@ class Agent:
         def _beat() -> None:
             while not stop.wait(self.HEARTBEAT_INTERVAL):
                 try:
-                    self._emit({"status": "heartbeat", "journal_id": journal_id})
+                    msg = {"status": "heartbeat", "journal_id": journal_id}
+                    msg.update(self._heartbeat_extra())
+                    self._emit(msg)
                 except Exception:
                     return  # socket gone; nothing useful to do from this thread
         hb = threading.Thread(target=_beat, name=f"hb-{self.name}", daemon=True)
@@ -98,6 +100,13 @@ class Agent:
         finally:
             stop.set()
             hb.join(timeout=2.0)
+
+    def _heartbeat_extra(self) -> dict[str, Any]:
+        """Extra fields merged into each heartbeat. Default empty; agents that do
+        multi-step work override this to make heartbeats progress-aware (e.g. the
+        current step/activity) so the watchdog can tell a slow-but-working run
+        from a hung one."""
+        return {}
 
     def setup(self) -> None:
         """One-time initialization before the drain loop. Override as needed."""

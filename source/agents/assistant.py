@@ -21,6 +21,7 @@ illustrative-until-promoted: they may be refined by a later PR as long as they
 still satisfy the assistant contracts.
 """
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -31,6 +32,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 import db
+import skills
 from agents.base import ModelGroupAgent, StatusSender
 from chat.transcript import format_history
 
@@ -60,6 +62,10 @@ class AssistantActionName(str, Enum):
     WORKSPACE_READ_COMMAND = "workspace_read_command"
     KANBAN_READ = "kanban_read"
 
+    # Write actions (PR 9): the first controlled-write family.
+    REMEMBER = "remember"              # log-and-undo: create an inert candidate
+    ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
+
 
 class AssistantStepDecision(BaseModel):
     """One structured decision the model emits per loop step.
@@ -78,58 +84,6 @@ class AssistantStepDecision(BaseModel):
     )
     action: AssistantActionName
     args: dict[str, Any] = Field(default_factory=dict)
-
-
-# Required args per action — the dispatcher's validator rejects a decision whose
-# required args are missing/empty before anything runs. Defined for the full
-# read-only enum (PR 4 reuses it); PR 2 only *enables* the terminal actions.
-_REQUIRED_ARGS: dict[AssistantActionName, tuple[str, ...]] = {
-    AssistantActionName.REPLY: ("message",),
-    AssistantActionName.ASK_CLARIFYING_QUESTION: ("question",),
-    AssistantActionName.QUERY_MEMORY: ("query",),
-    AssistantActionName.QUERY_QA: ("query",),
-    AssistantActionName.WORKSPACE_READ_COMMAND: ("command",),
-    AssistantActionName.KANBAN_READ: (),
-}
-
-# Optional args an action accepts beyond its required ones. Anything outside
-# required ∪ optional is rejected at validation ("unknown args are risky"), so a
-# stray or unsupported arg becomes a traceable failed step rather than a
-# silently-wrong read. kanban_read takes board_uuid only for now; task_uuid is
-# not yet implemented and is rejected rather than ignored.
-_OPTIONAL_ARGS: dict[AssistantActionName, frozenset[str]] = {
-    AssistantActionName.KANBAN_READ: frozenset({"board_uuid"}),
-}
-
-# One-line prompt help per action, used to render the action catalog.
-_ACTION_HELP: dict[AssistantActionName, str] = {
-    AssistantActionName.REPLY: (
-        'give your final answer to the user; ends the turn. args: {"message": "..."}'
-    ),
-    AssistantActionName.ASK_CLARIFYING_QUESTION: (
-        "ask the user for missing information; ends the turn. "
-        'args: {"question": "..."}'
-    ),
-    AssistantActionName.QUERY_MEMORY: (
-        'search remembered facts. args: {"query": "..."}'
-    ),
-    AssistantActionName.QUERY_QA: (
-        "answer from the Q&A knowledge base and read-only handlers. "
-        'args: {"query": "..."}'
-    ),
-    AssistantActionName.WORKSPACE_READ_COMMAND: (
-        'run an allowlisted read-only file-inspection command. args: {"command": "..."}'
-    ),
-    AssistantActionName.KANBAN_READ: (
-        'read kanban board/card state. args: optional {"board_uuid"}; '
-        "empty lists all boards"
-    ),
-}
-
-# Actions that end the run: the loop posts a chat message and finishes.
-_TERMINAL_ACTIONS: frozenset[AssistantActionName] = frozenset(
-    {AssistantActionName.REPLY, AssistantActionName.ASK_CLARIFYING_QUESTION}
-)
 
 
 ASSISTANT_SYSTEM_PROMPT: str = """\
@@ -174,13 +128,15 @@ AssistantAction = Callable[[AssistantActionContext, dict[str, Any]], AssistantOb
 def _action_query_memory(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Current memory retrieval path. Secrets are never returned to the model
-    (filter-before-rank: include_secret stays False)."""
-    from memory.retrieval import format_memory_context, retrieve_memories
+    """Hybrid memory retrieval (vector + full-text + entity, hard-filtered).
+    Secrets are never returned to the model (filter-before-rank:
+    include_secret stays False)."""
+    from memory.retrieval import format_memory_context, retrieve_memories_hybrid
 
     query = str(args.get("query", "")).strip()
-    memories = retrieve_memories(
-        query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid, include_secret=False
+    memories = retrieve_memories_hybrid(
+        query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
+        include_secret=False, journal_id=ctx.journal_id,
     )
     if not memories:
         return AssistantObservation(ok=True, text="No relevant remembered facts.")
@@ -281,14 +237,183 @@ def _action_kanban_read(
     return AssistantObservation(ok=True, text="\n".join(lines), data={"count": len(boards)})
 
 
-# Registry of read-only action callables. Phase 4 formalizes this into a
-# capability registry with metadata; for now it is the dispatch table.
-_ACTIONS: dict[AssistantActionName, AssistantAction] = {
-    AssistantActionName.QUERY_MEMORY: _action_query_memory,
-    AssistantActionName.QUERY_QA: _action_query_qa,
-    AssistantActionName.WORKSPACE_READ_COMMAND: _action_workspace_read_command,
-    AssistantActionName.KANBAN_READ: _action_kanban_read,
+def _action_remember(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: create an inert *candidate* memory claim. Low blast
+    radius (candidates never affect behavior until activated), executes
+    immediately, and is reversed by rejecting the candidate."""
+    text = str(args.get("text", "")).strip()
+    claim = db.create_memory_claim(
+        scope="room", kind="fact", text=text, confidence=0.5,
+        status="candidate", sensitivity="private",
+        agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
+    )
+    db.add_memory_evidence(
+        memory_uuid=claim.uuid, provenance="inferred_by_model",
+        source_type="chat_message", created_by_uuid=ctx.agent_uuid,
+    )
+    return AssistantObservation(
+        ok=True,
+        text=f"Remembered as a candidate (reject to undo): {text}",
+        data={"memory_uuid": str(claim.uuid), "status": "candidate"},
+    )
+
+
+def _action_activate_memory(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Confirm-tier write *executor*: activate a candidate memory (steers future
+    behavior). The dispatcher never calls this inline — it runs only via an
+    approved write intent."""
+    raw = args.get("memory_uuid")
+    try:
+        memory_uuid = UUID(str(raw))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid memory_uuid: {raw!r}")
+    claim = db.get_memory_claim(memory_uuid)
+    if claim is None:
+        return AssistantObservation(ok=False, text="no such memory claim")
+    db.activate_memory_claim(memory_uuid, confirmed_by_uuid=ctx.agent_uuid)
+    return AssistantObservation(
+        ok=True, text=f"Activated memory {memory_uuid}",
+        data={"memory_uuid": str(memory_uuid), "status": "active"},
+    )
+
+
+@dataclass(frozen=True)
+class Capability:
+    """Code-owned metadata + dispatch for one assistant action — the primitive
+    capability registry (Phase 4). The model can only request a capability that
+    is in this registry, enabled, and (for the catalog) prompt_exposed. Both the
+    prompt catalog and dispatch are generated from this single object, so
+    disabling a capability removes it from prompt *and* dispatch at once.
+
+    `family` is the grouping (query/memory/kanban/workspace/conversation/…), kept
+    separate from the read/write/network/secrets permission flags. `adapter` is
+    None for rainbox-native capabilities and names the owning adapter for
+    external ones (e.g. "mcp:github") — unused until the adapter boundary lands.
+    """
+
+    name: AssistantActionName
+    family: str
+    description: str
+    required_args: tuple[str, ...] = ()
+    optional_args: frozenset[str] = frozenset()
+    terminal: bool = False
+    action: AssistantAction | None = None
+    read: bool = True
+    write: bool = False
+    # Write approval tier: "log_and_undo" executes immediately with a reversible
+    # trace; "confirm" only proposes and needs operator approval. None for reads.
+    tier: str | None = None
+    network: bool = False
+    secrets: bool = False
+    confirm_required: bool = False
+    dry_run: bool = False
+    timeout_seconds: int = 10
+    output_cap_chars: int = 4000
+    enabled: bool = True
+    prompt_exposed: bool = True
+    adapter: str | None = None
+
+
+# The capability registry: one record per action. Boring and explicit on
+# purpose. Write-capable capabilities cannot be added without metadata here.
+CAPABILITIES: dict[AssistantActionName, Capability] = {
+    AssistantActionName.REPLY: Capability(
+        name=AssistantActionName.REPLY, family="conversation", read=False,
+        description='give your final answer to the user; ends the turn. args: {"message": "..."}',
+        required_args=("message",), terminal=True,
+    ),
+    AssistantActionName.ASK_CLARIFYING_QUESTION: Capability(
+        name=AssistantActionName.ASK_CLARIFYING_QUESTION, family="conversation", read=False,
+        description=('ask the user for missing information; ends the turn. '
+                     'args: {"question": "..."}'),
+        required_args=("question",), terminal=True,
+    ),
+    AssistantActionName.QUERY_MEMORY: Capability(
+        name=AssistantActionName.QUERY_MEMORY, family="memory",
+        description='search remembered facts. args: {"query": "..."}',
+        required_args=("query",), action=_action_query_memory,
+    ),
+    AssistantActionName.QUERY_QA: Capability(
+        name=AssistantActionName.QUERY_QA, family="query",
+        description=('answer from the Q&A knowledge base and read-only handlers. '
+                     'args: {"query": "..."}'),
+        required_args=("query",), action=_action_query_qa, output_cap_chars=6000,
+    ),
+    AssistantActionName.WORKSPACE_READ_COMMAND: Capability(
+        name=AssistantActionName.WORKSPACE_READ_COMMAND, family="workspace",
+        description='run an allowlisted read-only file-inspection command. args: {"command": "..."}',
+        required_args=("command",), action=_action_workspace_read_command,
+    ),
+    AssistantActionName.KANBAN_READ: Capability(
+        name=AssistantActionName.KANBAN_READ, family="kanban",
+        description=('read kanban board/card state. args: optional {"board_uuid"}; '
+                     "empty lists all boards"),
+        optional_args=frozenset({"board_uuid"}), action=_action_kanban_read,
+    ),
+    AssistantActionName.REMEMBER: Capability(
+        name=AssistantActionName.REMEMBER, family="memory",
+        description=('remember a fact as an inert candidate (reject to undo). '
+                     'args: {"text": "..."}'),
+        required_args=("text",), action=_action_remember,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.ACTIVATE_MEMORY: Capability(
+        name=AssistantActionName.ACTIVATE_MEMORY, family="memory",
+        description=('propose activating a candidate memory so it steers future '
+                     'answers; needs your confirmation. args: {"memory_uuid": "..."}'),
+        required_args=("memory_uuid",), action=_action_activate_memory,
+        read=False, write=True, tier="confirm",
+    ),
 }
+
+
+def _disabled_capability_names() -> set[str]:
+    """Capability names the operator has turned off via the
+    assistant.disabled_capabilities setting. Best-effort (no app context → none)."""
+    try:
+        val = db.get_setting("assistant.disabled_capabilities")
+    except Exception:
+        return set()
+    if isinstance(val, (list, tuple)):
+        return {str(x) for x in val}
+    if isinstance(val, str):
+        return {t.strip() for t in val.split(",") if t.strip()}
+    return set()
+
+
+def _base_enabled_capabilities() -> dict[AssistantActionName, Capability]:
+    """Capabilities enabled in code, ignoring the operator override. Safe without
+    an app context (e.g. at agent construction)."""
+    return {n: c for n, c in CAPABILITIES.items() if c.enabled}
+
+
+def enabled_capabilities() -> dict[AssistantActionName, Capability]:
+    """Capabilities enabled in code AND not disabled by the operator setting.
+    Requires an app context (reads settings)."""
+    disabled = _disabled_capability_names()
+    return {
+        n: c for n, c in _base_enabled_capabilities().items()
+        if n.value not in disabled
+    }
+
+
+def capability_report() -> list[dict[str, Any]]:
+    """A flat, inspectable view of every capability and whether it is currently
+    enabled — so the operator can see exactly which powers the assistant has."""
+    disabled = _disabled_capability_names()
+    return [
+        {
+            "name": n.value, "family": c.family, "read": c.read, "write": c.write,
+            "network": c.network, "secrets": c.secrets, "terminal": c.terminal,
+            "prompt_exposed": c.prompt_exposed, "adapter": c.adapter,
+            "enabled": c.enabled and n.value not in disabled,
+        }
+        for n, c in CAPABILITIES.items()
+    ]
 
 
 class AssistantAgent(ModelGroupAgent):
@@ -312,21 +437,26 @@ class AssistantAgent(ModelGroupAgent):
     MAX_RECENT_MESSAGES: int = 30
     MAX_SCRATCHPAD_CHARS: int = 5000
     # The slice of an observation the model/trace see per step. The raw action
-    # output is capped harder (MAX_OBSERVATION_CHARS) before this preview.
+    # output is capped harder (per-capability output_cap_chars) before this preview.
     MAX_OBSERVATION_PREVIEW_CHARS: int = 1200
-    MAX_OBSERVATION_CHARS: int = 4000
 
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
         self.step_limit = self.STEP_LIMIT
-        # Terminal actions plus the PR 4 read-only set.
-        self._enabled_actions: frozenset[AssistantActionName] = frozenset(
-            AssistantActionName
-        )
+        # The capabilities this turn may use. Defaults to the code-enabled set;
+        # handle() refreshes it with the operator's disable setting (which needs
+        # an app context). Catalog, validation, and dispatch all read from it, so
+        # a disabled capability disappears from prompt and dispatch together.
+        self._caps: dict[AssistantActionName, Capability] = _base_enabled_capabilities()
         # In-memory mirror of the trace for fast assertions/diagnostics; the
         # durable source of truth is the assistant_run/assistant_step tables.
         self._steps: list[dict[str, Any]] = []
         self._run: Any = None
+        # Active-skill guidance for this turn, injected into every step's prompt.
+        self._skill_block: str = ""
+        # Coarse current activity, surfaced in heartbeats so a slow run looks
+        # different from a hung one.
+        self._activity: str = "idle"
 
     @staticmethod
     def _room_uuid(payload: dict[str, Any]) -> UUID:
@@ -337,6 +467,8 @@ class AssistantAgent(ModelGroupAgent):
 
     def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
+        # Resolve the operator-effective capability set for this turn.
+        self._caps = enabled_capabilities()
         self._steps = []
         # Open the durable run row up front so a crash anywhere below is recorded
         # against it (and the journal, via Agent.run, when we re-raise).
@@ -358,10 +490,21 @@ class AssistantAgent(ModelGroupAgent):
                 if m.get("kind") == "message"
             ]
             transcript = format_history(messages, context_limit=self.MAX_RECENT_MESSAGES)
+            # Retrieve active procedural skills for this turn (candidates are
+            # inert and never injected). Best-effort: a retrieval failure must
+            # not break the turn.
+            self._skill_block = self._build_skill_block(messages, journal_id, room_uuid)
             scratchpad: list[str] = []
 
             for step_index in range(self.step_limit):
                 current_step = step_index
+                # Step boundary: honour any operator stop/redirect before the
+                # next model call, so a stop leaves a clean trace (not a killed
+                # process) and a redirect steers the next step.
+                stopped = self._apply_pending_controls(run, step_index, scratchpad)
+                if stopped is not None:
+                    return stopped
+                self._activity = f"deciding step {step_index}"
                 decision = self._decide_next_step(
                     transcript=transcript, scratchpad=scratchpad, step_index=step_index
                 )
@@ -379,7 +522,7 @@ class AssistantAgent(ModelGroupAgent):
                     )
                     continue
 
-                if decision.action in _TERMINAL_ACTIONS:
+                if self._caps[decision.action].terminal:
                     self._record_step(
                         step_index=step_index, phase="final", decision=decision
                     )
@@ -392,9 +535,12 @@ class AssistantAgent(ModelGroupAgent):
                     )
                     return self._run_result("finished", text[:200])
 
-                # Non-terminal read action: commit the `running` row before the
-                # action runs (so a kill mid-action leaves it), dispatch, then
-                # record the observation and feed a compact form to the model.
+                # Non-terminal action: commit the `running` row before acting (so
+                # a kill mid-action leaves it), then act and record the
+                # observation. A confirm-tier write is *proposed* here, never
+                # executed inline; everything else (reads, log-and-undo writes)
+                # executes immediately.
+                self._activity = f"running {decision.action.value}"
                 self._record_step(step_index=step_index, phase="running", decision=decision)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
@@ -402,7 +548,11 @@ class AssistantAgent(ModelGroupAgent):
                     agent_uuid=self.agent_uuid,
                     step_index=step_index,
                 )
-                observation = self._dispatch_action(action_ctx, decision)
+                cap = self._caps[decision.action]
+                if cap.write and cap.tier == "confirm":
+                    observation = self._propose_write(action_ctx, decision, cap)
+                else:
+                    observation = self._dispatch_action(action_ctx, decision)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._record_step(
                     step_index=step_index,
@@ -481,10 +631,33 @@ class AssistantAgent(ModelGroupAgent):
 
     def _action_catalog(self) -> str:
         lines = ["Available actions (choose exactly one per step):"]
-        for action in AssistantActionName:
-            if action in self._enabled_actions:
-                lines.append(f"- {action.value}: {_ACTION_HELP[action]}")
+        for action in AssistantActionName:  # stable enum order
+            cap = self._caps.get(action)
+            if cap is not None and cap.prompt_exposed:
+                lines.append(f"- {action.value}: {cap.description}")
         return "\n".join(lines)
+
+    def _build_skill_block(
+        self, messages: list[dict[str, Any]], journal_id: int, room_uuid: UUID
+    ) -> str:
+        """Retrieve active skills for the latest human message and render the
+        injectable block (empty when nothing matches)."""
+        query = ""
+        for m in reversed(messages):
+            if m.get("sender_type") == "human":
+                query = (m.get("text") or "").strip()
+                break
+        if not query:
+            return ""
+        try:
+            block, _ = skills.build_skill_block(
+                query, room_uuid=room_uuid, agent_uuid=self.agent_uuid,
+                journal_id=journal_id,
+            )
+            return block
+        except Exception:
+            logger.warning("assistant: skill retrieval failed", exc_info=True)
+            return ""
 
     def _build_user_prompt(
         self,
@@ -493,7 +666,10 @@ class AssistantAgent(ModelGroupAgent):
         scratchpad: list[str],
         step_index: int,
     ) -> str:
-        parts = [transcript]
+        parts = []
+        if self._skill_block:
+            parts.append(self._skill_block)
+        parts.append(transcript)
         rendered = self._render_scratchpad(scratchpad)
         if rendered:
             parts.append(f"Steps you have already taken this turn:\n{rendered}")
@@ -514,18 +690,20 @@ class AssistantAgent(ModelGroupAgent):
     # --- validation, terminal output, trace -----------------------------------
 
     def _validate_decision(self, decision: AssistantStepDecision) -> str | None:
-        """Return an error string if the decision can't be dispatched, else None."""
+        """Return an error string if the decision can't be dispatched, else None.
+        Everything is checked against the effective capability registry, so a
+        disabled or unknown capability is rejected here before any dispatch."""
         action = decision.action
-        if action not in self._enabled_actions:
+        cap = self._caps.get(action)
+        if cap is None:
             return f"action '{action.value}' is not available"
         args = decision.args or {}
-        required = _REQUIRED_ARGS.get(action, ())
-        for key in required:
+        for key in cap.required_args:
             value = args.get(key)
             if not isinstance(value, str) or not value.strip():
                 return f"action '{action.value}' requires a non-empty '{key}' argument"
         # Reject unknown args so an unsupported/typo'd read can't look successful.
-        allowed = set(required) | _OPTIONAL_ARGS.get(action, frozenset())
+        allowed = set(cap.required_args) | cap.optional_args
         unknown = sorted(set(args) - allowed)
         if unknown:
             return f"action '{action.value}' got unknown argument(s): {', '.join(unknown)}"
@@ -539,24 +717,109 @@ class AssistantAgent(ModelGroupAgent):
     def _dispatch_action(
         self, ctx: AssistantActionContext, decision: AssistantStepDecision
     ) -> AssistantObservation:
-        """Run one validated read action. Exceptions become a failed observation
-        (the loop records the failed step); output is capped so a chatty action
-        can't blow the prompt budget."""
-        action_fn = _ACTIONS.get(decision.action)
-        if action_fn is None:
+        """Run one validated read action via its registry callable. Exceptions
+        become a failed observation (the loop records the failed step); output is
+        capped per the capability so a chatty action can't blow the prompt
+        budget."""
+        cap = self._caps.get(decision.action)
+        if cap is None or cap.action is None:
             return AssistantObservation(
                 ok=False, text=f"action '{decision.action.value}' has no dispatcher"
             )
         try:
-            obs = action_fn(ctx, decision.args)
+            obs = cap.action(ctx, decision.args)
         except Exception as e:  # an action must never crash the loop
             logger.warning("assistant action %s failed: %s", decision.action.value, e)
             return AssistantObservation(ok=False, text=f"{type(e).__name__}: {e}")
-        if len(obs.text) > self.MAX_OBSERVATION_CHARS:
+        if len(obs.text) > cap.output_cap_chars:
             obs = AssistantObservation(
-                ok=obs.ok, text=obs.text[: self.MAX_OBSERVATION_CHARS], data=obs.data
+                ok=obs.ok, text=obs.text[: cap.output_cap_chars], data=obs.data
             )
         return obs
+
+    def _propose_write(
+        self,
+        ctx: AssistantActionContext,
+        decision: AssistantStepDecision,
+        cap: "Capability",
+    ) -> AssistantObservation:
+        """Record a confirm-tier write as a proposed intent instead of executing
+        it. The actual write runs only via agents.assistant_writes.execute_write_intent
+        after the operator approves — so a confirm-tier write can never execute
+        inline, by code, not prompt discipline."""
+        preview = f"{cap.name.value}: {json.dumps(decision.args, sort_keys=True)}"
+        intent = db.create_write_intent(
+            run_id=self._run.id,
+            step_index=ctx.step_index,
+            capability_name=cap.name.value,
+            payload=decision.args,
+            preview_text=preview,
+            room_uuid=ctx.room_uuid,
+            agent_uuid=ctx.agent_uuid,
+        )
+        return AssistantObservation(
+            ok=True,
+            text=(f"Proposed (awaiting your confirmation): {preview}. "
+                  f"Confirm intent {intent.uuid} to apply."),
+            data={"write_intent_uuid": str(intent.uuid), "state": "proposed"},
+        )
+
+    def _heartbeat_extra(self) -> dict[str, Any]:
+        extra: dict[str, Any] = {"activity": self._activity}
+        if self._run is not None:
+            extra["assistant_run_id"] = self._run.id
+        return extra
+
+    def _apply_pending_controls(
+        self, run: Any, step_index: int, scratchpad: list[str]
+    ) -> dict[str, Any] | None:
+        """Apply operator controls at a step boundary. Returns a run-result dict
+        when the run was stopped (the loop should return it), else None.
+
+        A pending stop wins: it records a `control` trace step, posts a clean
+        message, finishes the run `stopped`, and ignores any other pending
+        controls. Otherwise pending redirects are folded into the scratchpad so
+        the next step sees them — prior steps are never touched."""
+        controls = db.list_pending_controls(run.id)
+        if not controls:
+            return None
+
+        stop = next((c for c in controls if c.command == "stop"), None)
+        if stop is not None:
+            self._record_control(step_index, "stop", "stop requested by operator")
+            db.mark_control_state(stop, "applied", note=f"stopped at step {step_index}")
+            for other in controls:
+                if other.id != stop.id:
+                    db.mark_control_state(other, "ignored", note="run stopped")
+            self._activity = "stopped"
+            db.post_chat_message(
+                run.room_uuid, self.agent_uuid, "Stopped at your request.", kind="message"
+            )
+            db.finish_run(run, "stopped",
+                          final_summary=f"stopped by operator at step {step_index}")
+            logger.info("assistant run %s stopped by operator at step %d", run.id, step_index)
+            return self._run_result("stopped", "stopped by operator")
+
+        for c in controls:  # redirects only at this point
+            instruction = str((c.payload or {}).get("instruction", "")).strip()
+            self._record_control(step_index, "redirect", instruction or "(no instruction)")
+            if instruction:
+                scratchpad.append(f"operator redirect: {instruction}")
+            db.mark_control_state(c, "applied", note="redirect applied")
+        return None
+
+    def _record_control(self, step_index: int, command: str, detail: str) -> None:
+        """Persist a `control` trace step (and mirror it) so an applied stop/
+        redirect is visible in the trace."""
+        self._steps.append(
+            {"step_index": step_index, "phase": "control", "action": command,
+             "reason": detail, "error": None}
+        )
+        if self._run is not None:
+            db.append_assistant_step(
+                run_id=self._run.id, step_index=step_index, phase="control",
+                action=command, reason=detail, model_group_uuid=self.model_group_uuid,
+            )
 
     @staticmethod
     def _compact_step(

@@ -13,6 +13,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 logger = logging.getLogger(__name__)
 
@@ -819,11 +820,12 @@ class RetrievalEvent(db.Model):
     )
     __table_args__ = (
         CheckConstraint(
-            "target_type IN ('qa_entry','memory_claim')",
+            "target_type IN ('qa_entry','memory_claim','skill')",
             name="ck_retrieval_event_target_type",
         ),
         CheckConstraint(
-            "stage IN ('retrieved','accepted','rejected','used','downvoted')",
+            "stage IN ('retrieved','accepted','rejected','used','downvoted',"
+            "'considered','injected')",
             name="ck_retrieval_event_stage",
         ),
         CheckConstraint(
@@ -954,7 +956,7 @@ class AssistantRun(db.Model):
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     __table_args__ = (
         CheckConstraint(
-            "status IN ('running','finished','stopped','failed','killed')",
+            "status IN ('running','stopping','finished','stopped','failed','killed')",
             name="assistant_run_status_check",
         ),
         Index("assistant_run_by_room", "room_uuid", "started_at"),
@@ -997,6 +999,119 @@ class AssistantStep(db.Model):
         Index("assistant_step_by_run", "run_id", "step_index", "id"),
         Index("assistant_step_by_action_phase", "action", "phase"),
         Index("assistant_step_by_created", "created_at"),
+    )
+
+
+class AssistantControl(db.Model):
+    """An operator steering command for an in-flight assistant run. The loop
+    polls pending controls at each step boundary: `stop` ends the run cleanly,
+    `redirect` injects a new instruction before the next step. A new table (not a
+    chat row) because controls are runtime state, not conversation.
+    """
+
+    __tablename__ = "assistant_control"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_run.id", ondelete="CASCADE"), index=True
+    )
+    command: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    state: Mapped[str] = mapped_column(Text, default="pending")
+    requested_by_uuid: Mapped[UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (
+        CheckConstraint(
+            "command IN ('stop','redirect')", name="ck_assistant_control_command"
+        ),
+        CheckConstraint(
+            "state IN ('pending','applied','ignored')",
+            name="ck_assistant_control_state",
+        ),
+        Index("assistant_control_by_run_state", "run_id", "state", "id"),
+    )
+
+
+class AssistantWriteIntent(db.Model):
+    """A confirm-tier write the assistant proposed but must not execute until the
+    operator approves it. The payload is bound by `payload_hash` so a confirmed
+    intent executes exactly what was previewed — the assistant cannot mutate it
+    after confirmation. Log-and-undo writes do not use this table.
+
+    State machine: proposed -> confirmed -> executing -> completed | failed, with
+    rejected (operator declined) and undone (a completed write was reverted) as
+    additional terminal states.
+    """
+
+    __tablename__ = "assistant_write_intent"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_run.id", ondelete="CASCADE"), index=True
+    )
+    step_index: Mapped[int] = mapped_column()
+    capability_name: Mapped[str] = mapped_column(Text)
+    payload_hash: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    preview_text: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text, default="proposed")
+    room_uuid: Mapped[UUID] = mapped_column()
+    agent_uuid: Mapped[UUID] = mapped_column()
+    result: Mapped[dict] = mapped_column(JSONB, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_by_uuid: Mapped[UUID | None] = mapped_column()
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('proposed','confirmed','executing','completed','failed',"
+            "'rejected','undone')",
+            name="ck_assistant_write_intent_state",
+        ),
+        Index("assistant_write_intent_by_run", "run_id", "id"),
+    )
+
+
+class MemoryEmbedding(db.Model):
+    """A vector embedding of an active memory claim — the rainbox-owned half of
+    hybrid retrieval (the Q&A table is owned by LlamaIndex's PGVectorStore).
+
+    Kept separate from `memory_claim` so the claim stays readable in Flask-Admin,
+    multiple embedding models/text-hashes can coexist during rebuilds, and a
+    failed embedding never corrupts the source row. A claim with no row here
+    falls back to lexical-only retrieval — never an error.
+    """
+
+    __tablename__ = "memory_embedding"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    memory_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("memory_claim.uuid", ondelete="CASCADE"), index=True
+    )
+    model_name: Mapped[str] = mapped_column(Text)
+    embed_dim: Mapped[int] = mapped_column()
+    text_hash: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector(768))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "memory_uuid", "model_name", "text_hash", name="uq_memory_embedding"
+        ),
     )
 
 

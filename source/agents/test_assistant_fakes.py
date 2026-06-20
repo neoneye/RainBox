@@ -76,8 +76,9 @@ def test_decision_rejects_unknown_action():
         )
 
 
-def test_action_enum_covers_the_read_only_phase_one_set():
-    """Lock the PR 1-4 action surface so an accidental rename/removal is caught."""
+def test_action_enum_covers_the_known_action_surface():
+    """Lock the action surface so an accidental rename/removal is caught. The
+    read-only set (PR 1-4) plus the first write family (PR 9)."""
     assert {a.value for a in AssistantActionName} == {
         "reply",
         "ask_clarifying_question",
@@ -85,4 +86,6 @@ def test_action_enum_covers_the_read_only_phase_one_set():
         "query_qa",
         "workspace_read_command",
         "kanban_read",
+        "remember",
+        "activate_memory",
     }
