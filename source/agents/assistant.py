@@ -92,6 +92,15 @@ _REQUIRED_ARGS: dict[AssistantActionName, tuple[str, ...]] = {
     AssistantActionName.KANBAN_READ: (),
 }
 
+# Optional args an action accepts beyond its required ones. Anything outside
+# required ∪ optional is rejected at validation ("unknown args are risky"), so a
+# stray or unsupported arg becomes a traceable failed step rather than a
+# silently-wrong read. kanban_read takes board_uuid only for now; task_uuid is
+# not yet implemented and is rejected rather than ignored.
+_OPTIONAL_ARGS: dict[AssistantActionName, frozenset[str]] = {
+    AssistantActionName.KANBAN_READ: frozenset({"board_uuid"}),
+}
+
 # One-line prompt help per action, used to render the action catalog.
 _ACTION_HELP: dict[AssistantActionName, str] = {
     AssistantActionName.REPLY: (
@@ -338,6 +347,9 @@ class AssistantAgent(ModelGroupAgent):
             step_limit=self.step_limit,
         )
         run = self._run
+        # The logical step the loop is on, so a crash records its failed row
+        # against the right step (not a row count).
+        current_step = 0
         try:
             # Only real conversation turns feed the prompt; diagnostic rows
             # (debug-*, progress, thinking) are operator-only and excluded.
@@ -349,6 +361,7 @@ class AssistantAgent(ModelGroupAgent):
             scratchpad: list[str] = []
 
             for step_index in range(self.step_limit):
+                current_step = step_index
                 decision = self._decide_next_step(
                     transcript=transcript, scratchpad=scratchpad, step_index=step_index
                 )
@@ -417,7 +430,7 @@ class AssistantAgent(ModelGroupAgent):
         except Exception as exc:
             # Record the failure against the run so it isn't left stuck in
             # 'running'; Agent.run marks the journal failed when we re-raise.
-            self._fail_run(run, exc)
+            self._fail_run(run, exc, current_step)
             raise
 
     def _run_result(self, status: str, final_summary: str) -> dict[str, Any]:
@@ -432,10 +445,10 @@ class AssistantAgent(ModelGroupAgent):
             "step_count": len(self._steps),
         }
 
-    def _fail_run(self, run: Any, exc: Exception) -> None:
+    def _fail_run(self, run: Any, exc: Exception, step_index: int) -> None:
         err = f"{type(exc).__name__}: {exc}"
         try:
-            self._record_step(step_index=len(self._steps), phase="failed", error=err)
+            self._record_step(step_index=step_index, phase="failed", error=err)
             db.finish_run(run, "failed", final_summary=err)
         except Exception:
             logger.exception("assistant: failed to mark run %s failed", run.id)
@@ -506,10 +519,16 @@ class AssistantAgent(ModelGroupAgent):
         if action not in self._enabled_actions:
             return f"action '{action.value}' is not available"
         args = decision.args or {}
-        for key in _REQUIRED_ARGS.get(action, ()):
+        required = _REQUIRED_ARGS.get(action, ())
+        for key in required:
             value = args.get(key)
             if not isinstance(value, str) or not value.strip():
                 return f"action '{action.value}' requires a non-empty '{key}' argument"
+        # Reject unknown args so an unsupported/typo'd read can't look successful.
+        allowed = set(required) | _OPTIONAL_ARGS.get(action, frozenset())
+        unknown = sorted(set(args) - allowed)
+        if unknown:
+            return f"action '{action.value}' got unknown argument(s): {', '.join(unknown)}"
         return None
 
     def _terminal_text(self, decision: AssistantStepDecision) -> str:

@@ -188,6 +188,41 @@ def test_kanban_read_unknown_board_is_blocked(app_ctx):
     assert obs.ok is False
 
 
+# --- argument validation ------------------------------------------------------
+
+
+def test_validate_rejects_unsupported_kanban_args(app_ctx):
+    """kanban_read takes optional board_uuid only; task_uuid / typos must be a
+    traceable validation failure, not a silent fall-through to 'list all boards'."""
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    bad = AssistantStepDecision(
+        reason="x", action=AssistantActionName.KANBAN_READ,
+        args={"task_uuid": str(uuid4())},
+    )
+    err = agent._validate_decision(bad)
+    assert err and "task_uuid" in err
+    # board_uuid and empty args are both accepted.
+    ok_board = AssistantStepDecision(
+        reason="x", action=AssistantActionName.KANBAN_READ,
+        args={"board_uuid": str(uuid4())},
+    )
+    assert agent._validate_decision(ok_board) is None
+    empty = AssistantStepDecision(
+        reason="x", action=AssistantActionName.KANBAN_READ, args={}
+    )
+    assert agent._validate_decision(empty) is None
+
+
+def test_validate_rejects_unknown_arg_on_query(app_ctx):
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    bad = AssistantStepDecision(
+        reason="x", action=AssistantActionName.QUERY_QA,
+        args={"query": "hi", "extra": "nope"},
+    )
+    err = agent._validate_decision(bad)
+    assert err and "extra" in err
+
+
 # --- dispatch through the loop ------------------------------------------------
 
 

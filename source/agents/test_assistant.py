@@ -326,8 +326,13 @@ def test_killed_mid_run_leaves_last_committed_step_and_marks_run_failed(room):
     assert len(runs) == 1
     run = runs[0]
     assert run.status == "failed"
-    phases = [s.phase for s in _steps_for(run.id)]
+    steps = _steps_for(run.id)
+    phases = [s.phase for s in steps]
     # The step-0 planned+failed rows survived the crash; a terminal failed row
     # records the exception.
     assert phases[:2] == ["planned", "failed"]
     assert "failed" in phases[2:]
+    # The terminal failed row points at the logical step where it failed (the
+    # model raised while deciding step 1), not a row count.
+    assert steps[-1].phase == "failed"
+    assert steps[-1].step_index == 1
