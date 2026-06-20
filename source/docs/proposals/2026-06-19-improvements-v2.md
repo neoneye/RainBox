@@ -18,19 +18,22 @@ those systems.
 
 ## Document status (2026-06-20)
 
-This document is no longer just a brainstorm. It has three maturity levels:
+This document started as a brainstorm and is now a **mostly-implemented**
+roadmap. The full PR stack (PRs 1-10) has been built, tested, and merged to
+`main`. See **Implementation status** below for what landed and where.
 
 | Area | Status | What that means |
 |---|---|---|
-| Roadmap direction | **Decided** | The phase order and major choices are stable enough to implement against. |
-| PRs 1-4 | **Build-ready spec** | The first slice has concrete loop shape, fake-model seam, trace tables, helper names, prompt assembly, tests, and file placement. Start coding here. |
-| PRs 5-10 and later phases | **Roadmap plus draft defaults** | The direction is decided, but several details remain draft/range/missing until their phase is next. |
-| Concrete schemas in prose | **Illustrative unless promoted** | The assistant contracts are binding; field names and table sketches should be refined by the PR that implements them. |
+| Roadmap direction | **Decided** | The phase order and major choices held through implementation. |
+| PRs 1-10 (the whole stack) | **Implemented & merged** | Landed on `main` in two PRs (#1 = PRs 1-5, #2 = PRs 6-10). The code is the source of truth now. |
+| Phase 3.5 + later directions | **Roadmap** | Not yet built (async profile deriver, more write families, MCP/git adapters, dashboard UI, doctor CLI). |
+| Concrete schemas in prose | **Superseded by code** | The shipped SQLAlchemy models, the capability registry, and the loop are authoritative; the JSON/table sketches below are historical design notes. |
 
-The practical status is: **stop polishing before PR 1.** The first implementation
-branch can start now. Further document work should be phase-local: when a phase
-is next, promote its draft defaults into final spec text, resolve its open
-questions, then implement.
+The practical status is: **the first slice and the full Phase 1-6 skeleton are
+done.** Remaining work is the deferred half of Phase 3 (user profile), the
+optional Phase 3.5 deriver, additional write families, the external-system
+adapter boundary, and operator-facing polish (doctor, dashboard) — see **Where
+we are going next**.
 
 Known rough edges in this document:
 
@@ -57,6 +60,82 @@ Known rough edges in this document:
   only LM Studio reference is the provider-list row, which is correct. Both v1
   and v2 follow the current Ollama `nomic-embed-text` path
   (`agents/query_kb_helpers.py`).
+
+## Implementation status (2026-06-20)
+
+All ten roadmap PRs are implemented, tested, and merged to `main` (PR #1 carried
+PRs 1-5; PR #2 carried PRs 6-10). One commit per roadmap PR.
+
+| PR | What landed | Commit | Primary files |
+|---|---|---|---|
+| 1 | Eval harness: decision contract + fake-model seam + acceptance-spine regressions | `ca12516` | `agents/assistant.py`, `agents/assistant_fakes.py`, `evals/test_acceptance_spine.py` |
+| 2 | `AssistantAgent` bounded ReAct loop; `_structured_completion` extracted to `ModelGroupAgent`; role registered | `a92f38a` | `agents/assistant.py`, `agents/base.py`, `agents/config.py`, `agents/__main__.py`, `webapp/chat_api.py` |
+| 3 | Durable trace: `assistant_run`/`assistant_step` + thin `debug-assistant` pointer; `journal.result` is a summary | `7321a59` | `db/models.py`, `db/assistant.py` |
+| 4 | Read actions (`query_memory`, `query_qa`, `workspace_read_command`, `kanban_read`) + dispatcher | `ecbe095` | `agents/assistant.py` |
+| 5 | Inline chat rendering of the trace via `GET /chat/api/assistant/runs/<id>` | `f9ccb1e` | `webapp/chat_api.py`, `webapp/chat_template.py` |
+| 6 | Procedural skills MVP: loader (base + `<customize.dir>/skills/` overlay), candidate→active lifecycle, lexical retrieval + telemetry | `e660cea` | `skills/`, `data/skills/`, `agents/assistant.py` |
+| 7 | Hybrid memory retrieval: `memory_embedding` (pgvector) + backfill; `retrieve_memories_hybrid` (filters → vector + full-text + entity) | `9f4ea81` | `db/models.py`, `memory/embeddings.py`, `memory/retrieval.py` |
+| 8 | Minimal capability registry (`Capability`/`CAPABILITIES`); disable enforcement removes a capability from prompt + dispatch | `c454773` | `agents/assistant.py`, `db/settings.py` |
+| 9 | First write family: `remember` (log-and-undo) + `activate_memory` (confirm); `assistant_write_intent` state machine; confirm/reject endpoints | `336ccf8` | `db/models.py`, `db/assistant.py`, `agents/assistant_writes.py`, `webapp/chat_api.py` |
+| 10 | Runtime controls: `assistant_control` channel; step-boundary `/stop` (clean stopped trace) + `/redirect`; progress-aware heartbeat | `9d2824a` | `db/models.py`, `db/assistant.py`, `agents/assistant.py`, `agents/base.py`, `webapp/chat_api.py` |
+
+Test posture: the whole suite runs without a live LLM. Determinism comes from the
+fake-model seam (`scripted_decisions`) and an injectable fake embedder; full
+affected suite is green (≈999 tests) and `init_db` is idempotent (it creates the
+pgvector extension and widens CHECKs in place).
+
+### Deviations from the original spec (decided during implementation)
+
+These are intentional and supersede the prose where they differ:
+
+- **`kanban_read` accepts `board_uuid` only.** `task_uuid` (listed in the spec)
+  is *rejected* at validation rather than silently ignored — unknown args are
+  refused so a wrong read can't look successful. `task_uuid` support is deferred.
+- **Hybrid retrieval is additive, not a global swap.** `retrieve_memories_hybrid`
+  backs the assistant's `query_memory` action; the legacy token-overlap
+  `retrieve_memories` still serves the chat agents. Migrating them is later work.
+- **Skills telemetry reuses `retrieval_event`** with a widened CHECK (added the
+  `skill` target_type and `considered`/`injected` stages).
+- **Capability inspection is `capability_report()`**, a tested function; the
+  polished `rainbox doctor` surface is deferred (the spec already marks it
+  "minimal form / later scope").
+- **Write evidence uses constraint-legal `source_type`** values
+  (`chat_message` for `remember`, `manual` for `activate_memory`).
+- **Per-capability output caps**: `query_qa` 6000 chars, others 4000; the
+  prompt-visible observation preview is capped at 1200 chars per step.
+- The `adapter` field exists on `Capability` but is unused (no external systems
+  wired yet).
+
+## Where we are going next
+
+Nothing below is built yet; this is the forward plan now that the skeleton is
+complete. Rough order of value:
+
+1. **Phase 3 user profile (the deferred half).** A one-shot profile block built
+   from active memory + recent context, injected like the skills block, with
+   source references. PR 7 delivered retrieval only.
+2. **Embedding freshness.** Wire `ensure_memory_embedding` into the memory write
+   path (embed on activation) and add a periodic/triggered backfill + lazy prune
+   of stale embeddings. Today backfill is the only population path; claims
+   without an embedding fall back to lexical-only.
+3. **More write families (Phase 5 rollout).** Kanban work events, cron/reminders,
+   then file/document patch proposals — each with its tier, trace, and
+   dry-run/confirm or log-and-undo, reusing the `assistant_write_intent`
+   machinery. Add `undone` handling for log-and-undo reverts.
+4. **External-system adapter boundary (Phase 4 direction).** MCP as the first
+   read-only adapter (`adapter="mcp:..."` on capabilities), git as a natural
+   second — routed through the registry, never as a bespoke controller.
+5. **Operator surfaces.** `rainbox doctor` (list enabled capabilities, missing
+   model/embedding/MCP prerequisites, stale skill metadata) and a runtime
+   dashboard (PID, journal id, current step/activity, heartbeat age, and
+   stop/redirect/retry buttons — the `/stop` and `/redirect` endpoints already
+   exist; the UI does not).
+6. **Phase 3.5 async profile deriver** — optional, build only if the one-shot
+   profile proves stale in practice.
+7. **Smaller follow-ups.** `kanban_read` `task_uuid`; a tokenizer-aware prompt
+   budgeter to replace the character caps; the optional `eval_case` regression
+   layer as a first-class product surface; migrating the chat agents onto hybrid
+   retrieval.
 
 ## Executive decision summary
 
