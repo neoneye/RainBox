@@ -226,14 +226,14 @@ batches:
   **harden the sensitive-name denylist for writes** (it was sized for reads —
   exact/case-sensitive, e.g. `.git/config` and `.ENV` aren't covered).
 
-### S6 — `rainbox doctor` CLI  ·  Size S/M  ·  Depends on: none  ·  (v2 Phase 4)
-- **Goal:** Promote `capability_report()` into an operator-facing health check.
-- **Touches:** a CLI entry (mirror `agents/__main__` style) + optional `webapp`
-  doctor view; reads capability registry, model-group config, embedder
-  reachability, MCP config, skill metadata.
-- **Decisions:** CLI-only vs CLI + admin page; which prerequisites to probe.
-- **Done when:** `rainbox doctor` lists enabled capabilities and flags missing
-  model/embedding/MCP prerequisites and stale/invalid skill metadata.
+### S6 — `rainbox doctor` CLI  ·  ✅ DONE (merged)  ·  Size S/M  ·  (v2 Phase 4)
+- **Shipped:** `python -m tools.doctor` — per-check report (capabilities, model
+  groups, embedder reachability, skills + unparseable-file lint, MCP), exits 1 on
+  any `fail`. CLI-only; the embedder check flags a down Ollama as `warn`
+  (lexical-only) rather than crashing. New `skills.lint_skills`.
+  [spec](../superpowers/specs/2026-06-20-s6-doctor-design.md)
+- **Follow-ups:** an admin/web doctor page; a `rainbox` wrapper script; deeper
+  probes (migration drift, pgvector presence, per-agent model-group validity).
 
 ### S7 — Runtime dashboard  ·  Size M  ·  Depends on: none (endpoints exist)  ·  (v2 Phase 6)
 - **Goal:** See and steer in-flight assistant runs.
