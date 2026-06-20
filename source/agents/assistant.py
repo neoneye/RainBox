@@ -73,6 +73,7 @@ class AssistantActionName(str, Enum):
     KANBAN_CREATE = "kanban_create"            # log-and-undo: create a task
     KANBAN_DELETE_TASK = "kanban_delete_task"  # internal: create's undo inverse (not prompt-exposed)
     SET_REMINDER = "set_reminder"      # confirm-tier (dry-run): schedule a reminder message
+    EDIT_FILE = "edit_file"            # confirm-tier (dry-run diff): edit a workspace file
 
 
 class AssistantStepDecision(BaseModel):
@@ -490,6 +491,57 @@ def _action_set_reminder(
     )
 
 
+MAX_EDIT_BYTES: int = 100_000
+
+
+def _action_edit_file(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Confirm-tier write: replace a workspace file's content. Dry-run (propose)
+    shows the unified diff and writes nothing; real execution applies it. Confined
+    to the workspace by resolve_workspace_path (rejects traversal/sensitive/escape)."""
+    import difflib
+
+    from tools.workspace_policy import (
+        SHELL_CWD,
+        DisallowedCommand,
+        resolve_workspace_path,
+    )
+
+    path = str(args.get("path", "")).strip()
+    content = str(args.get("content", ""))
+    if len(content.encode("utf-8", "ignore")) > MAX_EDIT_BYTES:
+        return AssistantObservation(ok=False, text="new content too large (>100KB)")
+    try:
+        resolved = resolve_workspace_path(path, SHELL_CWD)
+    except DisallowedCommand as e:
+        return AssistantObservation(ok=False, text=f"blocked: {e}")
+    if resolved.is_dir():
+        return AssistantObservation(ok=False, text=f"path is a directory: {path}")
+    old = ""
+    if resolved.exists():
+        if resolved.stat().st_size > MAX_EDIT_BYTES:
+            return AssistantObservation(ok=False, text="existing file too large to edit (>100KB)")
+        old = resolved.read_text(encoding="utf-8", errors="replace")
+    if old == content:
+        return AssistantObservation(ok=False, text="no change: new content matches the file")
+    diff = "\n".join(difflib.unified_diff(
+        old.splitlines(), content.splitlines(),
+        fromfile=f"a/{path}", tofile=f"b/{path}", lineterm="",
+    ))
+    verb = "create" if not resolved.exists() else "edit"
+    if ctx.dry_run:
+        return AssistantObservation(
+            ok=True, text=f"Would {verb} {path}:\n{diff}", data={"path": path},
+        )
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(content, encoding="utf-8")
+    return AssistantObservation(
+        ok=True, text=f"Applied edit to {path} ({len(old)} → {len(content)} chars).",
+        data={"path": path, "old_chars": len(old), "new_chars": len(content)},
+    )
+
+
 @dataclass(frozen=True)
 class Capability:
     """Code-owned metadata + dispatch for one assistant action — the primitive
@@ -621,6 +673,15 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'confirmation. args: {"text": "...", "when": "ISO-8601 datetime"}'),
         required_args=("text", "when"), action=_action_set_reminder,
         read=False, write=True, tier="confirm", dry_run=True,
+    ),
+    AssistantActionName.EDIT_FILE: Capability(
+        name=AssistantActionName.EDIT_FILE, family="workspace",
+        description=('propose an edit to a workspace file (you supply the full new '
+                     'content); shows a diff and needs your confirmation. args: '
+                     '{"path": "...", "content": "..."}'),
+        required_args=("path", "content"), action=_action_edit_file,
+        read=False, write=True, tier="confirm", dry_run=True,
+        output_cap_chars=12000,
     ),
 }
 
