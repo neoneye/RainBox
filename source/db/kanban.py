@@ -826,6 +826,13 @@ def _task_brief(t: "KanbanTask") -> dict[str, Any]:
                               if t.claim_expires_at else None}
 
 
+def kanban_get_task(task_uuid: UUID) -> dict[str, Any] | None:
+    """Public single-task read: the task brief (incl. current columnUuid), or
+    None if the task is gone."""
+    t = _task(task_uuid)
+    return _task_brief(t) if t is not None else None
+
+
 def _lease_live(t: "KanbanTask", now: datetime) -> bool:
     return t.claimed_by is not None and (t.claim_expires_at or now) > now
 
