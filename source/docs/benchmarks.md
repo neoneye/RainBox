@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`rainbox` has two benchmark harnesses, each with its own page,
+`rainbox` has three benchmark harnesses, each with its own page,
 background runner, and live-updating results grid:
 
 - **`/benchmark_basic`** — coding/format probes (base64 decode/encode, reverse
@@ -13,9 +13,15 @@ background runner, and live-updating results grid:
   a fixed set of edit tasks and scores the resulting document byte-for-byte.
   Code: `benchmarks/editdocument.py`, `benchmarks/editdocument_runner.py`,
   `webapp/benchmark_editdocument_views.py`.
+- **`/benchmark_kanban`** — compares kanban context/action encodings
+  (markdown vs JSON context, structured output vs function calling) for the
+  agent-facing kanban operation shape. Code: `benchmarks/kanban.py`,
+  `webapp/benchmark_kanban_views.py`.
 
-Both share the same shape; this doc covers that shape, and in particular how
-each row runs in a **killable child process** so Stop actually stops the model.
+The basic and edit-document harnesses share the same subprocess-runner shape;
+this doc covers that shape, and in particular how each row runs in a
+**killable child process** so Stop actually stops the model. The kanban harness
+uses the same live page/start/stop/state pattern but its own spec set.
 
 ## Runner lifecycle
 

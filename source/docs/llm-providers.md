@@ -213,15 +213,16 @@ LLM routes through it, so provider selection (Ollama native wrapper vs
 
 The page renders one combined tree with a per-row provider badge:
 
-- Header shows `[LM Studio] http://127.0.0.1:1234 · [Jan]
-  http://127.0.0.1:1337` (each clickable). The list is generated from
-  `providers.all_providers()` so any registered provider appears
-  automatically.
+- Header shows each registered provider, for example `[LM Studio]
+  http://127.0.0.1:1234 · [Jan] http://127.0.0.1:1337 · [Ollama]
+  http://127.0.0.1:11434` (each clickable). The list is generated from
+  `providers.all_providers()` so any registered provider appears automatically.
 - Each model row has a small badge (`pp-provider-badge`) carrying the
   provider's display name. All providers share the same badge styling.
 - The Reload button calls `POST /models/api/reload`, which runs
-  `sync_models_from_providers()`. The response is
-  `{"ok": true, "summary": {"lm_studio": {…} | null, "jan": {…} | null}}`.
+  `sync_models_from_providers()`. The response is a provider-keyed summary such
+  as `{"ok": true, "summary": {"lm_studio": {…} | null, "jan": {…} | null,
+  "ollama": {…} | null}}`.
   Unreachable providers come back as `null` in the summary and the page
   reloads to show the latest state.
 - The model-info side panel uses the row's provider when rendering its
@@ -296,10 +297,11 @@ probe paths pick the new provider up automatically.
 
 ## Known limitations
 
-- **Embeddings stay LM Studio-only.** `agents/query_kb_helpers.py` hardcodes
-  `http://127.0.0.1:1234/v1`; switching the embedding provider would
-  invalidate stored vectors, so it's out of scope for the multi-provider
-  abstraction.
+- **Embeddings use Ollama.** `agents/query_kb_helpers.py` uses Ollama's
+  OpenAI-compatible endpoint (default `http://127.0.0.1:11434/v1`) with
+  `nomic-embed-text` for Q&A and memory embeddings. Switching embedding model
+  or provider would invalidate stored vectors, so embeddings remain a separate
+  fixed path rather than following the chat-model provider registry.
 - **`size_bytes` is `NULL` for Jan rows.** Jan exposes no equivalent of
   `lms ls`. The column is observational, so this is harmless.
 - **Jan capability detection is coarser than LM Studio's.** Jan's

@@ -18,7 +18,10 @@ Postgres must be available as `rainbox_production` unless `DATABASE_URL` is set.
 Tests run against a separate `rainbox_claude` database (forced by
 `rainbox/conftest.py`), so `pytest` never touches production data — create it
 once with `createdb rainbox_claude`.
-LM Studio should be running on `127.0.0.1:1234` for LLM-backed agents.
+Run whichever local model provider backs your agent model groups: LM Studio
+(`127.0.0.1:1234`), Jan (`127.0.0.1:1337`), and/or Ollama
+(`127.0.0.1:11434`). Ollama must also have `nomic-embed-text` available for
+Q&A and memory embeddings.
 
 ## Basic Chat Workflow
 
@@ -31,7 +34,11 @@ LM Studio should be running on `127.0.0.1:1234` for LLM-backed agents.
 
 Useful responder agents:
 
-- `chat`: normal chat reply with memory retrieval.
+- `chat_structured`: structured chat reply with memory retrieval.
+- `chat_unstructured`: plain-text chat reply with memory retrieval.
+- `assistant`: bounded ReAct-style assistant with trace, read actions, skills,
+  and controlled memory writes.
+- `router`: structured triage reply.
 - `query`: no-LLM Q&A retriever.
 - `query_router`: Q&A hint plus router LLM.
 - `query_filter_router`: Q&A retrieval, LLM relevance filter, router reply.
@@ -59,6 +66,7 @@ Memory tables are inspectable in Flask-Admin under the Memory category:
 
 - `MemoryClaim`
 - `MemoryEvidence`
+- `MemoryEmbedding`
 
 ## Feedback
 
@@ -165,7 +173,7 @@ Check:
 
 - room membership includes the agent.
 - the agent has a model group if it needs one.
-- LM Studio is running for LLM-backed agents.
+- the relevant local provider is running for LLM-backed agents.
 - the supervisor process is running.
 - Flask-Admin `Inbox` and `Journal` rows for failures.
 
@@ -174,7 +182,7 @@ Check:
 Check:
 
 - pgvector extension is installed.
-- LM Studio has `text-embedding-nomic-embed-text-v1.5`.
+- Ollama is running and has `nomic-embed-text` available.
 - `QUERY_AGENT_REBUILD_KB=1` if the JSONL registry changed.
 
 ### Tests Cannot Connect To Postgres

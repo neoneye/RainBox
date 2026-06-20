@@ -71,6 +71,18 @@ Human and agent identities.
 
 Chat rooms.
 
+Key fields:
+
+- `uuid`
+- `name`
+- `created_by`
+- `folder_uuid`
+- `position`
+
+### `chatroom_folder`
+
+Folder tree for organizing chat rooms in the left panel.
+
 ### `chatroom_member`
 
 Room membership.
@@ -94,6 +106,93 @@ are for operators and audit.
 ### `workspace_shell_state`
 
 Per-room working directory for the deterministic workspace shell agent.
+
+## Conversation Tables
+
+### `conversation_run`
+
+State for bounded persona-to-persona conversations managed by the
+`conversation` agent.
+
+Key fields:
+
+- `uuid`
+- `room_uuid`
+- `status`: `running`, `paused`, `finished`, `stopped`, `failed`
+- `participants`
+- `turn`, `active_turn`
+- `turn_policy`
+- `stop_requested`
+
+## Assistant Tables
+
+### `assistant_run`
+
+Durable trace header for one assistant turn.
+
+Key fields:
+
+- `uuid`
+- `room_uuid`
+- `agent_uuid`
+- `journal_id`
+- `status`
+- `step_limit`
+- `started_at`, `finished_at`
+- `final_summary`
+- `metadata`
+
+### `assistant_step`
+
+One persisted assistant loop step. Steps are written before/after actions so a
+run remains inspectable even if the process dies.
+
+Key fields:
+
+- `run_id`
+- `step_index`
+- `phase`: `planned`, `running`, `observed`, `failed`, `final`, `control`
+- `action`
+- `reason`
+- `args`
+- `observation_preview`
+- `error`
+- `model_group_uuid`
+- `model_uuid`
+
+### `assistant_control`
+
+Pending runtime controls for an assistant run, such as stop or redirect.
+
+Key fields:
+
+- `run_id`
+- `command`: `stop`, `redirect`
+- `payload`
+- `state`: `pending`, `applied`, `ignored`
+- `requested_by_uuid`
+- `applied_at`
+- `note`
+
+### `assistant_write_intent`
+
+Controlled write proposals created by the assistant. Confirm-tier writes are
+executed only through the confirmation API, not directly by model output.
+
+Key fields:
+
+- `uuid`
+- `run_id`
+- `step_index`
+- `capability_name`
+- `payload_hash`
+- `payload`
+- `preview_text`
+- `state`
+- `room_uuid`
+- `agent_uuid`
+- `result`
+- `error`
 
 ## Configuration Tables
 
@@ -140,6 +239,31 @@ A scheduled job. Key fields:
 
 One row per firing (trigger, timestamp), for history/logs.
 
+## Kanban Tables
+
+### `kanban_board`
+
+Board metadata and folder placement.
+
+### `kanban_board_folder`
+
+Folder tree for organizing boards.
+
+### `kanban_column`
+
+Columns inside a board.
+
+### `kanban_task`
+
+Cards/tasks. Key fields include board/column UUIDs, assigned `agent_uuid`,
+lease fields (`claimed_by`, `claimed_at`, `claim_expires_at`), title,
+description, and position.
+
+### `kanban_task_event`
+
+Append-only task audit trail: created/moved/claimed/progress/done/failed and
+other event details.
+
 ## Memory Tables
 
 ### `memory_claim`
@@ -179,6 +303,20 @@ Key fields:
 
 One memory claim can have many evidence rows.
 
+### `memory_embedding`
+
+Auxiliary pgvector embeddings for active memory claims, used by hybrid memory
+retrieval.
+
+Key fields:
+
+- `memory_uuid`
+- `model_name`
+- `text_hash`
+- `embedding`
+- `embed_dim`
+- `created_at`, `updated_at`
+
 ## Feedback And Telemetry Tables
 
 ### `feedback_event`
@@ -203,9 +341,10 @@ Append-only retrieval telemetry.
 
 Key fields:
 
-- `target_type`: `qa_entry`, `memory_claim`
+- `target_type`: `qa_entry`, `memory_claim`, `skill`
 - `target_id`
-- `stage`: `retrieved`, `accepted`, `rejected`, `used`, `downvoted`
+- `stage`: `retrieved`, `accepted`, `rejected`, `used`, `downvoted`,
+  `considered`, `injected`
 - `query`
 - `room_uuid`
 - `agent_uuid`
@@ -217,6 +356,16 @@ Key fields:
 - `metadata`
 
 Counters should be derived from this table.
+
+## Git Tables
+
+### `git_folder`
+
+Folder tree for organizing registered repositories.
+
+### `git_repo`
+
+Tracked local Git repositories and their display placement in the Git page.
 
 ## Eval Tables
 
