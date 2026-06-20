@@ -241,8 +241,11 @@ batches:
   any `fail`. CLI-only; the embedder check flags a down Ollama as `warn`
   (lexical-only) rather than crashing. New `skills.lint_skills`.
   [spec](../superpowers/specs/2026-06-20-s6-doctor-design.md)
-- **Follow-ups:** an admin/web doctor page; a `rainbox` wrapper script; deeper
-  probes (migration drift, pgvector presence, per-agent model-group validity).
+- **Follow-up (done):** a browser **Doctor page** at `/doctor` (nav link after
+  "Voice ▾") — the same checks as a color-coded table + a copy-paste report, so
+  the operator never needs a shell. `webapp/doctor_views.py`.
+- **Follow-ups:** a `rainbox` wrapper script; deeper probes (migration drift,
+  pgvector presence, per-agent model-group validity).
 
 ### S7 — Runtime dashboard  ·  Size M  ·  Depends on: none (endpoints exist)  ·  (v2 Phase 6)
 - **Goal:** See and steer in-flight assistant runs.
