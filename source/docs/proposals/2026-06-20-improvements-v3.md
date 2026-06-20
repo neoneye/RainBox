@@ -183,22 +183,18 @@ batches:
 - **Done when:** ≥1 new kanban write works end to end with its tier + trace +
   (undo or confirm); surface-lock test updated; model-free tests cover it.
 
-### S3 — Skill-candidate write family  ·  Size M  ·  Depends on: none (mirrors memory remember/activate)  ·  (v2 Phase 5 #1, skill side)
-- **Goal:** Close the other half of v2's "memory **and** skill candidates": let
-  the assistant propose a *candidate* skill (inert) and activate one. The memory
-  side (`remember` + `activate_memory`) is done; the skill side is not.
-- **Touches:** `skills/` loader (write a candidate skill file with provenance:
-  `created_by=assistant`, `source_journal_id`/`source_step_id`),
-  `agents/assistant.py` (two capabilities).
-- **Decisions:** tiers — proposing a candidate skill is **log-and-undo** (inert,
-  reject-to-undo, mirrors `remember`); activating a skill *steers future
-  behavior*, so activation is **confirm-tier** (mirrors `activate_memory`, per
-  v2's tier rule). File-write vs DB-row for the candidate (the loader is
-  file-backed today).
-- **Done when:** the assistant can author a candidate skill that is provably
-  never injected until activated; activation is confirm-tier; an unactivated
-  assistant-written skill cannot influence a later turn (the candidates-are-inert
-  contract, tested).
+### S3 — Skill-candidate write family  ·  ✅ DONE (merged `28e382d`)  ·  Size M  ·  (v2 Phase 5 #1, skill side)
+- **Shipped:** `propose_skill` (log-and-undo) writes an inert candidate skill file
+  to the `<customize.dir>/skills/` overlay (`created_by=assistant`, provenance);
+  undo deletes it via an internal `skill_delete` capability (not model-invocable).
+  `activate_skill` (confirm-tier) flips a genuine candidate to active. New loader
+  writers `write_candidate_skill`/`set_skill_status`/`delete_skill_file`. The
+  **candidates-are-inert contract is tested directly** (an assistant-written skill
+  is not injected until activated). Closes the last Phase 5 write family — the
+  assistant now has memory, skill, kanban (move/complete/comment/create),
+  reminder, and file-edit writes.
+  [spec](../superpowers/specs/2026-06-20-s3-skill-candidates-design.md)
+- **Follow-ups:** editing/superseding an existing active skill; a skill-review UI.
 
 ### S4 — Reminders / scheduling write family  ·  ✅ DONE (merged `a6098ea`)  ·  Size M  ·  (v2 Phase 5 #3)
 - **Shipped:** `set_reminder` — confirm-tier write that schedules a one-shot cron
