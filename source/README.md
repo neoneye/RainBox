@@ -87,7 +87,7 @@ That starts the webserver on `http://127.0.0.1:5000` **and** the supervisor (in 
 Startup also reconciles the `model_config` table with LM Studio (availability, file sizes, and the `is_function_calling_model` capability flag for newly-discovered models). To also refresh **existing** rows' arguments from LM Studio's reported capabilities, run a one-shot sync that exits without starting the server:
 
 ```
-python3 main.py --force-lmstudio-model-sync
+python3 main.py --force-model-sync
 ```
 
 In a browser:
@@ -120,7 +120,7 @@ Press **Ctrl-C** in the terminal to stop. The SIGINT handler asks the webserver 
 
 ## How it's structured
 
-- `main.py` — entrypoint. Starts the Flask webserver on the main thread (via `werkzeug.serving.make_server`) and the supervisor on a non-daemon background thread. Installs SIGINT/SIGTERM handlers for clean shutdown. Owns the `spawn()` helper and the supervisor's `selectors` loop. The `--force-lmstudio-model-sync` flag runs the LM Studio model sync (refreshing existing rows' capability flag) and exits without starting the server.
+- `main.py` — entrypoint. Starts the Flask webserver on the main thread (via `werkzeug.serving.make_server`) and the supervisor on a non-daemon background thread. Installs SIGINT/SIGTERM handlers for clean shutdown. Owns the `spawn()` helper and the supervisor's `selectors` loop. The `--force-model-sync` flag runs the provider model sync (refreshing existing rows' capability flag) and exits without starting the server.
 - `webapp/` — Flask app as a package, split by feature so no single file is large (see [The `webapp/` package](#the-webapp-package) below). Defines the `app` object that `main.py` imports.
 - `agents/` — the child agent process (`python -m agents`) **and** the agent class hierarchy. `Agent` (in `agents/base.py`) owns the inbox-drain lifecycle (pop item → journal `processing` → `handle()` → `completed`/`failed` → emit socket status → exit when idle), with `setup()`/`handle()` hooks. `ModelGroupAgent` resolves the agent's bound model group in `setup()`. `StructuredLLMAgent` makes one schema-validated LLM call per item (system prompt + a per-item user prompt → a Pydantic model, falling back through the group's models). `agents/__main__.py` reads the socket config and picks the subclass for the role via a small registry (`chat_structured → StructuredChatAgent`, `chat_unstructured → UnstructuredChatAgent`, `followup → FollowUpClassifierAgent`, `tool_demo → ToolDemoAgent`, `workspace_shell → WorkspaceShellChatAgent`, `router → RouterAgent`, `query → QueryAgent`, `query_router → QueryRouterAgent`, `query_filter_router → QueryFilterRouterAgent`, `edit_document* → EditDocumentAgent*`, `mcp → MCPAgent`, else `ModelGroupAgent`). Takes `--socket-fd` and nothing else.
 - `agents/config.py` — the role declarations + pipeline topology.
@@ -158,7 +158,7 @@ The Flask app is a package split by feature so no single file gets large. It use
 - `webapp/models_views.py` — `/models`, override create/test/delete, the per-override "usecase" presets (structured-output vs tool-use, which set `is_function_calling_model`/`should_use_structured_outputs`), and the in-place **Test chat** / **Test structured output** / **Test function calling** probes (JSON endpoint `/models/api/test`).
 - `webapp/model_group_views.py` — `/modelgroups*` and `/modelgrouppriorities`.
 - `webapp/agent_views.py` — `/agent_models` (bind each agent to a model group).
-- `webapp/benchmark_views.py` — `/benchmark*`.
+- `webapp/benchmark_views.py` — `/benchmark_basic*`.
 - `webapp/chat_views.py` — `/chat`, the single-page chat UI (client-side markdown via `marked`+`DOMPurify`, JSON syntax highlighting via `highlight.js`). Served with `Cache-Control: no-store` so frontend changes show on a normal reload.
 - `webapp/chat_api.py` — the chat JSON API (`/chat/api/rooms`, `/chat/api/agents`, `/chat/api/rooms/<uuid>/messages`, `/chat/api/messages/<uuid>/feedback`) and the SSE endpoint `/chat/stream` (a dedicated `psycopg` connection that `LISTEN`s and forwards `NOTIFY` events). Also enqueues a job for each responder agent (`chat_structured`, `chat_unstructured`, `tool_demo`, `workspace_shell`, `router`, `query`, `query_router`, `query_filter_router`, `mcp`) that belongs to a room when a human posts in it (the enqueue payload carries the triggering message's uuid so `workspace_shell` runs that exact command). Feedback capture writes `FeedbackEvent` rows and downvotes can write `RetrievalEvent(stage='downvoted')` rows for same-turn retrieval context.
 - `webapp/__init__.py` — imports `core` (which builds `app`), then imports the view modules to register their routes, and re-exports `app` so `from webapp import app` still works.
@@ -281,7 +281,7 @@ model_group_member(id, group_uuid -> model_group.uuid, position, member_uuid)
 agent_model_binding(id, agent_uuid unique, model_group_uuid -> model_group.uuid, created_at, updated_at)
 ```
 
-`model_config` rows are synced from LM Studio on startup but never deleted when a model disappears (only the `available` flag flips), so a past run's exact parameters stay recoverable by uuid. The sync refreshes the observational `size_bytes` and sets `is_function_calling_model` (from the native API's `tool_use` capability) on **new** rows; an existing row's `arguments` blob is otherwise left immutable, except via the explicit `python3 main.py --force-lmstudio-model-sync` which opts in to refreshing the capability flag on existing rows too. A `model_group_member.member_uuid` references either a `model_config` or a `model_config_override`, resolved override-first.
+`model_config` rows are synced from providers on startup but never deleted when a model disappears (only the `available` flag flips), so a past run's exact parameters stay recoverable by uuid. The sync refreshes the observational `size_bytes` and sets `is_function_calling_model` (from native capability metadata when available) on **new** rows; an existing row's `arguments` blob is otherwise left immutable, except via the explicit `python3 main.py --force-model-sync` which opts in to refreshing the capability flag on existing rows too. A `model_group_member.member_uuid` references either a `model_config` or a `model_config_override`, resolved override-first.
 
 `agent_model_binding` links a code-defined agent (its `uuid` from `agents/config.py`) to the `model_group` it should run — the prioritized fallback list, e.g. a fast/low-quality vs a slow/high-quality strategy. Agents and their pipeline topology stay in code; only this model-to-agent assignment lives in the database, editable at runtime via `/agent_models`. `init_db` seeds one unassigned row per code agent; `model_group_uuid` is nullable, with `ON DELETE SET NULL` so deleting a group just unassigns the agents that used it. `model_group.requires_function_calling` is a membership constraint: when set, only function-calling models/overrides may join, and `/agent_models` only offers such groups to agents that declare `requires_function_calling`.
 

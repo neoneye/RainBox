@@ -16,7 +16,7 @@ Roadmap section below):
    reliability and speed. granite4 is the speed pick; only nemotron-3-nano
    and qwen3-coder were flawless in tools mode; supergemma4 fails JSON.
    (Also: the old /benchmark page was renamed to **/benchmark_basic**.)
-2. The **first LLM worker is shipped**: `agent_kanban_worker.py`
+2. The **first LLM worker is shipped**: `agents/kanban_worker.py`
    (`kanban_worker` in agent_config). One structured call per card →
    `{status: done|unclear|failed, deliverable, comment}`; the deliverable
    lands in the task's event trail as a 'progress' event; ok=true completes
@@ -269,7 +269,7 @@ callback. Current consumer: **workspace_shell** runs the task's description
 as its command (validated argv, no shell, workspace-confined), output into
 the event trail as 'progress', ok = exit 0.
 
-Second consumer: **kanban_worker** (`agent_kanban_worker.py`) — the first LLM
+Second consumer: **kanban_worker** (`agents/kanban_worker.py`) — the first LLM
 worker. One structured call per card produces a text deliverable into the
 event trail; unverified, so ok=true completes into Review. All its board
 writes go through `tools/kanban_dispatcher.py`.

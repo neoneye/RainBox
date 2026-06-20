@@ -5,7 +5,7 @@
 `rainbox` has two benchmark harnesses, each with its own page,
 background runner, and live-updating results grid:
 
-- **`/benchmark`** — coding/format probes (base64 decode/encode, reverse
+- **`/benchmark_basic`** — coding/format probes (base64 decode/encode, reverse
   string, reverse list, tool ordering, tool routing) across every tuned
   model. Code: `benchmarks/basic.py`, `benchmarks/runner.py`,
   `webapp/benchmark_views.py`.
@@ -63,7 +63,7 @@ agent supervisor in `main.py`.
 The worker writes one JSON object per line. The runner's `_apply_event` maps
 each onto the existing `_state` setters, so the polling UI is unchanged.
 
-`/benchmark` worker:
+`/benchmark_basic` worker:
 
 - `{"t":"target_status","status":"warming_up"|"running"|"done"}`
 - `{"t":"warmup_elapsed","elapsed":float}` / `{"t":"warmup_failed","error":str}`
