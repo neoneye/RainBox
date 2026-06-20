@@ -67,6 +67,8 @@ class AssistantActionName(str, Enum):
     REMEMBER = "remember"              # log-and-undo: create an inert candidate
     ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
     KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
+    KANBAN_COMPLETE = "kanban_complete"  # log-and-undo: mark a task done
+    KANBAN_COMMENT = "kanban_comment"    # log-and-undo: comment on a task
 
 
 class AssistantStepDecision(BaseModel):
@@ -331,6 +333,73 @@ def _action_move_kanban_task(
     )
 
 
+def _action_complete_kanban_task(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: mark a task done (move it to the board's Done/last
+    column + a 'done' event). Reversible — the undo is a kanban_move back to the
+    task's prior column. Operator-proxy intent → Done, not worker review-routing."""
+    raw = args.get("task_uuid")
+    try:
+        task_uuid = UUID(str(raw))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid task_uuid: {raw!r}")
+    before = db.kanban_get_task(task_uuid)
+    if before is None:
+        return AssistantObservation(ok=False, text="no such kanban task")
+    from_column_uuid = before["columnUuid"]
+    after = db.kanban_complete_task(
+        task_uuid, True, actor=str(ctx.agent_uuid),
+        detail="assistant marked done (undoable)", review=False,
+    )
+    if after is None:
+        return AssistantObservation(ok=False, text="no such kanban task")
+    return AssistantObservation(
+        ok=True,
+        text=f"Marked '{before['title']}' done (undoable).",
+        data={
+            "task_uuid": str(task_uuid),
+            "from_column_uuid": str(from_column_uuid),
+            "to_column_uuid": after["columnUuid"],
+            "undo": {
+                "capability": "kanban_move",
+                "payload": {"task_uuid": str(task_uuid),
+                            "column_uuid": str(from_column_uuid)},
+            },
+        },
+    )
+
+
+def _action_comment_kanban_task(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: append a comment event to a task. The event log is
+    append-only, so the undo posts a retraction comment rather than erasing."""
+    raw = args.get("task_uuid")
+    text = str(args.get("text", "")).strip()
+    try:
+        task_uuid = UUID(str(raw))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid task_uuid: {raw!r}")
+    is_retraction = text.startswith("↩ retracted: ")
+    event = db.kanban_append_event(
+        task_uuid, "comment", actor=str(ctx.agent_uuid), detail=text,
+    )
+    if event is None:
+        return AssistantObservation(ok=False, text="no such kanban task")
+    data: dict[str, Any] = {"task_uuid": str(task_uuid)}
+    # A retraction (posted by undo) is itself a comment but needs no further undo.
+    if not is_retraction:
+        data["undo"] = {
+            "capability": "kanban_comment",
+            "payload": {"task_uuid": str(task_uuid),
+                        "text": f"↩ retracted: {text}"},
+        }
+    return AssistantObservation(
+        ok=True, text=f"Commented on task {task_uuid} (undoable).", data=data,
+    )
+
+
 @dataclass(frozen=True)
 class Capability:
     """Code-owned metadata + dispatch for one assistant action — the primitive
@@ -424,6 +493,20 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'args: {"task_uuid": "...", "column_uuid": "..."}'),
         required_args=("task_uuid", "column_uuid"),
         action=_action_move_kanban_task,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_COMPLETE: Capability(
+        name=AssistantActionName.KANBAN_COMPLETE, family="kanban",
+        description=('mark a kanban task done (moves it to the Done column); '
+                     'reversible. args: {"task_uuid": "..."}'),
+        required_args=("task_uuid",), action=_action_complete_kanban_task,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_COMMENT: Capability(
+        name=AssistantActionName.KANBAN_COMMENT, family="kanban",
+        description=('add a comment to a kanban task; reversible (posts a '
+                     'retraction). args: {"task_uuid": "...", "text": "..."}'),
+        required_args=("task_uuid", "text"), action=_action_comment_kanban_task,
         read=False, write=True, tier="log_and_undo",
     ),
 }
@@ -858,6 +941,14 @@ class AssistantAgent(ModelGroupAgent):
         ledger row. Created atomically in `completed` (never `proposed`) so it
         can't be confirm-executed into a duplicate write; `result["undo"]`
         carries the inverse op consumed by undo_write_intent."""
+        if observation.data.get("undo") is None:
+            # The row is still recorded (the trace must exist) and undo_write_intent
+            # refuses a None undo gracefully — but a log-and-undo write with no
+            # inverse is a capability bug worth surfacing.
+            logger.warning(
+                "assistant: log-and-undo write '%s' produced no undo record; "
+                "it will not be undoable", cap.name.value,
+            )
         preview = f"{cap.name.value}: {json.dumps(decision.args, sort_keys=True)}"
         db.create_write_intent(
             run_id=self._run.id,
