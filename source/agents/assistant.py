@@ -66,6 +66,7 @@ class AssistantActionName(str, Enum):
     # Write actions (PR 9): the first controlled-write family.
     REMEMBER = "remember"              # log-and-undo: create an inert candidate
     ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
+    KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
 
 
 class AssistantStepDecision(BaseModel):
@@ -286,6 +287,50 @@ def _action_activate_memory(
     )
 
 
+def _action_move_kanban_task(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: move a kanban task to another column of its board.
+    Reversible — `data["undo"]` is the inverse move (back to the task's current
+    column). Code-owned authority: this does not route through the worker
+    observe/work/shape dispatcher; reversibility + trace is the safety."""
+    raw_task, raw_col = args.get("task_uuid"), args.get("column_uuid")
+    try:
+        task_uuid = UUID(str(raw_task))
+        column_uuid = UUID(str(raw_col))
+    except (ValueError, TypeError):
+        return AssistantObservation(
+            ok=False, text=f"invalid task_uuid/column_uuid: {raw_task!r}, {raw_col!r}"
+        )
+    before = db.kanban_get_task(task_uuid)
+    if before is None:
+        return AssistantObservation(ok=False, text="no such kanban task")
+    from_column_uuid = before["columnUuid"]
+    try:
+        moved = db.kanban_move_task(
+            task_uuid, column_uuid,
+            actor=str(ctx.agent_uuid), note="assistant move (undoable)",
+        )
+    except db.KanbanError as e:
+        return AssistantObservation(ok=False, text=f"cannot move: {e}")
+    if moved is None:
+        return AssistantObservation(ok=False, text="no such kanban task")
+    return AssistantObservation(
+        ok=True,
+        text=f"Moved '{before['title']}' to column {column_uuid} (undoable).",
+        data={
+            "task_uuid": str(task_uuid),
+            "from_column_uuid": str(from_column_uuid),
+            "to_column_uuid": str(column_uuid),
+            "undo": {
+                "capability": "kanban_move",
+                "payload": {"task_uuid": str(task_uuid),
+                            "column_uuid": str(from_column_uuid)},
+            },
+        },
+    )
+
+
 @dataclass(frozen=True)
 class Capability:
     """Code-owned metadata + dispatch for one assistant action — the primitive
@@ -372,6 +417,14 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'answers; needs your confirmation. args: {"memory_uuid": "..."}'),
         required_args=("memory_uuid",), action=_action_activate_memory,
         read=False, write=True, tier="confirm",
+    ),
+    AssistantActionName.KANBAN_MOVE: Capability(
+        name=AssistantActionName.KANBAN_MOVE, family="kanban",
+        description=('move a kanban task to another column; reversible (undoable). '
+                     'args: {"task_uuid": "...", "column_uuid": "..."}'),
+        required_args=("task_uuid", "column_uuid"),
+        action=_action_move_kanban_task,
+        read=False, write=True, tier="log_and_undo",
     ),
 }
 
