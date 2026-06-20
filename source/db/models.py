@@ -819,11 +819,12 @@ class RetrievalEvent(db.Model):
     )
     __table_args__ = (
         CheckConstraint(
-            "target_type IN ('qa_entry','memory_claim')",
+            "target_type IN ('qa_entry','memory_claim','skill')",
             name="ck_retrieval_event_target_type",
         ),
         CheckConstraint(
-            "stage IN ('retrieved','accepted','rejected','used','downvoted')",
+            "stage IN ('retrieved','accepted','rejected','used','downvoted',"
+            "'considered','injected')",
             name="ck_retrieval_event_stage",
         ),
         CheckConstraint(

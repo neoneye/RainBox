@@ -292,6 +292,31 @@ def init_db(app: Flask) -> None:
                     "CHECK (status IN ('pending','ok','error'))"
                 )
             )
+        # Skills retrieval telemetry reuses retrieval_event; widen the
+        # target_type/stage CHECKs to admit skill 'considered'/'injected' rows.
+        _rt_target = _constraint_def("ck_retrieval_event_target_type")
+        if _rt_target is None or "skill" not in _rt_target:
+            db.session.execute(
+                sa.text("ALTER TABLE retrieval_event DROP CONSTRAINT IF EXISTS ck_retrieval_event_target_type")
+            )
+            db.session.execute(
+                sa.text(
+                    "ALTER TABLE retrieval_event ADD CONSTRAINT ck_retrieval_event_target_type "
+                    "CHECK (target_type IN ('qa_entry','memory_claim','skill'))"
+                )
+            )
+        _rt_stage = _constraint_def("ck_retrieval_event_stage")
+        if _rt_stage is None or "injected" not in _rt_stage:
+            db.session.execute(
+                sa.text("ALTER TABLE retrieval_event DROP CONSTRAINT IF EXISTS ck_retrieval_event_stage")
+            )
+            db.session.execute(
+                sa.text(
+                    "ALTER TABLE retrieval_event ADD CONSTRAINT ck_retrieval_event_stage "
+                    "CHECK (stage IN ('retrieved','accepted','rejected','used',"
+                    "'downvoted','considered','injected'))"
+                )
+            )
         db.session.commit()
         _migrate_ollama_native_args()
         _migrate_cron_message_targets()

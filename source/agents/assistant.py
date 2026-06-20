@@ -31,6 +31,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 import db
+import skills
 from agents.base import ModelGroupAgent, StatusSender
 from chat.transcript import format_history
 
@@ -327,6 +328,8 @@ class AssistantAgent(ModelGroupAgent):
         # durable source of truth is the assistant_run/assistant_step tables.
         self._steps: list[dict[str, Any]] = []
         self._run: Any = None
+        # Active-skill guidance for this turn, injected into every step's prompt.
+        self._skill_block: str = ""
 
     @staticmethod
     def _room_uuid(payload: dict[str, Any]) -> UUID:
@@ -358,6 +361,10 @@ class AssistantAgent(ModelGroupAgent):
                 if m.get("kind") == "message"
             ]
             transcript = format_history(messages, context_limit=self.MAX_RECENT_MESSAGES)
+            # Retrieve active procedural skills for this turn (candidates are
+            # inert and never injected). Best-effort: a retrieval failure must
+            # not break the turn.
+            self._skill_block = self._build_skill_block(messages, journal_id, room_uuid)
             scratchpad: list[str] = []
 
             for step_index in range(self.step_limit):
@@ -486,6 +493,28 @@ class AssistantAgent(ModelGroupAgent):
                 lines.append(f"- {action.value}: {_ACTION_HELP[action]}")
         return "\n".join(lines)
 
+    def _build_skill_block(
+        self, messages: list[dict[str, Any]], journal_id: int, room_uuid: UUID
+    ) -> str:
+        """Retrieve active skills for the latest human message and render the
+        injectable block (empty when nothing matches)."""
+        query = ""
+        for m in reversed(messages):
+            if m.get("sender_type") == "human":
+                query = (m.get("text") or "").strip()
+                break
+        if not query:
+            return ""
+        try:
+            block, _ = skills.build_skill_block(
+                query, room_uuid=room_uuid, agent_uuid=self.agent_uuid,
+                journal_id=journal_id,
+            )
+            return block
+        except Exception:
+            logger.warning("assistant: skill retrieval failed", exc_info=True)
+            return ""
+
     def _build_user_prompt(
         self,
         *,
@@ -493,7 +522,10 @@ class AssistantAgent(ModelGroupAgent):
         scratchpad: list[str],
         step_index: int,
     ) -> str:
-        parts = [transcript]
+        parts = []
+        if self._skill_block:
+            parts.append(self._skill_block)
+        parts.append(transcript)
         rendered = self._render_scratchpad(scratchpad)
         if rendered:
             parts.append(f"Steps you have already taken this turn:\n{rendered}")
