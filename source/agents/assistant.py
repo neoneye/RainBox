@@ -957,6 +957,12 @@ class AssistantAgent(ModelGroupAgent):
             step_limit=self.step_limit,
         )
         run = self._run
+        # Post an in-flight signal immediately — before the (possibly slow) first
+        # model call — so the operator can see the assistant picked up the message.
+        # `kind="progress"` rows are reaped automatically when the real reply lands.
+        db.post_chat_message(
+            room_uuid, self.agent_uuid, "💭 Working on it…", kind="progress"
+        )
         # The logical step the loop is on, so a crash records its failed row
         # against the right step (not a row count).
         current_step = 0
