@@ -9,6 +9,7 @@ diffable and operator-editable.
 from skills.loader import (  # noqa: F401
     Skill,
     delete_skill_file,
+    lint_skills,
     load_skills,
     set_skill_status,
     write_candidate_skill,

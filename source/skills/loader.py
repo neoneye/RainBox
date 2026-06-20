@@ -215,6 +215,23 @@ def load_skills(
     return [s for s in result if s.status != "rejected"]
 
 
+def lint_skills(base_dir: Path | None = None, overlay_dir=_UNSET) -> list[str]:
+    """Paths of *.md skill files that fail to parse (invalid metadata) — for
+    `rainbox doctor`. Reuses the loader's own parser."""
+    if base_dir is None:
+        base_dir = SKILLS_DIR
+    if overlay_dir is _UNSET:
+        overlay_dir = _overlay_dir()
+    bad: list[str] = []
+    for d in (base_dir, overlay_dir):
+        if d is None or not Path(d).is_dir():
+            continue
+        for p in sorted(Path(d).glob("*.md")):
+            if _parse_skill(p, "lint") is None:
+                bad.append(str(p))
+    return bad
+
+
 def _skill_file(skills_dir: Path, skill_id: str) -> Path:
     return skills_dir / f"{skill_id}.md"
 
