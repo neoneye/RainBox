@@ -833,6 +833,43 @@ def kanban_get_task(task_uuid: UUID) -> dict[str, Any] | None:
     return _task_brief(t) if t is not None else None
 
 
+def kanban_create_task(
+    board_uuid: UUID, column_uuid: UUID, *, title: str,
+    description: str = "", actor: str = "",
+) -> dict[str, Any] | None:
+    """Create a task at the end of a column. None if the column isn't on the
+    board. Records a 'created' event."""
+    col = db.session.execute(
+        sa.select(KanbanColumn).where(KanbanColumn.uuid == column_uuid,
+                                      KanbanColumn.board_uuid == board_uuid)
+    ).scalar_one_or_none()
+    if col is None:
+        return None
+    pos = (db.session.execute(
+        sa.select(sa.func.coalesce(sa.func.max(KanbanTask.position), -1))
+        .where(KanbanTask.column_uuid == column_uuid)
+    ).scalar_one()) + 1
+    t = KanbanTask(board_uuid=board_uuid, column_uuid=column_uuid,
+                   title=title, description=description, position=pos)
+    db.session.add(t)
+    db.session.flush()
+    db.session.add(KanbanTaskEvent(task_uuid=t.uuid, kind="created",
+                                   actor=str(actor or ""), detail=title))
+    db.session.commit()
+    return _task_brief(t)
+
+
+def kanban_delete_task(task_uuid: UUID) -> bool:
+    """Hard-delete a task and its events. True if removed, False if absent."""
+    t = _task(task_uuid)
+    if t is None:
+        return False
+    db.session.execute(sa.delete(KanbanTaskEvent).where(KanbanTaskEvent.task_uuid == task_uuid))
+    db.session.execute(sa.delete(KanbanTask).where(KanbanTask.uuid == task_uuid))
+    db.session.commit()
+    return True
+
+
 def _lease_live(t: "KanbanTask", now: datetime) -> bool:
     return t.claimed_by is not None and (t.claim_expires_at or now) > now
 
