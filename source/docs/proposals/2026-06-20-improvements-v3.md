@@ -200,18 +200,18 @@ batches:
   assistant-written skill cannot influence a later turn (the candidates-are-inert
   contract, tested).
 
-### S4 — Reminders / scheduling write family  ·  Size M  ·  Depends on: S1 (cron familiarity) recommended  ·  (v2 Phase 5 #3)
-- **Goal:** The assistant can set a reminder ("remind me Friday to …") that fires
-  a chat message — strong personal-assistant value.
-- **Touches:** new capability + action in `agents/assistant.py`; `db/cron.py`
-  (`cron_save_tree` / job creation); `webapp` for visibility.
-- **Decisions:** tier — scheduling a future action has real blast radius →
-  **confirm-tier with a dry-run preview** of the schedule (the first user of
-  `Capability.dry_run`); how a reminder fires (a cron job that posts a chat
-  message); edit/cancel semantics.
-- **Done when:** a confirmed reminder creates a CronJob that fires a chat message
-  at the computed time; an unconfirmed one never schedules; tests use
-  `cron_tick`/fake clock (no real waiting).
+### S4 — Reminders / scheduling write family  ·  ✅ DONE (merged `a6098ea`)  ·  Size M  ·  (v2 Phase 5 #3)
+- **Shipped:** `set_reminder` — confirm-tier write that schedules a one-shot cron
+  `message` job at an ISO-8601 time. First `Capability.dry_run` user: the
+  assistant proposes, `_propose_write` runs the action in dry-run to preview the
+  resolved fire instant (no mutation; bad datetimes fail at propose time), the
+  operator confirms to schedule. One-shot mechanism: `cron_create_one_shot_message`
+  (empty `cron_expr` + preset `next_run_at`); `cron_tick` retires it after firing.
+  The **dry-run preview protocol is reusable** (S5 reuses it).
+  [spec](../superpowers/specs/2026-06-20-s4-reminders-design.md)
+- **Follow-ups (own cards):** natural/relative time ("Friday 9am" — needs "now"
+  injected into the prompt + a parser; absolute ISO only today); edit/cancel of a
+  pending reminder; recurring reminders.
 
 ### S5 — File/document patch proposals  ·  Size M/L  ·  Depends on: none  ·  (v2 Phase 5 #4)
 - **Goal:** The assistant proposes edits to files/documents as **patches**, never
