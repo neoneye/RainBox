@@ -310,8 +310,9 @@ batches:
   (`MAX_*_CHARS` in `agents/assistant.py`, `skills/`, `user_profile/`).
 - Promote the optional `eval_case` regression layer to a first-class surface.
 - Project-scoped profile facts (needs a project key threaded onto the turn first).
-- Superseded-move undo awareness + the `None`-undo guard in `_record_log_and_undo`
-  (deferred follow-ups noted in the kanban-move design doc).
+- ✅ Superseded-move undo awareness (done) — kanban undo carries `expect_column`
+  and refuses if the task moved since; `None`-undo guard is the warning in
+  `_record_log_and_undo` (and every log-and-undo write now carries an inverse).
 - Read-only contradiction surfacing, if deferred from S8.
 - Dashboard `kill`/`retry` or model visibility, if deferred from S7.
 
