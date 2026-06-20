@@ -9,6 +9,12 @@ grounded in the code on `main` today. When a step here is picked up it gets its
 own spec + plan pair under `docs/superpowers/` (the pattern the kanban-move
 family used); this file is the ordered index and the per-step acceptance bar.
 
+> v3 is the **single live tracker**. Every Phase 5/6 write surface v2 committed to
+> has a card here — losing one to "we'll remember it" is exactly the drift this
+> file exists to prevent. The §4 cards trace back to v2's Phase 5 rollout list
+> (memory/skill candidates, kanban, cron/reminders, file/document patches, MCP)
+> and Phase 6 dashboard.
+
 ---
 
 ## 1. Where the code actually is (the substrate new work plugs into)
@@ -46,6 +52,9 @@ paths are the current source of truth; the v2 prose schemas are historical.
   rows atomically `completed`.
 - Endpoints: `POST /chat/api/assistant/write-intents/<uuid>/{confirm,reject,undo}`
   (`webapp/chat_api.py`).
+- **Implemented write families:** memory `remember` (log-and-undo candidate) +
+  `activate_memory` (confirm); `kanban_move` (log-and-undo). The *skill* side of
+  v2's "memory and skill candidates" is **not** built (see S3).
 
 **Memory** — `memory/`, `db/`
 - `retrieve_memories_hybrid` (vector + full-text + entity, hard-filtered) backs
@@ -57,11 +66,14 @@ paths are the current source of truth; the v2 prose schemas are historical.
   `prune_stale_embeddings` (lazy sweep), `sync_memory_embeddings` (reconcile).
   **No production trigger calls `sync` yet.**
 - `user_profile.build_profile_block` injects an active-memory digest before the
-  skills block (assistant only).
+  skills block (assistant only). No contradiction detection/surfacing yet (v2
+  Phase 3 wanted read-only contradiction surfacing — see S8).
 
 **Skills** — `skills/`
 - File-backed (base + `<customize.dir>/skills/` overlay), candidate→active
-  lifecycle, lexical retrieval, `retrieval_event` telemetry.
+  lifecycle, lexical retrieval, `retrieval_event` telemetry. The lifecycle exists
+  but the assistant cannot yet *create* a candidate skill or *activate* one as a
+  write (S3).
 
 **Kanban** — `db/kanban.py`, `tools/kanban_dispatcher.py`
 - Worker authority model `observe`/`work`/`shape` (`kanban_dispatcher`) governs
@@ -74,7 +86,8 @@ paths are the current source of truth; the v2 prose schemas are historical.
 
 **Runtime controls & trace** — `agents/assistant.py`, `agents/base.py`, `webapp/chat_api.py`
 - `assistant_control` channel; step-boundary `/stop` (clean stopped trace) and
-  `/redirect`; progress-aware heartbeat. Endpoints exist; **no runtime dashboard UI.**
+  `/redirect`; progress-aware heartbeat; process watchdog (the blunt kill path).
+  Endpoints exist; **no runtime dashboard UI.**
 
 **Scheduler / admin (substrate for reminders, the sync trigger, and dashboards)**
 - `db/cron.py`: `CronJob`/`CronRun`, `cron_tick(now)` fires due jobs,
@@ -84,10 +97,10 @@ paths are the current source of truth; the v2 prose schemas are historical.
   page and a runtime dashboard.
 
 **Half-built / unused seams to be aware of**
-- `Capability.adapter` exists but is unused (no external systems wired).
+- `Capability.adapter` exists but is unused (no external systems wired) — S9/S10.
 - `Capability.dry_run` exists but no capability sets it yet (the confirm-tier
-  preview today is just the proposal text).
-- `capability_report()` exists but there is no `rainbox doctor` CLI.
+  preview today is just the proposal text) — first real users are S4/S5.
+- `capability_report()` exists but there is no `rainbox doctor` CLI — S6.
 
 ---
 
@@ -116,7 +129,8 @@ outward-facing ones); **stop is stateful**; **context is budgeted**.
 ## 4. The actionable backlog (ordered by value ÷ cost)
 
 Each card: **Goal · Touches · Decisions to resolve in its spec · Done when ·
-Size (S/M/L) · Depends on.**
+Size (S/M/L) · Depends on.** Write families cluster in S2–S5 and S10; the
+trailing `(v2 …)` notes anchor each to the frozen commitment it carries.
 
 ### S1 — Embedding-sync trigger  ·  Size S  ·  Depends on: none
 - **Goal:** Actually run `sync_memory_embeddings` (backfill active + prune stale)
@@ -124,118 +138,173 @@ Size (S/M/L) · Depends on.**
 - **Touches:** `db/cron.py` (a built-in periodic job), or an admin button in a
   webapp view; calls `memory.embeddings.sync_memory_embeddings`.
 - **Decisions:** cron job vs admin button vs both; cadence; whether to log the
-  `(embedded, pruned)` counts to an existing telemetry/run table.
+  `(embedded, pruned)` counts.
 - **Done when:** a scheduled tick embeds newly-active claims and prunes stale
   embeddings with no manual call; a test drives the job end to end with a fake
   embedder.
 
-### S2 — More kanban write families  ·  Size M (per family)  ·  Depends on: none (extends kanban_move)
+### S2 — More kanban write families  ·  Size M (per family)  ·  Depends on: none (extends kanban_move)  ·  (v2 Phase 5 #2)
 - **Goal:** Extend the assistant's kanban writes beyond `move`, reusing the
   log-and-undo ledger and the code-owned-capability authority stance.
 - **Touches:** `agents/assistant.py` (new capabilities + `_action_*`),
   `db/kanban.py` (`kanban_append_event`, `kanban_complete_task`, task creation
   via `kanban_save_board`), the surface-lock test, `docs/kanban-design.md`.
-- **Sub-cards (pick order in the spec):**
-  - **comment/note** (`append_event` kind=comment): low blast radius; append-only,
-    so "undo" can only post a retraction — likely **confirm-tier** or
-    log-and-undo with an explicit "undo = retraction note" caveat.
-  - **complete / mark done**: reversible (re-open by moving back), good
-    **log-and-undo**; mind the verified→Done vs unverified→Review routing.
-  - **create task**: higher blast radius; undo = delete; decide log-and-undo vs
-    confirm.
-- **Decisions:** per-sub-family tier; how non-reversible ops (comment) express
-  "undo"; whether to add a `None`-undo guard in `_record_log_and_undo` now that a
-  second log-and-undo family exists (deferred follow-up from kanban-move review).
-- **Done when:** at least one new kanban write works end to end with its tier +
-  trace + (undo or confirm); surface-lock test updated; model-free tests cover it.
+- **Sub-cards (pick order in the spec):** comment/note (append-only → confirm-tier
+  or log-and-undo with "undo = retraction note"); complete/mark-done (reversible →
+  log-and-undo; mind verified→Done vs unverified→Review); create task
+  (higher blast radius; undo = delete).
+- **Decisions:** per-sub-family tier; how non-reversible ops express "undo";
+  add a `None`-undo guard to `_record_log_and_undo` now there is a second
+  log-and-undo family (deferred follow-up from kanban-move review).
+- **Done when:** ≥1 new kanban write works end to end with its tier + trace +
+  (undo or confirm); surface-lock test updated; model-free tests cover it.
 
-### S3 — Reminders / scheduling write family  ·  Size M  ·  Depends on: S1 (familiarity with cron) recommended
+### S3 — Skill-candidate write family  ·  Size M  ·  Depends on: none (mirrors memory remember/activate)  ·  (v2 Phase 5 #1, skill side)
+- **Goal:** Close the other half of v2's "memory **and** skill candidates": let
+  the assistant propose a *candidate* skill (inert) and activate one. The memory
+  side (`remember` + `activate_memory`) is done; the skill side is not.
+- **Touches:** `skills/` loader (write a candidate skill file with provenance:
+  `created_by=assistant`, `source_journal_id`/`source_step_id`),
+  `agents/assistant.py` (two capabilities).
+- **Decisions:** tiers — proposing a candidate skill is **log-and-undo** (inert,
+  reject-to-undo, mirrors `remember`); activating a skill *steers future
+  behavior*, so activation is **confirm-tier** (mirrors `activate_memory`, per
+  v2's tier rule). File-write vs DB-row for the candidate (the loader is
+  file-backed today).
+- **Done when:** the assistant can author a candidate skill that is provably
+  never injected until activated; activation is confirm-tier; an unactivated
+  assistant-written skill cannot influence a later turn (the candidates-are-inert
+  contract, tested).
+
+### S4 — Reminders / scheduling write family  ·  Size M  ·  Depends on: S1 (cron familiarity) recommended  ·  (v2 Phase 5 #3)
 - **Goal:** The assistant can set a reminder ("remind me Friday to …") that fires
   a chat message — strong personal-assistant value.
 - **Touches:** new capability + action in `agents/assistant.py`; `db/cron.py`
   (`cron_save_tree` / job creation); `webapp` for visibility.
-- **Decisions:** tier (scheduling a future action has real blast radius →
-  likely **confirm-tier with a dry-run preview** of the schedule, the first user
-  of `Capability.dry_run`); how a reminder renders/fires (a cron job that posts a
-  chat message); edit/cancel semantics.
+- **Decisions:** tier — scheduling a future action has real blast radius →
+  **confirm-tier with a dry-run preview** of the schedule (the first user of
+  `Capability.dry_run`); how a reminder fires (a cron job that posts a chat
+  message); edit/cancel semantics.
 - **Done when:** a confirmed reminder creates a CronJob that fires a chat message
   at the computed time; an unconfirmed one never schedules; tests use
   `cron_tick`/fake clock (no real waiting).
 
-### S4 — `rainbox doctor` CLI  ·  Size S/M  ·  Depends on: none
+### S5 — File/document patch proposals  ·  Size M/L  ·  Depends on: none  ·  (v2 Phase 5 #4)
+- **Goal:** The assistant proposes edits to files/documents as **patches**, never
+  silent file writes — "start with proposed patches" (v2).
+- **Touches:** new capability + action in `agents/assistant.py`; the workspace
+  policy/runner (`tools/`) for safe paths; a patch-preview surface in
+  `webapp/chat_api.py` + chat UI.
+- **Decisions:** **confirm-tier with a dry-run unified-diff preview** (the second
+  real `Capability.dry_run` user); patch format and apply mechanism; which paths
+  are writable (reuse/extend the workspace allowlist — today it is read-only);
+  rollback (revert the applied patch).
+- **Done when:** the assistant produces a previewable patch that is never applied
+  without an approved intent; applying is bound to the previewed diff (payload
+  hash); a bad/no-longer-applying patch fails cleanly with no partial write.
+
+### S6 — `rainbox doctor` CLI  ·  Size S/M  ·  Depends on: none  ·  (v2 Phase 4)
 - **Goal:** Promote `capability_report()` into an operator-facing health check.
-- **Touches:** a CLI entry (mirror existing `agents/__main__` style) + `webapp`
+- **Touches:** a CLI entry (mirror `agents/__main__` style) + optional `webapp`
   doctor view; reads capability registry, model-group config, embedder
   reachability, MCP config, skill metadata.
 - **Decisions:** CLI-only vs CLI + admin page; which prerequisites to probe.
 - **Done when:** `rainbox doctor` lists enabled capabilities and flags missing
   model/embedding/MCP prerequisites and stale/invalid skill metadata.
 
-### S5 — Runtime dashboard  ·  Size M  ·  Depends on: none (endpoints exist)
+### S7 — Runtime dashboard  ·  Size M  ·  Depends on: none (endpoints exist)  ·  (v2 Phase 6)
 - **Goal:** See and steer in-flight assistant runs.
 - **Touches:** a `webapp` view over `assistant_run`/heartbeat; buttons wired to
-  the existing `/stop`, `/redirect`, and write-intent `confirm/reject/undo`
-  endpoints.
-- **Decisions:** live-update mechanism (reuse chat SSE/LISTEN-NOTIFY) vs poll.
-- **Done when:** the dashboard shows PID, journal id, current step/activity,
-  heartbeat age, and working stop/redirect/undo controls.
+  `/stop`, `/redirect`, the write-intent `confirm/reject/undo` endpoints, and a
+  **kill** (watchdog) and **retry** (re-enqueue) path.
+- **Decisions:** live-update mechanism (reuse chat SSE/LISTEN-NOTIFY) vs poll;
+  whether `retry` re-runs from scratch or resumes (resume is out of scope unless
+  cheap).
+- **Done when (full v2 bar):** the dashboard shows PID, journal id, current step,
+  **current action/model**, last heartbeat age, and **stop / kill / retry**
+  controls plus redirect and per-intent undo. *(If kill or retry proves large,
+  ship stop/redirect/undo + visibility first and drop the remainder into S12 with
+  a note — do not silently narrow this bar.)*
 
-### S6 — External-system adapter boundary (MCP read-only first)  ·  Size M/L  ·  Depends on: none
-- **Goal:** Activate `Capability.adapter`: route a non-null `adapter` capability
-  through a narrow adapter contract instead of a direct rainbox call. MCP is the
-  first (read-only) adapter; git a natural second.
-- **Touches:** `agents/assistant.py` dispatch (adapter routing), the MCP config
-  loader, a small adapter surface (`status/list/read/search/summarize`).
-- **Decisions:** the adapter interface shape; which MCP server/tool first; how
-  the registry gates per-adapter capabilities.
-- **Done when:** one read-only MCP tool is callable as a registry capability with
-  `adapter="mcp:…"`, gated and traced like any other; no bespoke controller.
-
-### S7 — Unify chat agents with the assistant's memory stack  ·  Size M  ·  Depends on: none
+### S8 — Unify chat agents with the assistant's memory stack  ·  Size M  ·  Depends on: none  ·  (v2 Phase 3)
 - **Goal:** Biggest remaining recall win: move the chat agents off token-overlap
   `retrieve_memories` onto `retrieve_memories_hybrid`, and give them the profile
   block.
 - **Touches:** `memory/retrieval.py` (`build_chat_memory_block`), the chat agents,
   `user_profile`.
 - **Decisions:** keep `retrieve_memories` for anything, or remove it; profile
-  block for chat agents y/n.
+  block for chat agents y/n; **contradiction surfacing** — v2 Phase 3 wants
+  retrieval to *detect and surface* conflicts read-only (e.g. "lives in NYC" vs
+  "moved to SF"), with auto-supersede deferred to a Phase 5 write. Decide here
+  whether to add read-only contradiction surfacing as part of the retrieval
+  rework or split it to S12.
 - **Done when:** chat agents retrieve via hybrid + carry the profile block; recall
-  eval shows no regression and ideally a gain; secret/expired filtering still holds.
+  eval shows no regression and ideally a gain; secret/expired filtering still
+  holds; the contradiction-surfacing decision is recorded (built or deferred).
 
-### S8 — Phase 3.5 async profile deriver  ·  Size M/L  ·  Depends on: S7-ish  ·  Optional
+### S9 — External-system adapter boundary: MCP read-only  ·  Size M/L  ·  Depends on: none  ·  (v2 Phase 4 adapter boundary)
+- **Goal:** Activate `Capability.adapter`: route a non-null `adapter` capability
+  through a narrow adapter contract instead of a direct rainbox call. MCP is the
+  first (read-only) adapter; git a natural second.
+- **Touches:** `agents/assistant.py` dispatch (adapter routing), the MCP config
+  loader, a small read-only adapter surface (`status/list/read/search/summarize`).
+- **Decisions:** the adapter interface shape; which MCP server/tool first; how
+  the registry gates per-adapter capabilities.
+- **Done when:** one read-only MCP tool is callable as a registry capability with
+  `adapter="mcp:…"`, gated and traced like any other; no bespoke controller.
+
+### S10 — MCP write-capable adapter / selected tool calls  ·  Size M/L  ·  Depends on: S9  ·  (v2 Phase 5 #5, "MCP last")
+- **Goal:** The last write family: allow *selected* MCP tools to mutate, one
+  server/tool at a time, because the surface is externally supplied and easy to
+  over-grant.
+- **Touches:** the adapter surface (add `propose`/`dry_run`/`execute_approved`),
+  registry per-tool gating, the write-intent path.
+- **Decisions:** **confirm-tier by default** (external + likely `network=true`);
+  per-tool allowlist; dry-run support per tool; how approval binds to the exact
+  tool payload (reuse `payload_hash`).
+- **Done when:** one write-capable MCP tool runs only via an approved, hash-bound
+  intent; disabling it removes it from prompt + dispatch; nothing else in that
+  server is callable; traced like any write.
+
+### S11 — Phase 3.5 async profile deriver  ·  Size M/L  ·  Depends on: S8-ish  ·  Optional  ·  (v2 Phase 3.5)
 - **Goal:** Background agent proposing `inferred_by_model` candidate profile
   facts — build **only if** the one-shot profile proves stale in practice.
 - **Done when:** every inferred claim links to chat/journal evidence, is
   candidate/rejectable, and the deriver runs without slowing assistant turns.
 
-### S9 — Smaller follow-ups (grab-bag)  ·  Size S each
+### S12 — Smaller follow-ups (grab-bag)  ·  Size S each
 - `kanban_read` `task_uuid` support (currently rejected by validation).
 - Tokenizer-aware prompt budgeter to replace the character caps
   (`MAX_*_CHARS` in `agents/assistant.py`, `skills/`, `user_profile/`).
 - Promote the optional `eval_case` regression layer to a first-class surface.
 - Project-scoped profile facts (needs a project key threaded onto the turn first).
-- Superseded-move undo awareness + a `None`-undo guard in `_record_log_and_undo`
+- Superseded-move undo awareness + the `None`-undo guard in `_record_log_and_undo`
   (deferred follow-ups noted in the kanban-move design doc).
+- Read-only contradiction surfacing, if deferred from S8.
+- Dashboard `kill`/`retry` or model visibility, if deferred from S7.
 
 ---
 
 ## 5. Recommended sequence
 
 1. **S1 (sync trigger)** — tiny, finishes already-built freshness work, and warms
-   up the cron subsystem reused by S3.
-2. **S2 (more kanban writes)** — highest momentum; the pattern is fresh and the
-   DB functions exist.
-3. **S3 (reminders)** — high personal-assistant value; first real
-   `dry_run`/confirm-tier user.
-4. **S4 (doctor)** and **S5 (dashboard)** — operator-facing polish; independent,
-   can interleave or run in parallel with the above.
-5. **S7 (chat-agent unification)** — biggest recall win; do before investing more
-   in retrieval breadth.
-6. **S6 (MCP adapter)** — opens the external-system direction once the internal
-   write/registry surface is mature.
-7. **S8 (deriver)** and **S9 (follow-ups)** — optional / opportunistic.
+   up the cron subsystem reused by S4.
+2. **S2 (more kanban writes)** then **S3 (skill candidates)** — highest momentum;
+   both ride the just-built write/candidate machinery, DB + loader functions
+   already exist.
+3. **S4 (reminders)** then **S5 (file/document patches)** — the two confirm-tier,
+   `dry_run`-preview families; reminders first (lower blast radius, reuses cron),
+   patches second (writable-path policy + diff apply is the bigger lift).
+4. **S6 (doctor)** and **S7 (dashboard)** — operator-facing polish; independent,
+   can interleave or run in parallel with the write families.
+5. **S8 (chat-agent unification)** — biggest recall win; do before investing more
+   in retrieval breadth, and settle the contradiction-surfacing decision here.
+6. **S9 (MCP read-only)** then **S10 (MCP write, last)** — opens the
+   external-system direction once the internal write/registry surface is mature;
+   write-capable MCP is deliberately the *last* write family.
+7. **S11 (deriver)** and **S12 (follow-ups)** — optional / opportunistic.
 
-Rationale: finish cheap high-value loose ends (S1), ride momentum on the just-built
-write machinery (S2–S3), then operator polish (S4–S5) and the recall win (S7),
-before taking on the larger external-system surface (S6). S8/S9 are pulled in only
-when an eval or a real annoyance justifies them.
+Rationale: finish cheap high-value loose ends (S1), ride momentum on the
+write/candidate machinery (S2–S5), add operator polish (S6–S7) and the recall
+win (S8), then take on the external-system surface read-before-write (S9→S10).
+S11/S12 are pulled in only when an eval or a real annoyance justifies them.
