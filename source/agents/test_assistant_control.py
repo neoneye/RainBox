@@ -92,7 +92,7 @@ def test_stop_at_step_boundary_leaves_clean_trace(room):
     agent = _agent()
     agent._decide_next_step = _decider_that_inserts_control(agent, "stop")
 
-    result = agent.handle(0, {"room_uuid": str(room)})
+    result = agent.handle(uuid4(), {"room_uuid": str(room)})
 
     assert result["status"] == "stopped"
     run = db.db.session.get(AssistantRun, result["assistant_run_id"])
@@ -116,7 +116,7 @@ def test_redirect_consumed_before_next_step(room):
         agent, "redirect", payload={"instruction": "focus on the build logs"}
     )
 
-    result = agent.handle(0, {"room_uuid": str(room)})
+    result = agent.handle(uuid4(), {"room_uuid": str(room)})
 
     assert result["status"] == "finished"
     run_id = result["assistant_run_id"]

@@ -118,7 +118,7 @@ class WorkspaceShellChatAgent(Agent):
 
     @staticmethod
     def _record_cron_outcome(
-        journal_id: int, payload: dict[str, Any], status: str, error: str = ""
+        journal_id: UUID, payload: dict[str, Any], status: str, error: str = ""
     ) -> None:
         """A cron-fired command carries 'cron_run_uuid'; write the outcome back
         onto that CronRun row (status/error/journal link) so the run log shows
@@ -129,7 +129,7 @@ class WorkspaceShellChatAgent(Agent):
                 run_uuid, status=status, error=error, journal_id=journal_id
             )
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         # Kanban execution (milestone 3): a task enqueued for this agent runs
         # its DESCRIPTION as the command, via the shared kanban adapter
         # (claim → events → complete). Checked before room resolution — kanban

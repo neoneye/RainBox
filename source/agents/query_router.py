@@ -148,7 +148,7 @@ class QueryRouterAgent(StructuredLLMAgent):
             )
         return transcript + hint
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
         query = self._command_from_payload(room_uuid, payload)
         if not query:

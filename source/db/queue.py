@@ -22,9 +22,10 @@ def enqueue(agent_uuid: UUID, payload: dict[str, Any]) -> None:
     db.session.commit()
 
 
-def take_item(agent_uuid: UUID) -> tuple[int, dict[str, Any]] | None:
+def take_item(agent_uuid: UUID) -> tuple[UUID, dict[str, Any]] | None:
     """Atomically pop the oldest inbox item for this agent and start a journal
-    entry in 'processing' state. Returns (journal_id, payload_dict) or None."""
+    entry in 'processing' state. Returns (journal_id, payload_dict) or None.
+    `journal_id` is a uuid (see the Journal model)."""
     row = (
         db.session.query(Inbox)
         .filter_by(agent_uuid=agent_uuid)
@@ -53,7 +54,7 @@ def take_item(agent_uuid: UUID) -> tuple[int, dict[str, Any]] | None:
 
 
 def journal_update(
-    journal_id: int,
+    journal_id: UUID,
     state: State,
     result: dict[str, Any] | None = None,
 ) -> None:
@@ -73,7 +74,7 @@ def fetch_unrouted_completed() -> list[dict[str, Any]]:
     rows = (
         db.session.query(Journal)
         .filter(Journal.state == "completed", Journal.routed_at.is_(None))
-        .order_by(Journal.id.asc())
+        .order_by(Journal.started_at.asc())  # uuid id isn't monotonic
         .all()
     )
     return [
@@ -97,7 +98,7 @@ def fetch_unrouted_terminal() -> list[dict[str, Any]]:
     rows = (
         db.session.query(Journal)
         .filter(Journal.state.in_(("completed", "failed")), Journal.routed_at.is_(None))
-        .order_by(Journal.id.asc())
+        .order_by(Journal.started_at.asc())  # uuid id isn't monotonic
         .all()
     )
     return [
@@ -112,7 +113,7 @@ def fetch_unrouted_terminal() -> list[dict[str, Any]]:
     ]
 
 
-def mark_routed(journal_id: int) -> None:
+def mark_routed(journal_id: UUID) -> None:
     row = db.session.get(Journal, journal_id)
     if row is None:
         raise LookupError(f"journal row {journal_id} not found")

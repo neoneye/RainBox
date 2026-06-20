@@ -263,9 +263,15 @@ class AppSettingView(ModelView):
     column_formatters = {"value": _format_app_setting_value}
 
 
+class JournalView(ModelView):
+    # journal.id is a uuid (not monotonic), so default to chronological order by
+    # enqueued_at, newest first — `id` ordering would look random.
+    column_default_sort = ("enqueued_at", True)
+
+
 admin.add_view(AppSettingView(AppSetting, db, category="Config"))
 admin.add_view(ModelView(Inbox, db))
-admin.add_view(ModelView(Journal, db))
+admin.add_view(JournalView(Journal, db))
 admin.add_view(ModelView(ModelConfig, db, category="Config"))
 
 

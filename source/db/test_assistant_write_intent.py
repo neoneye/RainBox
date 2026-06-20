@@ -26,7 +26,7 @@ def app_ctx():
 @pytest.fixture
 def run(app_ctx):
     r = db.start_assistant_run(
-        journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
         yield r
@@ -90,7 +90,7 @@ def test_get_write_intent_roundtrip(run):
 
 def test_intent_cascades_when_run_deleted(app_ctx):
     r = db.start_assistant_run(
-        journal_id=1, room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     intent = db.create_write_intent(
         run_id=r.id, step_index=0, capability_name="c", payload={},

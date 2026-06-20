@@ -102,7 +102,7 @@ def build_skill_block(
     *,
     room_uuid: UUID | None = None,
     agent_uuid: UUID | None = None,
-    journal_id: int | None = None,
+    journal_id: UUID | None = None,
     base_dir: Path | None = None,
     overlay_dir=_UNSET,
     limit: int = MAX_SKILLS_INJECTED,
@@ -141,7 +141,7 @@ def _record(
     query: str,
     room_uuid: UUID | None,
     agent_uuid: UUID | None,
-    journal_id: int | None,
+    journal_id: UUID | None,
 ) -> None:
     try:
         db.record_retrieval_event(

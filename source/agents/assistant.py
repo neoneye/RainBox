@@ -105,7 +105,7 @@ class AssistantActionContext:
     """What a read action is told about the request it serves. No payload: the
     loop owns the conversation; an action performs one bounded read."""
 
-    journal_id: int
+    journal_id: UUID | None
     room_uuid: UUID
     agent_uuid: UUID
     step_index: int
@@ -465,7 +465,7 @@ class AssistantAgent(ModelGroupAgent):
             raise ValueError("assistant payload missing 'room_uuid'")
         return raw if isinstance(raw, UUID) else UUID(str(raw))
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
         # Resolve the operator-effective capability set for this turn.
         self._caps = enabled_capabilities()
@@ -638,7 +638,7 @@ class AssistantAgent(ModelGroupAgent):
         return "\n".join(lines)
 
     def _build_skill_block(
-        self, messages: list[dict[str, Any]], journal_id: int, room_uuid: UUID
+        self, messages: list[dict[str, Any]], journal_id: UUID, room_uuid: UUID
     ) -> str:
         """Retrieve active skills for the latest human message and render the
         injectable block (empty when nothing matches)."""

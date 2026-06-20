@@ -101,7 +101,7 @@ class StructuredChatAgent(StructuredLLMAgent):
     def user_prompt(
         self,
         payload: dict[str, Any],
-        journal_id: int | None = None,
+        journal_id: UUID | None = None,
     ) -> str:
         room_uuid = self._room_uuid(payload)
         # Diagnostic rows (debug-memory, debug-query, debug-router, thinking,
@@ -141,7 +141,7 @@ class StructuredChatAgent(StructuredLLMAgent):
             return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
         return response.reply_content
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
         user_prompt = self.user_prompt(payload, journal_id=journal_id)
         logger.info(

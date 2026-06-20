@@ -148,6 +148,62 @@ def _backfill_chatroom_positions() -> None:
     db.session.commit()
 
 
+def _migrate_journal_id_to_uuid() -> None:
+    """Convert `journal.id` from an integer autoincrement to a uuid, remapping
+    every loose `journal_id` reference (there are no FK constraints). Idempotent:
+    runs only while `journal.id` is still an integer; a no-op once it's a uuid,
+    and a no-op on a fresh DB (create_all already builds the uuid column).
+
+    Existing history is preserved: each journal row gets a stable uuid and the
+    referencing columns are remapped to it by join before the int id is dropped.
+    """
+    jid_type = db.session.execute(
+        sa.text("SELECT data_type FROM information_schema.columns "
+                "WHERE table_name='journal' AND column_name='id'")
+    ).scalar()
+    if jid_type not in ("integer", "bigint"):
+        return  # already uuid (or no journal table yet)
+    logger.info("migrating journal.id from %s to uuid (preserving history)", jid_type)
+
+    # 1. Mint a uuid for every existing journal row.
+    db.session.execute(sa.text("ALTER TABLE journal ADD COLUMN IF NOT EXISTS uuid_id uuid"))
+    db.session.execute(sa.text(
+        "UPDATE journal SET uuid_id = gen_random_uuid() WHERE uuid_id IS NULL"))
+
+    # 2. Remap each loose referencing column to the new uuid, by join.
+    for table, col in (
+        ("cron_run", "journal_id"),
+        ("conversation_run", "last_speaker_journal_id"),
+        ("retrieval_event", "journal_id"),
+        ("assistant_run", "journal_id"),
+    ):
+        if not _column_exists(table, col):
+            continue
+        db.session.execute(sa.text(
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col}__u uuid"))
+        db.session.execute(sa.text(
+            f"UPDATE {table} t SET {col}__u = j.uuid_id FROM journal j "
+            f"WHERE j.id = t.{col} AND t.{col} IS NOT NULL"))
+        db.session.execute(sa.text(f"ALTER TABLE {table} DROP COLUMN {col}"))
+        db.session.execute(sa.text(f"ALTER TABLE {table} RENAME COLUMN {col}__u TO {col}"))
+
+    # 3. Swap the journal primary key over to the uuid column.
+    db.session.execute(sa.text("ALTER TABLE journal DROP CONSTRAINT IF EXISTS journal_pkey"))
+    db.session.execute(sa.text("ALTER TABLE journal DROP COLUMN id"))
+    db.session.execute(sa.text("ALTER TABLE journal RENAME COLUMN uuid_id TO id"))
+    db.session.execute(sa.text("ALTER TABLE journal ALTER COLUMN id SET DEFAULT gen_random_uuid()"))
+    db.session.execute(sa.text("ALTER TABLE journal ALTER COLUMN id SET NOT NULL"))
+    db.session.execute(sa.text("ALTER TABLE journal ADD PRIMARY KEY (id)"))
+
+    # 4. Recreate the dropped-with-the-column indexes.
+    db.session.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS journal_by_agent ON journal (agent_uuid, id)"))
+    db.session.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_assistant_run_journal_id "
+        "ON assistant_run (journal_id)"))
+    db.session.commit()
+
+
 def _constraint_def(name: str) -> str | None:
     row = db.session.execute(
         sa.text("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
@@ -165,6 +221,7 @@ def init_db(app: Flask) -> None:
         db.session.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
         db.session.commit()
         db.create_all()
+        _migrate_journal_id_to_uuid()
         # Idempotent column additions for tables that pre-date the column.
         # create_all() never ALTERs existing tables; this catches DBs that
         # were created before size_bytes was introduced. All additions go

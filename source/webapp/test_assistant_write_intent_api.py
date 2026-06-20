@@ -38,7 +38,7 @@ def _propose_activation(app):
             AssistantStepDecision(reason="done", action=AssistantActionName.REPLY,
                                   args={"message": "proposed"}),
         )
-        result = agent.handle(0, {"room_uuid": str(room.uuid)})
+        result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
         from db import AssistantWriteIntent
         intent = (
             db.db.session.query(AssistantWriteIntent)

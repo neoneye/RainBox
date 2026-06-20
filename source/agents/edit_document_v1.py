@@ -210,7 +210,7 @@ class EditDocumentAgentV1(StructuredLLMAgent):
             f"Document:\n{rendered}\n\nWhat to change:\n{instructions}"
         )
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         document, _instructions = self._extract_payload(payload)
         line_count = 0 if document == "" else len(document.split("\n"))
 

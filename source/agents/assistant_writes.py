@@ -54,7 +54,7 @@ def execute_write_intent(
     db.set_write_intent_state(intent, "confirmed", confirmed_by_uuid=confirmed_by_uuid)
     db.set_write_intent_state(intent, "executing")
     ctx = AssistantActionContext(
-        journal_id=0, room_uuid=intent.room_uuid, agent_uuid=intent.agent_uuid,
+        journal_id=None, room_uuid=intent.room_uuid, agent_uuid=intent.agent_uuid,
         step_index=intent.step_index,
     )
     try:

@@ -16,7 +16,7 @@ See docs/superpowers/specs/2026-05-30-benchmark-editdocument-design.md.
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import db
 import llm
@@ -228,7 +228,7 @@ class BenchmarkEditDocument:
             with llm.capture_reasoning() as native:
                 try:
                     result = agent.handle(
-                        journal_id=0,
+                        journal_id=uuid4(),
                         payload={"document": test.document, "instructions": test.instructions},
                     )
                     elapsed = time.monotonic() - t0

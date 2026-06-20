@@ -84,11 +84,13 @@ def claim_conversation_tick(run_uuid: UUID, expected_tick_count: int) -> bool:
 
 
 def advance_conversation_if_new(
-    run_uuid: UUID, src_journal_id: int, completed_turn: int
+    run_uuid: UUID, src_journal_id: UUID, completed_turn: int
 ) -> bool:
     """CAS for a routed speaker-completion. Advances the run by one turn at most
-    once per completion. Rejects duplicates and stale older completions via the
-    monotonic `last_speaker_journal_id < src` guard. Returns True iff it advanced.
+    once per completion. The (turn, active_turn) match pins the exact current
+    turn, so ordering is enforced there; the `last_speaker_journal_id != src`
+    guard makes redelivery of the *same* completion idempotent. (journal ids are
+    uuids now, so the old monotonic `< src` ordering no longer applies.)
     """
     res = db.session.execute(
         sa.update(ConversationRun)
@@ -99,7 +101,7 @@ def advance_conversation_if_new(
             ConversationRun.active_turn == completed_turn,
             sa.or_(
                 ConversationRun.last_speaker_journal_id.is_(None),
-                ConversationRun.last_speaker_journal_id < src_journal_id,
+                ConversationRun.last_speaker_journal_id != src_journal_id,
             ),
         )
         .values(
@@ -219,13 +221,14 @@ def find_human_message_after(
 
 
 def claim_failed_turn(
-    run_uuid: UUID, src_journal_id: int, completed_turn: int
+    run_uuid: UUID, src_journal_id: UUID, completed_turn: int
 ) -> int | None:
     """CAS for a routed *failed* speaker turn. Records the journal id and bumps
     retry_count WITHOUT advancing the turn, so the manager can retry the same
     speaker. Returns the new retry_count, or None if this completion was a
     duplicate/stale delivery (or the run is no longer running / not on this turn).
-    The monotonic `last_speaker_journal_id < src` guard makes it idempotent."""
+    The (turn, active_turn) match pins the turn; `last_speaker_journal_id != src`
+    makes redelivery of the same completion idempotent (journal ids are uuids)."""
     res = db.session.execute(
         sa.update(ConversationRun)
         .where(
@@ -235,7 +238,7 @@ def claim_failed_turn(
             ConversationRun.active_turn == completed_turn,
             sa.or_(
                 ConversationRun.last_speaker_journal_id.is_(None),
-                ConversationRun.last_speaker_journal_id < src_journal_id,
+                ConversationRun.last_speaker_journal_id != src_journal_id,
             ),
         )
         .values(

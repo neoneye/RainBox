@@ -112,7 +112,7 @@ def test_reply_action_posts_one_message_and_finishes(room):
     agent = _agent()
     agent._decide_next_step = scripted_decisions(_reply("Working tree is clean."))
 
-    result = agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     posts = _agent_messages(room_uuid)
     assert len(posts) == 1
@@ -126,7 +126,7 @@ def test_ask_clarifying_question_is_terminal_and_posts(room):
     agent = _agent()
     agent._decide_next_step = scripted_decisions(_ask("Which repository do you mean?"))
 
-    result = agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     posts = _agent_messages(room_uuid)
     assert len(posts) == 1
@@ -146,7 +146,7 @@ def test_over_consumed_scripted_seam_raises_clearly(room):
     agent._decide_next_step = scripted_decisions()  # nothing scripted
 
     with pytest.raises(AssertionError, match="more decisions than were scripted"):
-        agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+        agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
 
 def test_step_cap_stops_after_step_limit(room):
@@ -160,7 +160,7 @@ def test_step_cap_stops_after_step_limit(room):
         _query_memory("a"), _query_memory("b"), _query_memory("c")
     )
 
-    result = agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "stopped"
     # Three planned/running/observed triples (query_memory is a real read action
@@ -184,7 +184,7 @@ def test_invalid_args_produce_traceable_failed_step_not_a_crash(room):
     )
     agent._decide_next_step = scripted_decisions(bad, _reply("Now I can answer."))
 
-    result = agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "finished"
     assert _phases(agent) == ["planned", "failed", "planned", "final"]
@@ -225,7 +225,7 @@ def test_decide_next_step_calls_structured_completion_with_decision_model(app_ct
 def test_handle_raises_on_missing_room_uuid(app_ctx):
     agent = _agent()
     with pytest.raises(ValueError, match="room_uuid"):
-        agent.handle(0, {"message_uuid": str(uuid4())})
+        agent.handle(uuid4(), {"message_uuid": str(uuid4())})
 
 
 # --- registration -------------------------------------------------------------
@@ -268,12 +268,13 @@ def test_loop_persists_run_and_steps_to_tables(room):
     agent = _agent()
     agent._decide_next_step = scripted_decisions(_reply("Working tree is clean."))
 
-    result = agent.handle(7, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    jid = uuid4()
+    result = agent.handle(jid, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     run = db.db.session.get(AssistantRun, result["assistant_run_id"])
     assert run is not None
     assert run.status == "finished"
-    assert run.journal_id == 7
+    assert run.journal_id == jid
     assert run.room_uuid == room_uuid
 
     steps = _steps_for(run.id)
@@ -286,7 +287,7 @@ def test_journal_result_is_summary_not_full_trace(room):
     agent = _agent()
     agent._decide_next_step = scripted_decisions(_reply("Done."))
 
-    result = agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     # The journal result points at the run + carries a short summary; it is not
     # the trace itself.
@@ -316,7 +317,7 @@ def test_killed_mid_run_leaves_last_committed_step_and_marks_run_failed(room):
     agent._decide_next_step = flaky
 
     with pytest.raises(RuntimeError, match="model exploded"):
-        agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+        agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     runs = (
         db.db.session.query(AssistantRun)

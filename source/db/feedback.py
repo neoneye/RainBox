@@ -249,7 +249,7 @@ def record_retrieval_event(
     query: str | None = None,
     room_uuid: UUID | None = None,
     agent_uuid: UUID | None = None,
-    journal_id: int | None = None,
+    journal_id: UUID | None = None,
     source: str | None = None,
     retrieval_rank: int | None = None,
     retrieval_score: float | None = None,

@@ -147,7 +147,7 @@ def test_records_retrieval_telemetry(app_ctx, fresh_subject):
     claim = _claim(fresh_subject, "telemetry widget fact")
     try:
         retrieve_memories_hybrid(
-            "widget", agent_uuid=None, room_uuid=None, journal_id=1,
+            "widget", agent_uuid=None, room_uuid=None, journal_id=uuid4(),
             embed_fn=_boom_embed,
         )
         events = (

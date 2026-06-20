@@ -30,7 +30,7 @@ StepPhase = Literal["planned", "running", "observed", "failed", "final", "contro
 
 
 def start_assistant_run(
-    journal_id: int,
+    journal_id: UUID,
     room_uuid: UUID,
     agent_uuid: UUID,
     step_limit: int = 6,

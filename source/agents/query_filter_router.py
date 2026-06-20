@@ -144,7 +144,7 @@ def _record_filter_events(
     query: str,
     room_uuid: UUID,
     agent_uuid: UUID,
-    journal_id: int,
+    journal_id: UUID,
     source: str,
     retrieved: list[dict[str, Any]],
     relevant_ids: set[str],
@@ -320,7 +320,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
             lines.append(f"    reply: {resolved_replies.get(qa_id, '')!r}")
         return transcript + "\n" + "\n".join(lines)
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = room_uuid_from_payload(payload)
         query = command_from_payload(room_uuid, payload)
         if not query:

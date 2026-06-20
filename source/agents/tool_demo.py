@@ -149,7 +149,7 @@ class ToolDemoAgent(ModelGroupAgent):
             f"in the group failed; last error: {last_error}"
         )
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
         user_prompt = self.user_prompt(payload)
         logger.info(

@@ -47,11 +47,13 @@ def _recorder():
 def test_heartbeats_emitted_during_slow_handle():
     sent, send = _recorder()
     agent = _SlowAgent(agent_uuid=uuid4(), name="slow", send=send)
-    result = agent._handle_with_heartbeat(42, {})
+    jid = uuid4()
+    result = agent._handle_with_heartbeat(jid, {})
     assert result == {"ok": True, "did": "work"}
     beats = [m for m in sent if m.get("status") == "heartbeat"]
     assert len(beats) >= 2, sent          # ~0.22s / 0.05s should give several
-    assert all(b["journal_id"] == 42 for b in beats)
+    # journal_id is emitted as a string (uuid) so the status JSON stays serializable.
+    assert all(b["journal_id"] == str(jid) for b in beats)
 
 
 def test_no_heartbeat_for_fast_handle():

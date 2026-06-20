@@ -21,6 +21,7 @@ metadata and dedup"):
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import UUID
 
 import yaml
 
@@ -48,7 +49,7 @@ class Skill:
     first_paragraph: str
     retrieval_tags: list[str] = field(default_factory=list)
     supersedes: str | None = None
-    source_journal_id: int | None = None
+    source_journal_id: UUID | None = None
     source_step_id: int | None = None
     updated_at: str | None = None
     origin: str = "base"  # "base" | "overlay"

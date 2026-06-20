@@ -600,7 +600,7 @@ def fire_cron_job(job: "CronJob", trigger: str = "scheduled", debug: bool = Fals
 
 def cron_record_run_outcome(
     run_uuid: UUID | str, *, status: str, error: str = "",
-    journal_id: int | None = None,
+    journal_id: UUID | None = None,
 ) -> None:
     """Write the final outcome of an async fire onto its CronRun row. Called by
     the workspace-shell agent (which received 'cron_run_uuid' in its payload)

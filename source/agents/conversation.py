@@ -141,7 +141,7 @@ class ConversationManagerAgent(Agent):
         raw = payload.get("run_uuid") or (payload.get("input") or {}).get("run_uuid")
         return UUID(str(raw)) if raw else None
 
-    def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         run_uuid = self._run_uuid(payload)
         if run_uuid is None:
             return {"ok": True, "skipped": "no run_uuid"}
@@ -164,9 +164,13 @@ class ConversationManagerAgent(Agent):
             completed_turn = (payload.get("input") or {}).get("turn")
             if completed_turn is None:
                 return {"ok": True, "skipped": "no completed turn", "journal": src}
+            # journal ids are uuids; coerce the routed string for the CAS helpers.
+            src_uuid = UUID(src) if src else None
+            if src_uuid is None:
+                return {"ok": True, "skipped": "no source journal"}
             if payload.get("state") == "failed":
-                return self._handle_failed_turn(run_uuid, src, completed_turn)
-            if not db.advance_conversation_if_new(run_uuid, src, completed_turn):
+                return self._handle_failed_turn(run_uuid, src_uuid, completed_turn)
+            if not db.advance_conversation_if_new(run_uuid, src_uuid, completed_turn):
                 return {"ok": True, "skipped": "already advanced", "journal": src}
 
         run = db.get_conversation_run(run_uuid)  # reload after the state mutation
@@ -242,7 +246,7 @@ class ConversationManagerAgent(Agent):
         return speaker
 
     def _handle_failed_turn(
-        self, run_uuid: UUID, src_journal_id: int, completed_turn: int
+        self, run_uuid: UUID, src_journal_id: UUID, completed_turn: int
     ) -> dict[str, Any]:
         """A speaker turn errored (routed back as a failed journal). Retry the same
         speaker up to MAX_TURN_RETRIES, then mark the whole run failed. Idempotent

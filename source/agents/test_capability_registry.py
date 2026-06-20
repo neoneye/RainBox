@@ -93,7 +93,7 @@ def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
                               args={"message": "done"}),
     )
     try:
-        result = agent.handle(0, {"room_uuid": str(room.uuid)})
+        result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
 
         # Removed from the prompt catalog.
         assert "query_qa" not in agent._action_catalog()

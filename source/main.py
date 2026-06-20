@@ -134,13 +134,13 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                     next_role = uuid_to_role.get(next_uuid, "?")
                     payload = {
                         "from": src_role,
-                        "from_journal_id": journal_row["id"],
+                        "from_journal_id": str(journal_row["id"]),
                         "state": journal_row["state"],
                         "input": journal_row["payload"],
                         "result": journal_row["result"],
                     }
                     db.enqueue(next_uuid, payload)
-                    logger.info("routed journal_id=%d %s -> %s", journal_row["id"], src_role, next_role)
+                    logger.info("routed journal_id=%s %s -> %s", journal_row["id"], src_role, next_role)
                 db.mark_routed(journal_row["id"])
 
             uuids_with_work = db.agent_uuids_with_work()
