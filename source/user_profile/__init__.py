@@ -1,0 +1,26 @@
+"""User profile block: a compact, query-independent digest of the operator's
+active self-model (preferences, project decisions, stable facts), injected into
+the assistant prompt like the skills block.
+
+Read-only: it surfaces existing *active* memory claims with provenance; it never
+creates or infers claims (derivation is the optional Phase 3.5 deriver). Named
+``user_profile`` rather than ``profile`` to avoid shadowing the stdlib profiler.
+"""
+
+from user_profile.retrieval import (
+    MAX_PROFILE_BLOCK_CHARS,
+    MAX_PROFILE_FACTS,
+    RetrievedProfileFact,
+    build_profile_block,
+    format_profile_context,
+    select_profile_facts,
+)
+
+__all__ = [
+    "MAX_PROFILE_BLOCK_CHARS",
+    "MAX_PROFILE_FACTS",
+    "RetrievedProfileFact",
+    "build_profile_block",
+    "format_profile_context",
+    "select_profile_facts",
+]

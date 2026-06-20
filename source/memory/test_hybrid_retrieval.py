@@ -94,6 +94,24 @@ def test_hard_filters_exclude_secret_expired_out_of_scope(app_ctx, fresh_subject
         _cleanup(fresh_subject)
 
 
+def test_hard_filters_exclude_project_scope(app_ctx, fresh_subject):
+    """A project-scoped claim has no project key to match the turn against
+    (MemoryClaim carries only agent/room keys), so hybrid retrieval must not
+    surface it until project context exists — same scope-leak guard the profile
+    digest needs, enforced once in the shared hard filter."""
+    proj = _claim(fresh_subject, "the project widget roadmap", scope="project")
+    public = _claim(fresh_subject, "the widget is blue")
+    try:
+        out = retrieve_memories_hybrid(
+            "widget", agent_uuid=None, room_uuid=uuid4(), embed_fn=_boom_embed,
+        )
+        ids = _uuids(out)
+        assert public.uuid in ids
+        assert proj.uuid not in ids
+    finally:
+        _cleanup(fresh_subject)
+
+
 def test_entity_boost_prefers_subject_object_match(app_ctx, fresh_subject):
     # Both mention "capital"; only one has the matching object entity "france".
     # (Use the object column so `subject` stays the cleanup tag.)

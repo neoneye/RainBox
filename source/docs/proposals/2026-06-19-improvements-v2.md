@@ -26,14 +26,16 @@ roadmap. The full PR stack (PRs 1-10) has been built, tested, and merged to
 |---|---|---|
 | Roadmap direction | **Decided** | The phase order and major choices held through implementation. |
 | PRs 1-10 (the whole stack) | **Implemented & merged** | Landed on `main` in two PRs (#1 = PRs 1-5, #2 = PRs 6-10). The code is the source of truth now. |
-| Phase 3.5 + later directions | **Roadmap** | Not yet built (async profile deriver, more write families, MCP/git adapters, dashboard UI, doctor CLI). |
+| Phase 3 user profile + embedding freshness | **Implemented, not yet merged** | On branch `phase3-user-profile`. The deferred half of Phase 3 plus write-path embedding freshness. See **Where we are going next**. |
+| Later directions | **Roadmap** | Not yet built (more write families, MCP/git adapters, dashboard UI, doctor CLI, chat-agent unification, Phase 3.5 deriver). |
 | Concrete schemas in prose | **Superseded by code** | The shipped SQLAlchemy models, the capability registry, and the loop are authoritative; the JSON/table sketches below are historical design notes. |
 
-The practical status is: **the first slice and the full Phase 1-6 skeleton are
-done.** Remaining work is the deferred half of Phase 3 (user profile), the
-optional Phase 3.5 deriver, additional write families, the external-system
-adapter boundary, and operator-facing polish (doctor, dashboard) — see **Where
-we are going next**.
+The practical status is: **the full Phase 1-6 skeleton plus the deferred half of
+Phase 3 (user profile) and embedding freshness are done** (the latter two on an
+unmerged branch). The next major step is additional write families (Phase 5
+rollout); then the external-system adapter boundary, operator-facing polish
+(doctor, dashboard, embedding-sync trigger), and chat-agent unification — see
+**Where we are going next**.
 
 Known rough edges in this document:
 
@@ -108,34 +110,44 @@ These are intentional and supersede the prose where they differ:
 
 ## Where we are going next
 
-Nothing below is built yet; this is the forward plan now that the skeleton is
-complete. Rough order of value:
+This is the forward plan now that the skeleton is complete.
 
-1. **Phase 3 user profile (the deferred half).** A one-shot profile block built
-   from active memory + recent context, injected like the skills block, with
-   source references. PR 7 delivered retrieval only.
-2. **Embedding freshness.** Wire `ensure_memory_embedding` into the memory write
-   path (embed on activation) and add a periodic/triggered backfill + lazy prune
-   of stale embeddings. Today backfill is the only population path; claims
-   without an embedding fall back to lexical-only.
-3. **More write families (Phase 5 rollout).** Kanban work events, cron/reminders,
+**Done since the skeleton (branch `phase3-user-profile`, not yet merged):**
+
+- ✅ **Phase 3 user profile (the deferred half).** A one-shot profile block built
+  from active memory, injected before the skills block, with provenance +
+  telemetry. New `user_profile` package; reuses the shared
+  `memory.retrieval.hard_filtered_claims` filter. Details:
+  [`2026-06-20-phase3-user-profile.md`](2026-06-20-phase3-user-profile.md).
+- ✅ **Embedding freshness.** `refresh_claim_embedding` is wired into the memory
+  write path (embed on activation/correct, prune on forget/supersede),
+  `prune_stale_embeddings` is the lazy safety net, and `sync_memory_embeddings`
+  is the triggered/periodic reconcile. *Caveat:* no production trigger calls
+  `sync` yet (a cron/admin button — see Operator surfaces below).
+
+**Still to do, rough order of value:**
+
+1. **More write families (Phase 5 rollout).** Kanban work events, cron/reminders,
    then file/document patch proposals — each with its tier, trace, and
    dry-run/confirm or log-and-undo, reusing the `assistant_write_intent`
-   machinery. Add `undone` handling for log-and-undo reverts.
-4. **External-system adapter boundary (Phase 4 direction).** MCP as the first
+   machinery. Add `undone` handling for log-and-undo reverts. *(Next major step.)*
+2. **External-system adapter boundary (Phase 4 direction).** MCP as the first
    read-only adapter (`adapter="mcp:..."` on capabilities), git as a natural
    second — routed through the registry, never as a bespoke controller.
-5. **Operator surfaces.** `rainbox doctor` (list enabled capabilities, missing
-   model/embedding/MCP prerequisites, stale skill metadata) and a runtime
-   dashboard (PID, journal id, current step/activity, heartbeat age, and
-   stop/redirect/retry buttons — the `/stop` and `/redirect` endpoints already
-   exist; the UI does not).
-6. **Phase 3.5 async profile deriver** — optional, build only if the one-shot
+3. **Operator surfaces.** `rainbox doctor` (list enabled capabilities, missing
+   model/embedding/MCP prerequisites, stale skill metadata); a periodic
+   `sync_memory_embeddings` trigger (cron/admin); and a runtime dashboard (PID,
+   journal id, current step/activity, heartbeat age, and stop/redirect/retry
+   buttons — the `/stop` and `/redirect` endpoints already exist; the UI does not).
+4. **Unify chat agents with the assistant's memory stack.** Migrate the chat
+   agents off token-overlap `retrieve_memories` onto `retrieve_memories_hybrid`,
+   and give them the profile block. Biggest remaining recall win.
+5. **Phase 3.5 async profile deriver** — optional, build only if the one-shot
    profile proves stale in practice.
-7. **Smaller follow-ups.** `kanban_read` `task_uuid`; a tokenizer-aware prompt
+6. **Smaller follow-ups.** `kanban_read` `task_uuid`; a tokenizer-aware prompt
    budgeter to replace the character caps; the optional `eval_case` regression
-   layer as a first-class product surface; migrating the chat agents onto hybrid
-   retrieval.
+   layer as a first-class product surface; project-scoped profile facts (needs a
+   project key on the turn first).
 
 ## Executive decision summary
 

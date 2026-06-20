@@ -11,6 +11,9 @@ from memory.embeddings import (
     EMBED_MODEL_NAME,
     backfill_memory_embeddings,
     ensure_memory_embedding,
+    prune_stale_embeddings,
+    refresh_claim_embedding,
+    sync_memory_embeddings,
 )
 
 
@@ -128,5 +131,78 @@ def test_backfill_embeds_only_active_claims(app_ctx, fresh_subject):
             .one()
         )
         assert db.get_memory_embedding(cand.uuid, EMBED_MODEL_NAME) is None
+    finally:
+        _cleanup(fresh_subject)
+
+
+# --- freshness: refresh on write, lazy prune, full sync ----------------------
+
+
+def test_refresh_embeds_an_active_claim(app_ctx, fresh_subject):
+    claim = _claim(fresh_subject, status="active")
+    try:
+        refresh_claim_embedding(claim, embed_fn=_fake_embed)
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
+    finally:
+        _cleanup(fresh_subject)
+
+
+def test_refresh_prunes_when_claim_no_longer_active(app_ctx, fresh_subject):
+    claim = _claim(fresh_subject, status="active")
+    try:
+        ensure_memory_embedding(claim, embed_fn=_fake_embed)
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
+        claim.status = "rejected"
+        db.db.session.commit()
+        refresh_claim_embedding(claim, embed_fn=_fake_embed)
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
+    finally:
+        _cleanup(fresh_subject)
+
+
+def test_prune_stale_drops_nonactive_keeps_active(app_ctx, fresh_subject):
+    active = _claim(fresh_subject, text="prune active", status="active")
+    stale = _claim(fresh_subject, text="prune stale", status="active")
+    try:
+        ensure_memory_embedding(active, embed_fn=_fake_embed)
+        ensure_memory_embedding(stale, embed_fn=_fake_embed)
+        stale.status = "superseded"
+        db.db.session.commit()
+        pruned = prune_stale_embeddings()
+        assert pruned >= 1
+        assert db.get_memory_embedding(active.uuid, EMBED_MODEL_NAME) is not None
+        assert db.get_memory_embedding(stale.uuid, EMBED_MODEL_NAME) is None
+    finally:
+        _cleanup(fresh_subject)
+
+
+def test_prune_stale_drops_expired_active_claim(app_ctx, fresh_subject):
+    from datetime import UTC, datetime, timedelta
+
+    claim = _claim(fresh_subject, status="active")
+    try:
+        ensure_memory_embedding(claim, embed_fn=_fake_embed)
+        # Still status=active, but past its expiry — retrieval won't use it, so
+        # its embedding is dead weight and should be pruned.
+        claim.expires_at = datetime.now(UTC) - timedelta(hours=1)
+        db.db.session.commit()
+        prune_stale_embeddings()
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
+    finally:
+        _cleanup(fresh_subject)
+
+
+def test_sync_backfills_active_and_prunes_stale(app_ctx, fresh_subject):
+    active = _claim(fresh_subject, text="sync active", status="active")
+    stale = _claim(fresh_subject, text="sync stale", status="active")
+    try:
+        ensure_memory_embedding(stale, embed_fn=_fake_embed)
+        stale.status = "rejected"
+        db.db.session.commit()
+        embedded, pruned = sync_memory_embeddings(embed_fn=_fake_embed)
+        assert embedded >= 1
+        assert pruned >= 1
+        assert db.get_memory_embedding(active.uuid, EMBED_MODEL_NAME) is not None
+        assert db.get_memory_embedding(stale.uuid, EMBED_MODEL_NAME) is None
     finally:
         _cleanup(fresh_subject)

@@ -192,13 +192,17 @@ _W_FULLTEXT = 0.30
 _W_ENTITY = 0.15
 
 
-def _hard_filtered_claims(
+def hard_filtered_claims(
     include_secret: bool,
     room_uuid: UUID | None,
     agent_uuid: UUID | None,
 ) -> list[MemoryClaim]:
     """Active, allowed-sensitivity, non-expired, in-scope claims — applied
-    BEFORE any ranking so forbidden claims never enter the candidate set."""
+    BEFORE any ranking so forbidden claims never enter the candidate set.
+
+    This is the single source of truth for the 'filter before rank' contract:
+    both hybrid retrieval and the user-profile digest reuse it so forbidden
+    claims can't leak through a divergent copy of the filter."""
     q = db.db.session.query(MemoryClaim).filter(MemoryClaim.status == "active")
     if not include_secret:
         q = q.filter(MemoryClaim.sensitivity != "secret")
@@ -208,9 +212,14 @@ def _hard_filtered_claims(
     )
     candidates = q.all()
     # Scope: a global claim is always allowed; an agent/room-scoped claim is only
-    # allowed for its own agent/room.
+    # allowed for its own agent/room. A project-scoped claim has no project key
+    # to match against (MemoryClaim carries only agent/room keys, and the turn
+    # has no project context), so it is excluded entirely until project context
+    # exists — otherwise it would leak into every unrelated room/agent.
     out = []
     for c in candidates:
+        if c.scope == "project":
+            continue
         if c.scope == "room" and c.room_uuid != room_uuid:
             continue
         if c.scope == "agent" and agent_uuid is not None and c.agent_uuid != agent_uuid:
@@ -301,7 +310,7 @@ def retrieve_memories_hybrid(
     """
     if not query or not query.strip():
         return []
-    candidates = _hard_filtered_claims(include_secret, room_uuid, agent_uuid)
+    candidates = hard_filtered_claims(include_secret, room_uuid, agent_uuid)
     if not candidates:
         return []
 
