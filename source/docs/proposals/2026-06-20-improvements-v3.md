@@ -155,7 +155,16 @@ trailing `(v2 …)` notes anchor each to the frozen commitment it carries.
   embeddings with no manual call; a test drives the job end to end with a fake
   embedder.
 
-### S2 — More kanban write families  ·  Size M (per family)  ·  Depends on: none (extends kanban_move)  ·  (v2 Phase 5 #2)
+### S2 — More kanban write families  ·  🟡 IN PROGRESS  ·  Size M (per family)  ·  (v2 Phase 5 #2)
+- **Done (batch 1, merged `46230eb`):** `kanban_complete` (mark done; undo
+  re-opens via `kanban_move`) and `kanban_comment` (append comment; undo posts a
+  `↩ retracted: …`), both log-and-undo; plus the `_record_log_and_undo` None-undo
+  warning. Spec:
+  [`../superpowers/specs/2026-06-20-s2-kanban-complete-comment-design.md`](../superpowers/specs/2026-06-20-s2-kanban-complete-comment-design.md).
+- **Remaining (batch 2, own spec):** `kanban_create` — needs
+  `kanban_create_task`/`kanban_delete_task` DB primitives and a dispatch guard so
+  the model can request only prompt-exposed capabilities (the delete-inverse must
+  not be model-invocable); undo = delete the created task.
 - **Goal:** Extend the assistant's kanban writes beyond `move`, reusing the
   log-and-undo ledger and the code-owned-capability authority stance.
 - **Touches:** `agents/assistant.py` (new capabilities + `_action_*`),
