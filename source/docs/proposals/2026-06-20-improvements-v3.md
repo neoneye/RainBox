@@ -294,7 +294,9 @@ batches:
   candidate/rejectable, and the deriver runs without slowing assistant turns.
 
 ### S12 — Smaller follow-ups (grab-bag)  ·  Size S each
-- `kanban_read` `task_uuid` support (currently rejected by validation).
+- ✅ `kanban_read` `task_uuid` support (done) — returns a task's detail + recent
+  events read-only.
+- Remove the now-test-only `retrieve_memories` (chat agents moved to hybrid in S8).
 - Tokenizer-aware prompt budgeter to replace the character caps
   (`MAX_*_CHARS` in `agents/assistant.py`, `skills/`, `user_profile/`).
 - Promote the optional `eval_case` regression layer to a first-class surface.
