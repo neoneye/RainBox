@@ -137,8 +137,16 @@ trailing `(v2 …)` notes anchor each to the frozen commitment it carries.
   on a schedule, closing the one caveat left by the embedding-freshness work.
 - **Touches:** `db/cron.py` (a built-in periodic job), or an admin button in a
   webapp view; calls `memory.embeddings.sync_memory_embeddings`.
-- **Decisions:** cron job vs admin button vs both; cadence; whether to log the
-  `(embedded, pruned)` counts.
+- **Trigger shape (recommended, settle in the spec):** add a **first-class
+  in-process cron action type** — e.g. `action_type="memory_sync"` — resolved
+  in-process at the `cron_tick` outcome step exactly like the existing `backup`
+  action (`db/cron.py` ~503-521), and seed/configure one maintenance job. The
+  cron action types today are `message` / `command` / `backup`; `sync` is an
+  in-process maintenance task, a sibling of `backup`. **Do not** run it through
+  the `command` / workspace-shell action.
+- **Decisions:** new `memory_sync` action type vs a seeded system job (+ optional
+  admin button); cadence; where to record the `(embedded, pruned)` counts so they
+  are visible (a `CronRun` outcome / existing telemetry).
 - **Done when:** a scheduled tick embeds newly-active claims and prunes stale
   embeddings with no manual call; a test drives the job end to end with a fake
   embedder.
@@ -196,12 +204,18 @@ trailing `(v2 …)` notes anchor each to the frozen commitment it carries.
   policy/runner (`tools/`) for safe paths; a patch-preview surface in
   `webapp/chat_api.py` + chat UI.
 - **Decisions:** **confirm-tier with a dry-run unified-diff preview** (the second
-  real `Capability.dry_run` user); patch format and apply mechanism; which paths
-  are writable (reuse/extend the workspace allowlist — today it is read-only);
-  rollback (revert the applied patch).
+  real `Capability.dry_run` user); **patch-apply primitive** — reuse
+  `agents/patch_apply.py::apply_patches` (string/document-level, already used by
+  the edit-document agents) vs. a smaller file-level patch helper, and where
+  file I/O happens; which paths are writable (reuse/extend the workspace
+  allowlist — today it is read-only); rollback (revert the applied patch).
+- **Safety primitive (required):** every writable path is resolved and confirmed
+  to be **inside the workspace root** before any write — explicit path-traversal /
+  symlink / outside-workspace **rejection tests** are part of "done," not optional.
 - **Done when:** the assistant produces a previewable patch that is never applied
   without an approved intent; applying is bound to the previewed diff (payload
-  hash); a bad/no-longer-applying patch fails cleanly with no partial write.
+  hash); an out-of-workspace or traversal path is rejected (tested); a
+  bad/no-longer-applying patch fails cleanly with no partial write.
 
 ### S6 — `rainbox doctor` CLI  ·  Size S/M  ·  Depends on: none  ·  (v2 Phase 4)
 - **Goal:** Promote `capability_report()` into an operator-facing health check.
