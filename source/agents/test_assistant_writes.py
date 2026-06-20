@@ -7,7 +7,7 @@
   exact proposed payload.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -91,6 +91,33 @@ def test_remember_creates_inert_candidate_and_is_undoable(room):
         db.reject_memory(claims[0].uuid, {"provenance": "confirmed_by_user",
                                           "source_type": "manual"})
         assert db.get_memory_claim(claims[0].uuid).status == "rejected"
+    finally:
+        db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
+        db.db.session.commit()
+
+
+def test_remember_is_undoable_through_the_write_intent_ledger(room):
+    """A log-and-undo `remember` must carry a working inverse so the operator can
+    undo it via the same endpoint as every other log-and-undo write."""
+    from agents.assistant_writes import undo_write_intent
+
+    agent = _agent()
+    text = f"teal sky {uuid4().hex[:6]}"
+    agent._decide_next_step = scripted_decisions(
+        _decision(AssistantActionName.REMEMBER, text=text),
+        _decision(AssistantActionName.REPLY, message="ok"),
+    )
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(room)})
+        intent = db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.room_uuid == room).one()
+        assert intent.state == "completed"
+        mem_uuid = UUID(intent.result["undo"]["payload"]["memory_uuid"])
+        assert db.get_memory_claim(mem_uuid).status == "candidate"
+        obs = undo_write_intent(intent.uuid)
+        assert obs.ok is True
+        assert db.get_memory_claim(mem_uuid).status == "rejected"  # undo rejected it
+        assert db.get_write_intent(intent.uuid).state == "undone"
     finally:
         db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
         db.db.session.commit()

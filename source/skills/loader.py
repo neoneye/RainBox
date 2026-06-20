@@ -294,8 +294,12 @@ def set_skill_status(
     return True
 
 
-def delete_skill_file(skill_id: str, *, skills_dir: Path | None = None) -> bool:
-    """Delete a skill file (the undo-inverse of write_candidate_skill)."""
+def delete_skill_file(
+    skill_id: str, *, if_status: str | None = None, skills_dir: Path | None = None,
+) -> bool:
+    """Delete a skill file (the undo-inverse of write_candidate_skill). When
+    `if_status` is given, only delete if the file's current status matches — so
+    undoing a proposal can't delete a skill the operator has since activated."""
     if skills_dir is None:
         skills_dir = _overlay_dir()
     if skills_dir is None:
@@ -303,6 +307,10 @@ def delete_skill_file(skill_id: str, *, skills_dir: Path | None = None) -> bool:
     path = _skill_file(skills_dir, skill_id.strip().lower())
     if not path.exists():
         return False
+    if if_status is not None:
+        fm, _ = _split_frontmatter(path.read_text(encoding="utf-8"))
+        if str(fm.get("status", "")).strip().lower() != if_status:
+            return False
     path.unlink()
     return True
 

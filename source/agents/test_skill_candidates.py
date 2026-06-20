@@ -125,6 +125,33 @@ def test_activate_is_confirm_tier(overlay):
         _cleanup_room(chatroom)
 
 
+def test_undo_proposal_after_activation_does_not_delete_active_skill(overlay):
+    """The propose_skill undo deletes the *candidate*. If it was since activated,
+    undoing the proposal must NOT delete the now-active skill."""
+    from agents.assistant_writes import undo_write_intent
+
+    chatroom = _room()
+    db.post_chat_message(chatroom.uuid, db.get_human_user().uuid, "learn this")
+    agent = _agent(scripted_decisions(
+        AssistantStepDecision(reason="propose", action=AssistantActionName.PROPOSE_SKILL,
+                              args={"skill_id": "act-undo", "title": "T", "body": "b"}),
+        AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
+                              args={"message": "ok"})))
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        propose_intent = db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.room_uuid == chatroom.uuid).one()
+        # The operator activates the candidate.
+        assert skills.set_skill_status("act-undo", "active", if_current="candidate")
+        # Undoing the original proposal must NOT remove the active skill.
+        obs = undo_write_intent(propose_intent.uuid)
+        assert obs.ok is False
+        assert (overlay / "act-undo.md").exists()
+        assert "status: active" in (overlay / "act-undo.md").read_text()
+    finally:
+        _cleanup_room(chatroom)
+
+
 def test_model_cannot_invoke_skill_delete(overlay):
     _action_propose_skill(_ctx(), {"skill_id": "keep-skill", "title": "Keep", "body": "x"})
     chatroom = _room()

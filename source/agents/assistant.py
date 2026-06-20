@@ -77,6 +77,7 @@ class AssistantActionName(str, Enum):
     PROPOSE_SKILL = "propose_skill"    # log-and-undo: write an inert candidate skill
     ACTIVATE_SKILL = "activate_skill"  # confirm-tier: activate a candidate skill
     SKILL_DELETE = "skill_delete"      # internal: propose_skill's undo inverse (not prompt-exposed)
+    REJECT_MEMORY_CANDIDATE = "reject_memory_candidate"  # internal: remember's undo inverse
 
 
 class AssistantStepDecision(BaseModel):
@@ -295,8 +296,33 @@ def _action_remember(
     return AssistantObservation(
         ok=True,
         text=f"Remembered as a candidate (reject to undo): {text}",
-        data={"memory_uuid": str(claim.uuid), "status": "candidate"},
+        data={"memory_uuid": str(claim.uuid), "status": "candidate",
+              "undo": {"capability": "reject_memory_candidate",
+                       "payload": {"memory_uuid": str(claim.uuid)}}},
     )
+
+
+def _action_reject_memory_candidate(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Internal: reject a *candidate* memory claim — remember's undo inverse. Not
+    prompt-exposed (reached only via undo_write_intent). Only rejects a claim that
+    is still a candidate, so undoing the original remember can't reject a claim
+    the operator has since activated."""
+    raw = args.get("memory_uuid")
+    try:
+        memory_uuid = UUID(str(raw))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid memory_uuid: {raw!r}")
+    claim = db.get_memory_claim(memory_uuid)
+    if claim is None or claim.status != "candidate":
+        return AssistantObservation(
+            ok=False, text="memory is not a pending candidate; not rejecting")
+    db.reject_memory(memory_uuid, {"provenance": "confirmed_by_user",
+                                   "source_type": "manual"})
+    return AssistantObservation(
+        ok=True, text=f"Rejected candidate memory {memory_uuid}",
+        data={"memory_uuid": str(memory_uuid)})
 
 
 def _action_activate_memory(
@@ -545,6 +571,8 @@ def _action_edit_file(
         return AssistantObservation(ok=False, text=f"blocked: {e}")
     if resolved.is_dir():
         return AssistantObservation(ok=False, text=f"path is a directory: {path}")
+    import hashlib
+
     old = ""
     if resolved.exists():
         if resolved.stat().st_size > MAX_EDIT_BYTES:
@@ -552,6 +580,17 @@ def _action_edit_file(
         old = resolved.read_text(encoding="utf-8", errors="replace")
     if old == content:
         return AssistantObservation(ok=False, text="no change: new content matches the file")
+    base_sha = hashlib.sha256(old.encode("utf-8")).hexdigest()
+    # The previewed diff was computed against `old`. On real execution, refuse if
+    # the file changed since the preview — otherwise we'd silently clobber an
+    # unpreviewed version. `base_sha` is folded into the stored payload by
+    # _propose_write from this action's dry-run `confirm_payload`.
+    expected = args.get("base_sha")
+    if not ctx.dry_run and expected is not None and expected != base_sha:
+        return AssistantObservation(
+            ok=False,
+            text=f"{path} changed since the preview; not applying (re-propose the edit)",
+        )
     diff = "\n".join(difflib.unified_diff(
         old.splitlines(), content.splitlines(),
         fromfile=f"a/{path}", tofile=f"b/{path}", lineterm="",
@@ -559,7 +598,8 @@ def _action_edit_file(
     verb = "create" if not resolved.exists() else "edit"
     if ctx.dry_run:
         return AssistantObservation(
-            ok=True, text=f"Would {verb} {path}:\n{diff}", data={"path": path},
+            ok=True, text=f"Would {verb} {path}:\n{diff}",
+            data={"path": path, "confirm_payload": {"base_sha": base_sha}},
         )
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
@@ -614,8 +654,11 @@ def _action_delete_skill(
     """Internal: delete a skill file — propose_skill's undo inverse. Not
     prompt-exposed (reached only via undo_write_intent)."""
     skill_id = str(args.get("skill_id", "")).strip().lower()
-    if not skills.delete_skill_file(skill_id):
-        return AssistantObservation(ok=False, text=f"no such skill: {skill_id}")
+    # Only delete a still-pending candidate: undoing the proposal must not remove
+    # a skill the operator has since activated.
+    if not skills.delete_skill_file(skill_id, if_status="candidate"):
+        return AssistantObservation(
+            ok=False, text=f"skill '{skill_id}' is not a pending candidate; not deleting")
     return AssistantObservation(
         ok=True, text=f"Deleted skill '{skill_id}'", data={"skill_id": skill_id})
 
@@ -783,6 +826,12 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         name=AssistantActionName.SKILL_DELETE, family="skill",
         description="(internal) delete a skill file — propose_skill's undo inverse.",
         required_args=("skill_id",), action=_action_delete_skill,
+        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
+    ),
+    AssistantActionName.REJECT_MEMORY_CANDIDATE: Capability(
+        name=AssistantActionName.REJECT_MEMORY_CANDIDATE, family="memory",
+        description="(internal) reject a candidate memory — remember's undo inverse.",
+        required_args=("memory_uuid",), action=_action_reject_memory_candidate,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
 }
@@ -1198,6 +1247,7 @@ class AssistantAgent(ModelGroupAgent):
         after the operator approves — so a confirm-tier write can never execute
         inline, by code, not prompt discipline."""
         preview = f"{cap.name.value}: {json.dumps(decision.args, sort_keys=True)}"
+        payload = dict(decision.args)
         if cap.dry_run:
             # Build a rich preview by running the action in dry-run (it must not
             # mutate). Bad input fails here → no proposal is recorded.
@@ -1205,11 +1255,14 @@ class AssistantAgent(ModelGroupAgent):
             if not dry.ok:
                 return dry
             preview = dry.text
+            # The dry-run may pin execution-time guards into the stored payload
+            # (e.g. edit_file's base_sha, so confirm refuses a since-changed file).
+            payload.update(dry.data.get("confirm_payload") or {})
         intent = db.create_write_intent(
             run_id=self._run.id,
             step_index=ctx.step_index,
             capability_name=cap.name.value,
-            payload=decision.args,
+            payload=payload,
             preview_text=preview,
             room_uuid=ctx.room_uuid,
             agent_uuid=ctx.agent_uuid,

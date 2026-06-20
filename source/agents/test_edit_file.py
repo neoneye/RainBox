@@ -140,3 +140,38 @@ def test_propose_uses_diff_preview_then_confirm_writes(app_ctx, ws):
             AssistantRun.room_uuid == chatroom.uuid).delete()
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
         db.db.session.commit()
+
+
+def test_confirm_refuses_if_file_changed_since_preview(app_ctx, ws):
+    """The diff was previewed against the file at propose time; if the file
+    changes before confirm, applying would silently clobber the unpreviewed
+    version. Confirm must refuse and not write."""
+    f = ws / "doc.txt"
+    f.write_text("v1\n")
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"edit-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "edit the doc")
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent._decide_next_step = scripted_decisions(
+        AssistantStepDecision(reason="edit", action=AssistantActionName.EDIT_FILE,
+                              args={"path": "doc.txt", "content": "v2\n"}),
+        AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
+                              args={"message": "proposed"}),
+    )
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        intent = db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.room_uuid == chatroom.uuid).one()
+        # File changes after the preview, before confirm.
+        f.write_text("v1-edited-elsewhere\n")
+        obs = execute_write_intent(intent.uuid)
+        assert obs.ok is False and "changed" in obs.text
+        assert f.read_text() == "v1-edited-elsewhere\n"  # NOT clobbered
+        assert db.get_write_intent(intent.uuid).state == "failed"
+    finally:
+        db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()

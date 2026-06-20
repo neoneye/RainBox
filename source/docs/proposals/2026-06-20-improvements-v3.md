@@ -52,28 +52,34 @@ paths are the current source of truth; the v2 prose schemas are historical.
   rows atomically `completed`.
 - Endpoints: `POST /chat/api/assistant/write-intents/<uuid>/{confirm,reject,undo}`
   (`webapp/chat_api.py`).
-- **Implemented write families:** memory `remember` (log-and-undo candidate) +
-  `activate_memory` (confirm); `kanban_move` (log-and-undo). The *skill* side of
-  v2's "memory and skill candidates" is **not** built (see S3).
+- **Implemented write families (updated as cards landed):** memory `remember`
+  (log-and-undo; undo rejects the candidate via internal `reject_memory_candidate`)
+  + `activate_memory` (confirm); skills `propose_skill` (log-and-undo) +
+  `activate_skill` (confirm); kanban `move`/`complete`/`comment`/`create`
+  (log-and-undo); `set_reminder` (confirm + dry-run); `edit_file` (confirm +
+  dry-run diff, base-hash guarded). Internal (non-prompt-exposed) inverses:
+  `skill_delete`, `kanban_delete_task`, `reject_memory_candidate`.
 
 **Memory** — `memory/`, `db/`
 - `retrieve_memories_hybrid` (vector + full-text + entity, hard-filtered) backs
   the assistant's `query_memory`. The shared filter is
   `memory.retrieval.hard_filtered_claims` (active, non-secret, non-expired,
-  in-scope; project scope excluded). Legacy token-overlap `retrieve_memories`
-  still serves the chat agents.
-- Embedding freshness: `refresh_claim_embedding` (write-path hook),
-  `prune_stale_embeddings` (lazy sweep), `sync_memory_embeddings` (reconcile).
-  **No production trigger calls `sync` yet.**
+  in-scope; project scope excluded). **Both the assistant's `query_memory` and the
+  chat agents now use hybrid** (S8); `retrieve_memories` (token-overlap) is
+  test-only. `_fulltext_scores` ORs query terms + gates on `@@` (S8 fix — an
+  unrelated query no longer retrieves the whole active set).
+- Embedding freshness: `refresh_claim_embedding`, `prune_stale_embeddings`,
+  `sync_memory_embeddings` — **wired to a `memory_sync` cron job (S1).**
 - `user_profile.build_profile_block` injects an active-memory digest before the
-  skills block (assistant only). No contradiction detection/surfacing yet (v2
-  Phase 3 wanted read-only contradiction surfacing — see S8).
+  skills block, in the assistant **and the chat agents** (S8). Read-only
+  contradiction surfacing is still deferred (→ S12).
 
 **Skills** — `skills/`
 - File-backed (base + `<customize.dir>/skills/` overlay), candidate→active
-  lifecycle, lexical retrieval, `retrieval_event` telemetry. The lifecycle exists
-  but the assistant cannot yet *create* a candidate skill or *activate* one as a
-  write (S3).
+  lifecycle, lexical retrieval, `retrieval_event` telemetry. The assistant can now
+  `propose_skill` (candidate) and `activate_skill` (confirm) — writers
+  `write_candidate_skill`/`set_skill_status`/`delete_skill_file`, plus
+  `lint_skills` for doctor (S3, S6).
 
 **Kanban** — `db/kanban.py`, `tools/kanban_dispatcher.py`
 - Worker authority model `observe`/`work`/`shape` (`kanban_dispatcher`) governs
@@ -97,10 +103,13 @@ paths are the current source of truth; the v2 prose schemas are historical.
   page and a runtime dashboard.
 
 **Half-built / unused seams to be aware of**
-- `Capability.adapter` exists but is unused (no external systems wired) — S9/S10.
-- `Capability.dry_run` exists but no capability sets it yet (the confirm-tier
-  preview today is just the proposal text) — first real users are S4/S5.
-- `capability_report()` exists but there is no `rainbox doctor` CLI — S6.
+- `Capability.adapter` exists but is still unused (no external systems wired) — S9/S10.
+- `Capability.dry_run` is **now used** by `set_reminder` and `edit_file` (S4/S5);
+  `_propose_write` runs the action in dry-run to build the preview and folds a
+  `confirm_payload` (e.g. `edit_file`'s `base_sha`) into the stored payload.
+- `rainbox doctor` (`python -m tools.doctor`) is **done** (S6); the **runtime
+  dashboard UI is still not built** (S7) though `/stop`, `/redirect`, and the
+  write-intent `confirm/reject/undo` endpoints exist.
 
 ---
 
