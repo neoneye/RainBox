@@ -396,10 +396,10 @@ Expected: FAIL — `ImportError: cannot import name '_action_move_kanban_task'` 
 (a) In `agents/assistant.py`, add to the `AssistantActionName` enum after `ACTIVATE_MEMORY` (line 68):
 
 ```python
-    MOVE_KANBAN = "kanban_move"        # log-and-undo: move a task between columns
+    KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
 ```
 
-Use the enum member name `MOVE_KANBAN` with value `"kanban_move"`.
+Use the enum member name `KANBAN_MOVE` with value `"kanban_move"`.
 
 (b) Add the action just before the `Capability` dataclass (before line 289):
 
@@ -451,8 +451,8 @@ def _action_move_kanban_task(
 (c) Add the registry entry inside `CAPABILITIES`, after the `ACTIVATE_MEMORY` entry (after line 375):
 
 ```python
-    AssistantActionName.MOVE_KANBAN: Capability(
-        name=AssistantActionName.MOVE_KANBAN, family="kanban",
+    AssistantActionName.KANBAN_MOVE: Capability(
+        name=AssistantActionName.KANBAN_MOVE, family="kanban",
         description=('move a kanban task to another column; reversible (undoable). '
                      'args: {"task_uuid": "...", "column_uuid": "..."}'),
         required_args=("task_uuid", "column_uuid"),
@@ -511,7 +511,7 @@ def test_move_via_loop_lands_completed_undo_ledger(board):
 
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="move", action=AssistantActionName.MOVE_KANBAN,
+        AssistantStepDecision(reason="move", action=AssistantActionName.KANBAN_MOVE,
                               args={"task_uuid": task["uuid"], "column_uuid": done}),
         AssistantStepDecision(reason="done", action=AssistantActionName.REPLY,
                               args={"message": "moved"}),
@@ -788,7 +788,7 @@ If a pre-existing unrelated failure appears, note it; do not fix out-of-scope te
 
 ## Notes for the implementer
 
-- The enum member is `AssistantActionName.MOVE_KANBAN` with string value `"kanban_move"`. The string is what appears in the prompt catalog, the registry key, and `capability_name`; the Python member name is `MOVE_KANBAN`.
+- The enum member is `AssistantActionName.KANBAN_MOVE` with string value `"kanban_move"`. The string is what appears in the prompt catalog, the registry key, and `capability_name`; the Python member name is `KANBAN_MOVE`.
 - `db.create_write_intent` is used in three modes now: confirm proposal (default `proposed`), and log-and-undo ledger (`state="completed"`, `result={...}`). Both share one helper — do not fork it.
 - `_record_log_and_undo` lives on the agent (not in the action) because it needs `self._run.id`; the pure action only returns the inverse in its observation `data`.
 - Undo is generic: it re-dispatches the stored inverse capability+payload. For `kanban_move` the inverse is itself a `kanban_move`, so no per-capability undo code exists or is needed.
