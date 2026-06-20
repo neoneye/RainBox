@@ -42,18 +42,17 @@ _KIND_PRIORITY: dict[str, int] = {
 def _is_profile_material(claim) -> bool:
     """Whether an already-hard-filtered claim belongs in the operator profile.
 
-    - Kind must be a self-model kind (``_KIND_PRIORITY``).
-    - Project-scoped claims are excluded: the assistant turn carries no project
-      key, so v1 visibility is global + this agent + this room (project scope is
-      deferred — see the proposal). ``hard_filtered_claims`` lets project claims
-      through for hybrid retrieval, so the profile must exclude them itself.
+    Scope/sensitivity/expiry/status are already enforced by
+    ``hard_filtered_claims`` (which also excludes project-scoped claims until a
+    project key exists), so this only narrows by *content*:
+
+    - Kind must be a self-model kind (``_KIND_PRIORITY``); ``episode_summary``
+      and ``procedure`` are not operator profile.
     - A plain ``fact`` is only included when it has a subject (an operator-
       referring entity); a subject-less ambient fact is not worth injecting on
       every turn.
     """
     if claim.kind not in _KIND_PRIORITY:
-        return False
-    if claim.scope == "project":
         return False
     if claim.kind == "fact" and not (claim.subject or "").strip():
         return False

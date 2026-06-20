@@ -71,7 +71,7 @@ The skills block is the template. The integration points are already proven:
 | `MAX_SKILL_BLOCK_CHARS = 2000` | `MAX_PROFILE_BLOCK_CHARS = 1500` |
 | `AssistantAgent._build_skill_block(...)` → `self._skill_block` | `AssistantAgent._build_profile_block(...)` → `self._profile_block` |
 | injected first in `_build_user_prompt` | injected **before** the skill block |
-| telemetry `source="skills.retrieval"`, `target_type="skill"` | `source="profile.retrieval"`, `target_type="memory_claim"` |
+| telemetry `source="skills.retrieval"`, `target_type="skill"` | `source="user_profile.retrieval"`, `target_type="memory_claim"` |
 
 Key difference from `query_memory`: the profile block is **query-independent**.
 `query_memory` is an action the model *chooses* and passes a query to. The

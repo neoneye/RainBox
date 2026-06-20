@@ -212,9 +212,14 @@ def hard_filtered_claims(
     )
     candidates = q.all()
     # Scope: a global claim is always allowed; an agent/room-scoped claim is only
-    # allowed for its own agent/room.
+    # allowed for its own agent/room. A project-scoped claim has no project key
+    # to match against (MemoryClaim carries only agent/room keys, and the turn
+    # has no project context), so it is excluded entirely until project context
+    # exists — otherwise it would leak into every unrelated room/agent.
     out = []
     for c in candidates:
+        if c.scope == "project":
+            continue
         if c.scope == "room" and c.room_uuid != room_uuid:
             continue
         if c.scope == "agent" and agent_uuid is not None and c.agent_uuid != agent_uuid:
