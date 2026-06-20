@@ -454,6 +454,9 @@ class AssistantAgent(ModelGroupAgent):
         self._run: Any = None
         # Active-skill guidance for this turn, injected into every step's prompt.
         self._skill_block: str = ""
+        # Coarse current activity, surfaced in heartbeats so a slow run looks
+        # different from a hung one.
+        self._activity: str = "idle"
 
     @staticmethod
     def _room_uuid(payload: dict[str, Any]) -> UUID:
@@ -495,6 +498,13 @@ class AssistantAgent(ModelGroupAgent):
 
             for step_index in range(self.step_limit):
                 current_step = step_index
+                # Step boundary: honour any operator stop/redirect before the
+                # next model call, so a stop leaves a clean trace (not a killed
+                # process) and a redirect steers the next step.
+                stopped = self._apply_pending_controls(run, step_index, scratchpad)
+                if stopped is not None:
+                    return stopped
+                self._activity = f"deciding step {step_index}"
                 decision = self._decide_next_step(
                     transcript=transcript, scratchpad=scratchpad, step_index=step_index
                 )
@@ -530,6 +540,7 @@ class AssistantAgent(ModelGroupAgent):
                 # observation. A confirm-tier write is *proposed* here, never
                 # executed inline; everything else (reads, log-and-undo writes)
                 # executes immediately.
+                self._activity = f"running {decision.action.value}"
                 self._record_step(step_index=step_index, phase="running", decision=decision)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
@@ -752,6 +763,63 @@ class AssistantAgent(ModelGroupAgent):
                   f"Confirm intent {intent.uuid} to apply."),
             data={"write_intent_uuid": str(intent.uuid), "state": "proposed"},
         )
+
+    def _heartbeat_extra(self) -> dict[str, Any]:
+        extra: dict[str, Any] = {"activity": self._activity}
+        if self._run is not None:
+            extra["assistant_run_id"] = self._run.id
+        return extra
+
+    def _apply_pending_controls(
+        self, run: Any, step_index: int, scratchpad: list[str]
+    ) -> dict[str, Any] | None:
+        """Apply operator controls at a step boundary. Returns a run-result dict
+        when the run was stopped (the loop should return it), else None.
+
+        A pending stop wins: it records a `control` trace step, posts a clean
+        message, finishes the run `stopped`, and ignores any other pending
+        controls. Otherwise pending redirects are folded into the scratchpad so
+        the next step sees them — prior steps are never touched."""
+        controls = db.list_pending_controls(run.id)
+        if not controls:
+            return None
+
+        stop = next((c for c in controls if c.command == "stop"), None)
+        if stop is not None:
+            self._record_control(step_index, "stop", "stop requested by operator")
+            db.mark_control_state(stop, "applied", note=f"stopped at step {step_index}")
+            for other in controls:
+                if other.id != stop.id:
+                    db.mark_control_state(other, "ignored", note="run stopped")
+            self._activity = "stopped"
+            db.post_chat_message(
+                run.room_uuid, self.agent_uuid, "Stopped at your request.", kind="message"
+            )
+            db.finish_run(run, "stopped",
+                          final_summary=f"stopped by operator at step {step_index}")
+            logger.info("assistant run %s stopped by operator at step %d", run.id, step_index)
+            return self._run_result("stopped", "stopped by operator")
+
+        for c in controls:  # redirects only at this point
+            instruction = str((c.payload or {}).get("instruction", "")).strip()
+            self._record_control(step_index, "redirect", instruction or "(no instruction)")
+            if instruction:
+                scratchpad.append(f"operator redirect: {instruction}")
+            db.mark_control_state(c, "applied", note="redirect applied")
+        return None
+
+    def _record_control(self, step_index: int, command: str, detail: str) -> None:
+        """Persist a `control` trace step (and mirror it) so an applied stop/
+        redirect is visible in the trace."""
+        self._steps.append(
+            {"step_index": step_index, "phase": "control", "action": command,
+             "reason": detail, "error": None}
+        )
+        if self._run is not None:
+            db.append_assistant_step(
+                run_id=self._run.id, step_index=step_index, phase="control",
+                action=command, reason=detail, model_group_uuid=self.model_group_uuid,
+            )
 
     @staticmethod
     def _compact_step(

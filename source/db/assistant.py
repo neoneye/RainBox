@@ -18,7 +18,13 @@ from typing import Any, Literal
 from uuid import UUID
 
 from db.chat import post_chat_message
-from db.models import AssistantRun, AssistantStep, AssistantWriteIntent, db
+from db.models import (
+    AssistantControl,
+    AssistantRun,
+    AssistantStep,
+    AssistantWriteIntent,
+    db,
+)
 
 StepPhase = Literal["planned", "running", "observed", "failed", "final", "control"]
 
@@ -195,3 +201,62 @@ def set_write_intent_state(
     db.session.add(intent)
     db.session.commit()
     return intent
+
+
+# --- control channel (Phase 6) -----------------------------------------------
+
+
+def create_assistant_control(
+    *,
+    run_id: int,
+    command: str,
+    payload: dict[str, Any] | None = None,
+    requested_by_uuid: UUID | None = None,
+    note: str | None = None,
+) -> "AssistantControl":
+    """Insert a pending steering command (stop/redirect) for a run."""
+    control = AssistantControl(
+        run_id=run_id, command=command, payload=payload or {},
+        state="pending", requested_by_uuid=requested_by_uuid, note=note,
+    )
+    db.session.add(control)
+    db.session.commit()
+    return control
+
+
+def list_pending_controls(run_id: int) -> list["AssistantControl"]:
+    """Pending controls for a run, oldest first (the order the loop applies them)."""
+    return (
+        db.session.query(AssistantControl)
+        .filter(AssistantControl.run_id == run_id, AssistantControl.state == "pending")
+        .order_by(AssistantControl.id)
+        .all()
+    )
+
+
+def mark_control_state(
+    control: "AssistantControl", state: str, *, note: str | None = None
+) -> "AssistantControl":
+    """Transition a control to applied/ignored, stamping applied_at."""
+    control.state = state
+    if state in ("applied", "ignored"):
+        control.applied_at = datetime.now(UTC)
+    if note is not None:
+        control.note = note
+    db.session.add(control)
+    db.session.commit()
+    return control
+
+
+def request_run_stop(run_id: int) -> bool:
+    """Signal an intent to stop a still-running run (status -> 'stopping'). The
+    loop performs the actual clean stop at its next step boundary. Returns False
+    for an unknown run; a no-op for an already-terminal run."""
+    run = db.session.get(AssistantRun, run_id)
+    if run is None:
+        return False
+    if run.status == "running":
+        run.status = "stopping"
+        db.session.add(run)
+        db.session.commit()
+    return True

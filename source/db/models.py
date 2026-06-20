@@ -956,7 +956,7 @@ class AssistantRun(db.Model):
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     __table_args__ = (
         CheckConstraint(
-            "status IN ('running','finished','stopped','failed','killed')",
+            "status IN ('running','stopping','finished','stopped','failed','killed')",
             name="assistant_run_status_check",
         ),
         Index("assistant_run_by_room", "room_uuid", "started_at"),
@@ -999,6 +999,40 @@ class AssistantStep(db.Model):
         Index("assistant_step_by_run", "run_id", "step_index", "id"),
         Index("assistant_step_by_action_phase", "action", "phase"),
         Index("assistant_step_by_created", "created_at"),
+    )
+
+
+class AssistantControl(db.Model):
+    """An operator steering command for an in-flight assistant run. The loop
+    polls pending controls at each step boundary: `stop` ends the run cleanly,
+    `redirect` injects a new instruction before the next step. A new table (not a
+    chat row) because controls are runtime state, not conversation.
+    """
+
+    __tablename__ = "assistant_control"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_run.id", ondelete="CASCADE"), index=True
+    )
+    command: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    state: Mapped[str] = mapped_column(Text, default="pending")
+    requested_by_uuid: Mapped[UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (
+        CheckConstraint(
+            "command IN ('stop','redirect')", name="ck_assistant_control_command"
+        ),
+        CheckConstraint(
+            "state IN ('pending','applied','ignored')",
+            name="ck_assistant_control_state",
+        ),
+        Index("assistant_control_by_run_state", "run_id", "state", "id"),
     )
 
 

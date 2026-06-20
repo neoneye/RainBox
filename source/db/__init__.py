@@ -322,6 +322,18 @@ def init_db(app: Flask) -> None:
                     "'downvoted','considered','injected'))"
                 )
             )
+        # Phase 6 adds the transient 'stopping' assistant_run status.
+        _ar_status = _constraint_def("assistant_run_status_check")
+        if _ar_status is not None and "stopping" not in _ar_status:
+            db.session.execute(
+                sa.text("ALTER TABLE assistant_run DROP CONSTRAINT IF EXISTS assistant_run_status_check")
+            )
+            db.session.execute(
+                sa.text(
+                    "ALTER TABLE assistant_run ADD CONSTRAINT assistant_run_status_check "
+                    "CHECK (status IN ('running','stopping','finished','stopped','failed','killed'))"
+                )
+            )
         db.session.commit()
         _migrate_ollama_native_args()
         _migrate_cron_message_targets()
