@@ -12,13 +12,16 @@ aggressive recall, as the spec requires.
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+import sqlalchemy as sa
+
 import db
-from db import ChatMessage, MemoryClaim, MemoryEvidence
+from db import ChatMessage, MemoryClaim, MemoryEmbedding, MemoryEvidence
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,8 @@ class RetrievedMemory:
     sensitivity: str
     reason: str
     evidence_summary: list[str] = field(default_factory=list)
+    # Merged hybrid score (0 for the legacy token-overlap path).
+    score: float = 0.0
 
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
@@ -174,6 +179,182 @@ def retrieve_memories(
                 evidence_summary=_evidence_summary(claim.uuid),
             )
         )
+    return out
+
+
+# --- hybrid retrieval (Phase 3) ----------------------------------------------
+
+# Merge weights for the minimal hybrid blend (docs/proposals/2026-06-19-...,
+# "Draft: memory embedding storage and ranking"). Confidence/scope are
+# tie-breakers after the score, not hidden multipliers.
+_W_VECTOR = 0.55
+_W_FULLTEXT = 0.30
+_W_ENTITY = 0.15
+
+
+def _hard_filtered_claims(
+    include_secret: bool,
+    room_uuid: UUID | None,
+    agent_uuid: UUID | None,
+) -> list[MemoryClaim]:
+    """Active, allowed-sensitivity, non-expired, in-scope claims — applied
+    BEFORE any ranking so forbidden claims never enter the candidate set."""
+    q = db.db.session.query(MemoryClaim).filter(MemoryClaim.status == "active")
+    if not include_secret:
+        q = q.filter(MemoryClaim.sensitivity != "secret")
+    now = datetime.now(UTC)
+    q = q.filter(
+        (MemoryClaim.expires_at.is_(None)) | (MemoryClaim.expires_at > now)
+    )
+    candidates = q.all()
+    # Scope: a global claim is always allowed; an agent/room-scoped claim is only
+    # allowed for its own agent/room.
+    out = []
+    for c in candidates:
+        if c.scope == "room" and c.room_uuid != room_uuid:
+            continue
+        if c.scope == "agent" and agent_uuid is not None and c.agent_uuid != agent_uuid:
+            continue
+        if c.scope == "agent" and agent_uuid is None:
+            continue
+        out.append(c)
+    return out
+
+
+def _fulltext_scores(query: str, ids: list[UUID]) -> dict[UUID, float]:
+    """Postgres ts_rank for each candidate (0 when it doesn't match)."""
+    if not ids:
+        return {}
+    stmt = sa.text(
+        "SELECT uuid, ts_rank("
+        "  to_tsvector('english', coalesce(text,'') || ' ' || "
+        "    coalesce(subject,'') || ' ' || coalesce(object,'')),"
+        "  plainto_tsquery('english', :q)) AS rank "
+        "FROM memory_claim WHERE uuid IN :ids"
+    ).bindparams(sa.bindparam("ids", expanding=True))
+    rows = db.db.session.execute(stmt, {"q": query, "ids": ids}).all()
+    return {row[0]: float(row[1]) for row in rows}
+
+
+def _vector_sims(
+    query: str, ids: list[UUID], embed_fn: Callable[[str], list[float]] | None
+) -> dict[UUID, float]:
+    """Cosine similarity (0..1) for candidates that have an embedding. Empty when
+    no query embedding is available — retrieval degrades to lexical-only."""
+    if not ids or not query.strip():
+        return {}
+    if embed_fn is None:
+        from memory.embeddings import _default_embed
+        embed_fn = _default_embed
+    try:
+        qvec = embed_fn(query)
+    except Exception:
+        logger.warning("memory: query embedding failed; lexical-only", exc_info=True)
+        return {}
+    if not qvec:
+        return {}
+    from memory.embeddings import EMBED_MODEL_NAME
+
+    rows = (
+        db.db.session.query(
+            MemoryEmbedding.memory_uuid,
+            MemoryEmbedding.embedding.cosine_distance(qvec),
+        )
+        .filter(
+            MemoryEmbedding.memory_uuid.in_(ids),
+            MemoryEmbedding.model_name == EMBED_MODEL_NAME,
+        )
+        .all()
+    )
+    # pgvector cosine distance is in [0,2]; map to a [0,1] similarity.
+    return {mu: max(0.0, 1.0 - float(dist) / 2.0) for mu, dist in rows}
+
+
+def _entity_boost(claim: MemoryClaim, query_tokens: set[str]) -> float:
+    subj = (claim.subject or "").lower().strip()
+    obj = (claim.object or "").lower().strip()
+    if (subj and subj in query_tokens) or (obj and obj in query_tokens):
+        return 1.0
+    field_tokens = _tokenize(" ".join([claim.subject or "", claim.object or ""]))
+    if field_tokens & query_tokens:
+        return 0.5
+    return 0.0
+
+
+def retrieve_memories_hybrid(
+    query: str,
+    *,
+    agent_uuid: UUID | None,
+    room_uuid: UUID | None,
+    limit: int = 6,
+    include_secret: bool = False,
+    journal_id: int | None = None,
+    embed_fn: Callable[[str], list[float]] | None = None,
+) -> list[RetrievedMemory]:
+    """Multi-signal memory retrieval: hard filters first, then a weighted merge
+    of vector similarity, Postgres full-text rank, and a structured
+    subject/object entity boost. Confidence/scope break ties. Records retrieval
+    telemetry for the injected set.
+
+    Degrades gracefully: claims without an embedding (or when no embedder is
+    available) are still retrievable via full-text/entity signals.
+    """
+    if not query or not query.strip():
+        return []
+    candidates = _hard_filtered_claims(include_secret, room_uuid, agent_uuid)
+    if not candidates:
+        return []
+
+    ids = [c.uuid for c in candidates]
+    query_tokens = _tokenize(query)
+    fts = _fulltext_scores(query, ids)
+    vec = _vector_sims(query, ids, embed_fn)
+    max_fts = max(fts.values(), default=0.0)
+
+    scored: list[tuple[float, int, float, datetime, MemoryClaim, str]] = []
+    for c in candidates:
+        v = vec.get(c.uuid, 0.0)
+        f = (fts.get(c.uuid, 0.0) / max_fts) if max_fts > 0 else 0.0
+        e = _entity_boost(c, query_tokens)
+        score = _W_VECTOR * v + _W_FULLTEXT * f + _W_ENTITY * e
+        if score <= 0.0:
+            continue
+        signals = [
+            name for name, val in (("vector", v), ("fulltext", f), ("entity", e))
+            if val > 0
+        ]
+        scored.append(
+            (score, _scope_tier(c, room_uuid, agent_uuid), float(c.confidence),
+             c.updated_at, c, "+".join(signals) or "hybrid")
+        )
+
+    # Best score first; then room/agent scope, higher confidence, more recent.
+    scored.sort(
+        key=lambda s: (
+            -s[0], s[1], -s[2],
+            -s[3].timestamp() if hasattr(s[3], "timestamp") else 0,
+        )
+    )
+
+    out: list[RetrievedMemory] = []
+    for rank, (score, _tier, _conf, _updated, claim, reason) in enumerate(scored[:limit]):
+        out.append(
+            RetrievedMemory(
+                uuid=claim.uuid, text=claim.text, kind=claim.kind, scope=claim.scope,
+                confidence=float(claim.confidence), sensitivity=claim.sensitivity,
+                reason=reason, evidence_summary=_evidence_summary(claim.uuid),
+                score=round(score, 6),
+            )
+        )
+        try:
+            db.record_retrieval_event(
+                target_type="memory_claim", target_id=str(claim.uuid),
+                stage="retrieved", query=query, room_uuid=room_uuid,
+                agent_uuid=agent_uuid, journal_id=journal_id, source="memory.hybrid",
+                retrieval_rank=rank, retrieval_score=round(score, 6),
+            )
+        except Exception:
+            logger.warning("memory: failed to record hybrid retrieval telemetry")
     return out
 
 

@@ -159,6 +159,11 @@ def _constraint_def(name: str) -> str | None:
 
 def init_db(app: Flask) -> None:
     with app.app_context():
+        # pgvector must exist before create_all() builds the memory_embedding
+        # table's vector column. Idempotent; the operator's DB already uses it
+        # for the Q&A store.
+        db.session.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+        db.session.commit()
         db.create_all()
         # Idempotent column additions for tables that pre-date the column.
         # create_all() never ALTERs existing tables; this catches DBs that

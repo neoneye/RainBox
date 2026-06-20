@@ -4,11 +4,11 @@ Split out of db.py. Holds the memory claim/evidence operations
 (create_memory_claim, add_memory_evidence, list_memory_claims, supersede_memory,
 reject_memory, ...). Re-exported from db for import compatibility.
 """
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from db.models import MemoryClaim, MemoryEvidence, db
+from db.models import MemoryClaim, MemoryEmbedding, MemoryEvidence, db
 
 
 def create_memory_claim(
@@ -129,3 +129,65 @@ def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any]) -> None:
     ev = MemoryEvidence(memory_uuid=memory_uuid, **evidence_args)
     db.session.add(ev)
     db.session.commit()
+
+
+# --- embeddings (hybrid retrieval) -------------------------------------------
+
+
+def upsert_memory_embedding(
+    *,
+    memory_uuid: UUID,
+    model_name: str,
+    embed_dim: int,
+    text_hash: str,
+    embedding: list[float],
+) -> MemoryEmbedding:
+    """Insert or update the embedding row for (memory_uuid, model_name,
+    text_hash). Idempotent on the unique key."""
+    row = (
+        db.session.query(MemoryEmbedding)
+        .filter(
+            MemoryEmbedding.memory_uuid == memory_uuid,
+            MemoryEmbedding.model_name == model_name,
+            MemoryEmbedding.text_hash == text_hash,
+        )
+        .one_or_none()
+    )
+    if row is None:
+        row = MemoryEmbedding(
+            memory_uuid=memory_uuid, model_name=model_name,
+            embed_dim=embed_dim, text_hash=text_hash, embedding=embedding,
+        )
+        db.session.add(row)
+    else:
+        row.embedding = embedding
+        row.embed_dim = embed_dim
+        row.updated_at = datetime.now(UTC)
+    db.session.commit()
+    return row
+
+
+def get_memory_embedding(
+    memory_uuid: UUID, model_name: str
+) -> MemoryEmbedding | None:
+    """The most recent embedding row for a claim under one model, or None."""
+    return (
+        db.session.query(MemoryEmbedding)
+        .filter(
+            MemoryEmbedding.memory_uuid == memory_uuid,
+            MemoryEmbedding.model_name == model_name,
+        )
+        .order_by(MemoryEmbedding.id.desc())
+        .first()
+    )
+
+
+def delete_memory_embeddings(memory_uuid: UUID) -> int:
+    """Drop all embedding rows for a claim. Returns the number removed."""
+    n = (
+        db.session.query(MemoryEmbedding)
+        .filter(MemoryEmbedding.memory_uuid == memory_uuid)
+        .delete()
+    )
+    db.session.commit()
+    return n

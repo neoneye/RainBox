@@ -175,13 +175,15 @@ AssistantAction = Callable[[AssistantActionContext, dict[str, Any]], AssistantOb
 def _action_query_memory(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Current memory retrieval path. Secrets are never returned to the model
-    (filter-before-rank: include_secret stays False)."""
-    from memory.retrieval import format_memory_context, retrieve_memories
+    """Hybrid memory retrieval (vector + full-text + entity, hard-filtered).
+    Secrets are never returned to the model (filter-before-rank:
+    include_secret stays False)."""
+    from memory.retrieval import format_memory_context, retrieve_memories_hybrid
 
     query = str(args.get("query", "")).strip()
-    memories = retrieve_memories(
-        query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid, include_secret=False
+    memories = retrieve_memories_hybrid(
+        query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
+        include_secret=False, journal_id=ctx.journal_id,
     )
     if not memories:
         return AssistantObservation(ok=True, text="No relevant remembered facts.")

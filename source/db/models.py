@@ -13,6 +13,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 logger = logging.getLogger(__name__)
 
@@ -998,6 +999,41 @@ class AssistantStep(db.Model):
         Index("assistant_step_by_run", "run_id", "step_index", "id"),
         Index("assistant_step_by_action_phase", "action", "phase"),
         Index("assistant_step_by_created", "created_at"),
+    )
+
+
+class MemoryEmbedding(db.Model):
+    """A vector embedding of an active memory claim — the rainbox-owned half of
+    hybrid retrieval (the Q&A table is owned by LlamaIndex's PGVectorStore).
+
+    Kept separate from `memory_claim` so the claim stays readable in Flask-Admin,
+    multiple embedding models/text-hashes can coexist during rebuilds, and a
+    failed embedding never corrupts the source row. A claim with no row here
+    falls back to lexical-only retrieval — never an error.
+    """
+
+    __tablename__ = "memory_embedding"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    memory_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("memory_claim.uuid", ondelete="CASCADE"), index=True
+    )
+    model_name: Mapped[str] = mapped_column(Text)
+    embed_dim: Mapped[int] = mapped_column()
+    text_hash: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector(768))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "memory_uuid", "model_name", "text_hash", name="uq_memory_embedding"
+        ),
     )
 
 
