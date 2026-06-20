@@ -156,6 +156,10 @@ is permitted before calling `db.kanban_*`. This keeps the orchestrator
 deterministic: call agents, collect verdicts, resolve conflicts, apply
 permissions, emit proposed actions, and write the audit log.
 
+> Note: the personal **assistant**'s `kanban_move` capability is code-owned and
+> does not pass through this observe/work/shape model; it is a log-and-undo write
+> whose safety is operator reversibility + trace, not the worker authority ceiling.
+
 **Known gap (follow-up):** the dispatcher chokepoint is in-process only. The
 HTTP operation endpoints (`/kanban/api/claim-next`, `…/claim`, `…/release`,
 `…/renew`, `…/move`, `…/complete`, `…/events` POST) predate it, take

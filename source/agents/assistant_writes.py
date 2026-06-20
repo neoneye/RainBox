@@ -50,6 +50,11 @@ def execute_write_intent(
     if cap.action is None or not cap.write:
         db.set_write_intent_state(intent, "failed", error="capability is not an executable write")
         return AssistantObservation(ok=False, text="capability is not an executable write")
+    if cap.tier != "confirm":
+        db.set_write_intent_state(intent, "failed", error="capability is not confirm-tier")
+        return AssistantObservation(
+            ok=False, text="capability is not confirm-tier; refusing to confirm-execute"
+        )
 
     db.set_write_intent_state(intent, "confirmed", confirmed_by_uuid=confirmed_by_uuid)
     db.set_write_intent_state(intent, "executing")
@@ -79,3 +84,37 @@ def reject_write_intent(intent_uuid: UUID) -> bool:
         return False
     db.set_write_intent_state(intent, "rejected")
     return True
+
+
+def undo_write_intent(intent_uuid: UUID) -> AssistantObservation:
+    """Revert a completed log-and-undo write by replaying its stored inverse op,
+    then mark the original intent `undone`. One-shot: only a `completed` intent
+    with an `undo` record can be undone (no redo)."""
+    intent = db.get_write_intent(intent_uuid)
+    if intent is None:
+        return AssistantObservation(ok=False, text="no such write intent")
+    if intent.state != "completed":
+        return AssistantObservation(
+            ok=False, text=f"write intent is not undoable (state={intent.state})"
+        )
+    undo = (intent.result or {}).get("undo")
+    if not undo:
+        return AssistantObservation(ok=False, text="write intent has no undo record")
+    try:
+        cap = CAPABILITIES[AssistantActionName(undo["capability"])]
+    except (KeyError, ValueError):
+        return AssistantObservation(ok=False, text="unknown capability for undo")
+    if cap.action is None:
+        return AssistantObservation(ok=False, text="undo capability has no dispatcher")
+    ctx = AssistantActionContext(
+        journal_id=None, room_uuid=intent.room_uuid,
+        agent_uuid=intent.agent_uuid, step_index=intent.step_index,
+    )
+    try:
+        obs = cap.action(ctx, dict(undo["payload"]))
+    except Exception as e:
+        logger.exception("undo of write intent %s failed", intent_uuid)
+        return AssistantObservation(ok=False, text=f"{type(e).__name__}: {e}")
+    if obs.ok:
+        db.set_write_intent_state(intent, "undone", result={**intent.result, "undone": True})
+    return obs

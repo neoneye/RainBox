@@ -149,8 +149,12 @@ def create_write_intent(
     preview_text: str,
     room_uuid: UUID,
     agent_uuid: UUID,
+    state: str = "proposed",
+    result: dict[str, Any] | None = None,
 ) -> AssistantWriteIntent:
-    """Open a confirm-tier write proposal (state=proposed)."""
+    """Open a write intent. Defaults to a `proposed` confirm-tier proposal; a
+    log-and-undo recorder passes `state="completed"` with a `result` so the row
+    is never confirmable as `proposed` (no double-execute window)."""
     intent = AssistantWriteIntent(
         run_id=run_id,
         step_index=step_index,
@@ -158,9 +162,10 @@ def create_write_intent(
         payload=payload,
         payload_hash=write_intent_payload_hash(capability_name, payload),
         preview_text=preview_text,
-        state="proposed",
+        state=state,
         room_uuid=room_uuid,
         agent_uuid=agent_uuid,
+        result=result or {},
     )
     db.session.add(intent)
     db.session.commit()

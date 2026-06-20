@@ -78,7 +78,8 @@ def test_decision_rejects_unknown_action():
 
 def test_action_enum_covers_the_known_action_surface():
     """Lock the action surface so an accidental rename/removal is caught. The
-    read-only set (PR 1-4) plus the first write family (PR 9)."""
+    read-only set (PR 1-4), the memory write family (PR 9), and the kanban-move
+    log-and-undo write family."""
     assert {a.value for a in AssistantActionName} == {
         "reply",
         "ask_clarifying_question",
@@ -88,4 +89,5 @@ def test_action_enum_covers_the_known_action_surface():
         "kanban_read",
         "remember",
         "activate_memory",
+        "kanban_move",
     }

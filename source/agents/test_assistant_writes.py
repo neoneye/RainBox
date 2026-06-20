@@ -177,3 +177,26 @@ def test_execute_refused_unless_proposed(room):
     finally:
         db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == "write-test").delete()
         db.db.session.commit()
+
+
+def test_execute_refuses_non_confirm_tier_capability(app_ctx):
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID, step_limit=6,
+    )
+    # 'remember' is log_and_undo, not confirm — a proposed intent for it must be refused.
+    intent = db.create_write_intent(
+        run_id=run.id, step_index=0, capability_name="remember",
+        payload={"text": "x"}, preview_text="remember: …",
+        room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
+    )
+    try:
+        obs = execute_write_intent(intent.uuid)
+        assert obs.ok is False
+        refreshed = db.get_write_intent(intent.uuid)
+        assert refreshed.state == "failed"
+    finally:
+        db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.run_id == run.id
+        ).delete()
+        db.db.session.query(AssistantRun).filter(AssistantRun.id == run.id).delete()
+        db.db.session.commit()
