@@ -792,7 +792,14 @@ def cron_tick(now: datetime | None = None) -> int:
                 job.next_run_at = cron_compute_next_run(job.cron_expr, job.timezone, after=now)
                 continue
             fire_cron_job(job, trigger="scheduled")
-            job.next_run_at = cron_compute_next_run(job.cron_expr, job.timezone, after=now)
+            nxt = cron_compute_next_run(job.cron_expr, job.timezone, after=now)
+            if nxt is None and not (job.cron_expr or "").strip():
+                # One-shot (empty cron_expr): retire after its single fire so it
+                # doesn't linger enabled-but-dead. A non-empty-but-unparseable
+                # recurring expr keeps its existing dormant behavior.
+                job.enabled = False
+            else:
+                job.next_run_at = nxt
             fired += 1
         elif not cron_job_is_draft(job) and cron_should_retry(job, now):
             # Auto-retry: the last run failed moments ago and the retry budget
@@ -854,6 +861,24 @@ def cron_job_health(job_uuid: UUID) -> dict[str, Any] | None:
             for r in recent
         ],
     }
+
+
+def cron_create_one_shot_message(
+    *, message: str, fire_at: datetime, target: str = "", name: str = "",
+    folder_uuid: UUID | None = None,
+) -> CronJob:
+    """Create an enabled one-shot 'message' cron job: empty cron_expr + a pre-set
+    next_run_at, so it fires once at `fire_at` and then retires (cron_tick
+    disables a fired empty-expr job). `target` is a chatroom uuid string (where
+    to post); empty → the cron room."""
+    job = CronJob(
+        name=name or "Reminder", enabled=True, folder_uuid=folder_uuid,
+        cron_expr="", timezone="UTC", action_type="message",
+        target=target, message=message, next_run_at=fire_at,
+    )
+    db.session.add(job)
+    db.session.commit()
+    return job
 
 
 def seed_cron_defaults() -> None:

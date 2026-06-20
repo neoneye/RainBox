@@ -94,4 +94,5 @@ def test_action_enum_covers_the_known_action_surface():
         "kanban_comment",
         "kanban_create",
         "kanban_delete_task",
+        "set_reminder",
     }

@@ -24,7 +24,8 @@ still satisfy the assistant contracts.
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, cast
 from uuid import UUID
@@ -71,6 +72,7 @@ class AssistantActionName(str, Enum):
     KANBAN_COMMENT = "kanban_comment"    # log-and-undo: comment on a task
     KANBAN_CREATE = "kanban_create"            # log-and-undo: create a task
     KANBAN_DELETE_TASK = "kanban_delete_task"  # internal: create's undo inverse (not prompt-exposed)
+    SET_REMINDER = "set_reminder"      # confirm-tier (dry-run): schedule a reminder message
 
 
 class AssistantStepDecision(BaseModel):
@@ -115,6 +117,9 @@ class AssistantActionContext:
     room_uuid: UUID
     agent_uuid: UUID
     step_index: int
+    # True only inside _propose_write's preview call: a dry_run-capable action
+    # must compute + return a preview without mutating anything.
+    dry_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -452,6 +457,39 @@ def _action_delete_kanban_task(
     )
 
 
+def _action_set_reminder(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Confirm-tier write: schedule a one-shot reminder that posts a chat message
+    at `when` (ISO-8601). In dry-run (propose) it resolves the time and previews
+    without creating anything; on real execution it creates the one-shot cron job."""
+    text = str(args.get("text", "")).strip()
+    raw_when = str(args.get("when", "")).strip()
+    try:
+        fire_at = datetime.fromisoformat(raw_when)
+    except ValueError:
+        return AssistantObservation(
+            ok=False,
+            text=f"invalid 'when' (use ISO-8601, e.g. 2026-06-27T09:00): {raw_when!r}",
+        )
+    if fire_at.tzinfo is None:
+        fire_at = fire_at.replace(tzinfo=UTC)
+    when_str = fire_at.isoformat()
+    if ctx.dry_run:
+        return AssistantObservation(
+            ok=True, text=f"Would remind you at {when_str}: {text}",
+            data={"fire_at": when_str},
+        )
+    job = db.cron_create_one_shot_message(
+        message=f"⏰ Reminder: {text}", fire_at=fire_at, target=str(ctx.room_uuid),
+        name=f"Reminder: {text[:40]}",
+    )
+    return AssistantObservation(
+        ok=True, text=f"Reminder set for {when_str}: {text}",
+        data={"cron_job_uuid": str(job.uuid), "fire_at": when_str},
+    )
+
+
 @dataclass(frozen=True)
 class Capability:
     """Code-owned metadata + dispatch for one assistant action — the primitive
@@ -576,6 +614,13 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         description="(internal) delete a kanban task — the undo-inverse of kanban_create.",
         required_args=("task_uuid",), action=_action_delete_kanban_task,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
+    ),
+    AssistantActionName.SET_REMINDER: Capability(
+        name=AssistantActionName.SET_REMINDER, family="cron",
+        description=('schedule a reminder that messages you at a time; needs your '
+                     'confirmation. args: {"text": "...", "when": "ISO-8601 datetime"}'),
+        required_args=("text", "when"), action=_action_set_reminder,
+        read=False, write=True, tier="confirm", dry_run=True,
     ),
 }
 
@@ -969,6 +1014,10 @@ class AssistantAgent(ModelGroupAgent):
         except Exception as e:  # an action must never crash the loop
             logger.warning("assistant action %s failed: %s", decision.action.value, e)
             return AssistantObservation(ok=False, text=f"{type(e).__name__}: {e}")
+        # NOTE: this cap also applies to dry-run preview text built via
+        # _propose_write. Fine for short previews (reminders); a future dry_run
+        # capability with a long preview (e.g. an S5 file-patch diff) should
+        # raise its output_cap_chars accordingly.
         if len(obs.text) > cap.output_cap_chars:
             obs = AssistantObservation(
                 ok=obs.ok, text=obs.text[: cap.output_cap_chars], data=obs.data
@@ -986,6 +1035,13 @@ class AssistantAgent(ModelGroupAgent):
         after the operator approves — so a confirm-tier write can never execute
         inline, by code, not prompt discipline."""
         preview = f"{cap.name.value}: {json.dumps(decision.args, sort_keys=True)}"
+        if cap.dry_run:
+            # Build a rich preview by running the action in dry-run (it must not
+            # mutate). Bad input fails here → no proposal is recorded.
+            dry = self._dispatch_action(replace(ctx, dry_run=True), decision)
+            if not dry.ok:
+                return dry
+            preview = dry.text
         intent = db.create_write_intent(
             run_id=self._run.id,
             step_index=ctx.step_index,
