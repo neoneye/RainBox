@@ -180,6 +180,28 @@ def args_reasoning_on(arguments: dict[str, Any]) -> bool:
 
 
 class Journal(db.Model):
+    """One unit of agent work (state + payload + result), the internal audit log
+    of the queue.
+
+    IDENTITY NOTE — why `journal_id` is an int, not a uuid:
+    `journal` is keyed only by an integer autoincrement `id`; unlike almost every
+    other entity it has NO `uuid` column. That int is threaded everywhere as
+    `journal_id` — `Agent.handle(journal_id: int, ...)`, `RetrievalEvent`,
+    `AssistantRun`, the inbox queue. It's an internal, high-churn,
+    ordered-by-`id` work/audit table that is never referenced across systems, so
+    an integer PK was cheap and `id` ordering ("what ran next") is handy.
+
+    KNOWN INCONSISTENCY / future consideration: this is the odd one out — UUIDs
+    in this schema are reserved for entities referenced across processes or
+    surfaced externally (agents, rooms, messages, memory claims, the assistant_*
+    tables all carry BOTH `id` and `uuid`). A `uuid` here would be stronger: it's
+    globally unique and self-describing, so a single id grep'd in a log file
+    points at exactly this row without first knowing which table it came from,
+    and it can be passed across boundaries unambiguously. Adding a `uuid` column
+    (kept alongside `id`) is a reasonable future change; it was left out here
+    only to match the long-standing convention, not because int is preferable.
+    """
+
     __tablename__ = "journal"
     id: Mapped[int] = mapped_column(primary_key=True)
     inbox_id: Mapped[int | None] = mapped_column()
