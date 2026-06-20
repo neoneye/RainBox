@@ -251,9 +251,14 @@ def write_candidate_skill(
     return path
 
 
-def set_skill_status(skill_id: str, status: str, *, skills_dir: Path | None = None) -> bool:
+def set_skill_status(
+    skill_id: str, status: str, *, if_current: str | None = None,
+    skills_dir: Path | None = None,
+) -> bool:
     """Rewrite a skill file's frontmatter status (e.g. candidate -> active).
-    False if the overlay/file is missing or the status is invalid."""
+    False if the overlay/file is missing, the status is invalid, or `if_current`
+    is given and the file's current status doesn't match (so e.g. activation only
+    promotes a genuine candidate, not a rejected/superseded/already-active skill)."""
     if status not in _VALID_STATUS:
         return False
     if skills_dir is None:
@@ -264,6 +269,8 @@ def set_skill_status(skill_id: str, status: str, *, skills_dir: Path | None = No
     if not path.exists():
         return False
     fm, body = _split_frontmatter(path.read_text(encoding="utf-8"))
+    if if_current is not None and str(fm.get("status", "")).strip().lower() != if_current:
+        return False
     fm["status"] = status
     front = yaml.safe_dump(fm, sort_keys=False).strip()
     path.write_text(f"---\n{front}\n---\n{body}\n", encoding="utf-8")

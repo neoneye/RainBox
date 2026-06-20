@@ -578,7 +578,7 @@ def _action_activate_skill(
 ) -> AssistantObservation:
     """Confirm-tier write: activate a candidate skill so it can steer future turns."""
     skill_id = str(args.get("skill_id", "")).strip().lower()
-    if not skills.set_skill_status(skill_id, "active"):
+    if not skills.set_skill_status(skill_id, "active", if_current="candidate"):
         return AssistantObservation(ok=False, text=f"no such candidate skill: {skill_id}")
     return AssistantObservation(
         ok=True, text=f"Activated skill '{skill_id}'.", data={"skill_id": skill_id})
