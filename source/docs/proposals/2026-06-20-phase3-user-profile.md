@@ -1,15 +1,29 @@
 # Phase 3 user profile block — concrete PR spec (2026-06-20)
 
-**Status:** build-ready spec. Implements the deferred half of Phase 3 from
-[`2026-06-19-improvements-v2.md`](2026-06-19-improvements-v2.md). PR 7 shipped
-hybrid memory *retrieval* (`query_memory` action). This PR adds the **one-shot
-user profile block**: a compact, always-injected prompt section built from
-active memory + recent context, with source references — the "Profile A"
+**Status: IMPLEMENTED & TESTED (2026-06-20)** — branch `phase3-user-profile`,
+not yet merged to `main`. The plan below held; the **As-built notes** section
+records the three intentional deviations. Implements the deferred half of
+Phase 3 from [`2026-06-19-improvements-v2.md`](2026-06-19-improvements-v2.md).
+PR 7 shipped hybrid memory *retrieval* (`query_memory` action); this work adds
+the **one-shot user profile block**: a compact, always-injected prompt section
+built from active memory, with source references — the "Profile A"
 recommendation from Phase 3.
+
+**What landed:** the `user_profile` package (`select_profile_facts` /
+`format_profile_context` / `build_profile_block`), the shared
+`memory.retrieval.hard_filtered_claims` (extracted so the profile reuses the
+exact "filter before rank" path), and the `AssistantAgent` wiring that injects
+the profile block before the skills block. 10 retrieval tests + 1 assistant
+integration test, all green.
 
 This is **read-only**. It injects existing active memory into the prompt; it
 creates no new claims and infers nothing durable. Inferring profile facts is
 Phase 3.5 (`profile_deriver`) and is explicitly out of scope here.
+
+**What this work does NOT cover (still open):** the async profile deriver
+(Phase 3.5), embedding the profile / vector selection, a profile-editing UI,
+project-scoped profile facts, and migrating the chat agents onto the profile
+block. See **Where Phase 3 goes next** at the bottom of this file.
 
 ## As-built notes (2026-06-20) — these supersede the prose where they differ
 
@@ -158,7 +172,8 @@ New `profile/test_profile_retrieval.py` and additions to the assistant suite:
    `MAX_PROFILE_BLOCK_CHARS` and includes facts in confidence/recency order;
    the dropped ones are recorded `considered` but not `injected`.
 4. **Telemetry:** `considered` and `injected` rows are written with
-   `source="profile.retrieval"`, `target_type="memory_claim"`.
+   `source="user_profile.retrieval"` (as-built; the draft said
+   `profile.retrieval`), `target_type="memory_claim"`.
 5. **Empty profile:** no active claims → empty block → prompt unchanged.
 6. **Prompt assembly (assistant):** with a scripted fake model, the profile
    block appears in the user prompt before the skill block. Reuse the
@@ -186,13 +201,36 @@ New `profile/test_profile_retrieval.py` and additions to the assistant suite:
 - Migrating chat agents onto this block (assistant-only for now).
 - Tokenizer-aware budgeting (still char caps; a later cross-cutting change).
 
-## Open questions for the operator
+## Open questions — resolved as-built
 
-1. **Injection order vs. skills.** Spec puts profile *before* skills ("who you
-   are" before "how to do the task"). Reasonable to flip if skills should win
-   the top-of-prompt slot. Easy to change — one list order in `_build_user_prompt`.
-2. **`project` scope.** `MemoryClaim.scope` includes `project`, but the
-   assistant turn context is room/agent-keyed. For v1 the profile uses the same
-   scope visibility as hybrid retrieval (global + this agent + this room). If
-   project-scoped profile facts should surface, we need a project key on the turn
-   — defer unless needed.
+1. **Injection order vs. skills.** *Decided:* profile is injected **before**
+   skills ("who you are" before "how to do the task"). One list order in
+   `_build_user_prompt`; trivial to flip later if it proves wrong.
+2. **`project` scope.** *Decided:* project-scoped claims are **excluded** from
+   the profile (the turn carries no project key). v1 visibility is global + this
+   agent + this room. Revisit only if/when a project key is threaded onto the
+   turn — see next steps.
+
+## Where Phase 3 goes next
+
+The profile block and embedding freshness (roadmap item 2) are done. Remaining
+Phase-3-adjacent work, roughly by value:
+
+1. **Wire `sync_memory_embeddings` to a trigger.** The freshness functions exist
+   and are wired into the write path, but nothing calls the periodic *reconcile*
+   (backfill active + prune stale). Add a cron job or admin button. *(Belongs to
+   roadmap "Operator surfaces"; small.)*
+2. **Migrate the chat agents onto the profile block and hybrid retrieval.**
+   Today the profile block and `retrieve_memories_hybrid` are assistant-only;
+   the chat agents still use token-overlap `retrieve_memories` and have no
+   profile. Unifying them is the biggest remaining recall win.
+3. **Phase 3.5 async profile deriver.** Build only if the one-shot profile
+   proves stale in practice (the original gate). Would propose `inferred_by_model`
+   candidate claims that feed this same block once activated.
+4. **Project-scoped profile facts.** Needs a project key on the assistant turn
+   first; then drop the `scope == "project"` exclusion in `select_profile_facts`.
+5. **Profile-editing affordance.** Operators currently shape the profile by
+   editing the underlying memory claims; a dedicated review/edit surface is
+   later scope.
+6. **Tokenizer-aware budgeting.** The profile block (and every other section)
+   still uses char caps; a shared token budgeter is a cross-cutting follow-up.
