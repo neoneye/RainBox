@@ -81,58 +81,6 @@ class AssistantStepDecision(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
-# Required args per action — the dispatcher's validator rejects a decision whose
-# required args are missing/empty before anything runs. Defined for the full
-# read-only enum (PR 4 reuses it); PR 2 only *enables* the terminal actions.
-_REQUIRED_ARGS: dict[AssistantActionName, tuple[str, ...]] = {
-    AssistantActionName.REPLY: ("message",),
-    AssistantActionName.ASK_CLARIFYING_QUESTION: ("question",),
-    AssistantActionName.QUERY_MEMORY: ("query",),
-    AssistantActionName.QUERY_QA: ("query",),
-    AssistantActionName.WORKSPACE_READ_COMMAND: ("command",),
-    AssistantActionName.KANBAN_READ: (),
-}
-
-# Optional args an action accepts beyond its required ones. Anything outside
-# required ∪ optional is rejected at validation ("unknown args are risky"), so a
-# stray or unsupported arg becomes a traceable failed step rather than a
-# silently-wrong read. kanban_read takes board_uuid only for now; task_uuid is
-# not yet implemented and is rejected rather than ignored.
-_OPTIONAL_ARGS: dict[AssistantActionName, frozenset[str]] = {
-    AssistantActionName.KANBAN_READ: frozenset({"board_uuid"}),
-}
-
-# One-line prompt help per action, used to render the action catalog.
-_ACTION_HELP: dict[AssistantActionName, str] = {
-    AssistantActionName.REPLY: (
-        'give your final answer to the user; ends the turn. args: {"message": "..."}'
-    ),
-    AssistantActionName.ASK_CLARIFYING_QUESTION: (
-        "ask the user for missing information; ends the turn. "
-        'args: {"question": "..."}'
-    ),
-    AssistantActionName.QUERY_MEMORY: (
-        'search remembered facts. args: {"query": "..."}'
-    ),
-    AssistantActionName.QUERY_QA: (
-        "answer from the Q&A knowledge base and read-only handlers. "
-        'args: {"query": "..."}'
-    ),
-    AssistantActionName.WORKSPACE_READ_COMMAND: (
-        'run an allowlisted read-only file-inspection command. args: {"command": "..."}'
-    ),
-    AssistantActionName.KANBAN_READ: (
-        'read kanban board/card state. args: optional {"board_uuid"}; '
-        "empty lists all boards"
-    ),
-}
-
-# Actions that end the run: the loop posts a chat message and finishes.
-_TERMINAL_ACTIONS: frozenset[AssistantActionName] = frozenset(
-    {AssistantActionName.REPLY, AssistantActionName.ASK_CLARIFYING_QUESTION}
-)
-
-
 ASSISTANT_SYSTEM_PROMPT: str = """\
 You are a personal assistant that works in small, explicit steps.
 
@@ -284,14 +232,122 @@ def _action_kanban_read(
     return AssistantObservation(ok=True, text="\n".join(lines), data={"count": len(boards)})
 
 
-# Registry of read-only action callables. Phase 4 formalizes this into a
-# capability registry with metadata; for now it is the dispatch table.
-_ACTIONS: dict[AssistantActionName, AssistantAction] = {
-    AssistantActionName.QUERY_MEMORY: _action_query_memory,
-    AssistantActionName.QUERY_QA: _action_query_qa,
-    AssistantActionName.WORKSPACE_READ_COMMAND: _action_workspace_read_command,
-    AssistantActionName.KANBAN_READ: _action_kanban_read,
+@dataclass(frozen=True)
+class Capability:
+    """Code-owned metadata + dispatch for one assistant action — the primitive
+    capability registry (Phase 4). The model can only request a capability that
+    is in this registry, enabled, and (for the catalog) prompt_exposed. Both the
+    prompt catalog and dispatch are generated from this single object, so
+    disabling a capability removes it from prompt *and* dispatch at once.
+
+    `family` is the grouping (query/memory/kanban/workspace/conversation/…), kept
+    separate from the read/write/network/secrets permission flags. `adapter` is
+    None for rainbox-native capabilities and names the owning adapter for
+    external ones (e.g. "mcp:github") — unused until the adapter boundary lands.
+    """
+
+    name: AssistantActionName
+    family: str
+    description: str
+    required_args: tuple[str, ...] = ()
+    optional_args: frozenset[str] = frozenset()
+    terminal: bool = False
+    action: AssistantAction | None = None
+    read: bool = True
+    write: bool = False
+    network: bool = False
+    secrets: bool = False
+    confirm_required: bool = False
+    dry_run: bool = False
+    timeout_seconds: int = 10
+    output_cap_chars: int = 4000
+    enabled: bool = True
+    prompt_exposed: bool = True
+    adapter: str | None = None
+
+
+# The capability registry: one record per action. Boring and explicit on
+# purpose. Write-capable capabilities cannot be added without metadata here.
+CAPABILITIES: dict[AssistantActionName, Capability] = {
+    AssistantActionName.REPLY: Capability(
+        name=AssistantActionName.REPLY, family="conversation", read=False,
+        description='give your final answer to the user; ends the turn. args: {"message": "..."}',
+        required_args=("message",), terminal=True,
+    ),
+    AssistantActionName.ASK_CLARIFYING_QUESTION: Capability(
+        name=AssistantActionName.ASK_CLARIFYING_QUESTION, family="conversation", read=False,
+        description=('ask the user for missing information; ends the turn. '
+                     'args: {"question": "..."}'),
+        required_args=("question",), terminal=True,
+    ),
+    AssistantActionName.QUERY_MEMORY: Capability(
+        name=AssistantActionName.QUERY_MEMORY, family="memory",
+        description='search remembered facts. args: {"query": "..."}',
+        required_args=("query",), action=_action_query_memory,
+    ),
+    AssistantActionName.QUERY_QA: Capability(
+        name=AssistantActionName.QUERY_QA, family="query",
+        description=('answer from the Q&A knowledge base and read-only handlers. '
+                     'args: {"query": "..."}'),
+        required_args=("query",), action=_action_query_qa, output_cap_chars=6000,
+    ),
+    AssistantActionName.WORKSPACE_READ_COMMAND: Capability(
+        name=AssistantActionName.WORKSPACE_READ_COMMAND, family="workspace",
+        description='run an allowlisted read-only file-inspection command. args: {"command": "..."}',
+        required_args=("command",), action=_action_workspace_read_command,
+    ),
+    AssistantActionName.KANBAN_READ: Capability(
+        name=AssistantActionName.KANBAN_READ, family="kanban",
+        description=('read kanban board/card state. args: optional {"board_uuid"}; '
+                     "empty lists all boards"),
+        optional_args=frozenset({"board_uuid"}), action=_action_kanban_read,
+    ),
 }
+
+
+def _disabled_capability_names() -> set[str]:
+    """Capability names the operator has turned off via the
+    assistant.disabled_capabilities setting. Best-effort (no app context → none)."""
+    try:
+        val = db.get_setting("assistant.disabled_capabilities")
+    except Exception:
+        return set()
+    if isinstance(val, (list, tuple)):
+        return {str(x) for x in val}
+    if isinstance(val, str):
+        return {t.strip() for t in val.split(",") if t.strip()}
+    return set()
+
+
+def _base_enabled_capabilities() -> dict[AssistantActionName, Capability]:
+    """Capabilities enabled in code, ignoring the operator override. Safe without
+    an app context (e.g. at agent construction)."""
+    return {n: c for n, c in CAPABILITIES.items() if c.enabled}
+
+
+def enabled_capabilities() -> dict[AssistantActionName, Capability]:
+    """Capabilities enabled in code AND not disabled by the operator setting.
+    Requires an app context (reads settings)."""
+    disabled = _disabled_capability_names()
+    return {
+        n: c for n, c in _base_enabled_capabilities().items()
+        if n.value not in disabled
+    }
+
+
+def capability_report() -> list[dict[str, Any]]:
+    """A flat, inspectable view of every capability and whether it is currently
+    enabled — so the operator can see exactly which powers the assistant has."""
+    disabled = _disabled_capability_names()
+    return [
+        {
+            "name": n.value, "family": c.family, "read": c.read, "write": c.write,
+            "network": c.network, "secrets": c.secrets, "terminal": c.terminal,
+            "prompt_exposed": c.prompt_exposed, "adapter": c.adapter,
+            "enabled": c.enabled and n.value not in disabled,
+        }
+        for n, c in CAPABILITIES.items()
+    ]
 
 
 class AssistantAgent(ModelGroupAgent):
@@ -315,17 +371,17 @@ class AssistantAgent(ModelGroupAgent):
     MAX_RECENT_MESSAGES: int = 30
     MAX_SCRATCHPAD_CHARS: int = 5000
     # The slice of an observation the model/trace see per step. The raw action
-    # output is capped harder (MAX_OBSERVATION_CHARS) before this preview.
+    # output is capped harder (per-capability output_cap_chars) before this preview.
     MAX_OBSERVATION_PREVIEW_CHARS: int = 1200
-    MAX_OBSERVATION_CHARS: int = 4000
 
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
         self.step_limit = self.STEP_LIMIT
-        # Terminal actions plus the PR 4 read-only set.
-        self._enabled_actions: frozenset[AssistantActionName] = frozenset(
-            AssistantActionName
-        )
+        # The capabilities this turn may use. Defaults to the code-enabled set;
+        # handle() refreshes it with the operator's disable setting (which needs
+        # an app context). Catalog, validation, and dispatch all read from it, so
+        # a disabled capability disappears from prompt and dispatch together.
+        self._caps: dict[AssistantActionName, Capability] = _base_enabled_capabilities()
         # In-memory mirror of the trace for fast assertions/diagnostics; the
         # durable source of truth is the assistant_run/assistant_step tables.
         self._steps: list[dict[str, Any]] = []
@@ -342,6 +398,8 @@ class AssistantAgent(ModelGroupAgent):
 
     def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
+        # Resolve the operator-effective capability set for this turn.
+        self._caps = enabled_capabilities()
         self._steps = []
         # Open the durable run row up front so a crash anywhere below is recorded
         # against it (and the journal, via Agent.run, when we re-raise).
@@ -388,7 +446,7 @@ class AssistantAgent(ModelGroupAgent):
                     )
                     continue
 
-                if decision.action in _TERMINAL_ACTIONS:
+                if self._caps[decision.action].terminal:
                     self._record_step(
                         step_index=step_index, phase="final", decision=decision
                     )
@@ -490,9 +548,10 @@ class AssistantAgent(ModelGroupAgent):
 
     def _action_catalog(self) -> str:
         lines = ["Available actions (choose exactly one per step):"]
-        for action in AssistantActionName:
-            if action in self._enabled_actions:
-                lines.append(f"- {action.value}: {_ACTION_HELP[action]}")
+        for action in AssistantActionName:  # stable enum order
+            cap = self._caps.get(action)
+            if cap is not None and cap.prompt_exposed:
+                lines.append(f"- {action.value}: {cap.description}")
         return "\n".join(lines)
 
     def _build_skill_block(
@@ -548,18 +607,20 @@ class AssistantAgent(ModelGroupAgent):
     # --- validation, terminal output, trace -----------------------------------
 
     def _validate_decision(self, decision: AssistantStepDecision) -> str | None:
-        """Return an error string if the decision can't be dispatched, else None."""
+        """Return an error string if the decision can't be dispatched, else None.
+        Everything is checked against the effective capability registry, so a
+        disabled or unknown capability is rejected here before any dispatch."""
         action = decision.action
-        if action not in self._enabled_actions:
+        cap = self._caps.get(action)
+        if cap is None:
             return f"action '{action.value}' is not available"
         args = decision.args or {}
-        required = _REQUIRED_ARGS.get(action, ())
-        for key in required:
+        for key in cap.required_args:
             value = args.get(key)
             if not isinstance(value, str) or not value.strip():
                 return f"action '{action.value}' requires a non-empty '{key}' argument"
         # Reject unknown args so an unsupported/typo'd read can't look successful.
-        allowed = set(required) | _OPTIONAL_ARGS.get(action, frozenset())
+        allowed = set(cap.required_args) | cap.optional_args
         unknown = sorted(set(args) - allowed)
         if unknown:
             return f"action '{action.value}' got unknown argument(s): {', '.join(unknown)}"
@@ -573,22 +634,23 @@ class AssistantAgent(ModelGroupAgent):
     def _dispatch_action(
         self, ctx: AssistantActionContext, decision: AssistantStepDecision
     ) -> AssistantObservation:
-        """Run one validated read action. Exceptions become a failed observation
-        (the loop records the failed step); output is capped so a chatty action
-        can't blow the prompt budget."""
-        action_fn = _ACTIONS.get(decision.action)
-        if action_fn is None:
+        """Run one validated read action via its registry callable. Exceptions
+        become a failed observation (the loop records the failed step); output is
+        capped per the capability so a chatty action can't blow the prompt
+        budget."""
+        cap = self._caps.get(decision.action)
+        if cap is None or cap.action is None:
             return AssistantObservation(
                 ok=False, text=f"action '{decision.action.value}' has no dispatcher"
             )
         try:
-            obs = action_fn(ctx, decision.args)
+            obs = cap.action(ctx, decision.args)
         except Exception as e:  # an action must never crash the loop
             logger.warning("assistant action %s failed: %s", decision.action.value, e)
             return AssistantObservation(ok=False, text=f"{type(e).__name__}: {e}")
-        if len(obs.text) > self.MAX_OBSERVATION_CHARS:
+        if len(obs.text) > cap.output_cap_chars:
             obs = AssistantObservation(
-                ok=obs.ok, text=obs.text[: self.MAX_OBSERVATION_CHARS], data=obs.data
+                ok=obs.ok, text=obs.text[: cap.output_cap_chars], data=obs.data
             )
         return obs
 
