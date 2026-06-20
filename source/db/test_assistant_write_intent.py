@@ -100,3 +100,15 @@ def test_intent_cascades_when_run_deleted(app_ctx):
     db.db.session.query(AssistantRun).filter(AssistantRun.id == r.id).delete()
     db.db.session.commit()
     assert db.db.session.get(AssistantWriteIntent, iid) is None
+
+
+def test_create_write_intent_accepts_completed_state_and_result(run):
+    intent = db.create_write_intent(
+        run_id=run.id, step_index=0, capability_name="kanban_move",
+        payload={"task_uuid": "t", "column_uuid": "c"},
+        preview_text="kanban_move: …",
+        room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,
+        state="completed", result={"undo": {"capability": "kanban_move"}},
+    )
+    assert intent.state == "completed"
+    assert intent.result == {"undo": {"capability": "kanban_move"}}
