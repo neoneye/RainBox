@@ -155,16 +155,19 @@ trailing `(v2 …)` notes anchor each to the frozen commitment it carries.
   embeddings with no manual call; a test drives the job end to end with a fake
   embedder.
 
-### S2 — More kanban write families  ·  🟡 IN PROGRESS  ·  Size M (per family)  ·  (v2 Phase 5 #2)
-- **Done (batch 1, merged `46230eb`):** `kanban_complete` (mark done; undo
-  re-opens via `kanban_move`) and `kanban_comment` (append comment; undo posts a
-  `↩ retracted: …`), both log-and-undo; plus the `_record_log_and_undo` None-undo
-  warning. Spec:
-  [`../superpowers/specs/2026-06-20-s2-kanban-complete-comment-design.md`](../superpowers/specs/2026-06-20-s2-kanban-complete-comment-design.md).
-- **Remaining (batch 2, own spec):** `kanban_create` — needs
-  `kanban_create_task`/`kanban_delete_task` DB primitives and a dispatch guard so
-  the model can request only prompt-exposed capabilities (the delete-inverse must
-  not be model-invocable); undo = delete the created task.
+### S2 — More kanban write families  ·  ✅ DONE  ·  Size M (per family)  ·  (v2 Phase 5 #2)
+The assistant's kanban write family now covers **move / complete / comment /
+create**, all log-and-undo on the shared write-intent ledger. Shipped in two
+batches:
+- **Batch 1 (merged `46230eb`):** `kanban_complete` (mark done; undo re-opens via
+  `kanban_move`) + `kanban_comment` (append comment; undo posts `↩ retracted: …`);
+  plus the `_record_log_and_undo` None-undo warning.
+  [spec](../superpowers/specs/2026-06-20-s2-kanban-complete-comment-design.md)
+- **Batch 2 (merged `4d5b905`):** `kanban_create` (undo deletes the task) via an
+  internal, non-prompt-exposed `kanban_delete_task` inverse; enforces the "model
+  may request only prompt-exposed capabilities" contract with a `_validate_decision`
+  guard. New `kanban_create_task`/`kanban_delete_task` DB primitives.
+  [spec](../superpowers/specs/2026-06-20-s2-kanban-create-design.md)
 - **Goal:** Extend the assistant's kanban writes beyond `move`, reusing the
   log-and-undo ledger and the code-owned-capability authority stance.
 - **Touches:** `agents/assistant.py` (new capabilities + `_action_*`),
