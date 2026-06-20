@@ -21,6 +21,7 @@ illustrative-until-promoted: they may be refined by a later PR as long as they
 still satisfy the assistant contracts.
 """
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -60,6 +61,10 @@ class AssistantActionName(str, Enum):
     QUERY_QA = "query_qa"
     WORKSPACE_READ_COMMAND = "workspace_read_command"
     KANBAN_READ = "kanban_read"
+
+    # Write actions (PR 9): the first controlled-write family.
+    REMEMBER = "remember"              # log-and-undo: create an inert candidate
+    ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
 
 
 class AssistantStepDecision(BaseModel):
@@ -232,6 +237,50 @@ def _action_kanban_read(
     return AssistantObservation(ok=True, text="\n".join(lines), data={"count": len(boards)})
 
 
+def _action_remember(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: create an inert *candidate* memory claim. Low blast
+    radius (candidates never affect behavior until activated), executes
+    immediately, and is reversed by rejecting the candidate."""
+    text = str(args.get("text", "")).strip()
+    claim = db.create_memory_claim(
+        scope="room", kind="fact", text=text, confidence=0.5,
+        status="candidate", sensitivity="private",
+        agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
+    )
+    db.add_memory_evidence(
+        memory_uuid=claim.uuid, provenance="inferred_by_model",
+        source_type="chat_message", created_by_uuid=ctx.agent_uuid,
+    )
+    return AssistantObservation(
+        ok=True,
+        text=f"Remembered as a candidate (reject to undo): {text}",
+        data={"memory_uuid": str(claim.uuid), "status": "candidate"},
+    )
+
+
+def _action_activate_memory(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Confirm-tier write *executor*: activate a candidate memory (steers future
+    behavior). The dispatcher never calls this inline — it runs only via an
+    approved write intent."""
+    raw = args.get("memory_uuid")
+    try:
+        memory_uuid = UUID(str(raw))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid memory_uuid: {raw!r}")
+    claim = db.get_memory_claim(memory_uuid)
+    if claim is None:
+        return AssistantObservation(ok=False, text="no such memory claim")
+    db.activate_memory_claim(memory_uuid, confirmed_by_uuid=ctx.agent_uuid)
+    return AssistantObservation(
+        ok=True, text=f"Activated memory {memory_uuid}",
+        data={"memory_uuid": str(memory_uuid), "status": "active"},
+    )
+
+
 @dataclass(frozen=True)
 class Capability:
     """Code-owned metadata + dispatch for one assistant action — the primitive
@@ -255,6 +304,9 @@ class Capability:
     action: AssistantAction | None = None
     read: bool = True
     write: bool = False
+    # Write approval tier: "log_and_undo" executes immediately with a reversible
+    # trace; "confirm" only proposes and needs operator approval. None for reads.
+    tier: str | None = None
     network: bool = False
     secrets: bool = False
     confirm_required: bool = False
@@ -301,6 +353,20 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         description=('read kanban board/card state. args: optional {"board_uuid"}; '
                      "empty lists all boards"),
         optional_args=frozenset({"board_uuid"}), action=_action_kanban_read,
+    ),
+    AssistantActionName.REMEMBER: Capability(
+        name=AssistantActionName.REMEMBER, family="memory",
+        description=('remember a fact as an inert candidate (reject to undo). '
+                     'args: {"text": "..."}'),
+        required_args=("text",), action=_action_remember,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.ACTIVATE_MEMORY: Capability(
+        name=AssistantActionName.ACTIVATE_MEMORY, family="memory",
+        description=('propose activating a candidate memory so it steers future '
+                     'answers; needs your confirmation. args: {"memory_uuid": "..."}'),
+        required_args=("memory_uuid",), action=_action_activate_memory,
+        read=False, write=True, tier="confirm",
     ),
 }
 
@@ -459,9 +525,11 @@ class AssistantAgent(ModelGroupAgent):
                     )
                     return self._run_result("finished", text[:200])
 
-                # Non-terminal read action: commit the `running` row before the
-                # action runs (so a kill mid-action leaves it), dispatch, then
-                # record the observation and feed a compact form to the model.
+                # Non-terminal action: commit the `running` row before acting (so
+                # a kill mid-action leaves it), then act and record the
+                # observation. A confirm-tier write is *proposed* here, never
+                # executed inline; everything else (reads, log-and-undo writes)
+                # executes immediately.
                 self._record_step(step_index=step_index, phase="running", decision=decision)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
@@ -469,7 +537,11 @@ class AssistantAgent(ModelGroupAgent):
                     agent_uuid=self.agent_uuid,
                     step_index=step_index,
                 )
-                observation = self._dispatch_action(action_ctx, decision)
+                cap = self._caps[decision.action]
+                if cap.write and cap.tier == "confirm":
+                    observation = self._propose_write(action_ctx, decision, cap)
+                else:
+                    observation = self._dispatch_action(action_ctx, decision)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._record_step(
                     step_index=step_index,
@@ -653,6 +725,33 @@ class AssistantAgent(ModelGroupAgent):
                 ok=obs.ok, text=obs.text[: cap.output_cap_chars], data=obs.data
             )
         return obs
+
+    def _propose_write(
+        self,
+        ctx: AssistantActionContext,
+        decision: AssistantStepDecision,
+        cap: "Capability",
+    ) -> AssistantObservation:
+        """Record a confirm-tier write as a proposed intent instead of executing
+        it. The actual write runs only via agents.assistant_writes.execute_write_intent
+        after the operator approves — so a confirm-tier write can never execute
+        inline, by code, not prompt discipline."""
+        preview = f"{cap.name.value}: {json.dumps(decision.args, sort_keys=True)}"
+        intent = db.create_write_intent(
+            run_id=self._run.id,
+            step_index=ctx.step_index,
+            capability_name=cap.name.value,
+            payload=decision.args,
+            preview_text=preview,
+            room_uuid=ctx.room_uuid,
+            agent_uuid=ctx.agent_uuid,
+        )
+        return AssistantObservation(
+            ok=True,
+            text=(f"Proposed (awaiting your confirmation): {preview}. "
+                  f"Confirm intent {intent.uuid} to apply."),
+            data={"write_intent_uuid": str(intent.uuid), "state": "proposed"},
+        )
 
     @staticmethod
     def _compact_step(

@@ -324,6 +324,27 @@ def assistant_run_steps(run_id: int) -> Response:
     )
 
 
+@app.route("/chat/api/assistant/write-intents/<uuid:intent_uuid>/confirm", methods=["POST"])
+def confirm_assistant_write_intent(intent_uuid: UUID) -> Response:
+    """Approve and execute a confirm-tier write the assistant proposed. Execution
+    is bound to the proposed payload; the assistant cannot run it itself."""
+    from agents.assistant_writes import execute_write_intent
+
+    human = db.get_human_user()
+    obs = execute_write_intent(
+        intent_uuid, confirmed_by_uuid=human.uuid if human else None
+    )
+    return jsonify({"ok": obs.ok, "text": obs.text, "data": obs.data})
+
+
+@app.route("/chat/api/assistant/write-intents/<uuid:intent_uuid>/reject", methods=["POST"])
+def reject_assistant_write_intent(intent_uuid: UUID) -> Response:
+    """Decline a proposed confirm-tier write."""
+    from agents.assistant_writes import reject_write_intent
+
+    return jsonify({"rejected": reject_write_intent(intent_uuid)})
+
+
 @app.route("/chat/api/messages/<message_uuid>/feedback", methods=["POST"])
 def post_feedback(message_uuid: str) -> Response | tuple[Response, int]:
     """Capture an upvote/downvote on an agent's user-facing chat reply.

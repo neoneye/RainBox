@@ -1002,6 +1002,50 @@ class AssistantStep(db.Model):
     )
 
 
+class AssistantWriteIntent(db.Model):
+    """A confirm-tier write the assistant proposed but must not execute until the
+    operator approves it. The payload is bound by `payload_hash` so a confirmed
+    intent executes exactly what was previewed — the assistant cannot mutate it
+    after confirmation. Log-and-undo writes do not use this table.
+
+    State machine: proposed -> confirmed -> executing -> completed | failed, with
+    rejected (operator declined) and undone (a completed write was reverted) as
+    additional terminal states.
+    """
+
+    __tablename__ = "assistant_write_intent"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_run.id", ondelete="CASCADE"), index=True
+    )
+    step_index: Mapped[int] = mapped_column()
+    capability_name: Mapped[str] = mapped_column(Text)
+    payload_hash: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    preview_text: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text, default="proposed")
+    room_uuid: Mapped[UUID] = mapped_column()
+    agent_uuid: Mapped[UUID] = mapped_column()
+    result: Mapped[dict] = mapped_column(JSONB, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_by_uuid: Mapped[UUID | None] = mapped_column()
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('proposed','confirmed','executing','completed','failed',"
+            "'rejected','undone')",
+            name="ck_assistant_write_intent_state",
+        ),
+        Index("assistant_write_intent_by_run", "run_id", "id"),
+    )
+
+
 class MemoryEmbedding(db.Model):
     """A vector embedding of an active memory claim — the rainbox-owned half of
     hybrid retrieval (the Q&A table is owned by LlamaIndex's PGVectorStore).

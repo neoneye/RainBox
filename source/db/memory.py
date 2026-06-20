@@ -118,6 +118,26 @@ def supersede_memory(
     return new_claim
 
 
+def activate_memory_claim(
+    memory_uuid: UUID, *, confirmed_by_uuid: UUID | None = None
+) -> MemoryClaim:
+    """Promote a claim to `active` and record a confirmation evidence row. Used
+    by the confirm-tier activate_memory write once an operator approves it."""
+    claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
+    if claim is None:
+        raise ValueError(f"memory claim not found: {memory_uuid}")
+    claim.status = "active"
+    claim.updated_at = datetime.now(UTC)
+    db.session.add(
+        MemoryEvidence(
+            memory_uuid=memory_uuid, provenance="confirmed_by_user",
+            source_type="manual", created_by_uuid=confirmed_by_uuid,
+        )
+    )
+    db.session.commit()
+    return claim
+
+
 def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any]) -> None:
     """Mark a claim `rejected` and attach an evidence row recording the
     rejection. Existing evidence is left untouched (the audit trail
