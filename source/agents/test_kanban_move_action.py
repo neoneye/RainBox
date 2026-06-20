@@ -71,10 +71,12 @@ def test_move_executes_and_returns_inverse(board):
     assert obs.ok is True
     # Task actually moved.
     assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == done
-    # Inverse points back at the original column.
+    # Inverse points back at the original column; expect_column pins the
+    # destination so undo refuses if the task moves again first.
     assert obs.data["undo"] == {
         "capability": "kanban_move",
-        "payload": {"task_uuid": task["uuid"], "column_uuid": todo},
+        "payload": {"task_uuid": task["uuid"], "column_uuid": todo,
+                    "expect_column": done},
     }
 
 
@@ -159,4 +161,33 @@ def test_move_via_loop_lands_completed_undo_ledger(board):
         db.db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
+
+
+def test_undo_refused_if_task_moved_since(board):
+    """Position-aware undo: if the task moved after the assistant's move, undoing
+    must not yank it from where it now sits. Refuse and leave it put."""
+    from agents.assistant_writes import undo_write_intent
+    from db import AssistantRun, AssistantWriteIntent
+
+    task = board["tasks"][0]
+    todo, done = board["columns"][0]["uuid"], board["columns"][1]["uuid"]
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID, step_limit=6)
+    obs = _action_move_kanban_task(_ctx(), {"task_uuid": task["uuid"], "column_uuid": done})
+    intent = db.create_write_intent(
+        run_id=run.id, step_index=0, capability_name="kanban_move",
+        payload={"task_uuid": task["uuid"], "column_uuid": done},
+        preview_text="kanban_move", room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
+        state="completed", result={"undo": obs.data["undo"]})
+    # Someone else moves the task back to To do after the assistant's move.
+    db.kanban_move_task(UUID(task["uuid"]), UUID(todo), actor="human")
+    try:
+        out = undo_write_intent(intent.uuid)
+        assert out.ok is False
+        assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == todo  # left put
+    finally:
+        db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.run_id == run.id).delete()
+        db.db.session.query(AssistantRun).filter(AssistantRun.id == run.id).delete()
         db.db.session.commit()

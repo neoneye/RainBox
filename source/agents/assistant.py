@@ -369,6 +369,13 @@ def _action_move_kanban_task(
     if before is None:
         return AssistantObservation(ok=False, text="no such kanban task")
     from_column_uuid = before["columnUuid"]
+    # Position-aware undo: an undo carries `expect_column` (where the original
+    # write left the task). If the task has since moved, refuse — don't yank it
+    # from where it now sits.
+    expect = args.get("expect_column")
+    if expect is not None and str(from_column_uuid) != str(expect):
+        return AssistantObservation(
+            ok=False, text="task moved since the write; not undoing")
     try:
         moved = db.kanban_move_task(
             task_uuid, column_uuid,
@@ -388,7 +395,8 @@ def _action_move_kanban_task(
             "undo": {
                 "capability": "kanban_move",
                 "payload": {"task_uuid": str(task_uuid),
-                            "column_uuid": str(from_column_uuid)},
+                            "column_uuid": str(from_column_uuid),
+                            "expect_column": str(column_uuid)},
             },
         },
     )
@@ -425,7 +433,8 @@ def _action_complete_kanban_task(
             "undo": {
                 "capability": "kanban_move",
                 "payload": {"task_uuid": str(task_uuid),
-                            "column_uuid": str(from_column_uuid)},
+                            "column_uuid": str(from_column_uuid),
+                            "expect_column": str(after["columnUuid"])},
             },
         },
     )
