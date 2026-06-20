@@ -213,25 +213,22 @@ batches:
   injected into the prompt + a parser; absolute ISO only today); edit/cancel of a
   pending reminder; recurring reminders.
 
-### S5 — File/document patch proposals  ·  Size M/L  ·  Depends on: none  ·  (v2 Phase 5 #4)
-- **Goal:** The assistant proposes edits to files/documents as **patches**, never
-  silent file writes — "start with proposed patches" (v2).
-- **Touches:** new capability + action in `agents/assistant.py`; the workspace
-  policy/runner (`tools/`) for safe paths; a patch-preview surface in
-  `webapp/chat_api.py` + chat UI.
-- **Decisions:** **confirm-tier with a dry-run unified-diff preview** (the second
-  real `Capability.dry_run` user); **patch-apply primitive** — reuse
-  `agents/patch_apply.py::apply_patches` (string/document-level, already used by
-  the edit-document agents) vs. a smaller file-level patch helper, and where
-  file I/O happens; which paths are writable (reuse/extend the workspace
-  allowlist — today it is read-only); rollback (revert the applied patch).
-- **Safety primitive (required):** every writable path is resolved and confirmed
-  to be **inside the workspace root** before any write — explicit path-traversal /
-  symlink / outside-workspace **rejection tests** are part of "done," not optional.
-- **Done when:** the assistant produces a previewable patch that is never applied
-  without an approved intent; applying is bound to the previewed diff (payload
-  hash); an out-of-workspace or traversal path is rejected (tested); a
-  bad/no-longer-applying patch fails cleanly with no partial write.
+### S5 — File/document patch proposals  ·  ✅ DONE (merged `8416fe7`)  ·  Size M/L  ·  (v2 Phase 5 #4)
+- **Shipped:** `edit_file` — confirm-tier write; the model supplies a path + full
+  new content, `_propose_write` (the S4 dry-run protocol) shows a **unified diff**,
+  the operator confirms to apply. Path safety reuses
+  `tools.workspace_policy.resolve_workspace_path` (workspace-confined; rejects
+  traversal/`~`/NUL/symlink-escape/sensitive names) — re-validated again at execute
+  time against the hash-checked payload. 100KB cap; new-file create + no-op
+  refusal; `output_cap_chars=12000` so the diff isn't truncated.
+  [spec](../superpowers/specs/2026-06-20-s5-file-edit-design.md)
+- **Security review (Opus):** containment empirically verified for traversal,
+  absolute, `~`, NUL, and final-component + parent-dir symlink escapes; dry-run
+  writes nothing; confirm-tier never writes inline.
+- **Follow-ups (own cards / S12):** line-range patch fragments (token-cheaper than
+  full content); automated one-click revert (needs an undo path for confirm-tier);
+  **harden the sensitive-name denylist for writes** (it was sized for reads —
+  exact/case-sensitive, e.g. `.git/config` and `.ENV` aren't covered).
 
 ### S6 — `rainbox doctor` CLI  ·  Size S/M  ·  Depends on: none  ·  (v2 Phase 4)
 - **Goal:** Promote `capability_report()` into an operator-facing health check.
