@@ -192,13 +192,17 @@ _W_FULLTEXT = 0.30
 _W_ENTITY = 0.15
 
 
-def _hard_filtered_claims(
+def hard_filtered_claims(
     include_secret: bool,
     room_uuid: UUID | None,
     agent_uuid: UUID | None,
 ) -> list[MemoryClaim]:
     """Active, allowed-sensitivity, non-expired, in-scope claims — applied
-    BEFORE any ranking so forbidden claims never enter the candidate set."""
+    BEFORE any ranking so forbidden claims never enter the candidate set.
+
+    This is the single source of truth for the 'filter before rank' contract:
+    both hybrid retrieval and the user-profile digest reuse it so forbidden
+    claims can't leak through a divergent copy of the filter."""
     q = db.db.session.query(MemoryClaim).filter(MemoryClaim.status == "active")
     if not include_secret:
         q = q.filter(MemoryClaim.sensitivity != "secret")
@@ -301,7 +305,7 @@ def retrieve_memories_hybrid(
     """
     if not query or not query.strip():
         return []
-    candidates = _hard_filtered_claims(include_secret, room_uuid, agent_uuid)
+    candidates = hard_filtered_claims(include_secret, room_uuid, agent_uuid)
     if not candidates:
         return []
 

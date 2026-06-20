@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 import db
 import skills
+import user_profile
 from agents.base import ModelGroupAgent, StatusSender
 from chat.transcript import format_history
 
@@ -454,6 +455,9 @@ class AssistantAgent(ModelGroupAgent):
         self._run: Any = None
         # Active-skill guidance for this turn, injected into every step's prompt.
         self._skill_block: str = ""
+        # Operator self-model digest (active memory) for this turn, injected
+        # before the skill block.
+        self._profile_block: str = ""
         # Coarse current activity, surfaced in heartbeats so a slow run looks
         # different from a hung one.
         self._activity: str = "idle"
@@ -494,6 +498,9 @@ class AssistantAgent(ModelGroupAgent):
             # inert and never injected). Best-effort: a retrieval failure must
             # not break the turn.
             self._skill_block = self._build_skill_block(messages, journal_id, room_uuid)
+            # Operator self-model digest: query-independent, always present (best
+            # -effort — a retrieval failure must not break the turn).
+            self._profile_block = self._build_profile_block(journal_id, room_uuid)
             scratchpad: list[str] = []
 
             for step_index in range(self.step_limit):
@@ -659,6 +666,20 @@ class AssistantAgent(ModelGroupAgent):
             logger.warning("assistant: skill retrieval failed", exc_info=True)
             return ""
 
+    def _build_profile_block(self, journal_id: UUID, room_uuid: UUID) -> str:
+        """Render the operator self-model digest (active memory) for this turn.
+        Query-independent (unlike `query_memory`); empty when there is no active
+        profile. Best-effort: a retrieval failure must not break the turn."""
+        try:
+            block, _ = user_profile.build_profile_block(
+                agent_uuid=self.agent_uuid, room_uuid=room_uuid,
+                journal_id=journal_id,
+            )
+            return block
+        except Exception:
+            logger.warning("assistant: profile retrieval failed", exc_info=True)
+            return ""
+
     def _build_user_prompt(
         self,
         *,
@@ -667,6 +688,9 @@ class AssistantAgent(ModelGroupAgent):
         step_index: int,
     ) -> str:
         parts = []
+        # Profile (who the operator is) before skills (how to do the task).
+        if self._profile_block:
+            parts.append(self._profile_block)
         if self._skill_block:
             parts.append(self._skill_block)
         parts.append(transcript)
