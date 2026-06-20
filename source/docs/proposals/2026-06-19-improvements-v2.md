@@ -26,16 +26,23 @@ roadmap. The full PR stack (PRs 1-10) has been built, tested, and merged to
 |---|---|---|
 | Roadmap direction | **Decided** | The phase order and major choices held through implementation. |
 | PRs 1-10 (the whole stack) | **Implemented & merged** | Landed on `main` in two PRs (#1 = PRs 1-5, #2 = PRs 6-10). The code is the source of truth now. |
-| Phase 3 user profile + embedding freshness | **Implemented, not yet merged** | On branch `phase3-user-profile`. The deferred half of Phase 3 plus write-path embedding freshness. See **Where we are going next**. |
-| Later directions | **Roadmap** | Not yet built (more write families, MCP/git adapters, dashboard UI, doctor CLI, chat-agent unification, Phase 3.5 deriver). |
+| Phase 3 user profile + embedding freshness | **Implemented & merged** | On `main` (merge `2f09a0b`). The deferred half of Phase 3 plus write-path embedding freshness. |
+| Kanban-move write family (first Phase 5 family) | **Implemented & merged** | On `main` (merge `33923ab`). First log-and-undo write + the reusable log-and-undo ledger / generic undo (`undone`) the roadmap flagged as missing. See [`2026-06-20-kanban-move-write-family-design.md`](../superpowers/specs/2026-06-20-kanban-move-write-family-design.md). |
+| Later directions | **Roadmap** | Not yet built (remaining write families: kanban create/comment/complete, cron/reminders, file/document patches, MCP; the Phase 4 adapter boundary; operator surfaces — doctor, dashboard, embedding-sync trigger; chat-agent unification; Phase 3.5 deriver). |
 | Concrete schemas in prose | **Superseded by code** | The shipped SQLAlchemy models, the capability registry, and the loop are authoritative; the JSON/table sketches below are historical design notes. |
 
-The practical status is: **the full Phase 1-6 skeleton plus the deferred half of
-Phase 3 (user profile) and embedding freshness are done** (the latter two on an
-unmerged branch). The next major step is additional write families (Phase 5
-rollout); then the external-system adapter boundary, operator-facing polish
-(doctor, dashboard, embedding-sync trigger), and chat-agent unification — see
-**Where we are going next**.
+**Is v2 fully implemented? No — substantially, not fully.** Done and merged: the
+full Phase 1-6 skeleton, the deferred half of Phase 3 (user profile), embedding
+freshness, and the *first* Phase 5 write family (kanban-move) plus the reusable
+log-and-undo ledger. Still open: the rest of the Phase 5 write-family rollout,
+the Phase 4 external-system adapter boundary, operator surfaces (doctor,
+dashboard, embedding-sync trigger), chat-agent unification, and the optional
+Phase 3.5 deriver — see **Where we are going next**.
+
+This file is now best read as a **frozen roadmap + decision log**, not a live
+tracker. New work gets its own spec/plan pair under `docs/superpowers/`
+(as kanban-move did); this doc records the direction and the contracts, and its
+"Where we are going next" list is the index of what remains.
 
 Known rough edges in this document:
 
@@ -112,7 +119,7 @@ These are intentional and supersede the prose where they differ:
 
 This is the forward plan now that the skeleton is complete.
 
-**Done since the skeleton (branch `phase3-user-profile`, not yet merged):**
+**Done since the skeleton (all merged to `main`):**
 
 - ✅ **Phase 3 user profile (the deferred half).** A one-shot profile block built
   from active memory, injected before the skills block, with provenance +
@@ -124,13 +131,22 @@ This is the forward plan now that the skeleton is complete.
   `prune_stale_embeddings` is the lazy safety net, and `sync_memory_embeddings`
   is the triggered/periodic reconcile. *Caveat:* no production trigger calls
   `sync` yet (a cron/admin button — see Operator surfaces below).
+- ✅ **Kanban-move write family + log-and-undo machinery (first Phase 5 family).**
+  A code-owned `kanban_move` log-and-undo capability (it bypasses the worker
+  observe/work/shape model by design — safety is reversibility + trace), the loop
+  recording executed log-and-undo writes as a `completed` `assistant_write_intent`
+  carrying its inverse, and a generic `undo_write_intent` + `POST …/undo` endpoint
+  that replays the inverse and marks the intent `undone`. This delivers the
+  **`undone` handling** the Phase 5 list called for. Details:
+  [`2026-06-20-kanban-move-write-family-design.md`](../superpowers/specs/2026-06-20-kanban-move-write-family-design.md).
 
 **Still to do, rough order of value:**
 
-1. **More write families (Phase 5 rollout).** Kanban work events, cron/reminders,
-   then file/document patch proposals — each with its tier, trace, and
-   dry-run/confirm or log-and-undo, reusing the `assistant_write_intent`
-   machinery. Add `undone` handling for log-and-undo reverts. *(Next major step.)*
+1. **More write families (Phase 5 rollout).** The log-and-undo ledger + `undone`
+   machinery now exists (kanban-move). Remaining families, each with its tier,
+   trace, and dry-run/confirm or log-and-undo: more kanban writes
+   (create/comment/complete/assign), cron/reminders, then file/document patch
+   proposals. *(Next major step.)*
 2. **External-system adapter boundary (Phase 4 direction).** MCP as the first
    read-only adapter (`adapter="mcp:..."` on capabilities), git as a natural
    second — routed through the registry, never as a bespoke controller.

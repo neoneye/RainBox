@@ -1,8 +1,8 @@
 # Phase 3 user profile block — concrete PR spec (2026-06-20)
 
-**Status: IMPLEMENTED & TESTED (2026-06-20)** — branch `phase3-user-profile`,
-not yet merged to `main`. The plan below held; the **As-built notes** section
-records the three intentional deviations. Implements the deferred half of
+**Status: IMPLEMENTED, TESTED & MERGED (2026-06-20)** — on `main` (merge
+`2f09a0b`). The plan below held; the **As-built notes** section records the three
+intentional deviations. Implements the deferred half of
 Phase 3 from [`2026-06-19-improvements-v2.md`](2026-06-19-improvements-v2.md).
 PR 7 shipped hybrid memory *retrieval* (`query_memory` action); this work adds
 the **one-shot user profile block**: a compact, always-injected prompt section
