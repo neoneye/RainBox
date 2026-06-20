@@ -19,8 +19,10 @@ metadata and dedup"):
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import yaml
@@ -28,6 +30,9 @@ import yaml
 import db
 
 logger = logging.getLogger(__name__)
+
+# A skill id is a lowercase kebab slug (matches the loader's id rules).
+_SKILL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 # Base skills that ship with rainbox.
 SKILLS_DIR: Path = Path(__file__).resolve().parent.parent / "data" / "skills"
@@ -208,6 +213,74 @@ def load_skills(
     # A rejected skill is never usable; drop it from the returned set so callers
     # never see it as available (its only job was to suppress a base id above).
     return [s for s in result if s.status != "rejected"]
+
+
+def _skill_file(skills_dir: Path, skill_id: str) -> Path:
+    return skills_dir / f"{skill_id}.md"
+
+
+def write_candidate_skill(
+    *, skill_id: str, title: str, body: str, created_by: str = "assistant",
+    retrieval_tags: list[str] | None = None, source_journal_id: object = None,
+    source_step_id: int | None = None, skills_dir: Path | None = None,
+) -> Path | None:
+    """Write an inert candidate skill file to the overlay (or `skills_dir`).
+    Returns the path, or None if the overlay is unconfigured, the id is not a
+    clean slug, or a skill with that id already exists (never overwrite)."""
+    if skills_dir is None:
+        skills_dir = _overlay_dir()
+    if skills_dir is None:
+        return None
+    skill_id = skill_id.strip().lower()
+    if not _SKILL_ID_RE.match(skill_id):
+        return None
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    path = _skill_file(skills_dir, skill_id)
+    if path.exists():
+        return None
+    fm: dict[str, Any] = {
+        "id": skill_id, "status": "candidate", "created_by": created_by,
+        "retrieval_tags": [t.strip().lower() for t in (retrieval_tags or []) if t.strip()],
+    }
+    if source_journal_id is not None:
+        fm["source_journal_id"] = str(source_journal_id)
+    if source_step_id is not None:
+        fm["source_step_id"] = source_step_id
+    front = yaml.safe_dump(fm, sort_keys=False).strip()
+    path.write_text(f"---\n{front}\n---\n# {title}\n\n{body}\n", encoding="utf-8")
+    return path
+
+
+def set_skill_status(skill_id: str, status: str, *, skills_dir: Path | None = None) -> bool:
+    """Rewrite a skill file's frontmatter status (e.g. candidate -> active).
+    False if the overlay/file is missing or the status is invalid."""
+    if status not in _VALID_STATUS:
+        return False
+    if skills_dir is None:
+        skills_dir = _overlay_dir()
+    if skills_dir is None:
+        return False
+    path = _skill_file(skills_dir, skill_id.strip().lower())
+    if not path.exists():
+        return False
+    fm, body = _split_frontmatter(path.read_text(encoding="utf-8"))
+    fm["status"] = status
+    front = yaml.safe_dump(fm, sort_keys=False).strip()
+    path.write_text(f"---\n{front}\n---\n{body}\n", encoding="utf-8")
+    return True
+
+
+def delete_skill_file(skill_id: str, *, skills_dir: Path | None = None) -> bool:
+    """Delete a skill file (the undo-inverse of write_candidate_skill)."""
+    if skills_dir is None:
+        skills_dir = _overlay_dir()
+    if skills_dir is None:
+        return False
+    path = _skill_file(skills_dir, skill_id.strip().lower())
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
 
 
 def _ids_in_supersedes_cycle(skills: dict[str, Skill]) -> set[str]:

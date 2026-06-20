@@ -74,6 +74,9 @@ class AssistantActionName(str, Enum):
     KANBAN_DELETE_TASK = "kanban_delete_task"  # internal: create's undo inverse (not prompt-exposed)
     SET_REMINDER = "set_reminder"      # confirm-tier (dry-run): schedule a reminder message
     EDIT_FILE = "edit_file"            # confirm-tier (dry-run diff): edit a workspace file
+    PROPOSE_SKILL = "propose_skill"    # log-and-undo: write an inert candidate skill
+    ACTIVATE_SKILL = "activate_skill"  # confirm-tier: activate a candidate skill
+    SKILL_DELETE = "skill_delete"      # internal: propose_skill's undo inverse (not prompt-exposed)
 
 
 class AssistantStepDecision(BaseModel):
@@ -542,6 +545,57 @@ def _action_edit_file(
     )
 
 
+def _action_propose_skill(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: write an inert candidate skill to the overlay. It is
+    never injected until activated; undo deletes it."""
+    skill_id = str(args.get("skill_id", "")).strip().lower()
+    title = str(args.get("title", "")).strip()
+    body = str(args.get("body", "")).strip()
+    tags = [t for t in str(args.get("tags", "")).split(",") if t.strip()]
+    path = skills.write_candidate_skill(
+        skill_id=skill_id, title=title, body=body, created_by="assistant",
+        retrieval_tags=tags, source_journal_id=ctx.journal_id,
+        source_step_id=ctx.step_index,
+    )
+    if path is None:
+        return AssistantObservation(
+            ok=False,
+            text=("couldn't propose skill (no skills overlay configured, invalid id, "
+                  "or that id already exists)"),
+        )
+    return AssistantObservation(
+        ok=True,
+        text=f"Proposed candidate skill '{skill_id}' (inert until you activate it; reject to undo).",
+        data={"skill_id": skill_id,
+              "undo": {"capability": "skill_delete", "payload": {"skill_id": skill_id}}},
+    )
+
+
+def _action_activate_skill(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Confirm-tier write: activate a candidate skill so it can steer future turns."""
+    skill_id = str(args.get("skill_id", "")).strip().lower()
+    if not skills.set_skill_status(skill_id, "active"):
+        return AssistantObservation(ok=False, text=f"no such candidate skill: {skill_id}")
+    return AssistantObservation(
+        ok=True, text=f"Activated skill '{skill_id}'.", data={"skill_id": skill_id})
+
+
+def _action_delete_skill(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Internal: delete a skill file — propose_skill's undo inverse. Not
+    prompt-exposed (reached only via undo_write_intent)."""
+    skill_id = str(args.get("skill_id", "")).strip().lower()
+    if not skills.delete_skill_file(skill_id):
+        return AssistantObservation(ok=False, text=f"no such skill: {skill_id}")
+    return AssistantObservation(
+        ok=True, text=f"Deleted skill '{skill_id}'", data={"skill_id": skill_id})
+
+
 @dataclass(frozen=True)
 class Capability:
     """Code-owned metadata + dispatch for one assistant action — the primitive
@@ -682,6 +736,29 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         required_args=("path", "content"), action=_action_edit_file,
         read=False, write=True, tier="confirm", dry_run=True,
         output_cap_chars=12000,
+    ),
+    AssistantActionName.PROPOSE_SKILL: Capability(
+        name=AssistantActionName.PROPOSE_SKILL, family="skill",
+        description=('propose a reusable "how to" skill as an inert candidate '
+                     '(never used until you activate it; reject to undo). args: '
+                     '{"skill_id": "kebab-slug", "title": "...", "body": "markdown", '
+                     'optional "tags": "a,b"}'),
+        required_args=("skill_id", "title", "body"),
+        optional_args=frozenset({"tags"}),
+        action=_action_propose_skill, read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.ACTIVATE_SKILL: Capability(
+        name=AssistantActionName.ACTIVATE_SKILL, family="skill",
+        description=('activate a candidate skill so it steers future answers; needs '
+                     'your confirmation. args: {"skill_id": "..."}'),
+        required_args=("skill_id",), action=_action_activate_skill,
+        read=False, write=True, tier="confirm",
+    ),
+    AssistantActionName.SKILL_DELETE: Capability(
+        name=AssistantActionName.SKILL_DELETE, family="skill",
+        description="(internal) delete a skill file — propose_skill's undo inverse.",
+        required_args=("skill_id",), action=_action_delete_skill,
+        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
 }
 

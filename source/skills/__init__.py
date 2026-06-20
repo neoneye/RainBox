@@ -6,7 +6,13 @@ inert" contract). Facts live in Postgres; skills live in files so they are
 diffable and operator-editable.
 """
 
-from skills.loader import Skill, load_skills  # noqa: F401
+from skills.loader import (  # noqa: F401
+    Skill,
+    delete_skill_file,
+    load_skills,
+    set_skill_status,
+    write_candidate_skill,
+)
 from skills.retrieval import (  # noqa: F401
     RetrievedSkill,
     build_skill_block,
