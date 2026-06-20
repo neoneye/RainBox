@@ -929,6 +929,77 @@ class EvalResult(db.Model):
     )
 
 
+class AssistantRun(db.Model):
+    """One execution of the AssistantAgent's bounded ReAct loop.
+
+    The durable, queryable source of truth for an assistant turn (journal.result
+    holds only a short summary; chat rows hold only thin inline pointers). One
+    row per handle() call; its assistant_step children are the step trace.
+    """
+
+    __tablename__ = "assistant_run"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    journal_id: Mapped[int] = mapped_column(index=True)
+    room_uuid: Mapped[UUID] = mapped_column()
+    agent_uuid: Mapped[UUID] = mapped_column()
+    status: Mapped[str] = mapped_column(Text, default="running")
+    step_limit: Mapped[int] = mapped_column(default=6)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    final_summary: Mapped[str | None] = mapped_column(Text)
+    # Run/model diagnostics; empty by default (NOT the step trace).
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running','finished','stopped','failed','killed')",
+            name="assistant_run_status_check",
+        ),
+        Index("assistant_run_by_room", "room_uuid", "started_at"),
+    )
+
+
+class AssistantStep(db.Model):
+    """One committed step-transition in an assistant run. Append-only: a single
+    logical step (run_id, step_index) normally has several rows
+    (planned -> running -> observed/failed, or planned -> final), so there is no
+    uniqueness constraint on the pair. Ordering is by id / created_at.
+
+    `phase="control"` is reserved for the Phase 6 stop/redirect feature so it
+    won't need a constraint migration just to record a control event.
+    """
+
+    __tablename__ = "assistant_step"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("assistant_run.id", ondelete="CASCADE"), index=True
+    )
+    step_index: Mapped[int] = mapped_column()
+    phase: Mapped[str] = mapped_column(Text)
+    action: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    args: Mapped[dict] = mapped_column(JSONB, default=dict)
+    observation_preview: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    model_group_uuid: Mapped[UUID | None] = mapped_column()
+    model_uuid: Mapped[UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "phase IN ('planned','running','observed','failed','final','control')",
+            name="assistant_step_phase_check",
+        ),
+        Index("assistant_step_by_run", "run_id", "step_index", "id"),
+        Index("assistant_step_by_action_phase", "action", "phase"),
+        Index("assistant_step_by_created", "created_at"),
+    )
+
+
 class _ExternalTableBase(DeclarativeBase):
     """Declarative base for tables managed by *other* tools (e.g. LlamaIndex's
     PGVectorStore). Kept separate from `db.Model` so `db.create_all()` ignores

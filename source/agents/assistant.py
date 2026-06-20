@@ -159,7 +159,10 @@ class AssistantAgent(ModelGroupAgent):
         self.step_limit = self.STEP_LIMIT
         # PR 2 enables only terminal actions; PR 4 widens this to the read set.
         self._enabled_actions: frozenset[AssistantActionName] = _TERMINAL_ACTIONS
+        # In-memory mirror of the trace for fast assertions/diagnostics; the
+        # durable source of truth is the assistant_run/assistant_step tables.
         self._steps: list[dict[str, Any]] = []
+        self._run: Any = None
 
     @staticmethod
     def _room_uuid(payload: dict[str, Any]) -> UUID:
@@ -171,63 +174,93 @@ class AssistantAgent(ModelGroupAgent):
     def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
         self._steps = []
-        # Only real conversation turns feed the prompt; diagnostic rows
-        # (debug-*, progress, thinking) are operator-only and excluded.
-        messages = [
-            m for m in db.list_room_messages(room_uuid)
-            if m.get("kind") == "message"
-        ]
-        transcript = format_history(messages, context_limit=self.MAX_RECENT_MESSAGES)
-        scratchpad: list[str] = []
-
-        for step_index in range(self.step_limit):
-            decision = self._decide_next_step(
-                transcript=transcript, scratchpad=scratchpad, step_index=step_index
-            )
-            self._record_step(step_index=step_index, phase="planned", decision=decision)
-
-            error = self._validate_decision(decision)
-            if error is not None:
-                self._record_step(
-                    step_index=step_index, phase="failed", decision=decision, error=error
-                )
-                scratchpad.append(
-                    f"step {step_index}: action '{decision.action.value}' "
-                    f"rejected: {error}"
-                )
-                continue
-
-            # PR 2 enables only terminal actions; PR 4 replaces this assert with
-            # the read-action dispatch branch for enabled non-terminal actions.
-            assert decision.action in _TERMINAL_ACTIONS
-            self._record_step(step_index=step_index, phase="final", decision=decision)
-            text = self._terminal_text(decision)
-            db.post_chat_message(room_uuid, self.agent_uuid, text, kind="message")
-            logger.info(
-                "assistant finished run in room %s at step %d", room_uuid, step_index
-            )
-            return {
-                "ok": True,
-                "status": "finished",
-                "final_summary": text[:200],
-                "step_count": len(self._steps),
-            }
-
-        # Ran out of steps without a terminal action.
-        msg = (
-            "I couldn't complete this within the step limit. "
-            "Please rephrase or narrow the request."
+        # Open the durable run row up front so a crash anywhere below is recorded
+        # against it (and the journal, via Agent.run, when we re-raise).
+        self._run = db.start_assistant_run(
+            journal_id=journal_id,
+            room_uuid=room_uuid,
+            agent_uuid=self.agent_uuid,
+            step_limit=self.step_limit,
         )
-        db.post_chat_message(room_uuid, self.agent_uuid, msg, kind="message")
-        logger.warning(
-            "assistant hit step limit (%d) in room %s", self.step_limit, room_uuid
-        )
+        run = self._run
+        try:
+            # Only real conversation turns feed the prompt; diagnostic rows
+            # (debug-*, progress, thinking) are operator-only and excluded.
+            messages = [
+                m for m in db.list_room_messages(room_uuid)
+                if m.get("kind") == "message"
+            ]
+            transcript = format_history(messages, context_limit=self.MAX_RECENT_MESSAGES)
+            scratchpad: list[str] = []
+
+            for step_index in range(self.step_limit):
+                decision = self._decide_next_step(
+                    transcript=transcript, scratchpad=scratchpad, step_index=step_index
+                )
+                self._record_step(step_index=step_index, phase="planned", decision=decision)
+
+                error = self._validate_decision(decision)
+                if error is not None:
+                    self._record_step(
+                        step_index=step_index, phase="failed", decision=decision,
+                        error=error,
+                    )
+                    scratchpad.append(
+                        f"step {step_index}: action '{decision.action.value}' "
+                        f"rejected: {error}"
+                    )
+                    continue
+
+                # PR 2 enables only terminal actions; PR 4 replaces this assert
+                # with the read-action dispatch branch for non-terminal actions.
+                assert decision.action in _TERMINAL_ACTIONS
+                self._record_step(step_index=step_index, phase="final", decision=decision)
+                text = self._terminal_text(decision)
+                db.post_chat_message(room_uuid, self.agent_uuid, text, kind="message")
+                db.finish_run(run, "finished", final_summary=text[:200])
+                logger.info(
+                    "assistant finished run %s in room %s at step %d",
+                    run.id, room_uuid, step_index,
+                )
+                return self._run_result("finished", text[:200])
+
+            # Ran out of steps without a terminal action.
+            msg = (
+                "I couldn't complete this within the step limit. "
+                "Please rephrase or narrow the request."
+            )
+            db.post_chat_message(room_uuid, self.agent_uuid, msg, kind="message")
+            db.finish_run(run, "stopped", final_summary="step limit reached")
+            logger.warning(
+                "assistant run %s hit step limit (%d) in room %s",
+                run.id, self.step_limit, room_uuid,
+            )
+            return self._run_result("stopped", "step limit reached")
+        except Exception as exc:
+            # Record the failure against the run so it isn't left stuck in
+            # 'running'; Agent.run marks the journal failed when we re-raise.
+            self._fail_run(run, exc)
+            raise
+
+    def _run_result(self, status: str, final_summary: str) -> dict[str, Any]:
+        """The journal result: a short summary plus pointers to the trace — never
+        the trace itself (the tables are the trace)."""
         return {
-            "ok": True,
-            "status": "stopped",
-            "final_summary": "step limit reached",
+            "ok": status != "failed",
+            "status": status,
+            "assistant_run_id": self._run.id,
+            "assistant_run_uuid": str(self._run.uuid),
+            "final_summary": final_summary,
             "step_count": len(self._steps),
         }
+
+    def _fail_run(self, run: Any, exc: Exception) -> None:
+        err = f"{type(exc).__name__}: {exc}"
+        try:
+            self._record_step(step_index=len(self._steps), phase="failed", error=err)
+            db.finish_run(run, "failed", final_summary=err)
+        except Exception:
+            logger.exception("assistant: failed to mark run %s failed", run.id)
 
     # --- the live-model seam --------------------------------------------------
 
@@ -313,16 +346,35 @@ class AssistantAgent(ModelGroupAgent):
         phase: str,
         decision: AssistantStepDecision | None = None,
         error: str | None = None,
+        observation_preview: str | None = None,
     ) -> None:
-        """Commit one step-transition to the trace. PR 2 keeps the trace in
-        memory; PR 3 overrides this to persist `assistant_run`/`assistant_step`
-        rows and post a thin `debug-assistant` chat pointer."""
+        """Commit one step-transition to the trace.
+
+        Persists an `assistant_step` row (the source of truth) plus, on a step's
+        first transition, a thin `debug-assistant` chat pointer — and mirrors the
+        transition into `self._steps` for fast in-process assertions.
+        """
+        action = decision.action.value if decision is not None else None
+        reason = decision.reason if decision is not None else None
+        args = decision.args if decision is not None else None
         self._steps.append(
             {
                 "step_index": step_index,
                 "phase": phase,
-                "action": decision.action.value if decision is not None else None,
-                "reason": decision.reason if decision is not None else None,
+                "action": action,
+                "reason": reason,
                 "error": error,
             }
         )
+        if self._run is not None:
+            db.append_assistant_step(
+                run_id=self._run.id,
+                step_index=step_index,
+                phase=phase,  # type: ignore[arg-type]
+                action=action,
+                reason=reason,
+                args=args,
+                observation_preview=observation_preview,
+                error=error,
+                model_group_uuid=self.model_group_uuid,
+            )

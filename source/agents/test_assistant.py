@@ -17,6 +17,7 @@ from uuid import uuid4
 import pytest
 
 import db
+from db import AssistantRun, AssistantStep
 from agents.assistant import AssistantActionName, AssistantAgent, AssistantStepDecision
 from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
@@ -48,6 +49,11 @@ def room(app_ctx):
     try:
         yield chatroom.uuid, msg.uuid
     finally:
+        # Drop trace rows (assistant_step cascades from assistant_run) and the
+        # room (chat messages, incl. debug-assistant pointers, cascade).
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid
+        ).delete()
         db.db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
@@ -238,3 +244,81 @@ def test_assistant_agent_is_a_model_group_agent_not_structured():
 
     assert issubclass(AssistantAgent, ModelGroupAgent)
     assert not issubclass(AssistantAgent, StructuredLLMAgent)
+
+
+# --- durable trace (PR 3) -----------------------------------------------------
+
+
+def _steps_for(run_id):
+    return (
+        db.db.session.query(AssistantStep)
+        .filter(AssistantStep.run_id == run_id)
+        .order_by(AssistantStep.id)
+        .all()
+    )
+
+
+def test_loop_persists_run_and_steps_to_tables(room):
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(_reply("Working tree is clean."))
+
+    result = agent.handle(7, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+
+    run = db.db.session.get(AssistantRun, result["assistant_run_id"])
+    assert run is not None
+    assert run.status == "finished"
+    assert run.journal_id == 7
+    assert run.room_uuid == room_uuid
+
+    steps = _steps_for(run.id)
+    assert [s.phase for s in steps] == ["planned", "final"]
+    assert [s.action for s in steps] == ["reply", "reply"]
+
+
+def test_journal_result_is_summary_not_full_trace(room):
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(_reply("Done."))
+
+    result = agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+
+    # The journal result points at the run + carries a short summary; it is not
+    # the trace itself.
+    assert result["assistant_run_id"] is not None
+    assert result["final_summary"] == "Done."
+    assert "steps" not in result
+
+
+def test_killed_mid_run_leaves_last_committed_step_and_marks_run_failed(room):
+    """If a later step crashes, the already-committed steps remain visible and
+    the run is marked failed (not left stuck in 'running')."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+
+    calls = {"n": 0}
+
+    def flaky(**_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _query_memory("first")  # disabled -> planned+failed, committed
+        raise RuntimeError("model exploded")
+
+    agent._decide_next_step = flaky
+
+    with pytest.raises(RuntimeError, match="model exploded"):
+        agent.handle(0, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+
+    runs = (
+        db.db.session.query(AssistantRun)
+        .filter(AssistantRun.room_uuid == room_uuid)
+        .all()
+    )
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.status == "failed"
+    phases = [s.phase for s in _steps_for(run.id)]
+    # The step-0 planned+failed rows survived the crash; a terminal failed row
+    # records the exception.
+    assert phases[:2] == ["planned", "failed"]
+    assert "failed" in phases[2:]
