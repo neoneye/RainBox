@@ -14,6 +14,7 @@ from flask import Response, abort, jsonify, request, stream_with_context
 
 import db
 from agents.config import (
+    ASSISTANT_UUID,
     CHAT_STRUCTURED_UUID,
     CHAT_UNSTRUCTURED_UUID,
     MCP_UUID,
@@ -43,6 +44,7 @@ CHAT_RESPONDER_UUIDS = (
     QUERY_ROUTER_UUID,
     QUERY_FILTER_ROUTER_UUID,
     MCP_UUID,
+    ASSISTANT_UUID,
 )
 
 
@@ -281,6 +283,45 @@ def chat_room_message(room_uuid: str, message_id: int) -> Response:
     if msg is None:
         abort(404, "message not found")
     return jsonify(msg)
+
+
+@app.route("/chat/api/assistant/runs/<int:run_id>")
+def assistant_run_steps(run_id: int) -> Response:
+    """An assistant run plus its step trace. The chat UI calls this to render the
+    inline plan/action/observation behind a thin `debug-assistant` pointer row
+    (which carries only {run_id, step_index}); the tables are the source of
+    truth."""
+    run = db.get_assistant_run(run_id)
+    if run is None:
+        abort(404, "assistant run not found")
+    steps = db.list_assistant_steps(run_id)
+    return jsonify(
+        {
+            "run": {
+                "id": run.id,
+                "uuid": str(run.uuid),
+                "status": run.status,
+                "step_limit": run.step_limit,
+                "final_summary": run.final_summary,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            },
+            "steps": [
+                {
+                    "id": s.id,
+                    "step_index": s.step_index,
+                    "phase": s.phase,
+                    "action": s.action,
+                    "reason": s.reason,
+                    "args": s.args,
+                    "observation_preview": s.observation_preview,
+                    "error": s.error,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                }
+                for s in steps
+            ],
+        }
+    )
 
 
 @app.route("/chat/api/messages/<message_uuid>/feedback", methods=["POST"])

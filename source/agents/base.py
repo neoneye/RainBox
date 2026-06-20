@@ -209,6 +209,97 @@ class ModelGroupAgent(Agent):
             "candidate_models": [str(u) for u in self.candidate_model_uuids],
         }
 
+    def _structured_completion(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: type[BaseModel],
+        validator: Callable[[BaseModel], None] | None = None,
+    ) -> BaseModel:
+        """Run one structured-output call (system + user message -> a parsed
+        `response_model`), falling back through the model group's members in
+        priority order. Returns the parsed Pydantic instance. Raises if there
+        are no candidates or all of them fail.
+
+        Lives on ModelGroupAgent (not StructuredLLMAgent) so any model-group
+        agent that needs *several* structured calls in one handle() — e.g. the
+        ReAct AssistantAgent deciding a step at a time — can reuse it with a
+        different system prompt / schema per call. StructuredLLMAgent's
+        one-shot `_structured_call` is a thin wrapper over this.
+
+        An optional `validator` callable is invoked on each successful response
+        before returning it; if it raises, the model is treated as failed and
+        the loop falls back to the next candidate."""
+        if not self.candidate_model_uuids:
+            raise RuntimeError(
+                f"agent {self.name} has no model group / candidate models bound"
+            )
+        messages = [
+            ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
+            ChatMessage(role=MessageRole.USER, content=user_prompt),
+        ]
+        last_error: Exception | None = None
+        for model_uuid in self.candidate_model_uuids:
+            try:
+                _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+                logger.info(
+                    "agent %s: calling model %s (this loads it into LM Studio if "
+                    "it isn't already; a large cold model may take a while)",
+                    self.name,
+                    model_name,
+                )
+                t0 = time.monotonic()
+                the_llm = prepare_llm(_provider_id, model_name, args)
+                sllm = the_llm.as_structured_llm(response_model)
+                # Consume the structured output as a *stream* (same parsed
+                # result as .chat()) so the underlying tokens are received
+                # incrementally — this is what lets a caller see how much a
+                # reasoning model produced before a timeout, and fires the
+                # per-chunk instrumentation events the reasoning tally reads.
+                #
+                # request_timeout is a per-read timeout, but a streamed response
+                # delivers tokens continuously, so it never trips on a runaway
+                # generation. Bound the whole stream with a wall-clock deadline
+                # instead; abandoning the generator closes the provider stream.
+                timeout_s = float(
+                    args.get("request_timeout") or args.get("timeout") or 60.0
+                )
+                deadline = time.monotonic() + timeout_s
+                last = None
+                for last in sllm.stream_chat(messages):
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(
+                            f"structured stream exceeded {timeout_s:.0f}s "
+                            "(model still generating)"
+                        )
+                if last is None:
+                    raise RuntimeError("structured stream produced no response")
+                # .raw is typed Any | None by LlamaIndex; on a successful
+                # structured call it's an instance of response_model.
+                result = cast(BaseModel, last.raw)
+                logger.info(
+                    "agent %s: model %s responded in %.1fs",
+                    self.name,
+                    model_name,
+                    time.monotonic() - t0,
+                )
+                if validator is not None:
+                    validator(result)
+                return result
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "agent %s: model %s failed (%s); trying next in group",
+                    self.name,
+                    model_uuid,
+                    e,
+                )
+        raise RuntimeError(
+            f"agent {self.name}: all {len(self.candidate_model_uuids)} models "
+            f"in the group failed; last error: {last_error}"
+        )
+
 
 class StructuredLLMAgent(ModelGroupAgent):
     """A stateless (no conversation history) agent that makes one structured
@@ -252,80 +343,16 @@ class StructuredLLMAgent(ModelGroupAgent):
         user_prompt: str,
         validator: Callable[[BaseModel], None] | None = None,
     ) -> BaseModel:
-        """Run one structured-output call, falling back through the model
-        group's members in priority order. Returns the parsed Pydantic
-        instance. Raises if there are no candidates or all of them fail.
-
-        An optional `validator` callable is invoked on each successful
-        response before returning it; if it raises, the model is treated as
-        failed and the loop falls back to the next candidate."""
-        if not self.candidate_model_uuids:
-            raise RuntimeError(
-                f"agent {self.name} has no model group / candidate models bound"
-            )
-        messages = [
-            ChatMessage(role=MessageRole.SYSTEM, content=self.system_prompt),
-            ChatMessage(role=MessageRole.USER, content=user_prompt),
-        ]
-        last_error: Exception | None = None
-        for model_uuid in self.candidate_model_uuids:
-            try:
-                _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
-                logger.info(
-                    "agent %s: calling model %s (this loads it into LM Studio if "
-                    "it isn't already; a large cold model may take a while)",
-                    self.name,
-                    model_name,
-                )
-                t0 = time.monotonic()
-                the_llm = prepare_llm(_provider_id, model_name, args)
-                sllm = the_llm.as_structured_llm(self.response_model)
-                # Consume the structured output as a *stream* (same parsed
-                # result as .chat()) so the underlying tokens are received
-                # incrementally — this is what lets a caller see how much a
-                # reasoning model produced before a timeout, and fires the
-                # per-chunk instrumentation events the reasoning tally reads.
-                #
-                # request_timeout is a per-read timeout, but a streamed response
-                # delivers tokens continuously, so it never trips on a runaway
-                # generation. Bound the whole stream with a wall-clock deadline
-                # instead; abandoning the generator closes the provider stream.
-                timeout_s = float(
-                    args.get("request_timeout") or args.get("timeout") or 60.0
-                )
-                deadline = time.monotonic() + timeout_s
-                last = None
-                for last in sllm.stream_chat(messages):
-                    if time.monotonic() > deadline:
-                        raise TimeoutError(
-                            f"structured stream exceeded {timeout_s:.0f}s "
-                            "(model still generating)"
-                        )
-                if last is None:
-                    raise RuntimeError("structured stream produced no response")
-                # .raw is typed Any | None by LlamaIndex; on a successful
-                # structured call it's an instance of self.response_model.
-                result = cast(BaseModel, last.raw)
-                logger.info(
-                    "agent %s: model %s responded in %.1fs",
-                    self.name,
-                    model_name,
-                    time.monotonic() - t0,
-                )
-                if validator is not None:
-                    validator(result)
-                return result
-            except Exception as e:
-                last_error = e
-                logger.warning(
-                    "agent %s: model %s failed (%s); trying next in group",
-                    self.name,
-                    model_uuid,
-                    e,
-                )
-        raise RuntimeError(
-            f"agent {self.name}: all {len(self.candidate_model_uuids)} models "
-            f"in the group failed; last error: {last_error}"
+        """One structured-output call against this agent's fixed `system_prompt`
+        and `response_model`. Thin wrapper over
+        `ModelGroupAgent._structured_completion` (shared model-group fallback);
+        kept as the stable one-shot entry point that subclasses and tests call
+        and monkeypatch."""
+        return self._structured_completion(
+            system_prompt=self.system_prompt,
+            user_prompt=user_prompt,
+            response_model=self.response_model,
+            validator=validator,
         )
 
     def handle(self, journal_id: int, payload: dict[str, Any]) -> dict[str, Any]:
