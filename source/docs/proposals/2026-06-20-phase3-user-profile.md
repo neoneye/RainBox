@@ -11,6 +11,25 @@ This is **read-only**. It injects existing active memory into the prompt; it
 creates no new claims and infers nothing durable. Inferring profile facts is
 Phase 3.5 (`profile_deriver`) and is explicitly out of scope here.
 
+## As-built notes (2026-06-20) — these supersede the prose where they differ
+
+Implemented and merged behind this spec. Three intentional deviations from the
+draft below:
+
+- **Package is `user_profile/`, not `profile/`.** `profile` shadows the Python
+  stdlib profiler, so the package (and its telemetry source) is `user_profile`.
+  Telemetry source label is therefore **`user_profile.retrieval`** (the draft's
+  `profile.retrieval` is superseded — keep consumers on `user_profile.retrieval`).
+- **Project scope is excluded in the digest, not just "deferred."** Because the
+  shared `hard_filtered_claims` lets `scope="project"` claims through (for hybrid
+  retrieval), `select_profile_facts` explicitly drops them so a project claim
+  can't leak into unrelated rooms. v1 visibility is global + this agent + this
+  room. (Resolves open question 2.)
+- **A `fact` needs a non-null `subject` to be profile material.** The draft's
+  "subject referring to the operator" is implemented as the concrete, testable
+  half (non-null subject); a true operator-identity check awaits an identity
+  signal. Subject-less ambient facts are never injected.
+
 ## Goal and contracts
 
 The profile block answers "who is the operator" the way the skills block answers

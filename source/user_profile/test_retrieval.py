@@ -106,6 +106,43 @@ def test_kind_preference_and_exclusions(app_ctx, tag):
         _cleanup(tag)
 
 
+def test_project_scope_excluded(app_ctx, tag):
+    """Project-scoped claims need a project key the assistant turn doesn't carry
+    (v1 visibility = global + this agent + this room); they must not leak into
+    unrelated rooms via the always-injected profile."""
+    glob = _claim(tag, "global preference")
+    proj = _claim(tag, "project-scoped preference", scope="project")
+    try:
+        ids = _uuids(select_profile_facts(agent_uuid=None, room_uuid=None))
+        assert glob.uuid in ids
+        assert proj.uuid not in ids
+    finally:
+        _cleanup(tag)
+
+
+def test_fact_requires_subject(app_ctx, tag):
+    """A fact is profile material only when it has a subject (an operator-
+    referring entity); a subject-less ambient fact is not always-inject worthy."""
+    with_subject = _claim(tag, "lives in copenhagen", kind="fact")
+    no_subject = db.create_memory_claim(
+        scope="global", kind="fact", text="ambient unrelated fact",
+        confidence=0.9, status="active", sensitivity="public", subject=None,
+    )
+    try:
+        ids = _uuids(select_profile_facts(agent_uuid=None, room_uuid=None))
+        assert with_subject.uuid in ids
+        assert no_subject.uuid not in ids
+    finally:
+        db.db.session.query(RetrievalEvent).filter(
+            RetrievalEvent.target_id == str(no_subject.uuid)
+        ).delete()
+        db.db.session.query(MemoryClaim).filter(
+            MemoryClaim.uuid == no_subject.uuid
+        ).delete()
+        db.db.session.commit()
+        _cleanup(tag)
+
+
 def test_same_kind_ranked_by_confidence(app_ctx, tag):
     low = _claim(tag, "weak preference", confidence=0.3)
     high = _claim(tag, "strong preference", confidence=0.95)
