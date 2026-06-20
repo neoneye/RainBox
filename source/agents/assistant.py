@@ -275,7 +275,11 @@ def _action_activate_memory(
     claim = db.get_memory_claim(memory_uuid)
     if claim is None:
         return AssistantObservation(ok=False, text="no such memory claim")
-    db.activate_memory_claim(memory_uuid, confirmed_by_uuid=ctx.agent_uuid)
+    activated = db.activate_memory_claim(memory_uuid, confirmed_by_uuid=ctx.agent_uuid)
+    # Newly active → embed it so hybrid retrieval can use it immediately
+    # (best-effort; falls back to lexical-only if no embedder is available).
+    from memory.embeddings import refresh_claim_embedding
+    refresh_claim_embedding(activated)
     return AssistantObservation(
         ok=True, text=f"Activated memory {memory_uuid}",
         data={"memory_uuid": str(memory_uuid), "status": "active"},

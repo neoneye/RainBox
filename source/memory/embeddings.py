@@ -5,18 +5,27 @@ dependency lazy and injectable so retrieval/backfill stay testable without a
 live model. Best-effort everywhere: a failed embed leaves the claim usable via
 lexical-only retrieval rather than raising.
 
-Population: a one-shot `backfill_memory_embeddings()` over active claims, plus
-`ensure_memory_embedding()` on each transition that makes a claim active (called
-by the memory write path). A claim whose text changes is re-embedded in place
-(at most one embedding row per claim).
+Freshness model:
+- `ensure_memory_embedding()` embeds a single claim, re-embedding in place when
+  its text changes (at most one embedding row per claim).
+- `refresh_claim_embedding()` is the write-path hook: embed while a claim is
+  active, prune once it isn't. The memory write path (remember/confirm/correct/
+  forget and the assistant's activate_memory) calls it after a status change.
+- `prune_stale_embeddings()` is the lazy safety net: drop embeddings for claims
+  that are no longer retrievable (non-active or expired).
+- `backfill_memory_embeddings()` / `sync_memory_embeddings()` are the
+  one-shot / triggered full reconcile (backfill active claims, then prune).
 """
 
 import hashlib
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
+
+import sqlalchemy as sa
 
 import db
-from db.models import MemoryClaim
+from db.models import MemoryClaim, MemoryEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +91,41 @@ def ensure_memory_embedding(
     return True
 
 
+def refresh_claim_embedding(
+    claim: MemoryClaim, *, embed_fn: EmbedFn | None = None
+) -> None:
+    """Keep one claim's embedding in sync with its current status — the hook for
+    the memory write path. Embed (or re-embed on text change) while the claim is
+    active; prune its embedding once it is no longer active. Best-effort: the
+    underlying embed/delete already swallow their own failures."""
+    if claim.status == "active":
+        ensure_memory_embedding(claim, embed_fn=embed_fn)
+    else:
+        db.delete_memory_embeddings(claim.uuid)
+
+
+def prune_stale_embeddings() -> int:
+    """Lazy prune: drop embedding rows whose claim is no longer *retrievable*
+    (not active, or active-but-expired). Returns the number removed.
+
+    This is the safety net for deactivation paths — forget/supersede/expiry —
+    that don't individually refresh: even if a write site forgets to prune, a
+    periodic `sync` reconciles the embedding table with what retrieval can use.
+    """
+    now = datetime.now(UTC)
+    retrievable = db.db.session.query(MemoryClaim.uuid).filter(
+        MemoryClaim.status == "active",
+        sa.or_(MemoryClaim.expires_at.is_(None), MemoryClaim.expires_at > now),
+    )
+    n = (
+        db.db.session.query(MemoryEmbedding)
+        .filter(MemoryEmbedding.memory_uuid.notin_(retrievable))
+        .delete(synchronize_session=False)
+    )
+    db.db.session.commit()
+    return n
+
+
 def backfill_memory_embeddings(
     *, embed_fn: EmbedFn | None = None, limit: int | None = None
 ) -> int:
@@ -95,3 +139,13 @@ def backfill_memory_embeddings(
         if ensure_memory_embedding(claim, embed_fn=embed_fn):
             ensured += 1
     return ensured
+
+
+def sync_memory_embeddings(
+    *, embed_fn: EmbedFn | None = None, limit: int | None = None
+) -> tuple[int, int]:
+    """Triggered/periodic full reconcile of the embedding table: backfill active
+    claims, then prune stale rows. Returns `(embedded, pruned)`."""
+    embedded = backfill_memory_embeddings(embed_fn=embed_fn, limit=limit)
+    pruned = prune_stale_embeddings()
+    return embedded, pruned

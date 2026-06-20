@@ -14,6 +14,7 @@ from typing import Any
 import db
 from db import MemoryClaim, MemoryEvidence
 from agents.query_handlers import QueryContext
+from memory.embeddings import refresh_claim_embedding
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,7 @@ def _handle_remember(ctx: QueryContext, text: str) -> str:
         source_id=_human_message_uuid(ctx),
         excerpt=ctx.query,
     )
+    refresh_claim_embedding(claim)
     return f"Remembered: {text}"
 
 
@@ -150,6 +152,7 @@ def _handle_forget(ctx: QueryContext, text: str) -> str:
             excerpt=ctx.query,
         ),
     )
+    refresh_claim_embedding(claim)  # now rejected → prunes its embedding
     return f"Forgot: {claim.text}"
 
 
@@ -174,6 +177,7 @@ def _handle_confirm(ctx: QueryContext, text: str) -> str:
         source_id=_human_message_uuid(ctx),
         excerpt=ctx.query,
     )
+    refresh_claim_embedding(claim)
     return f"Confirmed: {claim.text}"
 
 
@@ -189,7 +193,7 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
             f"before I correct one."
         )
     old = matches[0]
-    db.supersede_memory(
+    new_claim = db.supersede_memory(
         old.uuid,
         new_claim_args=dict(
             scope=old.scope, kind=old.kind, text=new_text,
@@ -204,6 +208,9 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
             excerpt=ctx.query,
         ),
     )
+    # New active claim gets a fresh embedding; the superseded old one is pruned.
+    refresh_claim_embedding(new_claim)
+    refresh_claim_embedding(old)
     return f"Corrected: {old.text} → {new_text}"
 
 
