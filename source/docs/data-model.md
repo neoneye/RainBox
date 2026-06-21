@@ -414,7 +414,7 @@ Key fields:
 ## External Tables
 
 The Q&A pgvector table is managed by LlamaIndex/PGVectorStore and is represented
-read-only in Flask-Admin as `QueryAgentKb`.
+read-only in Flask-Admin as `SeedMemoryKb`.
 
 ## Design Notes
 
