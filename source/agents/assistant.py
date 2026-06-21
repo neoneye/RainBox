@@ -110,7 +110,14 @@ Each step you emit exactly one decision as structured output with three fields:
 
 Work one step at a time. When you have enough to answer, use `reply`. If the
 request is ambiguous or missing information, use `ask_clarifying_question`. Only
-use actions from the list below; any other action is rejected."""
+use actions from the list below; any other action is rejected.
+
+Match the read action to the data you need: `kanban_read` for boards/tasks,
+`query_memory` for remembered facts, `query_qa` only for general questions
+(project/git status). Do not use `query_qa` to inspect kanban, memory, or files.
+When a step fails, fix the specific problem it reports — never resubmit the same
+args, and never invent placeholder values like `<COLUMN_UUID>`; if you lack an
+id, read for it or omit the optional argument."""
 
 
 @dataclass(frozen=True)
@@ -742,7 +749,10 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.QUERY_QA: Capability(
         name=AssistantActionName.QUERY_QA, family="query",
-        description=('answer from the Q&A knowledge base and read-only handlers. '
+        description=('answer a general question from the Q&A knowledge base and '
+                     'read-only handlers (e.g. project status, git status). NOT for '
+                     'kanban, remembered facts, or files — use the matching read '
+                     'action (kanban_read / query_memory / workspace_read_command). '
                      'args: {"query": "..."}'),
         required_args=("query",), action=_action_query_qa, output_cap_chars=6000,
     ),
@@ -753,9 +763,10 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.KANBAN_READ: Capability(
         name=AssistantActionName.KANBAN_READ, family="kanban",
-        description=('read kanban state. args: optional {"task_uuid"} for one '
-                     'task\'s detail + recent events, {"board_uuid"} for a board; '
-                     "empty lists all boards"),
+        description=('read kanban state — use this to find a board or list a '
+                     'board\'s columns before creating/moving a task. args: optional '
+                     '{"task_uuid"} for one task\'s detail + recent events, '
+                     '{"board_uuid"} for a board; empty lists all boards'),
         optional_args=frozenset({"board_uuid", "task_uuid"}), action=_action_kanban_read,
     ),
     AssistantActionName.REMEMBER: Capability(

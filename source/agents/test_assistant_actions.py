@@ -23,8 +23,19 @@ from agents.assistant import (
     _action_query_qa,
     _action_workspace_read_command,
 )
+from agents.assistant import ASSISTANT_SYSTEM_PROMPT, CAPABILITIES
 from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
+
+
+def test_read_action_descriptions_disambiguate_query_qa_from_kanban():
+    """Run 12: the model used query_qa to 'query the kanban boards'. The catalog
+    must steer inspecting a board to kanban_read, and mark query_qa as not-for-kanban."""
+    qa = CAPABILITIES[AssistantActionName.QUERY_QA].description.lower()
+    kb = CAPABILITIES[AssistantActionName.KANBAN_READ].description.lower()
+    assert "kanban" in qa and "not for" in qa          # query_qa says: not for kanban
+    assert "column" in kb                              # kanban_read: look up a board's columns
+    assert "kanban_read" in ASSISTANT_SYSTEM_PROMPT.lower()
 
 
 @pytest.fixture
