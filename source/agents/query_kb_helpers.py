@@ -148,21 +148,22 @@ def _overlay_path() -> Path | None:
 def _load_jsonl() -> list[dict[str, Any]]:
     """Base entries merged with the operator overlay (see _overlay_path),
     keyed by id — an overlay entry with the same id replaces the base entry
-    wholesale (base order is kept; overlay-only entries append). Id-less
-    entries are dropped here; the registry and alias table already ignored
-    them, and deduping before _build_documents keeps a shadowed base entry
-    from also being embedded."""
-    paths: list[Path] = [QA_JSONL_PATH]
+    wholesale (base order is kept; overlay-only entries append). Each entry is
+    tagged with `_source` ("upstream" for the base data/ file, "user-overlay"
+    for the customize overlay) so retrieval can tier by provenance. Id-less
+    entries are dropped here."""
     overlay = _overlay_path()
+    sources: list[tuple[Path, str]] = [(QA_JSONL_PATH, "upstream")]
     if overlay is not None and overlay.exists():
-        paths.append(overlay)
+        sources.append((overlay, "user-overlay"))
     merged: dict[str, dict[str, Any]] = {}
-    for path in paths:
+    for path, source in sources:
         for raw in path.read_text().splitlines():
             line = raw.strip()
             if line:
                 e = json.loads(line)
                 if e.get("id"):
+                    e["_source"] = source
                     merged[e["id"]] = e
     return list(merged.values())
 

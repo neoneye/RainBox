@@ -143,3 +143,20 @@ def test_rebuild_kb_failure_propagates_and_next_call_heals(customize_dir, monkey
     counts = kb.rebuild_kb()  # heals
     assert counts["documents"] > 0
     assert kb._populated is True
+
+
+def test_load_jsonl_tags_source(customize_dir, monkeypatch):
+    # base file (upstream) has one entry; overlay has another + an override.
+    base = [{"id": "u1", "path": "p.u1", "kind": "static", "questions": ["qu"], "answer": "base-u1"},
+            {"id": "shared", "path": "p.s", "kind": "static", "questions": ["qs"], "answer": "base-shared"}]
+    monkeypatch.setattr(kb, "QA_JSONL_PATH", customize_dir / "base.jsonl")
+    (customize_dir / "base.jsonl").write_text("\n".join(json.dumps(e) for e in base) + "\n")
+    _write_overlay(customize_dir, [
+        {"id": "o1", "path": "p.o1", "kind": "static", "questions": ["qo"], "answer": "overlay-o1"},
+        {"id": "shared", "path": "p.s", "kind": "static", "questions": ["qs"], "answer": "overlay-shared"},
+    ])
+    by_id = {e["id"]: e for e in kb._load_jsonl()}
+    assert by_id["u1"]["_source"] == "upstream"
+    assert by_id["o1"]["_source"] == "user-overlay"
+    assert by_id["shared"]["_source"] == "user-overlay"   # overlay overrides → its source wins
+    assert by_id["shared"]["answer"] == "overlay-shared"
