@@ -136,6 +136,14 @@ def test_rebuild_kb_resets_and_repopulates(customize_dir, monkeypatch):
     assert kb._populated is True
 
 
+def test_truncate_table_is_noop_when_table_missing(app_ctx, monkeypatch):
+    """After the data_query_agent_kb→data_seed_memory rename the new table may not
+    exist on the first rebuild; TRUNCATE must not crash (PGVectorStore creates it
+    on first insert). Uses the real sandbox DB via a bogus table name."""
+    monkeypatch.setattr(kb, "QA_FULL_TABLE", "data_seed_memory_missing_xyz123")
+    kb._truncate_table()  # must not raise
+
+
 def test_rebuild_kb_failure_propagates_and_next_call_heals(customize_dir, monkeypatch):
     _wire_fakes(monkeypatch)
 

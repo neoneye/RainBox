@@ -222,7 +222,14 @@ def _table_row_count() -> int:
 
 
 def _truncate_table() -> None:
+    """Empty the pgvector table before a rebuild. No-op if it doesn't exist yet
+    (e.g. the first rebuild after the data_query_agent_kb→data_seed_memory rename)
+    — PGVectorStore creates it on the first insert, so there's nothing to clear."""
     with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
+        cur.execute("SELECT to_regclass(%s)", (QA_FULL_TABLE,))
+        row = cur.fetchone()
+        if row is None or row[0] is None:
+            return
         cur.execute(sql.SQL("TRUNCATE {}").format(sql.Identifier(QA_FULL_TABLE)))
 
 
