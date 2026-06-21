@@ -233,7 +233,19 @@ def test_format_memory_context_includes_uuid_only_when_requested():
     m = _retrieved(text="I prefer pasta.")
     assert str(m.uuid) not in format_memory_context([m])            # default: clean
     with_id = format_memory_context([m], include_uuid=True)
-    assert str(m.uuid) in with_id and "I prefer pasta." in with_id  # assistant: targetable
+    assert "I prefer pasta." in with_id
+    assert f"- {m.uuid}, " in with_id                  # uuid leads the line (unambiguous)
+    assert "(memory_uuid:" not in with_id              # not the trailing-label form
+    assert "{memory_uuid}, {memory_tags}: {memory_text}" in with_id  # the legend
+
+
+def test_format_memory_uuid_leads_line_even_when_text_looks_uuidish():
+    """Safety: a trailing label is ambiguous if the text contains a uuid / the
+    literal 'memory_uuid:'. Leading the line with the real uuid stays parseable."""
+    m = _retrieved(text="note: memory_uuid: 00000000-0000-0000-0000-000000000000 in text")
+    out = format_memory_context([m], include_uuid=True)
+    fact_line = next(line for line in out.splitlines() if str(m.uuid) in line)
+    assert fact_line.startswith(f"- {m.uuid},")        # the authoritative uuid is first
 
 
 def test_record_memory_use_posts_debug_memory_row(app_ctx, fresh_subject):

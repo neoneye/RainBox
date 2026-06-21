@@ -403,15 +403,22 @@ def format_memory_context(
     point at a specific memory (e.g. to forget it)."""
     if not memories:
         return ""
+    # Tags = <kind>, <sensitivity>, <provenance...> — the kind + audit trail at a
+    # glance. With uuids, lead each line with the uuid: putting it first (not in a
+    # trailing "(memory_uuid: …)") is unambiguous even if the memory text itself
+    # contains a uuid or the literal "memory_uuid:", and a one-line legend is
+    # shorter than repeating the label per row.
+    if include_uuid:
+        lines = ["Relevant remembered facts",
+                 "- {memory_uuid}, {memory_tags}: {memory_text}"]
+        for m in memories:
+            evidence_tag = ", ".join(m.evidence_summary) or "no evidence"
+            lines.append(f"- {m.uuid}, {m.kind}, {m.sensitivity}, {evidence_tag}: {m.text}")
+        return "\n".join(lines)
     lines = ["Relevant remembered facts:"]
     for m in memories:
-        # Tags: [<kind>, <sensitivity>, <provenance...>]. Keeps the model
-        # informed about both the kind and the audit trail at a glance.
         evidence_tag = ", ".join(m.evidence_summary) or "no evidence"
-        line = f"- [{m.kind}, {m.sensitivity}, {evidence_tag}] {m.text}"
-        if include_uuid:
-            line += f"  (memory_uuid: {m.uuid})"
-        lines.append(line)
+        lines.append(f"- [{m.kind}, {m.sensitivity}, {evidence_tag}] {m.text}")
     return "\n".join(lines)
 
 
