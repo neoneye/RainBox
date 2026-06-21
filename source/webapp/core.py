@@ -4,6 +4,7 @@ Imported first by webapp/__init__.py so that `app` and `benchmark_runner`
 exist before the view modules register their routes against them.
 """
 
+import json
 import logging
 from datetime import datetime
 from uuid import UUID
@@ -20,6 +21,7 @@ from wtforms import StringField
 from benchmarks.runner import BenchmarkRunner
 from db import (
     AppSetting,
+    AssistantStep,
     ChatMessage,
     Chatroom,
     ChatroomFolder,
@@ -320,6 +322,43 @@ def _format_sender_name(view, context, model, name):
     return user.name if user else str(model.sender_uuid)
 
 
+def _format_chatmessage_text(view, context, model, name):
+    """A debug-assistant row stores only a {run_id, step_index, summary} pointer.
+    Resolve it to the step's action/reason/args/observation (like the chat UI's
+    inline trace) so the admin shows what the step actually did, not the pointer."""
+    text = model.text or ""
+    if model.kind != "debug-assistant":
+        return text
+    try:
+        ptr = json.loads(text)
+        run_id, step_index = ptr.get("run_id"), ptr.get("step_index")
+    except (ValueError, TypeError):
+        return text
+    if run_id is None:
+        return text
+    steps = (db.session.query(AssistantStep)
+             .filter_by(run_id=run_id, step_index=step_index)
+             .order_by(AssistantStep.id).all())
+    if not steps:
+        return text
+    decision = next((s for s in steps if s.action), steps[0])
+    lines = [f"step {step_index} · {decision.action or '?'}"]
+    if decision.reason:
+        lines.append(decision.reason)
+    if decision.args:
+        args = json.dumps(decision.args)
+        lines.append("args: " + (args[:800] + "…" if len(args) > 800 else args))
+    for s in steps:
+        if s.phase == "observed" and s.observation_preview:
+            obs = s.observation_preview
+            lines.append("observation: " + (obs[:600] + "…" if len(obs) > 600 else obs))
+        elif s.phase == "failed":
+            lines.append("error: " + (s.error or s.observation_preview or "failed"))
+        elif s.phase == "final":
+            lines.append("→ replied to the user")
+    return Markup("<br>".join(escape(line) for line in lines))
+
+
 def _fmt_copyable_uuid(view, context, model, name):
     """A row's own uuid shown in full (monospace) with a one-click Copy button —
     so the operator can grab a precise message reference to share. Unlike the
@@ -361,7 +400,9 @@ class ChatMessageView(ModelView):
         "uuid": _fmt_copyable_uuid,
         "room_uuid": _format_room_name,
         "sender_uuid": _format_sender_name,
+        "text": _format_chatmessage_text,
     }
+    column_formatters_detail = {"text": _format_chatmessage_text}
     # Flask-Admin's form converter skips the UUID columns, so the edit form shows
     # neither the room/sender uuids nor their names. Add read-only reference
     # fields that show both ("name (uuid)"), filled in on_form_prefill.
