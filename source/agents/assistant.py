@@ -473,17 +473,29 @@ def _action_comment_kanban_task(
 def _action_create_kanban_task(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Log-and-undo write: create a task in a column. Undo deletes it."""
+    """Log-and-undo write: create a task. Undo deletes it. `column_uuid` is
+    optional — operators name a board, not a column ("add a task to board ax"),
+    so an omitted/unresolvable column lands the task in the board's first column
+    rather than forcing the model to guess a column uuid."""
     raw_board, raw_col = args.get("board_uuid"), args.get("column_uuid")
     title = str(args.get("title", "")).strip()
     description = str(args.get("description", "")).strip()
     try:
         board_uuid = UUID(str(raw_board))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid board_uuid: {raw_board!r}")
+    # A valid column uuid is honored; anything unparseable (omitted, null, or a
+    # placeholder like '<COLUMN_UUID>') falls back to the board's first column.
+    column_uuid: UUID | None = None
+    try:
         column_uuid = UUID(str(raw_col))
     except (ValueError, TypeError):
-        return AssistantObservation(
-            ok=False, text=f"invalid board_uuid/column_uuid: {raw_board!r}, {raw_col!r}"
-        )
+        column_uuid = None
+    if column_uuid is None:
+        board = db.kanban_load_board(board_uuid)
+        if board is None or not board.get("columns"):
+            return AssistantObservation(ok=False, text="no such board (or it has no columns)")
+        column_uuid = UUID(str(board["columns"][0]["uuid"]))
     created = db.kanban_create_task(
         board_uuid, column_uuid, title=title, description=description,
         actor=str(ctx.agent_uuid),
@@ -784,11 +796,12 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.KANBAN_CREATE: Capability(
         name=AssistantActionName.KANBAN_CREATE, family="kanban",
-        description=('create a kanban task in a column; reversible (undo deletes '
-                     'it). args: {"board_uuid": "...", "column_uuid": "...", '
-                     '"title": "...", optional "description": "..."}'),
-        required_args=("board_uuid", "column_uuid", "title"),
-        optional_args=frozenset({"description"}),
+        description=('create a kanban task; reversible (undo deletes it). args: '
+                     '{"board_uuid": "...", "title": "...", optional "description", '
+                     'optional "column_uuid" — omit it to use the board\'s first '
+                     'column (the usual case)}'),
+        required_args=("board_uuid", "title"),
+        optional_args=frozenset({"description", "column_uuid"}),
         action=_action_create_kanban_task,
         read=False, write=True, tier="log_and_undo",
     ),

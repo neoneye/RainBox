@@ -80,6 +80,48 @@ def test_create_rejects_unknown_column(board):
     assert obs.ok is False
 
 
+def test_create_defaults_to_first_column_when_omitted(board):
+    """The operator gives a board, not a column ('add a task to board ax'). With
+    no column_uuid the task lands in the board's first column."""
+    bu = board["uuid"]
+    first_col = board["columns"][0]["uuid"]
+    obs = _action_create_kanban_task(
+        _ctx(), {"board_uuid": bu, "title": "Dentist checkup",
+                 "description": "the 6 month check up"})
+    assert obs.ok is True
+    tu = obs.data["task_uuid"]
+    task = db.kanban_get_task(UUID(tu))
+    assert task["title"] == "Dentist checkup"
+    assert task["columnUuid"] == first_col
+    assert obs.data["column_uuid"] == first_col
+
+
+def test_create_defaults_when_column_is_placeholder(board):
+    """A small model that can't resolve a column passes a placeholder like
+    '<COLUMN_UUID>'. Treat an unparseable column as 'unspecified' → first column,
+    instead of looping on 'invalid column_uuid' until the step limit (run 12)."""
+    bu = board["uuid"]
+    first_col = board["columns"][0]["uuid"]
+    obs = _action_create_kanban_task(
+        _ctx(), {"board_uuid": bu, "column_uuid": "<COLUMN_UUID>", "title": "Dentist checkup"})
+    assert obs.ok is True
+    assert db.kanban_get_task(UUID(obs.data["task_uuid"]))["columnUuid"] == first_col
+
+
+def test_create_uses_explicit_valid_column(board):
+    bu = board["uuid"]
+    col = board["columns"][0]["uuid"]
+    obs = _action_create_kanban_task(
+        _ctx(), {"board_uuid": bu, "column_uuid": col, "title": "explicit"})
+    assert obs.ok is True
+    assert db.kanban_get_task(UUID(obs.data["task_uuid"]))["columnUuid"] == col
+
+
+def test_create_rejects_invalid_board(board):
+    obs = _action_create_kanban_task(_ctx(), {"board_uuid": "not-a-uuid", "title": "x"})
+    assert obs.ok is False and "board_uuid" in obs.text
+
+
 def test_create_via_loop_then_undo_deletes(board):
     human = db.get_human_user()
     chatroom = db.create_chatroom(f"crt-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
