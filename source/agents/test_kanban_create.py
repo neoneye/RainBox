@@ -187,9 +187,9 @@ def test_duplicate_create_in_same_run_is_blocked(board):
         db.db.session.commit()
 
 
-def test_reply_includes_clickable_board_link_after_create(board):
-    """After creating a task the operator wants a way to the board — the reply
-    carries a clickable relative link [/kanban?id=<board>](/kanban?id=<board>)."""
+def test_reply_includes_clickable_task_link_after_create(board):
+    """After creating a task the reply carries a clickable relative link to the
+    TASK (not just the board): /kanban?id=<task> opens that task's overlay."""
     human = db.get_human_user()
     chatroom = db.create_chatroom(f"link-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
     db.post_chat_message(chatroom.uuid, human.uuid, "add bike task")
@@ -203,11 +203,12 @@ def test_reply_includes_clickable_board_link_after_create(board):
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        task_uuid = next(t["uuid"] for t in db.kanban_load_board(UUID(bu))["tasks"]
+                         if t["title"] == "Bike checkup")
         reply = db.db.session.query(db.ChatMessage).filter_by(
             room_uuid=chatroom.uuid, sender_uuid=ASSISTANT_UUID, kind="message").one()
-        link = f"/kanban?id={bu}"
-        assert link in reply.text                       # the relative path is present
-        assert f"[{link}]({link})" in reply.text        # …as a clickable markdown link
+        link = f"/kanban?id={task_uuid}"
+        assert f"[{link}]({link})" in reply.text        # clickable link to the task
         assert reply.text.startswith("The task has been added.")  # model's prose kept
     finally:
         db.db.session.query(AssistantRun).filter(

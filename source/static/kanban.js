@@ -991,6 +991,8 @@ document.getElementById('kb-all-boards').addEventListener('click', () => kbSelec
     kbSelectFolder(wantId);
   } else if (wantId && kbBoards.some(b => b.uuid === wantId)){
     await kbSelectBoard(wantId);
+  } else if (wantId && await kbOpenTaskDeepLink(wantId)){
+    // wantId was a task uuid: its board is selected and the overlay is open.
   } else {
     // Default to the top-most board in render order (depth-first, subfolders
     // before boards) — NOT kbBoards[0], which is global position order and can
@@ -1000,6 +1002,19 @@ document.getElementById('kb-all-boards').addEventListener('click', () => kbSelec
     else kbRender();
   }
 })();
+
+// Deep link to a task: `?id=<task>` resolves the task's board (server lookup,
+// since the index holds only boards), selects it, then pops the task overlay.
+// Returns false when the id is not a task so the caller can fall through.
+async function kbOpenTaskDeepLink(taskUuid){
+  const r = await fetch('/kanban/api/tasks/' + encodeURIComponent(taskUuid))
+    .then(x => x.ok ? x.json() : null).catch(() => null);
+  if (!r || !r.ok || !r.task || !r.task.boardUuid) return false;
+  await kbSelectBoard(r.task.boardUuid);
+  if (!kbTask(taskUuid)) return false;  // board changed under us / not present
+  kbEditTask(taskUuid);
+  return true;
+}
 
 // ---- folder-contents detail pane + folder modals + tree drag-and-drop ----
 // Depth-first flatten of a folder's subtree → [{kind:'folder'|'board', node, depth}].

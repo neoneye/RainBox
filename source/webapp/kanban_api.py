@@ -157,6 +157,19 @@ def _task_op(task_uuid: str, fn) -> tuple[Response, int] | Response:
     return jsonify({"ok": True, "task": result})
 
 
+@app.route("/kanban/api/tasks/<task_uuid>", methods=["GET"])
+def kanban_task_get(task_uuid: str) -> tuple[Response, int] | Response:
+    """Fetch one task (incl. its boardUuid) so a deep link `/kanban?id=<task>` can
+    resolve which board to open before popping the task overlay."""
+    tu = _uuid_or_none(task_uuid)
+    if tu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    task = db.kanban_get_task(tu)
+    if task is None:
+        return jsonify({"ok": False, "error": "task not found"}), 404
+    return jsonify({"ok": True, "task": task})
+
+
 @app.route("/kanban/api/claim-next", methods=["POST"])
 def kanban_claim_next() -> tuple[Response, int] | Response:
     """Atomically find and claim one eligible task for an agent (the DB picks:

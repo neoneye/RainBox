@@ -357,11 +357,12 @@ def _action_activate_memory(
     )
 
 
-def _kanban_board_link(board_uuid: UUID | str) -> str:
-    """A relative link to a board's page (origin-independent, so it resolves to
-    whatever host/port the operator is on). Surfaced in the assistant's reply so
-    the operator can jump straight to the board it just changed."""
-    return f"/kanban?id={board_uuid}"
+def _kanban_link(target_uuid: UUID | str) -> str:
+    """A relative link to the kanban page (origin-independent). `?id=` accepts a
+    board OR a task uuid — a task uuid selects its board and opens that task's
+    overlay — so writes link to the specific task they touched. Surfaced in the
+    assistant's reply so the operator can jump straight to what changed."""
+    return f"/kanban?id={target_uuid}"
 
 
 def _action_move_kanban_task(
@@ -406,7 +407,7 @@ def _action_move_kanban_task(
             "task_uuid": str(task_uuid),
             "from_column_uuid": str(from_column_uuid),
             "to_column_uuid": str(column_uuid),
-            "link": _kanban_board_link(before["boardUuid"]),
+            "link": _kanban_link(str(task_uuid)),
             "undo": {
                 "capability": "kanban_move",
                 "payload": {"task_uuid": str(task_uuid),
@@ -445,7 +446,7 @@ def _action_complete_kanban_task(
             "task_uuid": str(task_uuid),
             "from_column_uuid": str(from_column_uuid),
             "to_column_uuid": after["columnUuid"],
-            "link": _kanban_board_link(before["boardUuid"]),
+            "link": _kanban_link(str(task_uuid)),
             "undo": {
                 "capability": "kanban_move",
                 "payload": {"task_uuid": str(task_uuid),
@@ -525,7 +526,7 @@ def _action_create_kanban_task(
             "task_uuid": created["uuid"],
             "board_uuid": str(board_uuid),
             "column_uuid": str(column_uuid),
-            "link": _kanban_board_link(board_uuid),
+            "link": _kanban_link(created["uuid"]),
             "undo": {"capability": "kanban_delete_task",
                      "payload": {"task_uuid": created["uuid"]}},
         },
