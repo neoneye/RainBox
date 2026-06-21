@@ -184,12 +184,10 @@ class Journal(db.Model):
     of the queue.
 
     IDENTITY — `journal.id` is a UUID (the `journal_id` threaded everywhere is a
-    UUID). It used to be an integer autoincrement, the one core entity without a
-    uuid; that was changed so the id is globally unique and self-describing — a
-    single `journal_id` grep'd from a log file or backup points at exactly this
-    row without first knowing which table it came from, and it travels across
-    process/payload boundaries unambiguously (no int collisions with other
-    tables' PKs). See the int->uuid migration in `db.init_db`.
+    UUID), so the id is globally unique and self-describing: a single `journal_id`
+    grep'd from a log file or backup points at exactly this row without first
+    knowing which table it came from, and it travels across process/payload
+    boundaries unambiguously (no int collisions with other tables' PKs).
 
     Consequence: a random uuid is NOT monotonic, so "oldest first" ordering must
     use a timestamp (`started_at` / `enqueued_at`), never `id`. The queue helpers

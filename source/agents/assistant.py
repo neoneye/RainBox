@@ -1,24 +1,16 @@
 """The assistant: a rainbox-owned ReAct loop over a typed action enum.
 
-Layered by PR so each slice stays shippable:
-
-- PR 1 added the *contract* — `AssistantActionName` and `AssistantStepDecision` —
-  so the eval harness could drive a deterministic fake model
-  (`agents/assistant_fakes.py`) before any live LLM behaviour existed.
-- PR 2 added `AssistantAgent`: the bounded plan -> act -> observe loop.
-- PR 3 made the per-step trace durable (assistant_run / assistant_step tables).
-- PR 4 (this) adds the read-only actions — `query_memory`, `query_qa`,
-  `workspace_read_command`, `kanban_read` — and the dispatcher that runs them
-  with a trace-before-action `running` row, an output cap, and an observation
-  the loop feeds back to the model. Each action reuses an existing rainbox
-  surface; none writes. Writes/MCP/generated code remain out of scope.
+The contract is `AssistantActionName` + `AssistantStepDecision`: the model emits
+one structured decision per step, the loop validates it, dispatches the action,
+records a durable per-step trace (assistant_run / assistant_step tables), feeds
+the observation back, and repeats until a terminal `reply`/`ask_clarifying_question`
+or the step cap. Actions are read-only (query_memory, query_qa,
+workspace_read_command, kanban_read) and write families (memory, skills, kanban,
+reminders, files) — each risk-tiered (log-and-undo / confirm) and traced.
 
 The loop owns validation, the step cap, terminal posting, and trace boundaries;
-the only live-model seam is `_decide_next_step`. See
-docs/proposals/2026-06-19-improvements-v2.md ("Loop skeleton", "Step-decision
-schema") for the binding rationale. Concrete shapes here are
-illustrative-until-promoted: they may be refined by a later PR as long as they
-still satisfy the assistant contracts.
+the only live-model seam is `_decide_next_step` (the eval harness swaps in a
+deterministic fake via `agents/assistant_fakes.py`).
 """
 
 import json
@@ -44,28 +36,24 @@ logger = logging.getLogger(__name__)
 class AssistantActionName(str, Enum):
     """The bounded set of capabilities a single assistant step may request.
 
-    This enum is the primitive capability registry (Phase 4 formalizes it with
-    metadata). The model can only ever name an action in this enum; code, not
-    prompt text, decides what each one is allowed to do.
-
-    PR 1 ships the full read-only enum so the eval harness can script the
-    actions PRs 2-4 will implement, but only the two terminal actions are wired
-    in PR 2 and the read actions in PR 4.
+    This enum is the capability registry (the `CAPABILITIES` table carries each
+    action's metadata). The model can only ever name an action in this enum;
+    code, not prompt text, decides what each one is allowed to do.
     """
 
-    # Terminal actions (PR 2): the loop ends the run and posts a chat message.
+    # Terminal actions: the loop ends the run and posts a chat message.
     REPLY = "reply"
     ASK_CLARIFYING_QUESTION = "ask_clarifying_question"
 
-    # Read-only actions (PR 4): each performs one bounded read and returns an
+    # Read-only actions: each performs one bounded read and returns an
     # observation the loop feeds back to the model.
     QUERY_MEMORY = "query_memory"
     QUERY_QA = "query_qa"
     WORKSPACE_READ_COMMAND = "workspace_read_command"
     KANBAN_READ = "kanban_read"
 
-    # Write actions (PR 9): the first controlled-write family.
-    REMEMBER = "remember"              # log-and-undo: create an inert candidate
+    # Write actions, each risk-tiered:
+    REMEMBER = "remember"              # log-and-undo: create an active memory
     ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
     FORGET_MEMORY = "forget_memory"      # confirm-tier: reject a memory (stop recalling it)
     KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
@@ -504,8 +492,8 @@ def _action_move_kanban_task(
         return AssistantObservation(
             ok=False, text="task moved since the write; not undoing")
     # No-op guard: targeting the column the task is already in changes nothing —
-    # flag it (don't report a phantom "Moved", which is how run 17 misled the model
-    # into claiming a move that never happened).
+    # flag it rather than report a phantom "Moved", so the model can't claim a
+    # move that never happened.
     if str(column_uuid) == str(from_column_uuid):
         others = ", ".join(f"'{c['name']}'" for c in cols
                            if str(c["uuid"]) != str(from_column_uuid)) or "(none)"
@@ -829,8 +817,8 @@ def _action_delete_skill(
 
 @dataclass(frozen=True)
 class Capability:
-    """Code-owned metadata + dispatch for one assistant action — the primitive
-    capability registry (Phase 4). The model can only request a capability that
+    """Code-owned metadata + dispatch for one assistant action — the capability
+    registry. The model can only request a capability that
     is in this registry, enabled, and (for the catalog) prompt_exposed. Both the
     prompt catalog and dispatch are generated from this single object, so
     disabling a capability removes it from prompt *and* dispatch at once.
@@ -1072,14 +1060,14 @@ class AssistantAgent(ModelGroupAgent):
     `handle()`, each reusing the shared model-group fallback via
     `_structured_completion`.
 
-    PR 4 enables the two terminal actions plus the four read-only actions, each
-    dispatched through `_dispatch_action` with a trace-before-action `running`
-    row and an output cap. The per-step trace is durable via the `_record_step`
-    seam (assistant_run / assistant_step rows). Writes remain out of scope.
+    Terminal, read-only, and write actions are all dispatched through
+    `_dispatch_action` with a trace-before-action `running` row and an output
+    cap. The per-step trace is durable via the `_record_step` seam (assistant_run
+    / assistant_step rows).
     """
 
-    # Loop + prompt budget caps (PR 1-4: simple counts/char caps, not a
-    # tokenizer-aware budget — that is Phase 3).
+    # Loop + prompt budget caps: simple counts/char caps, not a tokenizer-aware
+    # budget.
     STEP_LIMIT: int = 6
     MAX_RECENT_MESSAGES: int = 30
     MAX_SCRATCHPAD_CHARS: int = 5000
@@ -1158,9 +1146,9 @@ class AssistantAgent(ModelGroupAgent):
             self._profile_block = self._build_profile_block(journal_id, room_uuid)
             scratchpad: list[str] = []
             # Signatures of writes already completed this run. A model that doesn't
-            # notice a write succeeded can re-issue the identical write (run 13
-            # created the same task twice); replaying it would duplicate state, so
-            # an identical repeat is blocked and the model is steered to `reply`.
+            # notice a write succeeded can re-issue the identical write; replaying
+            # it would duplicate state, so an identical repeat is blocked and the
+            # model is steered to `reply`.
             done_writes: set[str] = set()
             # Relative links a write surfaced (e.g. /kanban?id=...), appended to the
             # reply so the operator can jump to what just changed. Order-preserving.

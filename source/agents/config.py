@@ -177,7 +177,7 @@ agent_config: dict[str, AgentConfigEntry] = {
     "assistant": {
         "uuid": ASSISTANT_UUID,
         "requires_structured_output": True,
-        "description": "rainbox-owned ReAct loop: decides one bounded action per step via structured output, observes, and repeats until a terminal reply or the step cap (PR 2: reply/ask_clarifying_question only)",
+        "description": "rainbox-owned ReAct loop: decides one bounded action per step via structured output, observes, and repeats until a terminal reply or the step cap",
         "next": None,
     },
     # --- persona conversation feature (Phase 0 walking skeleton) ---------------

@@ -1,12 +1,9 @@
 """Fake-model seam for deterministic assistant-loop tests.
 
-The only live-model seam in the assistant is `AssistantAgent._decide_next_step`
-(added in PR 2). Tests replace it with a *scripted* provider so the loop, step
-cap, validation, dispatch, and trace shape can be exercised without LM Studio,
-the network, or a live model.
-
-This helper is shared across PRs 1-4: PR 1 proves the seam itself behaves; later
-PRs monkeypatch `_decide_next_step` with `scripted_decisions(...)`.
+The only live-model seam in the assistant is `AssistantAgent._decide_next_step`.
+Tests replace it with a *scripted* provider so the loop, step cap, validation,
+dispatch, and trace shape can be exercised without LM Studio, the network, or a
+live model — monkeypatch `_decide_next_step` with `scripted_decisions(...)`.
 
     from agents.assistant import AssistantActionName, AssistantStepDecision
     from agents.assistant_fakes import scripted_decisions
