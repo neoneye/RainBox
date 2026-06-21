@@ -177,13 +177,19 @@ Check:
 - the supervisor process is running.
 - Flask-Admin `Inbox` and `Journal` rows for failures.
 
-### QueryAgent Fails
+### QueryAgent / seed-memory Fails
 
 Check:
 
 - pgvector extension is installed.
 - Ollama is running and has `nomic-embed-text` available.
 - `QUERY_AGENT_REBUILD_KB=1` if the JSONL registry changed.
+
+**Upgrade note (seed-memory rename):** the curated Q&A pgvector table was renamed
+`data_query_agent_kb` → `data_seed_memory`. After upgrading, click **Repopulate
+Q&A memory** on `/settings` once — the new table starts empty (first use also
+auto-populates it, so retrieval is only degraded until then, not broken). The old
+`data_query_agent_kb` table is now orphaned and can be dropped.
 
 ### Tests Cannot Connect To Postgres
 
