@@ -22,3 +22,10 @@ def test_memory_embedding_view_hides_the_vector_column():
     view = next(v for v in admin._views if getattr(v, "model", None) is db.MemoryEmbedding)
     assert "embedding" in (view.column_exclude_list or ())
     assert view.can_edit is False  # machine-generated; read-only
+
+
+def test_seed_memory_table_renamed():
+    import db
+    assert db.SeedMemoryKb.__tablename__ == "data_seed_memory"
+    import agents.query_kb_helpers as kb
+    assert kb.QA_FULL_TABLE == "data_seed_memory"

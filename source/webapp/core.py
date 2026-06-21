@@ -55,7 +55,7 @@ from db import (
     ModelConfigOverride,
     ModelGroup,
     ModelGroupMember,
-    QueryAgentKb,
+    SeedMemoryKb,
     RetrievalEvent,
     WorkspaceShellState,
     db,
@@ -394,9 +394,9 @@ def _fmt_copyable_uuid(view, context, model, name):
     )
 
 
-class QueryAgentKbView(ModelView):
+class SeedMemoryKbView(ModelView):
     # LlamaIndex's PGVectorStore owns this table — read-only here so admins
-    # can browse the embedded Q&A entries without risking the QueryAgent state.
+    # can browse the embedded seed-memory Q&A entries without risking state.
     can_create = False
     can_edit = False
     can_delete = False
@@ -538,7 +538,7 @@ admin.add_view(ChatMessageView(ChatMessage, db, category="Chat"))
 admin.add_view(ModelView(ChatUser, db, category="Chat"))
 admin.add_view(ChatroomMemberView(ChatroomMember, db, category="Chat"))
 admin.add_view(WorkspaceShellStateView(WorkspaceShellState, db, category="Chat"))
-admin.add_view(QueryAgentKbView(QueryAgentKb, db, category="Memory"))
+admin.add_view(SeedMemoryKbView(SeedMemoryKb, db, category="Memory"))
 
 
 class MemoryClaimView(ModelView):

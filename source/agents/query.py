@@ -17,7 +17,7 @@ in `query_handlers.HANDLERS` (which receives a `QueryContext` so handlers can be
 room-aware). Also post a small `debug-query` JSON row with the match info first,
 then the answer.
 
-The JSONL is embedded into `data_query_agent_kb` on first use. The KB is
+The JSONL is embedded into `data_seed_memory` on first use. The KB is
 **not** refreshed automatically when the JSONL changes; set the env var
 `QUERY_AGENT_REBUILD_KB=1` (or truncate the table) and restart the agent process
 to repopulate.

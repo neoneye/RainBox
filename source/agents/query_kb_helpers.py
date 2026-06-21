@@ -32,7 +32,7 @@ from agents.query_handlers import HANDLERS, QueryContext
 logger = logging.getLogger(__name__)
 
 QA_JSONL_PATH: Path = Path(__file__).resolve().parent.parent / "data" / "question_answer.jsonl"
-QA_TABLE_NAME: str = "query_agent_kb"   # PGVectorStore creates table "data_query_agent_kb"
+QA_TABLE_NAME: str = "seed_memory"   # PGVectorStore creates table "data_seed_memory"
 QA_FULL_TABLE: str = f"data_{QA_TABLE_NAME}"
 # Embeddings run on Ollama (the same server already used for chat at :11434),
 # not LM Studio — so Q&A retrieval depends on one local server instead of two.
@@ -209,7 +209,7 @@ def _build_documents(entries: list[dict[str, Any]]) -> list[Document]:
 
 
 def _table_row_count() -> int:
-    """Row count of `data_query_agent_kb`, 0 if the table doesn't exist yet."""
+    """Row count of `data_seed_memory`, 0 if the table doesn't exist yet."""
     try:
         with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
             cur.execute(
@@ -261,7 +261,7 @@ def _ensure_populated(vs: PGVectorStore) -> None:
 
 
 def rebuild_kb() -> dict[str, int]:
-    """Reset the in-process registry caches, TRUNCATE data_query_agent_kb,
+    """Reset the in-process registry caches, TRUNCATE data_seed_memory,
     and eagerly re-embed the merged JSONL (the /settings 'Repopulate Q&A
     memory' button; same semantics as QUERY_AGENT_REBUILD_KB=1 but without
     a restart). Returns {"entries": N, "documents": M} (M = embedded

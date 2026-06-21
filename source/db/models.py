@@ -1137,14 +1137,14 @@ class _ExternalTableBase(DeclarativeBase):
     these — the owning tool creates and migrates them."""
 
 
-class QueryAgentKb(_ExternalTableBase):
-    """Maps the `data_query_agent_kb` table that LlamaIndex's PGVectorStore
-    creates for QueryAgent's Q&A retrieval. Read-only via Flask-Admin; the
-    `embedding` pgvector column is intentionally not declared because
+class SeedMemoryKb(_ExternalTableBase):
+    """Maps the `data_seed_memory` table that LlamaIndex's PGVectorStore
+    creates for curated seed-memory Q&A retrieval. Read-only via Flask-Admin;
+    the `embedding` pgvector column is intentionally not declared because
     Flask-Admin can't render vectors and SQLAlchemy SELECTs only the columns
     listed here."""
 
-    __tablename__ = "data_query_agent_kb"
+    __tablename__ = "data_seed_memory"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     text: Mapped[str] = mapped_column(Text)
     metadata_: Mapped[dict] = mapped_column(sa.JSON)

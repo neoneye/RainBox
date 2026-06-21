@@ -635,14 +635,14 @@ def get_memory_stats(ctx: QueryContext) -> str:
     embed_count = 0
     try:
         with psycopg.connect(db.psycopg_dsn(), connect_timeout=2) as conn, conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM data_query_agent_kb")
+            cur.execute("SELECT count(*) FROM data_seed_memory")
             row = cur.fetchone()
             embed_count = int(row[0]) if row else 0
     except Exception:
         pass
     return (
         f"Q&A registry: {jsonl_count} entries in data/question_answer.jsonl, "
-        f"{embed_count} embedded rows in data_query_agent_kb (one per question alternate)."
+        f"{embed_count} embedded rows in data_seed_memory (one per question alternate)."
     )
 
 
