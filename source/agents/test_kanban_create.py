@@ -154,6 +154,39 @@ def test_create_via_loop_then_undo_deletes(board):
         db.db.session.commit()
 
 
+def test_duplicate_create_in_same_run_is_blocked(board):
+    """Run 13: after a successful create the model didn't reply — it wandered and
+    created the task a SECOND time. An identical write already completed this run
+    must be blocked (no duplicate task, no second write-intent)."""
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"dup-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "add dentist task")
+    bu = board["uuid"]
+    args = {"board_uuid": bu, "title": "Dentist checkup", "description": "the 6 month check up"}
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent._decide_next_step = scripted_decisions(
+        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE, args=dict(args)),
+        AssistantStepDecision(reason="create again", action=AssistantActionName.KANBAN_CREATE, args=dict(args)),
+        AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY, args={"message": "created"}),
+    )
+    try:
+        result = agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        assert result["status"] == "finished"
+        tasks = [t for t in db.kanban_load_board(UUID(bu))["tasks"]
+                 if t["title"] == "Dentist checkup"]
+        assert len(tasks) == 1                       # duplicate blocked
+        intents = db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.room_uuid == chatroom.uuid).all()
+        assert len(intents) == 1                     # only one write recorded
+    finally:
+        db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
+
+
 def test_model_cannot_invoke_delete_task(board):
     """A scripted kanban_delete_task decision is rejected by the validator guard
     (not prompt-exposed) — the task is NOT deleted."""

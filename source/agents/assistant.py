@@ -1006,6 +1006,11 @@ class AssistantAgent(ModelGroupAgent):
             # -effort — a retrieval failure must not break the turn).
             self._profile_block = self._build_profile_block(journal_id, room_uuid)
             scratchpad: list[str] = []
+            # Signatures of writes already completed this run. A model that doesn't
+            # notice a write succeeded can re-issue the identical write (run 13
+            # created the same task twice); replaying it would duplicate state, so
+            # an identical repeat is blocked and the model is steered to `reply`.
+            done_writes: set[str] = set()
 
             for step_index in range(self.step_limit):
                 current_step = step_index
@@ -1060,12 +1065,28 @@ class AssistantAgent(ModelGroupAgent):
                     step_index=step_index,
                 )
                 cap = self._caps[decision.action]
-                if cap.write and cap.tier == "confirm":
+                write_sig = (
+                    f"{decision.action.value}:"
+                    f"{json.dumps(decision.args, sort_keys=True, default=str)}"
+                    if cap.write else None
+                )
+                if write_sig is not None and write_sig in done_writes:
+                    # Identical to a write already completed this run — don't replay
+                    # it (that would duplicate state); tell the model it's done.
+                    observation = AssistantObservation(
+                        ok=True,
+                        text=("You already completed this exact action earlier in "
+                              "this run. Do not repeat it — use `reply` to confirm "
+                              "to the operator."),
+                    )
+                elif cap.write and cap.tier == "confirm":
                     observation = self._propose_write(action_ctx, decision, cap)
                 else:
                     observation = self._dispatch_action(action_ctx, decision)
                     if cap.write and cap.tier == "log_and_undo" and observation.ok:
                         self._record_log_and_undo(action_ctx, cap, decision, observation)
+                if write_sig is not None and observation.ok:
+                    done_writes.add(write_sig)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._record_step(
                     step_index=step_index,
@@ -1077,6 +1098,13 @@ class AssistantAgent(ModelGroupAgent):
                 scratchpad.append(
                     self._compact_step(step_index, decision, observation.ok, preview)
                 )
+                if write_sig is not None and observation.ok:
+                    # A write landed: steer the model to confirm, not to keep going
+                    # (and certainly not to re-write). This is the common tail.
+                    scratchpad.append(
+                        "the write succeeded — the request is fulfilled; use `reply` "
+                        "now to confirm and do not perform another write for it"
+                    )
 
             # Ran out of steps without a terminal action.
             msg = (
