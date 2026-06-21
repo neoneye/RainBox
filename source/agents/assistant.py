@@ -429,8 +429,10 @@ def _action_move_kanban_task(
                            if str(c["uuid"]) != str(from_column_uuid)) or "(none)"
         return AssistantObservation(
             ok=False,
-            text=(f"'{before['title']}' is already in '{col_name}' — no move "
-                  f"performed. Other columns: {others}"),
+            text=(f"the destination column must be different from the source: "
+                  f"'{before['title']}' is already in '{col_name}', so this move "
+                  f"changes nothing. If you meant a different column, pick one of: "
+                  f"{others}."),
         )
     try:
         moved = db.kanban_move_task(

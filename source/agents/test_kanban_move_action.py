@@ -104,7 +104,9 @@ def test_move_to_current_column_is_flagged_not_silent_noop(board):
     todo = board["columns"][0]["uuid"]  # the task's current column
     obs = _action_move_kanban_task(_ctx(), {"task_uuid": task["uuid"], "column_uuid": todo})
     assert obs.ok is False
-    assert "already" in obs.text.lower()
+    assert "different" in obs.text.lower()        # states the destination≠source rule
+    assert "'To do'" in obs.text                  # names the source column
+    assert "'Done'" in obs.text                   # offers the real alternative
     assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == todo  # unchanged
 
 
