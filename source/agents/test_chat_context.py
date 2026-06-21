@@ -75,7 +75,7 @@ def test_context_block_has_profile_then_memory(app_ctx, tag):
 
 def test_chat_context_includes_seed_memories(app_ctx):
     from agents.chat_context import build_chat_context_block
-    from agents.query_kb_helpers import SeedMemory
+    from memory.seed_memory import SeedMemory
     def fake_seed(query, **_):
         return [SeedMemory(uuid="s-1", path="p", source="user-overlay", answer="curated answer", score=0.7)]
     block, *_ = build_chat_context_block(

@@ -31,7 +31,7 @@ from uuid import UUID
 import db
 from agents.base import Agent, StatusSender
 from agents.query_handlers import QueryContext
-from agents.query_kb_helpers import (
+from memory.seed_memory import (
     MIN_MARGIN,
     MIN_SCORE,
     Match,

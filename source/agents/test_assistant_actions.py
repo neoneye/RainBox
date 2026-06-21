@@ -108,7 +108,7 @@ def test_query_memory_with_no_matches_is_ok_and_empty(app_ctx):
 
 def test_query_memory_includes_seed_memories_tiered(app_ctx):
     from agents.assistant import _action_query_memory
-    from agents.query_kb_helpers import SeedMemory
+    from memory.seed_memory import SeedMemory
     def fake_seed(query, **_):
         return [SeedMemory(uuid="up-1", path="p.up", source="upstream", answer="upstream fact", score=0.7),
                 SeedMemory(uuid="ov-1", path="p.ov", source="user-overlay", answer="overlay fact", score=0.65)]
@@ -127,7 +127,7 @@ def test_query_memory_merges_seed_and_dynamic_without_duplicate_legend(app_ctx, 
     """Seed + dynamic together: seed lines first, then dynamic facts, and the
     '{memory_uuid}, ...' legend appears exactly once (the dynamic block's own
     header/legend must not be re-appended)."""
-    from agents.query_kb_helpers import SeedMemory
+    from memory.seed_memory import SeedMemory
     def fake_seed(query, **_):
         return [SeedMemory(uuid="ov-1", path="p", source="user-overlay",
                            answer="overlay fact", score=0.7)]
@@ -151,7 +151,7 @@ def test_query_qa_reuses_query_pipeline_and_resolves_match(app_ctx, monkeypatch)
     """query_qa must run the QueryAgent exact/semantic match + resolve path, not
     reimplement Q&A. Stub the embedding-dependent internals (as the existing
     query tests do) and a resolved match, then assert the action returns it."""
-    from agents import query_kb_helpers as qkb
+    from memory import seed_memory as qkb
 
     sentinel = qkb.Match(
         qa_id="git_status", method="exact", score=1.0,
@@ -171,7 +171,7 @@ def test_query_qa_reuses_query_pipeline_and_resolves_match(app_ctx, monkeypatch)
 
 
 def test_query_qa_reports_no_confident_match(app_ctx, monkeypatch):
-    from agents import query_kb_helpers as qkb
+    from memory import seed_memory as qkb
 
     monkeypatch.setattr(qkb, "_load_kb", lambda: None)
     monkeypatch.setattr(qkb, "_vector_store", lambda: None)

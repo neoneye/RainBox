@@ -31,7 +31,7 @@ from agents.base import ModelGroupAgent
 from chat.transcript import format_history
 from llm import prepare_llm
 from agents.query_handlers import QueryContext
-from agents.query_kb_helpers import (
+from memory.seed_memory import (
     Match,
     _ensure_populated,
     _exact_match,

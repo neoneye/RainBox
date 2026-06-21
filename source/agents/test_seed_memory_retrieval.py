@@ -1,7 +1,7 @@
 import pytest
 import db
-import agents.query_kb_helpers as kb
-from agents.query_kb_helpers import Match, SeedMemory
+import memory.seed_memory as kb
+from memory.seed_memory import Match, SeedMemory
 
 
 @pytest.fixture()

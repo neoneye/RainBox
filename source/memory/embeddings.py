@@ -29,7 +29,7 @@ from db.models import MemoryClaim, MemoryEmbedding
 
 logger = logging.getLogger(__name__)
 
-# Must match the Q&A embedder (agents/query_kb_helpers.py).
+# Must match the Q&A embedder (memory/seed_memory.py).
 EMBED_MODEL_NAME: str = "nomic-embed-text"
 EMBED_DIM: int = 768
 
@@ -39,7 +39,7 @@ EmbedFn = Callable[[str], list[float]]
 def _default_embed(text: str) -> list[float]:
     # Lazy import so the memory layer doesn't hard-depend on the agents layer
     # (and so importing memory never spins up an embedder).
-    from agents.query_kb_helpers import _embed_model
+    from memory.seed_memory import _embed_model
 
     return _embed_model().get_text_embedding(text)
 

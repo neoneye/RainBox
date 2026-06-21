@@ -27,5 +27,5 @@ def test_memory_embedding_view_hides_the_vector_column():
 def test_seed_memory_table_renamed():
     import db
     assert db.SeedMemoryKb.__tablename__ == "data_seed_memory"
-    import agents.query_kb_helpers as kb
+    import memory.seed_memory as kb
     assert kb.QA_FULL_TABLE == "data_seed_memory"

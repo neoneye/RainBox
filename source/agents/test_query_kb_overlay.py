@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 import db
-import agents.query_kb_helpers as kb
+import memory.seed_memory as kb
 
 
 @pytest.fixture()

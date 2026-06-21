@@ -34,7 +34,7 @@ def build_chat_context_block(
     `query` may be supplied directly (e.g. in tests with no message history);
     if omitted, the query is extracted from `messages` by
     `build_chat_memory_block`.  `_seed_retriever` is injected by tests."""
-    from agents.query_kb_helpers import retrieve_seed_memories
+    from memory.seed_memory import retrieve_seed_memories
 
     memory_block, retrieved_query, memories = memory_retrieval.build_chat_memory_block(
         messages or [], agent_uuid=agent_uuid, room_uuid=room_uuid, journal_id=journal_id,

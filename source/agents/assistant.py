@@ -161,7 +161,7 @@ def _action_query_memory(
     Results are tiered: user-overlay seed, then upstream seed, then dynamic
     claims. Secrets are never returned (include_secret stays False)."""
     from memory.retrieval import format_memory_context, retrieve_memories_hybrid
-    from agents.query_kb_helpers import retrieve_seed_memories
+    from memory.seed_memory import retrieve_seed_memories
 
     query = str(args.get("query", "")).strip()
     seed_fn = _seed_retriever or retrieve_seed_memories
@@ -203,7 +203,7 @@ def _action_query_qa(
     """Reuse the QueryAgent exact/semantic Q&A pipeline and its read-only dynamic
     handlers (project status, git status, ...). Module-qualified calls so tests
     can stub the embedding-dependent internals."""
-    from agents import query_kb_helpers as qkb
+    from memory import seed_memory as qkb
     from agents.query_handlers import QueryContext
 
     query = str(args.get("query", "")).strip()

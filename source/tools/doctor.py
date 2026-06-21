@@ -42,7 +42,7 @@ def check_model_groups() -> Check:
 
 
 def check_embedder(*, embed_fn: Callable[[str], list[float]] | None = None) -> Check:
-    from agents.query_kb_helpers import EMBED_MODEL_NAME, OLLAMA_BASE
+    from memory.seed_memory import EMBED_MODEL_NAME, OLLAMA_BASE
     fn = embed_fn
     if fn is None:
         from memory.embeddings import _default_embed
