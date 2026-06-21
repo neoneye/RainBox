@@ -53,29 +53,43 @@ def test_overlay_path_unset_is_none(app_ctx, monkeypatch):
     assert kb._overlay_path() is None
 
 
-def test_load_jsonl_merges_overlay_by_id(customize_dir):
+def test_load_jsonl_merges_overlay_by_id(customize_dir, monkeypatch):
+    # `id` is a uuid (the canonical reference); `path` is a human label. The merge
+    # is by `id`, so the overlay overrides a base entry by reusing its uuid. Use a
+    # controlled base file so the test doesn't depend on the real jsonl's contents.
+    base = [
+        {"id": "uuid-A", "path": "identity.builtwith", "kind": "static",
+         "questions": ["What are you built with?"], "answer": "BASE-A"},
+        {"id": "uuid-B", "path": "project.rainbox", "kind": "static",
+         "questions": ["What is rainbox?"], "answer": "BASE-B"},
+    ]
+    monkeypatch.setattr(kb, "QA_JSONL_PATH", customize_dir / "base.jsonl")
+    (customize_dir / "base.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in base) + "\n")
     _write_overlay(customize_dir, [
-        # overrides a real base entry
-        {"id": "identity.builtwith", "kind": "static",
+        # same uuid → overrides the base entry wholesale
+        {"id": "uuid-A", "path": "identity.builtwith", "kind": "static",
          "questions": ["What are you built with?"], "answer": "OVERLAY WINS"},
-        # overlay-only entry
-        {"id": "test.overlay_only", "kind": "static",
+        # overlay-only entry (new uuid) → appended
+        {"id": "uuid-C", "path": "test.overlay_only", "kind": "static",
          "questions": ["overlay only?"], "answer": "yes"},
     ])
     by_id = {e["id"]: e for e in kb._load_jsonl()}
-    assert by_id["identity.builtwith"]["answer"] == "OVERLAY WINS"
-    assert by_id["test.overlay_only"]["answer"] == "yes"
-    # stable base entries; if this fails, check data/question_answer.jsonl
-    assert "project.rainbox" in by_id
+    assert by_id["uuid-A"]["answer"] == "OVERLAY WINS"   # overlay overrides base by id
+    assert by_id["uuid-C"]["answer"] == "yes"            # overlay-only entry present
+    assert by_id["uuid-B"]["answer"] == "BASE-B"         # untouched base entry
 
 
-def test_load_jsonl_without_overlay_is_base_only(customize_dir):
+def test_load_jsonl_without_overlay_is_base_only(customize_dir, monkeypatch):
     # setting points at a dir with NO question_answer.jsonl → base only
+    base = [{"id": "uuid-A", "path": "identity.builtwith", "kind": "static",
+             "questions": ["What are you built with?"], "answer": "BASE-A"}]
+    monkeypatch.setattr(kb, "QA_JSONL_PATH", customize_dir / "base.jsonl")
+    (customize_dir / "base.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in base) + "\n")
     by_id = {e["id"]: e for e in kb._load_jsonl()}
-    assert "test.overlay_only" not in by_id
-    # stable base entries; if this fails, check data/question_answer.jsonl
-    assert "identity.builtwith" in by_id
-    assert by_id["identity.builtwith"]["answer"] != "OVERLAY WINS"
+    assert "uuid-C" not in by_id                         # no overlay-only entry
+    assert by_id["uuid-A"]["answer"] == "BASE-A"         # base entry, not overridden
 
 
 class _FakeIndex:
