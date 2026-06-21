@@ -357,6 +357,13 @@ def _action_activate_memory(
     )
 
 
+def _kanban_board_link(board_uuid: UUID | str) -> str:
+    """A relative link to a board's page (origin-independent, so it resolves to
+    whatever host/port the operator is on). Surfaced in the assistant's reply so
+    the operator can jump straight to the board it just changed."""
+    return f"/kanban?id={board_uuid}"
+
+
 def _action_move_kanban_task(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
@@ -399,6 +406,7 @@ def _action_move_kanban_task(
             "task_uuid": str(task_uuid),
             "from_column_uuid": str(from_column_uuid),
             "to_column_uuid": str(column_uuid),
+            "link": _kanban_board_link(before["boardUuid"]),
             "undo": {
                 "capability": "kanban_move",
                 "payload": {"task_uuid": str(task_uuid),
@@ -437,6 +445,7 @@ def _action_complete_kanban_task(
             "task_uuid": str(task_uuid),
             "from_column_uuid": str(from_column_uuid),
             "to_column_uuid": after["columnUuid"],
+            "link": _kanban_board_link(before["boardUuid"]),
             "undo": {
                 "capability": "kanban_move",
                 "payload": {"task_uuid": str(task_uuid),
@@ -516,6 +525,7 @@ def _action_create_kanban_task(
             "task_uuid": created["uuid"],
             "board_uuid": str(board_uuid),
             "column_uuid": str(column_uuid),
+            "link": _kanban_board_link(board_uuid),
             "undo": {"capability": "kanban_delete_task",
                      "payload": {"task_uuid": created["uuid"]}},
         },
@@ -1011,6 +1021,9 @@ class AssistantAgent(ModelGroupAgent):
             # created the same task twice); replaying it would duplicate state, so
             # an identical repeat is blocked and the model is steered to `reply`.
             done_writes: set[str] = set()
+            # Relative links a write surfaced (e.g. /kanban?id=...), appended to the
+            # reply so the operator can jump to what just changed. Order-preserving.
+            result_links: list[str] = []
 
             for step_index in range(self.step_limit):
                 current_step = step_index
@@ -1043,6 +1056,8 @@ class AssistantAgent(ModelGroupAgent):
                         step_index=step_index, phase="final", decision=decision
                     )
                     text = self._terminal_text(decision)
+                    if decision.action is AssistantActionName.REPLY:
+                        text = self._append_result_links(text, result_links)
                     db.post_chat_message(room_uuid, self.agent_uuid, text, kind="message")
                     db.finish_run(run, "finished", final_summary=text[:200])
                     logger.info(
@@ -1087,6 +1102,9 @@ class AssistantAgent(ModelGroupAgent):
                         self._record_log_and_undo(action_ctx, cap, decision, observation)
                 if write_sig is not None and observation.ok:
                     done_writes.add(write_sig)
+                    link = observation.data.get("link")
+                    if link and link not in result_links:
+                        result_links.append(link)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._record_step(
                     step_index=step_index,
@@ -1275,6 +1293,17 @@ class AssistantAgent(ModelGroupAgent):
         # Validation guarantees the required key is present and non-empty.
         key = "message" if decision.action is AssistantActionName.REPLY else "question"
         return str(decision.args[key]).strip()
+
+    @staticmethod
+    def _append_result_links(text: str, links: list[str]) -> str:
+        """Append any links a write surfaced this run as clickable markdown whose
+        visible text is the relative path itself (so it's both shown and clickable).
+        Skips a link the model already wrote into its reply."""
+        extra = [link for link in links if link not in text]
+        if not extra:
+            return text
+        footer = "\n".join(f"[{link}]({link})" for link in extra)
+        return f"{text}\n\n{footer}" if text else footer
 
     def _dispatch_action(
         self, ctx: AssistantActionContext, decision: AssistantStepDecision

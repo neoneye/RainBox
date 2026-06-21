@@ -187,6 +187,35 @@ def test_duplicate_create_in_same_run_is_blocked(board):
         db.db.session.commit()
 
 
+def test_reply_includes_clickable_board_link_after_create(board):
+    """After creating a task the operator wants a way to the board — the reply
+    carries a clickable relative link [/kanban?id=<board>](/kanban?id=<board>)."""
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"link-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "add bike task")
+    bu = board["uuid"]
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent._decide_next_step = scripted_decisions(
+        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE,
+                              args={"board_uuid": bu, "title": "Bike checkup"}),
+        AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
+                              args={"message": "The task has been added."}),
+    )
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        reply = db.db.session.query(db.ChatMessage).filter_by(
+            room_uuid=chatroom.uuid, sender_uuid=ASSISTANT_UUID, kind="message").one()
+        link = f"/kanban?id={bu}"
+        assert link in reply.text                       # the relative path is present
+        assert f"[{link}]({link})" in reply.text        # …as a clickable markdown link
+        assert reply.text.startswith("The task has been added.")  # model's prose kept
+    finally:
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
+
+
 def test_model_cannot_invoke_delete_task(board):
     """A scripted kanban_delete_task decision is rejected by the validator guard
     (not prompt-exposed) — the task is NOT deleted."""
