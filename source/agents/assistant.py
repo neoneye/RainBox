@@ -67,6 +67,7 @@ class AssistantActionName(str, Enum):
     # Write actions (PR 9): the first controlled-write family.
     REMEMBER = "remember"              # log-and-undo: create an inert candidate
     ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
+    FORGET_MEMORY = "forget_memory"      # confirm-tier: reject a memory (stop recalling it)
     KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
     KANBAN_COMPLETE = "kanban_complete"  # log-and-undo: mark a task done
     KANBAN_COMMENT = "kanban_comment"    # log-and-undo: comment on a task
@@ -341,6 +342,54 @@ def _action_reject_memory_candidate(
     return AssistantObservation(
         ok=True, text=f"Rejected candidate memory {memory_uuid}",
         data={"memory_uuid": str(memory_uuid)})
+
+
+def _action_forget_memory(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Confirm-tier write: forget (reject) a memory so it stops being recalled.
+    Resolve the target by `memory_uuid` (from query_memory) or by `text` — text
+    searches active AND candidate claims, so a just-remembered candidate can be
+    forgotten. Dry-run (propose) previews which memory; real execution rejects it
+    and prunes its embedding."""
+    raw_uuid = args.get("memory_uuid")
+    text = str(args.get("text", "")).strip()
+    claim = None
+    if raw_uuid:
+        try:
+            memory_uuid = UUID(str(raw_uuid))
+        except (ValueError, TypeError):
+            return AssistantObservation(ok=False, text=f"invalid memory_uuid: {raw_uuid!r}")
+        claim = db.get_memory_claim(memory_uuid)
+        if claim is None or claim.status == "rejected":
+            return AssistantObservation(
+                ok=False, text="no such memory (or it is already forgotten)")
+    elif text:
+        from memory.ops import find_memory_matches
+        matches = [c for c in find_memory_matches(text, status=None)
+                   if c.status != "rejected"]
+        if not matches:
+            return AssistantObservation(
+                ok=False, text=f"nothing in memory matches {text!r}")
+        if len(matches) > 1:
+            uuids = ", ".join(str(c.uuid) for c in matches)
+            return AssistantObservation(
+                ok=False,
+                text=(f"{len(matches)} memories match {text!r} — forget by "
+                      f"memory_uuid instead. Candidates: {uuids}"))
+        claim = matches[0]
+    else:
+        return AssistantObservation(
+            ok=False, text="forget_memory needs a memory_uuid or text")
+
+    if ctx.dry_run:
+        return AssistantObservation(ok=True, text=f"Will forget: '{claim.text}'")
+    db.reject_memory(claim.uuid, {"provenance": "confirmed_by_user",
+                                  "source_type": "manual"})
+    from memory.embeddings import refresh_claim_embedding
+    refresh_claim_embedding(claim)  # rejected → prune its embedding
+    return AssistantObservation(
+        ok=True, text=f"Forgot: '{claim.text}'", data={"memory_uuid": str(claim.uuid)})
 
 
 def _action_activate_memory(
@@ -842,6 +891,16 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'answers; needs your confirmation. args: {"memory_uuid": "..."}'),
         required_args=("memory_uuid",), action=_action_activate_memory,
         read=False, write=True, tier="confirm",
+    ),
+    AssistantActionName.FORGET_MEMORY: Capability(
+        name=AssistantActionName.FORGET_MEMORY, family="memory",
+        description=('propose forgetting a memory so it stops being recalled; needs '
+                     'your confirmation. args: {"memory_uuid": "..."} (from '
+                     'query_memory) or {"text": "..."} — text matches active AND '
+                     'candidate memories'),
+        optional_args=frozenset({"memory_uuid", "text"}),
+        action=_action_forget_memory,
+        read=False, write=True, tier="confirm", dry_run=True,
     ),
     AssistantActionName.KANBAN_MOVE: Capability(
         name=AssistantActionName.KANBAN_MOVE, family="kanban",

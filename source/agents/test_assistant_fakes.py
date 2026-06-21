@@ -89,6 +89,7 @@ def test_action_enum_covers_the_known_action_surface():
         "kanban_read",
         "remember",
         "activate_memory",
+        "forget_memory",
         "kanban_move",
         "kanban_complete",
         "kanban_comment",
