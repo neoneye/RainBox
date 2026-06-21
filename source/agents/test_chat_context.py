@@ -7,6 +7,7 @@ import pytest
 import db
 import memory.retrieval as memory_retrieval
 from agents.chat_context import build_chat_context_block
+from agents.config import ASSISTANT_UUID
 from db import MemoryClaim, RetrievalEvent
 
 
@@ -70,6 +71,17 @@ def test_context_block_has_profile_then_memory(app_ctx, tag):
         assert block.index("About the operator") < block.index("Relevant remembered facts")
     finally:
         _cleanup(tag)
+
+
+def test_chat_context_includes_seed_memories(app_ctx):
+    from agents.chat_context import build_chat_context_block
+    from agents.query_kb_helpers import SeedMemory
+    def fake_seed(query, **_):
+        return [SeedMemory(uuid="s-1", path="p", source="user-overlay", answer="curated answer", score=0.7)]
+    block, *_ = build_chat_context_block(
+        query="zzz unrelated", room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID,
+        journal_id=uuid4(), _seed_retriever=fake_seed)
+    assert "curated answer" in block and "s-1" in block
 
 
 def test_chat_path_filters_secret(app_ctx, tag):
