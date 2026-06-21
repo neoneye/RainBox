@@ -15,9 +15,11 @@ import db
 from db import AssistantRun, AssistantWriteIntent, MemoryClaim
 from agents.assistant import (
     CAPABILITIES,
+    AssistantActionContext,
     AssistantActionName,
     AssistantAgent,
     AssistantStepDecision,
+    _action_remember,
 )
 from agents.assistant_fakes import scripted_decisions
 from agents.assistant_writes import execute_write_intent, reject_write_intent
@@ -72,6 +74,23 @@ def test_write_capabilities_declare_tiers():
 
 
 # --- log-and-undo: remember ---------------------------------------------------
+
+
+def test_remember_observation_carries_the_candidate_uuid(room):
+    """The observation must surface the new candidate's uuid, so a follow-up
+    activate/forget uses the real uuid instead of inventing one (run 38)."""
+    ctx = AssistantActionContext(
+        journal_id=None, room_uuid=room, agent_uuid=ASSISTANT_UUID, step_index=0)
+    text = f"I use a non-electric bicycle {uuid4().hex[:6]}"
+    try:
+        obs = _action_remember(ctx, {"text": text})
+        assert obs.ok is True
+        mem_uuid = obs.data["memory_uuid"]
+        assert mem_uuid in obs.text                          # uuid is visible to the model
+        assert "never invent" in obs.text.lower()            # and told not to fabricate one
+    finally:
+        db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
+        db.db.session.commit()
 
 
 def test_remember_creates_inert_candidate_and_is_undoable(room):

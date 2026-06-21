@@ -314,7 +314,9 @@ def _action_remember(
     )
     return AssistantObservation(
         ok=True,
-        text=f"Remembered as a candidate (reject to undo): {text}",
+        text=(f"Remembered as a candidate. memory_uuid: {claim.uuid}. "
+              f"This is complete — reply to the operator. Do not activate it unless "
+              f"asked, and only ever with this exact memory_uuid (never invent one)."),
         data={"memory_uuid": str(claim.uuid), "status": "candidate",
               "undo": {"capability": "reject_memory_candidate",
                        "payload": {"memory_uuid": str(claim.uuid)}}},
