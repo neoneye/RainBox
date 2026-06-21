@@ -297,7 +297,7 @@ probe paths pick the new provider up automatically.
 
 ## Known limitations
 
-- **Embeddings use Ollama.** `agents/query_kb_helpers.py` uses Ollama's
+- **Embeddings use Ollama.** `memory/seed_memory.py` uses Ollama's
   OpenAI-compatible endpoint (default `http://127.0.0.1:11434/v1`) with
   `nomic-embed-text` for Q&A and memory embeddings. Switching embedding model
   or provider would invalidate stored vectors, so embeddings remain a separate
