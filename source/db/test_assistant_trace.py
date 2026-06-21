@@ -74,8 +74,12 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
 
 
 def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
+    # A real room: a `failed` step posts a terminal anchor (chat row), which needs
+    # an existing room to NOTIFY.
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"trace-fail-{uuid4().hex[:8]}", human.uuid, [])
     run = db.start_assistant_run(
-        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+        journal_id=uuid4(), room_uuid=chatroom.uuid, agent_uuid=uuid4(), step_limit=6
     )
     try:
         db.append_assistant_step(
@@ -105,23 +109,32 @@ def test_append_posts_thin_debug_assistant_chat_pointer(app_ctx):
         journal_id=uuid4(), room_uuid=chatroom.uuid, agent_uuid=uuid4(), step_limit=6
     )
     try:
+        # `planned` posts NO anchor (the observation doesn't exist yet); the
+        # anchor lands at the terminal transition so the row carries full detail.
         db.append_assistant_step(
             run_id=run.id, step_index=0, phase="planned",
-            action="reply", reason="answer now", args={"message": "hi"},
+            action="query_memory", reason="look it up", args={"query": "secret-q"},
+        )
+        assert not [m for m in db.list_room_messages(chatroom.uuid)
+                    if m["kind"] == "debug-assistant"]
+        db.append_assistant_step(
+            run_id=run.id, step_index=0, phase="observed",
+            action="query_memory", reason="look it up",
+            observation_preview="found the fact",
         )
         rows = [
             m for m in db.list_room_messages(chatroom.uuid)
             if m["kind"] == "debug-assistant"
         ]
-        assert len(rows) == 1
+        assert len(rows) == 1  # exactly one anchor per step, at its terminal phase
         assert rows[0]["content_type"] == "json"
         payload = json.loads(rows[0]["text"])
         assert payload["run_id"] == run.id
         assert payload["step_index"] == 0
         # Readable summary = action + reason (so the row means something without
         # the trace fetch), but never the args.
-        assert "reply" in payload["summary"] and "answer now" in payload["summary"]
-        assert "hi" not in rows[0]["text"]  # the arg value never leaks into the anchor
+        assert "query_memory" in payload["summary"] and "look it up" in payload["summary"]
+        assert "secret-q" not in rows[0]["text"]  # the arg value never leaks into the anchor
     finally:
         _cleanup_run(run.id)
         db.db.session.query(db.Chatroom).filter(

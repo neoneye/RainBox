@@ -84,11 +84,15 @@ def append_assistant_step(
     db.session.add(step)
     db.session.flush()  # commit the step row before anything else this txn
 
-    # One inline anchor per step, placed at its first transition. The pointer
-    # carries the locator plus a readable one-line summary (action + reason) so
-    # the row is meaningful even before/without the trace-fetch render — args are
-    # deliberately excluded (they may carry secrets), reason is operator-facing.
-    if phase == "planned":
+    # One inline anchor per step, placed at its *terminal* transition (observed /
+    # failed / final) — NOT at `planned`. Anchoring at planned posts the chat row
+    # before the action runs, so the browser renders the step before its
+    # observation exists and never re-renders it (the row then shows less than the
+    # trace tables hold). Posting at the terminal phase means the observation is
+    # already committed when the SSE fires, so the inline render matches the DB.
+    # The pointer carries the locator plus a readable summary (action + reason);
+    # args are excluded (may carry secrets), reason is operator-facing.
+    if phase in ("observed", "failed", "final"):
         run = db.session.get(AssistantRun, run_id)
         if run is not None:
             summary = action or "step"

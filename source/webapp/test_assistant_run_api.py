@@ -31,8 +31,11 @@ def _cleanup_run(app, run_id: int) -> None:
 def test_run_endpoint_returns_run_and_steps(client):
     flask_client, app = client
     with app.app_context():
+        # Real room: the terminal `observed` step posts an anchor chat row.
+        human = db.get_human_user()
+        chatroom = db.create_chatroom(f"runapi-{uuid4().hex[:8]}", human.uuid, [])
         run = db.start_assistant_run(
-            journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+            journal_id=uuid4(), room_uuid=chatroom.uuid, agent_uuid=uuid4(), step_limit=6
         )
         db.append_assistant_step(
             run_id=run.id, step_index=0, phase="running",
