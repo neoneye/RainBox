@@ -538,7 +538,7 @@ admin.add_view(ChatMessageView(ChatMessage, db, category="Chat"))
 admin.add_view(ModelView(ChatUser, db, category="Chat"))
 admin.add_view(ChatroomMemberView(ChatroomMember, db, category="Chat"))
 admin.add_view(WorkspaceShellStateView(WorkspaceShellState, db, category="Chat"))
-admin.add_view(QueryAgentKbView(QueryAgentKb, db, category="Chat"))
+admin.add_view(QueryAgentKbView(QueryAgentKb, db, category="Memory"))
 
 
 class MemoryClaimView(ModelView):
