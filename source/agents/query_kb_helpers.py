@@ -243,7 +243,7 @@ def _ensure_populated(vs: PGVectorStore) -> None:
                 logger.warning("truncate %s failed (%s); falling through to populate", QA_FULL_TABLE, e)
         count = _table_row_count()
         if count > 0:
-            logger.info("query_agent kb already populated (%d rows); skipping", count)
+            logger.info("seed memory kb already populated (%d rows); skipping", count)
             _populated = True
             return
         entries = _load_jsonl()
@@ -253,7 +253,7 @@ def _ensure_populated(vs: PGVectorStore) -> None:
             docs, storage_context=storage, embed_model=_embed_model()
         )
         logger.info(
-            "query_agent kb populated with %d question alternates from %s",
+            "seed memory kb populated with %d question alternates from %s",
             len(docs),
             QA_JSONL_PATH,
         )
