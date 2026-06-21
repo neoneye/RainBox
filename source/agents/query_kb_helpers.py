@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -407,3 +408,42 @@ def command_from_payload(room_uuid: UUID, payload: dict[str, Any]) -> str | None
         if m.get("sender_type") == "human":
             return (m.get("text") or "").strip()
     return None
+
+
+@dataclass
+class SeedMemory:
+    """A curated Q&A entry surfaced as a memory. `uuid` is the jsonl `id`."""
+    uuid: str
+    path: str
+    source: str   # "user-overlay" | "upstream"
+    answer: str
+    score: float
+
+
+def retrieve_seed_memories(
+    query: str, *, limit: int = 5,
+    _ranker: Callable[[str], list[Match]] | None = None,
+) -> list[SeedMemory]:
+    """Curated static Q&A entries relevant to `query`, as memories. Ranked by the
+    seed store's question-embedding similarity (>= MIN_SCORE), deduped by uuid
+    (the ranker aggregates per qa_id), capped at `limit`. Dynamic/handler entries
+    are excluded — they are computed answers, not facts. `_ranker` is injected by
+    tests; in production it runs the LlamaIndex semantic ranker."""
+    rank = _ranker or (lambda q: _semantic_ranked(q, _vector_store()))
+    out: list[SeedMemory] = []
+    for m in rank(query):
+        if m.score < MIN_SCORE:
+            continue
+        entry = _entries_by_id.get(m.qa_id)
+        if entry is None or entry.get("kind") != "static":
+            continue
+        out.append(SeedMemory(
+            uuid=m.qa_id,
+            path=str(entry.get("path", "")),
+            source=str(entry.get("_source", "upstream")),
+            answer=str(entry.get("answer", "")),
+            score=m.score,
+        ))
+        if len(out) >= limit:
+            break
+    return out
