@@ -822,6 +822,17 @@ function kbEditTask(uuid){
   };
   kbLoadTaskEvents(uuid);
 }
+// Copy a shareable link to the open task. Absolute (origin + path) so it works
+// pasted anywhere; /kanban?id=<task> reopens this overlay.
+function kbCopyTaskLink(btn){
+  if (!kbEditingTask) return;
+  const url = window.location.origin + '/kanban?id=' + kbEditingTask;
+  navigator.clipboard.writeText(url).then(() => {
+    const prev = btn.textContent;
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = prev; }, 1200);
+  }).catch(() => kbToast('Could not copy to clipboard.'));
+}
 // The task's audit trail (kanban_task_event): created/claimed/moved/done/
 // failed/notes, from UI saves and agent operations alike. Read-only here.
 async function kbLoadTaskEvents(uuid){

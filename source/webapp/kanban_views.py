@@ -266,7 +266,11 @@ KANBAN_TEMPLATE = """
     <label>Assigned agent <select id="kb-t-agent"></select></label>
     <label>Column <select id="kb-t-col"></select></label>
   </div>
-  <div class="kb-row muted" id="kb-t-uuid-row" hidden>Task uuid: <code id="kb-t-uuid"></code></div>
+  <div class="kb-row muted" id="kb-t-uuid-row" hidden>Task uuid: <code id="kb-t-uuid"></code>
+    <button type="button" id="kb-t-copy-link" class="btn-cancel"
+      style="padding:2px 9px;font-size:0.8rem;margin-left:8px"
+      title="Copy a shareable link to this task"
+      onclick="kbCopyTaskLink(this)">Copy link</button></div>
   <div class="kb-row muted" id="kb-t-claim" hidden></div>
   <span class="err" id="kb-t-err"></span>
   <div class="modal-actions">
