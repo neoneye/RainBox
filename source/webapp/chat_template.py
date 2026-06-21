@@ -545,9 +545,19 @@ function addCopyButton(container, source){
 const assistantRunCache = {};
 function fetchAssistantRun(runId){
   if (!assistantRunCache[runId]){
-    assistantRunCache[runId] = fetch('/chat/api/assistant/runs/' + runId)
+    const p = fetch('/chat/api/assistant/runs/' + runId)
       .then(r => r.ok ? r.json() : null)
       .catch(() => null);
+    assistantRunCache[runId] = p;
+    // Only a finished run is immutable and safe to cache. A still-running run
+    // keeps gaining steps, so drop it from the cache once resolved — otherwise
+    // later step rows render against a stale, short snapshot ("too little").
+    p.then(data => {
+      const st = data && data.run && data.run.status;
+      if (st !== 'finished' && st !== 'stopped' && st !== 'failed'){
+        delete assistantRunCache[runId];
+      }
+    });
   }
   return assistantRunCache[runId];
 }
@@ -573,6 +583,14 @@ function renderAssistantStepRows(stepIndex, rows){
     r.className = 'astep-reason';
     r.textContent = decision.reason;
     wrap.appendChild(r);
+  }
+  // The decision's args (what the action was actually called with) — the part of
+  // the AssistantStepDecision the operator most wants to inspect. Capped so a big
+  // payload (e.g. a file edit) can't blow up the row.
+  if (decision.args && Object.keys(decision.args).length){
+    let argsStr = JSON.stringify(decision.args);
+    if (argsStr.length > 800) argsStr = argsStr.slice(0, 800) + '…';
+    wrap.appendChild(astepBlock('args', argsStr));
   }
   rows.forEach(s => {
     if (s.phase === 'observed' && s.observation_preview){
