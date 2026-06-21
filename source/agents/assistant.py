@@ -169,7 +169,8 @@ def _action_query_memory(
     if not memories:
         return AssistantObservation(ok=True, text="No relevant remembered facts.")
     return AssistantObservation(
-        ok=True, text=format_memory_context(memories), data={"count": len(memories)}
+        ok=True, text=format_memory_context(memories, include_uuid=True),
+        data={"count": len(memories), "memory_uuids": [str(m.uuid) for m in memories]},
     )
 
 

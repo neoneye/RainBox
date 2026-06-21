@@ -227,6 +227,15 @@ def test_format_memory_context_returns_empty_string_when_no_memories():
     assert format_memory_context([]) == ""
 
 
+def test_format_memory_context_includes_uuid_only_when_requested():
+    """The chat-context block omits uuids (noise for a reply), but the assistant's
+    query_memory needs them to point at a specific memory (e.g. to forget it)."""
+    m = _retrieved(text="I prefer pasta.")
+    assert str(m.uuid) not in format_memory_context([m])            # default: clean
+    with_id = format_memory_context([m], include_uuid=True)
+    assert str(m.uuid) in with_id and "I prefer pasta." in with_id  # assistant: targetable
+
+
 def test_record_memory_use_posts_debug_memory_row(app_ctx, fresh_subject):
     """Verify the audit row is posted as kind='debug-memory' with a JSON
     payload listing the memory uuids and provenance labels."""

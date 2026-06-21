@@ -391,10 +391,16 @@ def retrieve_memories_hybrid(
 _DEBUG_MEMORY_KIND: str = "debug-memory"
 
 
-def format_memory_context(memories: list[RetrievedMemory]) -> str:
+def format_memory_context(
+    memories: list[RetrievedMemory], *, include_uuid: bool = False
+) -> str:
     """Render the memory block for `ChatAgent.user_prompt`. Returns the
     empty string when `memories` is empty (so callers can unconditionally
-    concatenate without producing a stray header)."""
+    concatenate without producing a stray header).
+
+    `include_uuid` appends each memory's uuid — off for the always-on chat
+    context (noise for a reply), on for the assistant's `query_memory` so it can
+    point at a specific memory (e.g. to forget it)."""
     if not memories:
         return ""
     lines = ["Relevant remembered facts:"]
@@ -402,7 +408,10 @@ def format_memory_context(memories: list[RetrievedMemory]) -> str:
         # Tags: [<kind>, <sensitivity>, <provenance...>]. Keeps the model
         # informed about both the kind and the audit trail at a glance.
         evidence_tag = ", ".join(m.evidence_summary) or "no evidence"
-        lines.append(f"- [{m.kind}, {m.sensitivity}, {evidence_tag}] {m.text}")
+        line = f"- [{m.kind}, {m.sensitivity}, {evidence_tag}] {m.text}"
+        if include_uuid:
+            line += f"  (memory_uuid: {m.uuid})"
+        lines.append(line)
     return "\n".join(lines)
 
 
