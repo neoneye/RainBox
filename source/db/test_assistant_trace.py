@@ -95,9 +95,9 @@ def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
 
 
 def test_append_posts_thin_debug_assistant_chat_pointer(app_ctx):
-    """The inline anchor is a debug-assistant JSON row carrying only the
-    run_id/step_index pointer — never 'progress' (which gets reaped) and never
-    the full payload."""
+    """The inline anchor is a debug-assistant JSON row carrying the run_id/
+    step_index pointer plus a readable action+reason summary — never 'progress'
+    (which gets reaped) and never the step args (potential secrets)."""
     human = db.get_human_user()
     assert human is not None
     chatroom = db.create_chatroom(f"trace-ptr-{uuid4().hex[:8]}", human.uuid, [])
@@ -116,9 +116,12 @@ def test_append_posts_thin_debug_assistant_chat_pointer(app_ctx):
         assert len(rows) == 1
         assert rows[0]["content_type"] == "json"
         payload = json.loads(rows[0]["text"])
-        assert payload == {"run_id": run.id, "step_index": 0}
-        # The pointer must not carry the step payload (args/reason).
-        assert "message" not in rows[0]["text"]
+        assert payload["run_id"] == run.id
+        assert payload["step_index"] == 0
+        # Readable summary = action + reason (so the row means something without
+        # the trace fetch), but never the args.
+        assert "reply" in payload["summary"] and "answer now" in payload["summary"]
+        assert "hi" not in rows[0]["text"]  # the arg value never leaks into the anchor
     finally:
         _cleanup_run(run.id)
         db.db.session.query(db.Chatroom).filter(

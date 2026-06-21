@@ -85,14 +85,20 @@ def append_assistant_step(
     db.session.flush()  # commit the step row before anything else this txn
 
     # One inline anchor per step, placed at its first transition. The pointer
-    # carries only the locator — readers join back to assistant_step by it.
+    # carries the locator plus a readable one-line summary (action + reason) so
+    # the row is meaningful even before/without the trace-fetch render — args are
+    # deliberately excluded (they may carry secrets), reason is operator-facing.
     if phase == "planned":
         run = db.session.get(AssistantRun, run_id)
         if run is not None:
+            summary = action or "step"
+            if reason:
+                summary = f"{summary} — {reason}"
             post_chat_message(
                 run.room_uuid,
                 run.agent_uuid,
-                json.dumps({"run_id": run_id, "step_index": step_index}),
+                json.dumps({"run_id": run_id, "step_index": step_index,
+                            "summary": summary[:200]}),
                 content_type="json",
                 kind="debug-assistant",
             )  # commits the txn (including the step row above)

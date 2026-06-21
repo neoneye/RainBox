@@ -593,7 +593,11 @@ function renderAssistantStepBody(body, text){
   try { ptr = JSON.parse(text); } catch(e){}
   if (!ptr || ptr.run_id == null){ body.textContent = text; return; }
   const holder = document.createElement('div');
-  holder.textContent = 'assistant step ' + (ptr.step_index != null ? ptr.step_index : '?') + '…';
+  // Show the summary carried in the pointer immediately, so the row is readable
+  // even before the trace fetch resolves (or if it fails / the JS is stale).
+  holder.textContent = ptr.summary
+    ? ('step ' + ptr.step_index + ' · ' + ptr.summary)
+    : ('assistant step ' + (ptr.step_index != null ? ptr.step_index : '?') + '…');
   body.appendChild(holder);
   fetchAssistantRun(ptr.run_id).then(data => {
     holder.innerHTML = '';
