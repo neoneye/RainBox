@@ -357,15 +357,15 @@ def _resolve_debug_assistant_text(model) -> str | None:
 
 
 def _format_chatmessage_text(view, context, model, name):
-    """List/detail formatter. A debug-assistant row's text is the full trace —
-    render it with line breaks. (`_resolve_debug_assistant_text` is a fallback for
-    legacy rows that still hold a {run_id, step_index} pointer.) Other rows pass
-    through unchanged."""
+    """List/detail formatter. A debug-assistant row's text is the full step state
+    as JSON — render it in a <pre> so indentation/newlines survive.
+    (`_resolve_debug_assistant_text` is a fallback for legacy rows that still hold
+    a {run_id, step_index} pointer.) Other rows pass through unchanged."""
     text = model.text or ""
     if model.kind != "debug-assistant":
         return text
     shown = _resolve_debug_assistant_text(model) or text
-    return Markup("<br>".join(escape(line) for line in shown.split("\n")))
+    return Markup(f'<pre style="white-space:pre-wrap;margin:0">{escape(shown)}</pre>')
 
 
 def _fmt_copyable_uuid(view, context, model, name):

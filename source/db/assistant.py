@@ -90,20 +90,22 @@ def append_assistant_step(
     if phase in ("observed", "failed", "final"):
         run = db.session.get(AssistantRun, run_id)
         if run is not None:
-            parts = [f"step {step_index} · {action or '?'}"]
-            if reason:
-                parts.append(reason)
-            if args:
-                parts.append("args: " + json.dumps(args, sort_keys=True))
-            if phase == "observed" and observation_preview:
-                parts.append("observation: " + observation_preview)
+            state: dict[str, Any] = {
+                "step": step_index,
+                "phase": phase,
+                "action": action,
+                "reason": reason,
+                "args": args or {},
+            }
+            if phase == "observed":
+                state["observation"] = observation_preview
             elif phase == "failed":
-                parts.append("error: " + (error or observation_preview or "failed"))
+                state["error"] = error or observation_preview
             elif phase == "final":
-                parts.append("→ replied to the user")
+                state["result"] = "replied to the user"
             post_chat_message(
-                run.room_uuid, run.agent_uuid, "\n".join(parts),
-                content_type="markdown", kind="debug-assistant",
+                run.room_uuid, run.agent_uuid, json.dumps(state, indent=2),
+                content_type="json", kind="debug-assistant",
             )  # commits the txn (including the step row above)
     db.session.commit()
     return step

@@ -588,13 +588,10 @@ function makeMessage(m){
 
   const body = document.createElement('div');
   body.className = 'msg-text';
-  if (m.kind === 'debug-assistant'){
-    // The text IS the full trace (action/reason/args/observation); show it
-    // verbatim with line breaks preserved. No pointer to resolve, no fetch.
-    body.style.whiteSpace = 'pre-wrap';
-    body.textContent = m.text;
-  } else if (m.content_type === 'json'){
+  if (m.content_type === 'json'){
     // Render JSON in a code block. textContent (not innerHTML) keeps it safe.
+    // debug-assistant rows are content_type:json — the full step state, inspected
+    // as JSON (no markdown rendering to hide anything).
     const pre = document.createElement('pre');
     const code = document.createElement('code');
     code.textContent = prettyJson(m.text);

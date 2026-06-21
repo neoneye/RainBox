@@ -126,12 +126,14 @@ def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
             if m["kind"] == "debug-assistant"
         ]
         assert len(rows) == 1  # exactly one anchor per step, at its terminal phase
-        body = rows[0]["text"]
-        assert "step 0 · query_memory" in body
-        assert "look it up" in body                  # reason
-        assert "the-query" in body                   # the args, in full
-        assert "observation: found the fact" in body  # and the observation
-        assert "run_id" not in body                  # not a pointer
+        assert rows[0]["content_type"] == "json"
+        state = json.loads(rows[0]["text"])          # the full step state as JSON
+        assert state["step"] == 0
+        assert state["action"] == "query_memory"
+        assert state["reason"] == "look it up"
+        assert state["args"] == {"query": "the-query"}  # args in full
+        assert state["observation"] == "found the fact"
+        assert "run_id" not in state                 # not a pointer
     finally:
         _cleanup_run(run.id)
         db.db.session.query(db.Chatroom).filter(
