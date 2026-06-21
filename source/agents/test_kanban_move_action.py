@@ -87,6 +87,35 @@ def test_move_rejects_missing_task(app_ctx):
     assert obs.ok is False
 
 
+def test_move_resolves_column_by_name(board):
+    """Run 17: the operator names a column ('In progress'); the model couldn't map
+    it to a uuid. The action resolves a column NAME (case-insensitive) too."""
+    task = board["tasks"][0]
+    done = board["columns"][1]["uuid"]  # "Done"
+    obs = _action_move_kanban_task(_ctx(), {"task_uuid": task["uuid"], "column_uuid": "done"})
+    assert obs.ok is True
+    assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == done
+
+
+def test_move_to_current_column_is_flagged_not_silent_noop(board):
+    """Run 17: the model targeted the column the task was already in; the move was
+    a no-op but reported 'Moved'. A no-op must be flagged, not claimed as success."""
+    task = board["tasks"][0]
+    todo = board["columns"][0]["uuid"]  # the task's current column
+    obs = _action_move_kanban_task(_ctx(), {"task_uuid": task["uuid"], "column_uuid": todo})
+    assert obs.ok is False
+    assert "already" in obs.text.lower()
+    assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == todo  # unchanged
+
+
+def test_move_unknown_column_lists_available(board):
+    task = board["tasks"][0]
+    obs = _action_move_kanban_task(
+        _ctx(), {"task_uuid": task["uuid"], "column_uuid": "Nonexistent"})
+    assert obs.ok is False
+    assert "To do" in obs.text and "Done" in obs.text  # guides the model
+
+
 def test_move_rejects_column_not_on_board(board):
     task = board["tasks"][0]
     obs = _action_move_kanban_task(

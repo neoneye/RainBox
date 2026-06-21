@@ -249,10 +249,15 @@ def _action_kanban_read(
         task = db.kanban_get_task(task_uuid)
         if task is None:
             return AssistantObservation(ok=False, text="no such kanban task")
+        board = db.kanban_load_board(UUID(str(task["boardUuid"])))
+        cur = next((c["name"] for c in (board["columns"] if board else [])
+                    if str(c["uuid"]) == str(task["columnUuid"])), task["columnUuid"])
+        all_cols = ", ".join(c["name"] for c in board["columns"]) if board else ""
         lines = [
             f"Task: {task['title']}",
-            f"  board: {task['boardUuid']}  column: {task['columnUuid']}",
+            f"  board: {task['boardUuid']}  column: {cur}",
             f"  description: {task['description'] or '(none)'}",
+            f"  board columns (move targets): {all_cols}",
         ]
         events = db.kanban_task_events(task_uuid, limit=10) or []
         if events:
@@ -365,25 +370,50 @@ def _kanban_link(target_uuid: UUID | str) -> str:
     return f"/kanban?id={target_uuid}"
 
 
+def _resolve_board_column(
+    board_uuid: UUID | str, raw: Any
+) -> tuple[UUID | None, list[dict[str, Any]]]:
+    """Resolve a column reference to a column uuid on the given board. Accepts the
+    column's uuid OR its name (case-insensitive) — operators name a column ("In
+    progress"), and the model can't be relied on to know its uuid. Returns
+    (uuid_or_None, columns); columns lets callers list options in an error."""
+    board = db.kanban_load_board(UUID(str(board_uuid)))
+    cols: list[dict[str, Any]] = board["columns"] if board else []
+    s = str(raw).strip()
+    for c in cols:  # exact uuid first
+        if str(c["uuid"]) == s:
+            return UUID(str(c["uuid"])), cols
+    for c in cols:  # then case-insensitive name
+        if str(c["name"]).strip().lower() == s.lower():
+            return UUID(str(c["uuid"])), cols
+    return None, cols
+
+
 def _action_move_kanban_task(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
     """Log-and-undo write: move a kanban task to another column of its board.
-    Reversible — `data["undo"]` is the inverse move (back to the task's current
-    column). Code-owned authority: this does not route through the worker
-    observe/work/shape dispatcher; reversibility + trace is the safety."""
+    `column_uuid` may be the column's name or uuid. Reversible — `data["undo"]`
+    is the inverse move. Code-owned authority: this does not route through the
+    worker observe/work/shape dispatcher; reversibility + trace is the safety."""
     raw_task, raw_col = args.get("task_uuid"), args.get("column_uuid")
     try:
         task_uuid = UUID(str(raw_task))
-        column_uuid = UUID(str(raw_col))
     except (ValueError, TypeError):
-        return AssistantObservation(
-            ok=False, text=f"invalid task_uuid/column_uuid: {raw_task!r}, {raw_col!r}"
-        )
+        return AssistantObservation(ok=False, text=f"invalid task_uuid: {raw_task!r}")
     before = db.kanban_get_task(task_uuid)
     if before is None:
         return AssistantObservation(ok=False, text="no such kanban task")
     from_column_uuid = before["columnUuid"]
+    column_uuid, cols = _resolve_board_column(before["boardUuid"], raw_col)
+    if column_uuid is None:
+        available = ", ".join(f"'{c['name']}'" for c in cols) or "(none)"
+        return AssistantObservation(
+            ok=False,
+            text=f"no column matching {raw_col!r} on this board. Columns: {available}",
+        )
+    col_name = next((str(c["name"]) for c in cols
+                     if str(c["uuid"]) == str(column_uuid)), str(column_uuid))
     # Position-aware undo: an undo carries `expect_column` (where the original
     # write left the task). If the task has since moved, refuse — don't yank it
     # from where it now sits.
@@ -391,6 +421,17 @@ def _action_move_kanban_task(
     if expect is not None and str(from_column_uuid) != str(expect):
         return AssistantObservation(
             ok=False, text="task moved since the write; not undoing")
+    # No-op guard: targeting the column the task is already in changes nothing —
+    # flag it (don't report a phantom "Moved", which is how run 17 misled the model
+    # into claiming a move that never happened).
+    if str(column_uuid) == str(from_column_uuid):
+        others = ", ".join(f"'{c['name']}'" for c in cols
+                           if str(c["uuid"]) != str(from_column_uuid)) or "(none)"
+        return AssistantObservation(
+            ok=False,
+            text=(f"'{before['title']}' is already in '{col_name}' — no move "
+                  f"performed. Other columns: {others}"),
+        )
     try:
         moved = db.kanban_move_task(
             task_uuid, column_uuid,
@@ -402,7 +443,7 @@ def _action_move_kanban_task(
         return AssistantObservation(ok=False, text="no such kanban task")
     return AssistantObservation(
         ok=True,
-        text=f"Moved '{before['title']}' to column {column_uuid} (undoable).",
+        text=f"Moved '{before['title']}' to '{col_name}' (undoable).",
         data={
             "task_uuid": str(task_uuid),
             "from_column_uuid": str(from_column_uuid),
@@ -797,7 +838,9 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.KANBAN_MOVE: Capability(
         name=AssistantActionName.KANBAN_MOVE, family="kanban",
         description=('move a kanban task to another column; reversible (undoable). '
-                     'args: {"task_uuid": "...", "column_uuid": "..."}'),
+                     'args: {"task_uuid": "...", "column_uuid": "..."} where '
+                     'column_uuid is the target column\'s NAME (e.g. "In progress") '
+                     'or its uuid — prefer the name the operator used'),
         required_args=("task_uuid", "column_uuid"),
         action=_action_move_kanban_task,
         read=False, write=True, tier="log_and_undo",
