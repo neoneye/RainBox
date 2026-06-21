@@ -123,6 +123,27 @@ def test_query_memory_includes_seed_memories_tiered(app_ctx):
     assert "user-overlay" in obs.text
 
 
+def test_query_memory_merges_seed_and_dynamic_without_duplicate_legend(app_ctx, fresh_subject):
+    """Seed + dynamic together: seed lines first, then dynamic facts, and the
+    '{memory_uuid}, ...' legend appears exactly once (the dynamic block's own
+    header/legend must not be re-appended)."""
+    from agents.query_kb_helpers import SeedMemory
+    def fake_seed(query, **_):
+        return [SeedMemory(uuid="ov-1", path="p", source="user-overlay",
+                           answer="overlay fact", score=0.7)]
+    try:
+        db.create_memory_claim(
+            scope="global", kind="fact", text="the deploy host is prod-web-01",
+            confidence=0.9, status="active", sensitivity="public", subject=fresh_subject)
+        obs = _action_query_memory(_ctx(), {"query": "deploy host prod"}, _seed_retriever=fake_seed)
+        assert obs.ok
+        assert "overlay fact" in obs.text and "prod-web-01" in obs.text   # both present
+        assert obs.text.index("overlay fact") < obs.text.index("prod-web-01")  # seed before dynamic
+        assert obs.text.count("{memory_uuid}") == 1   # the legend is not duplicated
+    finally:
+        _cleanup_subject(fresh_subject)
+
+
 # --- query_qa (reuses the QueryAgent pipeline) --------------------------------
 
 

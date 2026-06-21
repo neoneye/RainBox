@@ -187,8 +187,9 @@ def _action_query_memory(
         lines.append(f"- {s.uuid}, seed/{s.source}: {s.answer}")
     text = "\n".join(lines)
     if dynamic_block:
-        # dynamic_block already has its own header line; append its fact lines.
-        text += "\n" + "\n".join(dynamic_block.split("\n")[1:])
+        # format_memory_context(include_uuid=True) emits TWO header lines (title +
+        # the "{memory_uuid}, ..." legend); skip both and append only its fact lines.
+        text += "\n" + "\n".join(dynamic_block.split("\n")[2:])
     return AssistantObservation(
         ok=True, text=text,
         data={"seed_count": len(seeds), "dynamic_count": len(memories),
