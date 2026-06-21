@@ -585,12 +585,10 @@ function renderAssistantStepRows(stepIndex, rows){
     wrap.appendChild(r);
   }
   // The decision's args (what the action was actually called with) — the part of
-  // the AssistantStepDecision the operator most wants to inspect. Capped so a big
-  // payload (e.g. a file edit) can't blow up the row.
+  // the AssistantStepDecision the operator most wants to inspect. Shown in full;
+  // the row is collapsible so a big payload doesn't get in the way.
   if (decision.args && Object.keys(decision.args).length){
-    let argsStr = JSON.stringify(decision.args);
-    if (argsStr.length > 800) argsStr = argsStr.slice(0, 800) + '…';
-    wrap.appendChild(astepBlock('args', argsStr));
+    wrap.appendChild(astepBlock('args', JSON.stringify(decision.args)));
   }
   rows.forEach(s => {
     if (s.phase === 'observed' && s.observation_preview){

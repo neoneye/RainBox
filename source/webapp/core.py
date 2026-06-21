@@ -16,7 +16,7 @@ from flask_admin.model.typefmt import BASE_FORMATTERS
 from flask_admin.theme import Bootstrap4Theme
 from jinja2 import ChoiceLoader, DictLoader
 from markupsafe import Markup, escape
-from wtforms import StringField
+from wtforms import StringField, TextAreaField
 
 from benchmarks.runner import BenchmarkRunner
 from db import (
@@ -322,41 +322,47 @@ def _format_sender_name(view, context, model, name):
     return user.name if user else str(model.sender_uuid)
 
 
-def _format_chatmessage_text(view, context, model, name):
+def _resolve_debug_assistant_text(model) -> str | None:
     """A debug-assistant row stores only a {run_id, step_index, summary} pointer.
-    Resolve it to the step's action/reason/args/observation (like the chat UI's
-    inline trace) so the admin shows what the step actually did, not the pointer."""
-    text = model.text or ""
+    Resolve it to the step's full action/reason/args/observation (no truncation),
+    or None if `model` is not a resolvable debug-assistant row."""
     if model.kind != "debug-assistant":
-        return text
+        return None
     try:
-        ptr = json.loads(text)
+        ptr = json.loads(model.text or "")
         run_id, step_index = ptr.get("run_id"), ptr.get("step_index")
     except (ValueError, TypeError):
-        return text
+        return None
     if run_id is None:
-        return text
+        return None
     steps = (db.session.query(AssistantStep)
              .filter_by(run_id=run_id, step_index=step_index)
              .order_by(AssistantStep.id).all())
     if not steps:
-        return text
+        return None
     decision = next((s for s in steps if s.action), steps[0])
     lines = [f"step {step_index} · {decision.action or '?'}"]
     if decision.reason:
         lines.append(decision.reason)
     if decision.args:
-        args = json.dumps(decision.args)
-        lines.append("args: " + (args[:800] + "…" if len(args) > 800 else args))
+        lines.append("args: " + json.dumps(decision.args))      # full, no cap
     for s in steps:
         if s.phase == "observed" and s.observation_preview:
-            obs = s.observation_preview
-            lines.append("observation: " + (obs[:600] + "…" if len(obs) > 600 else obs))
+            lines.append("observation: " + s.observation_preview)  # full, no cap
         elif s.phase == "failed":
             lines.append("error: " + (s.error or s.observation_preview or "failed"))
         elif s.phase == "final":
             lines.append("→ replied to the user")
-    return Markup("<br>".join(escape(line) for line in lines))
+    return "\n".join(lines)
+
+
+def _format_chatmessage_text(view, context, model, name):
+    """List/detail formatter: show the resolved step (what it did), not the raw
+    pointer, for debug-assistant rows; other rows pass through unchanged."""
+    resolved = _resolve_debug_assistant_text(model)
+    if resolved is None:
+        return model.text or ""
+    return Markup("<br>".join(escape(line) for line in resolved.split("\n")))
 
 
 def _fmt_copyable_uuid(view, context, model, name):
@@ -409,6 +415,12 @@ class ChatMessageView(ModelView):
     form_extra_fields = {
         "room": StringField("Room", render_kw={"readonly": True}),
         "sender": StringField("Sender", render_kw={"readonly": True}),
+        # For a debug-assistant row, show the full resolved step (action/reason/
+        # args/observation) read-only — the editable `text` field holds only the
+        # raw pointer.
+        "resolved": TextAreaField(
+            "Resolved trace (debug-assistant)",
+            render_kw={"readonly": True, "rows": 24, "style": "width:100%"}),
     }
 
     def on_form_prefill(self, form, id):
@@ -419,6 +431,7 @@ class ChatMessageView(ModelView):
         user = db.session.query(ChatUser).filter_by(uuid=msg.sender_uuid).first()
         form.room.data = f"{room.name if room else '(unknown)'} ({msg.room_uuid})"
         form.sender.data = f"{user.name if user else '(unknown)'} ({msg.sender_uuid})"
+        form.resolved.data = _resolve_debug_assistant_text(msg) or "(not a debug-assistant row)"
 
 
 admin.add_view(ModelConfigOverrideView(ModelConfigOverride, db, category="Config"))

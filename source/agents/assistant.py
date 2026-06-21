@@ -1061,9 +1061,12 @@ class AssistantAgent(ModelGroupAgent):
     STEP_LIMIT: int = 6
     MAX_RECENT_MESSAGES: int = 30
     MAX_SCRATCHPAD_CHARS: int = 5000
-    # The slice of an observation the model/trace see per step. The raw action
-    # output is capped harder (per-capability output_cap_chars) before this preview.
-    MAX_OBSERVATION_PREVIEW_CHARS: int = 1200
+    # How much of an observation the trace stores per step. Set to the largest
+    # per-capability output_cap_chars (12000) so the trace captures the whole
+    # observation an action returned — the operator inspecting a run wants all of
+    # it, not a 1200-char slice. (The raw action output is already capped by
+    # output_cap_chars before this.)
+    MAX_OBSERVATION_PREVIEW_CHARS: int = 12000
 
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
