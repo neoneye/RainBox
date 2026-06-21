@@ -299,25 +299,27 @@ def _action_kanban_read(
 def _action_remember(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Log-and-undo write: create an inert *candidate* memory claim. Low blast
-    radius (candidates never affect behavior until activated), executes
-    immediately, and is reversed by rejecting the candidate."""
+    """Log-and-undo write: create an *active* memory claim. The operator
+    explicitly asked to remember this, so it goes straight to active (no candidate
+    review step) and is embedded for immediate retrieval; undo rejects it."""
     text = str(args.get("text", "")).strip()
     claim = db.create_memory_claim(
-        scope="room", kind="fact", text=text, confidence=0.5,
-        status="candidate", sensitivity="private",
+        scope="room", kind="fact", text=text, confidence=1.0,
+        status="active", sensitivity="private",
         agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
     )
     db.add_memory_evidence(
-        memory_uuid=claim.uuid, provenance="inferred_by_model",
+        memory_uuid=claim.uuid, provenance="confirmed_by_user",
         source_type="chat_message", created_by_uuid=ctx.agent_uuid,
     )
+    from memory.embeddings import refresh_claim_embedding
+    refresh_claim_embedding(claim)  # active now → embed so query_memory finds it
     return AssistantObservation(
         ok=True,
-        text=(f"Remembered as a candidate. memory_uuid: {claim.uuid}. "
-              f"This is complete — reply to the operator. Do not activate it unless "
-              f"asked, and only ever with this exact memory_uuid (never invent one)."),
-        data={"memory_uuid": str(claim.uuid), "status": "candidate",
+        text=(f"Remembered as an active memory. memory_uuid: {claim.uuid}. "
+              f"Done — reply to the operator. To forget it later, use this exact "
+              f"memory_uuid (never invent one)."),
+        data={"memory_uuid": str(claim.uuid), "status": "active",
               "undo": {"capability": "reject_memory_candidate",
                        "payload": {"memory_uuid": str(claim.uuid)}}},
     )
@@ -326,19 +328,20 @@ def _action_remember(
 def _action_reject_memory_candidate(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Internal: reject a *candidate* memory claim — remember's undo inverse. Not
-    prompt-exposed (reached only via undo_write_intent). Only rejects a claim that
-    is still a candidate, so undoing the original remember can't reject a claim
-    the operator has since activated."""
+    """Internal: reject a remembered memory claim — remember's undo inverse. Not
+    prompt-exposed (reached only via undo_write_intent). Rejects a claim that is
+    still candidate or active (the states remember leaves it in); refuses if it
+    has since been removed/changed (rejected/superseded/expired), so the undo
+    can't clobber a later state."""
     raw = args.get("memory_uuid")
     try:
         memory_uuid = UUID(str(raw))
     except (ValueError, TypeError):
         return AssistantObservation(ok=False, text=f"invalid memory_uuid: {raw!r}")
     claim = db.get_memory_claim(memory_uuid)
-    if claim is None or claim.status != "candidate":
+    if claim is None or claim.status not in ("candidate", "active"):
         return AssistantObservation(
-            ok=False, text="memory is not a pending candidate; not rejecting")
+            ok=False, text="memory is no longer candidate/active; not rejecting")
     db.reject_memory(memory_uuid, {"provenance": "confirmed_by_user",
                                    "source_type": "manual"})
     return AssistantObservation(

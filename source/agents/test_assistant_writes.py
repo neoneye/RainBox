@@ -93,7 +93,7 @@ def test_remember_observation_carries_the_candidate_uuid(room):
         db.db.session.commit()
 
 
-def test_remember_creates_inert_candidate_and_is_undoable(room):
+def test_remember_creates_active_memory_and_is_undoable(room):
     agent = _agent()
     text = f"the build server is ci-{uuid4().hex[:6]}"
     agent._decide_next_step = scripted_decisions(
@@ -105,8 +105,8 @@ def test_remember_creates_inert_candidate_and_is_undoable(room):
         assert result["status"] == "finished"
         claims = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
         assert len(claims) == 1
-        assert claims[0].status == "candidate"  # inert until activated
-        # Undo: rejecting the candidate reverses the write.
+        assert claims[0].status == "active"  # an explicit "remember" is active now
+        # Undo: rejecting it reverses the write.
         db.reject_memory(claims[0].uuid, {"provenance": "confirmed_by_user",
                                           "source_type": "manual"})
         assert db.get_memory_claim(claims[0].uuid).status == "rejected"
@@ -132,7 +132,7 @@ def test_remember_is_undoable_through_the_write_intent_ledger(room):
             AssistantWriteIntent.room_uuid == room).one()
         assert intent.state == "completed"
         mem_uuid = UUID(intent.result["undo"]["payload"]["memory_uuid"])
-        assert db.get_memory_claim(mem_uuid).status == "candidate"
+        assert db.get_memory_claim(mem_uuid).status == "active"
         obs = undo_write_intent(intent.uuid)
         assert obs.ok is True
         assert db.get_memory_claim(mem_uuid).status == "rejected"  # undo rejected it

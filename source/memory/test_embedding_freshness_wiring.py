@@ -95,13 +95,31 @@ def test_assistant_activate_memory_embeds_the_claim(app_ctx):
         journal_id=None, room_uuid=room_uuid, agent_uuid=agent_uuid, step_index=0
     )
     text = f"freshness activate {uuid4()}"
+    # A candidate (e.g. from a future deriver) — created directly, not embedded yet.
+    claim = db.create_memory_claim(
+        scope="room", kind="fact", text=text, confidence=0.5, status="candidate",
+        sensitivity="private", agent_uuid=agent_uuid, room_uuid=room_uuid)
+    try:
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
+        _action_activate_memory(ctx, {"memory_uuid": str(claim.uuid)})
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
+    finally:
+        db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete(
+            synchronize_session=False
+        )
+        db.db.session.commit()
+
+
+def test_assistant_remember_embeds_the_active_claim(app_ctx):
+    """An explicit `remember` lands an active claim AND embeds it immediately, so
+    query_memory can retrieve it without an activate step."""
+    ctx = AssistantActionContext(
+        journal_id=None, room_uuid=uuid4(), agent_uuid=uuid4(), step_index=0)
+    text = f"freshness remember {uuid4()}"
     try:
         obs = _action_remember(ctx, {"text": text})
-        memory_uuid = obs.data["memory_uuid"]
-        claim = db.get_memory_claim(UUID(memory_uuid))
-        # Candidate: not embedded yet.
-        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
-        _action_activate_memory(ctx, {"memory_uuid": memory_uuid})
+        claim = db.get_memory_claim(UUID(obs.data["memory_uuid"]))
+        assert claim.status == "active"
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
     finally:
         db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete(
