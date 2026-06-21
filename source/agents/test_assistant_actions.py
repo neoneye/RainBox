@@ -106,6 +106,23 @@ def test_query_memory_with_no_matches_is_ok_and_empty(app_ctx):
     assert obs.text  # a human-readable "nothing found" message, not a crash
 
 
+def test_query_memory_includes_seed_memories_tiered(app_ctx):
+    from agents.assistant import _action_query_memory
+    from agents.query_kb_helpers import SeedMemory
+    def fake_seed(query, **_):
+        return [SeedMemory(uuid="up-1", path="p.up", source="upstream", answer="upstream fact", score=0.7),
+                SeedMemory(uuid="ov-1", path="p.ov", source="user-overlay", answer="overlay fact", score=0.65)]
+    ctx = AssistantActionContext(journal_id=None, room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID, step_index=0)
+    obs = _action_query_memory(ctx, {"query": "anything unrelated zzz"}, _seed_retriever=fake_seed)
+    assert obs.ok is True
+    # user-overlay seed appears before upstream seed
+    assert obs.text.index("overlay fact") < obs.text.index("upstream fact")
+    # the seed uuids are present (greppable)
+    assert "ov-1" in obs.text and "up-1" in obs.text
+    # source tag is shown
+    assert "user-overlay" in obs.text
+
+
 # --- query_qa (reuses the QueryAgent pipeline) --------------------------------
 
 
