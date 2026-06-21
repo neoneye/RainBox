@@ -98,10 +98,10 @@ def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
         _cleanup_run(run.id)
 
 
-def test_append_posts_thin_debug_assistant_chat_pointer(app_ctx):
-    """The inline anchor is a debug-assistant JSON row carrying the run_id/
-    step_index pointer plus a readable action+reason summary — never 'progress'
-    (which gets reaped) and never the step args (potential secrets)."""
+def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
+    """The inline anchor's text IS the full readable trace (action/reason/args/
+    observation) — self-contained, so it matches what's shown and copied. It lands
+    at the terminal transition (planned posts nothing), one per step."""
     human = db.get_human_user()
     assert human is not None
     chatroom = db.create_chatroom(f"trace-ptr-{uuid4().hex[:8]}", human.uuid, [])
@@ -109,17 +109,16 @@ def test_append_posts_thin_debug_assistant_chat_pointer(app_ctx):
         journal_id=uuid4(), room_uuid=chatroom.uuid, agent_uuid=uuid4(), step_limit=6
     )
     try:
-        # `planned` posts NO anchor (the observation doesn't exist yet); the
-        # anchor lands at the terminal transition so the row carries full detail.
+        # `planned` posts NO anchor (the observation doesn't exist yet).
         db.append_assistant_step(
             run_id=run.id, step_index=0, phase="planned",
-            action="query_memory", reason="look it up", args={"query": "secret-q"},
+            action="query_memory", reason="look it up", args={"query": "the-query"},
         )
         assert not [m for m in db.list_room_messages(chatroom.uuid)
                     if m["kind"] == "debug-assistant"]
         db.append_assistant_step(
             run_id=run.id, step_index=0, phase="observed",
-            action="query_memory", reason="look it up",
+            action="query_memory", reason="look it up", args={"query": "the-query"},
             observation_preview="found the fact",
         )
         rows = [
@@ -127,14 +126,12 @@ def test_append_posts_thin_debug_assistant_chat_pointer(app_ctx):
             if m["kind"] == "debug-assistant"
         ]
         assert len(rows) == 1  # exactly one anchor per step, at its terminal phase
-        assert rows[0]["content_type"] == "json"
-        payload = json.loads(rows[0]["text"])
-        assert payload["run_id"] == run.id
-        assert payload["step_index"] == 0
-        # Readable summary = action + reason (so the row means something without
-        # the trace fetch), but never the args.
-        assert "query_memory" in payload["summary"] and "look it up" in payload["summary"]
-        assert "secret-q" not in rows[0]["text"]  # the arg value never leaks into the anchor
+        body = rows[0]["text"]
+        assert "step 0 · query_memory" in body
+        assert "look it up" in body                  # reason
+        assert "the-query" in body                   # the args, in full
+        assert "observation: found the fact" in body  # and the observation
+        assert "run_id" not in body                  # not a pointer
     finally:
         _cleanup_run(run.id)
         db.db.session.query(db.Chatroom).filter(

@@ -546,110 +546,6 @@ function addCopyButton(container, source){
   container.appendChild(btn);
 }
 
-// Assistant trace: a debug-assistant row carries only {run_id, step_index};
-// the step detail lives in the assistant_run/assistant_step tables. Fetch a
-// run's steps once (cached by run_id) and render this step's plan/action/
-// observation inline so the operator can inspect the loop in the conversation.
-const assistantRunCache = {};
-function fetchAssistantRun(runId){
-  if (!assistantRunCache[runId]){
-    const p = fetch('/chat/api/assistant/runs/' + runId)
-      .then(r => r.ok ? r.json() : null)
-      .catch(() => null);
-    assistantRunCache[runId] = p;
-    // Only a finished run is immutable and safe to cache. A still-running run
-    // keeps gaining steps, so drop it from the cache once resolved — otherwise
-    // later step rows render against a stale, short snapshot ("too little").
-    p.then(data => {
-      const st = data && data.run && data.run.status;
-      if (st !== 'finished' && st !== 'stopped' && st !== 'failed'){
-        delete assistantRunCache[runId];
-      }
-    });
-  }
-  return assistantRunCache[runId];
-}
-function astepBlock(label, text){
-  const d = document.createElement('div');
-  d.className = 'astep-' + label;
-  const l = document.createElement('span');
-  l.className = 'astep-label';
-  l.textContent = label + ': ';
-  d.appendChild(l);
-  d.appendChild(document.createTextNode(text));
-  return d;
-}
-function renderAssistantStepRows(stepIndex, rows){
-  const wrap = document.createElement('div');
-  const decision = rows.find(r => r.action) || rows[0] || {};
-  const head = document.createElement('div');
-  head.className = 'astep-head';
-  head.textContent = 'Step ' + stepIndex + (decision.action ? (' · ' + decision.action) : '');
-  wrap.appendChild(head);
-  if (decision.reason){
-    const r = document.createElement('div');
-    r.className = 'astep-reason';
-    r.textContent = decision.reason;
-    wrap.appendChild(r);
-  }
-  // The decision's args (what the action was actually called with) — the part of
-  // the AssistantStepDecision the operator most wants to inspect. Shown in full;
-  // the row is collapsible so a big payload doesn't get in the way.
-  if (decision.args && Object.keys(decision.args).length){
-    wrap.appendChild(astepBlock('args', JSON.stringify(decision.args)));
-  }
-  rows.forEach(s => {
-    if (s.phase === 'observed' && s.observation_preview){
-      wrap.appendChild(astepBlock('observation', s.observation_preview));
-    } else if (s.phase === 'failed'){
-      wrap.appendChild(astepBlock('error', s.error || s.observation_preview || 'failed'));
-    } else if (s.phase === 'final'){
-      const f = document.createElement('div');
-      f.className = 'astep-final';
-      f.textContent = '→ replied to the user';
-      wrap.appendChild(f);
-    }
-  });
-  return wrap;
-}
-// The resolved trace for one step as plain text (action/reason/args/observation),
-// for the Copy button — so the clipboard matches what's shown and what's stored,
-// not the raw {run_id, step_index} pointer. Falls back to the pointer text.
-function assistantStepText(ptr, fallback){
-  return fetchAssistantRun(ptr.run_id).then(data => {
-    const rows = data ? (data.steps || []).filter(s => s.step_index === ptr.step_index) : [];
-    if (!rows.length) return fallback;
-    const decision = rows.find(r => r.action) || rows[0] || {};
-    const lines = ['step ' + ptr.step_index + (decision.action ? ' · ' + decision.action : '')];
-    if (decision.reason) lines.push(decision.reason);
-    if (decision.args && Object.keys(decision.args).length) lines.push('args: ' + JSON.stringify(decision.args));
-    rows.forEach(s => {
-      if (s.phase === 'observed' && s.observation_preview) lines.push('observation: ' + s.observation_preview);
-      else if (s.phase === 'failed') lines.push('error: ' + (s.error || s.observation_preview || 'failed'));
-      else if (s.phase === 'final') lines.push('→ replied to the user');
-    });
-    return lines.join('\\n');
-  }).catch(() => fallback);
-}
-function renderAssistantStepBody(body, text){
-  let ptr = null;
-  try { ptr = JSON.parse(text); } catch(e){}
-  if (!ptr || ptr.run_id == null){ body.textContent = text; return; }
-  const holder = document.createElement('div');
-  // Show the summary carried in the pointer immediately, so the row is readable
-  // even before the trace fetch resolves (or if it fails / the JS is stale).
-  holder.textContent = ptr.summary
-    ? ('step ' + ptr.step_index + ' · ' + ptr.summary)
-    : ('assistant step ' + (ptr.step_index != null ? ptr.step_index : '?') + '…');
-  body.appendChild(holder);
-  fetchAssistantRun(ptr.run_id).then(data => {
-    holder.innerHTML = '';
-    if (!data){ holder.textContent = '(assistant step ' + ptr.step_index + ' — details unavailable)'; return; }
-    const rows = (data.steps || []).filter(s => s.step_index === ptr.step_index);
-    if (!rows.length){ holder.textContent = '(no trace for step ' + ptr.step_index + ')'; return; }
-    holder.appendChild(renderAssistantStepRows(ptr.step_index, rows));
-  });
-}
 
 function makeMessage(m){
   const msg = document.createElement('div');
@@ -693,9 +589,10 @@ function makeMessage(m){
   const body = document.createElement('div');
   body.className = 'msg-text';
   if (m.kind === 'debug-assistant'){
-    // Render the assistant step (plan/action/observation) from the trace tables
-    // rather than the raw {run_id, step_index} pointer.
-    renderAssistantStepBody(body, m.text);
+    // The text IS the full trace (action/reason/args/observation); show it
+    // verbatim with line breaks preserved. No pointer to resolve, no fetch.
+    body.style.whiteSpace = 'pre-wrap';
+    body.textContent = m.text;
   } else if (m.content_type === 'json'){
     // Render JSON in a code block. textContent (not innerHTML) keeps it safe.
     const pre = document.createElement('pre');
@@ -732,15 +629,9 @@ function makeMessage(m){
   // container owns the gap above the buttons so both share the same Y.
   const actions = document.createElement('div');
   actions.className = 'msg-actions';
-  // For a debug-assistant row, copy the resolved trace (full action/reason/args/
-  // observation), not the raw {run_id, step_index} pointer — the clipboard should
-  // match what's shown and what's stored.
-  let copySource = m.text;
-  if (m.kind === 'debug-assistant'){
-    let ptr = null; try { ptr = JSON.parse(m.text); } catch(e){}
-    if (ptr && ptr.run_id != null) copySource = () => assistantStepText(ptr, m.text);
-  }
-  addCopyButton(actions, copySource);
+  // Copy = the message's stored text, uniformly for every row (debug-assistant
+  // text is now the full trace, so no per-kind special-casing).
+  addCopyButton(actions, m.text);
   // Feedback row: only on agent user-facing replies. Never on human
   // messages or diagnostic rows (debug-memory / debug-query / progress /
   // thinking) — those aren't conversation outputs.

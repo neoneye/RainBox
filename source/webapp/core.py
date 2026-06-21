@@ -357,12 +357,15 @@ def _resolve_debug_assistant_text(model) -> str | None:
 
 
 def _format_chatmessage_text(view, context, model, name):
-    """List/detail formatter: show the resolved step (what it did), not the raw
-    pointer, for debug-assistant rows; other rows pass through unchanged."""
-    resolved = _resolve_debug_assistant_text(model)
-    if resolved is None:
-        return model.text or ""
-    return Markup("<br>".join(escape(line) for line in resolved.split("\n")))
+    """List/detail formatter. A debug-assistant row's text is the full trace —
+    render it with line breaks. (`_resolve_debug_assistant_text` is a fallback for
+    legacy rows that still hold a {run_id, step_index} pointer.) Other rows pass
+    through unchanged."""
+    text = model.text or ""
+    if model.kind != "debug-assistant":
+        return text
+    shown = _resolve_debug_assistant_text(model) or text
+    return Markup("<br>".join(escape(line) for line in shown.split("\n")))
 
 
 def _fmt_copyable_uuid(view, context, model, name):
@@ -431,7 +434,10 @@ class ChatMessageView(ModelView):
         user = db.session.query(ChatUser).filter_by(uuid=msg.sender_uuid).first()
         form.room.data = f"{room.name if room else '(unknown)'} ({msg.room_uuid})"
         form.sender.data = f"{user.name if user else '(unknown)'} ({msg.sender_uuid})"
-        form.resolved.data = _resolve_debug_assistant_text(msg) or "(not a debug-assistant row)"
+        if msg.kind == "debug-assistant":
+            form.resolved.data = _resolve_debug_assistant_text(msg) or (msg.text or "")
+        else:
+            form.resolved.data = "(not a debug-assistant row)"
 
 
 admin.add_view(ModelConfigOverrideView(ModelConfigOverride, db, category="Config"))

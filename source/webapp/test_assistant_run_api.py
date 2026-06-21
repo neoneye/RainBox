@@ -69,9 +69,10 @@ def test_run_endpoint_404_for_unknown_run(client):
     assert resp.status_code == 404
 
 
-def test_chat_page_includes_assistant_trace_renderer(client):
-    """The /chat page ships the JS that renders debug-assistant pointer rows."""
+def test_chat_page_renders_debug_assistant_from_text(client):
+    """debug-assistant rows render from their self-contained text (no pointer
+    fetch) — the page handles the kind and shows the text verbatim."""
     flask_client, _app = client
     html = flask_client.get("/chat").get_data(as_text=True)
     assert "debug-assistant" in html
-    assert "/chat/api/assistant/runs/" in html
+    assert "/chat/api/assistant/runs/" not in html  # the fetch-renderer is gone

@@ -114,7 +114,7 @@ def test_formatter_and_resolver_show_full_untruncated_observation(app_ctx):
         model = db.db.session.query(db.ChatMessage).filter_by(uuid=UUID(msg["uuid"])).one()
         out = str(_format_chatmessage_text(None, None, model, "text"))
         assert long_obs in out                       # full observation, not truncated
-        assert long_obs in _resolve_debug_assistant_text(model)
+        assert long_obs in model.text                # the text column itself holds it
     finally:
         db.db.session.query(db.ChatMessage).filter_by(room_uuid=room.uuid).delete()
         db.db.session.query(db.Chatroom).filter_by(uuid=room.uuid).delete()

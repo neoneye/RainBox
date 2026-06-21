@@ -61,13 +61,16 @@ def append_assistant_step(
     model_group_uuid: UUID | None = None,
     model_uuid: UUID | None = None,
 ) -> AssistantStep:
-    """Append one step-transition row (the source of truth) and, on the step's
-    first transition (`planned`), post a thin `debug-assistant` chat pointer so
-    the step renders inline in the conversation.
+    """Append one step-transition row (the structured source of truth) and, on the
+    step's *terminal* transition (observed/failed/final), post a `debug-assistant`
+    chat row whose `text` IS the full readable trace (action / reason / args /
+    observation). Self-contained on purpose: the chat message text == what's shown
+    == what copy-to-clipboard yields, with no pointer indirection to resolve.
 
-    Redaction v1: PRs 1-4 expose no secret-carrying actions, so `args` persist
-    verbatim. A later capability that sets secrets=true must redact before
-    calling this helper.
+    Anchored at the terminal phase (not `planned`) so the observation already
+    exists when the row is posted. Redaction v1: no secret-carrying actions exist
+    yet, so `args` persist verbatim into both the step row and this trace text; a
+    later capability that sets secrets=true must redact before calling this helper.
     """
     step = AssistantStep(
         run_id=run_id,
@@ -84,27 +87,23 @@ def append_assistant_step(
     db.session.add(step)
     db.session.flush()  # commit the step row before anything else this txn
 
-    # One inline anchor per step, placed at its *terminal* transition (observed /
-    # failed / final) — NOT at `planned`. Anchoring at planned posts the chat row
-    # before the action runs, so the browser renders the step before its
-    # observation exists and never re-renders it (the row then shows less than the
-    # trace tables hold). Posting at the terminal phase means the observation is
-    # already committed when the SSE fires, so the inline render matches the DB.
-    # The pointer carries the locator plus a readable summary (action + reason);
-    # args are excluded (may carry secrets), reason is operator-facing.
     if phase in ("observed", "failed", "final"):
         run = db.session.get(AssistantRun, run_id)
         if run is not None:
-            summary = action or "step"
+            parts = [f"step {step_index} · {action or '?'}"]
             if reason:
-                summary = f"{summary} — {reason}"
+                parts.append(reason)
+            if args:
+                parts.append("args: " + json.dumps(args, sort_keys=True))
+            if phase == "observed" and observation_preview:
+                parts.append("observation: " + observation_preview)
+            elif phase == "failed":
+                parts.append("error: " + (error or observation_preview or "failed"))
+            elif phase == "final":
+                parts.append("→ replied to the user")
             post_chat_message(
-                run.room_uuid,
-                run.agent_uuid,
-                json.dumps({"run_id": run_id, "step_index": step_index,
-                            "summary": summary[:200]}),
-                content_type="json",
-                kind="debug-assistant",
+                run.room_uuid, run.agent_uuid, "\n".join(parts),
+                content_type="markdown", kind="debug-assistant",
             )  # commits the txn (including the step row above)
     db.session.commit()
     return step
