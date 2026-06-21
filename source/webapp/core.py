@@ -20,13 +20,18 @@ from wtforms import StringField, TextAreaField
 
 from benchmarks.runner import BenchmarkRunner
 from db import (
+    AgentModelBinding,
     AppSetting,
+    AssistantControl,
+    AssistantRun,
     AssistantStep,
+    AssistantWriteIntent,
     ChatMessage,
     Chatroom,
     ChatroomFolder,
     ChatroomMember,
     ChatUser,
+    ConversationRun,
     CronFolder,
     CronJob,
     CronRun,
@@ -44,9 +49,12 @@ from db import (
     KanbanTask,
     KanbanTaskEvent,
     MemoryClaim,
+    MemoryEmbedding,
     MemoryEvidence,
     ModelConfig,
     ModelConfigOverride,
+    ModelGroup,
+    ModelGroupMember,
     QueryAgentKb,
     RetrievalEvent,
     WorkspaceShellState,
@@ -599,11 +607,33 @@ class EvalCaseView(ModelView):
     )
 
 
+class MemoryEmbeddingView(ModelView):
+    """The rainbox-owned half of hybrid retrieval. Read-only (machine-generated)
+    and the 768-float `embedding` vector is excluded everywhere — only its
+    metadata (claim, model, dim, hash, timestamps) is useful to inspect."""
+    can_create = False
+    can_edit = False
+    column_default_sort = ("created_at", True)
+    column_exclude_list = ("embedding",)
+    column_details_exclude_list = ("embedding",)
+
+
 admin.add_view(MemoryClaimView(MemoryClaim, db, category="Memory"))
 admin.add_view(MemoryEvidenceView(MemoryEvidence, db, category="Memory"))
+admin.add_view(MemoryEmbeddingView(MemoryEmbedding, db, category="Memory"))
 admin.add_view(FeedbackEventView(FeedbackEvent, db, category="Feedback"))
 admin.add_view(RetrievalEventView(RetrievalEvent, db, category="Telemetry"))
 admin.add_view(EvalCaseView(EvalCase, db, category="Feedback"))
+# Model-config tables (the Models pages are the curated UI; these expose the raw rows).
+admin.add_view(ModelView(ModelGroup, db, category="Config"))
+admin.add_view(ModelView(ModelGroupMember, db, category="Config"))
+admin.add_view(ModelView(AgentModelBinding, db, category="Config"))
+admin.add_view(ModelView(ConversationRun, db, category="Chat"))
+# Assistant ReAct loop: runs, per-step trace, control channel, write intents.
+admin.add_view(ModelView(AssistantRun, db, category="Assistant"))
+admin.add_view(ModelView(AssistantStep, db, category="Assistant"))
+admin.add_view(ModelView(AssistantControl, db, category="Assistant"))
+admin.add_view(ModelView(AssistantWriteIntent, db, category="Assistant"))
 
 
 class EvalRunView(ModelView):
