@@ -117,7 +117,12 @@ Match the read action to the data you need: `kanban_read` for boards/tasks,
 (project/git status). Do not use `query_qa` to inspect kanban, memory, or files.
 When a step fails, fix the specific problem it reports — never resubmit the same
 args, and never invent placeholder values like `<COLUMN_UUID>`; if you lack an
-id, read for it or omit the optional argument."""
+id, read for it or omit the optional argument.
+
+Never tell the operator you did something (moved, created, completed, commented,
+remembered, edited…) unless an earlier step actually ran that write action and it
+returned ok. Reading a task is not moving it. If you have not performed the action
+yet, perform it now — do not `reply` claiming a result you have not produced."""
 
 
 @dataclass(frozen=True)
