@@ -494,11 +494,19 @@ function copyText(text, btn){
     btn.textContent = 'Copied';
     setTimeout(() => { btn.innerHTML = prev; }, 1200);
   };
-  if (navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
-  } else {
-    fallbackCopy(text, done);
-  }
+  const doCopy = (t) => {
+    t = (t == null) ? '' : String(t);
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(done).catch(() => fallbackCopy(t, done));
+    } else {
+      fallbackCopy(t, done);
+    }
+  };
+  // `text` may be a string, or a function returning a string/Promise (used by
+  // debug-assistant rows to copy the resolved trace, not the raw pointer).
+  const resolved = (typeof text === 'function') ? text() : text;
+  if (resolved && typeof resolved.then === 'function') resolved.then(doCopy);
+  else doCopy(resolved);
 }
 
 // Pretty-print JSON for display; fall back to the raw text if it doesn't parse.
@@ -604,6 +612,25 @@ function renderAssistantStepRows(stepIndex, rows){
   });
   return wrap;
 }
+// The resolved trace for one step as plain text (action/reason/args/observation),
+// for the Copy button — so the clipboard matches what's shown and what's stored,
+// not the raw {run_id, step_index} pointer. Falls back to the pointer text.
+function assistantStepText(ptr, fallback){
+  return fetchAssistantRun(ptr.run_id).then(data => {
+    const rows = data ? (data.steps || []).filter(s => s.step_index === ptr.step_index) : [];
+    if (!rows.length) return fallback;
+    const decision = rows.find(r => r.action) || rows[0] || {};
+    const lines = ['step ' + ptr.step_index + (decision.action ? ' · ' + decision.action : '')];
+    if (decision.reason) lines.push(decision.reason);
+    if (decision.args && Object.keys(decision.args).length) lines.push('args: ' + JSON.stringify(decision.args));
+    rows.forEach(s => {
+      if (s.phase === 'observed' && s.observation_preview) lines.push('observation: ' + s.observation_preview);
+      else if (s.phase === 'failed') lines.push('error: ' + (s.error || s.observation_preview || 'failed'));
+      else if (s.phase === 'final') lines.push('→ replied to the user');
+    });
+    return lines.join('\\n');
+  }).catch(() => fallback);
+}
 function renderAssistantStepBody(body, text){
   let ptr = null;
   try { ptr = JSON.parse(text); } catch(e){}
@@ -705,7 +732,15 @@ function makeMessage(m){
   // container owns the gap above the buttons so both share the same Y.
   const actions = document.createElement('div');
   actions.className = 'msg-actions';
-  addCopyButton(actions, m.text);
+  // For a debug-assistant row, copy the resolved trace (full action/reason/args/
+  // observation), not the raw {run_id, step_index} pointer — the clipboard should
+  // match what's shown and what's stored.
+  let copySource = m.text;
+  if (m.kind === 'debug-assistant'){
+    let ptr = null; try { ptr = JSON.parse(m.text); } catch(e){}
+    if (ptr && ptr.run_id != null) copySource = () => assistantStepText(ptr, m.text);
+  }
+  addCopyButton(actions, copySource);
   // Feedback row: only on agent user-facing replies. Never on human
   // messages or diagnostic rows (debug-memory / debug-query / progress /
   // thinking) — those aren't conversation outputs.
