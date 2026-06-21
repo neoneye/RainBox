@@ -129,9 +129,9 @@ def test_repopulate_memory_endpoint_success(client, monkeypatch):
     """POST /settings/api/repopulate_memory → rebuild_kb() counts. The
     monkeypatch targets seed_memory (the endpoint resolves the function
     at call time)."""
-    import memory.seed_memory as query_kb_helpers
+    import memory.seed_memory as seed_memory
 
-    monkeypatch.setattr(query_kb_helpers, "rebuild_kb",
+    monkeypatch.setattr(seed_memory, "rebuild_kb",
                         lambda: {"entries": 7, "documents": 21})
     resp = client.post("/settings/api/repopulate_memory")
     assert resp.status_code == 200
@@ -140,12 +140,12 @@ def test_repopulate_memory_endpoint_success(client, monkeypatch):
 
 
 def test_repopulate_memory_endpoint_failure_is_502(client, monkeypatch):
-    import memory.seed_memory as query_kb_helpers
+    import memory.seed_memory as seed_memory
 
     def boom():
         raise RuntimeError("Connection refused (Ollama down?)")
 
-    monkeypatch.setattr(query_kb_helpers, "rebuild_kb", boom)
+    monkeypatch.setattr(seed_memory, "rebuild_kb", boom)
     resp = client.post("/settings/api/repopulate_memory")
     assert resp.status_code == 502
     data = resp.get_json()

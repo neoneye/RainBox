@@ -303,10 +303,10 @@ def settings_repopulate_memory() -> tuple[Response, int] | Response:
     restart — the 'Repopulate Q&A memory' button. 502 carries the embedding
     error (typically Ollama being down); the table is left empty then, and
     clicking again after starting Ollama heals it."""
-    import memory.seed_memory as query_kb_helpers
+    import memory.seed_memory as seed_memory
 
     try:
-        counts = query_kb_helpers.rebuild_kb()
+        counts = seed_memory.rebuild_kb()
     except Exception as exc:  # noqa: BLE001 — any backend failure → 502 + message
         # Not dead code: rebuild_kb reads the customize.dir setting via db.session (get_setting); a failure there leaves the session in a failed state that must be rolled back before responding.
         db.db.session.rollback()
