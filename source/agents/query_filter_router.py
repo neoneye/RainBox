@@ -447,7 +447,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                 json.dumps({
                     "query": query,
                     "candidates": [
-                        {"qa_id": c.qa_id, "score": c.score, "matched_question": c.matched_question}
+                        {"qa_id": c.qa_id, "score": round(c.score, 3), "matched_question": c.matched_question}
                         for c in candidates
                     ],
                     "filter_kept": relevant_qa_ids,

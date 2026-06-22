@@ -174,7 +174,7 @@ class QueryRouterAgent(StructuredLLMAgent):
                     "match": {
                         "qa_id": exact.qa_id,
                         "method": "exact",
-                        "score": exact.score,
+                        "score": round(exact.score, 3),
                         "matched_question": exact.matched_question,
                     },
                 },
@@ -207,7 +207,7 @@ class QueryRouterAgent(StructuredLLMAgent):
             debug_q_payload["candidate"] = {
                 "qa_id": candidate.qa_id,
                 "method": "semantic",
-                "score": candidate.score,
+                "score": round(candidate.score, 3),
                 "matched_question": candidate.matched_question,
                 "reply": candidate_reply,
             }

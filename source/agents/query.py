@@ -108,10 +108,10 @@ class QueryAgent(Agent):
             debug_payload["match"] = {
                 "qa_id": match.qa_id,
                 "method": match.method,
-                "score": match.score,
+                "score": round(match.score, 3),
                 "matched_question": match.matched_question,
                 "second_qa_id": match.second_qa_id,
-                "second_score": match.second_score,
+                "second_score": round(match.second_score, 3) if match.second_score is not None else None,
             }
         else:
             debug_payload["match"] = {
