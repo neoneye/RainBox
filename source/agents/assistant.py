@@ -55,7 +55,7 @@ class AssistantActionName(str, Enum):
     # Write actions, each risk-tiered:
     REMEMBER = "remember"              # log-and-undo: create an active memory
     ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
-    FORGET_MEMORY = "forget_memory"      # confirm-tier: reject a memory (stop recalling it)
+    FORGET_MEMORY = "forget_memory"      # log-and-undo: reject a memory (stop recalling it)
     KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
     KANBAN_COMPLETE = "kanban_complete"  # log-and-undo: mark a task done
     KANBAN_COMMENT = "kanban_comment"    # log-and-undo: comment on a task
@@ -67,6 +67,7 @@ class AssistantActionName(str, Enum):
     ACTIVATE_SKILL = "activate_skill"  # confirm-tier: activate a candidate skill
     SKILL_DELETE = "skill_delete"      # internal: propose_skill's undo inverse (not prompt-exposed)
     REJECT_MEMORY_CANDIDATE = "reject_memory_candidate"  # internal: remember's undo inverse
+    REACTIVATE_MEMORY = "reactivate_memory"  # internal: forget's undo inverse (not prompt-exposed)
 
 
 class AssistantStepDecision(BaseModel):
@@ -362,11 +363,12 @@ def _action_reject_memory_candidate(
 def _action_forget_memory(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Confirm-tier write: forget (reject) a memory so it stops being recalled.
+    """Log-and-undo write: forget (reject) a memory so it stops being recalled.
     Resolve the target by `memory_uuid` (from query_memory) or by `text` — text
-    searches active AND candidate claims, so a just-remembered candidate can be
-    forgotten. Dry-run (propose) previews which memory; real execution rejects it
-    and prunes its embedding."""
+    searches active AND candidate claims, so a just-remembered memory can be
+    forgotten. Executes immediately and reversibly: rejects the claim, prunes its
+    embedding, and carries an inverse op (`reactivate_memory`) so undo restores
+    it. The mirror image of `remember`."""
     raw_uuid = args.get("memory_uuid")
     text = str(args.get("text", "")).strip()
     claim = None
@@ -397,14 +399,42 @@ def _action_forget_memory(
         return AssistantObservation(
             ok=False, text="forget_memory needs a memory_uuid or text")
 
-    if ctx.dry_run:
-        return AssistantObservation(ok=True, text=f"Will forget: '{claim.text}'")
     db.reject_memory(claim.uuid, {"provenance": "confirmed_by_user",
                                   "source_type": "manual"})
     from memory.embeddings import refresh_claim_embedding
     refresh_claim_embedding(claim)  # rejected → prune its embedding
     return AssistantObservation(
-        ok=True, text=f"Forgot: '{claim.text}'", data={"memory_uuid": str(claim.uuid)})
+        ok=True,
+        text=(f"Forgot: '{claim.text}'. Done — reply to the operator. (Reversible: "
+              f"undo reactivates it.)"),
+        data={"memory_uuid": str(claim.uuid),
+              "undo": {"capability": "reactivate_memory",
+                       "payload": {"memory_uuid": str(claim.uuid)}}},
+    )
+
+
+def _action_reactivate_memory(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Internal: reactivate a forgotten memory — forget_memory's undo inverse. Not
+    prompt-exposed (reached only via undo_write_intent). Refuses a claim that is
+    not currently `rejected`, so the undo can't clobber a state that changed since
+    forget (the version-guard discipline shared by every reversible write)."""
+    raw = args.get("memory_uuid")
+    try:
+        memory_uuid = UUID(str(raw))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid memory_uuid: {raw!r}")
+    claim = db.get_memory_claim(memory_uuid)
+    if claim is None or claim.status != "rejected":
+        return AssistantObservation(
+            ok=False, text="memory is no longer rejected; not reactivating")
+    activated = db.activate_memory_claim(memory_uuid, confirmed_by_uuid=ctx.agent_uuid)
+    from memory.embeddings import refresh_claim_embedding
+    refresh_claim_embedding(activated)  # active again → re-embed for retrieval
+    return AssistantObservation(
+        ok=True, text=f"Reactivated memory {memory_uuid}",
+        data={"memory_uuid": str(memory_uuid), "status": "active"})
 
 
 def _action_activate_memory(
@@ -909,13 +939,13 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.FORGET_MEMORY: Capability(
         name=AssistantActionName.FORGET_MEMORY, family="memory",
-        description=('propose forgetting a memory so it stops being recalled; needs '
-                     'your confirmation. args: {"memory_uuid": "..."} (from '
-                     'query_memory) or {"text": "..."} — text matches active AND '
-                     'candidate memories'),
+        description=('forget a memory so it stops being recalled; reversible '
+                     '(undoable). args: {"memory_uuid": "..."} (from query_memory) '
+                     'or {"text": "..."} — text matches active AND candidate '
+                     'memories'),
         optional_args=frozenset({"memory_uuid", "text"}),
         action=_action_forget_memory,
-        read=False, write=True, tier="confirm", dry_run=True,
+        read=False, write=True, tier="log_and_undo",
     ),
     AssistantActionName.KANBAN_MOVE: Capability(
         name=AssistantActionName.KANBAN_MOVE, family="kanban",
@@ -1001,6 +1031,12 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         name=AssistantActionName.REJECT_MEMORY_CANDIDATE, family="memory",
         description="(internal) reject a candidate memory — remember's undo inverse.",
         required_args=("memory_uuid",), action=_action_reject_memory_candidate,
+        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
+    ),
+    AssistantActionName.REACTIVATE_MEMORY: Capability(
+        name=AssistantActionName.REACTIVATE_MEMORY, family="memory",
+        description="(internal) reactivate a forgotten memory — forget's undo inverse.",
+        required_args=("memory_uuid",), action=_action_reactivate_memory,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
 }
@@ -1494,8 +1530,11 @@ class AssistantAgent(ModelGroupAgent):
         )
         return AssistantObservation(
             ok=True,
-            text=(f"Proposed (awaiting your confirmation): {preview}. "
-                  f"Confirm intent {intent.uuid} to apply."),
+            text=(f"Proposed for the operator's approval: {preview}. "
+                  f"This is the end of your job for this request — there is no "
+                  f"action you can take to apply it yourself; the operator "
+                  f"confirms it. Reply to the operator that it awaits their "
+                  f"confirmation, and do not take any further action."),
             data={"write_intent_uuid": str(intent.uuid), "state": "proposed"},
         )
 

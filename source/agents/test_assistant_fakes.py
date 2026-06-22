@@ -101,4 +101,5 @@ def test_action_enum_covers_the_known_action_surface():
         "activate_skill",
         "skill_delete",
         "reject_memory_candidate",
+        "reactivate_memory",
     }

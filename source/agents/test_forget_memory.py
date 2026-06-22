@@ -1,8 +1,9 @@
-"""The assistant's forget_memory capability (confirm-tier + dry-run): reject a
-memory by uuid or text so it stops being recalled. Searches active AND candidate
-memories (a just-remembered candidate must be forgettable)."""
+"""The assistant's forget_memory capability (log-and-undo): reject a memory by
+uuid or text so it stops being recalled, executing immediately and reversibly
+(undo reactivates it). Searches active AND candidate memories (a just-remembered
+memory must be forgettable). Mirrors `remember` (its inverse)."""
 
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -15,6 +16,7 @@ from agents.assistant import (
     AssistantAgent,
     AssistantStepDecision,
     _action_forget_memory,
+    _action_reactivate_memory,
 )
 from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
@@ -33,10 +35,10 @@ def app_ctx():
         ctx.pop()
 
 
-def _ctx(dry_run=False):
+def _ctx():
     return AssistantActionContext(
         journal_id=None, room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID,
-        step_index=0, dry_run=dry_run,
+        step_index=0,
     )
 
 
@@ -46,10 +48,10 @@ def _claim(text, status="active"):
         status=status, sensitivity="private", subject="forget-test")
 
 
-def test_forget_capability_is_confirm_with_dry_run():
+def test_forget_capability_is_log_and_undo():
     cap = CAPABILITIES[AssistantActionName.FORGET_MEMORY]
-    assert cap.write is True and cap.tier == "confirm"
-    assert cap.dry_run is True and cap.prompt_exposed is True
+    assert cap.write is True and cap.tier == "log_and_undo"
+    assert cap.dry_run is False and cap.prompt_exposed is True
 
 
 def test_forget_by_uuid_rejects_the_memory(app_ctx):
@@ -75,12 +77,32 @@ def test_forget_by_text_matches_a_candidate(app_ctx):
         db.db.session.commit()
 
 
-def test_forget_dry_run_previews_without_rejecting(app_ctx):
-    c = _claim(f"keep me for now {uuid4().hex[:6]}")
+def test_forget_returns_an_undo_record_that_reactivates(app_ctx):
+    """Log-and-undo: forget carries an inverse op pointing at reactivate_memory,
+    so undo restores the exact claim it rejected."""
+    c = _claim(f"undo me {uuid4().hex[:6]}")
     try:
-        obs = _action_forget_memory(_ctx(dry_run=True), {"memory_uuid": str(c.uuid)})
-        assert obs.ok is True and "forget" in obs.text.lower()
-        assert db.get_memory_claim(c.uuid).status == "active"  # not mutated
+        obs = _action_forget_memory(_ctx(), {"memory_uuid": str(c.uuid)})
+        undo = obs.data["undo"]
+        assert undo["capability"] == "reactivate_memory"
+        assert undo["payload"]["memory_uuid"] == str(c.uuid)
+        # Replaying the inverse restores the active claim.
+        back = _action_reactivate_memory(_ctx(), undo["payload"])
+        assert back.ok is True
+        assert db.get_memory_claim(c.uuid).status == "active"
+    finally:
+        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.db.session.commit()
+
+
+def test_reactivate_refuses_a_claim_that_is_not_rejected(app_ctx):
+    """Version guard: undo can't clobber a memory that changed since forget —
+    reactivate only flips a still-rejected claim back."""
+    c = _claim(f"still active {uuid4().hex[:6]}")  # never forgotten
+    try:
+        obs = _action_reactivate_memory(_ctx(), {"memory_uuid": str(c.uuid)})
+        assert obs.ok is False
+        assert db.get_memory_claim(c.uuid).status == "active"  # untouched
     finally:
         db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
         db.db.session.commit()
@@ -96,8 +118,12 @@ def test_forget_needs_uuid_or_text(app_ctx):
     assert obs.ok is False
 
 
-def test_forget_via_loop_proposes_then_confirm_executes(app_ctx):
-    from agents.assistant_writes import execute_write_intent
+def test_forget_via_loop_executes_inline_and_is_undoable(app_ctx):
+    """End-to-end through the ReAct loop: 'forget X' rejects the memory inline
+    (no confirm step) and records a completed, undoable write-intent — mirroring
+    remember. This is the bug fix: forget used to only *propose*, which the model
+    could not terminate, looping to the step limit."""
+    from agents.assistant_writes import undo_write_intent
 
     text = f"I prefer pasta {uuid4().hex[:6]}"
     c = _claim(text, status="candidate")
@@ -115,11 +141,11 @@ def test_forget_via_loop_proposes_then_confirm_executes(app_ctx):
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         intent = db.db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).one()
-        assert intent.state == "proposed"                      # confirm-tier: not inline
-        assert db.get_memory_claim(c.uuid).status == "candidate"
-        assert "forget" in intent.preview_text.lower() and text in intent.preview_text
-        assert execute_write_intent(intent.uuid).ok is True
-        assert db.get_memory_claim(c.uuid).status == "rejected"  # gone after confirm
+        assert intent.state == "completed"                       # log-and-undo: inline
+        assert db.get_memory_claim(c.uuid).status == "rejected"  # gone immediately
+        # Reversible: undo reactivates it.
+        assert undo_write_intent(intent.uuid).ok is True
+        assert db.get_memory_claim(c.uuid).status == "active"
     finally:
         db.db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
