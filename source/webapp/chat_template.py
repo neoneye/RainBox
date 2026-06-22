@@ -298,6 +298,7 @@ const agentListEl = document.getElementById('agent-list');
 const LUCIDE_COPY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const LUCIDE_THUMBS_UP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/><path d="M7 10v12"/></svg>';
 const LUCIDE_THUMBS_DOWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/></svg>';
+const LUCIDE_MORE_HORIZONTAL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>';
 const CHAT_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
 const CHAT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>';
 
@@ -546,6 +547,52 @@ function addCopyButton(container, source){
   container.appendChild(btn);
 }
 
+// The message overflow (...) menu. Reuses the .room-menu styling + the global
+// click/Escape dismiss handler (see below), and anchors as position:fixed under
+// the kebab like the room/folder menus. One item: copy the message UUID.
+function buildMessageMenu(uuid){
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-menu-wrap';
+  const kebab = document.createElement('button');
+  kebab.type = 'button';
+  kebab.className = 'copy-btn';
+  kebab.title = 'Message actions';
+  kebab.setAttribute('aria-label', 'Message actions');
+  kebab.setAttribute('aria-haspopup', 'menu');
+  kebab.innerHTML = LUCIDE_MORE_HORIZONTAL_SVG;
+  const menu = document.createElement('div');
+  menu.className = 'room-menu';
+  menu.setAttribute('role', 'menu');
+  menu.hidden = true;
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = 'item';
+  item.setAttribute('role', 'menuitem');
+  item.textContent = 'Copy message id';
+  item.addEventListener('click', (e) => {
+    e.stopPropagation();
+    copyText(uuid, item);  // shows "Copied" in the item briefly
+    setTimeout(() => { menu.hidden = true; }, 900);
+  });
+  menu.appendChild(item);
+  kebab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = menu.hidden;
+    document.querySelectorAll('.room-menu').forEach(m => { m.hidden = true; });
+    if (willOpen){
+      // Anchor the fixed menu under the kebab, right edges aligned so it doesn't
+      // overflow off the right of the message column.
+      const r = kebab.getBoundingClientRect();
+      menu.hidden = false;          // unhide first so offsetWidth is measurable
+      menu.style.top = (r.bottom + 4) + 'px';
+      menu.style.left = (r.right - menu.offsetWidth) + 'px';
+    }
+  });
+  wrap.appendChild(kebab);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
 
 function makeMessage(m){
   const msg = document.createElement('div');
@@ -657,6 +704,8 @@ function makeMessage(m){
     if (m.feedback === 'downvote') dn.classList.add('fb-selected-down');
     actions.appendChild(fb);
   }
+  // Overflow (...) menu, always present: "Copy message id" copies the UUID.
+  actions.appendChild(buildMessageMenu(m.uuid));
   msg.appendChild(actions);
   if (toggleTop){
     const apply = (expanded) => {
