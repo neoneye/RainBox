@@ -26,7 +26,7 @@ checked against its public repo/README on 2026-06-22.
   file/line evidence. See "RainBox baseline" for the concrete pointers added
   during this pass. Two claims needed sharpening (not correction): the
   *log-and-undo* tier and the *MCP* surface — both are clarified inline.
-- **External claims:** all eight projects exist as described and the load-bearing
+- **External claims:** the original eight projects exist as described and the load-bearing
   facts checked out — Pi's four `@earendil-works/*` packages and its
   "no built-in permission system" posture; Hermes's gateway, `hermes claw
   migrate`, and pluggable memory providers (Honcho/Mem0/Supermemory); OpenClaw's
@@ -411,7 +411,7 @@ management, and agent diaries; auto-save hooks for Claude Code, Codex CLI, and
 Cursor that snapshot transcripts before context compression; and per-agent
 isolation where "each specialist agent gets its own wing and diary," discoverable
 at runtime via `mempalace_list_agents`. It is Python 3.9+, installs as a CLI (`uv
-tool install mempalace` / `pipx`), and uses `embedding-gemma-300m` (multilingual)
+tool install mempalace` / `pipx`), and uses `embeddinggemma-300m` (multilingual)
 or `all-MiniLM-L6-v2` (English) embeddings.
 
 Fit:
