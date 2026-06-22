@@ -561,7 +561,7 @@ function buildMessageMenu(uuid){
   kebab.setAttribute('aria-haspopup', 'menu');
   kebab.innerHTML = LUCIDE_MORE_HORIZONTAL_SVG;
   const menu = document.createElement('div');
-  menu.className = 'room-menu';
+  menu.className = 'room-menu msg-id-menu';
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
   const item = document.createElement('button');
@@ -580,8 +580,16 @@ function buildMessageMenu(uuid){
     const willOpen = menu.hidden;
     document.querySelectorAll('.room-menu').forEach(m => { m.hidden = true; });
     if (willOpen){
-      // Anchor the fixed menu under the kebab, right edges aligned so it doesn't
-      // overflow off the right of the message column.
+      // Reparent the fixed menu to <body> before showing it. Debug rows set
+      // opacity:0.8, which makes the bubble a stacking context that traps a
+      // nested z-index — the menu would then paint *under* later messages no
+      // matter how high its z-index. Living directly under <body> puts it in
+      // the root stacking context, where z-index:1000 wins. Sweep any earlier
+      // parked menu first so at most one lives in <body> at a time.
+      document.querySelectorAll('body > .room-menu.msg-id-menu').forEach(m => m.remove());
+      document.body.appendChild(menu);
+      // Anchor under the kebab, right edges aligned so it doesn't overflow off
+      // the right of the message column.
       const r = kebab.getBoundingClientRect();
       menu.hidden = false;          // unhide first so offsetWidth is measurable
       menu.style.top = (r.bottom + 4) + 'px';
