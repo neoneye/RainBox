@@ -334,12 +334,20 @@ function memReactivate(uuid) { doAction(uuid, 'reactivate', {}); }
 function openBackdrop() { document.getElementById('ui-modal-backdrop').hidden = false; }
 function closeBackdrop() { document.getElementById('ui-modal-backdrop').hidden = true; }
 
-function memOpenCorrect(uuid) {
-  modalState = {uuid};
+async function memOpenCorrect(uuid) {
   const inp = document.getElementById('mem-correct-input');
-  inp.value = ''; document.getElementById('mem-correct-err').textContent = '';
-  document.getElementById('mem-correct-save').disabled = true;
-  openBackdrop(); document.getElementById('mem-correct-modal').hidden = false; inp.focus();
+  document.getElementById('mem-correct-err').textContent = '';
+  // Prefill with the CURRENT text so a correction is a tweak, not a blind
+  // retype. Pull it from the detail endpoint, which reveals secret text too
+  // (the list row would be masked); fall back to the cached row otherwise.
+  let text = '';
+  try { const r = await fetch('/memory/api/claims/' + uuid); if (r.ok) text = (await r.json()).text || ''; } catch (_) {}
+  if (!text) { const c = claimByUuid(uuid); if (c && !c.secret) text = c.text; }
+  modalState = {uuid, initial: text};
+  inp.value = text;
+  document.getElementById('mem-correct-save').disabled = !text.trim();
+  openBackdrop(); document.getElementById('mem-correct-modal').hidden = false;
+  inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
 }
 function memCloseCorrect() { document.getElementById('mem-correct-modal').hidden = true; closeBackdrop(); modalState = {}; }
 async function memConfirmCorrect() {
@@ -400,7 +408,7 @@ function closeOpenModal() {
   if (!document.getElementById('mem-reject-modal').hidden) memCloseReject();
 }
 function openModalDirty() {
-  if (!document.getElementById('mem-correct-modal').hidden) return document.getElementById('mem-correct-input').value !== '';
+  if (!document.getElementById('mem-correct-modal').hidden) return document.getElementById('mem-correct-input').value !== (modalState.initial || '');
   if (!document.getElementById('mem-expiry-modal').hidden) return document.getElementById('mem-expiry-input').value !== '';
   return false;  // sensitivity (a select) and reject (confirm-only) are never "dirty"
 }
