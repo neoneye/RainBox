@@ -102,6 +102,18 @@ RainBox today is a local, Postgres-backed assistant workbench:
   (`source/agents/assistant.py`). The hybrid retrieval blends vector similarity
   (0.55), Postgres full-text rank (0.30), and an entity boost (0.15) in
   `source/memory/retrieval.py:retrieve_memories_hybrid`.
+- Embeddings run fully locally on Ollama with `embeddinggemma:300m` (768-dim, the
+  `MemoryEmbedding.embedding` pgvector column), so retrieval needs no external API
+  calls — the same zero-API-call posture MemPalace advertises. Each embedding row
+  stores its `model_name`/`embed_dim`, so swapping embedders re-embeds per claim
+  (lazily on write plus a daily backfill cron) rather than corrupting the table
+  (`source/memory/embeddings.py`).
+- A separate Q&A seed-memory path embeds the curated
+  `source/data/question_answer.jsonl` registry into a pgvector-backed
+  `data_seed_memory` table and answers with a two-stage lookup — exact-alias match
+  first, then semantic top-K — rebuildable without a restart via `rebuild_kb()`
+  (the `/settings` "Repopulate Q&A memory" button), in
+  `source/memory/seed_memory.py`.
 - Write families already implemented: memory, skills, kanban, reminders (cron),
   and file edits. Writes are tiered as log-and-undo (execute immediately,
   reversible) or confirm (dry-run preview → operator approval). The
@@ -419,9 +431,10 @@ Fit:
 - Best values match of the memory products: local-only by default, MIT, verbatim
   (no lossy summarization), and inspectable — the same instincts RainBox already
   has.
-- Strong if the priority is retrieval quality over your own conversation history
-  with zero external API calls, especially with a pgvector backend that could sit
-  alongside RainBox's existing Postgres.
+- Strong if the priority is retrieval quality over your own conversation history.
+  RainBox already embeds locally with zero API calls (`embeddinggemma:300m` on
+  Ollama), so the draw is MemPalace's *retrieval pipeline*, not API independence —
+  and its pgvector backend could sit alongside RainBox's existing Postgres.
 - Conceptually adjacent to RainBox's own rooms/agents: wings/rooms/drawers and
   per-agent diaries map naturally onto RainBox rooms, agents, and memberships.
 
