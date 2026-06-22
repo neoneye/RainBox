@@ -345,11 +345,17 @@ async function memOpenCorrect(uuid) {
   if (!text) { const c = claimByUuid(uuid); if (c && !c.secret) text = c.text; }
   modalState = {uuid, initial: text};
   inp.value = text;
-  document.getElementById('mem-correct-save').disabled = !text.trim();
+  memCorrectSyncSave();  // starts disabled: prefilled text is unchanged
   openBackdrop(); document.getElementById('mem-correct-modal').hidden = false;
   inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
 }
 function memCloseCorrect() { document.getElementById('mem-correct-modal').hidden = true; closeBackdrop(); modalState = {}; }
+// Save is enabled only once the text both is non-empty AND differs from the
+// original — correcting to the same text is a no-op supersede, so block it.
+function memCorrectSyncSave() {
+  const v = document.getElementById('mem-correct-input').value;
+  document.getElementById('mem-correct-save').disabled = !v.trim() || v === (modalState.initial || '');
+}
 async function memConfirmCorrect() {
   const text = document.getElementById('mem-correct-input').value.trim();
   if (!text) return;
@@ -436,9 +442,7 @@ document.getElementById('mem-all').addEventListener('click', selectAll);
     else if (selectedGroup) renderTable(STATUS_LABEL[selectedGroup] || selectedGroup,
       filteredClaims().filter(c => c.status === selectedGroup));
   }));
-document.getElementById('mem-correct-input').addEventListener('input', e => {
-  document.getElementById('mem-correct-save').disabled = !e.target.value.trim();
-});
+document.getElementById('mem-correct-input').addEventListener('input', memCorrectSyncSave);
 document.getElementById('ui-modal-backdrop').addEventListener('click', dismissIfClean);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { dismissIfClean(); closeMenu(); } });
 document.addEventListener('click', e => { if (openMenuEl && !e.target.closest('.mem-menu') && !e.target.closest('.mem-kebab')) closeMenu(); });
