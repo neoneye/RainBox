@@ -42,6 +42,7 @@ from memory.seed_memory import (
     command_from_payload,
     get_entry,
     room_uuid_from_payload,
+    score_permille,
 )
 from agents.router import RouterResponse
 
@@ -72,6 +73,10 @@ A candidate is NOT relevant when it is about a different topic, or when the
 user is volunteering information that the candidate does not speak to (for
 example: the user says where THEY are from, but the candidate is about the
 BOT's location — not relevant).
+
+Each candidate carries a `similarity score`: an integer from 0 to 1000 (higher
+means a closer semantic match; 1000 is an exact match). Treat it as a hint, not
+a hard threshold — a high score still has to be on-topic to count as relevant.
 
 Return exactly one JSON object with one field:
 - `relevant_qa_ids`: a list of qa_id strings (a subset of the listed
@@ -294,7 +299,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
             entry = get_entry(c.qa_id) or {}
             kind = entry.get("kind", "?")
             lines.append(f"  - qa_id: {c.qa_id}")
-            lines.append(f"    similarity score: {c.score:.3f}")
+            lines.append(f"    similarity score: {score_permille(c.score)}")
             lines.append(f"    matched_question: {c.matched_question!r}")
             lines.append(f"    kind: {kind}")
             if kind == "static":
@@ -394,7 +399,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                     "query": query,
                     "match": {
                         "qa_id": exact.qa_id, "method": "exact",
-                        "score": exact.score,
+                        "score": score_permille(exact.score),
                         "matched_question": exact.matched_question,
                     },
                 }, ensure_ascii=False, separators=(",", ":")),
@@ -447,7 +452,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                 json.dumps({
                     "query": query,
                     "candidates": [
-                        {"qa_id": c.qa_id, "score": round(c.score, 3), "matched_question": c.matched_question}
+                        {"qa_id": c.qa_id, "score": score_permille(c.score), "matched_question": c.matched_question}
                         for c in candidates
                     ],
                     "filter_kept": relevant_qa_ids,

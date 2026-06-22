@@ -31,6 +31,7 @@ from memory.seed_memory import (
     _resolve_match,
     _semantic_ranked,
     _vector_store,
+    score_permille,
 )
 from agents.query_handlers import QueryContext
 from agents.router import RouterResponse
@@ -50,7 +51,9 @@ You will receive:
    marked "Current message:".
 2. A "Query-agent candidate" hint at the end: a knowledge-base entry whose
    embedded question was the most similar to the user's message. It MAY or MAY
-   NOT be relevant — it is a hint, never an answer by default.
+   NOT be relevant — it is a hint, never an answer by default. Its `similarity
+   score` is an integer from 0 to 1000 (higher means a closer semantic match;
+   1000 is an exact match).
 
 How to reply:
 - Read the Current message in the context of the conversation, including any
@@ -142,7 +145,7 @@ class QueryRouterAgent(StructuredLLMAgent):
             hint = (
                 "\n\nQuery-agent candidate:"
                 f"\n  qa_id: {candidate.qa_id}"
-                f"\n  similarity score: {candidate.score:.3f}"
+                f"\n  similarity score: {score_permille(candidate.score)}"
                 f"\n  matched question alternate: {candidate.matched_question!r}"
                 f"\n  candidate reply: {candidate_reply!r}"
             )
@@ -174,7 +177,7 @@ class QueryRouterAgent(StructuredLLMAgent):
                     "match": {
                         "qa_id": exact.qa_id,
                         "method": "exact",
-                        "score": round(exact.score, 3),
+                        "score": score_permille(exact.score),
                         "matched_question": exact.matched_question,
                     },
                 },
@@ -207,7 +210,7 @@ class QueryRouterAgent(StructuredLLMAgent):
             debug_q_payload["candidate"] = {
                 "qa_id": candidate.qa_id,
                 "method": "semantic",
-                "score": round(candidate.score, 3),
+                "score": score_permille(candidate.score),
                 "matched_question": candidate.matched_question,
                 "reply": candidate_reply,
             }

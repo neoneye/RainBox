@@ -43,6 +43,7 @@ from memory.seed_memory import (
     _vector_store,
     command_from_payload,
     room_uuid_from_payload,
+    score_permille,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,10 +109,10 @@ class QueryAgent(Agent):
             debug_payload["match"] = {
                 "qa_id": match.qa_id,
                 "method": match.method,
-                "score": round(match.score, 3),
+                "score": score_permille(match.score),
                 "matched_question": match.matched_question,
                 "second_qa_id": match.second_qa_id,
-                "second_score": round(match.second_score, 3) if match.second_score is not None else None,
+                "second_score": score_permille(match.second_score),
             }
         else:
             debug_payload["match"] = {

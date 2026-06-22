@@ -76,6 +76,17 @@ class Match:
     second_score: float | None = None
 
 
+# Similarity scores are 0.0–1.0 floats. For compact display and LLM prompts we
+# rescale to an integer 0–1000 (a relevance "permille") so every value drops the
+# wasteful leading "0." — e.g. 0.554 -> 554. Telemetry keeps the raw float.
+SCORE_SCALE: int = 1000
+
+
+def score_permille(score: float | None) -> int | None:
+    """Rescale a 0.0–1.0 similarity score to an integer 0–1000 (None stays None)."""
+    return None if score is None else round(score * SCORE_SCALE)
+
+
 # --- Embedding / vector-store helpers ----------------------------------------
 
 
