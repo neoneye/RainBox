@@ -318,7 +318,6 @@ The system is still conservative and incomplete:
   rows.
 - There is no conflict detector for competing active claims.
 - `sensitivity` is manually assigned and coarse.
-- There is no dedicated memory management UI beyond Flask-Admin.
 - Memory is injected into `ChatAgent` and available to the assistant through
   `query_memory`, but not broadly integrated into every agent type.
 - Evidence stores excerpts, but not rich source navigation or source snapshots.
@@ -450,21 +449,28 @@ The journal already records durable work. A summarizer could periodically create
 This would make repeated engineering work more effective without stuffing raw
 journal JSON into prompts.
 
-### 8. Build A Memory Review UI
+### 8. Memory Review UI
 
-Flask-Admin is enough for developers, but a memory-specific page would make the
-system easier to operate:
+The **`/memory` page** (`webapp/memory_views.py`, `static/memory.js`,
+`webapp/memory_api.py`) is the operator-facing memory inspector. The left panel
+groups claims by **status facets** (Active / Candidate / Superseded / Rejected /
+Expired — no folders, no drag-drop), with a text/scope/kind/sensitivity filter
+bar; the right pane shows a claim's text, badges, evidence timeline, supersession
+lineage, embedding freshness, and recent retrieval events. Provenance-safe
+lifecycle actions run from there: activate / reject / reactivate, **correct**
+(= supersede, keeping the old claim as history), and sensitivity / expiry edits.
+Secret claims are masked in the list and revealed only on demand. Every mutation
+carries a per-row `expected_updated_at` and is refused with HTTP 409 if the claim
+changed underneath the operator. See
+`docs/superpowers/specs/2026-06-22-memory-review-ui-design.md`.
 
-- active memories
-- candidates awaiting confirmation
-- rejected/superseded history
-- evidence timeline
-- confirm/reject/correct buttons
-- sensitivity controls
-- "used in last answer" view
+This is where trust improves: the operator can see what the assistant believes,
+why, and what happened to it — and correct it directly, without raw field edits
+that would erase the audit trail.
 
-This is where trust improves: the user can see what the assistant believes and
-edit it directly.
+A user-created **folder tree** (the full `docs/ui-left-panel-tree.md` pattern)
+is a possible future addition; the page's grouping layer is kept swappable so it
+can be added as an additional grouping mode without a rewrite.
 
 ### 9. Tighten Sensitivity Policy
 
@@ -501,7 +507,7 @@ The best next sequence is:
 1. Finish eval comparison hardening so baseline and candidate runs use the same
    case set by default.
 2. Add duplicate/conflict handling for explicit user memory commands.
-3. Add a small memory review UI for candidates and active claims.
+3. ~~Add a small memory review UI~~ — done: the `/memory` page (§8).
 4. Add candidate extraction from chat, but keep it inactive until confirmed.
 5. Improve attribution signals cautiously.
 6. Add pgvector retrieval as a secondary channel.

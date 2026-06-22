@@ -151,6 +151,140 @@ def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any]) -> None:
     db.session.commit()
 
 
+# --- memory review UI: edits, reactivate, detail, guards ----------------------
+
+_SENSITIVITIES = ("public", "private", "secret")
+
+
+class StaleWriteError(Exception):
+    """A guarded write was refused because the claim changed since the caller
+    last read it (its `updated_at` no longer matches `expected_updated_at`).
+    The mirror, at single-row granularity, of the `/cron` tree version guard —
+    the web layer maps it to HTTP 409."""
+
+
+def assert_claim_unchanged(claim: MemoryClaim, expected_updated_at: datetime | None) -> None:
+    """Optimistic-concurrency check: raise StaleWriteError if the claim's
+    `updated_at` differs from what the caller saw. `None` skips the check (an
+    unconditional write)."""
+    if expected_updated_at is not None and claim.updated_at != expected_updated_at:
+        raise StaleWriteError(
+            f"memory claim {claim.uuid} changed since it was read "
+            f"(expected {expected_updated_at}, found {claim.updated_at})"
+        )
+
+
+def claim_stale(claim: MemoryClaim) -> bool:
+    """True when an `active` claim has expired by wall clock (its `expires_at`
+    is in the past). Retrieval already excludes these; the UI badges them. A
+    non-active claim is never `stale` — its status already explains it."""
+    return (
+        claim.status == "active"
+        and claim.expires_at is not None
+        and claim.expires_at <= datetime.now(UTC)
+    )
+
+
+def set_memory_sensitivity(
+    memory_uuid: UUID, sensitivity: str, *, expected_updated_at: datetime | None = None
+) -> MemoryClaim:
+    """Change a claim's sensitivity (policy metadata, not a belief — so no
+    evidence row). Guarded by `expected_updated_at`."""
+    if sensitivity not in _SENSITIVITIES:
+        raise ValueError(f"invalid sensitivity: {sensitivity!r}")
+    claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
+    if claim is None:
+        raise ValueError(f"memory claim not found: {memory_uuid}")
+    assert_claim_unchanged(claim, expected_updated_at)
+    claim.sensitivity = sensitivity
+    claim.updated_at = datetime.now(UTC)
+    db.session.commit()
+    return claim
+
+
+def set_memory_expiry(
+    memory_uuid: UUID,
+    expires_at: datetime | None,
+    *,
+    expected_updated_at: datetime | None = None,
+) -> MemoryClaim:
+    """Set or clear a claim's `expires_at` (pass None to clear). Guarded by
+    `expected_updated_at`."""
+    claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
+    if claim is None:
+        raise ValueError(f"memory claim not found: {memory_uuid}")
+    assert_claim_unchanged(claim, expected_updated_at)
+    claim.expires_at = expires_at
+    claim.updated_at = datetime.now(UTC)
+    db.session.commit()
+    return claim
+
+
+def reactivate_memory_claim(
+    memory_uuid: UUID,
+    *,
+    confirmed_by_uuid: UUID | None = None,
+    expected_updated_at: datetime | None = None,
+) -> MemoryClaim:
+    """Bring a `rejected` or `expired` claim back to `active`, recording a
+    confirmation evidence row. Refuses any other starting status (an active or
+    superseded claim is not a thing to "reactivate"). Guarded by
+    `expected_updated_at`. The DB-level sibling of the assistant's internal
+    forget-undo inverse."""
+    claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
+    if claim is None:
+        raise ValueError(f"memory claim not found: {memory_uuid}")
+    if claim.status not in ("rejected", "expired"):
+        raise ValueError(
+            f"cannot reactivate a {claim.status} claim (only rejected/expired)")
+    assert_claim_unchanged(claim, expected_updated_at)
+    claim.status = "active"
+    claim.updated_at = datetime.now(UTC)
+    db.session.add(
+        MemoryEvidence(
+            memory_uuid=memory_uuid, provenance="confirmed_by_user",
+            source_type="manual", created_by_uuid=confirmed_by_uuid,
+        )
+    )
+    db.session.commit()
+    return claim
+
+
+def memory_claim_detail(memory_uuid: UUID) -> dict[str, Any] | None:
+    """Assemble a claim with everything the detail pane shows: its evidence
+    (newest first) and its supersession lineage (the claim it supersedes, and
+    the claim that superseded it, if any). Returns None when the claim is
+    absent. Embedding/retrieval state is computed in the web layer, which may
+    import the embedding module; this stays pure DB."""
+    claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
+    if claim is None:
+        return None
+    evidence = (
+        db.session.query(MemoryEvidence)
+        .filter_by(memory_uuid=memory_uuid)
+        .order_by(MemoryEvidence.id.desc())
+        .all()
+    )
+    supersedes = None
+    if claim.supersedes_uuid is not None:
+        supersedes = (
+            db.session.query(MemoryClaim)
+            .filter_by(uuid=claim.supersedes_uuid)
+            .first()
+        )
+    superseded_by = (
+        db.session.query(MemoryClaim)
+        .filter_by(supersedes_uuid=memory_uuid)
+        .first()
+    )
+    return {
+        "claim": claim,
+        "evidence": evidence,
+        "supersedes": supersedes,
+        "superseded_by": superseded_by,
+    }
+
+
 # --- embeddings (hybrid retrieval) -------------------------------------------
 
 

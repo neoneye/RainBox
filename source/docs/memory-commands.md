@@ -125,16 +125,17 @@ should only be used when directly relevant.
 - Command parsing and command lookups are currently lexical/exact-match oriented.
 - Normal chat memory retrieval is still lexical; hybrid retrieval is currently
   additive and mainly used by the assistant.
-- There is no dedicated user-facing memory management UI yet.
 - Conflict detection is basic and should be improved.
 - Automatic memory extraction from chat/journal is not implemented yet.
 
 ## Operator Notes
 
-Inspect memory state in Flask-Admin:
+Inspect and curate memory on the **`/memory` page**: claims grouped by status,
+with an evidence timeline, supersession lineage, embedding freshness, and
+provenance-safe lifecycle actions (activate / reject / reactivate / correct /
+sensitivity / expiry). See `docs/memory-architecture.md` §8.
 
-- `MemoryClaim`
-- `MemoryEvidence`
-- `MemoryEmbedding`
+The raw tables are also browsable in Flask-Admin (`MemoryClaim`,
+`MemoryEvidence`, `MemoryEmbedding`).
 
 For architecture details, see `docs/memory-architecture.md`.

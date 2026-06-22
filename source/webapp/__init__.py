@@ -32,5 +32,7 @@ from . import kanban_api  # noqa: F401,E402
 from . import git_views  # noqa: F401,E402
 from . import git_api  # noqa: F401,E402
 from . import settings_views  # noqa: F401,E402
+from . import memory_views  # noqa: F401,E402
+from . import memory_api  # noqa: F401,E402
 
 __all__ = ["app"]
