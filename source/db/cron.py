@@ -935,7 +935,7 @@ def seed_cron_defaults() -> None:
                 "Backfill embeddings for active memory claims and prune stale "
                 "ones (in-process). Keeps hybrid memory retrieval fresh between "
                 "writes. Runs daily at 03:15 local time; needs the embedder "
-                "(Ollama nomic-embed-text) reachable — without it, embedding "
+                "(Ollama embeddinggemma:300m) reachable — without it, embedding "
                 "degrades to lexical-only and pruning still runs."
             ),
             position=1,

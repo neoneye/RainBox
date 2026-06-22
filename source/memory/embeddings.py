@@ -1,6 +1,6 @@
 """Embed active memory claims into the rainbox-owned memory_embedding table.
 
-Reuses the Q&A embedding path (Ollama nomic-embed-text, 768-d) but keeps the
+Reuses the Q&A embedding path (Ollama embeddinggemma:300m, 768-d) but keeps the
 dependency lazy and injectable so retrieval/backfill stay testable without a
 live model. Best-effort everywhere: a failed embed leaves the claim usable via
 lexical-only retrieval rather than raising.
@@ -30,7 +30,7 @@ from db.models import MemoryClaim, MemoryEmbedding
 logger = logging.getLogger(__name__)
 
 # Must match the Q&A embedder (memory/seed_memory.py).
-EMBED_MODEL_NAME: str = "nomic-embed-text"
+EMBED_MODEL_NAME: str = "embeddinggemma:300m"
 EMBED_DIM: int = 768
 
 EmbedFn = Callable[[str], list[float]]

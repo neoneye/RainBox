@@ -5,7 +5,7 @@ Two-stage match:
 1. **Exact alias** — normalize the message and look it up in an in-memory table
    of every JSONL question alternate. Costs no embedding call and is correct by
    construction for verbatim phrases ("git branch", "What is your name?").
-2. **Semantic** — embed the message via Ollama's nomic-embed-text (768-dim) and
+2. **Semantic** — embed the message via Ollama's embeddinggemma:300m (768-dim) and
    retrieve the top-K from a pgvector-backed table. Group hits by `qa_id`, take
    the max score per qa_id,
    require the best qa_id's score >= MIN_SCORE and beat the second qa_id by >=

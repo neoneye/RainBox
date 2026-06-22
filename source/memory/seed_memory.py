@@ -35,13 +35,13 @@ QA_JSONL_PATH: Path = Path(__file__).resolve().parent.parent / "data" / "questio
 QA_TABLE_NAME: str = "seed_memory"   # PGVectorStore creates table "data_seed_memory"
 QA_FULL_TABLE: str = f"data_{QA_TABLE_NAME}"
 # Embeddings run on Ollama (the same server already used for chat at :11434),
-# not LM Studio — so Q&A retrieval depends on one local server instead of two.
-# `nomic-embed-text` is the same model family as the prior LM Studio embedder and
-# is also 768-dim, so the existing pgvector table stays dimension-compatible; the
-# stored vectors must still be rebuilt once (QUERY_AGENT_REBUILD_KB=1) because
-# they won't be bit-identical across runtimes. Override the host with
-# OLLAMA_BASE_URL (matching providers/ollama.py) if Ollama isn't on localhost.
-EMBED_MODEL_NAME: str = "nomic-embed-text"
+# so Q&A retrieval depends on one local server. `embeddinggemma:300m` is 768-dim,
+# matching the pgvector column; changing the embedder requires rebuilding the
+# stored vectors (QUERY_AGENT_REBUILD_KB=1, or the "Repopulate Q&A memory" button)
+# because rows are keyed by model_name and won't match across embedders. Override
+# the host with OLLAMA_BASE_URL (matching providers/ollama.py) if Ollama isn't on
+# localhost.
+EMBED_MODEL_NAME: str = "embeddinggemma:300m"
 EMBED_DIM: int = 768
 OLLAMA_BASE: str = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/") + "/v1"
 OLLAMA_KEY: str = "ollama"  # Ollama ignores the key but the OpenAI client requires one

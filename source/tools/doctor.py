@@ -1,7 +1,7 @@
 """`rainbox doctor`: an operator health check. Run: `python -m tools.doctor`.
 
 Each probe returns a Check; the process exits 1 if any check failed. The most
-useful probe is the embedder reachability check (Ollama nomic-embed-text) — a
+useful probe is the embedder reachability check (Ollama embeddinggemma:300m) — a
 down embedder silently degrades memory retrieval to lexical-only.
 """
 
