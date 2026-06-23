@@ -331,6 +331,7 @@ def _action_remember(
               f"Done — reply to the operator. To forget it later, use this exact "
               f"memory_uuid (never invent one)."),
         data={"memory_uuid": str(claim.uuid), "status": "active",
+              "link": _memory_link(claim.uuid),
               "undo": {"capability": "reject_memory_candidate",
                        "payload": {"memory_uuid": str(claim.uuid)}}},
     )

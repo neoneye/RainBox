@@ -88,6 +88,8 @@ def test_remember_observation_carries_the_candidate_uuid(room):
         mem_uuid = obs.data["memory_uuid"]
         assert mem_uuid in obs.text                          # uuid is visible to the model
         assert "never invent" in obs.text.lower()            # and told not to fabricate one
+        # the reply surfaces a /memory link so the operator can verify the claim
+        assert obs.data["link"] == f"/memory?id={mem_uuid}"
     finally:
         db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
         db.db.session.commit()
