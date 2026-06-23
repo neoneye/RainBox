@@ -136,12 +136,13 @@ RainBox today is a local, Postgres-backed assistant workbench:
   hooks (`MemoryClaim`, `MemoryEvidence`, `MemoryEmbedding`, `RetrievalEvent`,
   `FeedbackEvent` in `source/db/models.py`).
 - A bounded assistant loop (`STEP_LIMIT = 6` ReAct steps) with a code-owned
-  capability registry, durable traces (`assistant_run`/`assistant_step` — one
-  mutable row per step, opened at `running` and settled in place, so each step is
-  individually addressable and a write it produces is FK-linked back to it via
-  `assistant_write_intent.step_uuid`), hybrid memory lookup, Q&A lookup, workspace
-  reads, kanban reads, and controlled writes (`source/agents/assistant.py`). The
-  hybrid retrieval blends vector similarity
+  capability registry, durable traces (`assistant_run` keyed by uuid, with
+  `assistant_step` — one mutable row per step, opened at `running` and settled in
+  place, so each step is individually addressable and a write it produces is
+  FK-linked back to it via `assistant_write_intent.step_uuid`), a post-run
+  summarizer agent (`assistant_run.summary`), hybrid memory lookup, Q&A lookup,
+  workspace reads, kanban reads, and controlled writes (`source/agents/assistant.py`).
+  The hybrid retrieval blends vector similarity
   (0.55), Postgres full-text rank (0.30), and an entity boost (0.15) in
   `source/memory/retrieval.py:retrieve_memories_hybrid`.
 - Embeddings run fully locally on Ollama with `embeddinggemma:300m` (768-dim, the
@@ -178,9 +179,9 @@ surface and integration reach:
 - No mature always-on gateway comparable to OpenClaw/Hermes.
 - Telegram exists as a service, but channel UX is not yet the primary product
   shape.
-- Runtime dashboard UI is still missing (the backend endpoints —
-  `/stop`, `/redirect`, write-intent `confirm/reject/undo` — already exist; only
-  the operator-facing view is unbuilt, tracked as S7).
+- Runtime dashboard is **partial**: the `/assistant` inspector + approval surface
+  (timeline, confirm/reject/undo, stop/redirect) shipped; **live** in-flight
+  streaming and the kill/retry controls are still unbuilt (tracked as S7).
 - *Governed* external-system/MCP adapters are intentionally deferred. Note the
   nuance: a standalone `MCPAgent` (`source/agents/mcp.py`, loading servers from
   `mcp.json`) already runs MCP tools directly as a chat agent. What is deferred

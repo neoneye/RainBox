@@ -24,11 +24,14 @@ paths are the current source of truth; the v2 prose schemas are historical.
 
 **Assistant loop & capability registry** — `agents/assistant.py`
 - `AssistantAgent.handle()` is the bounded ReAct loop (plan → act → observe,
-  step cap, per-step `assistant_run`/`assistant_step` trace). Each step is **one
-  mutable `assistant_step` row** (opened at `running`, settled in place to
-  `observed`/`failed`; terminal-only steps are a single insert), so a write a step
-  produces links back by `assistant_write_intent.step_uuid` (FK), not a
-  `(run_id, step_index)` pair (S12).
+  step cap, per-step `assistant_run`/`assistant_step` trace). `assistant_run` is
+  keyed by its **`uuid`** (no integer id); children reference it via **`run_uuid`**.
+  Each step is **one mutable `assistant_step` row** (opened at `running`, settled
+  in place to `observed`/`failed`; terminal-only steps are a single insert), so a
+  write a step produces links back by `assistant_write_intent.step_uuid` (FK), not
+  a `(run_id, step_index)` pair (S12).
+- On a terminal run the loop enqueues the **`assistant_run_summarizer`** agent
+  (off the critical path) to digest it into `assistant_run.summary`.
 - `AssistantActionName` (enum) + `CAPABILITIES: dict[AssistantActionName,
   Capability]` is the code-owned registry. `Capability` carries
   `read/write/network/secrets`, `tier` (`log_and_undo`/`confirm`/None),
@@ -253,11 +256,14 @@ batches:
 
 ### S7 — Runtime dashboard  ·  🟡 partial (inspection + approval shipped)  ·  Size M  ·  Depends on: none (endpoints exist)  ·  (v2 Phase 6)
 - **Shipped:** the **`/assistant`** page (`webapp/assistant_views.py`) — a
-  run-centric timeline over `assistant_run → assistant_step → assistant_write_intent`
-  (each write-intent inline under its step via `step_uuid`), with the lifecycle
+  run-centric view addressed by run uuid (`?id=<uuid>`): the left pane lists runs
+  newest-first with each run's **summary** + obstacle badge; the right pane leads
+  with the summary, then the run details (uuid + Copy, the trigger message with an
+  "open in chat" deep-link, and the step timeline with each
+  `assistant_write_intent` inline under its step via `step_uuid`). Lifecycle
   actions wired to the existing endpoints: **confirm/reject/undo** a write-intent
-  and **stop/redirect** a live run. This is the operator approval surface the
-  confirm-tier writes were missing.
+  and **stop/redirect** a live run — the operator approval surface the confirm-tier
+  writes were missing.
   [spec](../superpowers/specs/2026-06-23-assistant-run-inspector-design.md)
 - **Still open (→ keeps S7 partial):** live auto-refresh (SSE/LISTEN-NOTIFY),
   heartbeat/PID/current-action visibility, and the **kill** (watchdog) / **retry**
@@ -320,6 +326,16 @@ batches:
   candidate/rejectable, and the deriver runs without slowing assistant turns.
 
 ### S12 — Smaller follow-ups (grab-bag)  ·  Size S each
+- ✅ `assistant_run_summarizer` agent (done) — a dedicated `StructuredLLMAgent`
+  enqueued at every terminal run; digests it into `assistant_run.summary`
+  `{trigger, obstacles, outcome}` off the critical path; `requires_structured_output`
+  so `/agent_models` only offers it structured-output groups. Surfaced in the
+  `/assistant` inspector.
+  [spec](../superpowers/specs/2026-06-23-run-summarizer-agent-design.md)
+- ✅ `assistant_run` keyed by `uuid`, no integer id (done) — uuid is the primary
+  key and the sole identifier (shown, addressed via `?id=<uuid>`, logged); the
+  child tables reference it via `run_uuid`. One-time destructive table rebuild on
+  upgrade (run history is a regenerable trace).
 - ✅ Assistant-step single mutable row + `step_uuid` write-intent FK (done) — one
   row per logical step (open `running` → settle in place), and
   `assistant_write_intent.step_uuid` references its producing step by identity
