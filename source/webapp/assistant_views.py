@@ -116,8 +116,8 @@ ASSISTANT_TEMPLATE = """
                        line-height:1.35; display:-webkit-box; -webkit-line-clamp:2;
                        -webkit-box-orient:vertical; overflow:hidden; }
   .as-run-link .rsum.pending { color:#98a2b3; font-style:italic; }
-  .as-kebab { margin-left:auto; flex:0 0 auto; border:none; background:none; cursor:pointer;
-              color:#6b7280; width:1.4rem; height:1.4rem; padding:0; border-radius:5px;
+  .as-kebab { margin-left:auto; flex:0 0 auto; align-self:center; border:none; background:none;
+              cursor:pointer; color:#6b7280; width:1.4rem; height:1.4rem; padding:0; border-radius:5px;
               display:inline-flex; align-items:center; justify-content:center; visibility:hidden; }
   .as-run-node.sel .as-kebab { visibility:visible; }
   .as-kebab::before { content:""; width:3px; height:3px; border-radius:50%; background:currentColor;
