@@ -261,3 +261,12 @@ def test_cron_page_has_next_run_column():
     assert "<th>next run</th>" in body
     assert "function cronNextRunCell" in body
     assert "cron-nextrun-cell" in body
+
+
+def test_tree_kebab_has_copy_id_items():
+    body = _body()
+    # The left-panel kebab offers a copy-uuid action for both folders and jobs.
+    assert "Copy folder id" in body
+    assert "Copy job id" in body
+    assert "function cronCopyId" in body
+    assert "navigator.clipboard.writeText(uuid)" in body

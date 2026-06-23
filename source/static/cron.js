@@ -932,6 +932,8 @@ function cronJobNode(j){
   cronMakeKebab(n, {
     onDelete: () => cronConfirmDeleteJob(j.uuid),
     onDuplicate: () => cronDuplicateJob(j.uuid),
+    copyLabel: 'Copy job id',
+    onCopyId: () => cronCopyId(j.uuid, 'Job'),
   });
   return n;
 }
@@ -952,6 +954,7 @@ function cronMakeKebab(node, opts){
   const items = [];
   if (opts.onAddJob) items.push(['New job', '', opts.onAddJob]);
   items.push(['Duplicate', '', opts.onDuplicate || null]);
+  if (opts.onCopyId) items.push([opts.copyLabel || 'Copy id', '', opts.onCopyId]);
   items.push(['Delete', 'danger', opts.onDelete]);
   items.forEach(spec => {
     const item = document.createElement('button');
@@ -1004,6 +1007,8 @@ function cronFolderLi(f){
     onDelete: () => cronConfirmDeleteFolder(f.id),
     onDuplicate: () => cronDuplicateFolder(f.id),
     onAddJob: () => cronNewJob(f.id),
+    copyLabel: 'Copy folder id',
+    onCopyId: () => cronCopyId(f.id, 'Folder'),
   });
   li.appendChild(node);
   if (expanded && hasKids){
@@ -1509,6 +1514,13 @@ function cronToast(text){
   el.classList.add('show');
   clearTimeout(cronToastTimer);
   cronToastTimer = setTimeout(() => el.classList.remove('show'), 5000);
+}
+// Copy a folder/job uuid from its tree kebab to the clipboard (with a toast) —
+// handy for addressing it elsewhere.
+function cronCopyId(uuid, kind){
+  navigator.clipboard.writeText(uuid).then(
+    () => cronToast(kind + ' id copied: ' + uuid),
+    () => cronToast('Could not copy to clipboard.'));
 }
 let cronSaveTimer = null;
 let cronTreeVersion = null;    // token from hydrate; PUTs echo it (stale → 409)
