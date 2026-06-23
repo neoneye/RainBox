@@ -195,6 +195,17 @@ def get_assistant_run(run_id: int) -> AssistantRun | None:
     return db.session.get(AssistantRun, run_id)
 
 
+def list_assistant_runs(limit: int = 50) -> list[AssistantRun]:
+    """The most recent runs, newest first — the left pane of the /assistant
+    inspector."""
+    return (
+        db.session.query(AssistantRun)
+        .order_by(AssistantRun.started_at.desc(), AssistantRun.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 def list_assistant_steps(run_id: int) -> list[AssistantStep]:
     """All step rows for a run, in commit order (id ascending)."""
     return (
@@ -253,6 +264,17 @@ def get_write_intent(intent_uuid: UUID) -> AssistantWriteIntent | None:
         db.session.query(AssistantWriteIntent)
         .filter(AssistantWriteIntent.uuid == intent_uuid)
         .one_or_none()
+    )
+
+
+def list_write_intents_for_run(run_id: int) -> list[AssistantWriteIntent]:
+    """All write intents a run produced, in creation order — the /assistant
+    inspector buckets them by `step_uuid` to render each one under its step."""
+    return (
+        db.session.query(AssistantWriteIntent)
+        .filter(AssistantWriteIntent.run_id == run_id)
+        .order_by(AssistantWriteIntent.id)
+        .all()
     )
 
 

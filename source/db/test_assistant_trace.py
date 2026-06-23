@@ -230,6 +230,43 @@ def test_write_intent_binds_step_uuid(app_ctx):
         _cleanup_run(run.id)
 
 
+def test_list_assistant_runs_is_newest_first(app_ctx):
+    r1 = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
+    r2 = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
+    try:
+        runs = db.list_assistant_runs(limit=50)
+        ids = [r.id for r in runs]
+        # r2 was created after r1, so it sorts ahead of it.
+        assert ids.index(r2.id) < ids.index(r1.id)
+    finally:
+        _cleanup_run(r1.id)
+        _cleanup_run(r2.id)
+
+
+def test_list_write_intents_for_run_buckets_by_step(app_ctx):
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
+    try:
+        step = db.open_assistant_step(
+            run_id=run.id, step_index=0, action="kanban_move_task", reason="m")
+        linked = db.create_write_intent(
+            run_id=run.id, step_uuid=step.uuid, capability_name="kanban_move_task",
+            payload={}, preview_text="p", room_uuid=run.room_uuid,
+            agent_uuid=run.agent_uuid, state="completed", result={"undo": {}})
+        unlinked = db.create_write_intent(
+            run_id=run.id, capability_name="kanban_move_task", payload={},
+            preview_text="p", room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,
+            state="completed", result={"undo": {}})  # step_uuid NULL
+        intents = db.list_write_intents_for_run(run.id)
+        assert {i.uuid for i in intents} == {linked.uuid, unlinked.uuid}
+        by_step = [i for i in intents if i.step_uuid == step.uuid]
+        assert [i.uuid for i in by_step] == [linked.uuid]
+    finally:
+        _cleanup_run(run.id)
+
+
 def test_finish_run_sets_terminal_status_and_summary(app_ctx):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6

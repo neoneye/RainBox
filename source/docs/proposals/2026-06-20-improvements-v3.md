@@ -251,7 +251,17 @@ batches:
 - **Follow-ups:** a `rainbox` wrapper script; deeper probes (migration drift,
   pgvector presence, per-agent model-group validity).
 
-### S7 — Runtime dashboard  ·  Size M  ·  Depends on: none (endpoints exist)  ·  (v2 Phase 6)
+### S7 — Runtime dashboard  ·  🟡 partial (inspection + approval shipped)  ·  Size M  ·  Depends on: none (endpoints exist)  ·  (v2 Phase 6)
+- **Shipped:** the **`/assistant`** page (`webapp/assistant_views.py`) — a
+  run-centric timeline over `assistant_run → assistant_step → assistant_write_intent`
+  (each write-intent inline under its step via `step_uuid`), with the lifecycle
+  actions wired to the existing endpoints: **confirm/reject/undo** a write-intent
+  and **stop/redirect** a live run. This is the operator approval surface the
+  confirm-tier writes were missing.
+  [spec](../superpowers/specs/2026-06-23-assistant-run-inspector-design.md)
+- **Still open (→ keeps S7 partial):** live auto-refresh (SSE/LISTEN-NOTIFY),
+  heartbeat/PID/current-action visibility, and the **kill** (watchdog) / **retry**
+  (re-enqueue) controls.
 - **Goal:** See and steer in-flight assistant runs.
 - **Touches:** a `webapp` view over `assistant_run`/heartbeat; buttons wired to
   `/stop`, `/redirect`, the write-intent `confirm/reject/undo` endpoints, and a
