@@ -13,7 +13,35 @@ import pytest
 import db
 import webapp  # noqa: F401 — registers all views (incl. /assistant) on the app
 from db import AssistantRun
+from webapp.assistant_views import _bucket_runs
 from webapp.core import app as flask_app
+
+
+class _FakeRun:
+    """Minimal stand-in for an AssistantRun — _bucket_runs only reads
+    status/summary."""
+    def __init__(self, status, outcome=None):
+        self.status = status
+        self.summary = {"outcome": outcome} if outcome else None
+
+
+def test_bucket_runs_files_each_run_under_matching_facets():
+    running = _FakeRun("running")
+    stopped = _FakeRun("stopped")
+    resolved = _FakeRun("finished", outcome="resolved")
+    failed = _FakeRun("failed")
+    partial = _FakeRun("finished", outcome="partial")
+    runs = [running, stopped, resolved, failed, partial]
+    f = {b["name"]: b for b in _bucket_runs(runs)}
+    assert f["Recent"]["runs"] == runs                  # holds all
+    assert running in f["Running"]["runs"] and f["Running"]["count"] == 1
+    assert stopped in f["Stopped"]["runs"]
+    assert resolved in f["Resolved"]["runs"]
+    # failed run + a 'partial' outcome both count as unresolved
+    assert failed in f["Unresolved"]["runs"] and partial in f["Unresolved"]["runs"]
+    assert f["Unresolved"]["count"] == 2
+    # facets overlap: a running run is ALSO under Recent
+    assert running in f["Recent"]["runs"]
 
 
 @pytest.fixture
@@ -41,9 +69,9 @@ def _room():
     return db.create_chatroom(f"as-view-{uuid4().hex[:8]}", human.uuid, [])
 
 
-def _cleanup(run_id: int, room_uuid) -> None:
+def _cleanup(run_uuid, room_uuid) -> None:
     # assistant_step / assistant_write_intent cascade off assistant_run.
-    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
+    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_uuid).delete()
     db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
     db.db.session.commit()
 
@@ -57,8 +85,11 @@ def test_runs_list_renders(app_ctx, client):
         resp = client.get("/assistant")
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
-        assert "Runs" in body
-        assert f"?id={run.uuid}" in body       # the run appears in the left list (uuid-addressed)
+        # The virtual status folders render…
+        for folder in ("Recent", "Running", "Stopped", "Resolved", "Unresolved"):
+            assert f'class="as-fname">{folder}<' in body
+        # …and the run appears (uuid-addressed) under them.
+        assert f"?id={run.uuid}" in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -217,6 +248,22 @@ def test_unsummarized_run_shows_pending(app_ctx, client):
     try:
         detail = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert "Not yet summarized" in detail
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_selected_run_has_kebab_with_actions(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())  # status=running
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        # The kebab on the selected run carries its uuid/room/status.
+        assert f"asKebab(event, '{run.uuid}', '{run.room_uuid}', 'running')" in body
+        # The menu offers Copy id + Open in chat, and a Stop for a running run.
+        assert "Copy id" in body
+        assert "Open in chat" in body
+        assert f"/chat/api/assistant/runs/' + uuid + '/stop" in body  # Stop target (JS)
     finally:
         _cleanup(run.uuid, room.uuid)
 
