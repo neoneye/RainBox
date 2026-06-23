@@ -77,6 +77,18 @@ def test_forget_by_text_matches_a_candidate(app_ctx):
         db.db.session.commit()
 
 
+def test_forget_observation_links_to_the_memory_page(app_ctx):
+    """The reply surfaces a /memory?id=<uuid> link so the operator can inspect
+    (and reactivate) the just-forgotten claim."""
+    c = _claim(f"link me {uuid4().hex[:6]}")
+    try:
+        obs = _action_forget_memory(_ctx(), {"memory_uuid": str(c.uuid)})
+        assert obs.data["link"] == f"/memory?id={c.uuid}"
+    finally:
+        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.db.session.commit()
+
+
 def test_forget_returns_an_undo_record_that_reactivates(app_ctx):
     """Log-and-undo: forget carries an inverse op pointing at reactivate_memory,
     so undo restores the exact claim it rejected."""
@@ -143,6 +155,13 @@ def test_forget_via_loop_executes_inline_and_is_undoable(app_ctx):
             AssistantWriteIntent.room_uuid == chatroom.uuid).one()
         assert intent.state == "completed"                       # log-and-undo: inline
         assert db.get_memory_claim(c.uuid).status == "rejected"  # gone immediately
+        # the reply carries a /memory link so the operator can inspect it
+        reply = db.db.session.query(db.ChatMessage).filter(
+            db.ChatMessage.room_uuid == chatroom.uuid,
+            db.ChatMessage.kind == "message",
+            db.ChatMessage.sender_uuid == ASSISTANT_UUID).order_by(
+            db.ChatMessage.id.desc()).first()
+        assert f"/memory?id={c.uuid}" in reply.text
         # Reversible: undo reactivates it.
         assert undo_write_intent(intent.uuid).ok is True
         assert db.get_memory_claim(c.uuid).status == "active"

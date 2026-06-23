@@ -408,6 +408,7 @@ def _action_forget_memory(
         text=(f"Forgot: '{claim.text}'. Done — reply to the operator. (Reversible: "
               f"undo reactivates it.)"),
         data={"memory_uuid": str(claim.uuid),
+              "link": _memory_link(claim.uuid),
               "undo": {"capability": "reactivate_memory",
                        "payload": {"memory_uuid": str(claim.uuid)}}},
     )
@@ -468,6 +469,14 @@ def _kanban_link(target_uuid: UUID | str) -> str:
     overlay — so writes link to the specific task they touched. Surfaced in the
     assistant's reply so the operator can jump straight to what changed."""
     return f"/kanban?id={target_uuid}"
+
+
+def _memory_link(memory_uuid: UUID | str) -> str:
+    """A relative link to the /memory review page that opens a specific claim's
+    detail (its `?id=` deep-link). Surfaced in the assistant's reply after a
+    memory write so the operator can jump straight to the claim it touched —
+    e.g. inspect a just-forgotten memory and reactivate it if needed."""
+    return f"/memory?id={memory_uuid}"
 
 
 def _resolve_board_column(
