@@ -343,6 +343,16 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("chatroom", "position",
                                "position INTEGER NOT NULL DEFAULT 0")
         _backfill_chatroom_positions()
+        # The write-intent → producing-step identity pointer (the sole step
+        # reference). Additive nullable column on DBs that predate it; fresh DBs
+        # get the FK via create_all.
+        _add_column_if_missing("assistant_write_intent", "step_uuid", "step_uuid UUID")
+        # The former (run_id, step_index) soft pointer is superseded by step_uuid.
+        # Drop it where it still exists (guarded so a fully-migrated DB starts up
+        # without an ACCESS EXCLUSIVE lock — same rationale as _add_column_if_missing).
+        if _column_exists("assistant_write_intent", "step_index"):
+            db.session.execute(
+                sa.text("ALTER TABLE assistant_write_intent DROP COLUMN IF EXISTS step_index"))
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(

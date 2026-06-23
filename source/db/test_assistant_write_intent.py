@@ -37,7 +37,7 @@ def run(app_ctx):
 
 def test_create_write_intent_is_proposed_with_payload_hash(run):
     intent = db.create_write_intent(
-        run_id=run.id, step_index=0, capability_name="activate_memory",
+        run_id=run.id, capability_name="activate_memory",
         payload={"memory_uuid": "abc"}, preview_text="activate memory abc",
         room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,
     )
@@ -59,7 +59,7 @@ def test_payload_hash_changes_with_payload_or_capability(run):
 
 def test_state_transitions_stamp_timestamps(run):
     intent = db.create_write_intent(
-        run_id=run.id, step_index=0, capability_name="activate_memory",
+        run_id=run.id, capability_name="activate_memory",
         payload={"x": 1}, preview_text="p", room_uuid=run.room_uuid,
         agent_uuid=run.agent_uuid,
     )
@@ -80,7 +80,7 @@ def test_state_transitions_stamp_timestamps(run):
 
 def test_get_write_intent_roundtrip(run):
     intent = db.create_write_intent(
-        run_id=run.id, step_index=0, capability_name="activate_memory",
+        run_id=run.id, capability_name="activate_memory",
         payload={"x": 1}, preview_text="p", room_uuid=run.room_uuid,
         agent_uuid=run.agent_uuid,
     )
@@ -93,7 +93,7 @@ def test_intent_cascades_when_run_deleted(app_ctx):
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     intent = db.create_write_intent(
-        run_id=r.id, step_index=0, capability_name="c", payload={},
+        run_id=r.id, capability_name="c", payload={},
         preview_text="p", room_uuid=r.room_uuid, agent_uuid=r.agent_uuid,
     )
     iid = intent.id
@@ -104,7 +104,7 @@ def test_intent_cascades_when_run_deleted(app_ctx):
 
 def test_create_write_intent_accepts_completed_state_and_result(run):
     intent = db.create_write_intent(
-        run_id=run.id, step_index=0, capability_name="kanban_move_task",
+        run_id=run.id, capability_name="kanban_move_task",
         payload={"task_uuid": "t", "column_uuid": "c"},
         preview_text="kanban_move_task: …",
         room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,

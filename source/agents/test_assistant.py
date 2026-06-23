@@ -118,7 +118,8 @@ def test_reply_action_posts_one_message_and_finishes(room):
     assert len(posts) == 1
     assert posts[0]["text"] == "Working tree is clean."
     assert result["status"] == "finished"
-    assert _phases(agent) == ["planned", "final"]
+    # A terminal step is a single row (no separate planned transition).
+    assert _phases(agent) == ["final"]
 
 
 def test_ask_clarifying_question_is_terminal_and_posts(room):
@@ -132,7 +133,7 @@ def test_ask_clarifying_question_is_terminal_and_posts(room):
     assert len(posts) == 1
     assert posts[0]["text"] == "Which repository do you mean?"
     assert result["status"] == "finished"
-    assert _phases(agent) == ["planned", "final"]
+    assert _phases(agent) == ["final"]
 
 
 # --- loop control -------------------------------------------------------------
@@ -163,13 +164,9 @@ def test_step_cap_stops_after_step_limit(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "stopped"
-    # Three planned/running/observed triples (query_memory is a real read action
-    # in PR 4), no terminal "final".
-    assert _phases(agent) == [
-        "planned", "running", "observed",
-        "planned", "running", "observed",
-        "planned", "running", "observed",
-    ]
+    # Each step is one row that settles running->observed in place; no terminal
+    # "final" (the run hit the step cap). So three observed steps, not nine rows.
+    assert _phases(agent) == ["observed", "observed", "observed"]
     # The user still gets a message explaining the run stopped.
     assert len(_agent_messages(room_uuid)) == 1
 
@@ -187,8 +184,9 @@ def test_invalid_args_produce_traceable_failed_step_not_a_crash(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "finished"
-    assert _phases(agent) == ["planned", "failed", "planned", "final"]
-    failed = agent._steps[1]
+    # Step 0 fails validation (single failed row), step 1 is the terminal reply.
+    assert _phases(agent) == ["failed", "final"]
+    failed = agent._steps[0]
     assert failed["error"] and "message" in failed["error"]
     posts = _agent_messages(room_uuid)
     assert len(posts) == 1
@@ -278,8 +276,8 @@ def test_loop_persists_run_and_steps_to_tables(room):
     assert run.room_uuid == room_uuid
 
     steps = _steps_for(run.id)
-    assert [s.phase for s in steps] == ["planned", "final"]
-    assert [s.action for s in steps] == ["reply", "reply"]
+    assert [s.phase for s in steps] == ["final"]
+    assert [s.action for s in steps] == ["reply"]
 
 
 def test_journal_result_is_summary_not_full_trace(room):
@@ -329,10 +327,9 @@ def test_killed_mid_run_leaves_last_committed_step_and_marks_run_failed(room):
     assert run.status == "failed"
     steps = _steps_for(run.id)
     phases = [s.phase for s in steps]
-    # The step-0 planned+failed rows survived the crash; a terminal failed row
-    # records the exception.
-    assert phases[:2] == ["planned", "failed"]
-    assert "failed" in phases[2:]
+    # Step 0's failed row survived the crash; a terminal failed row records the
+    # exception raised while deciding step 1. One row per step now.
+    assert phases == ["failed", "failed"]
     # The terminal failed row points at the logical step where it failed (the
     # model raised while deciding step 1), not a row count.
     assert steps[-1].phase == "failed"

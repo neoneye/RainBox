@@ -142,6 +142,94 @@ def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
         db.db.session.commit()
 
 
+def test_open_then_settle_is_one_mutable_row(app_ctx):
+    """A normal action step is a single row: open inserts it at `running`
+    (durable before the action), settle UPDATEs the SAME row in place to its
+    terminal phase — no second row appended."""
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"trace-settle-{uuid4().hex[:8]}", human.uuid, [])
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=chatroom.uuid, agent_uuid=uuid4(), step_limit=6
+    )
+    try:
+        step = db.open_assistant_step(
+            run_id=run.id, step_index=0, action="query_memory",
+            reason="look it up", args={"query": "the-query"},
+        )
+        assert step.uuid is not None
+        assert step.phase == "running"
+        # Opening posts no chat anchor (the observation doesn't exist yet).
+        assert not [m for m in db.list_room_messages(chatroom.uuid)
+                    if m["kind"] == "debug-assistant"]
+
+        settled = db.settle_assistant_step(
+            step, phase="observed", observation_preview="found the fact",
+        )
+        # Same row, mutated — not a new one.
+        assert settled.id == step.id
+        assert settled.uuid == step.uuid
+        rows = db.list_assistant_steps(run.id)
+        assert len(rows) == 1
+        assert rows[0].phase == "observed"
+        assert rows[0].observation_preview == "found the fact"
+        # Exactly one terminal anchor, posted at settle.
+        anchors = [m for m in db.list_room_messages(chatroom.uuid)
+                   if m["kind"] == "debug-assistant"]
+        assert len(anchors) == 1
+        state = json.loads(anchors[0]["text"])
+        assert state["action"] == "query_memory"
+        assert state["observation"] == "found the fact"
+    finally:
+        _cleanup_run(run.id)
+        db.db.session.query(db.Chatroom).filter(
+            db.Chatroom.uuid == chatroom.uuid
+        ).delete()
+        db.db.session.commit()
+
+
+def test_unsettled_open_step_remains_a_durable_running_row(app_ctx):
+    """Crash visibility: a step opened but never settled stays as a single
+    `running` row carrying action/reason/args (the trace-before-action durability
+    the append-only design used to give)."""
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+    )
+    try:
+        db.open_assistant_step(
+            run_id=run.id, step_index=0, action="query_qa",
+            reason="look it up", args={"query": "git status"},
+        )
+        db.db.session.expire_all()  # simulate a fresh reader after a crash
+        rows = db.list_assistant_steps(run.id)
+        assert len(rows) == 1
+        assert rows[0].phase == "running"
+        assert rows[0].action == "query_qa"
+        assert rows[0].args == {"query": "git status"}
+    finally:
+        _cleanup_run(run.id)
+
+
+def test_write_intent_binds_step_uuid(app_ctx):
+    """A write intent references its producing step by uuid — the sole step
+    pointer (the old (run_id, step_index) soft pointer is gone)."""
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+    )
+    try:
+        step = db.open_assistant_step(
+            run_id=run.id, step_index=2, action="kanban_move_task", reason="move it",
+        )
+        intent = db.create_write_intent(
+            run_id=run.id, step_uuid=step.uuid,
+            capability_name="kanban_move_task", payload={"task_uuid": "t"},
+            preview_text="move", room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,
+            state="completed", result={"undo": {"x": 1}},
+        )
+        assert intent.step_uuid == step.uuid
+    finally:
+        _cleanup_run(run.id)
+
+
 def test_finish_run_sets_terminal_status_and_summary(app_ctx):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6

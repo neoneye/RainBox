@@ -978,13 +978,21 @@ class AssistantRun(db.Model):
 
 
 class AssistantStep(db.Model):
-    """One committed step-transition in an assistant run. Append-only: a single
-    logical step (run_id, step_index) normally has several rows
-    (planned -> running -> observed/failed, or planned -> final), so there is no
-    uniqueness constraint on the pair. Ordering is by id / created_at.
+    """One logical step in an assistant run, as **a single mutable row**. A normal
+    action step is inserted at `phase="running"` (so a crash mid-action leaves a
+    durable row) and then UPDATEd in place to its terminal `phase`
+    (`observed`/`failed`). Terminal-only steps — a `failed` validation, the
+    `final` reply, and `control` (stop/redirect) events — are a single insert.
 
-    `phase="control"` is reserved for the Phase 6 stop/redirect feature so it
-    won't need a constraint migration just to record a control event.
+    `phase` is therefore the step's *current state*, not a per-transition log.
+    Its uuid is stable for the step's whole life, so `assistant_write_intent`
+    references the producing step by `step_uuid`. `(run_id, step_index)` is
+    one-to-one per non-control step but is not DB-unique (legacy rows from the
+    former append-only design predate the single-row invariant, which is now
+    code-enforced via the open/settle helpers in db.assistant).
+
+    `legacy` note: older runs may still have multiple rows per (run_id,
+    step_index); readers order by id / created_at and tolerate them.
     """
 
     __tablename__ = "assistant_step"
@@ -1067,7 +1075,12 @@ class AssistantWriteIntent(db.Model):
     run_id: Mapped[int] = mapped_column(
         ForeignKey("assistant_run.id", ondelete="CASCADE"), index=True
     )
-    step_index: Mapped[int] = mapped_column()
+    # The step that produced this intent — the sole pointer (assistant_step is
+    # one mutable row per step, so its uuid is stable). Nullable only because
+    # legacy intents predate the FK; every intent the loop writes sets it.
+    step_uuid: Mapped[UUID | None] = mapped_column(
+        ForeignKey("assistant_step.uuid", ondelete="SET NULL"), index=True
+    )
     capability_name: Mapped[str] = mapped_column(Text)
     payload_hash: Mapped[str] = mapped_column(Text)
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)

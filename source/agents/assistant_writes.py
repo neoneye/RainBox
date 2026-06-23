@@ -60,7 +60,8 @@ def execute_write_intent(
     db.set_write_intent_state(intent, "executing")
     ctx = AssistantActionContext(
         journal_id=None, room_uuid=intent.room_uuid, agent_uuid=intent.agent_uuid,
-        step_index=intent.step_index,
+        step_index=0,  # operator-triggered re-dispatch: no loop step
+        step_uuid=intent.step_uuid,
     )
     try:
         obs = cap.action(ctx, dict(intent.payload))
@@ -108,7 +109,8 @@ def undo_write_intent(intent_uuid: UUID) -> AssistantObservation:
         return AssistantObservation(ok=False, text="undo capability has no dispatcher")
     ctx = AssistantActionContext(
         journal_id=None, room_uuid=intent.room_uuid,
-        agent_uuid=intent.agent_uuid, step_index=intent.step_index,
+        agent_uuid=intent.agent_uuid, step_index=0,  # no loop step for undo
+        step_uuid=intent.step_uuid,
     )
     try:
         obs = cap.action(ctx, dict(undo["payload"]))

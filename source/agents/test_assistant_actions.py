@@ -348,8 +348,10 @@ def test_loop_dispatches_read_action_then_replies(room):
 
     assert result["status"] == "finished"
     steps = _steps_for(result["assistant_run_id"])
-    assert [s.phase for s in steps] == ["planned", "running", "observed", "planned", "final"]
-    observed = steps[2]
+    # One row per step: the read step settles running->observed in place, the
+    # reply is a single terminal row.
+    assert [s.phase for s in steps] == ["observed", "final"]
+    observed = steps[0]
     assert observed.action == "query_memory"
     assert observed.observation_preview is not None
 
@@ -367,7 +369,9 @@ def test_loop_records_failed_action_and_continues(room):
 
     assert result["status"] == "finished"
     steps = _steps_for(result["assistant_run_id"])
-    assert [s.phase for s in steps] == ["planned", "running", "failed", "planned", "final"]
-    failed = steps[2]
+    # The blocked read opens a running row (committed before the action) that
+    # settles in place to failed; then a terminal reply row.
+    assert [s.phase for s in steps] == ["failed", "final"]
+    failed = steps[0]
     assert failed.action == "workspace_read_command"
     assert failed.error and "blocked" in failed.error.lower()

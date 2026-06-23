@@ -48,6 +48,96 @@ def start_assistant_run(
     return run
 
 
+_TERMINAL_PHASES = ("observed", "failed", "final")
+
+
+def _post_terminal_trace(step: AssistantStep) -> None:
+    """Post the self-contained `debug-assistant` chat row for a step that has
+    reached a terminal phase (observed/failed/final). The chat text IS the full
+    readable trace (action / reason / args / observation) — what's shown ==
+    what's copied, no pointer indirection. Anchored at the terminal phase so the
+    observation already exists. Commits the surrounding txn (including the step
+    row). No-op for non-terminal phases or a missing run.
+
+    Redaction v1: no secret-carrying actions exist yet, so `args` persist verbatim
+    into both the step row and this trace text; a later capability that sets
+    secrets=true must redact before this is called.
+    """
+    if step.phase not in _TERMINAL_PHASES:
+        db.session.commit()
+        return
+    run = db.session.get(AssistantRun, step.run_id)
+    if run is None:
+        db.session.commit()
+        return
+    state: dict[str, Any] = {
+        "step": step.step_index,
+        "phase": step.phase,
+        "action": step.action,
+        "reason": step.reason,
+        "args": step.args or {},
+    }
+    if step.phase == "observed":
+        state["observation"] = step.observation_preview
+    elif step.phase == "failed":
+        state["error"] = step.error or step.observation_preview
+    elif step.phase == "final":
+        state["result"] = "replied to the user"
+    post_chat_message(
+        run.room_uuid, run.agent_uuid, json.dumps(state, indent=2),
+        content_type="json", kind="debug-assistant",
+    )  # commits the txn (including the step row)
+
+
+def open_assistant_step(
+    *,
+    run_id: int,
+    step_index: int,
+    action: str | None,
+    reason: str | None = None,
+    args: dict[str, Any] | None = None,
+    model_group_uuid: UUID | None = None,
+    model_uuid: UUID | None = None,
+) -> AssistantStep:
+    """Insert a step's single row at phase `running` and commit it before the
+    action runs (trace-before-action durability: a kill mid-action leaves this
+    row). Returns the row so the caller has its stable `uuid` to bind a
+    write-intent to. Posts no chat row — that lands at settle, when the
+    observation exists."""
+    step = AssistantStep(
+        run_id=run_id,
+        step_index=step_index,
+        phase="running",
+        action=action,
+        reason=reason,
+        args=args or {},
+        model_group_uuid=model_group_uuid,
+        model_uuid=model_uuid,
+    )
+    db.session.add(step)
+    db.session.commit()
+    return step
+
+
+def settle_assistant_step(
+    step: AssistantStep,
+    *,
+    phase: StepPhase,
+    observation_preview: str | None = None,
+    error: str | None = None,
+) -> AssistantStep:
+    """Settle an open step in place: UPDATE its `running` row to a terminal
+    `phase` (observed/failed) with the outcome, then post the terminal
+    `debug-assistant` trace row. One row per step — no append."""
+    step.phase = phase
+    step.observation_preview = observation_preview
+    step.error = error
+    db.session.add(step)
+    db.session.flush()
+    _post_terminal_trace(step)
+    return step
+
+
 def append_assistant_step(
     *,
     run_id: int,
@@ -61,17 +151,11 @@ def append_assistant_step(
     model_group_uuid: UUID | None = None,
     model_uuid: UUID | None = None,
 ) -> AssistantStep:
-    """Append one step-transition row (the structured source of truth) and, on the
-    step's *terminal* transition (observed/failed/final), post a `debug-assistant`
-    chat row whose `text` IS the full readable trace (action / reason / args /
-    observation). Self-contained on purpose: the chat message text == what's shown
-    == what copy-to-clipboard yields, with no pointer indirection to resolve.
-
-    Anchored at the terminal phase (not `planned`) so the observation already
-    exists when the row is posted. Redaction v1: no secret-carrying actions exist
-    yet, so `args` persist verbatim into both the step row and this trace text; a
-    later capability that sets secrets=true must redact before calling this helper.
-    """
+    """Record a **single-insert** step row — the terminal-only path for a step
+    with no `running`→settle lifecycle: a `failed` validation, the `final` reply,
+    and `control` (stop/redirect) events. Inserts the row and, when its `phase`
+    is terminal, posts the self-contained `debug-assistant` trace row (see
+    `_post_terminal_trace`). Normal action steps use open/settle instead."""
     step = AssistantStep(
         run_id=run_id,
         step_index=step_index,
@@ -86,27 +170,7 @@ def append_assistant_step(
     )
     db.session.add(step)
     db.session.flush()  # commit the step row before anything else this txn
-
-    if phase in ("observed", "failed", "final"):
-        run = db.session.get(AssistantRun, run_id)
-        if run is not None:
-            state: dict[str, Any] = {
-                "step": step_index,
-                "phase": phase,
-                "action": action,
-                "reason": reason,
-                "args": args or {},
-            }
-            if phase == "observed":
-                state["observation"] = observation_preview
-            elif phase == "failed":
-                state["error"] = error or observation_preview
-            elif phase == "final":
-                state["result"] = "replied to the user"
-            post_chat_message(
-                run.room_uuid, run.agent_uuid, json.dumps(state, indent=2),
-                content_type="json", kind="debug-assistant",
-            )  # commits the txn (including the step row above)
+    _post_terminal_trace(step)
     db.session.commit()
     return step
 
@@ -154,7 +218,6 @@ def write_intent_payload_hash(capability_name: str, payload: dict[str, Any]) -> 
 def create_write_intent(
     *,
     run_id: int,
-    step_index: int,
     capability_name: str,
     payload: dict[str, Any],
     preview_text: str,
@@ -162,13 +225,15 @@ def create_write_intent(
     agent_uuid: UUID,
     state: str = "proposed",
     result: dict[str, Any] | None = None,
+    step_uuid: UUID | None = None,
 ) -> AssistantWriteIntent:
     """Open a write intent. Defaults to a `proposed` confirm-tier proposal; a
     log-and-undo recorder passes `state="completed"` with a `result` so the row
-    is never confirmable as `proposed` (no double-execute window)."""
+    is never confirmable as `proposed` (no double-execute window). `step_uuid`
+    binds the intent to the step that produced it (the identity pointer)."""
     intent = AssistantWriteIntent(
         run_id=run_id,
-        step_index=step_index,
+        step_uuid=step_uuid,
         capability_name=capability_name,
         payload=payload,
         payload_hash=write_intent_payload_hash(capability_name, payload),

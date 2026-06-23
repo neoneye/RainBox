@@ -169,10 +169,15 @@ def test_remember_is_undoable_through_the_write_intent_ledger(room):
         _decision(AssistantActionName.REPLY, message="ok"),
     )
     try:
-        agent.handle(uuid4(), {"room_uuid": str(room)})
+        result = agent.handle(uuid4(), {"room_uuid": str(room)})
         intent = db.db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == room).one()
         assert intent.state == "completed"
+        # The intent points at its producing step by uuid (the identity pointer),
+        # and that step row exists in the run's trace.
+        assert intent.step_uuid is not None
+        step_uuids = {s.uuid for s in db.list_assistant_steps(result["assistant_run_id"])}
+        assert intent.step_uuid in step_uuids
         mem_uuid = UUID(intent.result["undo"]["payload"]["memory_uuid"])
         assert db.get_memory_claim(mem_uuid).status == "active"
         obs = undo_write_intent(intent.uuid)
@@ -273,7 +278,7 @@ def test_execute_refuses_non_confirm_tier_capability(app_ctx):
     )
     # 'remember' is log_and_undo, not confirm — a proposed intent for it must be refused.
     intent = db.create_write_intent(
-        run_id=run.id, step_index=0, capability_name="remember",
+        run_id=run.id, capability_name="remember",
         payload={"text": "x"}, preview_text="remember: …",
         room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
     )

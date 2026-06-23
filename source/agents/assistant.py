@@ -126,6 +126,10 @@ class AssistantActionContext:
     room_uuid: UUID
     agent_uuid: UUID
     step_index: int
+    # The producing step's stable uuid, bound onto any write-intent this action
+    # records so the intent points at its step by identity (not (run_id,
+    # step_index)). None for the dry-run preview call, which records nothing.
+    step_uuid: UUID | None = None
     # True only inside _propose_write's preview call: a dry_run-capable action
     # must compute + return a preview without mutating anything.
     dry_run: bool = False
@@ -1290,7 +1294,6 @@ class AssistantAgent(ModelGroupAgent):
                 decision = self._decide_next_step(
                     transcript=transcript, scratchpad=scratchpad, step_index=step_index
                 )
-                self._record_step(step_index=step_index, phase="planned", decision=decision)
 
                 error = self._validate_decision(decision)
                 if error is not None:
@@ -1325,12 +1328,13 @@ class AssistantAgent(ModelGroupAgent):
                 # executed inline; everything else (reads, log-and-undo writes)
                 # executes immediately.
                 self._activity = f"running {decision.action.value}"
-                self._record_step(step_index=step_index, phase="running", decision=decision)
+                step_row = self._open_step(step_index=step_index, decision=decision)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
                     room_uuid=room_uuid,
                     agent_uuid=self.agent_uuid,
                     step_index=step_index,
+                    step_uuid=step_row.uuid if step_row is not None else None,
                 )
                 cap = self._caps[decision.action]
                 write_sig = (
@@ -1363,10 +1367,9 @@ class AssistantAgent(ModelGroupAgent):
                     if link and link not in result_links:
                         result_links.append(link)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
-                self._record_step(
-                    step_index=step_index,
+                self._settle_step(
+                    step_row,
                     phase="observed" if observation.ok else "failed",
-                    decision=decision,
                     observation_preview=preview,
                     error=None if observation.ok else preview,
                 )
@@ -1613,7 +1616,7 @@ class AssistantAgent(ModelGroupAgent):
             payload.update(dry.data.get("confirm_payload") or {})
         intent = db.create_write_intent(
             run_id=self._run.id,
-            step_index=ctx.step_index,
+            step_uuid=ctx.step_uuid,
             capability_name=cap.name.value,
             payload=payload,
             preview_text=preview,
@@ -1652,7 +1655,7 @@ class AssistantAgent(ModelGroupAgent):
         preview = f"{cap.name.value}: {json.dumps(decision.args, sort_keys=True)}"
         db.create_write_intent(
             run_id=self._run.id,
-            step_index=ctx.step_index,
+            step_uuid=ctx.step_uuid,
             capability_name=cap.name.value,
             payload=decision.args,
             preview_text=preview,
@@ -1726,6 +1729,54 @@ class AssistantAgent(ModelGroupAgent):
         status = "ok" if ok else "failed"
         return f"step {step_index}: {decision.action.value} -> {status}: {preview}"
 
+    def _open_step(
+        self, *, step_index: int, decision: AssistantStepDecision
+    ) -> "db.AssistantStep | None":
+        """Open a non-terminal action step: insert its single `running` row
+        (committed before the action runs) and mirror it as one in-process entry
+        that `_settle_step` later mutates in place. Returns the row so the loop
+        can bind a write-intent to its uuid; None when there is no run (the
+        scripted-seam unit path)."""
+        self._steps.append(
+            {
+                "step_index": step_index,
+                "phase": "running",
+                "action": decision.action.value,
+                "reason": decision.reason,
+                "error": None,
+            }
+        )
+        if self._run is None:
+            return None
+        return db.open_assistant_step(
+            run_id=self._run.id,
+            step_index=step_index,
+            action=decision.action.value,
+            reason=decision.reason,
+            args=decision.args,
+            model_group_uuid=self.model_group_uuid,
+        )
+
+    def _settle_step(
+        self,
+        step: "db.AssistantStep | None",
+        *,
+        phase: str,
+        observation_preview: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Settle the step opened by `_open_step`: mutate its row (and the mirror
+        entry) in place to the terminal `phase` with the observation. The
+        terminal `debug-assistant` trace row is posted here, where the
+        observation exists — exactly one anchor per step."""
+        if self._steps:
+            self._steps[-1].update(phase=phase, error=error)
+        if step is not None:
+            db.settle_assistant_step(
+                step, phase=phase,  # type: ignore[arg-type]
+                observation_preview=observation_preview, error=error,
+            )
+
     def _record_step(
         self,
         *,
@@ -1735,11 +1786,11 @@ class AssistantAgent(ModelGroupAgent):
         error: str | None = None,
         observation_preview: str | None = None,
     ) -> None:
-        """Commit one step-transition to the trace.
-
-        Persists an `assistant_step` row (the source of truth) plus, on a step's
-        first transition, a thin `debug-assistant` chat pointer — and mirrors the
-        transition into `self._steps` for fast in-process assertions.
+        """Record a single-insert (no open/settle lifecycle) trace step — the
+        terminal-only path: a `failed` validation, the `final` reply, and a
+        crash-failure row. Persists one `assistant_step` row and, when terminal,
+        its self-contained `debug-assistant` chat anchor — and mirrors one entry
+        into `self._steps` for fast in-process assertions.
         """
         action = decision.action.value if decision is not None else None
         reason = decision.reason if decision is not None else None

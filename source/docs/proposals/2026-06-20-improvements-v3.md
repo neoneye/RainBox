@@ -306,6 +306,11 @@ batches:
   candidate/rejectable, and the deriver runs without slowing assistant turns.
 
 ### S12 — Smaller follow-ups (grab-bag)  ·  Size S each
+- ✅ Assistant-step single mutable row + `step_uuid` write-intent FK (done) — one
+  row per logical step (open `running` → settle in place), and
+  `assistant_write_intent.step_uuid` references its producing step by identity
+  instead of the `(run_id, step_index)` soft pointer.
+  [spec](../superpowers/specs/2026-06-23-assistant-step-single-row-design.md)
 - ✅ `kanban_read` `task_uuid` support (done) — returns a task's detail + recent
   events read-only.
 - Remove the now-test-only `retrieve_memories` (chat agents moved to hybrid in S8).
