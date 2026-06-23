@@ -39,6 +39,9 @@ ASSISTANT_TEMPLATE = """
   </div>
 {% endmacro %}
 <style>
+  /* Match the other pages (/cron, /chat): drop the browser's default 8px body
+     margin so the sticky nav sits flush + full-width. */
+  body { margin: 0; font-family: system-ui, sans-serif; }
   .pp-as { display: flex; gap: 1rem; max-width: 1200px; margin: 1rem auto;
            padding: 0 1rem; font-family: system-ui, sans-serif; align-items: flex-start; }
   .pp-as h1 { margin: 0.2rem 0 0.6rem; }
