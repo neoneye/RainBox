@@ -77,7 +77,7 @@ def test_timeline_shows_step_with_inline_intent_and_undo(app_ctx, client):
         result={"undo": {"capability": "kanban_delete_task", "payload": {}}})
     db.finish_run(run, "finished")
     try:
-        body = client.get(f"/assistant?run={run.id}").get_data(as_text=True)
+        body = client.get(f"/assistant?id={run.id}").get_data(as_text=True)
         assert "kanban_move_task" in body            # step action + intent capability
         assert "moved the task" in body              # observation rendered
         # a completed log-and-undo intent (carries an undo record) → Undo button
@@ -101,7 +101,7 @@ def test_proposed_intent_shows_confirm_and_reject(app_ctx, client):
         room_uuid=room.uuid, agent_uuid=run.agent_uuid)  # default state=proposed
     db.finish_run(run, "finished")
     try:
-        body = client.get(f"/assistant?run={run.id}").get_data(as_text=True)
+        body = client.get(f"/assistant?id={run.id}").get_data(as_text=True)
         assert f"/chat/api/assistant/write-intents/{intent.uuid}/confirm" in body
         assert f"/chat/api/assistant/write-intents/{intent.uuid}/reject" in body
         # proposed → not undoable
@@ -123,7 +123,7 @@ def test_completed_intent_without_undo_has_no_action(app_ctx, client):
         agent_uuid=run.agent_uuid, state="completed", result={})  # no undo record
     db.finish_run(run, "finished")
     try:
-        body = client.get(f"/assistant?run={run.id}").get_data(as_text=True)
+        body = client.get(f"/assistant?id={run.id}").get_data(as_text=True)
         assert f"/write-intents/{intent.uuid}/undo" not in body
         assert f"/write-intents/{intent.uuid}/confirm" not in body
     finally:
@@ -135,12 +135,12 @@ def test_stop_redirect_only_for_running_run(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())  # status=running
     try:
-        body = client.get(f"/assistant?run={run.id}").get_data(as_text=True)
+        body = client.get(f"/assistant?id={run.id}").get_data(as_text=True)
         assert f"/chat/api/assistant/runs/{run.id}/stop" in body
         assert "ppRedirect(" in body
         # Once finished, the live-only controls disappear.
         db.finish_run(run, "finished")
-        body2 = client.get(f"/assistant?run={run.id}").get_data(as_text=True)
+        body2 = client.get(f"/assistant?id={run.id}").get_data(as_text=True)
         assert f"/chat/api/assistant/runs/{run.id}/stop" not in body2
     finally:
         _cleanup(run.id, room.uuid)
@@ -154,7 +154,7 @@ def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     db.finish_run(run, "finished", final_summary="all done — the verdict")
     try:
-        body = client.get(f"/assistant?run={run.id}").get_data(as_text=True)
+        body = client.get(f"/assistant?id={run.id}").get_data(as_text=True)
         # Trigger block shows the triggering message + a link into chat.
         assert "Trigger" in body
         assert "please mark the task done" in body
@@ -174,15 +174,17 @@ def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         # Addressable by uuid (the log-greppable id), which is shown in full + copyable.
-        body = client.get(f"/assistant?run={run.uuid}").get_data(as_text=True)
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert str(run.uuid) in body
         assert "Copy" in body
-        # Legacy integer ?run= still resolves to the same run.
-        body_int = client.get(f"/assistant?run={run.id}").get_data(as_text=True)
-        assert str(run.uuid) in body_int
+        # Legacy integer ?id= and the deprecated ?run= name both still resolve.
+        assert str(run.uuid) in client.get(
+            f"/assistant?id={run.id}").get_data(as_text=True)
+        assert str(run.uuid) in client.get(
+            f"/assistant?run={run.uuid}").get_data(as_text=True)
         # The runs list links address runs by uuid, not the integer id.
         listing = client.get("/assistant").get_data(as_text=True)
-        assert f"?run={run.uuid}" in listing
+        assert f"?id={run.uuid}" in listing
     finally:
         _cleanup(run.id, room.uuid)
 

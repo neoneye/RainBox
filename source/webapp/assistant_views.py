@@ -101,7 +101,7 @@ ASSISTANT_TEMPLATE = """
     {% if not runs %}<div class="empty">No assistant runs yet.</div>{% endif %}
     {% for r in runs %}
     <a class="run {{ 'active' if selected and r.id == selected.id }}"
-       href="{{ url_for('assistant_page') }}?run={{ r.uuid }}">
+       href="{{ url_for('assistant_page') }}?id={{ r.uuid }}">
       <span class="id">#{{ r.id }}</span>
       <span class="badge b-{{ r.status }}">{{ r.status }}</span>
       <div class="meta">
@@ -121,7 +121,7 @@ ASSISTANT_TEMPLATE = """
       <div class="runhd">
         <h1 style="margin:0">Run</h1>
         <span class="badge b-{{ selected.status }}">{{ selected.status }}</span>
-        <a class="muted" href="{{ url_for('assistant_page') }}?run={{ selected.uuid }}">Refresh</a>
+        <a class="muted" href="{{ url_for('assistant_page') }}?id={{ selected.uuid }}">Refresh</a>
         {% if selected.status in ('running', 'stopping') %}
           <button class="danger" onclick="ppAct('/chat/api/assistant/runs/{{ selected.id }}/stop')">Stop</button>
           <button onclick="ppRedirect({{ selected.id }})">Redirect…</button>
@@ -236,9 +236,9 @@ def assistant_page() -> str:
     unlinked: list = []
     pending_controls: list = []
     trigger = None
-    # Runs are addressed by uuid (the stable, log-greppable id); a legacy integer
-    # ?run= still resolves so old links/bookmarks keep working.
-    run_arg = request.args.get("run")
+    # Runs are addressed by uuid via ?id= (consistent with /chat, /cron). A legacy
+    # integer value and the old ?run= name both still resolve so bookmarks work.
+    run_arg = request.args.get("id") or request.args.get("run")
     if run_arg:
         if run_arg.isdigit():
             selected = db.get_assistant_run(int(run_arg))
