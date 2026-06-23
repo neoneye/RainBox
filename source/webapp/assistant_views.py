@@ -170,7 +170,6 @@ ASSISTANT_TEMPLATE = """
       <div class="runhd">
         <h1 style="margin:0">Run</h1>
         <span class="badge b-{{ selected.status }}">{{ selected.status }}</span>
-        <a class="muted" href="{{ url_for('assistant_page') }}?id={{ selected.uuid }}">Refresh</a>
         {% if selected.status in ('running', 'stopping') %}
           <button class="danger" onclick="ppAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop')">Stop</button>
           <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
