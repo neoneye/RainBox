@@ -267,6 +267,17 @@ def test_list_write_intents_for_run_buckets_by_step(app_ctx):
         _cleanup_run(run.id)
 
 
+def test_get_assistant_run_by_uuid(app_ctx):
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
+    try:
+        got = db.get_assistant_run_by_uuid(run.uuid)
+        assert got is not None and got.id == run.id
+        assert db.get_assistant_run_by_uuid(uuid4()) is None  # unknown uuid
+    finally:
+        _cleanup_run(run.id)
+
+
 def test_get_run_trigger_message_returns_latest_human_message(app_ctx):
     human = db.get_human_user()
     assert human is not None

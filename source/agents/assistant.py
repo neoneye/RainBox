@@ -1318,7 +1318,7 @@ class AssistantAgent(ModelGroupAgent):
                     db.finish_run(run, "finished", final_summary=text[:200])
                     logger.info(
                         "assistant finished run %s in room %s at step %d",
-                        run.id, room_uuid, step_index,
+                        run.uuid, room_uuid, step_index,
                     )
                     return self._run_result("finished", text[:200])
 
@@ -1393,7 +1393,7 @@ class AssistantAgent(ModelGroupAgent):
             db.finish_run(run, "stopped", final_summary="step limit reached")
             logger.warning(
                 "assistant run %s hit step limit (%d) in room %s",
-                run.id, self.step_limit, room_uuid,
+                run.uuid, self.step_limit, room_uuid,
             )
             return self._run_result("stopped", "step limit reached")
         except Exception as exc:
@@ -1420,7 +1420,7 @@ class AssistantAgent(ModelGroupAgent):
             self._record_step(step_index=step_index, phase="failed", error=err)
             db.finish_run(run, "failed", final_summary=err)
         except Exception:
-            logger.exception("assistant: failed to mark run %s failed", run.id)
+            logger.exception("assistant: failed to mark run %s failed", run.uuid)
 
     # --- the live-model seam --------------------------------------------------
 
@@ -1669,6 +1669,7 @@ class AssistantAgent(ModelGroupAgent):
         extra: dict[str, Any] = {"activity": self._activity}
         if self._run is not None:
             extra["assistant_run_id"] = self._run.id
+            extra["assistant_run_uuid"] = str(self._run.uuid)
         return extra
 
     def _apply_pending_controls(
@@ -1698,7 +1699,7 @@ class AssistantAgent(ModelGroupAgent):
             )
             db.finish_run(run, "stopped",
                           final_summary=f"stopped by operator at step {step_index}")
-            logger.info("assistant run %s stopped by operator at step %d", run.id, step_index)
+            logger.info("assistant run %s stopped by operator at step %d", run.uuid, step_index)
             return self._run_result("stopped", "stopped by operator")
 
         for c in controls:  # redirects only at this point

@@ -9,6 +9,8 @@ four models are also in Flask-Admin as flat tables; this page adds the join thos
 can't show. No field editing (the trace stays trustworthy).
 """
 
+from uuid import UUID
+
 from flask import render_template_string, request
 from sqlalchemy import func
 
@@ -88,6 +90,10 @@ ASSISTANT_TEMPLATE = """
                     margin:0.6rem 0; background:#fbfdff; }
   .pp-as .trigger .grp { margin:0 0 0.25rem; }
   .pp-as .trigmsg { white-space:pre-wrap; word-break:break-word; margin-top:0.25rem; }
+  .pp-as .uuidline { display:flex; gap:0.5rem; align-items:center; margin:0.3rem 0; }
+  .pp-as .ruuid { font-family:ui-monospace,monospace; font-size:0.86rem; background:#f6f8fa;
+                  border:1px solid #e1e4e8; border-radius:6px; padding:0.15rem 0.45rem; }
+  .pp-as button.copy { padding:0.15rem 0.55rem; font-size:0.82rem; }
 </style>
 <main class="pp-as">
   <div class="runs">
@@ -95,7 +101,7 @@ ASSISTANT_TEMPLATE = """
     {% if not runs %}<div class="empty">No assistant runs yet.</div>{% endif %}
     {% for r in runs %}
     <a class="run {{ 'active' if selected and r.id == selected.id }}"
-       href="{{ url_for('assistant_page') }}?run={{ r.id }}">
+       href="{{ url_for('assistant_page') }}?run={{ r.uuid }}">
       <span class="id">#{{ r.id }}</span>
       <span class="badge b-{{ r.status }}">{{ r.status }}</span>
       <div class="meta">
@@ -113,16 +119,21 @@ ASSISTANT_TEMPLATE = """
       <div class="empty">Select a run on the left to see its step timeline.</div>
     {% else %}
       <div class="runhd">
-        <h1 style="margin:0">Run #{{ selected.id }}</h1>
+        <h1 style="margin:0">Run</h1>
         <span class="badge b-{{ selected.status }}">{{ selected.status }}</span>
-        <a class="muted" href="{{ url_for('assistant_page') }}?run={{ selected.id }}">Refresh</a>
+        <a class="muted" href="{{ url_for('assistant_page') }}?run={{ selected.uuid }}">Refresh</a>
         {% if selected.status in ('running', 'stopping') %}
           <button class="danger" onclick="ppAct('/chat/api/assistant/runs/{{ selected.id }}/stop')">Stop</button>
           <button onclick="ppRedirect({{ selected.id }})">Redirect…</button>
         {% endif %}
       </div>
+      <div class="uuidline">
+        <code class="ruuid">{{ selected.uuid }}</code>
+        <button class="copy" onclick="ppCopy('{{ selected.uuid }}', this)">Copy</button>
+      </div>
       <div class="muted">
-        journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
+        internal #{{ selected.id }}
+        · journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
         · started {{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}
         {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
       </div>
@@ -187,6 +198,12 @@ ASSISTANT_TEMPLATE = """
       })
       .catch(function (e) { alert('Request failed: ' + e); });
   }
+  function ppCopy(text, btn) {
+    navigator.clipboard.writeText(text).then(function () {
+      var old = btn.textContent; btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = old; }, 1200);
+    });
+  }
   function ppRedirect(runId) {
     var instruction = prompt('Redirect instruction for the running run:');
     if (!instruction) return;
@@ -219,9 +236,17 @@ def assistant_page() -> str:
     unlinked: list = []
     pending_controls: list = []
     trigger = None
-    run_arg = request.args.get("run", type=int)
-    if run_arg is not None:
-        selected = db.get_assistant_run(run_arg)
+    # Runs are addressed by uuid (the stable, log-greppable id); a legacy integer
+    # ?run= still resolves so old links/bookmarks keep working.
+    run_arg = request.args.get("run")
+    if run_arg:
+        if run_arg.isdigit():
+            selected = db.get_assistant_run(int(run_arg))
+        else:
+            try:
+                selected = db.get_assistant_run_by_uuid(UUID(run_arg))
+            except ValueError:
+                selected = None
     if selected is not None:
         steps = db.list_assistant_steps(selected.id)
         intents = db.list_write_intents_for_run(selected.id)

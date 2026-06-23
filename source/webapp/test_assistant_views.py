@@ -167,6 +167,26 @@ def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
         _cleanup(run.id, room.uuid)
 
 
+def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished")
+    try:
+        # Addressable by uuid (the log-greppable id), which is shown in full + copyable.
+        body = client.get(f"/assistant?run={run.uuid}").get_data(as_text=True)
+        assert str(run.uuid) in body
+        assert "Copy" in body
+        # Legacy integer ?run= still resolves to the same run.
+        body_int = client.get(f"/assistant?run={run.id}").get_data(as_text=True)
+        assert str(run.uuid) in body_int
+        # The runs list links address runs by uuid, not the integer id.
+        listing = client.get("/assistant").get_data(as_text=True)
+        assert f"?run={run.uuid}" in listing
+    finally:
+        _cleanup(run.id, room.uuid)
+
+
 def test_nav_link_present(app_ctx, client):
     body = client.get("/assistant").get_data(as_text=True)
     assert 'href="/assistant"' in body and ">Assistant<" in body

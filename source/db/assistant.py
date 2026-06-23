@@ -193,8 +193,17 @@ def finish_run(
 
 
 def get_assistant_run(run_id: int) -> AssistantRun | None:
-    """One run row by id, or None."""
+    """One run row by integer id, or None."""
     return db.session.get(AssistantRun, run_id)
+
+
+def get_assistant_run_by_uuid(run_uuid: UUID) -> AssistantRun | None:
+    """One run row by uuid (the stable, log-greppable identifier), or None."""
+    return (
+        db.session.query(AssistantRun)
+        .filter(AssistantRun.uuid == run_uuid)
+        .one_or_none()
+    )
 
 
 def list_assistant_runs(limit: int = 50) -> list[AssistantRun]:
