@@ -190,6 +190,37 @@ def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
         _cleanup(run.id, room.uuid)
 
 
+def test_run_summary_renders_in_list_and_detail(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished")
+    db.set_run_summary(run, {
+        "trigger": "file the weekly report", "obstacles": ["the disk was full"],
+        "outcome": "partial"})
+    try:
+        listing = client.get("/assistant").get_data(as_text=True)
+        assert "file the weekly report" in listing   # trigger one-liner in the list
+        assert "⚠ 1" in listing                       # obstacle badge
+        detail = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "the disk was full" in detail          # obstacle in the detail pane
+        assert "partial" in detail                    # outcome badge
+    finally:
+        _cleanup(run.id, room.uuid)
+
+
+def test_unsummarized_run_shows_pending(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished")  # no summary set
+    try:
+        detail = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "Not yet summarized" in detail
+    finally:
+        _cleanup(run.id, room.uuid)
+
+
 def test_nav_link_present(app_ctx, client):
     body = client.get("/assistant").get_data(as_text=True)
     assert 'href="/assistant"' in body and ">Assistant<" in body

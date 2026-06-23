@@ -62,6 +62,7 @@ def main() -> None:
     # class, everything else as a plain ModelGroupAgent. Imported here (not at
     # module top) so those modules can import the base classes from this one.
     from agents.assistant import AssistantAgent
+    from agents.assistant_run_summarizer import AssistantRunSummarizerAgent
     from agents.chat_structured import StructuredChatAgent
     from agents.chat_unstructured import UnstructuredChatAgent
     from agents.edit_document_v1 import EditDocumentAgentV1
@@ -83,6 +84,7 @@ def main() -> None:
 
     agent_classes: dict[str, type[Agent]] = {
         "assistant": AssistantAgent,
+        "assistant_run_summarizer": AssistantRunSummarizerAgent,
         "chat_structured": StructuredChatAgent,
         "chat_unstructured": UnstructuredChatAgent,
         "edit_document_v1": EditDocumentAgentV1,

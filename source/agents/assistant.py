@@ -28,6 +28,7 @@ import db
 import skills
 import user_profile
 from agents.base import ModelGroupAgent, StatusSender
+from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID
 from chat.transcript import format_history
 
 logger = logging.getLogger(__name__)
@@ -1320,6 +1321,7 @@ class AssistantAgent(ModelGroupAgent):
                         "assistant finished run %s in room %s at step %d",
                         run.uuid, room_uuid, step_index,
                     )
+                    self._request_summary(run)
                     return self._run_result("finished", text[:200])
 
                 # Non-terminal action: commit the `running` row before acting (so
@@ -1395,6 +1397,7 @@ class AssistantAgent(ModelGroupAgent):
                 "assistant run %s hit step limit (%d) in room %s",
                 run.uuid, self.step_limit, room_uuid,
             )
+            self._request_summary(run)
             return self._run_result("stopped", "step limit reached")
         except Exception as exc:
             # Record the failure against the run so it isn't left stuck in
@@ -1414,6 +1417,16 @@ class AssistantAgent(ModelGroupAgent):
             "step_count": len(self._steps),
         }
 
+    def _request_summary(self, run: Any) -> None:
+        """Enqueue the run_summarizer for a now-terminal run — off the critical
+        path (a non-blocking inbox insert the supervisor drains in its own
+        process). Best-effort: a failure to enqueue must never break the turn or
+        mask the operator's reply."""
+        try:
+            db.enqueue(ASSISTANT_RUN_SUMMARIZER_UUID, {"run_uuid": str(run.uuid)})
+        except Exception:
+            logger.exception("assistant: failed to enqueue summary for run %s", run.uuid)
+
     def _fail_run(self, run: Any, exc: Exception, step_index: int) -> None:
         err = f"{type(exc).__name__}: {exc}"
         try:
@@ -1421,6 +1434,7 @@ class AssistantAgent(ModelGroupAgent):
             db.finish_run(run, "failed", final_summary=err)
         except Exception:
             logger.exception("assistant: failed to mark run %s failed", run.uuid)
+        self._request_summary(run)
 
     # --- the live-model seam --------------------------------------------------
 
@@ -1700,6 +1714,7 @@ class AssistantAgent(ModelGroupAgent):
             db.finish_run(run, "stopped",
                           final_summary=f"stopped by operator at step {step_index}")
             logger.info("assistant run %s stopped by operator at step %d", run.uuid, step_index)
+            self._request_summary(run)
             return self._run_result("stopped", "stopped by operator")
 
         for c in controls:  # redirects only at this point

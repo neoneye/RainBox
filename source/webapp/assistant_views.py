@@ -49,6 +49,12 @@ ASSISTANT_TEMPLATE = """
                 margin-bottom: 0.45rem; }
   .pp-as .run:hover { background: #f8fafc; }
   .pp-as .run.active { border-color: #2563eb; background: #eff6ff; }
+  .pp-as .run.out-resolved { border-left: 3px solid #1e7e34; }
+  .pp-as .run.out-partial  { border-left: 3px solid #b06f00; }
+  .pp-as .run.out-failed   { border-left: 3px solid #c0392b; }
+  .pp-as .run .rsum { font-size: 0.82rem; color: #344054; margin-top: 4px; }
+  .pp-as .run .rsum.pending { color: #98a2b3; font-style: italic; }
+  .b-obstacle { background:#fff4e5; color:#b06f00; }
   .pp-as .run .id { font-weight: 600; }
   .pp-as .run .meta { color: #667085; font-size: 0.82rem; margin-top: 2px; }
   .pp-as .empty { color: #667085; padding: 1rem 0; }
@@ -90,6 +96,14 @@ ASSISTANT_TEMPLATE = """
                     margin:0.6rem 0; background:#fbfdff; }
   .pp-as .trigger .grp { margin:0 0 0.25rem; }
   .pp-as .trigmsg { white-space:pre-wrap; word-break:break-word; margin-top:0.25rem; }
+  .pp-as .summary { border:1px solid #e5e7eb; border-radius:8px; padding:0.5rem 0.7rem;
+                    margin:0.6rem 0; background:#fbfdff; }
+  .pp-as .summary .grp { margin:0 0 0.25rem; }
+  .pp-as .obstacles { margin:0.2rem 0 0; padding-left:1.2rem; }
+  .pp-as .obstacles li { margin:0.1rem 0; }
+  .b-out-resolved { background:#e6f4ea; color:#1e7e34; }
+  .b-out-partial  { background:#fff4e5; color:#b06f00; }
+  .b-out-failed   { background:#fdecea; color:#c0392b; }
   .pp-as .uuidline { display:flex; gap:0.5rem; align-items:center; margin:0.3rem 0; }
   .pp-as .ruuid { font-family:ui-monospace,monospace; font-size:0.86rem; background:#f6f8fa;
                   border:1px solid #e1e4e8; border-radius:6px; padding:0.15rem 0.45rem; }
@@ -100,10 +114,19 @@ ASSISTANT_TEMPLATE = """
     <h1>Runs</h1>
     {% if not runs %}<div class="empty">No assistant runs yet.</div>{% endif %}
     {% for r in runs %}
-    <a class="run {{ 'active' if selected and r.id == selected.id }}"
+    <a class="run {{ 'active' if selected and r.id == selected.id }}
+              {{ ('out-' + r.summary.outcome) if r.summary and r.summary.outcome }}"
        href="{{ url_for('assistant_page') }}?id={{ r.uuid }}">
       <span class="id">#{{ r.id }}</span>
       <span class="badge b-{{ r.status }}">{{ r.status }}</span>
+      {% if r.summary and r.summary.obstacles %}
+        <span class="badge b-obstacle">⚠ {{ r.summary.obstacles | length }}</span>
+      {% endif %}
+      {% if r.summary %}
+        <div class="rsum">{{ r.summary.trigger | truncate(90) }}</div>
+      {% else %}
+        <div class="rsum pending">summarizing…</div>
+      {% endif %}
       <div class="meta">
         {{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else '—' }}
         · {{ counts.get(r.id, 0) }} step{{ '' if counts.get(r.id, 0) == 1 else 's' }}
@@ -151,6 +174,26 @@ ASSISTANT_TEMPLATE = """
             room {{ (selected.room_uuid|string)[:8] }} ·
             <a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a>
           </div>
+        {% endif %}
+      </div>
+
+      <div class="summary">
+        <div class="grp">Summary</div>
+        {% if selected.summary %}
+          <div>
+            {% if selected.summary.outcome %}<span class="badge b-out-{{ selected.summary.outcome }}">{{ selected.summary.outcome }}</span>{% endif %}
+            {{ selected.summary.trigger }}
+          </div>
+          {% if selected.summary.obstacles %}
+            <div class="grp" style="font-size:0.85rem">Obstacles</div>
+            <ul class="obstacles">
+              {% for o in selected.summary.obstacles %}<li>{{ o }}</li>{% endfor %}
+            </ul>
+          {% else %}
+            <div class="muted">No obstacles reported.</div>
+          {% endif %}
+        {% else %}
+          <div class="muted">Not yet summarized (runs shortly after the assistant finishes).</div>
         {% endif %}
       </div>
 

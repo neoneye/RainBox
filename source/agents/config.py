@@ -59,6 +59,7 @@ EDIT_DOCUMENT_V5_UUID: UUID = UUID("a20fff6b-afbc-48cb-b35a-b090f7088b39")
 EDIT_DOCUMENT_V6_UUID: UUID = UUID("4bf3271f-a58f-4dd0-a07f-b85dac906cd0")
 MCP_UUID: UUID = UUID("828ae65d-a902-4b4e-bcd3-f761afe23d29")
 ASSISTANT_UUID: UUID = UUID("cad11db6-a8e6-4cdd-a37e-a98bbc53e74d")
+ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25")
 # Persona conversation feature (see docs/proposals/2026-06-08-persona-prompts-...).
 # Persona runnable UUIDs MUST match agent_profiles/personas.jsonl. These roles
 # are deliberately NOT in webapp.chat_api.CHAT_RESPONDER_UUIDS, so a human post
@@ -178,6 +179,12 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": ASSISTANT_UUID,
         "requires_structured_output": True,
         "description": "rainbox-owned ReAct loop: decides one bounded action per step via structured output, observes, and repeats until a terminal reply or the step cap",
+        "next": None,
+    },
+    "assistant_run_summarizer": {
+        "uuid": ASSISTANT_RUN_SUMMARIZER_UUID,
+        "requires_structured_output": True,
+        "description": "summarizes a completed assistant run (trigger + obstacles + outcome) off the critical path, via one structured call; enqueued by the assistant at every terminal state",
         "next": None,
     },
     # --- persona conversation feature (Phase 0 walking skeleton) ---------------

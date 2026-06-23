@@ -107,6 +107,26 @@ def _phases(agent: AssistantAgent) -> list[str]:
 # --- terminal actions ---------------------------------------------------------
 
 
+def test_terminal_run_enqueues_a_summary(room):
+    """When a run reaches a terminal state, the assistant enqueues the
+    run_summarizer (off the critical path) carrying this run's uuid."""
+    from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID
+    from db.models import Inbox
+
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(_reply("Done."))
+    result = agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    run_uuid = result["assistant_run_uuid"]
+    items = (
+        db.db.session.query(Inbox)
+        .filter(Inbox.agent_uuid == ASSISTANT_RUN_SUMMARIZER_UUID)
+        .all()
+    )
+    assert any(run_uuid in (i.payload or "") for i in items)
+
+
 def test_reply_action_posts_one_message_and_finishes(room):
     room_uuid, message_uuid = room
     agent = _agent()

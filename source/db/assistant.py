@@ -192,6 +192,15 @@ def finish_run(
     return run
 
 
+def set_run_summary(run: AssistantRun, summary: dict[str, Any]) -> AssistantRun:
+    """Store the run_summarizer agent's post-completion digest on a run, stamping
+    `summarized_at`. Overwrites any prior summary (the latest summarization wins)."""
+    run.summary = {**summary, "summarized_at": datetime.now(UTC).isoformat()}
+    db.session.add(run)
+    db.session.commit()
+    return run
+
+
 def get_assistant_run(run_id: int) -> AssistantRun | None:
     """One run row by integer id, or None."""
     return db.session.get(AssistantRun, run_id)

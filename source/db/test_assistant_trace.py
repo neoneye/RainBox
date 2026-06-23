@@ -267,6 +267,22 @@ def test_list_write_intents_for_run_buckets_by_step(app_ctx):
         _cleanup_run(run.id)
 
 
+def test_set_run_summary_round_trips_and_stamps_time(app_ctx):
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
+    try:
+        assert run.summary is None
+        db.set_run_summary(run, {"trigger": "t", "obstacles": ["o"], "outcome": "partial"})
+        fresh = db.get_assistant_run_by_uuid(run.uuid)
+        assert fresh is not None
+        assert fresh.summary["trigger"] == "t"
+        assert fresh.summary["obstacles"] == ["o"]
+        assert fresh.summary["outcome"] == "partial"
+        assert fresh.summary["summarized_at"]  # stamped by the helper
+    finally:
+        _cleanup_run(run.id)
+
+
 def test_get_assistant_run_by_uuid(app_ctx):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
