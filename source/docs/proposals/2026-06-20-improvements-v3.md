@@ -24,7 +24,11 @@ paths are the current source of truth; the v2 prose schemas are historical.
 
 **Assistant loop & capability registry** — `agents/assistant.py`
 - `AssistantAgent.handle()` is the bounded ReAct loop (plan → act → observe,
-  step cap, per-step `assistant_run`/`assistant_step` trace).
+  step cap, per-step `assistant_run`/`assistant_step` trace). Each step is **one
+  mutable `assistant_step` row** (opened at `running`, settled in place to
+  `observed`/`failed`; terminal-only steps are a single insert), so a write a step
+  produces links back by `assistant_write_intent.step_uuid` (FK), not a
+  `(run_id, step_index)` pair (S12).
 - `AssistantActionName` (enum) + `CAPABILITIES: dict[AssistantActionName,
   Capability]` is the code-owned registry. `Capability` carries
   `read/write/network/secrets`, `tier` (`log_and_undo`/`confirm`/None),

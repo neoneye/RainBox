@@ -97,9 +97,12 @@ RainBox today is a local, Postgres-backed assistant workbench:
   hooks (`MemoryClaim`, `MemoryEvidence`, `MemoryEmbedding`, `RetrievalEvent`,
   `FeedbackEvent` in `source/db/models.py`).
 - A bounded assistant loop (`STEP_LIMIT = 6` ReAct steps) with a code-owned
-  capability registry, durable traces (`assistant_run`/`assistant_step`), hybrid
-  memory lookup, Q&A lookup, workspace reads, kanban reads, and controlled writes
-  (`source/agents/assistant.py`). The hybrid retrieval blends vector similarity
+  capability registry, durable traces (`assistant_run`/`assistant_step` — one
+  mutable row per step, opened at `running` and settled in place, so each step is
+  individually addressable and a write it produces is FK-linked back to it via
+  `assistant_write_intent.step_uuid`), hybrid memory lookup, Q&A lookup, workspace
+  reads, kanban reads, and controlled writes (`source/agents/assistant.py`). The
+  hybrid retrieval blends vector similarity
   (0.55), Postgres full-text rank (0.30), and an entity boost (0.15) in
   `source/memory/retrieval.py:retrieve_memories_hybrid`.
 - Embeddings run fully locally on Ollama with `embeddinggemma:300m` (768-dim, the

@@ -213,24 +213,26 @@ New `profile/test_profile_retrieval.py` and additions to the assistant suite:
 
 ## Where Phase 3 goes next
 
-The profile block and embedding freshness (roadmap item 2) are done. Remaining
+The core Phase 3 story is **complete**: the profile block, embedding freshness,
+the periodic sync trigger, and chat-agent unification all shipped. Status of the
 Phase-3-adjacent work, roughly by value:
 
-1. **Wire `sync_memory_embeddings` to a trigger.** The freshness functions exist
-   and are wired into the write path, but nothing calls the periodic *reconcile*
-   (backfill active + prune stale). Add a cron job or admin button. *(Belongs to
-   roadmap "Operator surfaces"; small.)*
-2. **Migrate the chat agents onto the profile block and hybrid retrieval.**
-   Today the profile block and `retrieve_memories_hybrid` are assistant-only;
-   the chat agents still use token-overlap `retrieve_memories` and have no
-   profile. Unifying them is the biggest remaining recall win.
+1. ✅ **`sync_memory_embeddings` runs on a trigger.** A first-class in-process
+   `memory_sync` cron action plus a seeded enabled daily job reconcile embeddings
+   (backfill active + prune stale) with no manual call (v3 **S1**).
+2. ✅ **Chat agents share the assistant's memory stack.** Both chat agents
+   retrieve via `retrieve_memories_hybrid` and carry the operator profile block
+   through the shared `agents/chat_context.py` (v3 **S8**); `retrieve_memories`
+   (token-overlap) is now test-only.
 3. **Phase 3.5 async profile deriver.** Build only if the one-shot profile
    proves stale in practice (the original gate). Would propose `inferred_by_model`
-   candidate claims that feed this same block once activated.
+   candidate claims that feed this same block once activated. *(v3 S11, optional.)*
 4. **Project-scoped profile facts.** Needs a project key on the assistant turn
    first; then drop the `scope == "project"` exclusion in `select_profile_facts`.
-5. **Profile-editing affordance.** Operators currently shape the profile by
-   editing the underlying memory claims; a dedicated review/edit surface is
-   later scope.
+   *(v3 S12.)*
+5. ✅ **Profile-editing affordance.** The **`/memory` review UI** lets operators
+   inspect claims and make provenance-safe lifecycle edits; operators no longer
+   have to hand-edit the underlying rows.
 6. **Tokenizer-aware budgeting.** The profile block (and every other section)
    still uses char caps; a shared token budgeter is a cross-cutting follow-up.
+   *(v3 S12.)*
