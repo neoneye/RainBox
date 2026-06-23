@@ -4,8 +4,8 @@ Date: 2026-06-22
 
 ## Purpose
 
-Compare RainBox with Pi, Hermes, OpenClaw, OpenHands, OpenCode, Supermemory,
-Mem0, Honcho, and MemPalace for the goal:
+Compare RainBox with Pi, BeeAI Framework, Hermes, OpenClaw, OpenHands, OpenCode,
+Supermemory, Mem0, Honcho, and MemPalace for the goal:
 
 > Own personal assistant for my needs.
 
@@ -16,11 +16,12 @@ repo structure/code surfaces, docs indexes, and, where relevant, architecture
 papers or policy pages. The external landscape changes quickly, so treat this as
 a decision memo dated above, not a permanent market survey.
 
-## Verification status (2026-06-22)
+## Verification status (updated 2026-06-23)
 
 This document was fact-checked against the RainBox source tree and against the
 external projects' public repos/docs on 2026-06-21, with MemPalace added and
-checked against its public repo/README on 2026-06-22.
+checked against its public repo/README on 2026-06-22, and BeeAI Framework added
+from the local checkout on 2026-06-23.
 
 - **RainBox claims:** every internal claim below was confirmed against code, with
   file/line evidence. See "RainBox baseline" for the concrete pointers added
@@ -49,21 +50,33 @@ checked against its public repo/README on 2026-06-22.
   in the README* (96.6% R@5 raw, 98.4% hybrid v4, ≥99% with LLM rerank). Those
   benchmark figures are the project's own claims, not independently reproduced
   here.
+- **BeeAI Framework (added 2026-06-23):** verified against the local checkout at
+  `/Users/neoneye/nobackup/git/beeai-framework`. The relevant code surfaces are
+  the Python package (`python/beeai_framework`) and TypeScript package
+  (`typescript/src`): `RunContext`/`Emitter`, `ChatModel`, `Tool`,
+  `RequirementAgent`, `Workflow`, memory classes, MCP/A2A/ACP/OpenAI/AgentStack
+  serving adapters, filesystem/code tools, and provider adapters. BeeAI is
+  Apache-2.0, Python package version `0.1.81`, and includes an IBM legal notice
+  saying the code was contributed as open source rather than as a maintained IBM
+  product.
 
 ## Executive judgment
 
 RainBox should remain the base if the goal is a personal assistant shaped around
 your own operating style, local models, inspectable state, reversible writes, and
 experimentation. It is already more aligned with "my private assistant that I can
-debug and bend" than Pi, OpenHands, or OpenCode, because those three are
-primarily coding-agent/toolkit surfaces rather than whole personal-assistant
-systems.
+debug and bend" than Pi, BeeAI, OpenHands, or OpenCode, because those are
+primarily agent/toolkit or coding-agent surfaces rather than whole
+personal-assistant systems.
 
 Hermes and OpenClaw are the closest product-level comparators. They are ahead on
 "always-on assistant" surfaces: messaging gateways, onboarding, daemon mode,
-voice/mobile/channel reach, and packaged skills. RainBox is ahead on narrow,
-auditable local authority: Postgres-backed provenance, explicit write tiers,
-log-and-undo, dry-run/confirm, model-free tests, and operator-visible eval loops.
+voice/mobile/channel reach, and packaged skills. BeeAI is a different kind of
+comparator: a reusable agent framework with stronger runtime abstractions,
+provider/tool contracts, observability, and protocol adapters. RainBox is ahead
+on narrow, auditable local authority: Postgres-backed provenance, explicit write
+tiers, log-and-undo, dry-run/confirm, model-free tests, and operator-visible eval
+loops.
 
 The memory products are not direct replacements. They are possible memory engines
 or design references. Supermemory looks strongest for broad ingestion/connectors
@@ -159,6 +172,7 @@ surface and integration reach:
 |---|---|---|---|
 | RainBox | Local ownership, inspectable state, reversible writes, eval loop, local model experiments | Fewer channels, less polished onboarding, no mature mobile/voice surface | Keep as the control plane; improve gateway and dashboard |
 | Pi | Minimal terminal coding harness, reusable TypeScript agent core, unified LLM API, TUI/extensibility | Not a durable personal assistant; no built-in permission system; coding-first | Event-stream agent loop, provider API, extension/package model, supply-chain discipline |
+| BeeAI Framework | Reusable Python/TypeScript agent runtime, provider abstraction, typed tools, nested events/middleware, workflow/protocol adapters | Framework rather than assistant product; shallow long-term memory; no RainBox-style durable governance/write ledger | Run/event/middleware model, structured tool/backend contract, RequirementAgent rules, MCP/A2A/OpenAI serving adapters |
 | Hermes | Self-improving personal agent, messaging gateway, skills, cron, subagents, pluggable memory providers | Large capability surface; harder to audit; less tailored to RainBox's provenance-first model | Gateway, daemon setup, skill lifecycle, provider/memory pluggability |
 | OpenClaw | Always-on multi-channel personal assistant, local-first gateway, voice/mobile/canvas, broad channel support | Host-access risk, huge remote-input attack surface, complex ecosystem | DM pairing/allowlists, channel routing, daemon mode, sandbox posture |
 | OpenHands | Software-dev agent platform, sandboxed execution, SDK, cloud/enterprise, GitHub workflows | Not a personal life assistant; optimized for repos and SDLC | Sandbox abstractions, lifecycle controls, security analyzer patterns |
@@ -218,6 +232,112 @@ RainBox takeaway: Pi is useful as an agent-runtime and TUI reference, not as the
 personal-assistant product model. The strongest ideas to borrow are the event
 stream, provider API, TypeScript extension/package model, and supply-chain
 hardening. Do not copy the default all-permissions tool posture into RainBox.
+
+### BeeAI Framework
+
+BeeAI Framework is not a personal assistant in the same sense as RainBox,
+Hermes, or OpenClaw. It is a library stack for building agents and multi-agent
+systems in Python and TypeScript. The local checkout shows two mature API
+surfaces rather than one app: Python under `python/beeai_framework` and
+TypeScript under `typescript/src`. The project gives you agent classes, a common
+chat/embedding backend contract, schema-validated tools, event emitters,
+middleware, short-term memory strategies, workflow composition, caching, and
+serving adapters for protocols such as MCP, A2A, ACP, AgentStack, and
+OpenAI-compatible APIs.
+
+How it works in code:
+
+- The unit of execution is `Runnable.run(...)`, which returns a `Run`. A `Run` is
+  awaitable and async-iterable, so callers can either wait for the final output
+  or consume live events.
+- `RunContext.enter(...)` creates a run id, group id, parent id, abort signal,
+  context dict, and child `Emitter`. Nested runs pipe their events into the
+  parent, giving agents, tools, models, workflows, and middleware one shared
+  trace tree.
+- `ChatModel` is the provider abstraction. Provider-specific adapters implement
+  `_create` and `_create_stream`; the base class handles tool-choice support,
+  retries, streaming token events, output validation, structured-output schemas,
+  malformed tool-call repair, prompt caching hooks, usage/cost accumulation, and
+  provider/model parsing such as `ollama:granite3.3:8b`.
+- `Tool` is schema-first: each tool exposes a Pydantic input schema, validates
+  input before execution, emits start/success/error/retry/finish events, supports
+  retry options, and can cache results. The decorator path can turn a normal
+  Python function into a tool by deriving a schema from its signature.
+- `RequirementAgent` is BeeAI's most interesting agent design for RainBox. It
+  runs an LLM/tool loop, but before each model call a reasoner computes rules for
+  the available tools. Requirements can force a tool at a step, hide or deny a
+  tool, prevent stopping until a minimum invocation is met, block repeated tool
+  cycles, and add ask-permission handlers by intercepting tool start events.
+- `HandoffTool` turns another agent/runnable into a tool, cloning the target when
+  possible and copying the relevant non-system messages. That is BeeAI's
+  multi-agent delegation primitive.
+- `Workflow` is a typed state machine over a Pydantic state object. Each step can
+  mutate state and route to next/prev/self/start/end or a named step, while
+  emitting workflow events.
+- Serving is adapter-oriented. The same runnable/agent can be registered behind
+  an MCP server, OpenAI chat-completions/responses API, A2A executor, ACP/Zed
+  integration, AgentStack server, or Watsonx Orchestrate surface. The adapters
+  generally clone the runnable per request and initialize per-session memory.
+
+The closest RainBox equivalents are clear:
+
+- RainBox `AssistantAgent` has a code-owned `AssistantActionName` enum and
+  `CAPABILITIES` registry. BeeAI has the more general `Tool` abstraction and
+  `Requirement` rules. RainBox's registry is better for audited personal writes;
+  BeeAI's schema/event contract is better as a reusable runtime surface.
+- RainBox `assistant_run`/`assistant_step` tables are durable traces. BeeAI
+  traces are in-process event trees. RainBox should keep Postgres as the source
+  of truth, but borrow BeeAI's nested run ids and uniform event vocabulary for
+  live dashboard streaming.
+- RainBox provider wrappers are tuned for LM Studio, Jan, and Ollama model
+  experiments. BeeAI's `ChatModel` contract is broader and cleaner for
+  structured outputs, tool-call fallback, retries, streaming, usage/cost, and
+  prompt caching. RainBox could adopt the shape without giving up its local-model
+  workbench.
+- RainBox workspace reads are deliberately narrow: allowlisted commands,
+  `shell=False`, fixed environment, no interpreters/network/mutation. BeeAI's
+  `ShellTool` is cleaner API-wise because it accepts argv directly and delegates
+  to a backend, but it is broader authority unless wrapped by RainBox policy.
+- RainBox file writes are confirm-tier, dry-run diff, then approved execution via
+  `AssistantWriteIntent`. BeeAI's `FileEditTool` returns a diff and guards exact
+  replacement counts, but it writes during the tool call. RainBox should copy the
+  exact-replace guard and diff shape, not the direct-write authority.
+- RainBox's standalone `MCPAgent` loads MCP tools into a LlamaIndex
+  `FunctionAgent`. BeeAI has both sides: `MCPTool` wraps remote MCP tools as
+  typed BeeAI tools, and `MCPServer` exposes BeeAI tools/runnables as MCP. That
+  is a better adapter model for RainBox's deferred S9/S10 assistant boundary.
+- RainBox memory is claim/evidence/provenance memory with lifecycle, sensitivity,
+  embeddings, retrieval telemetry, and feedback hooks. BeeAI memory is mostly
+  conversation-buffer memory (`UnconstrainedMemory`, `SlidingMemory`,
+  `SummarizeMemory`, `TokenMemory`). BeeAI is not a replacement for RainBox
+  memory, though its token/sliding/summarizing buffers could help with prompt
+  packing.
+
+Fit:
+
+- Strong if RainBox needs a better internal runtime contract: nested events,
+  middleware, typed run contexts, typed tools, provider abstraction, and protocol
+  adapters.
+- Strong as a source of implementation patterns for a runtime dashboard: every
+  nested model/tool/workflow event already has trace metadata in BeeAI.
+- Strong reference for exposing RainBox capabilities through MCP/A2A/OpenAI-like
+  protocols without hand-building every adapter from scratch.
+- Weak as a direct personal assistant. It has no durable Postgres-backed personal
+  state, no rooms/memberships/kanban/reminders product surface, no provenance
+  memory, no write-intent approval ledger, and no RainBox-specific operator
+  workflow.
+
+Important caution: BeeAI's abstractions can make powerful tools feel uniform,
+which is useful for developers and dangerous for a personal assistant. RainBox
+should not hand BeeAI tools directly to the model with broad filesystem, shell,
+network, or MCP authority. Put RainBox's capability registry and write-intent
+ledger in front of them.
+
+RainBox takeaway: BeeAI is the best framework reference in this comparison. Do
+not replace RainBox with it. Borrow the runtime ideas: `Run`/`RunContext`, nested
+emitters, middleware, tool schemas, backend contract, RequirementAgent-style
+rules, handoff tools, and protocol serving. Keep RainBox-owned persistence,
+provenance, memory lifecycle, write tiers, and operator approval.
 
 ### Hermes
 
@@ -465,23 +585,26 @@ provenance and sensitivity gates in front of any verbatim drawer store.
 ### Data ownership
 
 RainBox is best aligned with local/private ownership today. It stores the real
-state in local Postgres and is designed around operator inspection. OpenClaw and
-Hermes can also run locally, but their broader channel/tool surfaces make the
-trust boundary wider. Pi, OpenHands, and OpenCode are local-capable but oriented
-toward code workspaces. Supermemory/Mem0/Honcho can be managed or self-hosted
-depending on product and license, but outsourcing memory changes the trust
-model. MemPalace is the exception among the memory products: it is local-first by
-default and only sends data out if you explicitly point it at a remote
-Qdrant/pgvector, so it preserves the ownership posture RainBox cares about.
+state in local Postgres and is designed around operator inspection. BeeAI is
+local/self-hostable as a framework, but it does not itself define durable
+personal state; ownership depends on the app and adapters built with it.
+OpenClaw and Hermes can also run locally, but their broader channel/tool
+surfaces make the trust boundary wider. Pi, OpenHands, and OpenCode are
+local-capable but oriented toward code workspaces. Supermemory/Mem0/Honcho can
+be managed or self-hosted depending on product and license, but outsourcing
+memory changes the trust model. MemPalace is the exception among the memory
+products: it is local-first by default and only sends data out if you explicitly
+point it at a remote Qdrant/pgvector, so it preserves the ownership posture
+RainBox cares about.
 
 ### Personal-assistant UX
 
 Hermes and OpenClaw are ahead. RainBox has a useful web chat and Telegram
 service, but not yet a "talk to it anywhere" experience. OpenClaw's pairing and
 channel breadth are especially relevant. Hermes's CLI/gateway continuity is also
-relevant. Pi, OpenHands, and OpenCode are not broad personal-assistant UX
+relevant. Pi, BeeAI, OpenHands, and OpenCode are not broad personal-assistant UX
 products; Pi is closer to a minimal terminal coding harness plus embeddable
-agent toolkit.
+agent toolkit, and BeeAI is a framework/runtime rather than an end-user shell.
 
 ### Autonomy and writes
 
@@ -490,14 +613,17 @@ governed operations. The assistant can write memory, skills, kanban, reminders,
 and files, but with clear risk tiers, traces, undo, and dry-run/confirm. OpenClaw
 and Hermes appear more product-capable, but that broader autonomy is also the
 risk. OpenHands/OpenCode have mature code-edit autonomy, but that is repo-focused
-rather than personal-life focused.
+rather than personal-life focused. BeeAI has useful ask-permission requirements
+and tool rules, but no durable write-intent ledger; RainBox's approval model
+should remain authoritative.
 
 ### Memory
 
-RainBox's memory is safe, inspectable, and provenance-rich. Supermemory, Mem0,
-Honcho, and MemPalace are more specialized and likely stronger on large-scale
-retrieval, cross-session benchmark performance, graph/reasoning, connectors, and
-packaged SDKs. Honcho is the best conceptual complement for user/agent modeling.
+RainBox's memory is safe, inspectable, and provenance-rich. BeeAI's memory
+classes are useful prompt-window buffers, not long-term personal memory.
+Supermemory, Mem0, Honcho, and MemPalace are more specialized and likely
+stronger on large-scale retrieval, cross-session benchmark performance,
+graph/reasoning, connectors, and packaged SDKs. Honcho is the best conceptual complement for user/agent modeling.
 Supermemory is the strongest ingestion/context stack. Mem0 is the simplest
 integration baseline. MemPalace is the strongest local-first verbatim retriever
 and the closest to RainBox's ownership/inspectability values, with self-reported
@@ -516,10 +642,12 @@ RainBox's safety stance is narrow authority plus auditability:
 - reversible internal writes;
 - confirm-tier high-blast-radius writes.
 
-OpenCode has a good allow/ask/deny permission model. OpenHands has strong
-sandbox/workspace architecture. Pi has good documented containerization patterns
-but no built-in permission system. OpenClaw has DM pairing and non-main
-sandboxing, but its main-session host access is a major risk if exposed
+OpenCode has a good allow/ask/deny permission model. BeeAI has useful
+RequirementAgent rules and ask-permission hooks, but those are runtime controls
+rather than durable governance. OpenHands has strong sandbox/workspace
+architecture. Pi has good documented containerization patterns but no built-in
+permission system. OpenClaw has DM pairing and non-main sandboxing, but its
+main-session host access is a major risk if exposed
 casually. Hermes claims command approval and container isolation, but its broad
 gateway should be treated with the same caution.
 
@@ -527,10 +655,11 @@ gateway should be treated with the same caution.
 
 ### 1. Keep RainBox as the personal base
 
-Do not pivot to a generic agent framework. RainBox's moat is that it is already
-your own assistant substrate: local models, Postgres state, inspectable memory,
-evals, kanban, cron, feedback, and controlled writes. That is closer to the
-stated goal than a polished but opaque assistant.
+Do not pivot to a generic agent framework, including BeeAI. RainBox's moat is
+that it is already your own assistant substrate: local models, Postgres state,
+inspectable memory, evals, kanban, cron, feedback, and controlled writes. That
+is closer to the stated goal than a polished but opaque assistant or a clean
+runtime library.
 
 ### 2. Build the missing product shell
 
@@ -581,13 +710,14 @@ Near-term safe order:
 2. Confirm-tier external writes with dry-run previews.
 3. Log-and-undo only for internal writes where RainBox owns the inverse.
 
-### 5. Use Pi/OpenCode/OpenHands for coding, not identity
+### 5. Use BeeAI/Pi/OpenCode/OpenHands for runtime and coding ideas, not identity
 
-Pi, OpenCode, and OpenHands are useful tools and design references. RainBox can
-borrow Pi's event-stream runtime ideas, OpenCode's permission ergonomics, and
-OpenHands' sandbox/lifecycle architecture. It should not become primarily a
-coding agent. For your goal, coding is one skill of the personal assistant, not
-the identity of the assistant.
+BeeAI, Pi, OpenCode, and OpenHands are useful tools and design references.
+RainBox can borrow BeeAI's run/event/middleware model, tool/backend contracts,
+and protocol adapters; Pi's event-stream runtime ideas; OpenCode's permission
+ergonomics; and OpenHands' sandbox/lifecycle architecture. It should not become
+primarily a framework demo or coding agent. For your goal, coding is one skill
+of the personal assistant, not the identity of the assistant.
 
 ## Practical decision matrix
 
@@ -596,6 +726,9 @@ If the goal is:
 - "I want a self-hosted personal agent now": try Hermes or OpenClaw and compare
   daily use friction.
 - "I want a minimal terminal coding harness": try Pi.
+- "I want a reusable agent runtime/framework": study BeeAI first, especially
+  its Python `RunContext`, `Tool`, `ChatModel`, `RequirementAgent`, `Workflow`,
+  and serving adapters.
 - "I want a coding agent with stronger permission UX": try OpenCode.
 - "I want a software-agent platform/SDK": try OpenHands.
 - "I want a private assistant that reflects my workflows and can be audited":
@@ -614,12 +747,17 @@ If the goal is:
 2. Telegram/gateway hardening: pairing, allowlist, read-only default, write
    authority gates.
 3. Memory adapter interface and benchmark harness.
-4. Honcho proof-of-concept for room/agent/user representations.
-5. Supermemory or Mem0 proof-of-concept for document/project ingestion.
+4. BeeAI-inspired runtime-event pass: map RainBox assistant steps, provider
+   calls, capability dispatch, MCP calls, and write-intent state transitions onto
+   one nested event stream for the runtime dashboard.
+5. Honcho proof-of-concept for room/agent/user representations.
+6. Supermemory or Mem0 proof-of-concept for document/project ingestion.
    MemPalace proof-of-concept for local verbatim retrieval on the existing
    Postgres (pgvector backend), validating its LongMemEval claims on your data.
-6. Read-only MCP adapters through RainBox's existing `Capability.adapter` seam.
-7. Voice UX later; do not add it before the gateway safety model is clear.
+7. Read-only MCP adapters through RainBox's existing `Capability.adapter` seam,
+   using BeeAI's MCP client/server shape as a reference but keeping RainBox
+   policy in front.
+8. Voice UX later; do not add it before the gateway safety model is clear.
 
 ## Bottom line
 
@@ -632,7 +770,7 @@ The best path is not replacement. It is:
 RainBox as authority and audit log
 + Hermes/OpenClaw-style gateway and channel UX
 + optional memory-provider adapter
-+ Pi/OpenCode/OpenHands-inspired runtime, permission, and sandbox hardening
++ BeeAI/Pi/OpenCode/OpenHands-inspired runtime, permission, and sandbox hardening
 ```
 
 That combination fits "own personal assistant for my needs" better than any one
@@ -649,9 +787,27 @@ RainBox local:
 - `source/docs/proposals/2026-06-20-improvements-v3.md`
 - `source/agents/assistant.py`
 - `source/db/models.py`
+- `source/agents/mcp.py`
+- `source/tools/workspace_command_runner.py`
+- `source/tools/command_policy.py`
 
-External:
+External / local comparators:
 
+- BeeAI Framework local checkout: `/Users/neoneye/nobackup/git/beeai-framework`,
+  especially `README.md`, `python/pyproject.toml`,
+  `python/beeai_framework/context.py`,
+  `python/beeai_framework/emitter/emitter.py`,
+  `python/beeai_framework/runnable.py`,
+  `python/beeai_framework/backend/chat.py`,
+  `python/beeai_framework/tools/tool.py`,
+  `python/beeai_framework/agents/requirement/agent.py`,
+  `python/beeai_framework/agents/requirement/_runner.py`,
+  `python/beeai_framework/agents/requirement/requirements/`,
+  `python/beeai_framework/tools/handoff.py`,
+  `python/beeai_framework/tools/mcp/mcp.py`,
+  `python/beeai_framework/adapters/mcp/serve/server.py`,
+  `python/beeai_framework/adapters/openai/serve/server.py`,
+  `python/beeai_framework/workflows/workflow.py`, and `typescript/src`.
 - Pi Agent Harness: https://github.com/earendil-works/pi,
   https://pi.dev/docs/latest,
   https://github.com/earendil-works/pi/tree/main/packages/agent,
