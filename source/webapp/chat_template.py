@@ -1198,7 +1198,7 @@ function buildRoomMenu(roomUuid){
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
   // Only wired-up items are shown (Rename/Mute/Archive are not implemented yet).
-  [['Delete', 'danger']].forEach(([label, mod]) => {
+  [['Copy room id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'item' + (mod ? ' ' + mod : '');
@@ -1206,6 +1206,7 @@ function buildRoomMenu(roomUuid){
     item.textContent = label;
     item.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (label === 'Copy room id'){ copyText(roomUuid, item); setTimeout(() => { menu.hidden = true; }, 900); return; }
       menu.hidden = true;
       if (label === 'Delete') deleteRoom(roomUuid);
     });
@@ -1243,7 +1244,7 @@ function buildFolderMenu(folderId){
   menu.className = 'room-menu';
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
-  [['Rename', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
+  [['Rename', ''], ['Copy folder id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'item' + (mod ? ' ' + mod : '');
@@ -1251,6 +1252,7 @@ function buildFolderMenu(folderId){
     item.textContent = label;
     item.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (label === 'Copy folder id'){ copyText(folderId, item); setTimeout(() => { menu.hidden = true; }, 900); return; }
       menu.hidden = true;
       if (label === 'Delete') confirmDeleteFolder(folderId);
       else if (label === 'Rename') renameFolder(folderId);

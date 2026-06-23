@@ -63,3 +63,10 @@ def test_js_wires_facets_and_actions():
         assert "'" + action + "'" in body, action
     # per-row optimistic concurrency token is sent on mutations
     assert "expected_updated_at" in body
+
+
+def test_claim_kebab_has_copy_id():
+    body = _body()
+    assert "Copy memory id" in body
+    assert "function memCopyId" in body
+    assert "navigator.clipboard.writeText(uuid)" in body

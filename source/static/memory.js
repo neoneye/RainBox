@@ -269,6 +269,11 @@ function actionsHtml(d) {
 }
 
 function fmt(iso) { if (!iso) return '—'; try { return new Date(iso).toLocaleString(); } catch (_) { return iso; } }
+function memCopyId(uuid) {
+  navigator.clipboard.writeText(uuid).then(
+    () => memToast('Memory id copied: ' + uuid),
+    () => memToast('Could not copy to clipboard.'));
+}
 function memReveal() { const c = claimByUuid(currentClaimUuid); /* detail already holds text */ const el = document.getElementById('mem-dtext'); fetch('/memory/api/claims/' + currentClaimUuid).then(r => r.json()).then(d => { el.textContent = d.text; }); }
 
 // --- kebab menu (tree leaf) ------------------------------------------------
@@ -283,7 +288,7 @@ function openClaimMenu(c, anchor) {
   if (c.status === 'candidate') { items.push(it('Activate', false, 'activate')); items.push(it('Correct…', false, 'correct')); items.push(it('Reject', true, 'reject')); }
   else if (c.status === 'active') { items.push(it('Correct…', false, 'correct')); items.push(it('Forget', true, 'reject')); }
   else if (c.status === 'rejected' || c.status === 'expired') { items.push(it('Reactivate', false, 'reactivate')); }
-  if (!items.length) return;
+  items.push(it('Copy memory id', false, 'copyid'));  // always available
   menu.innerHTML = items.join('');
   document.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
@@ -295,6 +300,7 @@ function openClaimMenu(c, anchor) {
     else if (fn === 'reactivate') memReactivate(c.uuid);
     else if (fn === 'reject') memOpenReject(c.uuid);
     else if (fn === 'correct') memOpenCorrect(c.uuid);
+    else if (fn === 'copyid') memCopyId(c.uuid);
   }));
   openMenuEl = menu;
 }
