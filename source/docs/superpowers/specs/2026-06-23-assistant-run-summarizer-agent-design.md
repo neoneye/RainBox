@@ -1,4 +1,4 @@
-# Run-summarizer agent — design (2026-06-23)
+# Assistant-run summarizer agent — design (2026-06-23)
 
 **Status:** ✅ implemented (`agents/assistant_run_summarizer.py`; suite green,
 1239 passed). Adds a dedicated agent that summarizes a completed assistant run
@@ -52,7 +52,7 @@ to the operator.
 
 **`agents/assistant_run_summarizer.py`**
 - `RunSummary(BaseModel)` — the schema above.
-- `RUN_SUMMARIZER_SYSTEM_PROMPT` — instructs: read the trigger + the per-step
+- `ASSISTANT_RUN_SUMMARIZER_SYSTEM_PROMPT` — instructs: read the trigger + the per-step
   digest, output the schema only; obstacles = concrete problems (a `failed` step,
   an error, a no-op/blocked action), not normal successful steps.
 - `AssistantRunSummarizerAgent(StructuredLLMAgent)` — overrides `handle(journal_id,

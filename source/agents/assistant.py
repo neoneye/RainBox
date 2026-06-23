@@ -1417,7 +1417,7 @@ class AssistantAgent(ModelGroupAgent):
         }
 
     def _request_summary(self, run: Any) -> None:
-        """Enqueue the run_summarizer for a now-terminal run — off the critical
+        """Enqueue the assistant_run_summarizer for a now-terminal run — off the critical
         path (a non-blocking inbox insert the supervisor drains in its own
         process). Best-effort: a failure to enqueue must never break the turn or
         mask the operator's reply."""

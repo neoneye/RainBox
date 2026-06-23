@@ -35,7 +35,7 @@ class RunSummary(BaseModel):
     )
 
 
-RUN_SUMMARIZER_SYSTEM_PROMPT = """\
+ASSISTANT_RUN_SUMMARIZER_SYSTEM_PROMPT = """\
 You summarize a single completed run of an assistant's reason-act loop, for an \
 operator scanning a list of past runs. You are given the message that triggered \
 the run and a digest of each step (its action, phase, and any error).
@@ -57,7 +57,7 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(
             agent_uuid, name, send,
-            system_prompt=RUN_SUMMARIZER_SYSTEM_PROMPT,
+            system_prompt=ASSISTANT_RUN_SUMMARIZER_SYSTEM_PROMPT,
             response_model=RunSummary,
         )
 

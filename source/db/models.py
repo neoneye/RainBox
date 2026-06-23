@@ -971,7 +971,7 @@ class AssistantRun(db.Model):
     final_summary: Mapped[str | None] = mapped_column(Text)
     # Run/model diagnostics; empty by default (NOT the step trace).
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    # A post-completion digest produced by the run_summarizer agent (off the
+    # A post-completion digest produced by the assistant_run_summarizer agent (off the
     # critical path): {trigger, obstacles[], outcome, summarized_at}. NULL until
     # summarized; never blocks the run.
     summary: Mapped[dict | None] = mapped_column(JSONB)

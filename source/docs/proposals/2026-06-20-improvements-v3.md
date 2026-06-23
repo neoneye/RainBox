@@ -331,7 +331,7 @@ batches:
   `{trigger, obstacles, outcome}` off the critical path; `requires_structured_output`
   so `/agent_models` only offers it structured-output groups. Surfaced in the
   `/assistant` inspector.
-  [spec](../superpowers/specs/2026-06-23-run-summarizer-agent-design.md)
+  [spec](../superpowers/specs/2026-06-23-assistant-run-summarizer-agent-design.md)
 - ✅ `assistant_run` keyed by `uuid`, no integer id (done) — uuid is the primary
   key and the sole identifier (shown, addressed via `?id=<uuid>`, logged); the
   child tables reference it via `run_uuid`. One-time destructive table rebuild on

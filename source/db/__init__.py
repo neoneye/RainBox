@@ -364,7 +364,7 @@ def init_db(app: Flask) -> None:
         if _column_exists("assistant_write_intent", "step_index"):
             db.session.execute(
                 sa.text("ALTER TABLE assistant_write_intent DROP COLUMN IF EXISTS step_index"))
-        # The run_summarizer agent's post-completion digest (additive nullable).
+        # The assistant_run_summarizer agent's post-completion digest (additive nullable).
         _add_column_if_missing("assistant_run", "summary", "summary JSONB")
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:

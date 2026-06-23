@@ -109,7 +109,7 @@ def _phases(agent: AssistantAgent) -> list[str]:
 
 def test_terminal_run_enqueues_a_summary(room):
     """When a run reaches a terminal state, the assistant enqueues the
-    run_summarizer (off the critical path) carrying this run's uuid."""
+    assistant_run_summarizer (off the critical path) carrying this run's uuid."""
     from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID
     from db.models import Inbox
 
