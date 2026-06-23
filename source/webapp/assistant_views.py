@@ -236,17 +236,13 @@ def assistant_page() -> str:
     unlinked: list = []
     pending_controls: list = []
     trigger = None
-    # Runs are addressed by uuid via ?id= (consistent with /chat, /cron). A legacy
-    # integer value and the old ?run= name both still resolve so bookmarks work.
-    run_arg = request.args.get("id") or request.args.get("run")
+    # Runs are addressed by uuid via ?id= (consistent with /chat, /cron).
+    run_arg = request.args.get("id")
     if run_arg:
-        if run_arg.isdigit():
-            selected = db.get_assistant_run(int(run_arg))
-        else:
-            try:
-                selected = db.get_assistant_run_by_uuid(UUID(run_arg))
-            except ValueError:
-                selected = None
+        try:
+            selected = db.get_assistant_run_by_uuid(UUID(run_arg))
+        except ValueError:
+            selected = None
     if selected is not None:
         steps = db.list_assistant_steps(selected.id)
         intents = db.list_write_intents_for_run(selected.id)
