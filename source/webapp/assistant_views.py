@@ -124,7 +124,7 @@ ASSISTANT_TEMPLATE = """
               display:inline-flex; align-items:center; justify-content:center; visibility:hidden; }
   .as-run-node.sel .as-kebab { visibility:visible; }
   .as-kebab::before { content:""; width:3px; height:3px; border-radius:50%; background:currentColor;
-                      box-shadow:0 -5px 0 currentColor, 0 5px 0 currentColor; }
+                      box-shadow:-5px 0 0 currentColor, 5px 0 0 currentColor; }
   .as-kebab:hover { background:#d2ddf6; color:#1a1a2e; }
   .as-menu { position:fixed; z-index:1000; min-width:150px; background:#fff; border:1px solid #d1d5db;
              border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.14); padding:0.25em;
