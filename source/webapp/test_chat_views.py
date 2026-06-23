@@ -24,6 +24,8 @@ def test_room_and_folder_kebabs_have_copy_id():
     body = _body()
     assert "Copy room id" in body
     assert "Copy folder id" in body
-    # both copy via the shared copyText helper (which flashes "Copied")
-    assert "copyText(roomUuid, item)" in body
-    assert "copyText(folderId, item)" in body
+    # both copy + confirm via the bottom-right toast (not an in-menu flash)
+    assert "copyIdToast(roomUuid, 'Room')" in body
+    assert "copyIdToast(folderId, 'Folder')" in body
+    assert "function chatToast" in body
+    assert 'id="chat-toast"' in body

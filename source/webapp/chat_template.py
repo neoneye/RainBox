@@ -195,6 +195,12 @@ CHAT_TEMPLATE: str = """
   .folder-detail a.fd-details{color:#2563eb;cursor:pointer;text-decoration:none}
   .folder-detail a.fd-details:hover{text-decoration:underline}
   .folder-detail .fd-empty{color:#888;font-style:italic}
+  /* Transient bottom-right toast (e.g. "Room id copied: …"), matching /cron,
+     /kanban and /memory. */
+  .chat-toast{position:fixed;bottom:18px;right:18px;max-width:380px;background:#1f2937;color:#fff;
+    padding:10px 14px;border-radius:8px;font-size:0.9rem;box-shadow:0 4px 14px rgba(0,0,0,0.3);
+    z-index:2000;opacity:0;transition:opacity .25s;pointer-events:none}
+  .chat-toast.show{opacity:1}
 </style>
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
@@ -272,6 +278,7 @@ CHAT_TEMPLATE: str = """
 
   <div class="room-sidebar" id="room-sidebar"></div>
 </div>
+<div id="chat-toast" class="chat-toast"></div>
 
 <!-- Client-side markdown (marked) + sanitize (DOMPurify) + JSON syntax highlighting (highlight.js). -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/github.min.css">
@@ -508,6 +515,24 @@ function copyText(text, btn){
   const resolved = (typeof text === 'function') ? text() : text;
   if (resolved && typeof resolved.then === 'function') resolved.then(doCopy);
   else doCopy(resolved);
+}
+
+// Transient bottom-right toast (matches /cron, /kanban, /memory).
+let chatToastTimer = null;
+function chatToast(text){
+  const el = document.getElementById('chat-toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(chatToastTimer);
+  chatToastTimer = setTimeout(() => el.classList.remove('show'), 5000);
+}
+// Copy a room/folder uuid to the clipboard and confirm via the toast (not an
+// in-menu "Copied" flash) — consistent with the other tree panels.
+function copyIdToast(uuid, kind){
+  const done = () => chatToast(kind + ' id copied: ' + uuid);
+  if (navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(uuid).then(done).catch(() => fallbackCopy(uuid, done));
+  else fallbackCopy(uuid, done);
 }
 
 // Pretty-print JSON for display; fall back to the raw text if it doesn't parse.
@@ -1206,9 +1231,9 @@ function buildRoomMenu(roomUuid){
     item.textContent = label;
     item.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (label === 'Copy room id'){ copyText(roomUuid, item); setTimeout(() => { menu.hidden = true; }, 900); return; }
       menu.hidden = true;
-      if (label === 'Delete') deleteRoom(roomUuid);
+      if (label === 'Copy room id') copyIdToast(roomUuid, 'Room');
+      else if (label === 'Delete') deleteRoom(roomUuid);
     });
     menu.appendChild(item);
   });
@@ -1252,9 +1277,9 @@ function buildFolderMenu(folderId){
     item.textContent = label;
     item.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (label === 'Copy folder id'){ copyText(folderId, item); setTimeout(() => { menu.hidden = true; }, 900); return; }
       menu.hidden = true;
-      if (label === 'Delete') confirmDeleteFolder(folderId);
+      if (label === 'Copy folder id') copyIdToast(folderId, 'Folder');
+      else if (label === 'Delete') confirmDeleteFolder(folderId);
       else if (label === 'Rename') renameFolder(folderId);
     });
     menu.appendChild(item);
