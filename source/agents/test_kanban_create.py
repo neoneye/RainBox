@@ -1,5 +1,5 @@
-"""S2 batch 2: assistant kanban_create (log-and-undo; undo deletes the task) and
-the internal, non-model-invocable kanban_delete_task inverse."""
+"""S2 batch 2: assistant kanban_create_task (log-and-undo; undo deletes the task)
+and the internal, non-model-invocable kanban_delete_task inverse."""
 
 from uuid import UUID, uuid4
 
@@ -55,7 +55,7 @@ def _ctx():
 
 
 def test_capabilities_create_exposed_delete_internal():
-    create = CAPABILITIES[AssistantActionName.KANBAN_CREATE]
+    create = CAPABILITIES[AssistantActionName.KANBAN_CREATE_TASK]
     assert create.write is True and create.tier == "log_and_undo" and create.prompt_exposed is True
     delete = CAPABILITIES[AssistantActionName.KANBAN_DELETE_TASK]
     assert delete.prompt_exposed is False
@@ -129,7 +129,7 @@ def test_create_via_loop_then_undo_deletes(board):
     bu, col = board["uuid"], board["columns"][0]["uuid"]
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE,
+        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE_TASK,
                               args={"board_uuid": bu, "column_uuid": col, "title": "Follow up"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
                               args={"message": "created"}),
@@ -165,8 +165,8 @@ def test_duplicate_create_in_same_run_is_blocked(board):
     args = {"board_uuid": bu, "title": "Dentist checkup", "description": "the 6 month check up"}
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE, args=dict(args)),
-        AssistantStepDecision(reason="create again", action=AssistantActionName.KANBAN_CREATE, args=dict(args)),
+        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE_TASK, args=dict(args)),
+        AssistantStepDecision(reason="create again", action=AssistantActionName.KANBAN_CREATE_TASK, args=dict(args)),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY, args={"message": "created"}),
     )
     try:
@@ -196,7 +196,7 @@ def test_reply_includes_clickable_task_link_after_create(board):
     bu = board["uuid"]
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE,
+        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE_TASK,
                               args={"board_uuid": bu, "title": "Bike checkup"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
                               args={"message": "The task has been added."}),

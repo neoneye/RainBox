@@ -59,8 +59,8 @@ class AssistantActionName(str, Enum):
     KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
     KANBAN_COMPLETE = "kanban_complete"  # log-and-undo: mark a task done
     KANBAN_COMMENT = "kanban_comment"    # log-and-undo: comment on a task
-    KANBAN_CREATE = "kanban_create"            # log-and-undo: create a task on a board
-    KANBAN_DELETE_TASK = "kanban_delete_task"  # internal: create's undo inverse (not prompt-exposed)
+    KANBAN_CREATE_TASK = "kanban_create_task"  # log-and-undo: create a task on a board
+    KANBAN_DELETE_TASK = "kanban_delete_task"  # internal: create_task's undo inverse (not prompt-exposed)
     KANBAN_CREATE_BOARD = "kanban_create_board"  # log-and-undo: create a new board
     KANBAN_DELETE_BOARD = "kanban_delete_board"  # internal: create_board's undo inverse (not prompt-exposed)
     SET_REMINDER = "set_reminder"      # confirm-tier (dry-run): schedule a reminder message
@@ -705,7 +705,7 @@ def _action_delete_kanban_task(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
     """Internal: hard-delete a task. Not prompt-exposed — reached only as the
-    undo-inverse of kanban_create (via undo_write_intent)."""
+    undo-inverse of kanban_create_task (via undo_write_intent)."""
     raw = args.get("task_uuid")
     try:
         task_uuid = UUID(str(raw))
@@ -1040,8 +1040,8 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         required_args=("task_uuid", "text"), action=_action_comment_kanban_task,
         read=False, write=True, tier="log_and_undo",
     ),
-    AssistantActionName.KANBAN_CREATE: Capability(
-        name=AssistantActionName.KANBAN_CREATE, family="kanban",
+    AssistantActionName.KANBAN_CREATE_TASK: Capability(
+        name=AssistantActionName.KANBAN_CREATE_TASK, family="kanban",
         description=('create a kanban TASK on an EXISTING board (to make a new '
                      'board, use kanban_create_board). reversible (undo deletes '
                      'it). args: {"board_uuid": "..." (an existing board, from '
@@ -1055,7 +1055,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.KANBAN_DELETE_TASK: Capability(
         name=AssistantActionName.KANBAN_DELETE_TASK, family="kanban",
-        description="(internal) delete a kanban task — the undo-inverse of kanban_create.",
+        description="(internal) delete a kanban task — the undo-inverse of kanban_create_task.",
         required_args=("task_uuid",), action=_action_delete_kanban_task,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
