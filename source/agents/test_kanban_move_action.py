@@ -1,4 +1,4 @@
-"""The kanban_move action moves a task and returns its inverse (undo) op."""
+"""The kanban_move_task action moves a task and returns its inverse (undo) op."""
 
 from uuid import UUID, uuid4
 
@@ -56,7 +56,7 @@ def _ctx(room_uuid=None):
 
 
 def test_capability_is_log_and_undo_write():
-    cap = CAPABILITIES[AssistantActionName.KANBAN_MOVE]
+    cap = CAPABILITIES[AssistantActionName.KANBAN_MOVE_TASK]
     assert cap.write is True
     assert cap.tier == "log_and_undo"
     assert cap.required_args == ("task_uuid", "column_uuid")
@@ -74,7 +74,7 @@ def test_move_executes_and_returns_inverse(board):
     # Inverse points back at the original column; expect_column pins the
     # destination so undo refuses if the task moves again first.
     assert obs.data["undo"] == {
-        "capability": "kanban_move",
+        "capability": "kanban_move_task",
         "payload": {"task_uuid": task["uuid"], "column_uuid": todo,
                     "expect_column": done},
     }
@@ -135,11 +135,11 @@ def test_undo_moves_task_back_and_marks_undone(board):
     todo, done = board["columns"][0]["uuid"], board["columns"][1]["uuid"]
     db.kanban_move_task(UUID(task["uuid"]), UUID(done), actor=str(ASSISTANT_UUID))
     intent = db.create_write_intent(
-        run_id=run.id, step_index=0, capability_name="kanban_move",
+        run_id=run.id, step_index=0, capability_name="kanban_move_task",
         payload={"task_uuid": task["uuid"], "column_uuid": done},
-        preview_text="kanban_move: …", room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
+        preview_text="kanban_move_task: …", room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
         state="completed",
-        result={"undo": {"capability": "kanban_move",
+        result={"undo": {"capability": "kanban_move_task",
                          "payload": {"task_uuid": task["uuid"], "column_uuid": todo}}},
     )
     try:
@@ -170,7 +170,7 @@ def test_move_via_loop_lands_completed_undo_ledger(board):
 
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="move", action=AssistantActionName.KANBAN_MOVE,
+        AssistantStepDecision(reason="move", action=AssistantActionName.KANBAN_MOVE_TASK,
                               args={"task_uuid": task["uuid"], "column_uuid": done}),
         AssistantStepDecision(reason="done", action=AssistantActionName.REPLY,
                               args={"message": "moved"}),
@@ -207,9 +207,9 @@ def test_undo_refused_if_task_moved_since(board):
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID, step_limit=6)
     obs = _action_move_kanban_task(_ctx(), {"task_uuid": task["uuid"], "column_uuid": done})
     intent = db.create_write_intent(
-        run_id=run.id, step_index=0, capability_name="kanban_move",
+        run_id=run.id, step_index=0, capability_name="kanban_move_task",
         payload={"task_uuid": task["uuid"], "column_uuid": done},
-        preview_text="kanban_move", room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
+        preview_text="kanban_move_task", room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
         state="completed", result={"undo": obs.data["undo"]})
     # Someone else moves the task back to To do after the assistant's move.
     db.kanban_move_task(UUID(task["uuid"]), UUID(todo), actor="human")

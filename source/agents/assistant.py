@@ -56,7 +56,7 @@ class AssistantActionName(str, Enum):
     REMEMBER = "remember"              # log-and-undo: create an active memory
     ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
     FORGET_MEMORY = "forget_memory"      # log-and-undo: reject a memory (stop recalling it)
-    KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
+    KANBAN_MOVE_TASK = "kanban_move_task"  # log-and-undo: move a task between columns
     KANBAN_COMPLETE = "kanban_complete"  # log-and-undo: mark a task done
     KANBAN_COMMENT = "kanban_comment"    # log-and-undo: comment on a task
     KANBAN_CREATE_TASK = "kanban_create_task"  # log-and-undo: create a task on a board
@@ -577,7 +577,7 @@ def _action_move_kanban_task(
             "to_column_uuid": str(column_uuid),
             "link": _kanban_link(str(task_uuid)),
             "undo": {
-                "capability": "kanban_move",
+                "capability": "kanban_move_task",
                 "payload": {"task_uuid": str(task_uuid),
                             "column_uuid": str(from_column_uuid),
                             "expect_column": str(column_uuid)},
@@ -590,7 +590,7 @@ def _action_complete_kanban_task(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
     """Log-and-undo write: mark a task done (move it to the board's Done/last
-    column + a 'done' event). Reversible — the undo is a kanban_move back to the
+    column + a 'done' event). Reversible — the undo is a kanban_move_task back to the
     task's prior column. Operator-proxy intent → Done, not worker review-routing."""
     raw = args.get("task_uuid")
     try:
@@ -616,7 +616,7 @@ def _action_complete_kanban_task(
             "to_column_uuid": after["columnUuid"],
             "link": _kanban_link(str(task_uuid)),
             "undo": {
-                "capability": "kanban_move",
+                "capability": "kanban_move_task",
                 "payload": {"task_uuid": str(task_uuid),
                             "column_uuid": str(from_column_uuid),
                             "expect_column": str(after["columnUuid"])},
@@ -1016,8 +1016,8 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         action=_action_forget_memory,
         read=False, write=True, tier="log_and_undo",
     ),
-    AssistantActionName.KANBAN_MOVE: Capability(
-        name=AssistantActionName.KANBAN_MOVE, family="kanban",
+    AssistantActionName.KANBAN_MOVE_TASK: Capability(
+        name=AssistantActionName.KANBAN_MOVE_TASK, family="kanban",
         description=('move a kanban task to another column; reversible (undoable). '
                      'args: {"task_uuid": "...", "column_uuid": "..."} where '
                      'column_uuid is the target column\'s NAME (e.g. "In progress") '

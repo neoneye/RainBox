@@ -81,7 +81,7 @@ def test_complete_marks_done_and_returns_inverse(board):
     assert obs.ok is True
     assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == done  # moved to last col
     assert obs.data["undo"] == {
-        "capability": "kanban_move",
+        "capability": "kanban_move_task",
         "payload": {"task_uuid": task["uuid"], "column_uuid": todo,
                     "expect_column": done},
     }
