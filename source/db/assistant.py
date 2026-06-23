@@ -23,6 +23,8 @@ from db.models import (
     AssistantRun,
     AssistantStep,
     AssistantWriteIntent,
+    ChatMessage,
+    ChatUser,
     db,
 )
 
@@ -204,6 +206,35 @@ def list_assistant_runs(limit: int = 50) -> list[AssistantRun]:
         .limit(limit)
         .all()
     )
+
+
+def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
+    """The chat message that initiated a run: the latest human `message` in the
+    run's room at or before it started. Best-effort — returns None when none is
+    found (e.g. a run seeded outside the chat flow). Returns a small dict
+    (uuid/sender_name/text/timestamp) for the /assistant inspector's trigger
+    block."""
+    row = (
+        db.session.query(ChatMessage, ChatUser.name)
+        .join(ChatUser, ChatUser.uuid == ChatMessage.sender_uuid)
+        .filter(
+            ChatMessage.room_uuid == run.room_uuid,
+            ChatMessage.kind == "message",
+            ChatUser.user_type == "human",
+            ChatMessage.created_at <= run.started_at,
+        )
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    msg, sender_name = row
+    return {
+        "uuid": str(msg.uuid),
+        "sender_name": sender_name,
+        "text": msg.text,
+        "timestamp": msg.created_at.strftime("%Y-%m-%d %H:%M") if msg.created_at else "",
+    }
 
 
 def list_assistant_steps(run_id: int) -> list[AssistantStep]:

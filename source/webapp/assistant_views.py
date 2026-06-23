@@ -84,6 +84,10 @@ ASSISTANT_TEMPLATE = """
                     border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
   .pp-as .muted { color:#667085; font-size:0.85rem; }
   .pp-as .grp { font-weight:600; margin:0.8rem 0 0.3rem; }
+  .pp-as .trigger { border:1px solid #e5e7eb; border-radius:8px; padding:0.5rem 0.7rem;
+                    margin:0.6rem 0; background:#fbfdff; }
+  .pp-as .trigger .grp { margin:0 0 0.25rem; }
+  .pp-as .trigmsg { white-space:pre-wrap; word-break:break-word; margin-top:0.25rem; }
 </style>
 <main class="pp-as">
   <div class="runs">
@@ -122,7 +126,22 @@ ASSISTANT_TEMPLATE = """
         · started {{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}
         {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
       </div>
-      {% if selected.final_summary %}<pre>{{ selected.final_summary }}</pre>{% endif %}
+
+      <div class="trigger">
+        <div class="grp">Trigger</div>
+        {% if trigger %}
+          <div><strong>{{ trigger.sender_name }}</strong>
+            <span class="muted">{{ trigger.timestamp }}</span>
+            · <a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a>
+          </div>
+          <div class="trigmsg">{{ trigger.text | truncate(400) }}</div>
+        {% else %}
+          <div class="muted">No triggering chat message found ·
+            room {{ (selected.room_uuid|string)[:8] }} ·
+            <a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a>
+          </div>
+        {% endif %}
+      </div>
 
       {% for c in pending_controls %}
       <div class="pending">⏳ pending {{ c.command }}{% if c.payload and c.payload.get('instruction') %}: {{ c.payload.get('instruction') }}{% endif %}</div>
@@ -148,6 +167,11 @@ ASSISTANT_TEMPLATE = """
       {% if unlinked %}
         <div class="grp">Unlinked writes <span class="muted">(no step reference)</span></div>
         {% for it in unlinked %}{{ render_intent(it) }}{% endfor %}
+      {% endif %}
+
+      {% if selected.final_summary %}
+        <div class="grp">Verdict</div>
+        <pre>{{ selected.final_summary }}</pre>
       {% endif %}
     {% endif %}
   </div>
@@ -194,6 +218,7 @@ def assistant_page() -> str:
     timeline: list = []
     unlinked: list = []
     pending_controls: list = []
+    trigger = None
     run_arg = request.args.get("run", type=int)
     if run_arg is not None:
         selected = db.get_assistant_run(run_arg)
@@ -208,9 +233,10 @@ def assistant_page() -> str:
                 by_step.setdefault(str(it.step_uuid), []).append(it)
         timeline = [(s, by_step.get(str(s.uuid), [])) for s in steps]
         pending_controls = db.list_pending_controls(selected.id)
+        trigger = db.get_run_trigger_message(selected)
 
     return render_template_string(
         ASSISTANT_TEMPLATE,
-        runs=runs, counts=counts, selected=selected,
+        runs=runs, counts=counts, selected=selected, trigger=trigger,
         timeline=timeline, unlinked=unlinked, pending_controls=pending_controls,
     )

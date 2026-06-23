@@ -267,6 +267,32 @@ def test_list_write_intents_for_run_buckets_by_step(app_ctx):
         _cleanup_run(run.id)
 
 
+def test_get_run_trigger_message_returns_latest_human_message(app_ctx):
+    human = db.get_human_user()
+    assert human is not None
+    room = db.create_chatroom(f"trig-{uuid4().hex[:8]}", human.uuid, [])
+    db.post_chat_message(room.uuid, human.uuid, "an earlier message")
+    db.post_chat_message(room.uuid, human.uuid, "please do the thing")
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    try:
+        trig = db.get_run_trigger_message(run)
+        assert trig is not None
+        assert trig["text"] == "please do the thing"   # the latest before start
+        assert trig["sender_name"] == human.name
+        # A run in a room with no human message has no trigger.
+        empty = db.start_assistant_run(
+            journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
+        try:
+            assert db.get_run_trigger_message(empty) is None
+        finally:
+            _cleanup_run(empty.id)
+    finally:
+        _cleanup_run(run.id)
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.db.session.commit()
+
+
 def test_finish_run_sets_terminal_status_and_summary(app_ctx):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6

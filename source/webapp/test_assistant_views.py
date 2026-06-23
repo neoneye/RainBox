@@ -146,6 +146,26 @@ def test_stop_redirect_only_for_running_run(app_ctx, client):
         _cleanup(run.id, room.uuid)
 
 
+def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
+    room = _room()
+    human = db.get_human_user()
+    db.post_chat_message(room.uuid, human.uuid, "please mark the task done")
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished", final_summary="all done — the verdict")
+    try:
+        body = client.get(f"/assistant?run={run.id}").get_data(as_text=True)
+        # Trigger block shows the triggering message + a link into chat.
+        assert "Trigger" in body
+        assert "please mark the task done" in body
+        assert f"/chat?id={run.room_uuid}" in body
+        # The verdict (final_summary) is present and sits BELOW the trigger.
+        assert "Verdict" in body and "all done — the verdict" in body
+        assert body.index("Verdict") > body.index("Trigger")
+    finally:
+        _cleanup(run.id, room.uuid)
+
+
 def test_nav_link_present(app_ctx, client):
     body = client.get("/assistant").get_data(as_text=True)
     assert 'href="/assistant"' in body and ">Assistant<" in body

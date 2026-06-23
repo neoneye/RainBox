@@ -72,8 +72,14 @@ The view assembles: `run`, `steps = list_assistant_steps(run_id)`,
   `stopped`/`stopping`/`killed`), `#id`, room (short uuid), started-at, step
   count. Active row highlighted. Empty state when no runs.
 - **Right — timeline** (only when `?run=` selects one):
-  - Run header: status, journal id, started/finished, `final_summary`, plus
-    **Stop**/**Redirect** when running, and a pending-controls banner.
+  - Run header: status, journal id, started/finished, plus **Stop**/**Redirect**
+    when running, and a pending-controls banner.
+  - **Trigger block (top):** what initiated the run — the latest human chat
+    `message` in the run's room at/before `started_at` (`get_run_trigger_message`),
+    shown as sender + text + an "open in chat ↗" link to `/chat?id=<room_uuid>`.
+    Falls back to a room link when no message is found.
+  - **`final_summary` (the verdict) renders at the bottom**, under a "Verdict"
+    heading, after the step timeline.
   - Step cards in `id` order: step_index, phase badge, action, reason, args
     (`<pre>`), observation_preview, error, model. A `control` step is styled
     distinctly (it's an operator event, not a model action).
