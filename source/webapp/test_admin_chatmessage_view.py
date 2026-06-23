@@ -33,19 +33,19 @@ def test_text_formatter_expands_debug_assistant_pointer(app_ctx):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=ASSISTANT_UUID, step_limit=6)
     db.append_assistant_step(
-        run_id=run.id, step_index=0, phase="planned", action="kanban_read",
+        run_uuid=run.uuid, step_index=0, phase="planned", action="kanban_read",
         reason="List all Done tasks", args={"board_uuid": "b-123"})
     db.append_assistant_step(
-        run_id=run.id, step_index=0, phase="observed", action="kanban_read",
+        run_uuid=run.uuid, step_index=0, phase="observed", action="kanban_read",
         observation_preview="# Done\n- task A\n- task B")
     try:
-        ptr = json.dumps({"run_id": run.id, "step_index": 0, "summary": "x"})
+        ptr = json.dumps({"run_uuid": str(run.uuid), "step_index": 0, "summary": "x"})
         out = str(_format_chatmessage_text(None, None, _Msg("debug-assistant", ptr), "text"))
         assert "kanban_read" in out
         assert "List all Done tasks" in out
         assert "b-123" in out                 # the args
         assert "task A" in out                # the observation/result
-        assert "run_id" not in out            # not the raw pointer
+        assert "run_uuid" not in out            # not the raw pointer
     finally:
         db.db.session.query(db.ChatMessage).filter_by(room_uuid=room.uuid).delete()
         db.db.session.query(db.Chatroom).filter_by(uuid=room.uuid).delete()
@@ -101,7 +101,7 @@ def _make_debug_assistant_row(observation):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=ASSISTANT_UUID, step_limit=6)
     db.append_assistant_step(
-        run_id=run.id, step_index=0, phase="observed", action="query_memory",
+        run_uuid=run.uuid, step_index=0, phase="observed", action="query_memory",
         reason="look it up", args={"query": "x"}, observation_preview=observation)
     msg = next(m for m in db.list_room_messages(room.uuid) if m["kind"] == "debug-assistant")
     return room, msg

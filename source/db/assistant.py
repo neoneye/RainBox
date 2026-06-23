@@ -6,7 +6,7 @@ exactly three helpers — `start_assistant_run`, `append_assistant_step`,
 
 `append_assistant_step` commits the step row first, then (at the step's first
 transition) posts a thin `debug-assistant` chat row carrying only the
-run_id/step_index pointer, so the trace renders inline without putting the
+run_uuid/step_index pointer, so the trace renders inline without putting the
 payload in chat. The pointer is never `kind="progress"` (those get reaped on a
 terminal reply) and never carries the step args/observation.
 """
@@ -68,7 +68,7 @@ def _post_terminal_trace(step: AssistantStep) -> None:
     if step.phase not in _TERMINAL_PHASES:
         db.session.commit()
         return
-    run = db.session.get(AssistantRun, step.run_id)
+    run = db.session.get(AssistantRun, step.run_uuid)
     if run is None:
         db.session.commit()
         return
@@ -93,7 +93,7 @@ def _post_terminal_trace(step: AssistantStep) -> None:
 
 def open_assistant_step(
     *,
-    run_id: int,
+    run_uuid: UUID,
     step_index: int,
     action: str | None,
     reason: str | None = None,
@@ -107,7 +107,7 @@ def open_assistant_step(
     write-intent to. Posts no chat row — that lands at settle, when the
     observation exists."""
     step = AssistantStep(
-        run_id=run_id,
+        run_uuid=run_uuid,
         step_index=step_index,
         phase="running",
         action=action,
@@ -142,7 +142,7 @@ def settle_assistant_step(
 
 def append_assistant_step(
     *,
-    run_id: int,
+    run_uuid: UUID,
     step_index: int,
     phase: StepPhase,
     action: str | None,
@@ -159,7 +159,7 @@ def append_assistant_step(
     is terminal, posts the self-contained `debug-assistant` trace row (see
     `_post_terminal_trace`). Normal action steps use open/settle instead."""
     step = AssistantStep(
-        run_id=run_id,
+        run_uuid=run_uuid,
         step_index=step_index,
         phase=phase,
         action=action,
@@ -201,26 +201,17 @@ def set_run_summary(run: AssistantRun, summary: dict[str, Any]) -> AssistantRun:
     return run
 
 
-def get_assistant_run(run_id: int) -> AssistantRun | None:
-    """One run row by integer id, or None."""
-    return db.session.get(AssistantRun, run_id)
-
-
-def get_assistant_run_by_uuid(run_uuid: UUID) -> AssistantRun | None:
-    """One run row by uuid (the stable, log-greppable identifier), or None."""
-    return (
-        db.session.query(AssistantRun)
-        .filter(AssistantRun.uuid == run_uuid)
-        .one_or_none()
-    )
+def get_assistant_run(run_uuid: UUID) -> AssistantRun | None:
+    """One run row by uuid (the primary key / log-greppable identifier), or None."""
+    return db.session.get(AssistantRun, run_uuid)
 
 
 def list_assistant_runs(limit: int = 50) -> list[AssistantRun]:
     """The most recent runs, newest first — the left pane of the /assistant
-    inspector."""
+    inspector. (uuid is a stable tiebreaker for same-instant rows.)"""
     return (
         db.session.query(AssistantRun)
-        .order_by(AssistantRun.started_at.desc(), AssistantRun.id.desc())
+        .order_by(AssistantRun.started_at.desc(), AssistantRun.uuid.desc())
         .limit(limit)
         .all()
     )
@@ -256,11 +247,11 @@ def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
     }
 
 
-def list_assistant_steps(run_id: int) -> list[AssistantStep]:
+def list_assistant_steps(run_uuid: UUID) -> list[AssistantStep]:
     """All step rows for a run, in commit order (id ascending)."""
     return (
         db.session.query(AssistantStep)
-        .filter(AssistantStep.run_id == run_id)
+        .filter(AssistantStep.run_uuid == run_uuid)
         .order_by(AssistantStep.id)
         .all()
     )
@@ -278,7 +269,7 @@ def write_intent_payload_hash(capability_name: str, payload: dict[str, Any]) -> 
 
 def create_write_intent(
     *,
-    run_id: int,
+    run_uuid: UUID,
     capability_name: str,
     payload: dict[str, Any],
     preview_text: str,
@@ -293,7 +284,7 @@ def create_write_intent(
     is never confirmable as `proposed` (no double-execute window). `step_uuid`
     binds the intent to the step that produced it (the identity pointer)."""
     intent = AssistantWriteIntent(
-        run_id=run_id,
+        run_uuid=run_uuid,
         step_uuid=step_uuid,
         capability_name=capability_name,
         payload=payload,
@@ -317,12 +308,12 @@ def get_write_intent(intent_uuid: UUID) -> AssistantWriteIntent | None:
     )
 
 
-def list_write_intents_for_run(run_id: int) -> list[AssistantWriteIntent]:
+def list_write_intents_for_run(run_uuid: UUID) -> list[AssistantWriteIntent]:
     """All write intents a run produced, in creation order — the /assistant
     inspector buckets them by `step_uuid` to render each one under its step."""
     return (
         db.session.query(AssistantWriteIntent)
-        .filter(AssistantWriteIntent.run_id == run_id)
+        .filter(AssistantWriteIntent.run_uuid == run_uuid)
         .order_by(AssistantWriteIntent.id)
         .all()
     )
@@ -361,7 +352,7 @@ def set_write_intent_state(
 
 def create_assistant_control(
     *,
-    run_id: int,
+    run_uuid: UUID,
     command: str,
     payload: dict[str, Any] | None = None,
     requested_by_uuid: UUID | None = None,
@@ -369,7 +360,7 @@ def create_assistant_control(
 ) -> "AssistantControl":
     """Insert a pending steering command (stop/redirect) for a run."""
     control = AssistantControl(
-        run_id=run_id, command=command, payload=payload or {},
+        run_uuid=run_uuid, command=command, payload=payload or {},
         state="pending", requested_by_uuid=requested_by_uuid, note=note,
     )
     db.session.add(control)
@@ -377,11 +368,11 @@ def create_assistant_control(
     return control
 
 
-def list_pending_controls(run_id: int) -> list["AssistantControl"]:
+def list_pending_controls(run_uuid: UUID) -> list["AssistantControl"]:
     """Pending controls for a run, oldest first (the order the loop applies them)."""
     return (
         db.session.query(AssistantControl)
-        .filter(AssistantControl.run_id == run_id, AssistantControl.state == "pending")
+        .filter(AssistantControl.run_uuid == run_uuid, AssistantControl.state == "pending")
         .order_by(AssistantControl.id)
         .all()
     )
@@ -401,11 +392,11 @@ def mark_control_state(
     return control
 
 
-def request_run_stop(run_id: int) -> bool:
+def request_run_stop(run_uuid: UUID) -> bool:
     """Signal an intent to stop a still-running run (status -> 'stopping'). The
     loop performs the actual clean stop at its next step boundary. Returns False
     for an unknown run; a no-op for an already-terminal run."""
-    run = db.session.get(AssistantRun, run_id)
+    run = db.session.get(AssistantRun, run_uuid)
     if run is None:
         return False
     if run.status == "running":

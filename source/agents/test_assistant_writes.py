@@ -176,7 +176,7 @@ def test_remember_is_undoable_through_the_write_intent_ledger(room):
         # The intent points at its producing step by uuid (the identity pointer),
         # and that step row exists in the run's trace.
         assert intent.step_uuid is not None
-        step_uuids = {s.uuid for s in db.list_assistant_steps(result["assistant_run_id"])}
+        step_uuids = {s.uuid for s in db.list_assistant_steps(result["assistant_run_uuid"])}
         assert intent.step_uuid in step_uuids
         mem_uuid = UUID(intent.result["undo"]["payload"]["memory_uuid"])
         assert db.get_memory_claim(mem_uuid).status == "active"
@@ -211,7 +211,7 @@ def test_confirm_tier_proposes_without_executing(room):
         # An intent was proposed; the claim was NOT activated inline.
         intents = (
             db.db.session.query(AssistantWriteIntent)
-            .filter(AssistantWriteIntent.run_id == result["assistant_run_id"])
+            .filter(AssistantWriteIntent.run_uuid == result["assistant_run_uuid"])
             .all()
         )
         assert len(intents) == 1
@@ -233,7 +233,7 @@ def test_confirm_then_execute_activates_claim(room):
         result = agent.handle(uuid4(), {"room_uuid": str(room)})
         intent = (
             db.db.session.query(AssistantWriteIntent)
-            .filter(AssistantWriteIntent.run_id == result["assistant_run_id"])
+            .filter(AssistantWriteIntent.run_uuid == result["assistant_run_uuid"])
             .one()
         )
         # Operator confirms -> execution activates the claim.
@@ -258,7 +258,7 @@ def test_execute_refused_unless_proposed(room):
         result = agent.handle(uuid4(), {"room_uuid": str(room)})
         intent = (
             db.db.session.query(AssistantWriteIntent)
-            .filter(AssistantWriteIntent.run_id == result["assistant_run_id"])
+            .filter(AssistantWriteIntent.run_uuid == result["assistant_run_uuid"])
             .one()
         )
         # Reject it, then a confirm/execute attempt must do nothing.
@@ -278,7 +278,7 @@ def test_execute_refuses_non_confirm_tier_capability(app_ctx):
     )
     # 'remember' is log_and_undo, not confirm — a proposed intent for it must be refused.
     intent = db.create_write_intent(
-        run_id=run.id, capability_name="remember",
+        run_uuid=run.uuid, capability_name="remember",
         payload={"text": "x"}, preview_text="remember: …",
         room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
     )
@@ -289,7 +289,7 @@ def test_execute_refuses_non_confirm_tier_capability(app_ctx):
         assert refreshed.state == "failed"
     finally:
         db.db.session.query(AssistantWriteIntent).filter(
-            AssistantWriteIntent.run_id == run.id
+            AssistantWriteIntent.run_uuid == run.uuid
         ).delete()
-        db.db.session.query(AssistantRun).filter(AssistantRun.id == run.id).delete()
+        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
         db.db.session.commit()

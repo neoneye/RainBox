@@ -86,13 +86,13 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
         raw = payload.get("run_uuid")
         if raw:
             try:
-                run = db.get_assistant_run_by_uuid(UUID(str(raw)))
+                run = db.get_assistant_run(UUID(str(raw)))
             except ValueError:
                 run = None
         if run is None:
             return {"ok": False, "error": f"assistant run not found: {raw!r}"}
 
-        steps = db.list_assistant_steps(run.id)
+        steps = db.list_assistant_steps(run.uuid)
         trigger = db.get_run_trigger_message(run)
         summary: RunSummary = self._structured_call(  # type: ignore[assignment]
             self._build_prompt(run, steps, trigger)

@@ -135,7 +135,7 @@ def test_undo_moves_task_back_and_marks_undone(board):
     todo, done = board["columns"][0]["uuid"], board["columns"][1]["uuid"]
     db.kanban_move_task(UUID(task["uuid"]), UUID(done), actor=str(ASSISTANT_UUID))
     intent = db.create_write_intent(
-        run_id=run.id, capability_name="kanban_move_task",
+        run_uuid=run.uuid, capability_name="kanban_move_task",
         payload={"task_uuid": task["uuid"], "column_uuid": done},
         preview_text="kanban_move_task: …", room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
         state="completed",
@@ -151,8 +151,8 @@ def test_undo_moves_task_back_and_marks_undone(board):
         assert undo_write_intent(intent.uuid).ok is False
     finally:
         db.db.session.query(AssistantWriteIntent).filter(
-            AssistantWriteIntent.run_id == run.id).delete()
-        db.db.session.query(AssistantRun).filter(AssistantRun.id == run.id).delete()
+            AssistantWriteIntent.run_uuid == run.uuid).delete()
+        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
         db.db.session.commit()
 
 
@@ -207,7 +207,7 @@ def test_undo_refused_if_task_moved_since(board):
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID, step_limit=6)
     obs = _action_move_kanban_task(_ctx(), {"task_uuid": task["uuid"], "column_uuid": done})
     intent = db.create_write_intent(
-        run_id=run.id, capability_name="kanban_move_task",
+        run_uuid=run.uuid, capability_name="kanban_move_task",
         payload={"task_uuid": task["uuid"], "column_uuid": done},
         preview_text="kanban_move_task", room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
         state="completed", result={"undo": obs.data["undo"]})
@@ -219,6 +219,6 @@ def test_undo_refused_if_task_moved_since(board):
         assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == todo  # left put
     finally:
         db.db.session.query(AssistantWriteIntent).filter(
-            AssistantWriteIntent.run_id == run.id).delete()
-        db.db.session.query(AssistantRun).filter(AssistantRun.id == run.id).delete()
+            AssistantWriteIntent.run_uuid == run.uuid).delete()
+        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
         db.db.session.commit()

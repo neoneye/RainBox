@@ -40,7 +40,7 @@ def _room():
 
 
 def _cleanup(run_id: int, room_uuid=None) -> None:
-    db.db.session.query(AssistantRun).filter(AssistantRun.id == run_id).delete()
+    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
     if room_uuid is not None:
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
     db.db.session.commit()
@@ -55,7 +55,7 @@ def test_summarizes_run_into_summary_column(app_ctx):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_id=run.id, step_index=0, action="kanban_move_task", reason="move it")
+        run_uuid=run.uuid, step_index=0, action="kanban_move_task", reason="move it")
     db.settle_assistant_step(step, phase="failed", error="no such task")
     db.finish_run(run, "failed")
     agent = _agent()
@@ -77,14 +77,14 @@ def test_summarizes_run_into_summary_column(app_ctx):
         assert "kanban_move_task" in captured["prompt"]
         assert "no such task" in captured["prompt"]
         # The digest is stored on the run, with a timestamp.
-        fresh = db.get_assistant_run_by_uuid(run.uuid)
+        fresh = db.get_assistant_run(run.uuid)
         assert fresh is not None and fresh.summary is not None
         assert fresh.summary["trigger"] == "move a kanban task to Done"
         assert fresh.summary["obstacles"] == ["the task did not exist"]
         assert fresh.summary["outcome"] == "failed"
         assert "summarized_at" in fresh.summary
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_missing_run_returns_not_ok_without_calling_the_model(app_ctx):

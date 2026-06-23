@@ -275,7 +275,7 @@ def test_assistant_agent_is_a_model_group_agent_not_structured():
 def _steps_for(run_id):
     return (
         db.db.session.query(AssistantStep)
-        .filter(AssistantStep.run_id == run_id)
+        .filter(AssistantStep.run_uuid == run_id)
         .order_by(AssistantStep.id)
         .all()
     )
@@ -289,13 +289,13 @@ def test_loop_persists_run_and_steps_to_tables(room):
     jid = uuid4()
     result = agent.handle(jid, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
-    run = db.db.session.get(AssistantRun, result["assistant_run_id"])
+    run = db.db.session.get(AssistantRun, result["assistant_run_uuid"])
     assert run is not None
     assert run.status == "finished"
     assert run.journal_id == jid
     assert run.room_uuid == room_uuid
 
-    steps = _steps_for(run.id)
+    steps = _steps_for(run.uuid)
     assert [s.phase for s in steps] == ["final"]
     assert [s.action for s in steps] == ["reply"]
 
@@ -309,7 +309,7 @@ def test_journal_result_is_summary_not_full_trace(room):
 
     # The journal result points at the run + carries a short summary; it is not
     # the trace itself.
-    assert result["assistant_run_id"] is not None
+    assert result["assistant_run_uuid"] is not None
     assert result["final_summary"] == "Done."
     assert "steps" not in result
 
@@ -345,7 +345,7 @@ def test_killed_mid_run_leaves_last_committed_step_and_marks_run_failed(room):
     assert len(runs) == 1
     run = runs[0]
     assert run.status == "failed"
-    steps = _steps_for(run.id)
+    steps = _steps_for(run.uuid)
     phases = [s.phase for s in steps]
     # Step 0's failed row survived the crash; a terminal failed row records the
     # exception raised while deciding step 1. One row per step now.

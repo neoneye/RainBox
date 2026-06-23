@@ -101,7 +101,7 @@ def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
         # (planned -> failed), never a running/observed dispatch.
         steps = (
             db.db.session.query(AssistantStep)
-            .filter(AssistantStep.run_id == result["assistant_run_id"])
+            .filter(AssistantStep.run_uuid == result["assistant_run_uuid"])
             .order_by(AssistantStep.id)
             .all()
         )

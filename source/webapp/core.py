@@ -333,20 +333,20 @@ def _format_sender_name(view, context, model, name):
 
 
 def _resolve_debug_assistant_text(model) -> str | None:
-    """A debug-assistant row stores only a {run_id, step_index, summary} pointer.
+    """A debug-assistant row may store a {run_uuid, step_index, summary} pointer.
     Resolve it to the step's full action/reason/args/observation (no truncation),
     or None if `model` is not a resolvable debug-assistant row."""
     if model.kind != "debug-assistant":
         return None
     try:
         ptr = json.loads(model.text or "")
-        run_id, step_index = ptr.get("run_id"), ptr.get("step_index")
+        run_uuid, step_index = ptr.get("run_uuid"), ptr.get("step_index")
     except (ValueError, TypeError):
         return None
-    if run_id is None:
+    if run_uuid is None:
         return None
     steps = (db.session.query(AssistantStep)
-             .filter_by(run_id=run_id, step_index=step_index)
+             .filter_by(run_uuid=run_uuid, step_index=step_index)
              .order_by(AssistantStep.id).all())
     if not steps:
         return None

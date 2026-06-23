@@ -42,7 +42,7 @@ def _propose_activation(app):
         from db import AssistantWriteIntent
         intent = (
             db.db.session.query(AssistantWriteIntent)
-            .filter(AssistantWriteIntent.run_id == result["assistant_run_id"]).one()
+            .filter(AssistantWriteIntent.run_uuid == result["assistant_run_uuid"]).one()
         )
         return intent.uuid, cand.uuid, room.uuid
 

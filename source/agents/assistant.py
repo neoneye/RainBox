@@ -1411,7 +1411,6 @@ class AssistantAgent(ModelGroupAgent):
         return {
             "ok": status != "failed",
             "status": status,
-            "assistant_run_id": self._run.id,
             "assistant_run_uuid": str(self._run.uuid),
             "final_summary": final_summary,
             "step_count": len(self._steps),
@@ -1629,7 +1628,7 @@ class AssistantAgent(ModelGroupAgent):
             # (e.g. edit_file's base_sha, so confirm refuses a since-changed file).
             payload.update(dry.data.get("confirm_payload") or {})
         intent = db.create_write_intent(
-            run_id=self._run.id,
+            run_uuid=self._run.uuid,
             step_uuid=ctx.step_uuid,
             capability_name=cap.name.value,
             payload=payload,
@@ -1668,7 +1667,7 @@ class AssistantAgent(ModelGroupAgent):
             )
         preview = f"{cap.name.value}: {json.dumps(decision.args, sort_keys=True)}"
         db.create_write_intent(
-            run_id=self._run.id,
+            run_uuid=self._run.uuid,
             step_uuid=ctx.step_uuid,
             capability_name=cap.name.value,
             payload=decision.args,
@@ -1682,7 +1681,6 @@ class AssistantAgent(ModelGroupAgent):
     def _heartbeat_extra(self) -> dict[str, Any]:
         extra: dict[str, Any] = {"activity": self._activity}
         if self._run is not None:
-            extra["assistant_run_id"] = self._run.id
             extra["assistant_run_uuid"] = str(self._run.uuid)
         return extra
 
@@ -1696,7 +1694,7 @@ class AssistantAgent(ModelGroupAgent):
         message, finishes the run `stopped`, and ignores any other pending
         controls. Otherwise pending redirects are folded into the scratchpad so
         the next step sees them — prior steps are never touched."""
-        controls = db.list_pending_controls(run.id)
+        controls = db.list_pending_controls(run.uuid)
         if not controls:
             return None
 
@@ -1734,7 +1732,7 @@ class AssistantAgent(ModelGroupAgent):
         )
         if self._run is not None:
             db.append_assistant_step(
-                run_id=self._run.id, step_index=step_index, phase="control",
+                run_uuid=self._run.uuid, step_index=step_index, phase="control",
                 action=command, reason=detail, model_group_uuid=self.model_group_uuid,
             )
 
@@ -1765,7 +1763,7 @@ class AssistantAgent(ModelGroupAgent):
         if self._run is None:
             return None
         return db.open_assistant_step(
-            run_id=self._run.id,
+            run_uuid=self._run.uuid,
             step_index=step_index,
             action=decision.action.value,
             reason=decision.reason,
@@ -1822,7 +1820,7 @@ class AssistantAgent(ModelGroupAgent):
         )
         if self._run is not None:
             db.append_assistant_step(
-                run_id=self._run.id,
+                run_uuid=self._run.uuid,
                 step_index=step_index,
                 phase=phase,  # type: ignore[arg-type]
                 action=action,

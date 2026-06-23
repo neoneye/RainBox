@@ -20,12 +20,12 @@ def _run(app):
     with app.app_context():
         return db.start_assistant_run(
             journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
-        ).id
+        ).uuid
 
 
 def _cleanup(app, run_id):
     with app.app_context():
-        db.db.session.query(AssistantRun).filter(AssistantRun.id == run_id).delete()
+        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
         db.db.session.commit()
 
 

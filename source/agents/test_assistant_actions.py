@@ -331,7 +331,7 @@ def _decision(action: AssistantActionName, **args) -> AssistantStepDecision:
 def _steps_for(run_id):
     return (
         db.db.session.query(AssistantStep)
-        .filter(AssistantStep.run_id == run_id)
+        .filter(AssistantStep.run_uuid == run_id)
         .order_by(AssistantStep.id)
         .all()
     )
@@ -347,7 +347,7 @@ def test_loop_dispatches_read_action_then_replies(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "finished"
-    steps = _steps_for(result["assistant_run_id"])
+    steps = _steps_for(result["assistant_run_uuid"])
     # One row per step: the read step settles running->observed in place, the
     # reply is a single terminal row.
     assert [s.phase for s in steps] == ["observed", "final"]
@@ -368,7 +368,7 @@ def test_loop_records_failed_action_and_continues(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "finished"
-    steps = _steps_for(result["assistant_run_id"])
+    steps = _steps_for(result["assistant_run_uuid"])
     # The blocked read opens a running row (committed before the action) that
     # settles in place to failed; then a terminal reply row.
     assert [s.phase for s in steps] == ["failed", "final"]

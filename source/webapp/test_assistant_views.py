@@ -43,7 +43,7 @@ def _room():
 
 def _cleanup(run_id: int, room_uuid) -> None:
     # assistant_step / assistant_write_intent cascade off assistant_run.
-    db.db.session.query(AssistantRun).filter(AssistantRun.id == run_id).delete()
+    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
     db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
     db.db.session.commit()
 
@@ -60,7 +60,7 @@ def test_runs_list_renders(app_ctx, client):
         assert "Runs" in body
         assert f"?id={run.uuid}" in body       # the run appears in the left list (uuid-addressed)
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_timeline_shows_step_with_inline_intent_and_undo(app_ctx, client):
@@ -68,10 +68,10 @@ def test_timeline_shows_step_with_inline_intent_and_undo(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_id=run.id, step_index=0, action="kanban_move_task", reason="move it")
+        run_uuid=run.uuid, step_index=0, action="kanban_move_task", reason="move it")
     db.settle_assistant_step(step, phase="observed", observation_preview="moved the task")
     intent = db.create_write_intent(
-        run_id=run.id, step_uuid=step.uuid, capability_name="kanban_move_task",
+        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="kanban_move_task",
         payload={"task_uuid": "t"}, preview_text="move", room_uuid=room.uuid,
         agent_uuid=run.agent_uuid, state="completed",
         result={"undo": {"capability": "kanban_delete_task", "payload": {}}})
@@ -85,7 +85,7 @@ def test_timeline_shows_step_with_inline_intent_and_undo(app_ctx, client):
         # not a proposed intent → no confirm/reject
         assert f"/write-intents/{intent.uuid}/confirm" not in body
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_proposed_intent_shows_confirm_and_reject(app_ctx, client):
@@ -93,10 +93,10 @@ def test_proposed_intent_shows_confirm_and_reject(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_id=run.id, step_index=0, action="set_reminder", reason="schedule")
+        run_uuid=run.uuid, step_index=0, action="set_reminder", reason="schedule")
     db.settle_assistant_step(step, phase="observed", observation_preview="proposed")
     intent = db.create_write_intent(
-        run_id=run.id, step_uuid=step.uuid, capability_name="set_reminder",
+        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="set_reminder",
         payload={"text": "x", "when": "2026-06-24T09:00"}, preview_text="fires …",
         room_uuid=room.uuid, agent_uuid=run.agent_uuid)  # default state=proposed
     db.finish_run(run, "finished")
@@ -107,7 +107,7 @@ def test_proposed_intent_shows_confirm_and_reject(app_ctx, client):
         # proposed → not undoable
         assert f"/write-intents/{intent.uuid}/undo" not in body
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_completed_intent_without_undo_has_no_action(app_ctx, client):
@@ -115,10 +115,10 @@ def test_completed_intent_without_undo_has_no_action(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_id=run.id, step_index=0, action="activate_memory", reason="activate")
+        run_uuid=run.uuid, step_index=0, action="activate_memory", reason="activate")
     db.settle_assistant_step(step, phase="observed", observation_preview="done")
     intent = db.create_write_intent(
-        run_id=run.id, step_uuid=step.uuid, capability_name="activate_memory",
+        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="activate_memory",
         payload={"memory_uuid": "m"}, preview_text="activated", room_uuid=room.uuid,
         agent_uuid=run.agent_uuid, state="completed", result={})  # no undo record
     db.finish_run(run, "finished")
@@ -127,7 +127,7 @@ def test_completed_intent_without_undo_has_no_action(app_ctx, client):
         assert f"/write-intents/{intent.uuid}/undo" not in body
         assert f"/write-intents/{intent.uuid}/confirm" not in body
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_stop_redirect_only_for_running_run(app_ctx, client):
@@ -136,14 +136,14 @@ def test_stop_redirect_only_for_running_run(app_ctx, client):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())  # status=running
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert f"/chat/api/assistant/runs/{run.id}/stop" in body
+        assert f"/chat/api/assistant/runs/{run.uuid}/stop" in body
         assert "ppRedirect(" in body
         # Once finished, the live-only controls disappear.
         db.finish_run(run, "finished")
         body2 = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert f"/chat/api/assistant/runs/{run.id}/stop" not in body2
+        assert f"/chat/api/assistant/runs/{run.uuid}/stop" not in body2
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
@@ -164,7 +164,7 @@ def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
         assert "Verdict" in body and "all done — the verdict" in body
         assert body.index("Verdict") > body.index("Trigger")
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
@@ -178,16 +178,16 @@ def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
         assert str(run.uuid) in body
         assert "Copy" in body
         assert "Select a run" not in body          # a run is selected
-        # No back-compat: an integer ?id= and the old ?run= name do NOT select a run.
+        # Only a uuid ?id= resolves: a non-uuid value and the old ?run= don't.
         assert "Select a run" in client.get(
-            f"/assistant?id={run.id}").get_data(as_text=True)
+            "/assistant?id=not-a-uuid").get_data(as_text=True)
         assert "Select a run" in client.get(
             f"/assistant?run={run.uuid}").get_data(as_text=True)
         # The runs list links address runs by uuid.
         listing = client.get("/assistant").get_data(as_text=True)
         assert f"?id={run.uuid}" in listing
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_run_summary_renders_in_list_and_detail(app_ctx, client):
@@ -206,7 +206,7 @@ def test_run_summary_renders_in_list_and_detail(app_ctx, client):
         assert "the disk was full" in detail          # obstacle in the detail pane
         assert "partial" in detail                    # outcome badge
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_unsummarized_run_shows_pending(app_ctx, client):
@@ -218,7 +218,7 @@ def test_unsummarized_run_shows_pending(app_ctx, client):
         detail = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert "Not yet summarized" in detail
     finally:
-        _cleanup(run.id, room.uuid)
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_nav_link_present(app_ctx, client):

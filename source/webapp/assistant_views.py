@@ -116,7 +116,7 @@ ASSISTANT_TEMPLATE = """
     <h1>Runs</h1>
     {% if not runs %}<div class="empty">No assistant runs yet.</div>{% endif %}
     {% for r in runs %}
-    <a class="run {{ 'active' if selected and r.id == selected.id }}
+    <a class="run {{ 'active' if selected and r.uuid == selected.uuid }}
               {{ ('out-' + r.summary.outcome) if r.summary and r.summary.outcome }}"
        href="{{ url_for('assistant_page') }}?id={{ r.uuid }}">
       <div class="meta-top">
@@ -132,7 +132,7 @@ ASSISTANT_TEMPLATE = """
         <div class="rsum pending">summarizing…</div>
       {% endif %}
       <div class="meta">
-        {{ counts.get(r.id, 0) }} step{{ '' if counts.get(r.id, 0) == 1 else 's' }}
+        {{ counts.get(r.uuid, 0) }} step{{ '' if counts.get(r.uuid, 0) == 1 else 's' }}
         · room {{ (r.room_uuid|string)[:8] }}
       </div>
     </a>
@@ -149,8 +149,8 @@ ASSISTANT_TEMPLATE = """
         <span class="badge b-{{ selected.status }}">{{ selected.status }}</span>
         <a class="muted" href="{{ url_for('assistant_page') }}?id={{ selected.uuid }}">Refresh</a>
         {% if selected.status in ('running', 'stopping') %}
-          <button class="danger" onclick="ppAct('/chat/api/assistant/runs/{{ selected.id }}/stop')">Stop</button>
-          <button onclick="ppRedirect({{ selected.id }})">Redirect…</button>
+          <button class="danger" onclick="ppAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop')">Stop</button>
+          <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
         {% endif %}
       </div>
       <div class="uuidline">
@@ -266,13 +266,13 @@ ASSISTANT_TEMPLATE = """
 @app.route("/assistant")
 def assistant_page() -> str:
     runs = db.list_assistant_runs(limit=50)
-    counts: dict[int, int] = {}
+    counts: dict = {}
     if runs:
-        run_ids = [r.id for r in runs]
+        run_uuids = [r.uuid for r in runs]
         counts = dict(
-            db.db.session.query(AssistantStep.run_id, func.count())
-            .filter(AssistantStep.run_id.in_(run_ids))
-            .group_by(AssistantStep.run_id)
+            db.db.session.query(AssistantStep.run_uuid, func.count())
+            .filter(AssistantStep.run_uuid.in_(run_uuids))
+            .group_by(AssistantStep.run_uuid)
             .all()
         )
 
@@ -285,12 +285,12 @@ def assistant_page() -> str:
     run_arg = request.args.get("id")
     if run_arg:
         try:
-            selected = db.get_assistant_run_by_uuid(UUID(run_arg))
+            selected = db.get_assistant_run(UUID(run_arg))
         except ValueError:
             selected = None
     if selected is not None:
-        steps = db.list_assistant_steps(selected.id)
-        intents = db.list_write_intents_for_run(selected.id)
+        steps = db.list_assistant_steps(selected.uuid)
+        intents = db.list_write_intents_for_run(selected.uuid)
         by_step: dict[str, list] = {}
         for it in intents:
             if it.step_uuid is None:
@@ -298,7 +298,7 @@ def assistant_page() -> str:
             else:
                 by_step.setdefault(str(it.step_uuid), []).append(it)
         timeline = [(s, by_step.get(str(s.uuid), [])) for s in steps]
-        pending_controls = db.list_pending_controls(selected.id)
+        pending_controls = db.list_pending_controls(selected.uuid)
         trigger = db.get_run_trigger_message(selected)
 
     return render_template_string(

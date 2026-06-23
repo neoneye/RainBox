@@ -220,6 +220,17 @@ def init_db(app: Flask) -> None:
         # for the Q&A store.
         db.session.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
         db.session.commit()
+        # The assistant_* tables switched from an integer assistant_run.id PK to a
+        # uuid PK (children reference run_uuid). create_all() never ALTERs an
+        # existing table, so a DB built under the old schema must drop the four
+        # tables first and let create_all rebuild them — assistant run *history*
+        # is disposable (it's a trace, regenerated on the next run). Guarded on
+        # the old `id` column so it runs exactly once.
+        if _column_exists("assistant_run", "id"):
+            db.session.execute(sa.text(
+                "DROP TABLE IF EXISTS assistant_write_intent, assistant_control, "
+                "assistant_step, assistant_run CASCADE"))
+            db.session.commit()
         db.create_all()
         _migrate_journal_id_to_uuid()
         # Idempotent column additions for tables that pre-date the column.

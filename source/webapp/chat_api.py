@@ -285,20 +285,16 @@ def chat_room_message(room_uuid: str, message_id: int) -> Response:
     return jsonify(msg)
 
 
-@app.route("/chat/api/assistant/runs/<int:run_id>")
-def assistant_run_steps(run_id: int) -> Response:
-    """An assistant run plus its step trace. The chat UI calls this to render the
-    inline plan/action/observation behind a thin `debug-assistant` pointer row
-    (which carries only {run_id, step_index}); the tables are the source of
-    truth."""
-    run = db.get_assistant_run(run_id)
+@app.route("/chat/api/assistant/runs/<uuid:run_uuid>")
+def assistant_run_steps(run_uuid: UUID) -> Response:
+    """An assistant run plus its step trace, addressed by the run's uuid."""
+    run = db.get_assistant_run(run_uuid)
     if run is None:
         abort(404, "assistant run not found")
-    steps = db.list_assistant_steps(run_id)
+    steps = db.list_assistant_steps(run_uuid)
     return jsonify(
         {
             "run": {
-                "id": run.id,
                 "uuid": str(run.uuid),
                 "status": run.status,
                 "step_limit": run.step_limit,
@@ -324,25 +320,25 @@ def assistant_run_steps(run_id: int) -> Response:
     )
 
 
-@app.route("/chat/api/assistant/runs/<int:run_id>/stop", methods=["POST"])
-def stop_assistant_run(run_id: int) -> Response:
+@app.route("/chat/api/assistant/runs/<uuid:run_uuid>/stop", methods=["POST"])
+def stop_assistant_run(run_uuid: UUID) -> Response:
     """Request a clean stop of an in-flight run. Inserts a stop control the loop
     honours at its next step boundary and flags the run `stopping`."""
-    if db.get_assistant_run(run_id) is None:
+    if db.get_assistant_run(run_uuid) is None:
         abort(404, "assistant run not found")
     human = db.get_human_user()
     db.create_assistant_control(
-        run_id=run_id, command="stop",
+        run_uuid=run_uuid, command="stop",
         requested_by_uuid=human.uuid if human else None,
     )
-    db.request_run_stop(run_id)
+    db.request_run_stop(run_uuid)
     return jsonify({"ok": True, "status": "stopping"})
 
 
-@app.route("/chat/api/assistant/runs/<int:run_id>/redirect", methods=["POST"])
-def redirect_assistant_run(run_id: int) -> Response | tuple[Response, int]:
+@app.route("/chat/api/assistant/runs/<uuid:run_uuid>/redirect", methods=["POST"])
+def redirect_assistant_run(run_uuid: UUID) -> Response | tuple[Response, int]:
     """Steer an in-flight run: the loop folds the instruction into the next step."""
-    if db.get_assistant_run(run_id) is None:
+    if db.get_assistant_run(run_uuid) is None:
         abort(404, "assistant run not found")
     data = request.get_json(silent=True) or {}
     instruction = (data.get("instruction") or "").strip()
@@ -350,7 +346,7 @@ def redirect_assistant_run(run_id: int) -> Response | tuple[Response, int]:
         abort(400, "instruction required")
     human = db.get_human_user()
     db.create_assistant_control(
-        run_id=run_id, command="redirect", payload={"instruction": instruction},
+        run_uuid=run_uuid, command="redirect", payload={"instruction": instruction},
         requested_by_uuid=human.uuid if human else None,
     )
     return jsonify({"ok": True})

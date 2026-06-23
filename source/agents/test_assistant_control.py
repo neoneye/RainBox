@@ -65,7 +65,7 @@ def _decider_that_inserts_control(agent, command, payload=None):
     def decide(**_kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            db.create_assistant_control(run_id=agent._run.id, command=command,
+            db.create_assistant_control(run_uuid=agent._run.uuid, command=command,
                                         payload=payload or {})
             return _query()
         return _reply()
@@ -77,7 +77,7 @@ def _decider_that_inserts_control(agent, command, payload=None):
 def _steps(run_id):
     return (
         db.db.session.query(AssistantStep)
-        .filter(AssistantStep.run_id == run_id)
+        .filter(AssistantStep.run_uuid == run_id)
         .order_by(AssistantStep.id)
         .all()
     )
@@ -95,10 +95,10 @@ def test_stop_at_step_boundary_leaves_clean_trace(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room)})
 
     assert result["status"] == "stopped"
-    run = db.db.session.get(AssistantRun, result["assistant_run_id"])
+    run = db.db.session.get(AssistantRun, result["assistant_run_uuid"])
     assert run.status == "stopped"
     assert run.final_summary and "stopped by operator" in run.final_summary
-    phases = [(s.action, s.phase) for s in _steps(run.id)]
+    phases = [(s.action, s.phase) for s in _steps(run.uuid)]
     # Step 0's work is intact; a control step records the stop.
     assert ("query_memory", "observed") in phases
     assert ("stop", "control") in phases
@@ -119,7 +119,7 @@ def test_redirect_consumed_before_next_step(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room)})
 
     assert result["status"] == "finished"
-    run_id = result["assistant_run_id"]
+    run_id = result["assistant_run_uuid"]
     phases = [(s.action, s.phase) for s in _steps(run_id)]
     assert ("redirect", "control") in phases   # the redirect was applied
     assert ("query_memory", "observed") in phases  # step 0 intact

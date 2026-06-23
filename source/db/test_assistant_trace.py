@@ -27,9 +27,9 @@ def app_ctx():
         ctx.pop()
 
 
-def _cleanup_run(run_id: int) -> None:
+def _cleanup_run(run_uuid) -> None:
     # assistant_step has an ON DELETE CASCADE FK to assistant_run.
-    db.db.session.query(AssistantRun).filter(AssistantRun.id == run_id).delete()
+    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_uuid).delete()
     db.db.session.commit()
 
 
@@ -38,12 +38,12 @@ def test_start_assistant_run_creates_running_row(app_ctx):
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
-        assert run.id is not None
+        assert run.uuid is not None
         assert run.status == "running"
         assert run.step_limit == 6
         assert run.finished_at is None
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
 def test_append_step_is_committed_before_the_next_append(app_ctx):
@@ -55,7 +55,7 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
     )
     try:
         db.append_assistant_step(
-            run_id=run.id, step_index=0, phase="running",
+            run_uuid=run.uuid, step_index=0, phase="running",
             action="query_qa", reason="look it up", args={"query": "git status"},
         )
         # Simulate another reader (fresh state) mid-action: the running row is
@@ -63,14 +63,14 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
         db.db.session.expire_all()
         running = (
             db.db.session.query(AssistantStep)
-            .filter(AssistantStep.run_id == run.id, AssistantStep.phase == "running")
+            .filter(AssistantStep.run_uuid == run.uuid, AssistantStep.phase == "running")
             .all()
         )
         assert len(running) == 1
         assert running[0].action == "query_qa"
         assert running[0].args == {"query": "git status"}
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
 def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
@@ -83,19 +83,19 @@ def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
     )
     try:
         db.append_assistant_step(
-            run_id=run.id, step_index=0, phase="failed",
+            run_uuid=run.uuid, step_index=0, phase="failed",
             action="query_qa", error="boom: kaboom",
         )
         # Queryable by phase/action without scanning chat history.
         failed = (
             db.db.session.query(AssistantStep)
-            .filter(AssistantStep.run_id == run.id, AssistantStep.phase == "failed")
+            .filter(AssistantStep.run_uuid == run.uuid, AssistantStep.phase == "failed")
             .all()
         )
         assert len(failed) == 1
         assert failed[0].error == "boom: kaboom"
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
 def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
@@ -111,13 +111,13 @@ def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
     try:
         # `planned` posts NO anchor (the observation doesn't exist yet).
         db.append_assistant_step(
-            run_id=run.id, step_index=0, phase="planned",
+            run_uuid=run.uuid, step_index=0, phase="planned",
             action="query_memory", reason="look it up", args={"query": "the-query"},
         )
         assert not [m for m in db.list_room_messages(chatroom.uuid)
                     if m["kind"] == "debug-assistant"]
         db.append_assistant_step(
-            run_id=run.id, step_index=0, phase="observed",
+            run_uuid=run.uuid, step_index=0, phase="observed",
             action="query_memory", reason="look it up", args={"query": "the-query"},
             observation_preview="found the fact",
         )
@@ -135,7 +135,7 @@ def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
         assert state["observation"] == "found the fact"
         assert "run_id" not in state                 # not a pointer
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
         db.db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
@@ -153,7 +153,7 @@ def test_open_then_settle_is_one_mutable_row(app_ctx):
     )
     try:
         step = db.open_assistant_step(
-            run_id=run.id, step_index=0, action="query_memory",
+            run_uuid=run.uuid, step_index=0, action="query_memory",
             reason="look it up", args={"query": "the-query"},
         )
         assert step.uuid is not None
@@ -168,7 +168,7 @@ def test_open_then_settle_is_one_mutable_row(app_ctx):
         # Same row, mutated — not a new one.
         assert settled.id == step.id
         assert settled.uuid == step.uuid
-        rows = db.list_assistant_steps(run.id)
+        rows = db.list_assistant_steps(run.uuid)
         assert len(rows) == 1
         assert rows[0].phase == "observed"
         assert rows[0].observation_preview == "found the fact"
@@ -180,7 +180,7 @@ def test_open_then_settle_is_one_mutable_row(app_ctx):
         assert state["action"] == "query_memory"
         assert state["observation"] == "found the fact"
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
         db.db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
@@ -196,17 +196,17 @@ def test_unsettled_open_step_remains_a_durable_running_row(app_ctx):
     )
     try:
         db.open_assistant_step(
-            run_id=run.id, step_index=0, action="query_qa",
+            run_uuid=run.uuid, step_index=0, action="query_qa",
             reason="look it up", args={"query": "git status"},
         )
         db.db.session.expire_all()  # simulate a fresh reader after a crash
-        rows = db.list_assistant_steps(run.id)
+        rows = db.list_assistant_steps(run.uuid)
         assert len(rows) == 1
         assert rows[0].phase == "running"
         assert rows[0].action == "query_qa"
         assert rows[0].args == {"query": "git status"}
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
 def test_write_intent_binds_step_uuid(app_ctx):
@@ -217,17 +217,17 @@ def test_write_intent_binds_step_uuid(app_ctx):
     )
     try:
         step = db.open_assistant_step(
-            run_id=run.id, step_index=2, action="kanban_move_task", reason="move it",
+            run_uuid=run.uuid, step_index=2, action="kanban_move_task", reason="move it",
         )
         intent = db.create_write_intent(
-            run_id=run.id, step_uuid=step.uuid,
+            run_uuid=run.uuid, step_uuid=step.uuid,
             capability_name="kanban_move_task", payload={"task_uuid": "t"},
             preview_text="move", room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,
             state="completed", result={"undo": {"x": 1}},
         )
         assert intent.step_uuid == step.uuid
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
 def test_list_assistant_runs_is_newest_first(app_ctx):
@@ -237,12 +237,12 @@ def test_list_assistant_runs_is_newest_first(app_ctx):
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
     try:
         runs = db.list_assistant_runs(limit=50)
-        ids = [r.id for r in runs]
+        ids = [r.uuid for r in runs]
         # r2 was created after r1, so it sorts ahead of it.
-        assert ids.index(r2.id) < ids.index(r1.id)
+        assert ids.index(r2.uuid) < ids.index(r1.uuid)
     finally:
-        _cleanup_run(r1.id)
-        _cleanup_run(r2.id)
+        _cleanup_run(r1.uuid)
+        _cleanup_run(r2.uuid)
 
 
 def test_list_write_intents_for_run_buckets_by_step(app_ctx):
@@ -250,21 +250,21 @@ def test_list_write_intents_for_run_buckets_by_step(app_ctx):
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
     try:
         step = db.open_assistant_step(
-            run_id=run.id, step_index=0, action="kanban_move_task", reason="m")
+            run_uuid=run.uuid, step_index=0, action="kanban_move_task", reason="m")
         linked = db.create_write_intent(
-            run_id=run.id, step_uuid=step.uuid, capability_name="kanban_move_task",
+            run_uuid=run.uuid, step_uuid=step.uuid, capability_name="kanban_move_task",
             payload={}, preview_text="p", room_uuid=run.room_uuid,
             agent_uuid=run.agent_uuid, state="completed", result={"undo": {}})
         unlinked = db.create_write_intent(
-            run_id=run.id, capability_name="kanban_move_task", payload={},
+            run_uuid=run.uuid, capability_name="kanban_move_task", payload={},
             preview_text="p", room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,
             state="completed", result={"undo": {}})  # step_uuid NULL
-        intents = db.list_write_intents_for_run(run.id)
+        intents = db.list_write_intents_for_run(run.uuid)
         assert {i.uuid for i in intents} == {linked.uuid, unlinked.uuid}
         by_step = [i for i in intents if i.step_uuid == step.uuid]
         assert [i.uuid for i in by_step] == [linked.uuid]
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
 def test_set_run_summary_round_trips_and_stamps_time(app_ctx):
@@ -273,25 +273,25 @@ def test_set_run_summary_round_trips_and_stamps_time(app_ctx):
     try:
         assert run.summary is None
         db.set_run_summary(run, {"trigger": "t", "obstacles": ["o"], "outcome": "partial"})
-        fresh = db.get_assistant_run_by_uuid(run.uuid)
+        fresh = db.get_assistant_run(run.uuid)
         assert fresh is not None
         assert fresh.summary["trigger"] == "t"
         assert fresh.summary["obstacles"] == ["o"]
         assert fresh.summary["outcome"] == "partial"
         assert fresh.summary["summarized_at"]  # stamped by the helper
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
-def test_get_assistant_run_by_uuid(app_ctx):
+def test_get_assistant_run(app_ctx):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
     try:
-        got = db.get_assistant_run_by_uuid(run.uuid)
-        assert got is not None and got.id == run.id
-        assert db.get_assistant_run_by_uuid(uuid4()) is None  # unknown uuid
+        got = db.get_assistant_run(run.uuid)
+        assert got is not None and got.uuid == run.uuid
+        assert db.get_assistant_run(uuid4()) is None  # unknown uuid
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
 def test_get_run_trigger_message_returns_latest_human_message(app_ctx):
@@ -314,9 +314,9 @@ def test_get_run_trigger_message_returns_latest_human_message(app_ctx):
         try:
             assert db.get_run_trigger_message(empty) is None
         finally:
-            _cleanup_run(empty.id)
+            _cleanup_run(empty.uuid)
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
         db.db.session.commit()
 
@@ -328,12 +328,12 @@ def test_finish_run_sets_terminal_status_and_summary(app_ctx):
     try:
         db.finish_run(run, "finished", final_summary="all done")
         db.db.session.expire_all()
-        reloaded = db.db.session.get(AssistantRun, run.id)
+        reloaded = db.db.session.get(AssistantRun, run.uuid)
         assert reloaded.status == "finished"
         assert reloaded.final_summary == "all done"
         assert reloaded.finished_at is not None
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
 def test_get_assistant_run_returns_row_or_none(app_ctx):
@@ -341,10 +341,10 @@ def test_get_assistant_run_returns_row_or_none(app_ctx):
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
     )
     try:
-        assert db.get_assistant_run(run.id) is not None
-        assert db.get_assistant_run(999999999) is None
+        assert db.get_assistant_run(run.uuid) is not None
+        assert db.get_assistant_run(uuid4()) is None
     finally:
-        _cleanup_run(run.id)
+        _cleanup_run(run.uuid)
 
 
 def test_init_db_twice_preserves_sentinel_assistant_run(app_ctx):
@@ -357,8 +357,8 @@ def test_init_db_twice_preserves_sentinel_assistant_run(app_ctx):
         db.init_db(app_ctx)
         db.init_db(app_ctx)  # second call must also succeed
         db.db.session.expire_all()
-        reloaded = db.db.session.get(AssistantRun, sentinel.id)
+        reloaded = db.db.session.get(AssistantRun, sentinel.uuid)
         assert reloaded is not None, "init_db erased existing assistant_run rows"
         assert reloaded.journal_id == sentinel_jid
     finally:
-        _cleanup_run(sentinel.id)
+        _cleanup_run(sentinel.uuid)

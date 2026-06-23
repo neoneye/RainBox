@@ -951,11 +951,14 @@ class AssistantRun(db.Model):
     The durable, queryable source of truth for an assistant turn (journal.result
     holds only a short summary; chat rows hold only thin inline pointers). One
     row per handle() call; its assistant_step children are the step trace.
+
+    Identity is the `uuid` (the primary key) — the same token shown in the
+    `/assistant` inspector and grep'd from logs. Children reference it via
+    `run_uuid`. There is no integer surrogate id.
     """
 
     __tablename__ = "assistant_run"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     journal_id: Mapped[UUID | None] = mapped_column(index=True)
     room_uuid: Mapped[UUID] = mapped_column()
     agent_uuid: Mapped[UUID] = mapped_column()
@@ -1002,8 +1005,8 @@ class AssistantStep(db.Model):
     __tablename__ = "assistant_step"
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
-    run_id: Mapped[int] = mapped_column(
-        ForeignKey("assistant_run.id", ondelete="CASCADE"), index=True
+    run_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("assistant_run.uuid", ondelete="CASCADE"), index=True
     )
     step_index: Mapped[int] = mapped_column()
     phase: Mapped[str] = mapped_column(Text)
@@ -1022,7 +1025,7 @@ class AssistantStep(db.Model):
             "phase IN ('planned','running','observed','failed','final','control')",
             name="assistant_step_phase_check",
         ),
-        Index("assistant_step_by_run", "run_id", "step_index", "id"),
+        Index("assistant_step_by_run", "run_uuid", "step_index", "id"),
         Index("assistant_step_by_action_phase", "action", "phase"),
         Index("assistant_step_by_created", "created_at"),
     )
@@ -1038,8 +1041,8 @@ class AssistantControl(db.Model):
     __tablename__ = "assistant_control"
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
-    run_id: Mapped[int] = mapped_column(
-        ForeignKey("assistant_run.id", ondelete="CASCADE"), index=True
+    run_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("assistant_run.uuid", ondelete="CASCADE"), index=True
     )
     command: Mapped[str] = mapped_column(Text)
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -1058,7 +1061,7 @@ class AssistantControl(db.Model):
             "state IN ('pending','applied','ignored')",
             name="ck_assistant_control_state",
         ),
-        Index("assistant_control_by_run_state", "run_id", "state", "id"),
+        Index("assistant_control_by_run_state", "run_uuid", "state", "id"),
     )
 
 
@@ -1076,8 +1079,8 @@ class AssistantWriteIntent(db.Model):
     __tablename__ = "assistant_write_intent"
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
-    run_id: Mapped[int] = mapped_column(
-        ForeignKey("assistant_run.id", ondelete="CASCADE"), index=True
+    run_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("assistant_run.uuid", ondelete="CASCADE"), index=True
     )
     # The step that produced this intent — the sole pointer (assistant_step is
     # one mutable row per step, so its uuid is stable). Nullable only because
@@ -1107,7 +1110,7 @@ class AssistantWriteIntent(db.Model):
             "'rejected','undone')",
             name="ck_assistant_write_intent_state",
         ),
-        Index("assistant_write_intent_by_run", "run_id", "id"),
+        Index("assistant_write_intent_by_run", "run_uuid", "id"),
     )
 
 

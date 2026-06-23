@@ -24,7 +24,7 @@ def client():
 
 def _cleanup_run(app, run_id: int) -> None:
     with app.app_context():
-        db.db.session.query(AssistantRun).filter(AssistantRun.id == run_id).delete()
+        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
         db.db.session.commit()
 
 
@@ -38,19 +38,19 @@ def test_run_endpoint_returns_run_and_steps(client):
             journal_id=uuid4(), room_uuid=chatroom.uuid, agent_uuid=uuid4(), step_limit=6
         )
         db.append_assistant_step(
-            run_id=run.id, step_index=0, phase="running",
+            run_uuid=run.uuid, step_index=0, phase="running",
             action="query_qa", reason="look it up", args={"query": "git status"},
         )
         db.append_assistant_step(
-            run_id=run.id, step_index=0, phase="observed",
+            run_uuid=run.uuid, step_index=0, phase="observed",
             action="query_qa", observation_preview="Working tree clean.",
         )
-        run_id = run.id
+        run_id = run.uuid
     try:
         resp = flask_client.get(f"/chat/api/assistant/runs/{run_id}")
         assert resp.status_code == 200
         body = resp.get_json()
-        assert body["run"]["id"] == run_id
+        assert body["run"]["uuid"] == str(run_id)
         assert body["run"]["status"] == "running"
         phases = [s["phase"] for s in body["steps"]]
         assert phases == ["running", "observed"]
