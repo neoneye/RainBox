@@ -15,8 +15,6 @@ DOCTOR_TEMPLATE = """
 <title>Doctor &mdash; rainbox</title>
 {% include "_nav.html" %}
 <style>
-  /* Match /cron, /chat, /assistant: drop the default 8px body margin so the
-     sticky nav sits flush + full-width. */
   body { margin: 0; font-family: system-ui, sans-serif; }
   .pp-doc { max-width: 900px; margin: 1rem auto; padding: 0 1rem;
             font-family: system-ui, sans-serif; }
