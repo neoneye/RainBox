@@ -52,6 +52,8 @@ ASSISTANT_TEMPLATE = """
   .pp-as .run.out-resolved { border-left: 3px solid #1e7e34; }
   .pp-as .run.out-partial  { border-left: 3px solid #b06f00; }
   .pp-as .run.out-failed   { border-left: 3px solid #c0392b; }
+  .pp-as .run .meta-top { display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; }
+  .pp-as .run .when { font-weight:600; font-variant-numeric:tabular-nums; }
   .pp-as .run .rsum { font-size: 0.82rem; color: #344054; margin-top: 4px; }
   .pp-as .run .rsum.pending { color: #98a2b3; font-style: italic; }
   .b-obstacle { background:#fff4e5; color:#b06f00; }
@@ -117,19 +119,20 @@ ASSISTANT_TEMPLATE = """
     <a class="run {{ 'active' if selected and r.id == selected.id }}
               {{ ('out-' + r.summary.outcome) if r.summary and r.summary.outcome }}"
        href="{{ url_for('assistant_page') }}?id={{ r.uuid }}">
-      <span class="id">#{{ r.id }}</span>
-      <span class="badge b-{{ r.status }}">{{ r.status }}</span>
-      {% if r.summary and r.summary.obstacles %}
-        <span class="badge b-obstacle">⚠ {{ r.summary.obstacles | length }}</span>
-      {% endif %}
+      <div class="meta-top">
+        <span class="when">{{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else '—' }}</span>
+        <span class="badge b-{{ r.status }}">{{ r.status }}</span>
+        {% if r.summary and r.summary.obstacles %}
+          <span class="badge b-obstacle">⚠ {{ r.summary.obstacles | length }}</span>
+        {% endif %}
+      </div>
       {% if r.summary %}
         <div class="rsum">{{ r.summary.trigger | truncate(90) }}</div>
       {% else %}
         <div class="rsum pending">summarizing…</div>
       {% endif %}
       <div class="meta">
-        {{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else '—' }}
-        · {{ counts.get(r.id, 0) }} step{{ '' if counts.get(r.id, 0) == 1 else 's' }}
+        {{ counts.get(r.id, 0) }} step{{ '' if counts.get(r.id, 0) == 1 else 's' }}
         · room {{ (r.room_uuid|string)[:8] }}
       </div>
     </a>
@@ -155,8 +158,7 @@ ASSISTANT_TEMPLATE = """
         <button class="copy" onclick="ppCopy('{{ selected.uuid }}', this)">Copy</button>
       </div>
       <div class="muted">
-        internal #{{ selected.id }}
-        · journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
+        journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
         · started {{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}
         {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
       </div>

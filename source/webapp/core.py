@@ -632,7 +632,13 @@ admin.add_view(ModelView(ModelGroupMember, db, category="Config"))
 admin.add_view(ModelView(AgentModelBinding, db, category="Config"))
 admin.add_view(ModelView(ConversationRun, db, category="Chat"))
 # Assistant ReAct loop: runs, per-step trace, control channel, write intents.
-admin.add_view(ModelView(AssistantRun, db, category="Assistant"))
+class AssistantRunView(ModelView):
+    # Newest first — the integer id is internal plumbing, not the sort the
+    # operator cares about.
+    column_default_sort = ("started_at", True)
+
+
+admin.add_view(AssistantRunView(AssistantRun, db, category="Assistant"))
 admin.add_view(ModelView(AssistantStep, db, category="Assistant"))
 admin.add_view(ModelView(AssistantControl, db, category="Assistant"))
 admin.add_view(ModelView(AssistantWriteIntent, db, category="Assistant"))

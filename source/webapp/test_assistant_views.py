@@ -58,7 +58,7 @@ def test_runs_list_renders(app_ctx, client):
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
         assert "Runs" in body
-        assert f"#{run.id}" in body            # the run appears in the left list
+        assert f"?id={run.uuid}" in body       # the run appears in the left list (uuid-addressed)
     finally:
         _cleanup(run.id, room.uuid)
 
