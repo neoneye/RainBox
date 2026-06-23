@@ -11,12 +11,13 @@ OpenCode, Supermemory, Mem0, Honcho, and MemPalace for the goal:
 
 This is not a README-only scan. For RainBox I read the local architecture docs,
 status proposals, and implementation files around agents, memory, cron, tools,
-and the assistant write surface. For PlanExe I read the local PlanExe checkout, including its worker
-pipeline, hosted UI, database worker, MCP cloud server, shared database models,
-and agent instructions. For external projects I used official docs, repo structure/code
-surfaces, docs indexes, and, where relevant, architecture papers or policy
-pages. The external landscape changes quickly, so treat this as a decision memo
-dated above, not a permanent market survey.
+and the assistant write surface. For PlanExe I read the local PlanExe checkout,
+including its worker pipeline, hosted UI, database worker, MCP cloud server,
+shared database models, agent instructions, and one generated
+`cross_border_rail_ticketing` output bundle. For external projects I used
+official docs, repo structure/code surfaces, docs indexes, and, where relevant,
+architecture papers or policy pages. The external landscape changes quickly, so
+treat this as a decision memo dated above, not a permanent market survey.
 
 ## Verification status (updated 2026-06-23)
 
@@ -67,9 +68,13 @@ from the local checkout on 2026-06-23.
   `worker_plan/worker_plan_internal/plan/nodes/full_plan_pipeline.py`, the
   diagnostics modules (`redline_gate`, `premise_attack`, `constraint_checker`,
   `prompt_adherence`), the report assembly node, `database_api/model_planitem.py`,
-  `worker_plan_database/app.py`, `frontend_multi_user/src`, and `mcp_cloud`.
-  PlanExe is best read as a long-horizon planning artifact factory with an MCP
-  service boundary, not as a general personal assistant.
+  `worker_plan_database/app.py`, `frontend_multi_user/src`, and `mcp_cloud`. I
+  also inspected the generated `cross_border_rail_ticketing` bundle: 175 files
+  (mostly JSON/Markdown plus CSV, HTML, text, and JSONL), including a 560KB final
+  report, WBS JSON/CSV, schedule CSV, prompt-adherence report, self-audit, usage
+  overview, and raw model outputs. PlanExe is best read as a long-horizon
+  planning artifact factory with an MCP service boundary, not as a general
+  personal assistant.
 
 ## Executive judgment
 
@@ -104,11 +109,11 @@ memory-provider seam and benchmark them before outsourcing memory.
 
 PlanExe should not be merged into RainBox as another chat agent. Treat it as a
 long-horizon planning module that RainBox can call, inspect, critique, and turn
-into living execution state. The most valuable integration is: RainBox drafts and
-remembers context, calls PlanExe when the task deserves a full planning pipeline,
-ingests the resulting WBS/risks/governance/assumptions into RainBox kanban and
-memory, then uses RainBox agents to verify, monitor, and update the plan over
-time.
+into living execution state. The generated report is useful for humans, but the
+intermediary bundle is more important for RainBox: WBS CSV/JSON, schedule CSV,
+assumptions, prompt-adherence issues, self-audit blockers, risks, documents to
+find/create, and usage telemetry can be imported directly into RainBox kanban,
+memory, evals, reminders, and monitoring.
 
 ## RainBox baseline
 
@@ -283,6 +288,17 @@ The closest RainBox equivalents are clear:
   natural RainBox ingestion targets. They should become kanban boards/tasks,
   memory claims with provenance, evaluation cases, reminders/checkpoints, and
   monitoring prompts - not just a downloaded HTML report.
+- The actual output bundle confirms that the intermediary files are the product
+  surface RainBox should consume. The cross-border rail sample contains stable
+  task UUIDs, a multi-level WBS, task descriptions, start/end dates, parent-child
+  relationships, resources needed, prompt-adherence scores, self-audit blockers,
+  generated document requests, source-finding requests, raw model outputs, and
+  usage totals. That is much closer to a project database export than a PDF.
+- The sample also shows that PlanExe's own critique outputs should not be hidden
+  below the final report. In this run, prompt adherence was high (96%), while the
+  self-audit still found many high-severity blockers. RainBox should ingest those
+  blockers as first-class follow-up tasks, not treat the report as "done" just
+  because it rendered successfully.
 
 Non-obvious implementation details worth carrying over:
 
@@ -303,6 +319,10 @@ Non-obvious implementation details worth carrying over:
 - PlanExe records token/user/API-key context for LLM calls and incremental
   billing. RainBox does not need billing, but the attribution idea is useful for
   answering "which assistant/tool/model spent time or money on this result?"
+- The inspected sample is a reminder that a full PlanExe run is not a cheap
+  one-shot LLM call: its usage overview shows 192 model calls and roughly 3.3M
+  total tokens. RainBox should reserve PlanExe for requests that justify a full
+  planning pipeline, and should preview that cost/latency class before calling it.
 
 Fit:
 
@@ -873,10 +893,14 @@ for MCP/external systems. The useful workflow is not "chat with PlanExe." It is:
    budget, stakeholders, success criteria, and banned approaches.
 3. The operator approves that prompt before `plan_create`.
 4. RainBox polls `plan_status` or subscribes to the SSE completion detector.
-5. RainBox ingests the resulting zip/report: WBS -> kanban, risks -> memory and
-   monitoring checks, assumptions -> claim/evidence review, schedule -> reminders,
+5. RainBox ingests the intermediary files first, not the report first: WBS
+   JSON/CSV -> kanban hierarchy, schedule CSV -> dated checkpoints, prompt
+   adherence -> eval cases, self-audit/premortem -> blocker tasks, documents to
+   find -> research queue, assumptions/risks -> memory claims with provenance,
    governance -> decision rules.
-6. RainBox continues owning drift monitoring, updates, and write authority.
+6. RainBox treats the HTML/Markdown report as the human-facing narrative over
+   that imported project database.
+7. RainBox continues owning drift monitoring, updates, and write authority.
 
 This is the strongest bridge between your two systems: PlanExe creates the
 initial rigorous plan; RainBox keeps it alive.
@@ -899,7 +923,8 @@ The best ideas across this comparison are:
   model-free regression tests.
 - PlanExe: copy staged artifact generation, explicit critique gates, prompt
   examples before expensive tool calls, progress based on expected artifacts,
-  retry/resume/stop semantics, and downloadable intermediate bundles.
+  retry/resume/stop semantics, and downloadable intermediate bundles. Import the
+  intermediates as structured project state, not just report prose.
 - Hermes/OpenClaw: copy always-on gateway ergonomics, onboarding, daemon mode,
   channel routing, and DM pairing/allowlists.
 - BeeAI/Pi: copy nested run/event streams, middleware, typed tool/provider
@@ -949,8 +974,10 @@ If the goal is:
    make PlanExe the first serious external tool because its write surface is
    naturally job-scoped.
 3. PlanExe ingestion prototype: `plan_create` -> `plan_status` -> zip parse ->
-   WBS into kanban, assumptions/risks into memory claims, schedule into
-   reminders, prompt-adherence issues into eval cases.
+   WBS JSON/CSV into kanban hierarchy, schedule CSV into checkpoints/reminders,
+   prompt-adherence issues into eval cases, self-audit/premortem blockers into
+   follow-up tasks, documents-to-find into a research queue, and assumptions/
+   risks into memory claims with provenance.
 4. Telegram/gateway hardening: pairing, allowlist, read-only default, write
    authority gates.
 5. Memory adapter interface and benchmark harness.
@@ -1012,6 +1039,11 @@ External / local comparators:
   `database_api/model_planitem.py`, `worker_plan_database/app.py`,
   `mcp_cloud/AGENTS.md`, `mcp_cloud/tool_models.py`,
   `mcp_cloud/handlers.py`, and `mcp_cloud/db_queries.py`.
+- PlanExe generated output sample: `cross_border_rail_ticketing` bundle,
+  especially `report.html`, `report.md`, `activity_overview.json`,
+  `prompt_adherence.md`, `self_audit.md`, `wbs_level*.json`,
+  `wbs_project_level1_and_level2_and_level3.csv`, and
+  `schedule_gantt_machai.csv`.
 - BeeAI Framework local checkout, especially `README.md`,
   `python/pyproject.toml`,
   `python/beeai_framework/context.py`,
