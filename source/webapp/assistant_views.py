@@ -54,12 +54,9 @@ ASSISTANT_TEMPLATE = """
   <li>
     <div class="as-run-node {{ 'sel' if selected and r.uuid == selected.uuid }}">
       <a class="as-run-link" href="{{ url_for('assistant_page') }}?id={{ r.uuid }}">
-        <span class="meta-top">
-          <span class="when">{{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else '—' }}</span>
-          <span class="badge b-{{ r.status }}">{{ r.status }}</span>
-          {% if r.summary and r.summary.obstacles %}<span class="badge b-obstacle">⚠ {{ r.summary.obstacles | length }}</span>{% endif %}
-        </span>
-        {% if r.summary %}<span class="rsum">{{ r.summary.trigger | truncate(70) }}</span>
+        {% if r.status in ('running', 'stopping') %}<span class="as-ind run" title="running">⏳</span>
+        {% elif r.status in ('failed', 'killed') %}<span class="as-ind fail" title="failed">✗</span>{% endif %}
+        {% if r.summary %}<span class="rsum">{{ r.summary.trigger }}</span>
         {% else %}<span class="rsum pending">summarizing…</span>{% endif %}
       </a>
       <button class="as-kebab" title="actions"
@@ -111,12 +108,13 @@ ASSISTANT_TEMPLATE = """
   .as-run-node:hover { background:#f1f5f9; }
   .as-run-node.sel { background:#dbeafe; }
   .as-run-link { flex:1 1 auto; min-width:0; text-decoration:none; color:#222;
-                 display:block; padding:2px 2px; }
+                 display:flex; gap:5px; align-items:flex-start; padding:2px 2px; }
   .as-run-node.sel .as-run-link { font-weight:600; }
-  .as-run-link .meta-top { display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap; }
-  .as-run-link .when { font-variant-numeric:tabular-nums; }
-  .as-run-link .rsum { display:block; font-size:0.82rem; color:#344054; margin-top:2px;
-                       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .as-ind { flex:0 0 auto; font-size:0.9rem; line-height:1.35; }
+  .as-ind.fail { color:#c0392b; }
+  .as-run-link .rsum { flex:1 1 auto; min-width:0; font-size:0.82rem; color:#344054;
+                       line-height:1.35; display:-webkit-box; -webkit-line-clamp:2;
+                       -webkit-box-orient:vertical; overflow:hidden; }
   .as-run-link .rsum.pending { color:#98a2b3; font-style:italic; }
   .as-kebab { margin-left:auto; flex:0 0 auto; border:none; background:none; cursor:pointer;
               color:#6b7280; width:1.4rem; height:1.4rem; padding:0; border-radius:5px;

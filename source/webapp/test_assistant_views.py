@@ -231,8 +231,7 @@ def test_run_summary_renders_in_list_and_detail(app_ctx, client):
         "outcome": "partial"})
     try:
         listing = client.get("/assistant").get_data(as_text=True)
-        assert "file the weekly report" in listing   # trigger one-liner in the list
-        assert "⚠ 1" in listing                       # obstacle badge
+        assert "file the weekly report" in listing   # the summary trigger in the leaf
         detail = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert "the disk was full" in detail          # obstacle in the detail pane
         assert "partial" in detail                    # outcome badge
@@ -250,6 +249,25 @@ def test_unsummarized_run_shows_pending(app_ctx, client):
         assert "Not yet summarized" in detail
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_leaf_shows_run_and_fail_indicators(app_ctx, client):
+    room = _room()
+    running = db.start_assistant_run(  # status=running
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    failed = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(failed, "failed")
+    try:
+        body = client.get("/assistant").get_data(as_text=True)
+        assert 'class="as-ind run"' in body    # in-progress indicator (⏳)
+        assert 'class="as-ind fail"' in body   # failed indicator (✗)
+    finally:
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.uuid.in_([running.uuid, failed.uuid])
+        ).delete(synchronize_session=False)
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.db.session.commit()
 
 
 def test_selected_run_has_kebab_with_actions(app_ctx, client):
