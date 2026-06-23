@@ -59,8 +59,10 @@ class AssistantActionName(str, Enum):
     KANBAN_MOVE = "kanban_move"        # log-and-undo: move a task between columns
     KANBAN_COMPLETE = "kanban_complete"  # log-and-undo: mark a task done
     KANBAN_COMMENT = "kanban_comment"    # log-and-undo: comment on a task
-    KANBAN_CREATE = "kanban_create"            # log-and-undo: create a task
+    KANBAN_CREATE = "kanban_create"            # log-and-undo: create a task on a board
     KANBAN_DELETE_TASK = "kanban_delete_task"  # internal: create's undo inverse (not prompt-exposed)
+    KANBAN_CREATE_BOARD = "kanban_create_board"  # log-and-undo: create a new board
+    KANBAN_DELETE_BOARD = "kanban_delete_board"  # internal: create_board's undo inverse (not prompt-exposed)
     SET_REMINDER = "set_reminder"      # confirm-tier (dry-run): schedule a reminder message
     EDIT_FILE = "edit_file"            # confirm-tier (dry-run diff): edit a workspace file
     PROPOSE_SKILL = "propose_skill"    # log-and-undo: write an inert candidate skill
@@ -716,6 +718,50 @@ def _action_delete_kanban_task(
     )
 
 
+def _action_create_kanban_board(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: create a new board (with the default columns). The
+    caller supplies only a name — the board's uuid is assigned by the store, so
+    a caller can never pick (and collide) a board uuid. Undo deletes the board."""
+    title = str(args.get("title", "")).strip()
+    if not title:
+        return AssistantObservation(ok=False, text="kanban_create_board needs a non-empty title")
+    description = str(args.get("description", "")).strip()
+    try:
+        created = db.kanban_create_board(title, description=description)
+    except db.KanbanError as exc:
+        return AssistantObservation(ok=False, text=str(exc))
+    board_uuid = str(created["uuid"])
+    return AssistantObservation(
+        ok=True,
+        text=f"Created board '{title}' (undoable — undo deletes it).",
+        data={
+            "board_uuid": board_uuid,
+            "link": _kanban_link(board_uuid),
+            "undo": {"capability": "kanban_delete_board",
+                     "payload": {"board_uuid": board_uuid}},
+        },
+    )
+
+
+def _action_delete_kanban_board(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Internal: hard-delete a board (with its columns/tasks/events). Not
+    prompt-exposed — reached only as the undo-inverse of kanban_create_board."""
+    raw = args.get("board_uuid")
+    try:
+        board_uuid = UUID(str(raw))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid board_uuid: {raw!r}")
+    if not db.kanban_delete_board(board_uuid):
+        return AssistantObservation(ok=False, text="no such kanban board")
+    return AssistantObservation(
+        ok=True, text=f"Deleted board {board_uuid}", data={"board_uuid": str(board_uuid)},
+    )
+
+
 def _action_set_reminder(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
@@ -996,8 +1042,10 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.KANBAN_CREATE: Capability(
         name=AssistantActionName.KANBAN_CREATE, family="kanban",
-        description=('create a kanban task; reversible (undo deletes it). args: '
-                     '{"board_uuid": "...", "title": "...", optional "description", '
+        description=('create a kanban TASK on an EXISTING board (to make a new '
+                     'board, use kanban_create_board). reversible (undo deletes '
+                     'it). args: {"board_uuid": "..." (an existing board, from '
+                     'kanban_read), "title": "...", optional "description", '
                      'optional "column_uuid" — omit it to use the board\'s first '
                      'column (the usual case)}'),
         required_args=("board_uuid", "title"),
@@ -1009,6 +1057,23 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         name=AssistantActionName.KANBAN_DELETE_TASK, family="kanban",
         description="(internal) delete a kanban task — the undo-inverse of kanban_create.",
         required_args=("task_uuid",), action=_action_delete_kanban_task,
+        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
+    ),
+    AssistantActionName.KANBAN_CREATE_BOARD: Capability(
+        name=AssistantActionName.KANBAN_CREATE_BOARD, family="kanban",
+        description=('create a NEW kanban board with the given name (the default '
+                     'columns are added; the board uuid is assigned automatically '
+                     '— never pass one). reversible (undo deletes it). args: '
+                     '{"title": "...", optional "description"}'),
+        required_args=("title",),
+        optional_args=frozenset({"description"}),
+        action=_action_create_kanban_board,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_DELETE_BOARD: Capability(
+        name=AssistantActionName.KANBAN_DELETE_BOARD, family="kanban",
+        description="(internal) delete a kanban board — the undo-inverse of kanban_create_board.",
+        required_args=("board_uuid",), action=_action_delete_kanban_board,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
     AssistantActionName.SET_REMINDER: Capability(

@@ -95,6 +95,8 @@ def test_action_enum_covers_the_known_action_surface():
         "kanban_comment",
         "kanban_create",
         "kanban_delete_task",
+        "kanban_create_board",
+        "kanban_delete_board",
         "set_reminder",
         "edit_file",
         "propose_skill",
