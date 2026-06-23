@@ -348,6 +348,7 @@ function kbFolderLi(f){
   kbMakeKebab(node, [
     ['Rename', '', () => kbRenameFolder(f.uuid)],
     ['New subfolder', '', () => kbNewFolder(f.uuid)],
+    ['Copy folder id', '', () => kbCopyId(f.uuid, 'Folder')],
     ['Delete', 'danger', () => kbConfirmDeleteFolder(f.uuid)],
   ]);
   kbWireFolderDrag(node, f.uuid);
@@ -374,6 +375,7 @@ function kbBoardNode(b){
   node.addEventListener('click', () => kbSelectBoard(b.uuid));
   kbMakeKebab(node, [
     ['Duplicate', '', () => kbDuplicateBoard(b.uuid)],
+    ['Copy board id', '', () => kbCopyId(b.uuid, 'Board')],
     ['Delete', 'danger', () => kbConfirmDeleteBoard(b.uuid)],
   ]);
   kbWireBoardDrag(node, b.uuid);
@@ -832,6 +834,13 @@ function kbCopyTaskLink(btn){
     btn.textContent = 'Copied';
     setTimeout(() => { btn.textContent = prev; }, 1200);
   }).catch(() => kbToast('Could not copy to clipboard.'));
+}
+// Copy a board/folder uuid from its tree kebab — handy for addressing it in
+// chat/assistant commands (e.g. "add a task to board <id>").
+function kbCopyId(uuid, kind){
+  navigator.clipboard.writeText(uuid).then(
+    () => kbToast(kind + ' id copied: ' + uuid),
+    () => kbToast('Could not copy to clipboard.'));
 }
 // The task's audit trail (kanban_task_event): created/claimed/moved/done/
 // failed/notes, from UI saves and agent operations alike. Read-only here.

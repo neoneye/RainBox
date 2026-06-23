@@ -51,6 +51,15 @@ def test_kanban_page_is_database_backed():
     assert "function kbCancelSave" in body
 
 
+def test_tree_kebab_has_copy_id_items():
+    body = _body()
+    # The left-panel kebab offers a copy-uuid action for both kinds.
+    assert "Copy board id" in body
+    assert "Copy folder id" in body
+    assert "function kbCopyId" in body
+    assert "navigator.clipboard.writeText(uuid)" in body
+
+
 def test_kanban_page_has_right_sidebar_picker():
     body = _body()
     # Right sidebar with an off/stats/developer picker, mirroring /chat's
