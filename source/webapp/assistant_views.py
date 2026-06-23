@@ -101,7 +101,6 @@ ASSISTANT_TEMPLATE = """
   .as-ficon svg { width:15px; height:15px; display:block; }
   .as-folder:not([open]) .as-ficon-open { display:none; }
   .as-folder[open] .as-ficon-closed { display:none; }
-  .as-fname { font-weight:600; }
   .as-group-count { margin-left:4px; color:#6b7280; font-weight:400; font-size:0.82rem; }
   .as-tree-list, .as-tree-list ul { list-style:none; margin:0; padding:0; }
   .as-tree-list { margin-left:0.85em; border-left:1px solid #e5e7eb; padding-left:0.35em; }
