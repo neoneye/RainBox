@@ -380,8 +380,8 @@ def _bucket_runs(runs: list) -> list[dict]:
         if outcome in ("partial", "failed") or r.status == "failed":
             unresolved.append(r)
     return [
-        {"name": "Recent", "runs": runs, "count": len(runs), "default_open": True},
         {"name": "Running", "runs": running, "count": len(running), "default_open": True},
+        {"name": "Recent", "runs": runs, "count": len(runs), "default_open": True},
         {"name": "Stopped", "runs": stopped, "count": len(stopped), "default_open": False},
         {"name": "Resolved", "runs": resolved, "count": len(resolved), "default_open": False},
         {"name": "Unresolved", "runs": unresolved, "count": len(unresolved), "default_open": False},
