@@ -94,6 +94,41 @@ def list_memory_claims(
     return q.order_by(MemoryClaim.id.asc()).all()
 
 
+def normalize_claim_text(text: str) -> str:
+    """Canonical form for duplicate detection: lowercased, leading/trailing and
+    internal whitespace collapsed. Two claims whose text normalizes to the same
+    string are treated as the same belief."""
+    return " ".join((text or "").split()).casefold()
+
+
+def find_equivalent_claim(
+    text: str,
+    *,
+    scope: str,
+    room_uuid: UUID | None = None,
+    agent_uuid: UUID | None = None,
+    statuses: tuple[str, ...] = ("active", "candidate"),
+) -> "MemoryClaim | None":
+    """Return an existing *live* claim (active/candidate by default) in the same
+    scope/room whose text normalizes equal to `text`, or None. Used to avoid
+    storing the same belief twice — the exact-normalized-duplicate rule from
+    docs/memory-architecture.md §3. A rejected/expired claim does not match, so
+    re-remembering something previously forgotten still creates a fresh claim."""
+    norm = normalize_claim_text(text)
+    if not norm:
+        return None
+    q = db.session.query(MemoryClaim).filter(
+        MemoryClaim.scope == scope, MemoryClaim.status.in_(statuses))
+    if room_uuid is not None:
+        q = q.filter(MemoryClaim.room_uuid == room_uuid)
+    if agent_uuid is not None:
+        q = q.filter(MemoryClaim.agent_uuid == agent_uuid)
+    for claim in q.order_by(MemoryClaim.id.asc()).all():
+        if normalize_claim_text(claim.text) == norm:
+            return claim
+    return None
+
+
 def supersede_memory(
     old_uuid: UUID,
     new_claim_args: dict[str, Any],

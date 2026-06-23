@@ -314,6 +314,19 @@ def _action_remember(
     explicitly asked to remember this, so it goes straight to active (no candidate
     review step) and is embedded for immediate retrieval; undo rejects it."""
     text = str(args.get("text", "")).strip()
+    # Don't store the same belief twice: if an equivalent live claim already
+    # exists in this room, return it instead of creating a duplicate (the
+    # exact-normalized-duplicate rule, docs/memory-architecture.md §3). `noop`
+    # tells the loop not to record a log-and-undo ledger row (nothing changed).
+    existing = db.find_equivalent_claim(text, scope="room", room_uuid=ctx.room_uuid)
+    if existing is not None:
+        return AssistantObservation(
+            ok=True,
+            text=(f"Already remembered (no duplicate created). memory_uuid: "
+                  f"{existing.uuid}. Reply to the operator."),
+            data={"memory_uuid": str(existing.uuid), "status": existing.status,
+                  "link": _memory_link(existing.uuid), "noop": True},
+        )
     claim = db.create_memory_claim(
         scope="room", kind="fact", text=text, confidence=1.0,
         status="active", sensitivity="private",
@@ -1273,7 +1286,11 @@ class AssistantAgent(ModelGroupAgent):
                     observation = self._propose_write(action_ctx, decision, cap)
                 else:
                     observation = self._dispatch_action(action_ctx, decision)
-                    if cap.write and cap.tier == "log_and_undo" and observation.ok:
+                    # A `noop` write changed no state (e.g. remember found an
+                    # existing duplicate) — there is nothing to undo, so don't
+                    # record a ledger row; the link still surfaces in the reply.
+                    if (cap.write and cap.tier == "log_and_undo" and observation.ok
+                            and not observation.data.get("noop")):
                         self._record_log_and_undo(action_ctx, cap, decision, observation)
                 if write_sig is not None and observation.ok:
                     done_writes.add(write_sig)

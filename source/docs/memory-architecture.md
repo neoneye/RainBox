@@ -316,7 +316,9 @@ The system is still conservative and incomplete:
   not yet the default for every memory consumer.
 - There is no automatic extraction of candidate memories from chat or journal
   rows.
-- There is no conflict detector for competing active claims.
+- Conflict detection is minimal: the assistant's `remember` blocks exact
+  (normalized) duplicates, but there is no detector for competing active claims
+  with the same subject/predicate but a different object.
 - `sensitivity` is manually assigned and coarse.
 - Memory is injected into `ChatAgent` and available to the assistant through
   `query_memory`, but not broadly integrated into every agent type.
@@ -377,11 +379,17 @@ similar subject/predicate/object or high textual overlap.
 
 The first version can be simple:
 
-- exact normalized text duplicate: do not create another claim
+- exact normalized text duplicate: do not create another claim — **done** for
+  the assistant's `remember` action (`db.find_equivalent_claim`): re-remembering
+  the same belief in a room returns the existing claim instead of creating a
+  second. A previously rejected/expired claim does not match, so re-remembering
+  something forgotten still creates a fresh claim.
 - same subject and predicate but different object: flag conflict
 - correction path: supersede instead of parallel active claims
 
-Later, semantic conflict detection can use embeddings or an LLM.
+The chat-command `remember that …` path (`memory/ops.py`) and `activate_memory`
+do not yet dedupe. Later, semantic conflict detection can use embeddings or an
+LLM.
 
 ### 4. Expand Hybrid Retrieval Carefully
 

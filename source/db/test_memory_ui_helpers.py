@@ -12,7 +12,9 @@ from db import MemoryClaim, MemoryEvidence
 from db.memory import (
     StaleWriteError,
     claim_stale,
+    find_equivalent_claim,
     memory_claim_detail,
+    normalize_claim_text,
     reactivate_memory_claim,
     set_memory_expiry,
     set_memory_sensitivity,
@@ -148,6 +150,43 @@ def test_memory_claim_detail_includes_evidence_and_lineage(app_ctx):
         assert len(d_old["evidence"]) >= 1
     finally:
         _cleanup(old.uuid, new.uuid)
+
+
+def test_find_equivalent_claim_matches_normalized_text(app_ctx):
+    room = uuid4()
+    c = db.create_memory_claim(
+        scope="room", kind="fact", text="Simon has a Triangle Draw mug",
+        confidence=1.0, status="active", sensitivity="private", room_uuid=room)
+    try:
+        # whitespace + case differences still match
+        hit = find_equivalent_claim("  simon   has a triangle draw MUG ",
+                                    scope="room", room_uuid=room)
+        assert hit is not None and hit.uuid == c.uuid
+        # different text does not match
+        assert find_equivalent_claim("Simon has a cat", scope="room", room_uuid=room) is None
+        # different room does not match
+        assert find_equivalent_claim("Simon has a Triangle Draw mug",
+                                     scope="room", room_uuid=uuid4()) is None
+    finally:
+        _cleanup(c.uuid)
+
+
+def test_find_equivalent_claim_ignores_rejected(app_ctx):
+    """A previously forgotten (rejected) claim is not an equivalent — so
+    re-remembering it creates a fresh claim rather than being blocked."""
+    room = uuid4()
+    c = db.create_memory_claim(
+        scope="room", kind="fact", text="forgotten fact", confidence=1.0,
+        status="rejected", sensitivity="private", room_uuid=room)
+    try:
+        assert find_equivalent_claim("forgotten fact", scope="room", room_uuid=room) is None
+    finally:
+        _cleanup(c.uuid)
+
+
+def test_normalize_claim_text(app_ctx):
+    assert normalize_claim_text("  A  B\tC ") == "a b c"
+    assert normalize_claim_text("") == ""
 
 
 def test_claim_stale_predicate(app_ctx):

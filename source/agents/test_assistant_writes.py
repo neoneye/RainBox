@@ -95,6 +95,46 @@ def test_remember_observation_carries_the_candidate_uuid(room):
         db.db.session.commit()
 
 
+def test_remember_dedupes_an_existing_claim(room):
+    """Remembering the same fact twice (any casing/whitespace) must not create a
+    second claim — the action returns the existing one with a /memory link and
+    records no extra ledger row."""
+    agent = _agent()
+    text = f"Simon has a Triangle Draw mug {uuid4().hex[:6]}"
+    agent._decide_next_step = scripted_decisions(
+        _decision(AssistantActionName.REMEMBER, text=text),
+        _decision(AssistantActionName.REPLY, message="Noted."))
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(room)})
+        first = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
+        assert len(first) == 1
+        existing_uuid = first[0].uuid
+
+        # Ask again with different casing/spacing — should resolve to the same claim.
+        agent2 = _agent()
+        agent2._decide_next_step = scripted_decisions(
+            _decision(AssistantActionName.REMEMBER, text="  simon HAS a triangle draw MUG " + text.split(" ")[-1]),
+            _decision(AssistantActionName.REPLY, message="Already have it."))
+        agent2.handle(uuid4(), {"room_uuid": str(room)})
+        # still exactly one claim with the original text; no second row created
+        again = db.db.session.query(MemoryClaim).filter(
+            MemoryClaim.room_uuid == room,
+            MemoryClaim.text.ilike("%triangle draw mug%")).all()
+        assert len(again) == 1 and again[0].uuid == existing_uuid
+
+        obs = _action_remember(
+            AssistantActionContext(journal_id=None, room_uuid=room,
+                                   agent_uuid=ASSISTANT_UUID, step_index=0),
+            {"text": text.upper()})
+        assert obs.data["noop"] is True
+        assert obs.data["memory_uuid"] == str(existing_uuid)
+        assert obs.data["link"] == f"/memory?id={existing_uuid}"
+        assert "undo" not in obs.data
+    finally:
+        db.db.session.query(MemoryClaim).filter(MemoryClaim.room_uuid == room).delete()
+        db.db.session.commit()
+
+
 def test_remember_creates_active_memory_and_is_undoable(room):
     agent = _agent()
     text = f"the build server is ci-{uuid4().hex[:6]}"
