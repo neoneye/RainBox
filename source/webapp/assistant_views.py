@@ -98,6 +98,7 @@ ASSISTANT_TEMPLATE = """
                     margin:0.6rem 0; background:#fbfdff; }
   .pp-as .trigger .grp { margin:0 0 0.25rem; }
   .pp-as .trigmsg { white-space:pre-wrap; word-break:break-word; margin-top:0.25rem; }
+  .pp-as hr.sep { border:0; border-top:1px solid #e5e7eb; margin:1rem 0; }
   .pp-as .summary { border:1px solid #e5e7eb; border-radius:8px; padding:0.5rem 0.7rem;
                     margin:0.6rem 0; background:#fbfdff; }
   .pp-as .summary .grp { margin:0 0 0.25rem; }
@@ -144,6 +145,28 @@ ASSISTANT_TEMPLATE = """
       <h1>Timeline</h1>
       <div class="empty">Select a run on the left to see its step timeline.</div>
     {% else %}
+      <div class="summary">
+        <div class="grp">Summary</div>
+        {% if selected.summary %}
+          <div>
+            {% if selected.summary.outcome %}<span class="badge b-out-{{ selected.summary.outcome }}">{{ selected.summary.outcome }}</span>{% endif %}
+            {{ selected.summary.trigger }}
+          </div>
+          {% if selected.summary.obstacles %}
+            <div class="grp" style="font-size:0.85rem">Obstacles</div>
+            <ul class="obstacles">
+              {% for o in selected.summary.obstacles %}<li>{{ o }}</li>{% endfor %}
+            </ul>
+          {% else %}
+            <div class="muted">No obstacles reported.</div>
+          {% endif %}
+        {% else %}
+          <div class="muted">Not yet summarized (runs shortly after the assistant finishes).</div>
+        {% endif %}
+      </div>
+
+      <hr class="sep">
+
       <div class="runhd">
         <h1 style="margin:0">Run</h1>
         <span class="badge b-{{ selected.status }}">{{ selected.status }}</span>
@@ -176,26 +199,6 @@ ASSISTANT_TEMPLATE = """
             room {{ (selected.room_uuid|string)[:8] }} ·
             <a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a>
           </div>
-        {% endif %}
-      </div>
-
-      <div class="summary">
-        <div class="grp">Summary</div>
-        {% if selected.summary %}
-          <div>
-            {% if selected.summary.outcome %}<span class="badge b-out-{{ selected.summary.outcome }}">{{ selected.summary.outcome }}</span>{% endif %}
-            {{ selected.summary.trigger }}
-          </div>
-          {% if selected.summary.obstacles %}
-            <div class="grp" style="font-size:0.85rem">Obstacles</div>
-            <ul class="obstacles">
-              {% for o in selected.summary.obstacles %}<li>{{ o }}</li>{% endfor %}
-            </ul>
-          {% else %}
-            <div class="muted">No obstacles reported.</div>
-          {% endif %}
-        {% else %}
-          <div class="muted">Not yet summarized (runs shortly after the assistant finishes).</div>
         {% endif %}
       </div>
 
