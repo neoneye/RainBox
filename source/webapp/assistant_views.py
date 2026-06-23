@@ -132,7 +132,7 @@ ASSISTANT_TEMPLATE = """
         {% if trigger %}
           <div><strong>{{ trigger.sender_name }}</strong>
             <span class="muted">{{ trigger.timestamp }}</span>
-            · <a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a>
+            · <a href="/chat?id={{ selected.room_uuid }}&msg={{ trigger.id }}">open in chat ↗</a>
           </div>
           <div class="trigmsg">{{ trigger.text | truncate(400) }}</div>
         {% else %}

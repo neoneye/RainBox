@@ -230,6 +230,7 @@ def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
         return None
     msg, sender_name = row
     return {
+        "id": msg.id,            # the int id the chat DOM anchors on (data-message-id)
         "uuid": str(msg.uuid),
         "sender_name": sender_name,
         "text": msg.text,

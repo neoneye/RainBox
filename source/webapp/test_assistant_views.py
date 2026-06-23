@@ -158,7 +158,8 @@ def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
         # Trigger block shows the triggering message + a link into chat.
         assert "Trigger" in body
         assert "please mark the task done" in body
-        assert f"/chat?id={run.room_uuid}" in body
+        # links into chat AND anchors on the specific triggering message
+        assert f"/chat?id={run.room_uuid}&msg=" in body
         # The verdict (final_summary) is present and sits BELOW the trigger.
         assert "Verdict" in body and "all done — the verdict" in body
         assert body.index("Verdict") > body.index("Trigger")

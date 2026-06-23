@@ -117,6 +117,9 @@ CHAT_TEMPLATE: str = """
   .rename-room:hover{color:#1a1a2e;border-color:#1a1a2e}
 
   .chat-log{flex:1 1 auto;overflow:auto;padding:1em;display:flex;flex-direction:column;gap:1.1em}
+  /* Deep-link target flash (e.g. /assistant "open in chat"). */
+  .msg.msg-highlight{animation:pp-msg-flash 2.6s ease-out}
+  @keyframes pp-msg-flash{0%{background:#fde68a}30%{background:#fef3c7}100%{background:transparent}}
   .msg-head{font-size:0.85rem;margin-bottom:0.15em}
   .msg-sender{font-weight:600;color:#1a1a2e}
   .msg-type{font-size:0.66rem;text-transform:uppercase;letter-spacing:0.03em;padding:1px 6px;border-radius:999px;margin-left:0.5em;vertical-align:middle}
@@ -1455,12 +1458,13 @@ function chatCurrentSelectionId(){
 function chatSyncUrl(){
   const url = new URL(window.location);
   url.searchParams.delete('room');  // migrate off the old per-kind param
+  url.searchParams.delete('msg');   // a one-shot deep-link anchor, already consumed
   const id = chatCurrentSelectionId();
   if (id) url.searchParams.set('id', id); else url.searchParams.delete('id');
   history.replaceState(null, '', url);
 }
 
-async function selectRoom(uuid){
+async function selectRoom(uuid, scrollMsgId){
   currentRoom = uuid;
   selectedFolder = null;  // opening a room clears any folder selection
   hideFolderDetail();     // swap the right pane back to the chat view
@@ -1481,6 +1485,25 @@ async function selectRoom(uuid){
   renderSidebar();  // members/stats reflect the now-open room — resizes the log,
                     // so toggle it BEFORE scrolling or we land a line short.
   scrollLogToBottom();
+  if (scrollMsgId) scrollToMessage(scrollMsgId);
+}
+
+// Deep-link scroll: bring a specific message (by its int id, the DOM's
+// data-message-id) into view and flash it. Runs after the open's
+// scroll-to-bottom settles (and a sidebar resize), so it wins the final scroll.
+function scrollToMessage(msgId){
+  let tries = 0;
+  const go = () => {
+    const el = log.querySelector('[data-message-id="' + msgId + '"]');
+    if (el){
+      el.scrollIntoView({behavior: 'smooth', block: 'center'});
+      el.classList.add('msg-highlight');
+      setTimeout(() => el.classList.remove('msg-highlight'), 2600);
+    } else if (tries++ < 5){
+      setTimeout(go, 80);  // the message may still be rendering/laying out
+    }
+  };
+  setTimeout(go, 80);
 }
 
 async function fetchNew(uuid){
@@ -1492,7 +1515,7 @@ async function fetchNew(uuid){
   if (sidebarMode === 'stats') renderStats();  // keep the live message count fresh
 }
 
-async function loadRooms(selectUuid){
+async function loadRooms(selectUuid, scrollMsgId){
   const tree = await getJSON('/chat/api/tree');
   folders = (tree && tree.folders) || [];
   rooms = (tree && tree.rooms) || [];
@@ -1514,7 +1537,7 @@ async function loadRooms(selectUuid){
   if (!target || !rooms.some(r => r.uuid === target)){
     target = firstRoomInTree(null);
   }
-  if (target) await selectRoom(target);
+  if (target) await selectRoom(target, scrollMsgId);
   else chatSyncUrl();  // nothing to open (no rooms) — clear a stale ?id=
 }
 
@@ -1868,7 +1891,12 @@ wireRootDrop(document.getElementById('chat-root-drop'), false);
 })();
 
 // Deep link: ?id=<uuid> reopens that room or folder on load (mirrors /cron).
-loadRooms(new URLSearchParams(window.location.search).get('id'));
+// ?msg=<message-id> additionally scrolls to + highlights that message (e.g. the
+// /assistant inspector's "open in chat" link to a run's triggering message).
+(function(){
+  const p = new URLSearchParams(window.location.search);
+  loadRooms(p.get('id'), p.get('msg'));
+})();
 startStream();
 </script>
 """
