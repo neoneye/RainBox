@@ -153,7 +153,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .runhd { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
-  .as-main .step { border:1px solid #e5e7eb; border-radius:8px; padding:0.55rem 0.7rem; margin-bottom:0.55rem; }
+  .as-main .step { border:1px solid #e5e7eb; border-radius:8px; padding:0.55rem 0.7rem; }
   .as-main .step.control { background:#faf5ff; border-color:#e9d5ff; }
   .as-main .step .hd { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
@@ -255,6 +255,7 @@ ASSISTANT_TEMPLATE = """
 
       {% if not timeline %}<div class="as-empty">This run has no steps.</div>{% endif %}
       {% for step, intents in timeline %}
+      <hr class="sep">
       <div class="step {{ 'control' if step.phase == 'control' }}">
         <div class="hd">
           <span class="ix">#{{ step.step_index }}</span>
@@ -288,6 +289,7 @@ ASSISTANT_TEMPLATE = """
       {% endif %}
 
       {% if selected.final_summary %}
+        <hr class="sep">
         <div class="grp">Verdict</div>
         <pre>{{ selected.final_summary }}</pre>
       {% endif %}
