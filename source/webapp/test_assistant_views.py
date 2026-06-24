@@ -214,10 +214,10 @@ def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     db.finish_run(run, "finished")
     try:
-        # Addressable only by uuid via ?id= — shown in full + copyable.
+        # Addressable only by uuid via ?id=; the kebab offers Copy id.
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert str(run.uuid) in body
-        assert "Copy" in body
+        assert "Copy id" in body
         assert "Select a run" not in body          # a run is selected
         # Only a uuid ?id= resolves: a non-uuid value and the old ?run= don't.
         assert "Select a run" in client.get(

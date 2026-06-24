@@ -143,7 +143,6 @@ ASSISTANT_TEMPLATE = """
                     border-radius:6px; background:#fff; color:#222; }
   .as-main button.primary { background:#2563eb; border-color:#2563eb; color:#fff; }
   .as-main button.danger { color:#c0392b; border-color:#e7b9b3; }
-  .as-main button.copy { padding:0.15rem 0.55rem; font-size:0.82rem; }
   .as-main .summary, .as-main .trigger { border:1px solid #e5e7eb; border-radius:8px;
                     padding:0.5rem 0.7rem; margin:0.6rem 0; background:#fbfdff; }
   .as-main .summary .grp, .as-main .trigger .grp { margin:0 0 0.25rem; }
@@ -152,9 +151,6 @@ ASSISTANT_TEMPLATE = """
   .as-main .trigmsg { white-space:pre-wrap; word-break:break-word; margin-top:0.25rem; }
   .as-main hr.sep { border:0; border-top:1px solid #e5e7eb; margin:1rem 0; }
   .as-main .runhd { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem; }
-  .as-main .uuidline { display:flex; gap:0.5rem; align-items:center; margin:0.3rem 0; }
-  .as-main .ruuid { font-family:ui-monospace,monospace; font-size:0.86rem; background:#f6f8fa;
-                    border:1px solid #e1e4e8; border-radius:6px; padding:0.15rem 0.45rem; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
   .as-main .step { border:1px solid #e5e7eb; border-radius:8px; padding:0.55rem 0.7rem; margin-bottom:0.55rem; }
@@ -225,10 +221,6 @@ ASSISTANT_TEMPLATE = """
           <button class="danger" onclick="ppAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop')">Stop</button>
           <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
         {% endif %}
-      </div>
-      <div class="uuidline">
-        <code class="ruuid">{{ selected.uuid }}</code>
-        <button class="copy" onclick="ppCopy('{{ selected.uuid }}', this)">Copy</button>
       </div>
       <div class="muted">
         journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
@@ -346,12 +338,6 @@ ASSISTANT_TEMPLATE = """
       .catch(function (e) { alert('Request failed: ' + e); });
   }
   function ppCopyText(text) { navigator.clipboard.writeText(text); }
-  function ppCopy(text, btn) {
-    navigator.clipboard.writeText(text).then(function () {
-      var old = btn.textContent; btn.textContent = 'Copied';
-      setTimeout(function () { btn.textContent = old; }, 1200);
-    });
-  }
   function ppRedirect(runId) {
     var instruction = prompt('Redirect instruction for the running run:');
     if (!instruction) return;
