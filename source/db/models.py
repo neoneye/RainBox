@@ -1013,6 +1013,11 @@ class AssistantStep(db.Model):
     action: Mapped[str | None] = mapped_column(Text)
     reason: Mapped[str | None] = mapped_column(Text)
     args: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # The exact prompt sent to the model for this step's decide call (the
+    # "model request" half of the LLM interaction); NULL for control steps and
+    # legacy rows that predate prompt capture.
+    system_prompt: Mapped[str | None] = mapped_column(Text)
+    user_prompt: Mapped[str | None] = mapped_column(Text)
     observation_preview: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     model_group_uuid: Mapped[UUID | None] = mapped_column()

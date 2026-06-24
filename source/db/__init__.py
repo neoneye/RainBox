@@ -370,6 +370,10 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("assistant_step", "input_tokens", "input_tokens INTEGER")
         _add_column_if_missing("assistant_step", "output_tokens", "output_tokens INTEGER")
         _add_column_if_missing("assistant_step", "duration_ms", "duration_ms INTEGER")
+        # Per-step "model request" prompts — the exact system/user text sent to
+        # the model that step (additive nullable; legacy rows stay NULL).
+        _add_column_if_missing("assistant_step", "system_prompt", "system_prompt TEXT")
+        _add_column_if_missing("assistant_step", "user_prompt", "user_prompt TEXT")
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(

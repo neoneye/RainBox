@@ -191,6 +191,11 @@ class ModelGroupAgent(Agent):
         # these to record per-step metrics; other agents ignore them.
         self._last_usage: dict[str, int] | None = None
         self._last_model_uuid: UUID | None = None
+        # The exact system/user prompt of the most recent decide call, captured
+        # at the live-model seam so the assistant can persist the "model request"
+        # alongside the step it produced (None until one runs).
+        self._last_system_prompt: str | None = None
+        self._last_user_prompt: str | None = None
 
     def setup(self) -> None:
         self.model_group_uuid: UUID | None = None

@@ -17,7 +17,12 @@ from uuid import UUID
 from flask import render_template_string, request
 
 import db
+from agents.assistant import CAPABILITIES
 from .core import app
+
+# action value -> human description, for the timeline's "function call" section.
+# Static (the capability registry is defined in code), so resolve once at import.
+_ACTION_DESCRIPTIONS = {n.value: c.description for n, c in CAPABILITIES.items()}
 
 # Lucide folder icons (verbatim from /chat — the convention's shared SVGs).
 _ICON_FOLDER = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
@@ -192,8 +197,20 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .io-label { font-size:0.68rem; text-transform:uppercase;
                              letter-spacing:0.04em; color:#6b7280; margin-bottom:0.2rem; }
   .as-main .step .io > pre { margin:0; }
+  .as-main .step .io-req pre { border-left:3px solid #94a3b8; max-height:20rem; overflow:auto; }
   .as-main .step .io-out > pre { border-left:3px solid #6366f1; }
+  .as-main .step .io-call > pre { border-left:3px solid #f59e0b; }
   .as-main .step .io-in > pre { border-left:3px solid #10b981; }
+  /* "function call": the chosen action's description + the args it's invoked with. */
+  .as-main .step .fn-desc { color:#475467; margin-bottom:0.25rem; font-size:0.85rem; }
+  .as-main .step .fn-desc code { background:#f1f5f9; padding:1px 5px;
+                                 border-radius:4px; font-size:0.82rem; }
+  /* "model request" sub-parts: system and user prompt, each collapsed in a
+     <details>. The summaries mirror .io-label but a notch smaller. */
+  .as-main .step .prompt { margin:0.25rem 0 0; }
+  .as-main .step .prompt > summary { font-size:0.64rem; text-transform:uppercase;
+                             letter-spacing:0.04em; color:#6b7280; margin-bottom:0.15rem;
+                             cursor:pointer; -webkit-user-select:none; user-select:none; }
   .as-main .err { color:#c0392b; }
   .as-main .intent { border-left:3px solid #cbd5e1; margin:0.45rem 0 0.2rem 0.4rem;
                      padding:0.4rem 0.6rem; background:#fcfcfd; border-radius:0 6px 6px 0; }
@@ -333,10 +350,34 @@ ASSISTANT_TEMPLATE = """
         {% if step.phase == 'control' %}
           {% if step.reason %}<div class="reason">{{ step.reason }}</div>{% endif %}
         {% else %}
+        {% if step.system_prompt or step.user_prompt %}
+        <div class="io io-req">
+          <div class="io-label">model request</div>
+          {% if step.system_prompt %}
+          <details class="prompt">
+            <summary>system prompt</summary>
+            <pre>{{ step.system_prompt }}</pre>
+          </details>
+          {% endif %}
+          {% if step.user_prompt %}
+          <details class="prompt">
+            <summary>user prompt</summary>
+            <pre>{{ step.user_prompt }}</pre>
+          </details>
+          {% endif %}
+        </div>
+        {% endif %}
         <div class="io io-out">
           <div class="io-label">model response · JSON</div>
           <pre>{{ decision_json.get(step.uuid|string, '') }}</pre>
         </div>
+        {% if step.action %}
+        <div class="io io-call">
+          <div class="io-label">function call</div>
+          <div class="fn-desc"><code>{{ step.action }}</code>{% if action_descriptions.get(step.action) %} — {{ action_descriptions[step.action] }}{% endif %}</div>
+          {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
+        </div>
+        {% endif %}
         {% endif %}
         {% if step.observation_preview %}
         <div class="io io-in">
@@ -581,7 +622,8 @@ def assistant_page() -> str:
     return render_template_string(
         ASSISTANT_TEMPLATE,
         runs=runs, folders=folders, selected=selected, trigger=trigger,
-        timeline=timeline, decision_json=decision_json, unlinked=unlinked,
+        timeline=timeline, decision_json=decision_json,
+        action_descriptions=_ACTION_DESCRIPTIONS, unlinked=unlinked,
         pending_controls=pending_controls,
         duration=duration, model_names=model_names, dash=dash, verdict=verdict,
         icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,

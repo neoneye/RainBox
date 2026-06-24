@@ -1300,12 +1300,15 @@ class AssistantAgent(ModelGroupAgent):
                 # step can't inherit them.
                 usage = self._last_usage
                 model_uuid = self._last_model_uuid
+                system_prompt = self._last_system_prompt
+                user_prompt = self._last_user_prompt
 
                 error = self._validate_decision(decision)
                 if error is not None:
                     self._record_step(
                         step_index=step_index, phase="failed", decision=decision,
                         error=error, usage=usage, model_uuid=model_uuid,
+                        system_prompt=system_prompt, user_prompt=user_prompt,
                     )
                     scratchpad.append(
                         f"step {step_index}: action '{decision.action.value}' "
@@ -1317,6 +1320,7 @@ class AssistantAgent(ModelGroupAgent):
                     self._record_step(
                         step_index=step_index, phase="final", decision=decision,
                         usage=usage, model_uuid=model_uuid,
+                        system_prompt=system_prompt, user_prompt=user_prompt,
                     )
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
@@ -1338,7 +1342,8 @@ class AssistantAgent(ModelGroupAgent):
                 self._activity = f"running {decision.action.value}"
                 step_row = self._open_step(
                     step_index=step_index, decision=decision, usage=usage,
-                    model_uuid=model_uuid)
+                    model_uuid=model_uuid,
+                    system_prompt=system_prompt, user_prompt=user_prompt)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
                     room_uuid=room_uuid,
@@ -1457,8 +1462,14 @@ class AssistantAgent(ModelGroupAgent):
         user_prompt = self._build_user_prompt(
             transcript=transcript, scratchpad=scratchpad, step_index=step_index
         )
+        system_prompt = self._system_prompt()
+        # Snapshot the exact request so the step row can persist the "model
+        # request" half of the interaction (the scripted-seam test path skips
+        # this method, so these stay None there — read defensively downstream).
+        self._last_system_prompt = system_prompt
+        self._last_user_prompt = user_prompt
         result = self._structured_completion(
-            system_prompt=self._system_prompt(),
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_model=AssistantStepDecision,
         )
@@ -1754,6 +1765,7 @@ class AssistantAgent(ModelGroupAgent):
     def _open_step(
         self, *, step_index: int, decision: AssistantStepDecision,
         usage: dict[str, int] | None = None, model_uuid: "UUID | None" = None,
+        system_prompt: str | None = None, user_prompt: str | None = None,
     ) -> "db.AssistantStep | None":
         """Open a non-terminal action step: insert its single `running` row
         (committed before the action runs) and mirror it as one in-process entry
@@ -1777,6 +1789,8 @@ class AssistantAgent(ModelGroupAgent):
             action=decision.action.value,
             reason=decision.reason,
             args=decision.args,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             model_group_uuid=self.model_group_uuid,
             model_uuid=model_uuid,
             input_tokens=(usage or {}).get("input"),
@@ -1814,6 +1828,8 @@ class AssistantAgent(ModelGroupAgent):
         observation_preview: str | None = None,
         usage: dict[str, int] | None = None,
         model_uuid: "UUID | None" = None,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
     ) -> None:
         """Record a single-insert (no open/settle lifecycle) trace step — the
         terminal-only path: a `failed` validation, the `final` reply, and a
@@ -1842,6 +1858,8 @@ class AssistantAgent(ModelGroupAgent):
                 action=action,
                 reason=reason,
                 args=args,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 observation_preview=observation_preview,
                 error=error,
                 model_group_uuid=self.model_group_uuid,
