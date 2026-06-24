@@ -45,7 +45,7 @@ ASSISTANT_TEMPLATE = """
         <button class="primary" onclick="ppAct('/chat/api/assistant/write-intents/{{ it.uuid }}/confirm')">Confirm</button>
         <button class="danger" onclick="ppAct('/chat/api/assistant/write-intents/{{ it.uuid }}/reject')">Reject</button>
       {% elif it.state == 'completed' and it.result and it.result.get('undo') %}
-        <button onclick="ppAct('/chat/api/assistant/write-intents/{{ it.uuid }}/undo')">Undo</button>
+        <button onclick="ppConfirmAct('/chat/api/assistant/write-intents/{{ it.uuid }}/undo', 'Undo this {{ it.capability_name }} write? This reverts the change.')">Undo</button>
       {% endif %}
     </div>
   </div>
@@ -391,6 +391,7 @@ ASSISTANT_TEMPLATE = """
       })
       .catch(function (e) { alert('Request failed: ' + e); });
   }
+  function ppConfirmAct(url, msg) { if (window.confirm(msg)) ppAct(url); }
   function ppCopyText(text) { navigator.clipboard.writeText(text); }
   function ppRedirect(runId) {
     var instruction = prompt('Redirect instruction for the running run:');
