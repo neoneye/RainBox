@@ -224,7 +224,7 @@ ASSISTANT_TEMPLATE = """
         <div class="dcell">
           <div class="dlabel">Time</div>
           <div class="dval">total {{ dash.total_time }}</div>
-          <div class="dval">llm {{ dash.llm_time }}</div>
+          <div class="dval">llm {{ dash.llm_time }}{% if dash.llm_tps %} · {{ dash.llm_tps }} tok/s{% endif %}</div>
         </div>
         <div class="dcell">
           <div class="dlabel">Tokens</div>
@@ -439,14 +439,18 @@ def _dash_status(run) -> tuple[str, str]:
 def _run_dashboard(run, steps: list) -> dict:
     """Aggregate metrics for the top-of-detail mini dashboard."""
     label, cls = _dash_status(run)
+    in_tokens = sum((s.input_tokens or 0) for s in steps)
+    out_tokens = sum((s.output_tokens or 0) for s in steps)
+    llm_ms = sum((s.duration_ms or 0) for s in steps)
     return {
         "status": label,
         "status_class": cls,
         "steps": len(steps),
         "total_time": _format_duration(run.started_at, run.finished_at) or "—",
-        "llm_time": _format_seconds(sum((s.duration_ms or 0) for s in steps) / 1000),
-        "in_tokens": sum((s.input_tokens or 0) for s in steps),
-        "out_tokens": sum((s.output_tokens or 0) for s in steps),
+        "llm_time": _format_seconds(llm_ms / 1000),
+        "llm_tps": round((in_tokens + out_tokens) / (llm_ms / 1000)) if llm_ms else None,
+        "in_tokens": in_tokens,
+        "out_tokens": out_tokens,
     }
 
 

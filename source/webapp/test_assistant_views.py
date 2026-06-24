@@ -321,7 +321,7 @@ def test_run_dashboard_aggregates_status_steps_time_tokens(app_ctx, client):
         assert "Resolved" in body                       # status column
         assert '<div class="dval-big">2</div>' in body  # step count
         assert "in 500" in body and "out 70" in body    # accumulated tokens
-        assert "llm 5.1s" in body                        # accumulated LLM time
+        assert "llm 5.1s · 112 tok/s" in body            # accumulated LLM time + throughput
         assert "total " in body                          # start→finish time
     finally:
         _cleanup(run.uuid, room.uuid)
