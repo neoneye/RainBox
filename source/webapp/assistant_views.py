@@ -386,13 +386,18 @@ ASSISTANT_TEMPLATE = """
         </div>
         {% endif %}
         {% endif %}
-        {% if step.observation_preview or step.observation_data %}
+        {% set obs = step.observation %}
+        {% if obs is not none or step.observation_preview %}
         <div class="io io-in">
-          <div class="io-label">function result
-            <span class="fn-ok {{ 'ok-true' if step.phase == 'observed' else 'ok-false' }}">ok: {{ 'true' if step.phase == 'observed' else 'false' }}</span>
+          <div class="io-label">function result{% if obs is not none %}
+            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}
           </div>
-          {% if step.observation_preview %}<pre>{{ step.observation_preview }}</pre>{% endif %}
-          {% if step.observation_data %}<pre>{{ step.observation_data | tojson }}</pre>{% endif %}
+          {% if obs is not none %}
+            {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
+            {% if obs.data %}<pre>{{ obs.data | tojson }}</pre>{% endif %}
+          {% elif step.observation_preview %}
+            <pre>{{ step.observation_preview }}</pre>
+          {% endif %}
         </div>
         {% endif %}
         {% if step.error %}<div class="err">{{ step.error }}</div>{% endif %}
