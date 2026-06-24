@@ -184,8 +184,22 @@ ASSISTANT_TEMPLATE = """
   .as-main .runhd { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
-  .as-main .step.control { background:#faf5ff; }
-  .as-main .step .hd { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; }
+  /* Each ReAct step is a self-contained card: a header band over a padded body
+     holding the model/function io sections, so it reads as one grouped unit. */
+  .as-main .step { border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;
+                   background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05); margin-bottom:16px; }
+  .as-main .step .hd { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;
+                       padding:10px 14px; background:#fbfdff; border-bottom:1px solid #e5e7eb;
+                       border-left:3px solid #cbd5e1; }
+  .as-main .step.phase-observed .hd, .as-main .step.phase-final .hd { border-left-color:#1e7e34; }
+  .as-main .step.phase-failed .hd { border-left-color:#c0392b; }
+  .as-main .step.phase-control .hd { border-left-color:#7e22ce; }
+  .as-main .step.phase-running .hd { border-left-color:#1d4ed8; }
+  .as-main .step.phase-planned .hd { border-left-color:#98a2b3; }
+  .as-main .step-body { padding:14px 16px; }
+  .as-main .step-body > :first-child { margin-top:0; }
+  .as-main .step-body > :last-child { margin-bottom:0; }
+  .as-main .step.phase-control .step-body { background:#faf5ff; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
   .as-main .step .step-right { margin-left:auto; display:flex; gap:0.5rem; align-items:center; }
   .as-main .step .step-model { color:#2563eb; text-decoration:none; font-size:0.8rem; }
@@ -338,11 +352,9 @@ ASSISTANT_TEMPLATE = """
 
       {% if not timeline %}<div class="as-empty">This run has no steps.</div>{% endif %}
       {% for step, intents in timeline %}
-      <hr class="sep">
-      <div class="step {{ 'control' if step.phase == 'control' }}">
+      <div class="step phase-{{ step.phase }}">
         <div class="hd">
           <span class="ix">#{{ step.step_index }}</span>
-          <span class="badge b-{{ step.phase }}">{{ step.phase }}</span>
           <span class="action">{{ step.action or '—' }}</span>
           {% set has_toks = step.input_tokens is not none or step.output_tokens is not none %}
           {% if step.model_uuid or has_toks or step.duration_ms is not none %}
@@ -359,6 +371,7 @@ ASSISTANT_TEMPLATE = """
           </span>
           {% endif %}
         </div>
+        <div class="step-body">
         {% if step.phase == 'control' %}
           {% if step.reason %}<div class="reason">{{ step.reason }}</div>{% endif %}
         {% else %}
@@ -407,6 +420,7 @@ ASSISTANT_TEMPLATE = """
         {% endif %}
         {% if step.error %}<div class="err">{{ step.error }}</div>{% endif %}
         {% for it in intents %}{{ render_intent(it) }}{% endfor %}
+        </div>
       </div>
       {% endfor %}
 
