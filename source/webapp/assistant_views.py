@@ -153,8 +153,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .runhd { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
-  .as-main .step { border:1px solid #e5e7eb; border-radius:8px; padding:0.55rem 0.7rem; }
-  .as-main .step.control { background:#faf5ff; border-color:#e9d5ff; }
+  .as-main .step.control { background:#faf5ff; }
   .as-main .step .hd { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
   .as-main .step .step-right { margin-left:auto; display:flex; gap:0.5rem; align-items:center; }
