@@ -223,6 +223,13 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .io-time { text-transform:none; font-weight:400; color:#98a2b3;
                             font-size:0.72rem; margin-left:auto;
                             font-variant-numeric:tabular-nums; }
+  /* Function-call execution time, shown right before the result timestamp:
+     "took 5.3s · 12:34:56". io-dur takes the auto margin so the pair stays
+     together on the right. */
+  .as-main .step .io-dur { text-transform:none; font-weight:400; color:#98a2b3;
+                           font-size:0.72rem; margin-left:auto;
+                           font-variant-numeric:tabular-nums; }
+  .as-main .step .io-dur + .io-time { margin-left:0; }
   /* "model request" sub-parts: system and user prompt, each collapsed in a
      <details>. The summaries mirror .io-label but a notch smaller. */
   .as-main .step .prompt { margin:0.25rem 0 0; }
@@ -401,7 +408,7 @@ ASSISTANT_TEMPLATE = """
         {% if obs is not none or step.observation_preview %}
         <div class="io io-in">
           <div class="io-label">function result{% if obs is not none %}
-            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at %}<span class="io-time" title="{{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span>{% endif %}
+            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at and step.created_at %}<span class="io-dur">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s · </span>{% endif %}{% if step.settled_at %}<span class="io-time" title="{{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span>{% endif %}
           </div>
           {% if obs is not none %}
             {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
