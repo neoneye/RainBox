@@ -150,16 +150,15 @@ ASSISTANT_TEMPLATE = """
   /* Right detail pane. */
   /* Full-bleed band: negative margins cancel .as-main's 12px/18px padding so it
      reaches the pane edges; only a bottom divider, no rounded box. */
-  .as-main .dash { display:grid; grid-template-columns:repeat(4, 1fr);
-                   min-height:7.5rem; margin:-12px -18px 1rem; background:#fbfdff;
+  .as-main .dash { display:grid; grid-template-columns:1.2fr 1fr 1.4fr 1fr;
+                   gap:24px; margin:-12px -18px 1.4rem; padding:18px 18px;
                    border-bottom:1px solid #e5e7eb; }
-  .as-main .dash .dcell { padding:0.6rem 0.9rem; border-left:1px solid #e5e7eb;
-                          display:flex; flex-direction:column; justify-content:center; }
-  .as-main .dash .dcell:first-child { border-left:none; }
-  .as-main .dash .dlabel { font-size:0.7rem; text-transform:uppercase;
-                           letter-spacing:0.04em; color:#6b7280; margin-bottom:0.35rem; }
-  .as-main .dash .dval { font-size:0.95rem; color:#344054; font-variant-numeric:tabular-nums; }
-  .as-main .dash .dval-big { font-size:1.4rem; font-weight:700; color:#344054;
+  .as-main .dash .dcell { display:flex; flex-direction:column; }
+  .as-main .dash .dlabel { font-size:0.66rem; font-weight:700; text-transform:uppercase;
+                           letter-spacing:0.05em; color:#9ca3af; margin-bottom:8px; }
+  .as-main .dash .dval { font-size:0.92rem; color:#374151; line-height:1.5;
+                         font-variant-numeric:tabular-nums; }
+  .as-main .dash .dval-big { font-size:1.3rem; font-weight:700; color:#1a1a2e;
                              font-variant-numeric:tabular-nums; }
   .as-main .dash .dstatus-resolved { color:#1e7e34; }
   .as-main .dash .dstatus-unresolved { color:#c0392b; }
