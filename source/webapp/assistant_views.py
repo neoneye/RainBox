@@ -20,9 +20,12 @@ import db
 from agents.assistant import CAPABILITIES
 from .core import app
 
-# action value -> human description, for the timeline's "function call" section.
-# Static (the capability registry is defined in code), so resolve once at import.
-_ACTION_DESCRIPTIONS = {n.value: c.description for n, c in CAPABILITIES.items()}
+# action value -> short human-readable summary, for the timeline's "function
+# call" section (the verbose `description` is LLM-facing). Static (the capability
+# registry is defined in code), so resolve once at import.
+_ACTION_DESCRIPTIONS = {
+    n.value: (c.summary or c.description) for n, c in CAPABILITIES.items()
+}
 
 # Lucide folder icons (verbatim from /chat — the convention's shared SVGs).
 _ICON_FOLDER = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '

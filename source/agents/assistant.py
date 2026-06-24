@@ -935,7 +935,11 @@ class Capability:
 
     name: AssistantActionName
     family: str
+    # `description` is the LLM-facing text (verbose: usage caveats, undo notes,
+    # arg schema). `summary` is the short human-readable line for the operator UI
+    # (e.g. the /assistant timeline). Falls back to `description` when empty.
     description: str
+    summary: str = ""
     required_args: tuple[str, ...] = ()
     optional_args: frozenset[str] = frozenset()
     terminal: bool = False
@@ -962,17 +966,20 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
         description='give your final answer to the user; ends the turn. args: {"message": "..."}',
+        summary="give your final answer to the user",
         required_args=("message",), terminal=True,
     ),
     AssistantActionName.ASK_CLARIFYING_QUESTION: Capability(
         name=AssistantActionName.ASK_CLARIFYING_QUESTION, family="conversation", read=False,
         description=('ask the user for missing information; ends the turn. '
                      'args: {"question": "..."}'),
+        summary="ask the user for missing information",
         required_args=("question",), terminal=True,
     ),
     AssistantActionName.QUERY_MEMORY: Capability(
         name=AssistantActionName.QUERY_MEMORY, family="memory",
         description='search remembered facts. args: {"query": "..."}',
+        summary="search remembered facts",
         required_args=("query",), action=_action_query_memory,
     ),
     AssistantActionName.QUERY_QA: Capability(
@@ -982,11 +989,13 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'kanban, remembered facts, or files — use the matching read '
                      'action (kanban_read / query_memory / workspace_read_command). '
                      'args: {"query": "..."}'),
+        summary="answer a general question from the knowledge base",
         required_args=("query",), action=_action_query_qa, output_cap_chars=6000,
     ),
     AssistantActionName.WORKSPACE_READ_COMMAND: Capability(
         name=AssistantActionName.WORKSPACE_READ_COMMAND, family="workspace",
         description='run an allowlisted read-only file-inspection command. args: {"command": "..."}',
+        summary="run a read-only file-inspection command",
         required_args=("command",), action=_action_workspace_read_command,
     ),
     AssistantActionName.KANBAN_READ: Capability(
@@ -995,12 +1004,14 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'board\'s columns before creating/moving a task. args: optional '
                      '{"task_uuid"} for one task\'s detail + recent events, '
                      '{"board_uuid"} for a board; empty lists all boards'),
+        summary="read kanban boards and tasks",
         optional_args=frozenset({"board_uuid", "task_uuid"}), action=_action_kanban_read,
     ),
     AssistantActionName.REMEMBER: Capability(
         name=AssistantActionName.REMEMBER, family="memory",
         description=('remember a fact as an inert candidate (reject to undo). '
                      'args: {"text": "..."}'),
+        summary="remember a fact as a candidate",
         required_args=("text",), action=_action_remember,
         read=False, write=True, tier="log_and_undo",
     ),
@@ -1008,6 +1019,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         name=AssistantActionName.ACTIVATE_MEMORY, family="memory",
         description=('propose activating a candidate memory so it steers future '
                      'answers; needs your confirmation. args: {"memory_uuid": "..."}'),
+        summary="activate a candidate memory",
         required_args=("memory_uuid",), action=_action_activate_memory,
         read=False, write=True, tier="confirm",
     ),
@@ -1017,6 +1029,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      '(undoable). args: {"memory_uuid": "..."} (from query_memory) '
                      'or {"text": "..."} — text matches active AND candidate '
                      'memories'),
+        summary="forget a memory",
         optional_args=frozenset({"memory_uuid", "text"}),
         action=_action_forget_memory,
         read=False, write=True, tier="log_and_undo",
@@ -1027,6 +1040,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'args: {"task_uuid": "...", "column_uuid": "..."} where '
                      'column_uuid is the target column\'s NAME (e.g. "In progress") '
                      'or its uuid — prefer the name the operator used'),
+        summary="move a kanban task to another column",
         required_args=("task_uuid", "column_uuid"),
         action=_action_move_kanban_task,
         read=False, write=True, tier="log_and_undo",
@@ -1035,6 +1049,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         name=AssistantActionName.KANBAN_COMPLETE, family="kanban",
         description=('mark a kanban task done (moves it to the Done column); '
                      'reversible. args: {"task_uuid": "..."}'),
+        summary="mark a kanban task done",
         required_args=("task_uuid",), action=_action_complete_kanban_task,
         read=False, write=True, tier="log_and_undo",
     ),
@@ -1042,6 +1057,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         name=AssistantActionName.KANBAN_COMMENT, family="kanban",
         description=('add a comment to a kanban task; reversible (posts a '
                      'retraction). args: {"task_uuid": "...", "text": "..."}'),
+        summary="add a comment to a kanban task",
         required_args=("task_uuid", "text"), action=_action_comment_kanban_task,
         read=False, write=True, tier="log_and_undo",
     ),
@@ -1053,6 +1069,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'kanban_read), "title": "...", optional "description", '
                      'optional "column_uuid" — omit it to use the board\'s first '
                      'column (the usual case)}'),
+        summary="create a kanban task on an existing board",
         required_args=("board_uuid", "title"),
         optional_args=frozenset({"description", "column_uuid"}),
         action=_action_create_kanban_task,
@@ -1061,6 +1078,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.KANBAN_DELETE_TASK: Capability(
         name=AssistantActionName.KANBAN_DELETE_TASK, family="kanban",
         description="(internal) delete a kanban task — the undo-inverse of kanban_create_task.",
+        summary="delete a kanban task",
         required_args=("task_uuid",), action=_action_delete_kanban_task,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
@@ -1070,6 +1088,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'columns are added; the board uuid is assigned automatically '
                      '— never pass one). reversible (undo deletes it). args: '
                      '{"title": "...", optional "description"}'),
+        summary="create a new kanban board",
         required_args=("title",),
         optional_args=frozenset({"description"}),
         action=_action_create_kanban_board,
@@ -1078,6 +1097,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.KANBAN_DELETE_BOARD: Capability(
         name=AssistantActionName.KANBAN_DELETE_BOARD, family="kanban",
         description="(internal) delete a kanban board — the undo-inverse of kanban_create_board.",
+        summary="delete a kanban board",
         required_args=("board_uuid",), action=_action_delete_kanban_board,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
@@ -1085,6 +1105,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         name=AssistantActionName.SET_REMINDER, family="cron",
         description=('schedule a reminder that messages you at a time; needs your '
                      'confirmation. args: {"text": "...", "when": "ISO-8601 datetime"}'),
+        summary="schedule a reminder",
         required_args=("text", "when"), action=_action_set_reminder,
         read=False, write=True, tier="confirm", dry_run=True,
     ),
@@ -1093,6 +1114,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         description=('propose an edit to a workspace file (you supply the full new '
                      'content); shows a diff and needs your confirmation. args: '
                      '{"path": "...", "content": "..."}'),
+        summary="propose an edit to a workspace file",
         required_args=("path", "content"), action=_action_edit_file,
         read=False, write=True, tier="confirm", dry_run=True,
         output_cap_chars=12000,
@@ -1103,6 +1125,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      '(never used until you activate it; reject to undo). args: '
                      '{"skill_id": "kebab-slug", "title": "...", "body": "markdown", '
                      'optional "tags": "a,b"}'),
+        summary="propose a reusable skill as a candidate",
         required_args=("skill_id", "title", "body"),
         optional_args=frozenset({"tags"}),
         action=_action_propose_skill, read=False, write=True, tier="log_and_undo",
@@ -1111,24 +1134,28 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         name=AssistantActionName.ACTIVATE_SKILL, family="skill",
         description=('activate a candidate skill so it steers future answers; needs '
                      'your confirmation. args: {"skill_id": "..."}'),
+        summary="activate a candidate skill",
         required_args=("skill_id",), action=_action_activate_skill,
         read=False, write=True, tier="confirm",
     ),
     AssistantActionName.SKILL_DELETE: Capability(
         name=AssistantActionName.SKILL_DELETE, family="skill",
         description="(internal) delete a skill file — propose_skill's undo inverse.",
+        summary="delete a skill",
         required_args=("skill_id",), action=_action_delete_skill,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
     AssistantActionName.REJECT_MEMORY_CANDIDATE: Capability(
         name=AssistantActionName.REJECT_MEMORY_CANDIDATE, family="memory",
         description="(internal) reject a candidate memory — remember's undo inverse.",
+        summary="reject a candidate memory",
         required_args=("memory_uuid",), action=_action_reject_memory_candidate,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
     AssistantActionName.REACTIVATE_MEMORY: Capability(
         name=AssistantActionName.REACTIVATE_MEMORY, family="memory",
         description="(internal) reactivate a forgotten memory — forget's undo inverse.",
+        summary="reactivate a forgotten memory",
         required_args=("memory_uuid",), action=_action_reactivate_memory,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
