@@ -6,6 +6,7 @@ stop/redirect) wired to the existing endpoints. Read-only data; the buttons are
 the only writes.
 """
 
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -13,8 +14,17 @@ import pytest
 import db
 import webapp  # noqa: F401 — registers all views (incl. /assistant) on the app
 from db import AssistantRun
-from webapp.assistant_views import _bucket_runs
+from webapp.assistant_views import _bucket_runs, _format_duration
 from webapp.core import app as flask_app
+
+
+def test_format_duration():
+    base = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    assert _format_duration(base, base + timedelta(seconds=2.34)) == "2.3s"
+    assert _format_duration(base, base + timedelta(seconds=65)) == "1m 5s"
+    assert _format_duration(base, base + timedelta(hours=1, minutes=30)) == "1h 30m"
+    assert _format_duration(base, None) is None      # still running
+    assert _format_duration(None, base) is None
 
 
 class _FakeRun:

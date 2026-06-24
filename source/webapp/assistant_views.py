@@ -234,6 +234,7 @@ ASSISTANT_TEMPLATE = """
         journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
         · started {{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}
         {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
+        {% if duration %}· took {{ duration }}{% endif %}
       </div>
 
       <div class="trigger">
@@ -365,6 +366,18 @@ ASSISTANT_TEMPLATE = """
 """
 
 
+def _format_duration(start, finish) -> str | None:
+    """Human-readable elapsed time (finish - start), or None if either is unset."""
+    if start is None or finish is None:
+        return None
+    secs = max(0.0, (finish - start).total_seconds())
+    if secs < 60:
+        return f"{secs:.1f}s"
+    if secs < 3600:
+        return f"{int(secs // 60)}m {int(secs % 60)}s"
+    return f"{int(secs // 3600)}h {int((secs % 3600) // 60)}m"
+
+
 def _bucket_runs(runs: list) -> list[dict]:
     """Group runs into the virtual status folders (facets — a run lands in every
     bucket it matches). Recent holds all; the rest are filtered subsets."""
@@ -418,9 +431,12 @@ def assistant_page() -> str:
         pending_controls = db.list_pending_controls(selected.uuid)
         trigger = db.get_run_trigger_message(selected)
 
+    duration = _format_duration(
+        selected.started_at, selected.finished_at) if selected else None
+
     return render_template_string(
         ASSISTANT_TEMPLATE,
         runs=runs, folders=folders, selected=selected, trigger=trigger,
         timeline=timeline, unlinked=unlinked, pending_controls=pending_controls,
-        icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
+        duration=duration, icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
     )
