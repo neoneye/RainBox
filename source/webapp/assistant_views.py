@@ -260,12 +260,16 @@ ASSISTANT_TEMPLATE = """
           <span class="ix">#{{ step.step_index }}</span>
           <span class="badge b-{{ step.phase }}">{{ step.phase }}</span>
           <span class="action">{{ step.action or '—' }}</span>
-          {% if step.model_uuid or step.input_tokens is not none or step.output_tokens is not none %}
+          {% set has_toks = step.input_tokens is not none or step.output_tokens is not none %}
+          {% if step.model_uuid or has_toks or step.duration_ms is not none %}
           <span class="step-right">
             {% if step.model_uuid %}<a class="step-model" href="/models?id={{ step.model_uuid }}"
                 >{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }} ↗</a>{% endif %}
-            {% if step.input_tokens is not none or step.output_tokens is not none %}
-              <span class="toks">in {{ step.input_tokens or 0 }} · out {{ step.output_tokens or 0 }} tok</span>
+            {% if has_toks or step.duration_ms is not none %}
+              <span class="toks">
+                {%- if has_toks %}in {{ step.input_tokens or 0 }} tok · out {{ step.output_tokens or 0 }} tok{% endif -%}
+                {%- if step.duration_ms is not none %}{% if has_toks %} · {% endif %}took {{ '%.1f'|format(step.duration_ms / 1000) }}s{% endif -%}
+              </span>
             {% endif %}
           </span>
           {% endif %}

@@ -115,7 +115,8 @@ def test_step_records_token_usage_and_model_from_the_decide_call(room):
     model_uuid = uuid4()
 
     def decider(**_kwargs):
-        agent._last_usage = {"input": 412, "output": 87}   # what base.py would set
+        # what base.py would set
+        agent._last_usage = {"input": 412, "output": 87, "ms": 5100}
         agent._last_model_uuid = model_uuid
         return _reply("done")
 
@@ -124,6 +125,7 @@ def test_step_records_token_usage_and_model_from_the_decide_call(room):
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
     final = db.list_assistant_steps(agent._run.uuid)[-1]
     assert final.input_tokens == 412 and final.output_tokens == 87
+    assert final.duration_ms == 5100
     assert final.model_uuid == model_uuid
 
 

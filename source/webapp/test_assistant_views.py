@@ -286,16 +286,16 @@ def test_step_token_counts_render_in_timeline(app_ctx, client):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     with_tok = db.open_assistant_step(
         run_uuid=run.uuid, step_index=0, action="query_memory", reason="r",
-        input_tokens=412, output_tokens=87)
+        input_tokens=412, output_tokens=87, duration_ms=5100)
     db.settle_assistant_step(with_tok, phase="observed", observation_preview="ok")
     # a control step has no counts
     db.append_assistant_step(run_uuid=run.uuid, step_index=1, phase="control", action="stop")
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "in 412 · out 87 tok" in body    # the step with counts
-        # exactly one token line (the control step shows none)
-        assert body.count("tok</span>") == 1
+        assert "in 412 tok · out 87 tok · took 5.1s" in body   # the step with metrics
+        # exactly one metrics line (the control step shows none)
+        assert body.count('class="toks"') == 1
     finally:
         _cleanup(run.uuid, room.uuid)
 

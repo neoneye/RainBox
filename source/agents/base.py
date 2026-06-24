@@ -313,6 +313,7 @@ class ModelGroupAgent(Agent):
                 self._last_usage = {
                     "input": token_counter.prompt_llm_token_count,
                     "output": token_counter.completion_llm_token_count,
+                    "ms": int((time.monotonic() - t0) * 1000),
                 }
                 self._last_model_uuid = model_uuid
                 return result

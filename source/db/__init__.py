@@ -366,9 +366,10 @@ def init_db(app: Flask) -> None:
                 sa.text("ALTER TABLE assistant_write_intent DROP COLUMN IF EXISTS step_index"))
         # The assistant_run_summarizer agent's post-completion digest (additive nullable).
         _add_column_if_missing("assistant_run", "summary", "summary JSONB")
-        # Per-step LLM token counts (additive nullable).
+        # Per-step LLM token counts + call duration (additive nullable).
         _add_column_if_missing("assistant_step", "input_tokens", "input_tokens INTEGER")
         _add_column_if_missing("assistant_step", "output_tokens", "output_tokens INTEGER")
+        _add_column_if_missing("assistant_step", "duration_ms", "duration_ms INTEGER")
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(

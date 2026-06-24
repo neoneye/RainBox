@@ -1022,6 +1022,8 @@ class AssistantStep(db.Model):
     # reported no usage.
     input_tokens: Mapped[int | None] = mapped_column()
     output_tokens: Mapped[int | None] = mapped_column()
+    # Wall-clock duration of this step's LLM (decide) call, in milliseconds.
+    duration_ms: Mapped[int | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

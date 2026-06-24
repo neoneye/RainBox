@@ -1781,6 +1781,7 @@ class AssistantAgent(ModelGroupAgent):
             model_uuid=model_uuid,
             input_tokens=(usage or {}).get("input"),
             output_tokens=(usage or {}).get("output"),
+            duration_ms=(usage or {}).get("ms"),
         )
 
     def _settle_step(
@@ -1847,4 +1848,5 @@ class AssistantAgent(ModelGroupAgent):
                 model_uuid=model_uuid,
                 input_tokens=(usage or {}).get("input"),
                 output_tokens=(usage or {}).get("output"),
+                duration_ms=(usage or {}).get("ms"),
             )
