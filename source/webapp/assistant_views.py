@@ -236,10 +236,7 @@ ASSISTANT_TEMPLATE = """
       <div class="summary">
         <div class="grp">Summary</div>
         {% if selected.summary %}
-          <div>
-            {% if selected.summary.outcome %}<span class="badge b-out-{{ selected.summary.outcome }}">{{ selected.summary.outcome }}</span>{% endif %}
-            {{ selected.summary.trigger }}
-          </div>
+          <div>{{ selected.summary.trigger }}</div>
           {% if selected.summary.obstacles %}
             <div class="grp" style="font-size:0.85rem">Obstacles</div>
             <ul class="obstacles">

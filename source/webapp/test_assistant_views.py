@@ -244,7 +244,7 @@ def test_run_summary_renders_in_list_and_detail(app_ctx, client):
         assert "file the weekly report" in listing   # the summary trigger in the leaf
         detail = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert "the disk was full" in detail          # obstacle in the detail pane
-        assert "partial" in detail                    # outcome badge
+        assert "Unresolved" in detail                 # 'partial' outcome → dashboard status
     finally:
         _cleanup(run.uuid, room.uuid)
 
