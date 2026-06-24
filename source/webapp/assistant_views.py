@@ -272,7 +272,8 @@ ASSISTANT_TEMPLATE = """
         <div class="dcell">
           <div class="dlabel">Time</div>
           <div class="dval">total {{ dash.total_time }}</div>
-          <div class="dval">llm {{ dash.llm_time }}</div>
+          <div class="dval">model {{ dash.model_time }}</div>
+          <div class="dval">function {{ dash.function_time }}</div>
         </div>
         <div class="dcell">
           <div class="dlabel">Tokens</div>
@@ -549,12 +550,20 @@ def _run_dashboard(run, steps: list) -> dict:
     in_tokens = sum((s.input_tokens or 0) for s in steps)
     out_tokens = sum((s.output_tokens or 0) for s in steps)
     llm_ms = sum((s.duration_ms or 0) for s in steps)
+    llm_seconds = llm_ms / 1000
+    # "function" time = wall-clock spent outside the model (action execution +
+    # overhead) = total - model. Only computable once the run has finished.
+    total_seconds = None
+    if run.started_at and run.finished_at:
+        total_seconds = (run.finished_at - run.started_at).total_seconds()
     return {
         "status": label,
         "status_class": cls,
         "steps": len(steps),
-        "total_time": _format_duration(run.started_at, run.finished_at) or "—",
-        "llm_time": _format_seconds(llm_ms / 1000),
+        "total_time": _format_seconds(total_seconds) if total_seconds is not None else "—",
+        "model_time": _format_seconds(llm_seconds),
+        "function_time": (_format_seconds(total_seconds - llm_seconds)
+                          if total_seconds is not None else "—"),
         "llm_tps": round((in_tokens + out_tokens) / (llm_ms / 1000)) if llm_ms else None,
         "in_tokens": in_tokens,
         "out_tokens": out_tokens,

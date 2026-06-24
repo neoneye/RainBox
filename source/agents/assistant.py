@@ -1346,15 +1346,21 @@ class AssistantAgent(ModelGroupAgent):
                     continue
 
                 if self._caps[decision.action].terminal:
+                    text = self._terminal_text(decision)
+                    if decision.action is AssistantActionName.REPLY:
+                        text = self._append_result_links(text, result_links)
+                    # A terminal action has no settle, so record its "function
+                    # result" here: posting the message to the operator succeeded.
+                    outcome = ("Replied to the operator."
+                               if decision.action is AssistantActionName.REPLY
+                               else "Asked the operator a clarifying question.")
                     self._record_step(
                         step_index=step_index, phase="final", decision=decision,
                         usage=usage, model_uuid=model_uuid,
                         system_prompt=system_prompt, user_prompt=user_prompt,
                         requested_at=requested_at,
+                        observation={"ok": True, "text": outcome, "data": {}},
                     )
-                    text = self._terminal_text(decision)
-                    if decision.action is AssistantActionName.REPLY:
-                        text = self._append_result_links(text, result_links)
                     db.post_chat_message(room_uuid, self.agent_uuid, text, kind="message")
                     db.finish_run(run, "finished", final_summary=text[:200])
                     logger.info(
@@ -1863,6 +1869,7 @@ class AssistantAgent(ModelGroupAgent):
         decision: AssistantStepDecision | None = None,
         error: str | None = None,
         observation_preview: str | None = None,
+        observation: dict[str, Any] | None = None,
         usage: dict[str, int] | None = None,
         model_uuid: "UUID | None" = None,
         system_prompt: str | None = None,
@@ -1900,6 +1907,7 @@ class AssistantAgent(ModelGroupAgent):
                 user_prompt=user_prompt,
                 requested_at=requested_at,
                 observation_preview=observation_preview,
+                observation=observation,
                 error=error,
                 model_group_uuid=self.model_group_uuid,
                 model_uuid=model_uuid,

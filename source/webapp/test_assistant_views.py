@@ -361,8 +361,9 @@ def test_run_dashboard_aggregates_status_steps_time_tokens(app_ctx, client):
         assert '<div class="dval-big">2</div>' in body  # step count
         assert "in 500" in body and "out 70" in body    # accumulated tokens
         assert "112 tok/s" in body                       # throughput, in the Tokens column
-        assert "llm 5.1s" in body                        # accumulated LLM time
+        assert "model 5.1s" in body                      # accumulated model (LLM) time
         assert "total " in body                          # start→finish time
+        assert "function " in body                       # time outside the model
     finally:
         _cleanup(run.uuid, room.uuid)
 
