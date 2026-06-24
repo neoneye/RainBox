@@ -304,6 +304,7 @@ ASSISTANT_TEMPLATE = """
               <span class="toks">
                 {%- if has_toks %}in {{ step.input_tokens or 0 }} tok · out {{ step.output_tokens or 0 }} tok{% endif -%}
                 {%- if step.duration_ms is not none %}{% if has_toks %} · {% endif %}took {{ '%.1f'|format(step.duration_ms / 1000) }}s{% endif -%}
+                {%- if has_toks and step.duration_ms %} · {{ '%.0f'|format(((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms) }} tok/s{% endif -%}
               </span>
             {% endif %}
           </span>

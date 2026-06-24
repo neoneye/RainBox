@@ -293,7 +293,8 @@ def test_step_token_counts_render_in_timeline(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "in 412 tok · out 87 tok · took 5.1s" in body   # the step with metrics
+        # (412+87)/5.1s ≈ 98 tok/s
+        assert "in 412 tok · out 87 tok · took 5.1s · 98 tok/s" in body
         # exactly one metrics line (the control step shows none)
         assert body.count('class="toks"') == 1
     finally:
