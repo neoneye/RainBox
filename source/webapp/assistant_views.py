@@ -174,23 +174,25 @@ ASSISTANT_TEMPLATE = """
                     border-radius:6px; background:#fff; color:#222; }
   .as-main button.primary { background:#2563eb; border-color:#2563eb; color:#fff; }
   .as-main button.danger { color:#c0392b; border-color:#e7b9b3; }
-  .as-main .summary, .as-main .trigger { border:1px solid #e5e7eb; border-radius:8px;
+  .as-main .summary { border:1px solid #e5e7eb; border-radius:8px;
                     padding:0.5rem 0.7rem; margin:0.6rem 0; background:#fbfdff; }
   .as-main .summary .grp, .as-main .trigger .grp { margin:0 0 0.25rem; }
   .as-main .obstacles { margin:0.2rem 0 0; padding-left:1.2rem; }
   .as-main .obstacles li { margin:0.1rem 0; }
   .as-main .trigmsg { white-space:pre-wrap; word-break:break-word; margin-top:0.25rem; }
   .as-main hr.sep { border:0; border-top:1px solid #e5e7eb; margin:1rem 0; }
-  .as-main .runhd { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-bottom:0.5rem; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
-  /* Each ReAct step is a self-contained card: a header band over a padded body
-     holding the model/function io sections, so it reads as one grouped unit. */
-  .as-main .step { border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;
-                   background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05); margin-bottom:16px; }
-  .as-main .step .hd { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;
-                       padding:10px 14px; background:#fbfdff; border-bottom:1px solid #e5e7eb; }
-  .as-main .step-body { padding:14px 16px; }
+  /* The run header and each ReAct step are self-contained cards: a header band
+     (.hd) over a padded body, so each reads as one grouped unit. */
+  .as-main .step, .as-main .runcard { border:1px solid #e5e7eb; border-radius:8px;
+                   overflow:hidden; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05);
+                   margin-bottom:16px; }
+  .as-main .step .hd, .as-main .runcard .hd { display:flex; gap:0.5rem; align-items:center;
+                       flex-wrap:wrap; padding:10px 14px; background:#fbfdff;
+                       border-bottom:1px solid #e5e7eb; }
+  .as-main .step-body, .as-main .runcard-body { padding:14px 16px; }
+  .as-main .runcard-body .trigger { margin-top:0.8rem; }
   .as-main .step-body > :first-child { margin-top:0; }
   .as-main .step-body > :last-child { margin-bottom:0; }
   .as-main .step.phase-control .step-body { background:#faf5ff; }
@@ -321,37 +323,38 @@ ASSISTANT_TEMPLATE = """
         {% endif %}
       </div>
 
-      <hr class="sep">
-
-      <div class="runhd">
-        <h1 style="margin:0">Run</h1>
-        <span class="badge b-{{ selected.status }}">{{ selected.status }}</span>
-        {% if selected.status in ('running', 'stopping') %}
-          <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
-          <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
-        {% endif %}
-      </div>
-      <div class="muted">
-        journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
-        · started {{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}
-        {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
-        {% if duration %}· took {{ duration }}{% endif %}
-      </div>
-
-      <div class="trigger">
-        <div class="grp">Trigger</div>
-        {% if trigger %}
-          <div><strong>{{ trigger.sender_name }}</strong>
-            <span class="muted">{{ trigger.timestamp }}</span>
-            · <a href="/chat?id={{ selected.room_uuid }}&msg={{ trigger.id }}">open in chat ↗</a>
+      <div class="runcard">
+        <div class="hd">
+          <h1 style="margin:0">Run</h1>
+          <span class="badge b-{{ selected.status }}">{{ selected.status }}</span>
+          {% if selected.status in ('running', 'stopping') %}
+            <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
+            <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
+          {% endif %}
+        </div>
+        <div class="runcard-body">
+          <div class="muted">
+            journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
+            · started {{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}
+            {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
+            {% if duration %}· took {{ duration }}{% endif %}
           </div>
-          <div class="trigmsg">{{ trigger.text | truncate(400) }}</div>
-        {% else %}
-          <div class="muted">No triggering chat message found ·
-            room {{ (selected.room_uuid|string)[:8] }} ·
-            <a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a>
+          <div class="trigger">
+            <div class="grp">Trigger</div>
+            {% if trigger %}
+              <div><strong>{{ trigger.sender_name }}</strong>
+                <span class="muted">{{ trigger.timestamp }}</span>
+                · <a href="/chat?id={{ selected.room_uuid }}&msg={{ trigger.id }}">open in chat ↗</a>
+              </div>
+              <div class="trigmsg">{{ trigger.text | truncate(400) }}</div>
+            {% else %}
+              <div class="muted">No triggering chat message found ·
+                room {{ (selected.room_uuid|string)[:8] }} ·
+                <a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a>
+              </div>
+            {% endif %}
           </div>
-        {% endif %}
+        </div>
       </div>
 
       {% for c in pending_controls %}
