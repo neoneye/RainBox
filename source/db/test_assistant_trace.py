@@ -142,6 +142,22 @@ def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
         db.db.session.commit()
 
 
+def test_open_and_append_persist_token_counts(app_ctx):
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
+    try:
+        opened = db.open_assistant_step(
+            run_uuid=run.uuid, step_index=0, action="query_memory", reason="r",
+            input_tokens=412, output_tokens=87)
+        assert opened.input_tokens == 412 and opened.output_tokens == 87
+        # append (terminal single-insert) carries them too; default is None.
+        plain = db.append_assistant_step(
+            run_uuid=run.uuid, step_index=1, phase="control", action="stop")
+        assert plain.input_tokens is None and plain.output_tokens is None
+    finally:
+        _cleanup_run(run.uuid)
+
+
 def test_open_then_settle_is_one_mutable_row(app_ctx):
     """A normal action step is a single row: open inserts it at `running`
     (durable before the action), settle UPDATEs the SAME row in place to its

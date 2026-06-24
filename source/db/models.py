@@ -1017,6 +1017,11 @@ class AssistantStep(db.Model):
     error: Mapped[str | None] = mapped_column(Text)
     model_group_uuid: Mapped[UUID | None] = mapped_column()
     model_uuid: Mapped[UUID | None] = mapped_column()
+    # Token counts of this step's LLM (decide) call; NULL when not captured — a
+    # `control` step, a crash before the call returned, or a provider that
+    # reported no usage.
+    input_tokens: Mapped[int | None] = mapped_column()
+    output_tokens: Mapped[int | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

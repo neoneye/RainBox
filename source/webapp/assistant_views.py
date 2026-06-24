@@ -157,6 +157,8 @@ ASSISTANT_TEMPLATE = """
   .as-main .step.control { background:#faf5ff; border-color:#e9d5ff; }
   .as-main .step .hd { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
+  .as-main .step .toks { margin-left:auto; color:#6b7280; font-size:0.78rem;
+                         font-variant-numeric:tabular-nums; }
   .as-main .step .action { font-weight:600; }
   .as-main .step .reason { color:#475467; margin:0.3rem 0; }
   .as-main .err { color:#c0392b; }
@@ -257,6 +259,9 @@ ASSISTANT_TEMPLATE = """
           <span class="badge b-{{ step.phase }}">{{ step.phase }}</span>
           <span class="action">{{ step.action or '—' }}</span>
           {% if step.model_uuid %}<span class="muted">model {{ (step.model_uuid|string)[:8] }}</span>{% endif %}
+          {% if step.input_tokens is not none or step.output_tokens is not none %}
+            <span class="toks">in {{ step.input_tokens or 0 }} · out {{ step.output_tokens or 0 }} tok</span>
+          {% endif %}
         </div>
         {% if step.reason %}<div class="reason">{{ step.reason }}</div>{% endif %}
         {% if step.args %}<pre>{{ step.args | tojson(indent=2) }}</pre>{% endif %}

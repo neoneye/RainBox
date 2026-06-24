@@ -28,6 +28,7 @@ import time
 from typing import Any, Callable, cast
 from uuid import UUID
 
+from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.llms import ChatMessage, MessageRole
 from pydantic import BaseModel
 
@@ -185,6 +186,10 @@ class ModelGroupAgent(Agent):
         # model group (e.g. memory commands) must work on a bare instance.
         self.model_group_uuid: UUID | None = None
         self.candidate_model_uuids: list[UUID] = []
+        # Input/output token counts of the most recent _structured_completion
+        # call (None until one runs). The assistant reads it to record per-step
+        # metrics; other agents ignore it.
+        self._last_usage: dict[str, int] | None = None
 
     def setup(self) -> None:
         self.model_group_uuid: UUID | None = None
@@ -248,6 +253,12 @@ class ModelGroupAgent(Agent):
             ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
             ChatMessage(role=MessageRole.USER, content=user_prompt),
         ]
+        # Per-call token accounting (PlanExe's structured-LLM pattern): a
+        # TokenCountingHandler on the structured LLM captures input/output tokens
+        # even though `.raw` is the parsed model, not the usage dict. Reset here so
+        # a caller reading self._last_usage after a failed call sees None.
+        self._last_usage = None
+        token_counter = TokenCountingHandler()
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
             try:
@@ -260,7 +271,9 @@ class ModelGroupAgent(Agent):
                 )
                 t0 = time.monotonic()
                 the_llm = prepare_llm(_provider_id, model_name, args)
-                sllm = the_llm.as_structured_llm(response_model)
+                sllm = the_llm.as_structured_llm(
+                    response_model, callback_manager=CallbackManager([token_counter])
+                )
                 # Consume the structured output as a *stream* (same parsed
                 # result as .chat()) so the underlying tokens are received
                 # incrementally — this is what lets a caller see how much a
@@ -295,6 +308,10 @@ class ModelGroupAgent(Agent):
                 )
                 if validator is not None:
                     validator(result)
+                self._last_usage = {
+                    "input": token_counter.prompt_llm_token_count,
+                    "output": token_counter.completion_llm_token_count,
+                }
                 return result
             except Exception as e:
                 last_error = e

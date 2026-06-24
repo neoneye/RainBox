@@ -100,6 +100,8 @@ def open_assistant_step(
     args: dict[str, Any] | None = None,
     model_group_uuid: UUID | None = None,
     model_uuid: UUID | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
 ) -> AssistantStep:
     """Insert a step's single row at phase `running` and commit it before the
     action runs (trace-before-action durability: a kill mid-action leaves this
@@ -115,6 +117,8 @@ def open_assistant_step(
         args=args or {},
         model_group_uuid=model_group_uuid,
         model_uuid=model_uuid,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )
     db.session.add(step)
     db.session.commit()
@@ -152,6 +156,8 @@ def append_assistant_step(
     error: str | None = None,
     model_group_uuid: UUID | None = None,
     model_uuid: UUID | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
 ) -> AssistantStep:
     """Record a **single-insert** step row — the terminal-only path for a step
     with no `running`→settle lifecycle: a `failed` validation, the `final` reply,
@@ -169,6 +175,8 @@ def append_assistant_step(
         error=error,
         model_group_uuid=model_group_uuid,
         model_uuid=model_uuid,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )
     db.session.add(step)
     db.session.flush()  # commit the step row before anything else this txn

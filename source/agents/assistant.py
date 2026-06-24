@@ -1295,12 +1295,16 @@ class AssistantAgent(ModelGroupAgent):
                 decision = self._decide_next_step(
                     transcript=transcript, scratchpad=scratchpad, step_index=step_index
                 )
+                # Token counts of THIS step's decide call (None if the seam set
+                # nothing). Carried explicitly so a later control step can't
+                # inherit it.
+                usage = self._last_usage
 
                 error = self._validate_decision(decision)
                 if error is not None:
                     self._record_step(
                         step_index=step_index, phase="failed", decision=decision,
-                        error=error,
+                        error=error, usage=usage,
                     )
                     scratchpad.append(
                         f"step {step_index}: action '{decision.action.value}' "
@@ -1310,7 +1314,8 @@ class AssistantAgent(ModelGroupAgent):
 
                 if self._caps[decision.action].terminal:
                     self._record_step(
-                        step_index=step_index, phase="final", decision=decision
+                        step_index=step_index, phase="final", decision=decision,
+                        usage=usage,
                     )
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
@@ -1330,7 +1335,8 @@ class AssistantAgent(ModelGroupAgent):
                 # executed inline; everything else (reads, log-and-undo writes)
                 # executes immediately.
                 self._activity = f"running {decision.action.value}"
-                step_row = self._open_step(step_index=step_index, decision=decision)
+                step_row = self._open_step(
+                    step_index=step_index, decision=decision, usage=usage)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
                     room_uuid=room_uuid,
@@ -1744,13 +1750,14 @@ class AssistantAgent(ModelGroupAgent):
         return f"step {step_index}: {decision.action.value} -> {status}: {preview}"
 
     def _open_step(
-        self, *, step_index: int, decision: AssistantStepDecision
+        self, *, step_index: int, decision: AssistantStepDecision,
+        usage: dict[str, int] | None = None,
     ) -> "db.AssistantStep | None":
         """Open a non-terminal action step: insert its single `running` row
         (committed before the action runs) and mirror it as one in-process entry
         that `_settle_step` later mutates in place. Returns the row so the loop
         can bind a write-intent to its uuid; None when there is no run (the
-        scripted-seam unit path)."""
+        scripted-seam unit path). `usage` is the decide call's token counts."""
         self._steps.append(
             {
                 "step_index": step_index,
@@ -1769,6 +1776,8 @@ class AssistantAgent(ModelGroupAgent):
             reason=decision.reason,
             args=decision.args,
             model_group_uuid=self.model_group_uuid,
+            input_tokens=(usage or {}).get("input"),
+            output_tokens=(usage or {}).get("output"),
         )
 
     def _settle_step(
@@ -1799,12 +1808,14 @@ class AssistantAgent(ModelGroupAgent):
         decision: AssistantStepDecision | None = None,
         error: str | None = None,
         observation_preview: str | None = None,
+        usage: dict[str, int] | None = None,
     ) -> None:
         """Record a single-insert (no open/settle lifecycle) trace step — the
         terminal-only path: a `failed` validation, the `final` reply, and a
         crash-failure row. Persists one `assistant_step` row and, when terminal,
         its self-contained `debug-assistant` chat anchor — and mirrors one entry
-        into `self._steps` for fast in-process assertions.
+        into `self._steps` for fast in-process assertions. `usage` is the decide
+        call's token counts (None for a crash/control row).
         """
         action = decision.action.value if decision is not None else None
         reason = decision.reason if decision is not None else None
@@ -1829,4 +1840,6 @@ class AssistantAgent(ModelGroupAgent):
                 observation_preview=observation_preview,
                 error=error,
                 model_group_uuid=self.model_group_uuid,
+                input_tokens=(usage or {}).get("input"),
+                output_tokens=(usage or {}).get("output"),
             )
