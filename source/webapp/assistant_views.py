@@ -198,7 +198,8 @@ ASSISTANT_TEMPLATE = """
      result (response); label and color-accent them so they can't be confused. */
   .as-main .step .io { margin:0.4rem 0; }
   .as-main .step .io-label { font-size:0.68rem; text-transform:uppercase;
-                             letter-spacing:0.04em; color:#6b7280; margin-bottom:0.2rem; }
+                             letter-spacing:0.04em; color:#6b7280; margin-bottom:0.2rem;
+                             display:flex; align-items:center; }
   .as-main .step .io > pre { margin:0; }
   .as-main .step .io-req pre { border-left:3px solid #94a3b8; max-height:20rem; overflow:auto; }
   .as-main .step .io-out > pre { border-left:3px solid #6366f1; }
@@ -212,6 +213,10 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .fn-ok { text-transform:none; font-weight:600; margin-left:0.3rem; }
   .as-main .step .fn-ok.ok-true { color:#1e7e34; }
   .as-main .step .fn-ok.ok-false { color:#c0392b; }
+  /* Invocation / response timestamps on the call & result labels. */
+  .as-main .step .io-time { text-transform:none; font-weight:400; color:#98a2b3;
+                            font-size:0.72rem; margin-left:auto;
+                            font-variant-numeric:tabular-nums; }
   /* "model request" sub-parts: system and user prompt, each collapsed in a
      <details>. The summaries mirror .io-label but a notch smaller. */
   .as-main .step .prompt { margin:0.25rem 0 0; }
@@ -380,7 +385,7 @@ ASSISTANT_TEMPLATE = """
         </div>
         {% if step.action %}
         <div class="io io-call">
-          <div class="io-label">function call</div>
+          <div class="io-label">function call{% if step.created_at %}<span class="io-time" title="{{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
           <div class="fn-desc"><code>{{ step.action }}</code>{% if action_descriptions.get(step.action) %} — {{ action_descriptions[step.action] }}{% endif %}</div>
           {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
         </div>
@@ -390,7 +395,7 @@ ASSISTANT_TEMPLATE = """
         {% if obs is not none or step.observation_preview %}
         <div class="io io-in">
           <div class="io-label">function result{% if obs is not none %}
-            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}
+            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at %}<span class="io-time" title="{{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span>{% endif %}
           </div>
           {% if obs is not none %}
             {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}

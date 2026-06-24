@@ -145,6 +145,7 @@ def settle_assistant_step(
     step.phase = phase
     step.observation_preview = observation_preview
     step.observation = observation
+    step.settled_at = datetime.now(UTC)
     step.error = error
     db.session.add(step)
     db.session.flush()

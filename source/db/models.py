@@ -1037,6 +1037,11 @@ class AssistantStep(db.Model):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # When the step settled — i.e. the action returned and the observation was
+    # recorded (the "function result" time). NULL until settled, and on
+    # single-insert terminal rows (final/failed-validation/control) that never
+    # settle. created_at is the open / "function call" invocation time.
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint(
             "phase IN ('planned','running','observed','failed','final','control')",
