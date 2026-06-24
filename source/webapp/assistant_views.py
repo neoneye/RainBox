@@ -131,6 +131,11 @@ ASSISTANT_TEMPLATE = """
                    font-size:0.85rem; color:#333; padding:0.45em 0.6em; border-radius:6px; }
   .as-menu .item:hover { background:#eef0f6; }
   .as-menu .item.danger { color:#b91c1c; }
+  .as-toast { position:fixed; bottom:18px; right:18px; max-width:420px; background:#1f2937;
+              color:#fff; padding:10px 14px; border-radius:8px; font-size:0.9rem;
+              box-shadow:0 4px 14px rgba(0,0,0,0.3); z-index:2000; opacity:0;
+              transition:opacity .25s; pointer-events:none; }
+  .as-toast.show { opacity:1; }
 
   /* Right detail pane. */
   /* Full-bleed band: negative margins cancel .as-main's 12px/18px padding so it
@@ -334,6 +339,7 @@ ASSISTANT_TEMPLATE = """
 </div>
 
 <div id="as-menu" class="as-menu" hidden></div>
+<div id="as-toast" class="as-toast"></div>
 
 <script>
   // --- folder expand/collapse persistence (localStorage, keyed by name) -------
@@ -382,15 +388,28 @@ ASSISTANT_TEMPLATE = """
   }
 
   // --- shared actions --------------------------------------------------------
+  function asToast(msg) {
+    var t = document.getElementById('as-toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function () { t.classList.remove('show'); }, 3500);
+  }
   function ppAct(url) {
     fetch(url, {method: 'POST'})
       .then(function (r) { return r.json().catch(function () { return {}; }); })
       .then(function (d) {
         if (d && d.ok === false) { alert(d.text || 'Action failed'); return; }
+        // Flash survives the reload via sessionStorage (shown on load below).
+        try { sessionStorage.setItem('as.flash', (d && d.text) || 'Done.'); } catch (e) {}
         location.reload();
       })
       .catch(function (e) { alert('Request failed: ' + e); });
   }
+  (function () {
+    var f = null;
+    try { f = sessionStorage.getItem('as.flash'); sessionStorage.removeItem('as.flash'); } catch (e) {}
+    if (f) asToast(f);
+  })();
   function ppConfirmAct(url, msg) { if (window.confirm(msg)) ppAct(url); }
   function ppCopyText(text) { navigator.clipboard.writeText(text); }
   function ppRedirect(runId) {
