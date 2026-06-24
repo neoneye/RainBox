@@ -133,6 +133,21 @@ ASSISTANT_TEMPLATE = """
   .as-menu .item.danger { color:#b91c1c; }
 
   /* Right detail pane. */
+  .as-main .dash { display:grid; grid-template-columns:repeat(4, 1fr);
+                   border:1px solid #e5e7eb; border-radius:8px; min-height:7.5rem;
+                   margin:0 0 1rem; background:#fbfdff; }
+  .as-main .dash .dcell { padding:0.6rem 0.9rem; border-left:1px solid #e5e7eb;
+                          display:flex; flex-direction:column; justify-content:center; }
+  .as-main .dash .dcell:first-child { border-left:none; }
+  .as-main .dash .dlabel { font-size:0.7rem; text-transform:uppercase;
+                           letter-spacing:0.04em; color:#6b7280; margin-bottom:0.35rem; }
+  .as-main .dash .dval { font-size:0.95rem; color:#344054; font-variant-numeric:tabular-nums; }
+  .as-main .dash .dval-big { font-size:1.4rem; font-weight:700; color:#344054;
+                             font-variant-numeric:tabular-nums; }
+  .as-main .dash .dstatus-resolved { color:#1e7e34; }
+  .as-main .dash .dstatus-unresolved { color:#c0392b; }
+  .as-main .dash .dstatus-running { color:#1d4ed8; }
+  .as-main .dash .dstatus-pending { color:#98a2b3; }
   .as-main h1 { margin:0.1rem 0 0.5rem; }
   .as-main .muted { color:#667085; font-size:0.85rem; }
   .as-main .grp { font-weight:600; margin:0.8rem 0 0.3rem; }
@@ -195,6 +210,27 @@ ASSISTANT_TEMPLATE = """
       <h1>Timeline</h1>
       <div class="as-empty">Select a run on the left to see its summary and step timeline.</div>
     {% else %}
+      <div class="dash">
+        <div class="dcell">
+          <div class="dlabel">Status</div>
+          <div class="dval-big dstatus-{{ dash.status_class }}">{{ dash.status }}</div>
+        </div>
+        <div class="dcell">
+          <div class="dlabel">Steps</div>
+          <div class="dval-big">{{ dash.steps }}</div>
+        </div>
+        <div class="dcell">
+          <div class="dlabel">Time</div>
+          <div class="dval">total {{ dash.total_time }}</div>
+          <div class="dval">llm {{ dash.llm_time }}</div>
+        </div>
+        <div class="dcell">
+          <div class="dlabel">Tokens</div>
+          <div class="dval">in {{ dash.in_tokens }}</div>
+          <div class="dval">out {{ dash.out_tokens }}</div>
+        </div>
+      </div>
+
       <div class="summary">
         <div class="grp">Summary</div>
         {% if selected.summary %}
@@ -369,16 +405,49 @@ ASSISTANT_TEMPLATE = """
 """
 
 
-def _format_duration(start, finish) -> str | None:
-    """Human-readable elapsed time (finish - start), or None if either is unset."""
-    if start is None or finish is None:
-        return None
-    secs = max(0.0, (finish - start).total_seconds())
+def _format_seconds(secs: float) -> str:
+    """Human-readable elapsed seconds (e.g. 5.1s / 1m 5s / 1h 30m)."""
+    secs = max(0.0, secs)
     if secs < 60:
         return f"{secs:.1f}s"
     if secs < 3600:
         return f"{int(secs // 60)}m {int(secs % 60)}s"
     return f"{int(secs // 3600)}h {int((secs % 3600) // 60)}m"
+
+
+def _format_duration(start, finish) -> str | None:
+    """Human-readable elapsed time (finish - start), or None if either is unset."""
+    if start is None or finish is None:
+        return None
+    return _format_seconds((finish - start).total_seconds())
+
+
+def _dash_status(run) -> tuple[str, str]:
+    """The run's headline status for the dashboard: (label, css-suffix)."""
+    if run.status in ("running", "stopping"):
+        return ("Running", "running")
+    outcome = (run.summary or {}).get("outcome")
+    if outcome == "resolved":
+        return ("Resolved", "resolved")
+    if outcome in ("partial", "failed") or run.status in ("failed", "killed"):
+        return ("Unresolved", "unresolved")
+    if not run.summary:
+        return ("—", "pending")        # terminal but not yet summarized
+    return ("Unresolved", "unresolved")
+
+
+def _run_dashboard(run, steps: list) -> dict:
+    """Aggregate metrics for the top-of-detail mini dashboard."""
+    label, cls = _dash_status(run)
+    return {
+        "status": label,
+        "status_class": cls,
+        "steps": len(steps),
+        "total_time": _format_duration(run.started_at, run.finished_at) or "—",
+        "llm_time": _format_seconds(sum((s.duration_ms or 0) for s in steps) / 1000),
+        "in_tokens": sum((s.input_tokens or 0) for s in steps),
+        "out_tokens": sum((s.output_tokens or 0) for s in steps),
+    }
 
 
 def _bucket_runs(runs: list) -> list[dict]:
@@ -415,6 +484,7 @@ def assistant_page() -> str:
     pending_controls: list = []
     trigger = None
     model_names: dict[str, str] = {}
+    dash = None
     # Runs are addressed by uuid via ?id= (consistent with /chat, /cron).
     run_arg = request.args.get("id")
     if run_arg:
@@ -434,6 +504,7 @@ def assistant_page() -> str:
         timeline = [(s, by_step.get(str(s.uuid), [])) for s in steps]
         pending_controls = db.list_pending_controls(selected.uuid)
         trigger = db.get_run_trigger_message(selected)
+        dash = _run_dashboard(selected, steps)
         # Resolve each step's model uuid to a display name for the timeline link.
         for muid in {s.model_uuid for s in steps if s.model_uuid}:
             mc = db.get_model_config(muid)
@@ -447,6 +518,6 @@ def assistant_page() -> str:
         ASSISTANT_TEMPLATE,
         runs=runs, folders=folders, selected=selected, trigger=trigger,
         timeline=timeline, unlinked=unlinked, pending_controls=pending_controls,
-        duration=duration, model_names=model_names,
+        duration=duration, model_names=model_names, dash=dash,
         icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
     )

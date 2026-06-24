@@ -300,6 +300,32 @@ def test_step_token_counts_render_in_timeline(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_run_dashboard_aggregates_status_steps_time_tokens(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    s1 = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="query_memory", reason="r",
+        input_tokens=400, output_tokens=50, duration_ms=3000)
+    db.settle_assistant_step(s1, phase="observed", observation_preview="ok")
+    s2 = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=1, action="reply", reason="r2",
+        input_tokens=100, output_tokens=20, duration_ms=2100)
+    db.settle_assistant_step(s2, phase="observed", observation_preview="done")
+    db.finish_run(run, "finished")
+    db.set_run_summary(run, {"trigger": "t", "obstacles": [], "outcome": "resolved"})
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert 'class="dash"' in body
+        assert "Resolved" in body                       # status column
+        assert '<div class="dval-big">2</div>' in body  # step count
+        assert "in 500" in body and "out 70" in body    # accumulated tokens
+        assert "llm 5.1s" in body                        # accumulated LLM time
+        assert "total " in body                          # start→finish time
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_step_model_renders_as_a_link(app_ctx, client):
     mc = db.create_model_config("qwen-2.5-7b", {})
     room = _room()
