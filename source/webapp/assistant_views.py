@@ -364,7 +364,7 @@ ASSISTANT_TEMPLATE = """
         {% else %}
         {% if step.system_prompt or step.user_prompt %}
         <div class="io io-req">
-          <div class="io-label">model request</div>
+          <div class="io-label">model request{% if step.requested_at %}<span class="io-time" title="{{ step.requested_at.replace(microsecond=0).isoformat() }}">{{ step.requested_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
           {% if step.system_prompt %}
           <details class="prompt">
             <summary>system prompt</summary>
@@ -380,7 +380,7 @@ ASSISTANT_TEMPLATE = """
         </div>
         {% endif %}
         <div class="io io-out">
-          <div class="io-label">model response · JSON</div>
+          <div class="io-label">model response{% if step.created_at %}<span class="io-time" title="{{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
           <pre>{{ decision_json.get(step.uuid|string, '') }}</pre>
         </div>
         {% if step.action %}

@@ -1319,6 +1319,7 @@ class AssistantAgent(ModelGroupAgent):
                 if stopped is not None:
                     return stopped
                 self._activity = f"deciding step {step_index}"
+                requested_at = datetime.now(UTC)
                 decision = self._decide_next_step(
                     transcript=transcript, scratchpad=scratchpad, step_index=step_index
                 )
@@ -1336,6 +1337,7 @@ class AssistantAgent(ModelGroupAgent):
                         step_index=step_index, phase="failed", decision=decision,
                         error=error, usage=usage, model_uuid=model_uuid,
                         system_prompt=system_prompt, user_prompt=user_prompt,
+                        requested_at=requested_at,
                     )
                     scratchpad.append(
                         f"step {step_index}: action '{decision.action.value}' "
@@ -1348,6 +1350,7 @@ class AssistantAgent(ModelGroupAgent):
                         step_index=step_index, phase="final", decision=decision,
                         usage=usage, model_uuid=model_uuid,
                         system_prompt=system_prompt, user_prompt=user_prompt,
+                        requested_at=requested_at,
                     )
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
@@ -1370,7 +1373,8 @@ class AssistantAgent(ModelGroupAgent):
                 step_row = self._open_step(
                     step_index=step_index, decision=decision, usage=usage,
                     model_uuid=model_uuid,
-                    system_prompt=system_prompt, user_prompt=user_prompt)
+                    system_prompt=system_prompt, user_prompt=user_prompt,
+                    requested_at=requested_at)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
                     room_uuid=room_uuid,
@@ -1795,6 +1799,7 @@ class AssistantAgent(ModelGroupAgent):
         self, *, step_index: int, decision: AssistantStepDecision,
         usage: dict[str, int] | None = None, model_uuid: "UUID | None" = None,
         system_prompt: str | None = None, user_prompt: str | None = None,
+        requested_at: "datetime | None" = None,
     ) -> "db.AssistantStep | None":
         """Open a non-terminal action step: insert its single `running` row
         (committed before the action runs) and mirror it as one in-process entry
@@ -1820,6 +1825,7 @@ class AssistantAgent(ModelGroupAgent):
             args=decision.args,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            requested_at=requested_at,
             model_group_uuid=self.model_group_uuid,
             model_uuid=model_uuid,
             input_tokens=(usage or {}).get("input"),
@@ -1861,6 +1867,7 @@ class AssistantAgent(ModelGroupAgent):
         model_uuid: "UUID | None" = None,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
+        requested_at: "datetime | None" = None,
     ) -> None:
         """Record a single-insert (no open/settle lifecycle) trace step — the
         terminal-only path: a `failed` validation, the `final` reply, and a
@@ -1891,6 +1898,7 @@ class AssistantAgent(ModelGroupAgent):
                 args=args,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                requested_at=requested_at,
                 observation_preview=observation_preview,
                 error=error,
                 model_group_uuid=self.model_group_uuid,

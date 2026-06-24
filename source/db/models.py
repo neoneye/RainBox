@@ -1034,13 +1034,19 @@ class AssistantStep(db.Model):
     output_tokens: Mapped[int | None] = mapped_column()
     # Wall-clock duration of this step's LLM (decide) call, in milliseconds.
     duration_ms: Mapped[int | None] = mapped_column()
+    # When the decide LLM request was sent (the "model request" time); the
+    # response arrived ~duration_ms later, at which point the row is created.
+    # NULL on legacy rows that predate capture.
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the row was created — right after the model response returned, so it
+    # doubles as the "model response" / "function call" invocation time.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     # When the step settled — i.e. the action returned and the observation was
     # recorded (the "function result" time). NULL until settled, and on
     # single-insert terminal rows (final/failed-validation/control) that never
-    # settle. created_at is the open / "function call" invocation time.
+    # settle.
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint(

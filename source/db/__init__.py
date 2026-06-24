@@ -376,6 +376,8 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("assistant_step", "user_prompt", "user_prompt TEXT")
         # The full AssistantObservation ({ok, text, data}) the action returned.
         _add_column_if_missing("assistant_step", "observation", "observation JSONB")
+        # When the decide LLM request was sent — the "model request" time.
+        _add_column_if_missing("assistant_step", "requested_at", "requested_at TIMESTAMPTZ")
         # When the step settled (observation recorded) — the "function result" time.
         _add_column_if_missing("assistant_step", "settled_at", "settled_at TIMESTAMPTZ")
         _status_def = _constraint_def("cron_run_status_check")
