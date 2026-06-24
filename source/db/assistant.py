@@ -167,7 +167,6 @@ def append_assistant_step(
     user_prompt: str | None = None,
     requested_at: datetime | None = None,
     observation_preview: str | None = None,
-    observation: dict[str, Any] | None = None,
     error: str | None = None,
     model_group_uuid: UUID | None = None,
     model_uuid: UUID | None = None,
@@ -179,9 +178,7 @@ def append_assistant_step(
     with no `running`→settle lifecycle: a `failed` validation, the `final` reply,
     and `control` (stop/redirect) events. Inserts the row and, when its `phase`
     is terminal, posts the self-contained `debug-assistant` trace row (see
-    `_post_terminal_trace`). Normal action steps use open/settle instead. A
-    terminal action (reply/ask) has no settle, so pass its `observation` here to
-    record the "function result"; settled_at is stamped when it does."""
+    `_post_terminal_trace`). Normal action steps use open/settle instead."""
     step = AssistantStep(
         run_uuid=run_uuid,
         step_index=step_index,
@@ -193,8 +190,6 @@ def append_assistant_step(
         user_prompt=user_prompt,
         requested_at=requested_at,
         observation_preview=observation_preview,
-        observation=observation,
-        settled_at=datetime.now(UTC) if observation is not None else None,
         error=error,
         model_group_uuid=model_group_uuid,
         model_uuid=model_uuid,
