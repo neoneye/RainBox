@@ -488,6 +488,9 @@ class JournalView(ModelView):
     # journal.id is a uuid (not monotonic), so default to chronological order by
     # enqueued_at, newest first — `id` ordering would look random. uuid columns
     # show only the first 6 chars (full value on hover) to keep the row narrow.
+    # Flask-Admin hides the primary key by default; show it so the journal_id is
+    # visible (truncated by the formatter below).
+    column_display_pk = True
     column_default_sort = ("enqueued_at", True)
     column_formatters = {"id": _fmt_short_uuid, "agent_uuid": _fmt_short_uuid}
 
