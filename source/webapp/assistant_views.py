@@ -204,6 +204,8 @@ ASSISTANT_TEMPLATE = """
   /* Each step bundles the model's structured output (request) and the action's
      result (response); the uppercase io-label tells them apart. */
   .as-main .step .io { margin:0.4rem 0; }
+  /* Extra space above these so the labels are easy to scan for. */
+  .as-main .step .io-out, .as-main .step .io-call, .as-main .step .io-in { margin-top:1.4rem; }
   .as-main .step .io-label { font-size:0.68rem; text-transform:uppercase;
                              letter-spacing:0.04em; color:#6b7280; margin-bottom:0.2rem;
                              display:flex; align-items:center; }
