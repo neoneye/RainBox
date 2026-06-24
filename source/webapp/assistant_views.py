@@ -189,13 +189,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .step { border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;
                    background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05); margin-bottom:16px; }
   .as-main .step .hd { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;
-                       padding:10px 14px; background:#fbfdff; border-bottom:1px solid #e5e7eb;
-                       border-left:3px solid #cbd5e1; }
-  .as-main .step.phase-observed .hd, .as-main .step.phase-final .hd { border-left-color:#1e7e34; }
-  .as-main .step.phase-failed .hd { border-left-color:#c0392b; }
-  .as-main .step.phase-control .hd { border-left-color:#7e22ce; }
-  .as-main .step.phase-running .hd { border-left-color:#1d4ed8; }
-  .as-main .step.phase-planned .hd { border-left-color:#98a2b3; }
+                       padding:10px 14px; background:#fbfdff; border-bottom:1px solid #e5e7eb; }
   .as-main .step-body { padding:14px 16px; }
   .as-main .step-body > :first-child { margin-top:0; }
   .as-main .step-body > :last-child { margin-bottom:0; }
@@ -208,16 +202,13 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .action { font-weight:600; }
   .as-main .step .reason { color:#475467; margin:0.3rem 0; }
   /* Each step bundles the model's structured output (request) and the action's
-     result (response); label and color-accent them so they can't be confused. */
+     result (response); the uppercase io-label tells them apart. */
   .as-main .step .io { margin:0.4rem 0; }
   .as-main .step .io-label { font-size:0.68rem; text-transform:uppercase;
                              letter-spacing:0.04em; color:#6b7280; margin-bottom:0.2rem;
                              display:flex; align-items:center; }
   .as-main .step .io > pre { margin:0; }
-  .as-main .step .io-req pre { border-left:3px solid #94a3b8; max-height:20rem; overflow:auto; }
-  .as-main .step .io-out > pre { border-left:3px solid #6366f1; }
-  .as-main .step .io-call > pre { border-left:3px solid #f59e0b; }
-  .as-main .step .io-in > pre { border-left:3px solid #10b981; }
+  .as-main .step .io-req pre { max-height:20rem; overflow:auto; }
   /* "function call": the chosen action's description + the args it's invoked with. */
   .as-main .step .fn-desc { color:#475467; margin-bottom:0.25rem; font-size:0.85rem; }
   .as-main .step .fn-desc code { background:#f1f5f9; padding:1px 5px;
