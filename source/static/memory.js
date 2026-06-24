@@ -86,12 +86,8 @@ function groupClaims(list) {
 function renderTree() {
   const root = document.getElementById('mem-tree-root');
   const groups = groupClaims(filteredClaims());
-  const ul = document.createElement('ul');
-  STATUS_ORDER.forEach(status => {
-    const list = groups[status] || [];
-    ul.appendChild(groupLi(status, list));
-  });
-  root.replaceChildren(ul);
+  const lis = STATUS_ORDER.map(status => groupLi(status, groups[status] || []));
+  root.replaceChildren(...lis);
   // reflect selection highlight
   document.getElementById('mem-all').classList.toggle('sel', selectedGroup === 'all');
 }
