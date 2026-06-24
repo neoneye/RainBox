@@ -94,7 +94,7 @@ ASSISTANT_TEMPLATE = """
               grid-template-rows:1fr; flex:1 1 auto; min-height:0; }
   .as-tree { overflow:auto; min-height:0; border-right:1px solid #e5e7eb;
              background:#fbfbfb; padding:10px; font-size:0.9rem; }
-  .as-main { overflow:auto; min-height:0; min-width:0; padding:12px 18px; }
+  .as-main { overflow:auto; min-height:0; min-width:0; padding:12px 18px 3.5rem; }
   .as-empty { color:#667085; padding:1rem 0; }
 
   /* Tree: virtual folders via <details>; folder icon is the expand indicator. */
@@ -344,7 +344,7 @@ ASSISTANT_TEMPLATE = """
                 <span class="muted">{{ trigger.timestamp }}</span>
                 · <a href="/chat?id={{ selected.room_uuid }}&msg={{ trigger.id }}">open in chat ↗</a>
               </div>
-              <div class="trigmsg">{{ trigger.text | truncate(400) }}</div>
+              <pre class="trigmsg">{{ trigger.text }}</pre>
             {% else %}
               <div class="muted">No triggering chat message found ·
                 room {{ (selected.room_uuid|string)[:8] }} ·
