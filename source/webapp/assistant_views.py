@@ -224,12 +224,13 @@ ASSISTANT_TEMPLATE = """
         <div class="dcell">
           <div class="dlabel">Time</div>
           <div class="dval">total {{ dash.total_time }}</div>
-          <div class="dval">llm {{ dash.llm_time }}{% if dash.llm_tps %} · {{ dash.llm_tps }} tok/s{% endif %}</div>
+          <div class="dval">llm {{ dash.llm_time }}</div>
         </div>
         <div class="dcell">
           <div class="dlabel">Tokens</div>
           <div class="dval">in {{ dash.in_tokens }}</div>
           <div class="dval">out {{ dash.out_tokens }}</div>
+          {% if dash.llm_tps %}<div class="dval">{{ dash.llm_tps }} tok/s</div>{% endif %}
         </div>
       </div>
 
