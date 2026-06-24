@@ -11,6 +11,7 @@ run carries a kebab (Copy id / Open in chat / Stop). See
 docs/ui-left-panel-tree.md.
 """
 
+import json
 from uuid import UUID
 
 from flask import render_template_string, request
@@ -39,7 +40,7 @@ ASSISTANT_TEMPLATE = """
     <span class="cap">{{ it.capability_name }}</span>
     <span class="badge b-{{ it.state }}">{% if it.state == 'undone' %}↩ {% endif %}{{ it.state }}</span>
     {% if it.preview_text %}<div class="muted">{{ it.preview_text }}</div>{% endif %}
-    {% if it.payload %}<pre>{{ it.payload | tojson(indent=2) }}</pre>{% endif %}
+    {% if it.payload %}<pre>{{ it.payload | tojson }}</pre>{% endif %}
     <div class="acts">
       {% if it.state == 'proposed' %}
         <button class="primary" onclick="ppAct('/chat/api/assistant/write-intents/{{ it.uuid }}/confirm')">Confirm</button>
@@ -185,6 +186,14 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .toks { color:#6b7280; font-size:0.78rem; font-variant-numeric:tabular-nums; }
   .as-main .step .action { font-weight:600; }
   .as-main .step .reason { color:#475467; margin:0.3rem 0; }
+  /* Each step bundles the model's structured output (request) and the action's
+     result (response); label and color-accent them so they can't be confused. */
+  .as-main .step .io { margin:0.4rem 0; }
+  .as-main .step .io-label { font-size:0.68rem; text-transform:uppercase;
+                             letter-spacing:0.04em; color:#6b7280; margin-bottom:0.2rem; }
+  .as-main .step .io > pre { margin:0; }
+  .as-main .step .io-out > pre { border-left:3px solid #6366f1; }
+  .as-main .step .io-in > pre { border-left:3px solid #10b981; }
   .as-main .err { color:#c0392b; }
   .as-main .intent { border-left:3px solid #cbd5e1; margin:0.45rem 0 0.2rem 0.4rem;
                      padding:0.4rem 0.6rem; background:#fcfcfd; border-radius:0 6px 6px 0; }
@@ -321,9 +330,20 @@ ASSISTANT_TEMPLATE = """
           </span>
           {% endif %}
         </div>
-        {% if step.reason %}<div class="reason">{{ step.reason }}</div>{% endif %}
-        {% if step.args %}<pre>{{ step.args | tojson(indent=2) }}</pre>{% endif %}
-        {% if step.observation_preview %}<pre>{{ step.observation_preview }}</pre>{% endif %}
+        {% if step.phase == 'control' %}
+          {% if step.reason %}<div class="reason">{{ step.reason }}</div>{% endif %}
+        {% else %}
+        <div class="io io-out">
+          <div class="io-label">model response · JSON</div>
+          <pre>{{ decision_json.get(step.uuid|string, '') }}</pre>
+        </div>
+        {% endif %}
+        {% if step.observation_preview %}
+        <div class="io io-in">
+          <div class="io-label">function result</div>
+          <pre>{{ step.observation_preview }}</pre>
+        </div>
+        {% endif %}
         {% if step.error %}<div class="err">{{ step.error }}</div>{% endif %}
         {% for it in intents %}{{ render_intent(it) }}{% endfor %}
       </div>
@@ -510,6 +530,7 @@ def assistant_page() -> str:
 
     selected = None
     timeline: list = []
+    decision_json: dict[str, str] = {}
     unlinked: list = []
     pending_controls: list = []
     trigger = None
@@ -533,6 +554,16 @@ def assistant_page() -> str:
             else:
                 by_step.setdefault(str(it.step_uuid), []).append(it)
         timeline = [(s, by_step.get(str(s.uuid), [])) for s in steps]
+        # The model emits one AssistantStepDecision per step; dump it verbatim
+        # (field order preserved, not Flask's key-sorted tojson) for the trace.
+        # Control steps are operator events, not model responses, so skip them.
+        decision_json = {
+            str(s.uuid): json.dumps(
+                {"reason": s.reason, "action": s.action, "args": s.args or {}},
+                ensure_ascii=False,
+            )
+            for s in steps if s.phase != "control"
+        }
         pending_controls = db.list_pending_controls(selected.uuid)
         trigger = db.get_run_trigger_message(selected)
         dash = _run_dashboard(selected, steps)
@@ -550,7 +581,8 @@ def assistant_page() -> str:
     return render_template_string(
         ASSISTANT_TEMPLATE,
         runs=runs, folders=folders, selected=selected, trigger=trigger,
-        timeline=timeline, unlinked=unlinked, pending_controls=pending_controls,
+        timeline=timeline, decision_json=decision_json, unlinked=unlinked,
+        pending_controls=pending_controls,
         duration=duration, model_names=model_names, dash=dash, verdict=verdict,
         icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
     )
