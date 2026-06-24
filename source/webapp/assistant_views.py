@@ -195,10 +195,14 @@ ASSISTANT_TEMPLATE = """
   .as-main .step-body > :last-child { margin-bottom:0; }
   .as-main .step.phase-control .step-body { background:#faf5ff; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
-  .as-main .step .step-right { margin-left:auto; display:flex; gap:0.5rem; align-items:center; }
-  .as-main .step .step-model { color:#2563eb; text-decoration:none; font-size:0.8rem; }
+  /* Model/token meta on the "model response" label — matches io-time typography. */
+  .as-main .step .step-right { margin-left:auto; display:flex; gap:0.5rem; align-items:center;
+                               font-size:0.72rem; font-weight:400; text-transform:none;
+                               letter-spacing:normal; color:#98a2b3;
+                               font-variant-numeric:tabular-nums; }
+  .as-main .step .step-model { color:#2563eb; text-decoration:none; }
   .as-main .step .step-model:hover { text-decoration:underline; }
-  .as-main .step .toks { color:#6b7280; font-size:0.78rem; font-variant-numeric:tabular-nums; }
+  .as-main .step .toks { color:#98a2b3; font-variant-numeric:tabular-nums; }
   .as-main .step .action { font-weight:600; }
   .as-main .step .reason { color:#475467; margin:0.3rem 0; }
   /* Each step bundles the model's structured output (request) and the action's
@@ -229,7 +233,11 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .io-dur { text-transform:none; font-weight:400; color:#98a2b3;
                            font-size:0.72rem; margin-left:auto;
                            font-variant-numeric:tabular-nums; }
-  .as-main .step .io-dur + .io-time { margin-left:0; }
+  .as-main .step .io-dur + .io-time, .as-main .step .step-right + .io-time { margin-left:0; }
+  /* Separator between the meta (duration / model+tokens) and the timestamp. A
+     pseudo-element with real margins, so the spacing survives flex edge-trimming. */
+  .as-main .step .io-dur + .io-time::before,
+  .as-main .step .step-right + .io-time::before { content:"·"; margin:0 0.4em; }
   /* "model request" sub-parts: system and user prompt, each collapsed in a
      <details>. The summaries mirror .io-label but a notch smaller. */
   .as-main .step .prompt { margin:0.25rem 0 0; }
@@ -356,20 +364,6 @@ ASSISTANT_TEMPLATE = """
         <div class="hd">
           <span class="ix">#{{ step.step_index }}</span>
           <span class="action">{{ step.action or '—' }}</span>
-          {% set has_toks = step.input_tokens is not none or step.output_tokens is not none %}
-          {% if step.model_uuid or has_toks or step.duration_ms is not none %}
-          <span class="step-right">
-            {% if step.model_uuid %}<a class="step-model" href="/models?id={{ step.model_uuid }}"
-                >{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }} ↗</a>{% endif %}
-            {% if has_toks or step.duration_ms is not none %}
-              <span class="toks">
-                {%- if has_toks %}in {{ step.input_tokens or 0 }} tok · out {{ step.output_tokens or 0 }} tok{% endif -%}
-                {%- if step.duration_ms is not none %}{% if has_toks %} · {% endif %}took {{ '%.1f'|format(step.duration_ms / 1000) }}s{% endif -%}
-                {%- if has_toks and step.duration_ms %} · {{ '%.0f'|format(((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms) }} tok/s{% endif -%}
-              </span>
-            {% endif %}
-          </span>
-          {% endif %}
         </div>
         <div class="step-body">
         {% if step.phase == 'control' %}
@@ -393,7 +387,19 @@ ASSISTANT_TEMPLATE = """
         </div>
         {% endif %}
         <div class="io io-out">
-          <div class="io-label">model response{% if step.created_at %}<span class="io-time" title="{{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
+          {% set has_toks = step.input_tokens is not none or step.output_tokens is not none %}
+          {% set has_right = step.model_uuid or has_toks or step.duration_ms is not none %}
+          <div class="io-label">model response{% if has_right %}<span class="step-right">
+            {% if step.model_uuid %}<a class="step-model" href="/models?id={{ step.model_uuid }}"
+                >{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }} ↗</a>{% endif %}
+            {% if has_toks or step.duration_ms is not none %}
+              <span class="toks">
+                {%- if has_toks %}in {{ step.input_tokens or 0 }} tok · out {{ step.output_tokens or 0 }} tok{% endif -%}
+                {%- if has_toks and step.duration_ms %} · {{ '%.0f'|format(((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms) }} tok/s{% endif -%}
+                {%- if step.duration_ms is not none %}{% if has_toks %} · {% endif %}took {{ '%.1f'|format(step.duration_ms / 1000) }}s{% endif -%}
+              </span>
+            {% endif %}
+          </span>{% endif %}{% if step.created_at %}<span class="io-time" title="{{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
           <pre>{{ decision_json.get(step.uuid|string, '') }}</pre>
         </div>
         {% if step.action %}
@@ -408,7 +414,7 @@ ASSISTANT_TEMPLATE = """
         {% if obs is not none or step.observation_preview %}
         <div class="io io-in">
           <div class="io-label">function result{% if obs is not none %}
-            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at and step.created_at %}<span class="io-dur">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s · </span>{% endif %}{% if step.settled_at %}<span class="io-time" title="{{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span>{% endif %}
+            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at and step.created_at %}<span class="io-dur">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}{% if step.settled_at %}<span class="io-time" title="{{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span>{% endif %}
           </div>
           {% if obs is not none %}
             {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
