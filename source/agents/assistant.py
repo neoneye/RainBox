@@ -1295,16 +1295,17 @@ class AssistantAgent(ModelGroupAgent):
                 decision = self._decide_next_step(
                     transcript=transcript, scratchpad=scratchpad, step_index=step_index
                 )
-                # Token counts of THIS step's decide call (None if the seam set
-                # nothing). Carried explicitly so a later control step can't
-                # inherit it.
+                # Token counts + the model used for THIS step's decide call (None
+                # if the seam set nothing). Carried explicitly so a later control
+                # step can't inherit them.
                 usage = self._last_usage
+                model_uuid = self._last_model_uuid
 
                 error = self._validate_decision(decision)
                 if error is not None:
                     self._record_step(
                         step_index=step_index, phase="failed", decision=decision,
-                        error=error, usage=usage,
+                        error=error, usage=usage, model_uuid=model_uuid,
                     )
                     scratchpad.append(
                         f"step {step_index}: action '{decision.action.value}' "
@@ -1315,7 +1316,7 @@ class AssistantAgent(ModelGroupAgent):
                 if self._caps[decision.action].terminal:
                     self._record_step(
                         step_index=step_index, phase="final", decision=decision,
-                        usage=usage,
+                        usage=usage, model_uuid=model_uuid,
                     )
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
@@ -1336,7 +1337,8 @@ class AssistantAgent(ModelGroupAgent):
                 # executes immediately.
                 self._activity = f"running {decision.action.value}"
                 step_row = self._open_step(
-                    step_index=step_index, decision=decision, usage=usage)
+                    step_index=step_index, decision=decision, usage=usage,
+                    model_uuid=model_uuid)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
                     room_uuid=room_uuid,
@@ -1751,7 +1753,7 @@ class AssistantAgent(ModelGroupAgent):
 
     def _open_step(
         self, *, step_index: int, decision: AssistantStepDecision,
-        usage: dict[str, int] | None = None,
+        usage: dict[str, int] | None = None, model_uuid: "UUID | None" = None,
     ) -> "db.AssistantStep | None":
         """Open a non-terminal action step: insert its single `running` row
         (committed before the action runs) and mirror it as one in-process entry
@@ -1776,6 +1778,7 @@ class AssistantAgent(ModelGroupAgent):
             reason=decision.reason,
             args=decision.args,
             model_group_uuid=self.model_group_uuid,
+            model_uuid=model_uuid,
             input_tokens=(usage or {}).get("input"),
             output_tokens=(usage or {}).get("output"),
         )
@@ -1809,6 +1812,7 @@ class AssistantAgent(ModelGroupAgent):
         error: str | None = None,
         observation_preview: str | None = None,
         usage: dict[str, int] | None = None,
+        model_uuid: "UUID | None" = None,
     ) -> None:
         """Record a single-insert (no open/settle lifecycle) trace step — the
         terminal-only path: a `failed` validation, the `final` reply, and a
@@ -1840,6 +1844,7 @@ class AssistantAgent(ModelGroupAgent):
                 observation_preview=observation_preview,
                 error=error,
                 model_group_uuid=self.model_group_uuid,
+                model_uuid=model_uuid,
                 input_tokens=(usage or {}).get("input"),
                 output_tokens=(usage or {}).get("output"),
             )

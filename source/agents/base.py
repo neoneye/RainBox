@@ -186,10 +186,11 @@ class ModelGroupAgent(Agent):
         # model group (e.g. memory commands) must work on a bare instance.
         self.model_group_uuid: UUID | None = None
         self.candidate_model_uuids: list[UUID] = []
-        # Input/output token counts of the most recent _structured_completion
-        # call (None until one runs). The assistant reads it to record per-step
-        # metrics; other agents ignore it.
+        # Input/output token counts + the model uuid of the most recent
+        # _structured_completion call (None until one runs). The assistant reads
+        # these to record per-step metrics; other agents ignore them.
         self._last_usage: dict[str, int] | None = None
+        self._last_model_uuid: UUID | None = None
 
     def setup(self) -> None:
         self.model_group_uuid: UUID | None = None
@@ -258,6 +259,7 @@ class ModelGroupAgent(Agent):
         # even though `.raw` is the parsed model, not the usage dict. Reset here so
         # a caller reading self._last_usage after a failed call sees None.
         self._last_usage = None
+        self._last_model_uuid = None
         token_counter = TokenCountingHandler()
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
@@ -312,6 +314,7 @@ class ModelGroupAgent(Agent):
                     "input": token_counter.prompt_llm_token_count,
                     "output": token_counter.completion_llm_token_count,
                 }
+                self._last_model_uuid = model_uuid
                 return result
             except Exception as e:
                 last_error = e

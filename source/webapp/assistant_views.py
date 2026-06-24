@@ -157,6 +157,8 @@ ASSISTANT_TEMPLATE = """
   .as-main .step.control { background:#faf5ff; border-color:#e9d5ff; }
   .as-main .step .hd { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
+  .as-main .step .step-model { color:#2563eb; text-decoration:none; font-size:0.8rem; }
+  .as-main .step .step-model:hover { text-decoration:underline; }
   .as-main .step .toks { margin-left:auto; color:#6b7280; font-size:0.78rem;
                          font-variant-numeric:tabular-nums; }
   .as-main .step .action { font-weight:600; }
@@ -258,7 +260,8 @@ ASSISTANT_TEMPLATE = """
           <span class="ix">#{{ step.step_index }}</span>
           <span class="badge b-{{ step.phase }}">{{ step.phase }}</span>
           <span class="action">{{ step.action or '—' }}</span>
-          {% if step.model_uuid %}<span class="muted">model {{ (step.model_uuid|string)[:8] }}</span>{% endif %}
+          {% if step.model_uuid %}<a class="step-model" href="/models?id={{ step.model_uuid }}"
+              >{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }} ↗</a>{% endif %}
           {% if step.input_tokens is not none or step.output_tokens is not none %}
             <span class="toks">in {{ step.input_tokens or 0 }} · out {{ step.output_tokens or 0 }} tok</span>
           {% endif %}
@@ -402,6 +405,7 @@ def assistant_page() -> str:
     unlinked: list = []
     pending_controls: list = []
     trigger = None
+    model_names: dict[str, str] = {}
     # Runs are addressed by uuid via ?id= (consistent with /chat, /cron).
     run_arg = request.args.get("id")
     if run_arg:
@@ -421,6 +425,11 @@ def assistant_page() -> str:
         timeline = [(s, by_step.get(str(s.uuid), [])) for s in steps]
         pending_controls = db.list_pending_controls(selected.uuid)
         trigger = db.get_run_trigger_message(selected)
+        # Resolve each step's model uuid to a display name for the timeline link.
+        for muid in {s.model_uuid for s in steps if s.model_uuid}:
+            mc = db.get_model_config(muid)
+            if mc is not None:
+                model_names[str(muid)] = mc.display_name or mc.model_name
 
     duration = _format_duration(
         selected.started_at, selected.finished_at) if selected else None
@@ -429,5 +438,6 @@ def assistant_page() -> str:
         ASSISTANT_TEMPLATE,
         runs=runs, folders=folders, selected=selected, trigger=trigger,
         timeline=timeline, unlinked=unlinked, pending_controls=pending_controls,
-        duration=duration, icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
+        duration=duration, model_names=model_names,
+        icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
     )

@@ -107,22 +107,24 @@ def _phases(agent: AssistantAgent) -> list[str]:
 # --- terminal actions ---------------------------------------------------------
 
 
-def test_step_records_token_usage_from_the_decide_call(room):
-    """The token counts the structured-completion seam exposes via _last_usage
-    are stored on the step that decision produced."""
+def test_step_records_token_usage_and_model_from_the_decide_call(room):
+    """The token counts + model uuid the structured-completion seam exposes (via
+    _last_usage / _last_model_uuid) are stored on the step that decision produced."""
     room_uuid, message_uuid = room
     agent = _agent()
+    model_uuid = uuid4()
 
     def decider(**_kwargs):
         agent._last_usage = {"input": 412, "output": 87}   # what base.py would set
+        agent._last_model_uuid = model_uuid
         return _reply("done")
 
     agent._decide_next_step = decider
     agent.handle(
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
-    steps = db.list_assistant_steps(agent._run.uuid)
-    assert steps[-1].input_tokens == 412
-    assert steps[-1].output_tokens == 87
+    final = db.list_assistant_steps(agent._run.uuid)[-1]
+    assert final.input_tokens == 412 and final.output_tokens == 87
+    assert final.model_uuid == model_uuid
 
 
 def test_terminal_run_enqueues_a_summary(room):
