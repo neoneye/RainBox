@@ -43,7 +43,7 @@ ASSISTANT_TEMPLATE = """
     <div class="acts">
       {% if it.state == 'proposed' %}
         <button class="primary" onclick="ppAct('/chat/api/assistant/write-intents/{{ it.uuid }}/confirm')">Confirm</button>
-        <button class="danger" onclick="ppAct('/chat/api/assistant/write-intents/{{ it.uuid }}/reject')">Reject</button>
+        <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/write-intents/{{ it.uuid }}/reject', 'Reject this {{ it.capability_name }} write?')">Reject</button>
       {% elif it.state == 'completed' and it.result and it.result.get('undo') %}
         <button onclick="ppConfirmAct('/chat/api/assistant/write-intents/{{ it.uuid }}/undo', 'Undo this {{ it.capability_name }} write? This reverts the change.')">Undo</button>
       {% endif %}
@@ -257,7 +257,7 @@ ASSISTANT_TEMPLATE = """
         <h1 style="margin:0">Run</h1>
         <span class="badge b-{{ selected.status }}">{{ selected.status }}</span>
         {% if selected.status in ('running', 'stopping') %}
-          <button class="danger" onclick="ppAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop')">Stop</button>
+          <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
           <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
         {% endif %}
       </div>
@@ -372,7 +372,7 @@ ASSISTANT_TEMPLATE = """
     }));
     if (status === 'running' || status === 'stopping') {
       asMenu.appendChild(asItem('Stop', function () {
-        ppAct('/chat/api/assistant/runs/' + uuid + '/stop');
+        ppConfirmAct('/chat/api/assistant/runs/' + uuid + '/stop', 'Stop this run?');
       }, true));
     }
     var r = event.currentTarget.getBoundingClientRect();
