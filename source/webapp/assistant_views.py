@@ -35,9 +35,9 @@ ASSISTANT_TEMPLATE = """
 <!doctype html>
 <title>Assistant runs &mdash; rainbox</title>
 {% macro render_intent(it) %}
-  <div class="intent {{ 'proposed' if it.state == 'proposed' }}">
+  <div class="intent {{ it.state }}">
     <span class="cap">{{ it.capability_name }}</span>
-    <span class="badge b-{{ it.state }}">{{ it.state }}</span>
+    <span class="badge b-{{ it.state }}">{% if it.state == 'undone' %}↩ {% endif %}{{ it.state }}</span>
     {% if it.preview_text %}<div class="muted">{{ it.preview_text }}</div>{% endif %}
     {% if it.payload %}<pre>{{ it.payload | tojson(indent=2) }}</pre>{% endif %}
     <div class="acts">
@@ -71,7 +71,8 @@ ASSISTANT_TEMPLATE = """
   .b-running,.b-stopping { background:#e0edff; color:#1d4ed8; }
   .b-finished,.b-observed,.b-final,.b-completed,.b-confirmed,.b-executing { background:#e6f4ea; color:#1e7e34; }
   .b-failed,.b-killed { background:#fdecea; color:#c0392b; }
-  .b-stopped,.b-rejected,.b-undone,.b-planned { background:#f1f3f5; color:#555; }
+  .b-stopped,.b-rejected,.b-planned { background:#f1f3f5; color:#555; }
+  .b-undone { background:#fef3c7; color:#92400e; }
   .b-control { background:#f3e8ff; color:#7e22ce; }
   .b-proposed { background:#fff4e5; color:#b06f00; }
   .b-obstacle { background:#fff4e5; color:#b06f00; }
@@ -188,6 +189,10 @@ ASSISTANT_TEMPLATE = """
   .as-main .intent { border-left:3px solid #cbd5e1; margin:0.45rem 0 0.2rem 0.4rem;
                      padding:0.4rem 0.6rem; background:#fcfcfd; border-radius:0 6px 6px 0; }
   .as-main .intent.proposed { border-left-color:#f59e0b; }
+  .as-main .intent.undone { border-left-color:#d97706; background:#fffbeb; }
+  .as-main .intent.undone .cap { text-decoration:line-through; color:#92400e; }
+  .as-main .intent.rejected { background:#f8f9fb; }
+  .as-main .intent.rejected .cap { text-decoration:line-through; color:#6b7280; }
   .as-main .intent .cap { font-weight:600; }
   .as-main .acts { margin-top:0.35rem; display:flex; gap:0.4rem; flex-wrap:wrap; }
 </style>
