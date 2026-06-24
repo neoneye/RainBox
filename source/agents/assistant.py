@@ -966,7 +966,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
         description='give your final answer to the user; ends the turn. args: {"message": "..."}',
-        summary="give your final answer to the user",
+        summary="send the final answer to the user",
         required_args=("message",), terminal=True,
     ),
     AssistantActionName.ASK_CLARIFYING_QUESTION: Capability(

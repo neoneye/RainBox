@@ -217,10 +217,8 @@ ASSISTANT_TEMPLATE = """
                              display:flex; align-items:center; }
   .as-main .step .io > pre { margin:0; }
   .as-main .step .io-req pre { max-height:20rem; overflow:auto; }
-  /* "function call": the chosen action's description + the args it's invoked with. */
-  .as-main .step .fn-desc { color:#475467; margin-bottom:0.25rem; font-size:0.85rem; }
-  .as-main .step .fn-desc code { background:#f1f5f9; padding:1px 5px;
-                                 border-radius:4px; font-size:0.82rem; }
+  /* The chosen action's human description, shown after the action in the header band. */
+  .as-main .step .hd .action-desc { color:#667085; font-size:0.85rem; font-weight:400; }
   /* The observation's ok flag, derived from the step phase (observed=ok). */
   .as-main .step .fn-ok { text-transform:none; font-weight:600; margin-left:0.3rem; }
   .as-main .step .fn-ok.ok-true { color:#1e7e34; }
@@ -367,6 +365,7 @@ ASSISTANT_TEMPLATE = """
         <div class="hd">
           <span class="ix">#{{ step.step_index }}</span>
           <span class="action">{{ step.action or '—' }}</span>
+          {% if step.action and action_descriptions.get(step.action) %}<span class="action-desc">— {{ action_descriptions[step.action] }}</span>{% endif %}
         </div>
         <div class="step-body">
         {% if step.phase == 'control' %}
@@ -408,7 +407,6 @@ ASSISTANT_TEMPLATE = """
         {% if step.action %}
         <div class="io io-call">
           <div class="io-label">function call{% if step.created_at %}<span class="io-time" title="{{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
-          <div class="fn-desc"><code>{{ step.action }}</code>{% if action_descriptions.get(step.action) %} — {{ action_descriptions[step.action] }}{% endif %}</div>
           {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
         </div>
         {% endif %}
