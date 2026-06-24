@@ -187,6 +187,21 @@ def test_stop_redirect_only_for_running_run(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_verdict_shows_the_full_reply_not_the_truncated_summary(app_ctx, client):
+    room = _room()
+    agent_uuid = uuid4()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=agent_uuid)
+    full_reply = "FULL-REPLY " + ("blah " * 100)      # > 200 chars
+    db.post_chat_message(room.uuid, agent_uuid, full_reply)
+    db.finish_run(run, "finished", final_summary=full_reply[:200])
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert full_reply.strip() in body            # the whole reply, not just [:200]
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
     room = _room()
     human = db.get_human_user()

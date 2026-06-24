@@ -259,6 +259,28 @@ def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
     }
 
 
+def get_run_final_reply(run: AssistantRun) -> str | None:
+    """The full text of the agent's final reply for a run — the latest agent
+    `message` in the room at or before it finished (the run stores only a
+    truncated `final_summary`). None for a still-running run or one that crashed
+    before replying. Robust across rooms with multiple runs: a later run's reply
+    has a later timestamp, so '<= this run's finished_at' picks this run's."""
+    if run.finished_at is None:
+        return None
+    msg = (
+        db.session.query(ChatMessage)
+        .filter(
+            ChatMessage.room_uuid == run.room_uuid,
+            ChatMessage.sender_uuid == run.agent_uuid,
+            ChatMessage.kind == "message",
+            ChatMessage.created_at <= run.finished_at,
+        )
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .first()
+    )
+    return msg.text if msg is not None else None
+
+
 def list_assistant_steps(run_uuid: UUID) -> list[AssistantStep]:
     """All step rows for a run, in commit order (id ascending)."""
     return (

@@ -310,6 +310,28 @@ def test_get_assistant_run(app_ctx):
         _cleanup_run(run.uuid)
 
 
+def test_get_run_final_reply_returns_the_full_agent_reply(app_ctx):
+    human = db.get_human_user()
+    assert human is not None
+    room = db.create_chatroom(f"reply-{uuid4().hex[:8]}", human.uuid, [])
+    agent_uuid = uuid4()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=agent_uuid)
+    long_text = "VERDICT " + ("word " * 200)          # well past the 200-char summary
+    db.post_chat_message(room.uuid, agent_uuid, long_text)   # the agent's reply
+    db.finish_run(run, "finished", final_summary=long_text[:200])
+    running = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=agent_uuid)
+    try:
+        assert db.get_run_final_reply(run) == long_text       # full, not truncated
+        assert db.get_run_final_reply(running) is None         # not finished → no verdict
+    finally:
+        _cleanup_run(run.uuid)
+        _cleanup_run(running.uuid)
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.db.session.commit()
+
+
 def test_get_run_trigger_message_returns_latest_human_message(app_ctx):
     human = db.get_human_user()
     assert human is not None

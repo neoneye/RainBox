@@ -324,10 +324,10 @@ ASSISTANT_TEMPLATE = """
         {% for it in unlinked %}{{ render_intent(it) }}{% endfor %}
       {% endif %}
 
-      {% if selected.final_summary %}
+      {% if verdict %}
         <hr class="sep">
         <div class="grp">Verdict</div>
-        <pre>{{ selected.final_summary }}</pre>
+        <pre>{{ verdict }}</pre>
       {% endif %}
     {% endif %}
   </section>
@@ -490,6 +490,7 @@ def assistant_page() -> str:
     trigger = None
     model_names: dict[str, str] = {}
     dash = None
+    verdict = None
     # Runs are addressed by uuid via ?id= (consistent with /chat, /cron).
     run_arg = request.args.get("id")
     if run_arg:
@@ -510,6 +511,8 @@ def assistant_page() -> str:
         pending_controls = db.list_pending_controls(selected.uuid)
         trigger = db.get_run_trigger_message(selected)
         dash = _run_dashboard(selected, steps)
+        # The full final reply (the run stores only a truncated final_summary).
+        verdict = db.get_run_final_reply(selected) or selected.final_summary
         # Resolve each step's model uuid to a display name for the timeline link.
         for muid in {s.model_uuid for s in steps if s.model_uuid}:
             mc = db.get_model_config(muid)
@@ -523,6 +526,6 @@ def assistant_page() -> str:
         ASSISTANT_TEMPLATE,
         runs=runs, folders=folders, selected=selected, trigger=trigger,
         timeline=timeline, unlinked=unlinked, pending_controls=pending_controls,
-        duration=duration, model_names=model_names, dash=dash,
+        duration=duration, model_names=model_names, dash=dash, verdict=verdict,
         icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
     )
