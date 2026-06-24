@@ -20,8 +20,11 @@ from agents.base import StatusSender, StructuredLLMAgent
 
 class RunSummary(BaseModel):
     trigger: str = Field(
-        description="One sentence: what the operator asked for / what kicked off "
-        "this run. Plain, concrete, no preamble."
+        description="A short noun phrase naming what the run was asked to do, for "
+        "scanning a list. Drop leading verbs (\"Create a new\" → \"New\") and omit "
+        "noisy identifiers like UUIDs or board/object IDs. Keep meaningful names. "
+        'E.g. \'New kanban task named "Find my phone"\', not \'Create a new kanban '
+        'task named "Find my phone" on kanban board 753fc9b3-…\'.'
     )
     obstacles: list[str] = Field(
         default_factory=list,
@@ -41,7 +44,11 @@ operator scanning a list of past runs. You are given the message that triggered 
 the run and a digest of each step (its action, phase, and any error).
 
 Respond with ONE JSON object matching the `RunSummary` schema and nothing else:
-  - `trigger`: one concrete sentence describing what the run was asked to do.
+  - `trigger`: a short noun phrase naming what the run was asked to do, for an \
+operator scanning a list. Drop leading verbs ("Create a new …" → "New …") and \
+omit noisy identifiers like UUIDs or board/object IDs; keep meaningful names. \
+E.g. 'New kanban task named "Find my phone"', not 'Create a new kanban task \
+named "Find my phone" on kanban board 753fc9b3-…'.
   - `obstacles`: a list of the concrete problems hit across the steps (a `failed` \
 phase, an error, a blocked/no-op action, a retry). One short phrase each. Use an \
 empty list if the run proceeded without trouble — do NOT invent obstacles.
