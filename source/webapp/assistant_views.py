@@ -208,6 +208,10 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .fn-desc { color:#475467; margin-bottom:0.25rem; font-size:0.85rem; }
   .as-main .step .fn-desc code { background:#f1f5f9; padding:1px 5px;
                                  border-radius:4px; font-size:0.82rem; }
+  /* The observation's ok flag, derived from the step phase (observed=ok). */
+  .as-main .step .fn-ok { text-transform:none; font-weight:600; margin-left:0.3rem; }
+  .as-main .step .fn-ok.ok-true { color:#1e7e34; }
+  .as-main .step .fn-ok.ok-false { color:#c0392b; }
   /* "model request" sub-parts: system and user prompt, each collapsed in a
      <details>. The summaries mirror .io-label but a notch smaller. */
   .as-main .step .prompt { margin:0.25rem 0 0; }
@@ -382,10 +386,13 @@ ASSISTANT_TEMPLATE = """
         </div>
         {% endif %}
         {% endif %}
-        {% if step.observation_preview %}
+        {% if step.observation_preview or step.observation_data %}
         <div class="io io-in">
-          <div class="io-label">function result</div>
-          <pre>{{ step.observation_preview }}</pre>
+          <div class="io-label">function result
+            <span class="fn-ok {{ 'ok-true' if step.phase == 'observed' else 'ok-false' }}">ok: {{ 'true' if step.phase == 'observed' else 'false' }}</span>
+          </div>
+          {% if step.observation_preview %}<pre>{{ step.observation_preview }}</pre>{% endif %}
+          {% if step.observation_data %}<pre>{{ step.observation_data | tojson }}</pre>{% endif %}
         </div>
         {% endif %}
         {% if step.error %}<div class="err">{{ step.error }}</div>{% endif %}

@@ -136,6 +136,7 @@ def settle_assistant_step(
     *,
     phase: StepPhase,
     observation_preview: str | None = None,
+    observation_data: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> AssistantStep:
     """Settle an open step in place: UPDATE its `running` row to a terminal
@@ -143,6 +144,7 @@ def settle_assistant_step(
     `debug-assistant` trace row. One row per step — no append."""
     step.phase = phase
     step.observation_preview = observation_preview
+    step.observation_data = observation_data or {}
     step.error = error
     db.session.add(step)
     db.session.flush()

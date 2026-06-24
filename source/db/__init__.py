@@ -374,6 +374,8 @@ def init_db(app: Flask) -> None:
         # the model that step (additive nullable; legacy rows stay NULL).
         _add_column_if_missing("assistant_step", "system_prompt", "system_prompt TEXT")
         _add_column_if_missing("assistant_step", "user_prompt", "user_prompt TEXT")
+        # Structured `data` the action returned (the "function result" detail).
+        _add_column_if_missing("assistant_step", "observation_data", "observation_data JSONB")
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(

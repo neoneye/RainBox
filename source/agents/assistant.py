@@ -1413,6 +1413,7 @@ class AssistantAgent(ModelGroupAgent):
                     step_row,
                     phase="observed" if observation.ok else "failed",
                     observation_preview=preview,
+                    observation_data=observation.data,
                     error=None if observation.ok else preview,
                 )
                 scratchpad.append(
@@ -1831,6 +1832,7 @@ class AssistantAgent(ModelGroupAgent):
         *,
         phase: str,
         observation_preview: str | None = None,
+        observation_data: dict[str, Any] | None = None,
         error: str | None = None,
     ) -> None:
         """Settle the step opened by `_open_step`: mutate its row (and the mirror
@@ -1842,7 +1844,8 @@ class AssistantAgent(ModelGroupAgent):
         if step is not None:
             db.settle_assistant_step(
                 step, phase=phase,  # type: ignore[arg-type]
-                observation_preview=observation_preview, error=error,
+                observation_preview=observation_preview,
+                observation_data=observation_data, error=error,
             )
 
     def _record_step(

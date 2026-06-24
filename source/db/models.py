@@ -1019,6 +1019,11 @@ class AssistantStep(db.Model):
     system_prompt: Mapped[str | None] = mapped_column(Text)
     user_prompt: Mapped[str | None] = mapped_column(Text)
     observation_preview: Mapped[str | None] = mapped_column(Text)
+    # The structured `data` the action returned alongside observation_preview
+    # (e.g. task_uuid, link, the undo descriptor) — the "function result" detail
+    # for the trace. Empty {} for reads with no structured result; NULL on
+    # legacy rows that predate capture.
+    observation_data: Mapped[dict] = mapped_column(JSONB, default=dict)
     error: Mapped[str | None] = mapped_column(Text)
     model_group_uuid: Mapped[UUID | None] = mapped_column()
     model_uuid: Mapped[UUID | None] = mapped_column()
