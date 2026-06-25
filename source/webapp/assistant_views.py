@@ -386,7 +386,7 @@ ASSISTANT_TEMPLATE = """
         {% else %}
         {% if step.system_prompt or step.user_prompt %}
         <div class="io io-req">
-          <div class="io-label">model request{% if step.requested_at %}<span class="io-time" title="{{ step.requested_at.replace(microsecond=0).isoformat() }}">{{ step.requested_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
+          <div class="io-label">model request{% if step.requested_at %}<span class="io-time" title="When this model request was made: {{ step.requested_at.replace(microsecond=0).isoformat() }}">{{ step.requested_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
           {% if step.system_prompt %}
           <details class="prompt">
             <summary>system prompt</summary>
@@ -419,7 +419,7 @@ ASSISTANT_TEMPLATE = """
         </div>
         {% if step.action %}
         <div class="io io-call">
-          <div class="io-label">action call{% if step.created_at %}<span class="io-time" title="{{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
+          <div class="io-label">action call{% if step.created_at %}<span class="io-time" title="When this action was called: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
           {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
         </div>
         {% endif %}
@@ -428,7 +428,7 @@ ASSISTANT_TEMPLATE = """
         {% if obs is not none or step.observation_preview %}
         <div class="io io-in">
           <div class="io-label">action result{% if obs is not none %}
-            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at and step.created_at %}<span class="io-dur">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}{% if step.settled_at %}<span class="io-time" title="{{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span>{% endif %}
+            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at and step.created_at %}<span class="io-dur" title="Duration: how long the action took to complete">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}{% if step.settled_at %}<span class="io-time" title="When this action result was recorded: {{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span>{% endif %}
           </div>
           {% if obs is not none %}
             {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
