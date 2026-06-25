@@ -38,6 +38,21 @@ CHAT_NOTIFY_MAX_TEXT: int = 7000
 
 
 class Inbox(db.Model):
+    """Pending work for an agent: the input side of the queue.
+
+    An inbox row is ephemeral — `take_item` (db.queue) pops the oldest row for
+    an agent, deletes it, and opens a `Journal` row in 'processing'. So the
+    `Inbox`/`Journal` pair tells the lifecycle at the operator level: Inbox is
+    work *waiting to start*, Journal is *what happened to it* once taken.
+
+    NAMING — no `Queue` prefix, on purpose. The package (`db.queue`) and its
+    helpers (`enqueue`, `take_item`) already mark the subsystem; a `Queue*`
+    prefix would only stutter ("an inbox is already a queue"). The bare,
+    lifecycle-oriented pair `Inbox`/`Journal` reads better than a taxonomy
+    prefix would, so these two skip the `Cron*`/`Kanban*`/`Memory*` convention
+    that groups larger multi-table subsystems.
+    """
+
     __tablename__ = "inbox"
     id: Mapped[int] = mapped_column(primary_key=True)
     agent_uuid: Mapped[UUID] = mapped_column()
@@ -182,6 +197,23 @@ def args_reasoning_on(arguments: dict[str, Any]) -> bool:
 class Journal(db.Model):
     """One unit of agent work (state + payload + result), the internal audit log
     of the queue.
+
+    A journal row is the durable counterpart to an `Inbox` row: created when
+    `take_item` pops the inbox entry, then mutated through its lifecycle —
+    'processing' → 'completed'/'failed'/'stopped' — with the original payload,
+    the result, timestamps, and routing status all preserved as the work's
+    history. (For richer agents the result only *points* at a fuller per-step
+    record, e.g. the `assistant_run`/`assistant_step` trace; the journal row is
+    the queue-level record beneath those, not a peer of them.)
+
+    NAMING — "journal" here means "durable record of work after it leaves the
+    inbox," not a diary. The append-only connotation is a mild mismatch (the row
+    mutates in place rather than being only appended to), but the local meaning
+    is settled and load-bearing: `journal_id` is threaded across the codebase.
+    It is deliberately NOT named `AgentRun`: that would read as a peer of the
+    higher-level domain runs (`AssistantRun`, `ConversationRun`, `CronRun`,
+    `EvalRun`) when it is actually the lower-level substrate underneath them —
+    and not every such run maps 1:1 to a journal row.
 
     IDENTITY — `journal.id` is a UUID (the `journal_id` threaded everywhere is a
     UUID), so the id is globally unique and self-describing: a single `journal_id`
