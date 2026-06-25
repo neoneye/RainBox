@@ -309,7 +309,7 @@ ASSISTANT_TEMPLATE = """
         {% if selected.summary %}
           <div>{{ selected.summary.trigger }}</div>
           {% if selected.summary.obstacles %}
-            <div class="grp" style="font-size:0.85rem">Obstacles</div>
+            <div class="grp" style="font-size:0.85rem; margin-top:0.8rem">Obstacles</div>
             <ul class="obstacles">
               {% for o in selected.summary.obstacles %}<li>{{ o }}</li>{% endfor %}
             </ul>
