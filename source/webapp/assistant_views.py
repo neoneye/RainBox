@@ -165,6 +165,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .dash .dts { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .as-main .dash .dcell .dval + .dlabel { margin-top:8px; }
   .as-main .dash .dsummary { grid-column:1 / span 3; }
+  .as-main .dash .dsummary + .dcell .dlabel { margin-bottom:2px; }
   .as-main .dash .dstatus-resolved { color:#1e7e34; }
   .as-main .dash .dstatus-unresolved { color:#c0392b; }
   .as-main .dash .dstatus-running { color:#1d4ed8; }
@@ -405,7 +406,7 @@ ASSISTANT_TEMPLATE = """
           {% set has_right = step.model_uuid or has_toks or step.duration_ms is not none %}
           <div class="io-label">model response{% if has_right %}<span class="step-right">
             {% if step.model_uuid %}<a class="step-model" href="/models?id={{ step.model_uuid }}"
-                >{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }} ↗</a>{% endif %}
+                title="{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }}">model ↗</a>{% endif %}
             {% if has_toks or step.duration_ms is not none %}
               <span class="toks">
                 {%- if has_toks %}in {{ step.input_tokens or 0 }} tok · out {{ step.output_tokens or 0 }} tok{% endif -%}
