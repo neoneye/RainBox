@@ -197,6 +197,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .hd, .as-main .runcard .hd { display:flex; gap:0.5rem; align-items:center;
                        flex-wrap:wrap; padding:10px 14px; background:#fbfdff;
                        border-bottom:1px solid #e5e7eb; }
+  .as-main .runcard .hd .runtitle { font-size:1rem; font-weight:400; }
   .as-main .step-body, .as-main .runcard-body { padding:14px 16px; }
   .as-main .runcard-body .trigger { margin-top:0.8rem; }
   .as-main .step-body > :first-child { margin-top:0; }
@@ -351,7 +352,7 @@ ASSISTANT_TEMPLATE = """
 
       <div class="runcard">
         <div class="hd">
-          <h1 style="margin:0">Run</h1>
+          <div class="runtitle">Run</div>
           {% if selected.status in ('running', 'stopping') %}
             <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
             <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
