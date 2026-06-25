@@ -285,6 +285,7 @@ ASSISTANT_TEMPLATE = """
         <div class="dcell">
           <div class="dlabel">Status</div>
           <div class="dval-big dstatus-{{ dash.status_class }}">{{ dash.status }}</div>
+          <div style="margin-top:6px"><span class="badge b-{{ selected.status }}">{{ selected.status | capitalize }}</span></div>
         </div>
         <div class="dcell">
           <div class="dlabel">Steps</div>
@@ -324,7 +325,6 @@ ASSISTANT_TEMPLATE = """
       <div class="runcard">
         <div class="hd">
           <h1 style="margin:0">Run</h1>
-          <span class="badge b-{{ selected.status }}">{{ selected.status }}</span>
           {% if selected.status in ('running', 'stopping') %}
             <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
             <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
