@@ -160,10 +160,11 @@ ASSISTANT_TEMPLATE = """
                          font-variant-numeric:tabular-nums; }
   .as-main .dash .dval-big { font-size:1.3rem; font-weight:700; color:#1a1a2e;
                              font-variant-numeric:tabular-nums; }
-  .as-main .dash .dsep { grid-column:1 / -1; margin:0; border:0; border-top:1px solid #e5e7eb; }
+  .as-main .dash .dsep { grid-column:1 / -1; margin:0 -18px; border:0; border-top:1px solid #e5e7eb; }
   .as-main .dash .dcell a { color:inherit; }
   .as-main .dash .dts { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .as-main .dash .dcell .dval + .dlabel { margin-top:8px; }
+  .as-main .dash .dsummary { grid-column:1 / span 3; }
   .as-main .dash .dstatus-resolved { color:#1e7e34; }
   .as-main .dash .dstatus-unresolved { color:#c0392b; }
   .as-main .dash .dstatus-running { color:#1d4ed8; }
@@ -313,17 +314,22 @@ ASSISTANT_TEMPLATE = """
           {% if dash.llm_tps %}<div class="dval">{{ dash.llm_tps }} tok/s</div>{% endif %}
         </div>
         <hr class="dsep">
-        <div class="dcell">
-          <div class="dlabel">Start</div>
-          <div class="dval"><span class="dts">{{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}</span></div>
-        </div>
-        <div class="dcell">
-          {% if selected.finished_at %}
-          <div class="dlabel">Finish</div>
-          <div class="dval"><span class="dts">{{ selected.finished_at.strftime('%Y-%m-%d %H:%M:%S') }}</span></div>
+        <div class="dcell dsummary">
+          <div class="dlabel">Summary</div>
+          {% if selected.summary %}
+            <div>{{ selected.summary.trigger }}</div>
+            {% if selected.summary.obstacles %}
+              <div class="dlabel" style="margin-top:1.5rem">Obstacles</div>
+              <ul class="obstacles">
+                {% for o in selected.summary.obstacles %}<li>{{ o }}</li>{% endfor %}
+              </ul>
+            {% else %}
+              <div class="muted">No obstacles reported.</div>
+            {% endif %}
+          {% else %}
+            <div class="muted">Not yet summarized (runs shortly after the assistant finishes).</div>
           {% endif %}
         </div>
-        <div class="dcell"></div>
         <div class="dcell">
           {% if trigger %}
             <div class="dval">Started by <a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a></div>
@@ -333,24 +339,13 @@ ASSISTANT_TEMPLATE = """
             <div class="dval"><a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a></div>
           {% endif %}
           <div class="dval">journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}</div>
-        </div>
-      </div>
-
-      <div class="summary">
-        <div class="grp">Summary</div>
-        {% if selected.summary %}
-          <div>{{ selected.summary.trigger }}</div>
-          {% if selected.summary.obstacles %}
-            <div class="grp" style="font-size:0.85rem; margin-top:0.8rem">Obstacles</div>
-            <ul class="obstacles">
-              {% for o in selected.summary.obstacles %}<li>{{ o }}</li>{% endfor %}
-            </ul>
-          {% else %}
-            <div class="muted">No obstacles reported.</div>
+          <div class="dlabel">Start</div>
+          <div class="dval"><span class="dts">{{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}</span></div>
+          {% if selected.finished_at %}
+          <div class="dlabel">Finish</div>
+          <div class="dval"><span class="dts">{{ selected.finished_at.strftime('%Y-%m-%d %H:%M:%S') }}</span></div>
           {% endif %}
-        {% else %}
-          <div class="muted">Not yet summarized (runs shortly after the assistant finishes).</div>
-        {% endif %}
+        </div>
       </div>
 
       <div class="runcard">
