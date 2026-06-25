@@ -20,7 +20,7 @@ import db
 from agents.assistant import CAPABILITIES
 from .core import app
 
-# action value -> short human-readable summary, for the timeline's "function
+# action value -> short human-readable summary, for the timeline's "action
 # call" section (the verbose `description` is LLM-facing). Static (the capability
 # registry is defined in code), so resolve once at import.
 _ACTION_DESCRIPTIONS = {
@@ -300,7 +300,7 @@ ASSISTANT_TEMPLATE = """
           <div class="dlabel">Time</div>
           <div class="dval">total {{ dash.total_time }}</div>
           <div class="dval">model {{ dash.model_time }}</div>
-          <div class="dval">function {{ dash.function_time }}</div>
+          <div class="dval">action {{ dash.action_time }}</div>
         </div>
         <div class="dcell">
           <div class="dlabel">Tokens</div>
@@ -409,7 +409,7 @@ ASSISTANT_TEMPLATE = """
         </div>
         {% if step.action %}
         <div class="io io-call">
-          <div class="io-label">function call{% if step.created_at %}<span class="io-time" title="{{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
+          <div class="io-label">action call{% if step.created_at %}<span class="io-time" title="{{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
           {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
         </div>
         {% endif %}
@@ -417,7 +417,7 @@ ASSISTANT_TEMPLATE = """
         {% set obs = step.observation %}
         {% if obs is not none or step.observation_preview %}
         <div class="io io-in">
-          <div class="io-label">function result{% if obs is not none %}
+          <div class="io-label">action result{% if obs is not none %}
             <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at and step.created_at %}<span class="io-dur">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}{% if step.settled_at %}<span class="io-time" title="{{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span>{% endif %}
           </div>
           {% if obs is not none %}
@@ -585,7 +585,7 @@ def _run_dashboard(run, steps: list) -> dict:
     out_tokens = sum((s.output_tokens or 0) for s in steps)
     llm_ms = sum((s.duration_ms or 0) for s in steps)
     llm_seconds = llm_ms / 1000
-    # "function" time = wall-clock spent outside the model (action execution +
+    # "action" time = wall-clock spent outside the model (action execution +
     # overhead) = total - model. Only computable once the run has finished.
     total_seconds = None
     if run.started_at and run.finished_at:
@@ -596,8 +596,8 @@ def _run_dashboard(run, steps: list) -> dict:
         "steps": len(steps),
         "total_time": _format_seconds(total_seconds) if total_seconds is not None else "—",
         "model_time": _format_seconds(llm_seconds),
-        "function_time": (_format_seconds(total_seconds - llm_seconds)
-                          if total_seconds is not None else "—"),
+        "action_time": (_format_seconds(total_seconds - llm_seconds)
+                        if total_seconds is not None else "—"),
         "llm_tps": round((in_tokens + out_tokens) / (llm_ms / 1000)) if llm_ms else None,
         "in_tokens": in_tokens,
         "out_tokens": out_tokens,
