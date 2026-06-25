@@ -1432,10 +1432,14 @@ class AssistantAgent(ModelGroupAgent):
                         "now to confirm and do not perform another write for it"
                     )
 
-            # Ran out of steps without a terminal action.
+            # Ran out of steps without a terminal action. Link the run page so the
+            # operator can inspect what it did before giving up (relative path as
+            # clickable markdown, matching _append_result_links).
+            run_link = f"/assistant?id={run.uuid}"
             msg = (
                 "I couldn't complete this within the step limit. "
-                "Please rephrase or narrow the request."
+                "Please rephrase or narrow the request.\n\n"
+                f"Inspect the run: [{run_link}]({run_link})"
             )
             db.post_chat_message(room_uuid, self.agent_uuid, msg, kind="message")
             db.finish_run(run, "stopped", final_summary="step limit reached")
