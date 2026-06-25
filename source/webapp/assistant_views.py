@@ -197,7 +197,9 @@ ASSISTANT_TEMPLATE = """
   .as-main .step-body > :last-child { margin-bottom:0; }
   .as-main .step.phase-control .step-body { background:#faf5ff; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
-  .as-main .step .sep { color:#98a2b3; }
+  .as-main .step .hd { gap:1rem; }
+  .as-main .step .hd .ix { color:inherit; }
+  .as-main .step .hd .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   /* Model/token meta on the "model response" label — matches io-time typography. */
   .as-main .step .step-right { margin-left:auto; display:flex; gap:0.5rem; align-items:center;
                                font-size:0.72rem; font-weight:400; text-transform:none;
@@ -219,7 +221,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .io > pre { margin:0; }
   .as-main .step .io-req pre { max-height:20rem; overflow:auto; }
   /* The chosen action's human description, shown after the action in the header band. */
-  .as-main .step .hd .action-desc { color:#667085; font-size:0.85rem; font-weight:400; }
+  .as-main .step .hd .action-desc { color:inherit; font-size:0.85rem; font-weight:400; }
   /* The observation's ok flag, derived from the step phase (observed=ok). */
   .as-main .step .fn-ok { text-transform:none; font-weight:600; margin-left:0.3rem; }
   .as-main .step .fn-ok.ok-true { color:#1e7e34; }
@@ -363,9 +365,8 @@ ASSISTANT_TEMPLATE = """
       <div class="step phase-{{ step.phase }}">
         <div class="hd">
           <span class="ix" title="internal step index={{ step.step_index }}">Step {{ step.step_index + 1 }} of {{ timeline|length }}</span>
-          <span class="sep">—</span>
           <span class="action">{{ step.action or '—' }}</span>
-          {% if step.action and action_descriptions.get(step.action) %}<span class="action-desc">— {{ action_descriptions[step.action] }}</span>{% endif %}
+          {% if step.action and action_descriptions.get(step.action) %}<span class="action-desc">{{ action_descriptions[step.action] }}</span>{% endif %}
         </div>
         <div class="step-body">
         {% if step.phase == 'control' %}
