@@ -74,3 +74,28 @@ def test_redirect_requires_instruction(client):
 def test_stop_unknown_run_404(client):
     flask_client, _app = client
     assert flask_client.post("/chat/api/assistant/runs/999999999/stop").status_code == 404
+
+
+def test_resummarize_endpoint_enqueues_summarizer(client, monkeypatch):
+    from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID
+    flask_client, app = client
+    run_id = _run(app)
+    captured: dict = {}
+    monkeypatch.setattr(
+        db, "enqueue",
+        lambda agent_uuid, payload: captured.update(agent=agent_uuid, payload=payload),
+    )
+    try:
+        resp = flask_client.post(f"/chat/api/assistant/runs/{run_id}/resummarize")
+        assert resp.status_code == 200
+        assert resp.get_json()["ok"] is True
+        assert captured["agent"] == ASSISTANT_RUN_SUMMARIZER_UUID
+        assert captured["payload"]["run_uuid"] == str(run_id)
+    finally:
+        _cleanup(app, run_id)
+
+
+def test_resummarize_unknown_run_404(client):
+    flask_client, _app = client
+    assert flask_client.post(
+        f"/chat/api/assistant/runs/{uuid4()}/resummarize").status_code == 404
