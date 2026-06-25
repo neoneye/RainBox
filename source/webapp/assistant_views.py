@@ -335,7 +335,6 @@ ASSISTANT_TEMPLATE = """
             journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
             · started {{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}
             {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
-            {% if duration %}· took {{ duration }}{% endif %}
           </div>
           <div class="trigger">
             <div class="grp">Trigger</div>
