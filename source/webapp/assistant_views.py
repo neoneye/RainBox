@@ -198,6 +198,8 @@ ASSISTANT_TEMPLATE = """
   .as-main .step.phase-control .step-body { background:#faf5ff; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
   .as-main .step .hd { gap:1rem; }
+  .as-main .step .hd > span:not(:first-child) { align-self:stretch; display:flex; align-items:center;
+                       margin:-10px 0; padding:10px 0 10px 1rem; border-left:1px solid #e5e7eb; }
   .as-main .step .hd .ix { color:inherit; }
   .as-main .step .hd .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   /* Model/token meta on the "model response" label — matches io-time typography. */
@@ -221,7 +223,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .io > pre { margin:0; }
   .as-main .step .io-req pre { max-height:20rem; overflow:auto; }
   /* The chosen action's human description, shown after the action in the header band. */
-  .as-main .step .hd .action-desc { color:inherit; font-size:0.85rem; font-weight:400; }
+  .as-main .step .hd .action-desc { color:inherit; font-size:inherit; font-weight:400; }
   /* The observation's ok flag, derived from the step phase (observed=ok). */
   .as-main .step .fn-ok { text-transform:none; font-weight:600; margin-left:0.3rem; }
   .as-main .step .fn-ok.ok-true { color:#1e7e34; }
@@ -365,7 +367,7 @@ ASSISTANT_TEMPLATE = """
       <div class="step phase-{{ step.phase }}">
         <div class="hd">
           <span class="ix" title="internal step index={{ step.step_index }}">Step {{ step.step_index + 1 }} of {{ timeline|length }}</span>
-          <span class="action">{{ step.action or '—' }}</span>
+          <span class="action" title="The action the model decided to take for this step">{{ step.action or '—' }}</span>
           {% if step.action and action_descriptions.get(step.action) %}<span class="action-desc">{{ action_descriptions[step.action] }}</span>{% endif %}
         </div>
         <div class="step-body">
