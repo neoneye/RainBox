@@ -197,6 +197,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .step-body > :last-child { margin-bottom:0; }
   .as-main .step.phase-control .step-body { background:#faf5ff; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
+  .as-main .step .sep { color:#98a2b3; }
   /* Model/token meta on the "model response" label — matches io-time typography. */
   .as-main .step .step-right { margin-left:auto; display:flex; gap:0.5rem; align-items:center;
                                font-size:0.72rem; font-weight:400; text-transform:none;
@@ -340,7 +341,6 @@ ASSISTANT_TEMPLATE = """
             {% if trigger %}
               <div>Started by
                 <strong><a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a></strong>
-                <span class="muted">{{ trigger.timestamp }}</span>
                 · <a href="/chat?id={{ selected.room_uuid }}&msg={{ trigger.id }}">open in chat ↗</a>
               </div>
               <pre class="trigmsg">{{ trigger.text }}</pre>
@@ -362,7 +362,8 @@ ASSISTANT_TEMPLATE = """
       {% for step, intents in timeline %}
       <div class="step phase-{{ step.phase }}">
         <div class="hd">
-          <span class="ix">#{{ step.step_index }}</span>
+          <span class="ix" title="internal step index={{ step.step_index }}">Step {{ step.step_index + 1 }} of {{ timeline|length }}</span>
+          <span class="sep">—</span>
           <span class="action">{{ step.action or '—' }}</span>
           {% if step.action and action_descriptions.get(step.action) %}<span class="action-desc">— {{ action_descriptions[step.action] }}</span>{% endif %}
         </div>
