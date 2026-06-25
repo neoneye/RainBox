@@ -36,6 +36,11 @@ Fix order:
    filesystem inspection behind capability checks.
 5. Remove destructive startup migration from app boot.
 
+Findings 2, 3, and 4 are separate because they are distinct exploit paths, but
+they share the same root failure as Finding 1: no authenticated operator
+boundary. Phase 1 collapses most of the P0 surface; the later mitigations make
+those surfaces safe even after authentication exists.
+
 ---
 
 ## Finding 1: No auth; Flask-Admin is an unauthenticated database control panel
@@ -301,9 +306,11 @@ state, write intents, and undo history.
 
 ### Impact
 
-Starting the app against an older database can silently delete operational audit
-history and pending approvals. In the worst case, it destroys evidence needed to
-understand or undo assistant writes.
+Starting the app against an older pre-UUID database can silently delete
+operational audit history and pending approvals on the first boot after that
+upgrade path is introduced. The guard means it is a one-time migration, not
+something that runs every boot, but the first run is still destructive. In the
+worst case, it destroys evidence needed to understand or undo assistant writes.
 
 This also mixes schema migration with application boot. Startup should not
 perform irreversible data destruction as a side effect.
