@@ -210,7 +210,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .step-model { color:#2563eb; text-decoration:none; }
   .as-main .step .step-model:hover { text-decoration:underline; }
   .as-main .step .toks { color:#98a2b3; font-variant-numeric:tabular-nums; }
-  .as-main .step .action { font-weight:600; }
+  .as-main .step .action { font-weight:400; }
   .as-main .step .reason { color:#475467; margin:0.3rem 0; }
   /* Each step bundles the model's structured output (request) and the action's
      result (response); the uppercase io-label tells them apart. */
