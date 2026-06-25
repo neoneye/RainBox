@@ -160,7 +160,7 @@ ASSISTANT_TEMPLATE = """
                          font-variant-numeric:tabular-nums; }
   .as-main .dash .dval-big { font-size:1.3rem; font-weight:700; color:#1a1a2e;
                              font-variant-numeric:tabular-nums; }
-  .as-main .dash .dsep { grid-column:1 / -1; margin:0; border:0; border-top:1px solid #e5e7eb; }
+  .as-main .dash .dsep { grid-column:1 / -1; margin:0 -18px; border:0; border-top:1px solid #e5e7eb; }
   .as-main .dash .dcell a { color:inherit; }
   .as-main .dash .dts { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .as-main .dash .dcell .dval + .dlabel { margin-top:8px; }
