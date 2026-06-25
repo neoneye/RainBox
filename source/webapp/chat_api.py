@@ -14,6 +14,7 @@ from flask import Response, abort, jsonify, request, stream_with_context
 
 import db
 from agents.config import (
+    ASSISTANT_RUN_SUMMARIZER_UUID,
     ASSISTANT_UUID,
     CHAT_STRUCTURED_UUID,
     CHAT_UNSTRUCTURED_UUID,
@@ -350,6 +351,16 @@ def redirect_assistant_run(run_uuid: UUID) -> Response | tuple[Response, int]:
         requested_by_uuid=human.uuid if human else None,
     )
     return jsonify({"ok": True})
+
+
+@app.route("/chat/api/assistant/runs/<uuid:run_uuid>/resummarize", methods=["POST"])
+def resummarize_assistant_run(run_uuid: UUID) -> Response:
+    """Re-run the summarizer for a completed run — same enqueue the assistant does
+    at a terminal state — so the operator can regenerate a stale or missing digest."""
+    if db.get_assistant_run(run_uuid) is None:
+        abort(404, "assistant run not found")
+    db.enqueue(ASSISTANT_RUN_SUMMARIZER_UUID, {"run_uuid": str(run_uuid)})
+    return jsonify({"ok": True, "text": "Summary refresh queued."})
 
 
 @app.route("/chat/api/assistant/write-intents/<uuid:intent_uuid>/confirm", methods=["POST"])

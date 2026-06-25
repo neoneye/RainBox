@@ -483,6 +483,17 @@ ASSISTANT_TEMPLATE = """
     asMenu.appendChild(asItem('Open in chat ↗', function () {
       window.location = '/chat?id=' + roomUuid;
     }));
+    asMenu.appendChild(asItem('Refresh summary', function () {
+      // The summarizer runs out-of-process, so just confirm it's queued — the
+      // new digest appears on a later reload, not immediately.
+      fetch('/chat/api/assistant/runs/' + uuid + '/resummarize', {method: 'POST'})
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .then(function (d) {
+          if (d && d.ok === false) { alert(d.text || 'Action failed'); return; }
+          asToast((d && d.text) || 'Summary refresh queued.');
+        })
+        .catch(function (e) { alert('Request failed: ' + e); });
+    }));
     if (status === 'running' || status === 'stopping') {
       asMenu.appendChild(asItem('Stop', function () {
         ppConfirmAct('/chat/api/assistant/runs/' + uuid + '/stop', 'Stop this run?');
