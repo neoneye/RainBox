@@ -185,7 +185,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .summary .grp, .as-main .trigger .grp { margin:0 0 0.25rem; }
   .as-main .obstacles { margin:0.2rem 0 0; padding-left:1.2rem; }
   .as-main .obstacles li { margin:0.1rem 0; }
-  .as-main .trigmsg { white-space:pre-wrap; word-break:break-word; margin-top:0.25rem; }
+  .as-main .trigmsg { white-space:pre-wrap; word-break:break-word; margin:0; }
   .as-main hr.sep { border:0; border-top:1px solid #e5e7eb; margin:1rem 0; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
@@ -199,7 +199,6 @@ ASSISTANT_TEMPLATE = """
                        border-bottom:1px solid #e5e7eb; }
   .as-main .runcard .hd .runtitle { font-size:1rem; font-weight:400; }
   .as-main .step-body, .as-main .runcard-body { padding:14px 16px; }
-  .as-main .runcard-body .trigger { margin-top:0.8rem; }
   .as-main .step-body > :first-child { margin-top:0; }
   .as-main .step-body > :last-child { margin-bottom:0; }
   .as-main .step.phase-control .step-body { background:#faf5ff; }
@@ -410,12 +409,12 @@ ASSISTANT_TEMPLATE = """
                 title="{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }}">model ↗</a>{% endif %}
             {% if has_toks or step.duration_ms is not none %}
               <span class="toks">
-                {%- if has_toks %}in {{ step.input_tokens or 0 }} tok · out {{ step.output_tokens or 0 }} tok{% endif -%}
-                {%- if has_toks and step.duration_ms %} · {{ '%.0f'|format(((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms) }} tok/s{% endif -%}
-                {%- if step.duration_ms is not none %}{% if has_toks %} · {% endif %}took {{ '%.1f'|format(step.duration_ms / 1000) }}s{% endif -%}
+                {%- if has_toks %}<span title="Input tokens: the size of the prompt sent to the model for this step">in {{ step.input_tokens or 0 }}</span> · <span title="Output tokens: the amount of text the model generated for this step">out {{ step.output_tokens or 0 }}</span>{% endif -%}
+                {%- if has_toks and step.duration_ms %} · <span title="Throughput: total tokens (input + output) processed per second">{{ '%.0f'|format(((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms) }} tok/s</span>{% endif -%}
+                {%- if step.duration_ms is not none %}{% if has_toks %} · {% endif %}<span title="Duration: how long the model took to produce this response">took {{ '%.1f'|format(step.duration_ms / 1000) }}s</span>{% endif -%}
               </span>
             {% endif %}
-          </span>{% endif %}{% if step.created_at %}<span class="io-time" title="{{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
+          </span>{% endif %}{% if step.created_at %}<span class="io-time" title="When this model response was recorded: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
           <pre>{{ decision_json.get(step.uuid|string, '') }}</pre>
         </div>
         {% if step.action %}
