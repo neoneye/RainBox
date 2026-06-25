@@ -337,9 +337,9 @@ ASSISTANT_TEMPLATE = """
             {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
           </div>
           <div class="trigger">
-            <div class="grp">Trigger</div>
             {% if trigger %}
-              <div><strong>{{ trigger.sender_name }}</strong>
+              <div>Started by
+                <strong><a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a></strong>
                 <span class="muted">{{ trigger.timestamp }}</span>
                 · <a href="/chat?id={{ selected.room_uuid }}&msg={{ trigger.id }}">open in chat ↗</a>
               </div>

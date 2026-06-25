@@ -345,6 +345,7 @@ def test_get_run_trigger_message_returns_latest_human_message(app_ctx):
         assert trig is not None
         assert trig["text"] == "please do the thing"   # the latest before start
         assert trig["sender_name"] == human.name
+        assert trig["sender_uuid"] == str(human.uuid)  # links to /user
         assert isinstance(trig["id"], int)             # the chat-anchor id
         # A run in a room with no human message has no trigger.
         empty = db.start_assistant_run(

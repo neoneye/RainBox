@@ -235,14 +235,16 @@ def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
     db.finish_run(run, "finished", final_summary="all done — the verdict")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        # Trigger block shows the triggering message + a link into chat.
-        assert "Trigger" in body
+        # "Started by" block shows who triggered it + the message + a chat link.
+        assert "Started by" in body
         assert "please mark the task done" in body
+        # the operator name links to their /user page
+        assert f"/user?id={human.uuid}" in body
         # links into chat AND anchors on the specific triggering message
         assert f"/chat?id={run.room_uuid}&msg=" in body
         # The verdict (final_summary) is present and sits BELOW the trigger.
         assert "Verdict" in body and "all done — the verdict" in body
-        assert body.index("Verdict") > body.index("Trigger")
+        assert body.index("Verdict") > body.index("Started by")
     finally:
         _cleanup(run.uuid, room.uuid)
 

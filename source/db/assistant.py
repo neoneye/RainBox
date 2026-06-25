@@ -248,8 +248,8 @@ def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
     """The chat message that initiated a run: the latest human `message` in the
     run's room at or before it started. Best-effort — returns None when none is
     found (e.g. a run seeded outside the chat flow). Returns a small dict
-    (uuid/sender_name/text/timestamp) for the /assistant inspector's trigger
-    block."""
+    (uuid/sender_uuid/sender_name/text/timestamp) for the /assistant inspector's
+    trigger block; sender_uuid links to that participant's /user page."""
     row = (
         db.session.query(ChatMessage, ChatUser.name)
         .join(ChatUser, ChatUser.uuid == ChatMessage.sender_uuid)
@@ -268,6 +268,7 @@ def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
     return {
         "id": msg.id,            # the int id the chat DOM anchors on (data-message-id)
         "uuid": str(msg.uuid),
+        "sender_uuid": str(msg.sender_uuid),
         "sender_name": sender_name,
         "text": msg.text,
         "timestamp": msg.created_at.strftime("%Y-%m-%d %H:%M") if msg.created_at else "",
