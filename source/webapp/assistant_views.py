@@ -160,6 +160,10 @@ ASSISTANT_TEMPLATE = """
                          font-variant-numeric:tabular-nums; }
   .as-main .dash .dval-big { font-size:1.3rem; font-weight:700; color:#1a1a2e;
                              font-variant-numeric:tabular-nums; }
+  .as-main .dash .dsep { grid-column:1 / -1; margin:0; border:0; border-top:1px solid #e5e7eb; }
+  .as-main .dash .dmeta { grid-column:1 / -1; display:flex; flex-direction:column; gap:4px;
+                          font-size:0.85rem; color:#667085; font-variant-numeric:tabular-nums; }
+  .as-main .dash .dmeta a { color:inherit; }
   .as-main .dash .dstatus-resolved { color:#1e7e34; }
   .as-main .dash .dstatus-unresolved { color:#c0392b; }
   .as-main .dash .dstatus-running { color:#1d4ed8; }
@@ -308,6 +312,23 @@ ASSISTANT_TEMPLATE = """
           <div class="dval">out {{ dash.out_tokens }}</div>
           {% if dash.llm_tps %}<div class="dval">{{ dash.llm_tps }} tok/s</div>{% endif %}
         </div>
+        <hr class="dsep">
+        <div class="dmeta">
+          <div>
+            journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
+            · started {{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}
+            {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
+          </div>
+          <div>
+            {% if trigger %}
+              Started by <a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a>
+              · <a href="/chat?id={{ selected.room_uuid }}&msg={{ trigger.id }}">open in chat ↗</a>
+            {% else %}
+              No triggering chat message · room {{ (selected.room_uuid|string)[:8] }}
+              · <a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a>
+            {% endif %}
+          </div>
+        </div>
       </div>
 
       <div class="summary">
@@ -336,23 +357,11 @@ ASSISTANT_TEMPLATE = """
           {% endif %}
         </div>
         <div class="runcard-body">
-          <div class="muted">
-            journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}
-            · started {{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}
-            {% if selected.finished_at %}· finished {{ selected.finished_at.strftime('%H:%M:%S') }}{% endif %}
-          </div>
           <div class="trigger">
             {% if trigger %}
-              <div>Started by
-                <strong><a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a></strong>
-                · <a href="/chat?id={{ selected.room_uuid }}&msg={{ trigger.id }}">open in chat ↗</a>
-              </div>
               <pre class="trigmsg">{{ trigger.text }}</pre>
             {% else %}
-              <div class="muted">No triggering chat message found ·
-                room {{ (selected.room_uuid|string)[:8] }} ·
-                <a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a>
-              </div>
+              <div class="muted">No triggering chat message found.</div>
             {% endif %}
           </div>
         </div>
