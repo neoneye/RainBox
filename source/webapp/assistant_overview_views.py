@@ -43,15 +43,16 @@ OVERVIEW_TEMPLATE = """
   .ao-tab .ct{font-size:0.72rem;font-weight:600;color:#6b7280;background:#f3f4f6;
     padding:1px 8px;border-radius:999px;min-width:20px;text-align:center}
   .ao-tab.sel .ct{color:#2563eb;background:#dbeafe}
-  .ao-table{width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid #e5e7eb;
+  /* Auto layout: every column shrinks to its content (white-space:nowrap on
+     all cells) except Summary, which is told to absorb the remaining width and
+     ellipsis-truncate. No per-column pixel widths. */
+  .ao-table{width:100%;border-collapse:collapse;border:1px solid #e5e7eb;
     border-radius:8px;overflow:hidden;background:#fff}
-  .ao-table th:nth-child(1),.ao-table td:nth-child(1){width:104px}
-  .ao-table th:nth-child(2),.ao-table td:nth-child(2){width:116px}
-  .ao-table th:nth-child(4),.ao-table td:nth-child(4){width:64px}
-  .ao-table th:nth-child(5),.ao-table td:nth-child(5){width:92px}
+  .ao-table th,.ao-table td{white-space:nowrap}
+  .ao-table th:nth-child(3),.ao-table td:nth-child(3){width:100%;max-width:0}
   .ao-table th{background:#fbfbfb;border-bottom:1px solid #e5e7eb;text-align:left;
     padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;
-    letter-spacing:0.03em;color:#9ca3af;white-space:nowrap;user-select:none}
+    letter-spacing:0.03em;color:#9ca3af;user-select:none}
   .ao-table th.sortable{cursor:pointer}
   .ao-table td{padding:12px 14px;border-bottom:1px solid #e5e7eb;font-size:0.9rem}
   .ao-table tbody tr{cursor:pointer}
