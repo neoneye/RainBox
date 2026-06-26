@@ -208,14 +208,14 @@ ASSISTANT_TEMPLATE = """
                        margin:-10px 0; padding:10px 0 10px 1rem; border-left:1px solid #e5e7eb; }
   .as-main .step .hd .ix { color:inherit; }
   .as-main .step .hd .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  /* Model/token meta on the "model response" label — matches io-time typography. */
-  .as-main .step .step-right { margin-left:auto; display:flex; gap:0.5rem; align-items:center;
-                               font-size:0.72rem; font-weight:400; text-transform:none;
-                               letter-spacing:normal; color:#98a2b3;
-                               font-variant-numeric:tabular-nums; }
-  .as-main .step .step-model { color:#2563eb; text-decoration:none; }
-  .as-main .step .step-model:hover { text-decoration:underline; }
-  .as-main .step .toks { color:#98a2b3; font-variant-numeric:tabular-nums; }
+  /* Right-aligned metadata on io-labels: model link, token counts, duration, timestamp.
+     Fields are separated by the flex gap, not punctuation. */
+  .as-main .step .io-meta { margin-left:auto; display:flex; gap:1rem; align-items:center;
+                            font-size:0.72rem; font-weight:400; text-transform:none;
+                            letter-spacing:normal; color:#98a2b3;
+                            font-variant-numeric:tabular-nums; }
+  .as-main .step .io-model { color:#2563eb; text-decoration:none; }
+  .as-main .step .io-model:hover { text-decoration:underline; }
   .as-main .step .action { font-weight:400; }
   .as-main .step .reason { color:#475467; margin:0.3rem 0; }
   /* Each step bundles the model's structured output (request) and the action's
@@ -234,21 +234,9 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .fn-ok { text-transform:none; font-weight:600; margin-left:0.3rem; }
   .as-main .step .fn-ok.ok-true { color:#1e7e34; }
   .as-main .step .fn-ok.ok-false { color:#c0392b; }
-  /* Invocation / response timestamps on the call & result labels. */
-  .as-main .step .io-time { text-transform:none; font-weight:400; color:#98a2b3;
-                            font-size:0.72rem; margin-left:auto;
-                            font-variant-numeric:tabular-nums; }
-  /* Function-call execution time, shown right before the result timestamp:
-     "took 5.3s · 12:34:56". io-dur takes the auto margin so the pair stays
-     together on the right. */
-  .as-main .step .io-dur { text-transform:none; font-weight:400; color:#98a2b3;
-                           font-size:0.72rem; margin-left:auto;
-                           font-variant-numeric:tabular-nums; }
-  .as-main .step .io-dur + .io-time, .as-main .step .step-right + .io-time { margin-left:0; }
-  /* Separator between the meta (duration / model+tokens) and the timestamp. A
-     pseudo-element with real margins, so the spacing survives flex edge-trimming. */
-  .as-main .step .io-dur + .io-time::before,
-  .as-main .step .step-right + .io-time::before { content:"·"; margin:0 0.4em; }
+  /* Timestamps and durations live inside io-meta; spacing comes from its gap. */
+  .as-main .step .io-time, .as-main .step .io-dur { text-transform:none; font-weight:400;
+                            color:#98a2b3; font-size:0.72rem; font-variant-numeric:tabular-nums; }
   /* "model request" sub-parts: system and user prompt, each collapsed in a
      <details>. The summaries mirror .io-label but a notch smaller. */
   .as-main .step .prompt { margin:0.25rem 0 0; }
@@ -386,7 +374,7 @@ ASSISTANT_TEMPLATE = """
         {% else %}
         {% if step.system_prompt or step.user_prompt %}
         <div class="io io-req">
-          <div class="io-label">model request{% if step.requested_at %}<span class="io-time" title="When this model request was made: {{ step.requested_at.replace(microsecond=0).isoformat() }}">{{ step.requested_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
+          <div class="io-label">model request{% if step.requested_at %}<span class="io-meta"><span class="io-time" title="When this model request was made: {{ step.requested_at.replace(microsecond=0).isoformat() }}">{{ step.requested_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
           {% if step.system_prompt %}
           <details class="prompt">
             <summary>system prompt</summary>
@@ -404,22 +392,20 @@ ASSISTANT_TEMPLATE = """
         <div class="io io-out">
           {% set has_toks = step.input_tokens is not none or step.output_tokens is not none %}
           {% set has_right = step.model_uuid or has_toks or step.duration_ms is not none %}
-          <div class="io-label">model response{% if has_right %}<span class="step-right">
-            {% if step.model_uuid %}<a class="step-model" href="/models?id={{ step.model_uuid }}"
+          <div class="io-label">model response{% if has_right or step.created_at %}<span class="io-meta">
+            {% if step.model_uuid %}<a class="io-model" href="/models?id={{ step.model_uuid }}"
                 title="{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }}">model ↗</a>{% endif %}
-            {% if has_toks or step.duration_ms is not none %}
-              <span class="toks">
-                {%- if has_toks %}<span title="Input tokens: the size of the prompt sent to the model for this step">in {{ step.input_tokens or 0 }}</span> · <span title="Output tokens: the amount of text the model generated for this step">out {{ step.output_tokens or 0 }}</span>{% endif -%}
-                {%- if has_toks and step.duration_ms %} · <span title="Throughput: total tokens (input + output) processed per second">{{ '%.0f'|format(((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms) }} tok/s</span>{% endif -%}
-                {%- if step.duration_ms is not none %}{% if has_toks %} · {% endif %}<span title="Duration: how long the model took to produce this response">took {{ '%.1f'|format(step.duration_ms / 1000) }}s</span>{% endif -%}
-              </span>
-            {% endif %}
-          </span>{% endif %}{% if step.created_at %}<span class="io-time" title="When this model response was recorded: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
+            {% if has_toks %}<span title="Input tokens: the size of the prompt sent to the model for this step">in {{ step.input_tokens or 0 }}</span>
+            <span title="Output tokens: the amount of text the model generated for this step">out {{ step.output_tokens or 0 }}</span>{% endif %}
+            {% if has_toks and step.duration_ms %}<span title="Throughput: total tokens (input + output) processed per second">{{ '%.0f'|format(((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms) }} tok/s</span>{% endif %}
+            {% if step.duration_ms is not none %}<span title="Duration: how long the model took to produce this response">took {{ '%.1f'|format(step.duration_ms / 1000) }}s</span>{% endif %}
+            {% if step.created_at %}<span class="io-time" title="When this model response was recorded: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}
+          </span>{% endif %}</div>
           <pre>{{ decision_json.get(step.uuid|string, '') }}</pre>
         </div>
         {% if step.action %}
         <div class="io io-call">
-          <div class="io-label">action call{% if step.created_at %}<span class="io-time" title="When this action was called: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}</div>
+          <div class="io-label">action call{% if step.created_at %}<span class="io-meta"><span class="io-time" title="When this action was called: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
           {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
         </div>
         {% endif %}
@@ -427,9 +413,7 @@ ASSISTANT_TEMPLATE = """
         {% set obs = step.observation %}
         {% if obs is not none or step.observation_preview %}
         <div class="io io-in">
-          <div class="io-label">action result{% if obs is not none %}
-            <span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at and step.created_at %}<span class="io-dur" title="Duration: how long the action took to complete">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}{% if step.settled_at %}<span class="io-time" title="When this action result was recorded: {{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span>{% endif %}
-          </div>
+          <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at %}<span class="io-meta">{% if step.created_at %}<span class="io-dur" title="Duration: how long the action took to complete">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}<span class="io-time" title="When this action result was recorded: {{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
           {% if obs is not none %}
             {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
             {% if obs.data %}<pre>{{ obs.data | tojson }}</pre>{% endif %}
