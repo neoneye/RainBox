@@ -284,6 +284,9 @@ ASSISTANT_TEMPLATE = """
     {% endfor %}
   </aside>
 
+  {# The .as-main detail pane has a Markdown twin: _run_markdown() serializes the
+     same sections (dashboard → summary → trigger → timeline → verdict) for the
+     kebab's "View as markdown". Keep the two in sync when editing either. #}
   <section class="as-main">
     {% if not selected %}
       <h1>Timeline</h1>
@@ -394,6 +397,8 @@ ASSISTANT_TEMPLATE = """
         <div class="io io-out">
           {% set has_toks = step.input_tokens is not none or step.output_tokens is not none %}
           {% set has_right = step.model_uuid or has_toks or step.duration_ms is not none %}
+          {# This io-meta line (model · tokens · throughput · duration · time) is
+             duplicated in Python by _response_meta_md(); change both together. #}
           <div class="io-label">model response{% if has_right or step.created_at %}<span class="io-meta">
             {% if step.model_uuid %}<a class="io-model" href="/models?id={{ step.model_uuid }}"
                 title="{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }}">model ↗</a>{% endif %}
@@ -413,6 +418,8 @@ ASSISTANT_TEMPLATE = """
         {% endif %}
         {% endif %}
         {% set obs = step.observation %}
+        {# The model request / action call / action result io-blocks below are
+           mirrored in Python by _step_md(); keep them aligned. #}
         {% if obs is not none or step.observation_preview %}
         <div class="io io-in">
           <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at %}<span class="io-meta">{% if step.created_at %}<span class="io-dur" title="Duration: how long the action took to complete">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}<span class="io-time" title="When this action result was recorded: {{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
@@ -636,7 +643,9 @@ def _hms(dt) -> str | None:
 
 def _response_meta_md(step, model_names: dict[str, str]) -> str:
     """The "model response" meta line — model, tokens, throughput, duration,
-    time — mirroring the HTML io-meta, joined with ' · '."""
+    time — joined with ' · '. Mirror of the template's `io-out`/`io-meta` line
+    (search ASSISTANT_TEMPLATE for "duplicated in Python by _response_meta_md");
+    the throughput formula must match the one there. Edit both together."""
     parts: list[str] = []
     if step.model_uuid:
         parts.append(model_names.get(str(step.model_uuid), str(step.model_uuid)[:8]))
@@ -670,7 +679,9 @@ def _intent_md(it) -> list[str]:
 
 def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -> list[str]:
     """A single timeline step's body: model request/response, action call/result
-    and any error — the same io-blocks the HTML renders."""
+    and any error. Mirror of the template's per-step io-blocks (search
+    ASSISTANT_TEMPLATE for "mirrored in Python by _step_md"); keep the set of
+    blocks and their order aligned with the HTML."""
     lines: list[str] = []
     if step.phase == "control":
         if step.reason:
