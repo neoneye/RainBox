@@ -50,6 +50,9 @@ OVERVIEW_TEMPLATE = """
     border-radius:8px;overflow:hidden;background:#fff}
   .ao-table th,.ao-table td{white-space:nowrap}
   .ao-table th:nth-child(3),.ao-table td:nth-child(3){width:100%;max-width:0}
+  /* Numeric columns (Steps, Duration) read better right-aligned. */
+  .ao-table th:nth-child(4),.ao-table td:nth-child(4),
+  .ao-table th:nth-child(5),.ao-table td:nth-child(5){text-align:right}
   .ao-table th{background:#fbfbfb;border-bottom:1px solid #e5e7eb;text-align:left;
     padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;
     letter-spacing:0.03em;color:#9ca3af;user-select:none}
