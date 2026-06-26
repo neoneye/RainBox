@@ -322,11 +322,6 @@ ASSISTANT_TEMPLATE = """
           {% endif %}
         </div>
         <div class="dcell">
-          {% if trigger %}
-            <div class="dval">Started by <a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a></div>
-          {% else %}
-            <div class="dval">No triggering chat message</div>
-          {% endif %}
           <div class="dval">journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}</div>
           <div class="dlabel">Start</div>
           <div class="dval"><span class="dts">{{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}</span></div>
@@ -339,7 +334,7 @@ ASSISTANT_TEMPLATE = """
 
       <div class="card">
         <div class="hd">
-          <div class="card-title">Run</div>
+          <div class="card-title">{% if trigger %}Started by <a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a>{% else %}Run{% endif %}</div>
           {% if selected.status in ('running', 'stopping') %}
             <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
             <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
