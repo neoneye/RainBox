@@ -135,7 +135,41 @@ function aoRender(data) {
   if (!empty) aoRenderPager(data.total, data.page, data.pages);
 }
 
+// Reflect the active filter/sort/page into the URL (defaults omitted) so the
+// view is shareable and reloadable. replaceState, not push, so live typing
+// doesn't flood the back-button history.
+function aoSyncUrl() {
+  const p = new URLSearchParams();
+  if (aoState.q) p.set('q', aoState.q);
+  if (aoState.status !== 'all') p.set('status', aoState.status);
+  if (aoState.range !== 'all') p.set('range', aoState.range);
+  if (aoState.sort !== 'started') p.set('sort', aoState.sort);
+  if (aoState.dir !== 'desc') p.set('dir', aoState.dir);
+  if (aoState.page > 1) p.set('page', aoState.page);
+  const qs = p.toString();
+  history.replaceState(null, '', qs ? '?' + qs : location.pathname);
+}
+
+// Seed state from the URL on load, validating each param against the values
+// the UI actually offers (so a hand-edited link can't wedge the page).
+function aoReadUrl() {
+  const p = new URLSearchParams(location.search);
+  aoState.q = p.get('q') || '';
+  const statuses = AO_TABS.map((t) => t[0]);
+  if (statuses.includes(p.get('status'))) aoState.status = p.get('status');
+  const sorts = [...document.querySelectorAll('#ao-table th.sortable')]
+    .map((th) => th.dataset.sort);
+  if (sorts.includes(p.get('sort'))) aoState.sort = p.get('sort');
+  if (p.get('dir') === 'asc' || p.get('dir') === 'desc') aoState.dir = p.get('dir');
+  const pg = parseInt(p.get('page'), 10);
+  if (pg > 0) aoState.page = pg;
+  // Validate range by assigning to the <select> and reading what stuck.
+  const rangeSel = aoEl('ao-range-select');
+  if (p.get('range')) { rangeSel.value = p.get('range'); aoState.range = rangeSel.value; }
+}
+
 async function aoLoad() {
+  aoSyncUrl();
   const p = new URLSearchParams({
     q: aoState.q, status: aoState.status, range: aoState.range,
     sort: aoState.sort, dir: aoState.dir, page: aoState.page,
@@ -151,6 +185,9 @@ async function aoLoad() {
 
 let aoSearchTimer = null;
 function aoInit() {
+  aoReadUrl();
+  aoEl('ao-search').value = aoState.q;
+  aoEl('ao-range-select').value = aoState.range;
   aoRenderTabs(null);
   aoRenderHeaders();
   aoEl('ao-search').addEventListener('input', (e) => {

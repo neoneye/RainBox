@@ -33,5 +33,6 @@ def test_nav_marks_assistant_active():
 def test_js_has_core_markers():
     b = _body()
     for marker in ["aoLoad", "aoRender", "aoRenderTabs", "aoRenderPager",
+                   "aoSyncUrl", "aoReadUrl", "history.replaceState",
                    "/assistant-overview/api/runs", "/assistant?id="]:
         assert marker in b, f"missing marker: {marker}"
