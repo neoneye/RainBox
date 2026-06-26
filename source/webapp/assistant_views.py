@@ -186,7 +186,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .obstacles { margin:0.2rem 0 0; padding-left:1.2rem; }
   .as-main .obstacles li { margin:0.1rem 0; }
   .as-main .trigmsg { white-space:pre-wrap; word-break:break-word; margin:0; }
-  .as-main hr.sep { border:0; border-top:1px solid #e5e7eb; margin:1rem 0; }
+  .as-main .runcard-body pre { margin:0; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
   /* The run header and each ReAct step are self-contained cards: a header band
@@ -434,9 +434,14 @@ ASSISTANT_TEMPLATE = """
       {% endif %}
 
       {% if verdict %}
-        <hr class="sep">
-        <div class="grp">Verdict</div>
-        <pre>{{ verdict }}</pre>
+      <div class="runcard">
+        <div class="hd">
+          <div class="runtitle">Verdict</div>
+        </div>
+        <div class="runcard-body">
+          <pre>{{ verdict }}</pre>
+        </div>
+      </div>
       {% endif %}
     {% endif %}
   </section>
