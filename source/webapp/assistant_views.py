@@ -7,7 +7,7 @@ the selected run's summary, details, and `AssistantStep` timeline with each
 `AssistantWriteIntent` inline (joined by `step_uuid`). Read-only except the
 lifecycle actions the existing endpoints already own — confirm / reject / undo a
 write-intent, and stop / redirect a live run (`webapp/chat_api.py`). The selected
-run carries a kebab (Copy id / Open in chat / Stop). See
+run carries a kebab (Copy run id / Copy journal id / Stop). See
 docs/ui-left-panel-tree.md.
 """
 
@@ -69,7 +69,7 @@ ASSISTANT_TEMPLATE = """
         {% else %}<span class="rsum pending">summarizing…</span>{% endif %}
       </a>
       <button class="as-kebab" title="actions"
-              onclick="asKebab(event, '{{ r.uuid }}', '{{ r.room_uuid }}', '{{ r.status }}')"></button>
+              onclick="asKebab(event, '{{ r.uuid }}', '{{ r.status }}', '{{ r.journal_id or '' }}')"></button>
     </div>
   </li>
 {% endmacro %}
@@ -322,7 +322,6 @@ ASSISTANT_TEMPLATE = """
           {% endif %}
         </div>
         <div class="dcell">
-          <div class="dval">journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}</div>
           <div class="dlabel">Start</div>
           <div class="dval"><span class="dts">{{ selected.started_at.strftime('%Y-%m-%d %H:%M:%S') if selected.started_at else '—' }}</span></div>
           {% if selected.finished_at %}
@@ -474,14 +473,14 @@ ASSISTANT_TEMPLATE = """
     b.addEventListener('click', function () { asCloseMenu(); fn(); });
     return b;
   }
-  function asKebab(event, uuid, roomUuid, status) {
+  function asKebab(event, uuid, status, journalId) {
     event.preventDefault();
     event.stopPropagation();
     asMenu.replaceChildren();
-    asMenu.appendChild(asItem('Copy id', function () { ppCopyText(uuid); }));
-    asMenu.appendChild(asItem('Open in chat ↗', function () {
-      window.location = '/chat?id=' + roomUuid;
-    }));
+    asMenu.appendChild(asItem('Copy run id', function () { ppCopyText(uuid); }));
+    if (journalId) {
+      asMenu.appendChild(asItem('Copy journal id', function () { ppCopyText(journalId); }));
+    }
     asMenu.appendChild(asItem('Refresh summary', function () {
       // The summarizer runs out-of-process, so just confirm it's queued — the
       // new digest appears on a later reload, not immediately.
