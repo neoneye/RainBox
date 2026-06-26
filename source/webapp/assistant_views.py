@@ -77,10 +77,18 @@ ASSISTANT_TEMPLATE = """
   body { margin: 0; font-family: system-ui, sans-serif; height: 100vh;
          display: flex; flex-direction: column; overflow: hidden; }
   .badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:0.74rem; font-weight:600; }
-  .b-running,.b-stopping { background:#e0edff; color:#1d4ed8; }
-  .b-finished,.b-observed,.b-final,.b-completed,.b-confirmed,.b-executing { background:#e6f4ea; color:#1e7e34; }
+  /* In-progress → blue. */
+  .b-running,.b-stopping,.b-executing { background:#e0edff; color:#1d4ed8; }
+  /* Genuine success → green (a write went through / was approved). */
+  .b-completed,.b-confirmed { background:#e6f4ea; color:#1e7e34; }
+  /* Errored → red. */
   .b-failed,.b-killed { background:#fdecea; color:#c0392b; }
-  .b-stopped,.b-rejected,.b-planned { background:#f1f3f5; color:#555; }
+  /* Neutral phases & non-success terminal states → gray. "observed"/"final" are
+     lifecycle phases, not outcomes, so they must not read as green. */
+  .b-stopped,.b-rejected,.b-planned,.b-observed,.b-final { background:#f1f3f5; color:#555; }
+  /* A run finished — terminal but outcome-agnostic (the Resolved/Unresolved
+     verdict says whether it succeeded) → blue-gray, not optimistic green. */
+  .b-finished { background:#eef2f6; color:#475569; }
   .b-undone { background:#fef3c7; color:#92400e; }
   .b-control { background:#f3e8ff; color:#7e22ce; }
   .b-proposed { background:#fff4e5; color:#b06f00; }
