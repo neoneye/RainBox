@@ -51,7 +51,7 @@ function aoRow(run) {
 
   const steps = document.createElement('td');
   steps.className = 'ao-mono';
-  steps.textContent = run.steps + ' / ' + run.step_limit;
+  steps.textContent = run.steps;
 
   const dur = document.createElement('td');
   dur.className = 'ao-mono';
