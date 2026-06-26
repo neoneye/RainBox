@@ -67,8 +67,8 @@ OVERVIEW_TEMPLATE = """
   .ao-chip.running{color:#1d4ed8;background:#dbeafe}
   .ao-chip.resolved{color:#16a34a;background:#dcfce7}
   .ao-chip.unresolved{color:#b91c1c;background:#fee2e2}
-  .ao-chip.stopped{color:#6b7280;background:#f3f4f6}
-  .ao-chip.pending{color:#9ca3af;background:#f3f4f6}
+  .ao-chip.stopped{color:#6b7280;background:#e5e7eb}
+  .ao-chip.pending{color:#9ca3af;background:#e5e7eb}
   .ao-dot{width:7px;height:7px;border-radius:999px;background:#2563eb;
     animation:aopulse 1.5s ease-in-out infinite}
   @keyframes aopulse{0%,100%{opacity:1}50%{opacity:0.3}}
