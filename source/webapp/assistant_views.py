@@ -186,19 +186,21 @@ ASSISTANT_TEMPLATE = """
   .as-main .obstacles { margin:0.2rem 0 0; padding-left:1.2rem; }
   .as-main .obstacles li { margin:0.1rem 0; }
   .as-main .trigmsg { white-space:pre-wrap; word-break:break-word; margin:0; }
-  .as-main .runcard-body pre { margin:0; }
+  .as-main .card-body pre { margin:0; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
   /* The run header and each ReAct step are self-contained cards: a header band
      (.hd) over a padded body, so each reads as one grouped unit. */
-  .as-main .step, .as-main .runcard { border:1px solid #e5e7eb; border-radius:8px;
+  .as-main .step, .as-main .card { border:1px solid #e5e7eb; border-radius:8px;
                    overflow:hidden; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05);
                    margin-bottom:16px; }
-  .as-main .step .hd, .as-main .runcard .hd { display:flex; gap:0.5rem; align-items:center;
+  .as-main .step .hd, .as-main .card .hd { display:flex; gap:0.5rem; align-items:center;
                        flex-wrap:wrap; padding:10px 14px; background:#fbfdff;
                        border-bottom:1px solid #e5e7eb; }
-  .as-main .runcard .hd .runtitle { font-size:1rem; font-weight:400; }
-  .as-main .step-body, .as-main .runcard-body { padding:14px 16px; }
+  .as-main .card .hd .card-title { font-size:1rem; font-weight:400; }
+  .as-main .card .hd .card-link { margin-left:auto; font-size:0.82rem; color:#2563eb; text-decoration:none; }
+  .as-main .card .hd .card-link:hover { text-decoration:underline; }
+  .as-main .step-body, .as-main .card-body { padding:14px 16px; }
   .as-main .step-body > :first-child { margin-top:0; }
   .as-main .step-body > :last-child { margin-bottom:0; }
   .as-main .step.phase-control .step-body { background:#faf5ff; }
@@ -322,10 +324,8 @@ ASSISTANT_TEMPLATE = """
         <div class="dcell">
           {% if trigger %}
             <div class="dval">Started by <a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a></div>
-            <div class="dval"><a href="/chat?id={{ selected.room_uuid }}&msg={{ trigger.id }}">open in chat ↗</a></div>
           {% else %}
             <div class="dval">No triggering chat message</div>
-            <div class="dval"><a href="/chat?id={{ selected.room_uuid }}">open in chat ↗</a></div>
           {% endif %}
           <div class="dval">journal {{ (selected.journal_id|string)[:8] if selected.journal_id else '—' }}</div>
           <div class="dlabel">Start</div>
@@ -337,15 +337,16 @@ ASSISTANT_TEMPLATE = """
         </div>
       </div>
 
-      <div class="runcard">
+      <div class="card">
         <div class="hd">
-          <div class="runtitle">Run</div>
+          <div class="card-title">Run</div>
           {% if selected.status in ('running', 'stopping') %}
             <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
             <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
           {% endif %}
+          <a class="card-link" href="/chat?id={{ selected.room_uuid }}{% if trigger %}&msg={{ trigger.id }}{% endif %}">chat ↗</a>
         </div>
-        <div class="runcard-body">
+        <div class="card-body">
           <div class="trigger">
             {% if trigger %}
               <pre class="trigmsg">{{ trigger.text }}</pre>
@@ -434,11 +435,11 @@ ASSISTANT_TEMPLATE = """
       {% endif %}
 
       {% if verdict %}
-      <div class="runcard">
+      <div class="card">
         <div class="hd">
-          <div class="runtitle">Verdict</div>
+          <div class="card-title">Verdict</div>
         </div>
-        <div class="runcard-body">
+        <div class="card-body">
           <pre>{{ verdict }}</pre>
         </div>
       </div>
