@@ -14,7 +14,7 @@ import pytest
 import db
 import webapp  # noqa: F401 — registers all views (incl. /assistant) on the app
 from db import AssistantRun
-from webapp.assistant_views import _bucket_runs, _format_duration
+from webapp.assistant_views import _format_duration
 from webapp.core import app as flask_app
 
 
@@ -25,36 +25,6 @@ def test_format_duration():
     assert _format_duration(base, base + timedelta(hours=1, minutes=30)) == "1h 30m"
     assert _format_duration(base, None) is None      # still running
     assert _format_duration(None, base) is None
-
-
-class _FakeRun:
-    """Minimal stand-in for an AssistantRun — _bucket_runs only reads
-    status/summary."""
-    def __init__(self, status, outcome=None):
-        self.status = status
-        self.summary = {"outcome": outcome} if outcome else None
-
-
-def test_bucket_runs_files_each_run_under_matching_facets():
-    running = _FakeRun("running")
-    stopped = _FakeRun("stopped")
-    resolved = _FakeRun("finished", outcome="resolved")
-    failed = _FakeRun("failed")
-    killed = _FakeRun("killed")
-    partial = _FakeRun("finished", outcome="partial")
-    runs = [running, stopped, resolved, failed, killed, partial]
-    f = {b["name"]: b for b in _bucket_runs(runs)}
-    assert f["Recent"]["runs"] == runs                  # holds all
-    assert running in f["Running"]["runs"] and f["Running"]["count"] == 1
-    assert stopped in f["Stopped"]["runs"]
-    assert resolved in f["Resolved"]["runs"]
-    # failed/killed runs + a 'partial' outcome all count as unresolved (matches
-    # the dashboard status, so the tree and selected-run status agree)
-    for r in (failed, killed, partial):
-        assert r in f["Unresolved"]["runs"]
-    assert f["Unresolved"]["count"] == 3
-    # facets overlap: a running run is ALSO under Recent
-    assert running in f["Recent"]["runs"]
 
 
 @pytest.fixture
@@ -89,22 +59,16 @@ def _cleanup(run_uuid, room_uuid) -> None:
     db.db.session.commit()
 
 
-def test_runs_list_renders(app_ctx, client):
-    room = _room()
-    run = db.start_assistant_run(
-        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
-    db.finish_run(run, "finished")
-    try:
-        resp = client.get("/assistant")
-        assert resp.status_code == 200
-        body = resp.get_data(as_text=True)
-        # The virtual status folders render…
-        for folder in ("Recent", "Running", "Stopped", "Resolved", "Unresolved"):
-            assert f'class="as-fname">{folder}<' in body
-        # …and the run appears (uuid-addressed) under them.
-        assert f"?id={run.uuid}" in body
-    finally:
-        _cleanup(run.uuid, room.uuid)
+def test_assistant_page_has_no_tree_and_points_to_overview(app_ctx, client):
+    resp = client.get("/assistant")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    # The left tree is gone…
+    assert "as-tree" not in body
+    assert "as-folder" not in body
+    # …and the empty state points at the overview (the run finder).
+    assert "/assistant-overview" in body
+    assert "No run selected" in body
 
 
 def test_timeline_shows_step_with_inline_intent_and_undo(app_ctx, client):
@@ -258,24 +222,23 @@ def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     db.finish_run(run, "finished")
     try:
-        # Addressable only by uuid via ?id=; the kebab offers Copy run id.
+        # Addressable only by uuid via ?id=; the header kebab offers Copy run id.
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert str(run.uuid) in body
         assert "Copy run id" in body
-        assert "Select a run" not in body          # a run is selected
+        assert "as-main-head" in body                 # header bar with the kebab
+        assert f"asKebab(event, '{run.uuid}'" in body  # kebab wired to this run
+        assert "No run selected" not in body           # a run is selected
         # Only a uuid ?id= resolves: a non-uuid value and the old ?run= don't.
-        assert "Select a run" in client.get(
+        assert "No run selected" in client.get(
             "/assistant?id=not-a-uuid").get_data(as_text=True)
-        assert "Select a run" in client.get(
+        assert "No run selected" in client.get(
             f"/assistant?run={run.uuid}").get_data(as_text=True)
-        # The runs list links address runs by uuid.
-        listing = client.get("/assistant").get_data(as_text=True)
-        assert f"?id={run.uuid}" in listing
     finally:
         _cleanup(run.uuid, room.uuid)
 
 
-def test_run_summary_renders_in_list_and_detail(app_ctx, client):
+def test_run_summary_renders_in_detail(app_ctx, client):
     room = _room()
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
@@ -284,9 +247,8 @@ def test_run_summary_renders_in_list_and_detail(app_ctx, client):
         "trigger": "file the weekly report", "obstacles": ["the disk was full"],
         "outcome": "partial"})
     try:
-        listing = client.get("/assistant").get_data(as_text=True)
-        assert "file the weekly report" in listing   # the summary trigger in the leaf
         detail = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "file the weekly report" in detail     # summary trigger in the dashboard
         assert "the disk was full" in detail          # obstacle in the detail pane
         assert "Unresolved" in detail                 # 'partial' outcome → dashboard status
     finally:
@@ -303,25 +265,6 @@ def test_unsummarized_run_shows_pending(app_ctx, client):
         assert "Not yet summarized" in detail
     finally:
         _cleanup(run.uuid, room.uuid)
-
-
-def test_leaf_shows_run_and_fail_indicators(app_ctx, client):
-    room = _room()
-    running = db.start_assistant_run(  # status=running
-        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
-    failed = db.start_assistant_run(
-        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
-    db.finish_run(failed, "failed")
-    try:
-        body = client.get("/assistant").get_data(as_text=True)
-        assert 'class="as-ind run"' in body    # in-progress indicator (⏳)
-        assert 'class="as-ind fail"' in body   # failed indicator (✗)
-    finally:
-        db.db.session.query(AssistantRun).filter(
-            AssistantRun.uuid.in_([running.uuid, failed.uuid])
-        ).delete(synchronize_session=False)
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
 
 
 def test_step_token_counts_render_in_timeline(app_ctx, client):

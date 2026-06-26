@@ -27,19 +27,6 @@ _ACTION_DESCRIPTIONS = {
     n.value: (c.summary or c.description) for n, c in CAPABILITIES.items()
 }
 
-# Lucide folder icons (verbatim from /chat — the convention's shared SVGs).
-_ICON_FOLDER = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-                'fill="none" stroke="currentColor" stroke-width="2" '
-                'stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 '
-                '2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 '
-                '0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>')
-_ICON_FOLDER_OPEN = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-                     'fill="none" stroke="currentColor" stroke-width="2" '
-                     'stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 '
-                     '1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 '
-                     '0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 '
-                     '1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>')
-
 ASSISTANT_TEMPLATE = """
 <!doctype html>
 <title>Assistant runs &mdash; rainbox</title>
@@ -58,20 +45,6 @@ ASSISTANT_TEMPLATE = """
       {% endif %}
     </div>
   </div>
-{% endmacro %}
-{% macro run_leaf(r) %}
-  <li>
-    <div class="as-run-node {{ 'sel' if selected and r.uuid == selected.uuid }}">
-      <a class="as-run-link" href="{{ url_for('assistant_page') }}?id={{ r.uuid }}">
-        {% if r.status in ('running', 'stopping') %}<span class="as-ind run" title="running">⏳</span>
-        {% elif r.status in ('failed', 'killed') %}<span class="as-ind fail" title="failed">✗</span>{% endif %}
-        {% if r.summary %}<span class="rsum">{{ r.summary.trigger }}</span>
-        {% else %}<span class="rsum pending">summarizing…</span>{% endif %}
-      </a>
-      <button class="as-kebab" title="actions"
-              onclick="asKebab(event, '{{ r.uuid }}', '{{ r.status }}', '{{ r.journal_id or '' }}')"></button>
-    </div>
-  </li>
 {% endmacro %}
 <style>
   body { margin: 0; font-family: system-ui, sans-serif; height: 100vh;
@@ -97,50 +70,22 @@ ASSISTANT_TEMPLATE = """
   .b-out-partial  { background:#fff4e5; color:#b06f00; }
   .b-out-failed   { background:#fdecea; color:#c0392b; }
 
-  /* Full-height split: virtual folder tree (left) | run detail (right). */
-  .as-split { display:grid; grid-template-columns:340px minmax(0,1fr);
-              grid-template-rows:1fr; flex:1 1 auto; min-height:0; }
-  .as-tree { overflow:auto; min-height:0; border-right:1px solid #e5e7eb;
-             background:#fbfbfb; padding:10px; font-size:0.9rem; }
-  .as-main { overflow:auto; min-height:0; min-width:0; padding:12px 18px 3.5rem; }
+  /* Full-height single-run detail pane; the run finder is /assistant-overview. */
+  .as-main { overflow:auto; min-height:0; min-width:0; flex:1 1 auto;
+             padding:12px 18px 3.5rem; }
   .as-empty { color:#667085; padding:1rem 0; }
+  .as-empty a { color:#2563eb; }
 
-  /* Tree: virtual folders via <details>; folder icon is the expand indicator. */
-  .as-folder { margin-bottom:2px; }
-  .as-folder > summary { list-style:none; display:flex; align-items:center; gap:5px;
-              padding:8px 4px; border-radius:4px; cursor:pointer; white-space:nowrap;
-              -webkit-user-select:none; user-select:none; }
-  .as-folder > summary::-webkit-details-marker { display:none; }
-  .as-folder > summary:hover { background:#f1f5f9; }
-  .as-ficon { display:inline-flex; align-items:center; color:#6b7280; }
-  .as-ficon svg { width:15px; height:15px; display:block; }
-  .as-folder:not([open]) .as-ficon-open { display:none; }
-  .as-folder[open] .as-ficon-closed { display:none; }
-  .as-group-count { margin-left:4px; color:#6b7280; font-weight:400; font-size:0.82rem; }
-  .as-tree-list, .as-tree-list ul { list-style:none; margin:0; padding:0; }
-  .as-tree-list { margin-left:0.85em; border-left:1px solid #e5e7eb; padding-left:0.35em; }
-  .as-none { color:#98a2b3; font-style:italic; font-size:0.82rem; padding:3px 4px; }
-
-  .as-run-node { display:flex; align-items:flex-start; gap:4px; padding:3px 4px;
-                 border-radius:4px; }
-  .as-run-node:hover { background:#f1f5f9; }
-  .as-run-node.sel { background:#dbeafe; }
-  .as-run-link { flex:1 1 auto; min-width:0; text-decoration:none; color:#222;
-                 display:flex; gap:5px; align-items:flex-start; padding:2px 2px; }
-  .as-run-node.sel .as-run-link { font-weight:600; }
-  .as-ind { flex:0 0 auto; font-size:0.9rem; line-height:1.35; }
-  .as-ind.fail { color:#c0392b; }
-  .as-run-link .rsum { flex:1 1 auto; min-width:0; font-size:0.82rem; color:#344054;
-                       line-height:1.35; display:-webkit-box; -webkit-line-clamp:2;
-                       -webkit-box-orient:vertical; overflow:hidden; }
-  .as-run-link .rsum.pending { color:#98a2b3; font-style:italic; }
-  .as-kebab { margin-left:auto; flex:0 0 auto; align-self:center; border:none; background:none;
-              cursor:pointer; color:#6b7280; width:1.4rem; height:1.4rem; padding:0; border-radius:5px;
-              display:inline-flex; align-items:center; justify-content:center; visibility:hidden; }
-  .as-run-node.sel .as-kebab { visibility:visible; }
+  /* Detail header: run id + kebab actions menu. */
+  .as-main-head { display:flex; align-items:center; gap:0.75rem; margin:0.2rem 0 0.7rem; }
+  .as-main-head .as-runid { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+             font-size:0.95rem; font-weight:600; color:#1a1a2e; word-break:break-all; }
+  .as-kebab { margin-left:auto; flex:0 0 auto; border:none; background:none; cursor:pointer;
+             color:#6b7280; width:1.9rem; height:1.9rem; padding:0; border-radius:6px;
+             display:inline-flex; align-items:center; justify-content:center; }
   .as-kebab::before { content:""; width:3px; height:3px; border-radius:50%; background:currentColor;
-                      box-shadow:-5px 0 0 currentColor, 5px 0 0 currentColor; }
-  .as-kebab:hover { background:#d2ddf6; color:#1a1a2e; }
+             box-shadow:0 -5px 0 currentColor, 0 5px 0 currentColor; }
+  .as-kebab:hover { background:#eef0f6; color:#1a1a2e; }
   .as-menu { position:fixed; z-index:1000; min-width:150px; background:#fff; border:1px solid #d1d5db;
              border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.14); padding:0.25em;
              display:flex; flex-direction:column; }
@@ -273,33 +218,22 @@ ASSISTANT_TEMPLATE = """
 </style>
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
-<div class="as-split">
-  <aside class="as-tree">
-    {% if not runs %}<div class="as-empty">No assistant runs yet.</div>{% endif %}
-    {% for f in folders %}
-    <details class="as-folder" data-folder="{{ f.name }}" {{ 'open' if f.default_open }}>
-      <summary>
-        <span class="as-ficon as-ficon-open">{{ icon_open | safe }}</span>
-        <span class="as-ficon as-ficon-closed">{{ icon_closed | safe }}</span>
-        <span class="as-fname">{{ f.name }}</span>
-        <span class="as-group-count">{{ f.count }}</span>
-      </summary>
-      <ul class="as-tree-list">
-        {% for r in f.runs %}{{ run_leaf(r) }}{% endfor %}
-        {% if not f.runs %}<li class="as-none">none</li>{% endif %}
-      </ul>
-    </details>
-    {% endfor %}
-  </aside>
-
-  {# The .as-main detail pane has a Markdown twin: _run_markdown() serializes the
+  {# /assistant is a single-run detail view; the run finder is /assistant-overview.
+     The .as-main detail pane has a Markdown twin: _run_markdown() serializes the
      same sections (dashboard → summary → trigger → timeline → verdict) for the
      kebab's "View as markdown". Keep the two in sync when editing either. #}
   <section class="as-main">
     {% if not selected %}
-      <h1>Timeline</h1>
-      <div class="as-empty">Select a run on the left to see its summary and step timeline.</div>
+      <h1>Assistant run</h1>
+      <div class="as-empty">No run selected — open the
+        <a href="{{ url_for('assistant_overview_page') }}">Assistant overview</a>
+        to pick a run.</div>
     {% else %}
+      <div class="as-main-head">
+        <span class="as-runid">Run {{ selected.uuid }}</span>
+        <button class="as-kebab" title="actions"
+                onclick="asKebab(event, '{{ selected.uuid }}', '{{ selected.status }}', '{{ selected.journal_id or '' }}')"></button>
+      </div>
       <div class="dash">
         <div class="dcell">
           <div class="dlabel">Status</div>
@@ -464,23 +398,11 @@ ASSISTANT_TEMPLATE = """
       {% endif %}
     {% endif %}
   </section>
-</div>
 
 <div id="as-menu" class="as-menu" hidden></div>
 <div id="as-toast" class="as-toast"></div>
 
 <script>
-  // --- folder expand/collapse persistence (localStorage, keyed by name) -------
-  document.querySelectorAll('details.as-folder').forEach(function (d) {
-    var key = 'as.folder.' + d.dataset.folder;
-    var saved = localStorage.getItem(key);
-    if (saved === 'open') d.open = true;
-    else if (saved === 'closed') d.open = false;
-    d.addEventListener('toggle', function () {
-      localStorage.setItem(key, d.open ? 'open' : 'closed');
-    });
-  });
-
   // --- kebab menu on the selected run ----------------------------------------
   var asMenu = document.getElementById('as-menu');
   function asCloseMenu() { asMenu.hidden = true; asMenu.replaceChildren(); }
@@ -833,31 +755,6 @@ def _run_markdown(run, ctx: dict) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
-def _bucket_runs(runs: list) -> list[dict]:
-    """Group runs into the virtual status folders (facets — a run lands in every
-    bucket it matches). Recent holds all; the rest are filtered subsets."""
-    running, stopped, resolved, unresolved = [], [], [], []
-    for r in runs:
-        if r.status in ("running", "stopping"):
-            running.append(r)
-        if r.status == "stopped":
-            stopped.append(r)
-        outcome = (r.summary or {}).get("outcome")
-        if outcome == "resolved":
-            resolved.append(r)
-        # Mirror _dash_status: killed counts as unresolved too, so the left tree
-        # and the selected-run status agree.
-        if outcome in ("partial", "failed") or r.status in ("failed", "killed"):
-            unresolved.append(r)
-    return [
-        {"name": "Running", "runs": running, "count": len(running), "default_open": True},
-        {"name": "Recent", "runs": runs, "count": len(runs), "default_open": True},
-        {"name": "Stopped", "runs": stopped, "count": len(stopped), "default_open": False},
-        {"name": "Resolved", "runs": resolved, "count": len(resolved), "default_open": False},
-        {"name": "Unresolved", "runs": unresolved, "count": len(unresolved), "default_open": False},
-    ]
-
-
 def _load_run_detail(selected) -> dict:
     """Assemble the per-run detail shared by the HTML page and the markdown
     export: the step timeline (each step with its write-intents), the verbatim
@@ -917,8 +814,6 @@ def _selected_run():
 
 @app.route("/assistant")
 def assistant_page() -> str:
-    runs = db.list_assistant_runs(limit=50)
-    folders = _bucket_runs(runs)
     selected = _selected_run()
     ctx = _load_run_detail(selected) if selected is not None else {}
     duration = _format_duration(
@@ -926,7 +821,7 @@ def assistant_page() -> str:
 
     return render_template_string(
         ASSISTANT_TEMPLATE,
-        runs=runs, folders=folders, selected=selected,
+        selected=selected,
         trigger=ctx.get("trigger"),
         timeline=ctx.get("timeline", []),
         decision_json=ctx.get("decision_json", {}),
@@ -935,7 +830,6 @@ def assistant_page() -> str:
         pending_controls=ctx.get("pending_controls", []),
         duration=duration, model_names=ctx.get("model_names", {}),
         dash=ctx.get("dash"), verdict=ctx.get("verdict"), reply=ctx.get("reply"),
-        icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
     )
 
 
