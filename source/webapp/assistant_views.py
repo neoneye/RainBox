@@ -200,6 +200,13 @@ ASSISTANT_TEMPLATE = """
   .as-main .card .hd .card-title { font-size:1rem; font-weight:400; }
   .as-main .card .hd .card-link { margin-left:auto; font-size:0.82rem; color:#2563eb; text-decoration:none; }
   .as-main .card .hd .card-link:hover { text-decoration:underline; }
+  /* Outcome chip after the card title, separated like the step header's spans. */
+  .as-main .card .hd .outcome { align-self:stretch; display:flex; align-items:center;
+                                margin:-10px 0; padding:10px 0 10px 1rem;
+                                border-left:1px solid #e5e7eb; font-weight:600; }
+  .as-main .card .hd .out-finished { color:#1e7e34; }
+  .as-main .card .hd .out-stopped { color:#555; }
+  .as-main .card .hd .out-failed, .as-main .card .hd .out-killed { color:#c0392b; }
   .as-main .step-body, .as-main .card-body { padding:14px 16px; }
   .as-main .step-body > :first-child { margin-top:0; }
   .as-main .step-body > :last-child { margin-bottom:0; }
@@ -432,6 +439,7 @@ ASSISTANT_TEMPLATE = """
       <div class="card">
         <div class="hd">
           <div class="card-title">Verdict</div>
+          <span class="outcome out-{{ selected.status }}">{{ selected.status | capitalize }}</span>
           {% if reply %}<a class="card-link" href="/chat?id={{ selected.room_uuid }}&msg={{ reply.id }}">chat ↗</a>{% endif %}
         </div>
         <div class="card-body">
