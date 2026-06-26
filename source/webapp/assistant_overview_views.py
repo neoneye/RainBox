@@ -91,7 +91,7 @@ OVERVIEW_TEMPLATE = """
 <div class="ao-wrap">
   <div class="ao-filters">
     <input id="ao-search" class="ao-search" type="search" placeholder="Search summary&hellip;">
-    <select id="ao-range" class="ao-select" aria-label="Time range">
+    <select id="ao-range-select" class="ao-select" aria-label="Time range">
       <option value="all">Any time</option>
       <option value="3h">Last 3 hours</option>
       <option value="6h">Last 6 hours</option>

@@ -162,7 +162,7 @@ function aoInit() {
       aoLoad();
     }, 250);
   });
-  aoEl('ao-range').addEventListener('change', (e) => {
+  aoEl('ao-range-select').addEventListener('change', (e) => {
     aoState.range = e.target.value;
     aoState.page = 1;
     aoLoad();

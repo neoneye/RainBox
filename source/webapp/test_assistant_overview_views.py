@@ -20,7 +20,7 @@ def test_page_renders_with_nav_and_js():
     assert "pp-nav" in body
     assert "/static/assistant-overview.js?v=" in body
     assert 'id="ao-body"' in body
-    assert 'id="ao-range"' in body        # the time-range picker
+    assert 'id="ao-range-select"' in body  # the time-range picker
     assert ">Any time<" in body
     assert ">Last 7 days<" in body
 
