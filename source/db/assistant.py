@@ -277,12 +277,13 @@ def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
 
 def get_run_final_reply(run: AssistantRun) -> dict[str, Any] | None:
     """The agent's final reply for a run: the latest agent `message` in the room
-    at or before it finished (the run stores only a truncated `final_summary`).
-    None for a still-running run or one that crashed before replying. Robust
-    across rooms with multiple runs: a later run's reply has a later timestamp,
-    so '<= this run's finished_at' picks this run's. Returns a small dict
-    (id/uuid/text) for the /assistant inspector's verdict block; `id` is the int
-    the chat DOM anchors on, letting the verdict link jump to the reply."""
+    within the run's lifetime (the run stores only a truncated `final_summary`).
+    None for a still-running run or one that crashed before replying. Bounded to
+    `[started_at, finished_at]` so it can't borrow a sibling run's reply: without
+    the lower bound, a later run that fails before replying would pick up the
+    *previous* run's reply (any agent message before its finished_at). Returns a
+    small dict (id/uuid/text) for the /assistant inspector's verdict block; `id`
+    is the int the chat DOM anchors on, letting the verdict link jump to it."""
     if run.finished_at is None:
         return None
     msg = (
@@ -291,6 +292,7 @@ def get_run_final_reply(run: AssistantRun) -> dict[str, Any] | None:
             ChatMessage.room_uuid == run.room_uuid,
             ChatMessage.sender_uuid == run.agent_uuid,
             ChatMessage.kind == "message",
+            ChatMessage.created_at >= run.started_at,
             ChatMessage.created_at <= run.finished_at,
         )
         .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())

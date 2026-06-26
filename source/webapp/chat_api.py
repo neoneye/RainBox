@@ -381,7 +381,14 @@ def reject_assistant_write_intent(intent_uuid: UUID) -> Response:
     """Decline a proposed confirm-tier write."""
     from agents.assistant_writes import reject_write_intent
 
-    return jsonify({"rejected": reject_write_intent(intent_uuid)})
+    # `ok` so the UI flags failure: reject only succeeds from `proposed`, so a
+    # stale or double-clicked reject returns ok:false instead of a false "Done."
+    rejected = reject_write_intent(intent_uuid)
+    return jsonify({
+        "ok": rejected,
+        "text": "Write rejected." if rejected
+        else "Write was not in a rejectable (proposed) state.",
+    })
 
 
 @app.route("/chat/api/assistant/write-intents/<uuid:intent_uuid>/undo", methods=["POST"])

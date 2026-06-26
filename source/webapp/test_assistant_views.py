@@ -40,16 +40,19 @@ def test_bucket_runs_files_each_run_under_matching_facets():
     stopped = _FakeRun("stopped")
     resolved = _FakeRun("finished", outcome="resolved")
     failed = _FakeRun("failed")
+    killed = _FakeRun("killed")
     partial = _FakeRun("finished", outcome="partial")
-    runs = [running, stopped, resolved, failed, partial]
+    runs = [running, stopped, resolved, failed, killed, partial]
     f = {b["name"]: b for b in _bucket_runs(runs)}
     assert f["Recent"]["runs"] == runs                  # holds all
     assert running in f["Running"]["runs"] and f["Running"]["count"] == 1
     assert stopped in f["Stopped"]["runs"]
     assert resolved in f["Resolved"]["runs"]
-    # failed run + a 'partial' outcome both count as unresolved
-    assert failed in f["Unresolved"]["runs"] and partial in f["Unresolved"]["runs"]
-    assert f["Unresolved"]["count"] == 2
+    # failed/killed runs + a 'partial' outcome all count as unresolved (matches
+    # the dashboard status, so the tree and selected-run status agree)
+    for r in (failed, killed, partial):
+        assert r in f["Unresolved"]["runs"]
+    assert f["Unresolved"]["count"] == 3
     # facets overlap: a running run is ALSO under Recent
     assert running in f["Recent"]["runs"]
 

@@ -332,6 +332,31 @@ def test_get_run_final_reply_returns_the_full_agent_reply(app_ctx):
         _cleanup_run(run.uuid)
         _cleanup_run(running.uuid)
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+
+
+def test_get_run_final_reply_does_not_borrow_a_sibling_runs_reply(app_ctx):
+    """A later run that fails before replying must not pick up the previous run's
+    reply — the lower bound (created_at >= started_at) keeps runs from bleeding
+    into each other in a room with multiple runs."""
+    human = db.get_human_user()
+    assert human is not None
+    room = db.create_chatroom(f"reply-{uuid4().hex[:8]}", human.uuid, [])
+    agent_uuid = uuid4()
+    first = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=agent_uuid)
+    db.post_chat_message(room.uuid, agent_uuid, "the first run's reply")
+    db.finish_run(first, "finished", final_summary="first")
+    # A second run starts afterwards and fails before posting any reply.
+    second = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=agent_uuid)
+    db.finish_run(second, "failed")
+    try:
+        assert db.get_run_final_reply(first) is not None        # owns its reply
+        assert db.get_run_final_reply(second) is None           # not the first's
+    finally:
+        _cleanup_run(first.uuid)
+        _cleanup_run(second.uuid)
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
         db.db.session.commit()
 
 

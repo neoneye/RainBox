@@ -845,7 +845,9 @@ def _bucket_runs(runs: list) -> list[dict]:
         outcome = (r.summary or {}).get("outcome")
         if outcome == "resolved":
             resolved.append(r)
-        if outcome in ("partial", "failed") or r.status == "failed":
+        # Mirror _dash_status: killed counts as unresolved too, so the left tree
+        # and the selected-run status agree.
+        if outcome in ("partial", "failed") or r.status in ("failed", "killed"):
             unresolved.append(r)
     return [
         {"name": "Running", "runs": running, "count": len(running), "default_open": True},

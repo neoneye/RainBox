@@ -74,8 +74,13 @@ def test_reject_endpoint_declines_the_write(client):
     try:
         resp = flask_client.post(f"/chat/api/assistant/write-intents/{intent_uuid}/reject")
         assert resp.status_code == 200
-        assert resp.get_json()["rejected"] is True
+        assert resp.get_json()["ok"] is True            # first reject succeeds
         with app.app_context():
             assert db.get_memory_claim(cand_uuid).status == "candidate"  # untouched
+        # A second (stale/double-clicked) reject is no longer 'proposed' → ok:false
+        # so the UI flags it instead of falsely reporting success.
+        again = flask_client.post(f"/chat/api/assistant/write-intents/{intent_uuid}/reject")
+        assert again.status_code == 200
+        assert again.get_json()["ok"] is False
     finally:
         _cleanup(app, room_uuid)
