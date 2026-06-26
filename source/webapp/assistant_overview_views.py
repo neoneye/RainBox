@@ -45,10 +45,10 @@ OVERVIEW_TEMPLATE = """
   .ao-tab.sel .ct{color:#2563eb;background:#dbeafe}
   .ao-table{width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid #e5e7eb;
     border-radius:8px;overflow:hidden;background:#fff}
-  .ao-table th:nth-child(1),.ao-table td:nth-child(1){width:132px}
-  .ao-table th:nth-child(2),.ao-table td:nth-child(2){width:150px}
-  .ao-table th:nth-child(4),.ao-table td:nth-child(4){width:92px}
-  .ao-table th:nth-child(5),.ao-table td:nth-child(5){width:116px}
+  .ao-table th:nth-child(1),.ao-table td:nth-child(1){width:104px}
+  .ao-table th:nth-child(2),.ao-table td:nth-child(2){width:116px}
+  .ao-table th:nth-child(4),.ao-table td:nth-child(4){width:64px}
+  .ao-table th:nth-child(5),.ao-table td:nth-child(5){width:92px}
   .ao-table th{background:#fbfbfb;border-bottom:1px solid #e5e7eb;text-align:left;
     padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;
     letter-spacing:0.03em;color:#9ca3af;white-space:nowrap;user-select:none}
