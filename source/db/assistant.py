@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
+import sqlalchemy as sa
+
 from db.chat import post_chat_message
 from db.models import (
     AssistantControl,
@@ -242,6 +244,105 @@ def list_assistant_runs(limit: int = 50) -> list[AssistantRun]:
         .limit(limit)
         .all()
     )
+
+
+def assistant_step_counts(run_uuids: list[UUID]) -> dict[UUID, int]:
+    """Number of step rows per run, for a batch of runs (one GROUP BY — no
+    N+1 over a result page). Runs with no steps are absent from the result; the
+    caller treats a missing key as 0."""
+    if not run_uuids:
+        return {}
+    rows = (
+        db.session.query(AssistantStep.run_uuid, sa.func.count())
+        .filter(AssistantStep.run_uuid.in_(run_uuids))
+        .group_by(AssistantStep.run_uuid)
+        .all()
+    )
+    return {run_uuid: n for run_uuid, n in rows}
+
+
+def _overview_q_filter(query, q: str):
+    """Narrow a run query to the case-insensitive substring `q` over the
+    human-facing text: the summary digest's trigger line, the truncated
+    final_summary, and the uuid (so a grepped id still finds its run)."""
+    needle = f"%{q.strip()}%"
+    return query.filter(
+        sa.or_(
+            AssistantRun.summary["trigger"].astext.ilike(needle),
+            AssistantRun.final_summary.ilike(needle),
+            sa.cast(AssistantRun.uuid, sa.Text).ilike(needle),
+        )
+    )
+
+
+# Status facets for the overview, mirroring the left tree's buckets
+# (_bucket_runs) and the inspector's _dash_status outcome reading.
+_OVERVIEW_STATUS_PREDICATES = {
+    "running": lambda: AssistantRun.status.in_(("running", "stopping")),
+    "stopped": lambda: AssistantRun.status == "stopped",
+    "resolved": lambda: AssistantRun.summary["outcome"].astext == "resolved",
+    "unresolved": lambda: sa.or_(
+        AssistantRun.summary["outcome"].astext.in_(("partial", "failed")),
+        AssistantRun.status.in_(("failed", "killed")),
+    ),
+}
+
+
+def list_assistant_runs_page(
+    *, q: str = "", status: str = "all", since: datetime | None = None,
+    sort: str = "started", direction: str = "desc", offset: int = 0,
+    limit: int = 25,
+) -> tuple[list[AssistantRun], int, dict[str, int]]:
+    """A filtered/sorted/paginated page of runs for /assistant-overview.
+
+    Returns `(page_runs, total, counts)`:
+      - `page_runs` — the requested slice, with running runs pinned ahead of
+        the rest and the chosen `sort`/`direction` ordering within each group.
+      - `total` — rows matching `q` AND `since` AND `status` (drives the pager).
+      - `counts` — per-facet counts over the `q`+`since`-filtered set only (so
+        the status tabs show their numbers independent of the active tab).
+
+    `since` keeps only runs started at or after that instant (the time-range
+    picker); None means any time. Sort keys: started (started_at), summary
+    (summary->>'trigger'), steps (assistant_step count), duration (finished_at
+    - started_at).
+    """
+    base = (_overview_q_filter(db.session.query(AssistantRun), q)
+            if q.strip() else db.session.query(AssistantRun))
+    if since is not None:
+        base = base.filter(AssistantRun.started_at >= since)
+
+    counts = {"all": base.count()}
+    for key, pred in _OVERVIEW_STATUS_PREDICATES.items():
+        counts[key] = base.filter(pred()).count()
+
+    page_q = base
+    if status in _OVERVIEW_STATUS_PREDICATES:
+        page_q = page_q.filter(_OVERVIEW_STATUS_PREDICATES[status]())
+    total = page_q.count()
+
+    step_count = (
+        sa.select(sa.func.count(AssistantStep.id))
+        .where(AssistantStep.run_uuid == AssistantRun.uuid)
+        .correlate(AssistantRun)
+        .scalar_subquery()
+    )
+    sort_col = {
+        "started": AssistantRun.started_at,
+        "summary": AssistantRun.summary["trigger"].astext,
+        "duration": (AssistantRun.finished_at - AssistantRun.started_at),
+        "steps": step_count,
+    }.get(sort, AssistantRun.started_at)
+    ordering = sort_col.asc() if direction == "asc" else sort_col.desc()
+
+    # Running runs always lead, regardless of the chosen sort.
+    running_first = sa.case(
+        (AssistantRun.status.in_(("running", "stopping")), 0), else_=1)
+    page_runs = (
+        page_q.order_by(running_first, ordering, AssistantRun.uuid.desc())
+        .offset(max(0, offset)).limit(max(1, limit)).all()
+    )
+    return page_runs, total, counts
 
 
 def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
