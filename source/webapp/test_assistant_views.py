@@ -255,10 +255,10 @@ def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     db.finish_run(run, "finished")
     try:
-        # Addressable only by uuid via ?id=; the kebab offers Copy id.
+        # Addressable only by uuid via ?id=; the kebab offers Copy run id.
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert str(run.uuid) in body
-        assert "Copy id" in body
+        assert "Copy run id" in body
         assert "Select a run" not in body          # a run is selected
         # Only a uuid ?id= resolves: a non-uuid value and the old ?run= don't.
         assert "Select a run" in client.get(
@@ -334,10 +334,12 @@ def test_step_token_counts_render_in_timeline(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        # token counts + throughput render as separate gap-separated fields
         # (412+87)/5.1s ≈ 98 tok/s
-        assert "in 412 tok · out 87 tok · 98 tok/s · took 5.1s" in body
-        # exactly one metrics line (the control step shows none)
-        assert body.count('class="toks"') == 1
+        assert "in 412" in body and "out 87" in body
+        assert "98 tok/s" in body and "took 5.1s" in body
+        # exactly one step metrics line (the control step shows none)
+        assert body.count('title="Input tokens') == 1
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -365,7 +367,7 @@ def test_run_dashboard_aggregates_status_steps_time_tokens(app_ctx, client):
         assert "112 tok/s" in body                       # throughput, in the Tokens column
         assert "model 5.1s" in body                      # accumulated model (LLM) time
         assert "total " in body                          # start→finish time
-        assert "function " in body                       # time outside the model
+        assert "action " in body                          # time outside the model
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -397,11 +399,13 @@ def test_selected_run_has_kebab_with_actions(app_ctx, client):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())  # status=running
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        # The kebab on the selected run carries its uuid/room/status.
-        assert f"asKebab(event, '{run.uuid}', '{run.room_uuid}', 'running')" in body
-        # The menu offers Copy id + Open in chat, and a Stop for a running run.
-        assert "Copy id" in body
-        assert "Open in chat" in body
+        # The kebab on the selected run carries its uuid/status/journal id.
+        assert f"asKebab(event, '{run.uuid}', 'running', '{run.journal_id}')" in body
+        # The menu offers Copy run id / Copy journal id / View as markdown, and a
+        # Stop for a running run.
+        assert "Copy run id" in body
+        assert "Copy journal id" in body
+        assert "View as markdown" in body
         assert f"/chat/api/assistant/runs/' + uuid + '/stop" in body  # Stop target (JS)
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -410,3 +414,41 @@ def test_selected_run_has_kebab_with_actions(app_ctx, client):
 def test_nav_link_present(app_ctx, client):
     body = client.get("/assistant").get_data(as_text=True)
     assert 'href="/assistant"' in body and ">Assistant<" in body
+
+
+def test_markdown_export_serializes_the_run(app_ctx, client):
+    room = _room()
+    human = db.get_human_user()
+    db.post_chat_message(room.uuid, human.uuid, "please file the report")
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look it up",
+        args={"query": "report"}, input_tokens=120, output_tokens=15, duration_ms=2000)
+    db.settle_assistant_step(step, phase="observed", observation_preview="found it")
+    db.finish_run(run, "finished", final_summary="all done — the verdict")
+    db.set_run_summary(run, {
+        "trigger": "file the weekly report", "obstacles": ["the disk was full"],
+        "outcome": "resolved"})
+    try:
+        resp = client.get(f"/assistant/{run.uuid}/markdown")
+        assert resp.status_code == 200
+        assert resp.mimetype == "text/plain"
+        md = resp.get_data(as_text=True)
+        # Section headers and key content from the detail pane.
+        assert md.startswith(f"# Assistant run {run.uuid}")   # full uuid for DB lookups
+        assert "## Summary" in md and "file the weekly report" in md
+        assert "### Obstacles" in md and "- the disk was full" in md
+        assert "## Run" in md and "please file the report" in md
+        assert "## Timeline" in md
+        assert "Step 1 of 1 — query_memory" in md   # action + its description
+        assert '"query": "report"' in md             # action args block
+        assert "found it" in md                       # observation
+        assert "## Verdict — Finished" in md and "all done — the verdict" in md
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_markdown_export_unknown_run_is_404(app_ctx, client):
+    assert client.get("/assistant/not-a-uuid/markdown").status_code == 404
+    assert client.get(f"/assistant/{uuid4()}/markdown").status_code == 404

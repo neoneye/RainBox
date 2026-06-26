@@ -14,7 +14,7 @@ docs/ui-left-panel-tree.md.
 import json
 from uuid import UUID
 
-from flask import render_template_string, request
+from flask import Response, render_template_string, request
 
 import db
 from agents.assistant import CAPABILITIES
@@ -489,6 +489,9 @@ ASSISTANT_TEMPLATE = """
     if (journalId) {
       asMenu.appendChild(asItem('Copy journal id', function () { ppCopyText(journalId); }));
     }
+    asMenu.appendChild(asItem('View as markdown', function () {
+      window.location = '/assistant/' + uuid + '/markdown';
+    }));
     asMenu.appendChild(asItem('Refresh summary', function () {
       // The summarizer runs out-of-process, so just confirm it's queued — the
       // new digest appears on a later reload, not immediately.
@@ -607,6 +610,210 @@ def _run_dashboard(run, steps: list) -> dict:
     }
 
 
+# --- markdown export ---------------------------------------------------------
+# Serialize the /assistant detail pane to Markdown, section-for-section with
+# ASSISTANT_TEMPLATE's `.as-main`: dashboard → summary → trigger → timeline →
+# unlinked writes → verdict. Built from the data model (not the DOM) so it stays
+# stable as the HTML evolves.
+
+
+def _fence(text: str, lang: str = "") -> str:
+    """A fenced code block whose fence is long enough to survive backticks in
+    `text` (CommonMark: the closing fence must be at least as long as any run of
+    backticks inside)."""
+    longest = 0
+    run = 0
+    for ch in text:
+        run = run + 1 if ch == "`" else 0
+        longest = max(longest, run)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{lang}\n{text}\n{fence}"
+
+
+def _hms(dt) -> str | None:
+    return dt.strftime("%H:%M:%S") if dt else None
+
+
+def _response_meta_md(step, model_names: dict[str, str]) -> str:
+    """The "model response" meta line — model, tokens, throughput, duration,
+    time — mirroring the HTML io-meta, joined with ' · '."""
+    parts: list[str] = []
+    if step.model_uuid:
+        parts.append(model_names.get(str(step.model_uuid), str(step.model_uuid)[:8]))
+    has_toks = step.input_tokens is not None or step.output_tokens is not None
+    if has_toks:
+        parts.append(f"in {step.input_tokens or 0}")
+        parts.append(f"out {step.output_tokens or 0}")
+    if has_toks and step.duration_ms:
+        tps = ((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms
+        parts.append(f"{tps:.0f} tok/s")
+    if step.duration_ms is not None:
+        parts.append(f"took {step.duration_ms / 1000:.1f}s")
+    when = _hms(step.created_at)
+    if when:
+        parts.append(when)
+    return " · ".join(parts)
+
+
+def _intent_md(it) -> list[str]:
+    """One write-intent as Markdown: a bullet with capability + state, optional
+    preview, and the payload as a JSON block."""
+    lines = [f"- write intent `{it.capability_name}` — {it.state}"]
+    if it.preview_text:
+        lines.append(f"  - {it.preview_text}")
+    if it.payload:
+        lines.append("")
+        lines.append(_fence(json.dumps(it.payload, ensure_ascii=False, indent=2), "json"))
+    lines.append("")
+    return lines
+
+
+def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -> list[str]:
+    """A single timeline step's body: model request/response, action call/result
+    and any error — the same io-blocks the HTML renders."""
+    lines: list[str] = []
+    if step.phase == "control":
+        if step.reason:
+            lines.append(step.reason)
+            lines.append("")
+        return lines
+    if step.system_prompt or step.user_prompt:
+        when = _hms(step.requested_at)
+        lines.append("**model request**" + (f" · {when}" if when else ""))
+        lines.append("")
+        if step.system_prompt:
+            lines.append("_system prompt_")
+            lines.append(_fence(step.system_prompt))
+            lines.append("")
+        if step.user_prompt:
+            lines.append("_user prompt_")
+            lines.append(_fence(step.user_prompt))
+            lines.append("")
+    meta = _response_meta_md(step, model_names)
+    lines.append("**model response**" + (f" · {meta}" if meta else ""))
+    lines.append("")
+    decision = decision_json.get(str(step.uuid), "")
+    if decision:
+        lines.append(_fence(decision, "json"))
+        lines.append("")
+    if step.action:
+        when = _hms(step.created_at)
+        lines.append("**action call**" + (f" · {when}" if when else ""))
+        lines.append("")
+        if step.args:
+            lines.append(_fence(json.dumps(step.args, ensure_ascii=False, indent=2), "json"))
+            lines.append("")
+    obs = step.observation
+    if obs is not None or step.observation_preview:
+        label = "**action result**"
+        if obs is not None:
+            label += f" · ok: {'true' if obs.get('ok') else 'false'}"
+        if step.settled_at:
+            if step.created_at:
+                label += f" · took {(step.settled_at - step.created_at).total_seconds():.1f}s"
+            label += f" · {_hms(step.settled_at)}"
+        lines.append(label)
+        lines.append("")
+        if obs is not None:
+            if obs.get("text"):
+                lines.append(_fence(obs["text"]))
+                lines.append("")
+            if obs.get("data"):
+                lines.append(_fence(json.dumps(obs["data"], ensure_ascii=False, indent=2), "json"))
+                lines.append("")
+        elif step.observation_preview:
+            lines.append(_fence(step.observation_preview))
+            lines.append("")
+    if step.error:
+        lines.append(f"**error:** {step.error}")
+        lines.append("")
+    return lines
+
+
+def _run_markdown(run, ctx: dict) -> str:
+    """Serialize a run's detail pane to Markdown, mirroring `.as-main`."""
+    dash = ctx["dash"]
+    trigger = ctx["trigger"]
+    timeline = ctx["timeline"]
+
+    def fmt_dt(dt) -> str:
+        return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "—"
+
+    out: list[str] = [f"# Assistant run {run.uuid}", ""]
+
+    # Dashboard metrics.
+    toks = f"in {dash['in_tokens']} · out {dash['out_tokens']}"
+    if dash.get("llm_tps"):
+        toks += f" · {dash['llm_tps']} tok/s"
+    out += [
+        f"- **Status:** {dash['status']} ({run.status.capitalize()})",
+        f"- **Steps:** {dash['steps']}",
+        f"- **Time:** total {dash['total_time']} · model {dash['model_time']} · action {dash['action_time']}",
+        f"- **Tokens:** {toks}",
+        f"- **Start:** {fmt_dt(run.started_at)}",
+        f"- **Finish:** {fmt_dt(run.finished_at)}",
+        f"- **Journal:** {run.journal_id or '—'}",
+        "",
+    ]
+
+    # Summary + obstacles.
+    out += ["## Summary", ""]
+    summary = run.summary or {}
+    if summary:
+        out += [summary.get("trigger", "") or "", "", "### Obstacles", ""]
+        obstacles = summary.get("obstacles") or []
+        out += [f"- {o}" for o in obstacles] if obstacles else ["None"]
+    else:
+        out.append("Not yet summarized.")
+    out.append("")
+
+    # Trigger message.
+    out += ["## Run", ""]
+    if trigger:
+        out += [f"Started by {trigger['sender_name']}", "", _fence(trigger["text"])]
+    else:
+        out.append("No triggering chat message found.")
+    out.append("")
+
+    # Pending controls.
+    if ctx["pending_controls"]:
+        out += ["## Pending controls", ""]
+        for c in ctx["pending_controls"]:
+            instr = (c.payload or {}).get("instruction") if c.payload else None
+            out.append(f"- pending {c.command}" + (f": {instr}" if instr else ""))
+        out.append("")
+
+    # Step timeline.
+    out += ["## Timeline", ""]
+    if not timeline:
+        out += ["This run has no steps.", ""]
+    n = len(timeline)
+    for step, intents in timeline:
+        head = f"Step {step.step_index + 1} of {n}"
+        if step.phase == "control":
+            out.append(f"### {head} — control")
+        else:
+            desc = _ACTION_DESCRIPTIONS.get(step.action or "")
+            title = f"{head} — {step.action or '—'}" + (f" — {desc}" if desc else "")
+            out.append(f"### {title}")
+        out.append("")
+        out += _step_md(step, ctx["decision_json"], ctx["model_names"])
+        for it in intents:
+            out += _intent_md(it)
+
+    # Unlinked writes.
+    if ctx["unlinked"]:
+        out += ["## Unlinked writes", ""]
+        for it in ctx["unlinked"]:
+            out += _intent_md(it)
+
+    # Verdict.
+    if ctx["verdict"]:
+        out += [f"## Verdict — {run.status.capitalize()}", "", ctx["verdict"], ""]
+
+    return "\n".join(out).rstrip() + "\n"
+
+
 def _bucket_runs(runs: list) -> list[dict]:
     """Group runs into the virtual status folders (facets — a run lands in every
     bucket it matches). Recent holds all; the rest are filtered subsets."""
@@ -630,70 +837,97 @@ def _bucket_runs(runs: list) -> list[dict]:
     ]
 
 
+def _load_run_detail(selected) -> dict:
+    """Assemble the per-run detail shared by the HTML page and the markdown
+    export: the step timeline (each step with its write-intents), the verbatim
+    decision dumps, unlinked write-intents, pending controls, trigger/reply
+    messages, dashboard metrics, model display names, and the verdict text."""
+    steps = db.list_assistant_steps(selected.uuid)
+    intents = db.list_write_intents_for_run(selected.uuid)
+    unlinked: list = []
+    by_step: dict[str, list] = {}
+    for it in intents:
+        if it.step_uuid is None:
+            unlinked.append(it)
+        else:
+            by_step.setdefault(str(it.step_uuid), []).append(it)
+    timeline = [(s, by_step.get(str(s.uuid), [])) for s in steps]
+    # The model emits one AssistantStepDecision per step; dump it verbatim
+    # (field order preserved, not Flask's key-sorted tojson) for the trace.
+    # Control steps are operator events, not model responses, so skip them.
+    decision_json = {
+        str(s.uuid): json.dumps(
+            {"reason": s.reason, "action": s.action, "args": s.args or {}},
+            ensure_ascii=False,
+        )
+        for s in steps if s.phase != "control"
+    }
+    # The full final reply (the run stores only a truncated final_summary).
+    reply = db.get_run_final_reply(selected)
+    model_names: dict[str, str] = {}
+    for muid in {s.model_uuid for s in steps if s.model_uuid}:
+        mc = db.get_model_config(muid)
+        if mc is not None:
+            model_names[str(muid)] = mc.display_name or mc.model_name
+    return {
+        "timeline": timeline,
+        "decision_json": decision_json,
+        "unlinked": unlinked,
+        "pending_controls": db.list_pending_controls(selected.uuid),
+        "trigger": db.get_run_trigger_message(selected),
+        "dash": _run_dashboard(selected, steps),
+        "reply": reply,
+        "verdict": reply["text"] if reply else selected.final_summary,
+        "model_names": model_names,
+    }
+
+
+def _selected_run():
+    """The run addressed by ?id= (consistent with /chat, /cron), or None for a
+    missing/malformed id."""
+    run_arg = request.args.get("id")
+    if not run_arg:
+        return None
+    try:
+        return db.get_assistant_run(UUID(run_arg))
+    except ValueError:
+        return None
+
+
 @app.route("/assistant")
 def assistant_page() -> str:
     runs = db.list_assistant_runs(limit=50)
     folders = _bucket_runs(runs)
-
-    selected = None
-    timeline: list = []
-    decision_json: dict[str, str] = {}
-    unlinked: list = []
-    pending_controls: list = []
-    trigger = None
-    model_names: dict[str, str] = {}
-    dash = None
-    verdict = None
-    reply = None
-    # Runs are addressed by uuid via ?id= (consistent with /chat, /cron).
-    run_arg = request.args.get("id")
-    if run_arg:
-        try:
-            selected = db.get_assistant_run(UUID(run_arg))
-        except ValueError:
-            selected = None
-    if selected is not None:
-        steps = db.list_assistant_steps(selected.uuid)
-        intents = db.list_write_intents_for_run(selected.uuid)
-        by_step: dict[str, list] = {}
-        for it in intents:
-            if it.step_uuid is None:
-                unlinked.append(it)
-            else:
-                by_step.setdefault(str(it.step_uuid), []).append(it)
-        timeline = [(s, by_step.get(str(s.uuid), [])) for s in steps]
-        # The model emits one AssistantStepDecision per step; dump it verbatim
-        # (field order preserved, not Flask's key-sorted tojson) for the trace.
-        # Control steps are operator events, not model responses, so skip them.
-        decision_json = {
-            str(s.uuid): json.dumps(
-                {"reason": s.reason, "action": s.action, "args": s.args or {}},
-                ensure_ascii=False,
-            )
-            for s in steps if s.phase != "control"
-        }
-        pending_controls = db.list_pending_controls(selected.uuid)
-        trigger = db.get_run_trigger_message(selected)
-        dash = _run_dashboard(selected, steps)
-        # The full final reply (the run stores only a truncated final_summary).
-        reply = db.get_run_final_reply(selected)
-        verdict = reply["text"] if reply else selected.final_summary
-        # Resolve each step's model uuid to a display name for the timeline link.
-        for muid in {s.model_uuid for s in steps if s.model_uuid}:
-            mc = db.get_model_config(muid)
-            if mc is not None:
-                model_names[str(muid)] = mc.display_name or mc.model_name
-
+    selected = _selected_run()
+    ctx = _load_run_detail(selected) if selected is not None else {}
     duration = _format_duration(
         selected.started_at, selected.finished_at) if selected else None
 
     return render_template_string(
         ASSISTANT_TEMPLATE,
-        runs=runs, folders=folders, selected=selected, trigger=trigger,
-        timeline=timeline, decision_json=decision_json,
-        action_descriptions=_ACTION_DESCRIPTIONS, unlinked=unlinked,
-        pending_controls=pending_controls,
-        duration=duration, model_names=model_names, dash=dash, verdict=verdict,
-        reply=reply,
+        runs=runs, folders=folders, selected=selected,
+        trigger=ctx.get("trigger"),
+        timeline=ctx.get("timeline", []),
+        decision_json=ctx.get("decision_json", {}),
+        action_descriptions=_ACTION_DESCRIPTIONS,
+        unlinked=ctx.get("unlinked", []),
+        pending_controls=ctx.get("pending_controls", []),
+        duration=duration, model_names=ctx.get("model_names", {}),
+        dash=ctx.get("dash"), verdict=ctx.get("verdict"), reply=ctx.get("reply"),
         icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
     )
+
+
+@app.route("/assistant/<run_id>/markdown")
+def assistant_markdown(run_id: str):
+    """The selected run's detail pane (`.as-main`) serialized to Markdown —
+    backs the kebab's "View as markdown". Served as text/plain so the browser
+    shows the raw source inline rather than offering a download."""
+    try:
+        selected = db.get_assistant_run(UUID(run_id))
+    except ValueError:
+        selected = None
+    if selected is None:
+        return Response("Run not found.", status=404, mimetype="text/plain")
+    md = _run_markdown(selected, _load_run_detail(selected))
+    return Response(md, mimetype="text/plain; charset=utf-8")
