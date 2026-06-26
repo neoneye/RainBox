@@ -275,12 +275,14 @@ def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
     }
 
 
-def get_run_final_reply(run: AssistantRun) -> str | None:
-    """The full text of the agent's final reply for a run — the latest agent
-    `message` in the room at or before it finished (the run stores only a
-    truncated `final_summary`). None for a still-running run or one that crashed
-    before replying. Robust across rooms with multiple runs: a later run's reply
-    has a later timestamp, so '<= this run's finished_at' picks this run's."""
+def get_run_final_reply(run: AssistantRun) -> dict[str, Any] | None:
+    """The agent's final reply for a run: the latest agent `message` in the room
+    at or before it finished (the run stores only a truncated `final_summary`).
+    None for a still-running run or one that crashed before replying. Robust
+    across rooms with multiple runs: a later run's reply has a later timestamp,
+    so '<= this run's finished_at' picks this run's. Returns a small dict
+    (id/uuid/text) for the /assistant inspector's verdict block; `id` is the int
+    the chat DOM anchors on, letting the verdict link jump to the reply."""
     if run.finished_at is None:
         return None
     msg = (
@@ -294,7 +296,9 @@ def get_run_final_reply(run: AssistantRun) -> str | None:
         .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
         .first()
     )
-    return msg.text if msg is not None else None
+    if msg is None:
+        return None
+    return {"id": msg.id, "uuid": str(msg.uuid), "text": msg.text}
 
 
 def list_assistant_steps(run_uuid: UUID) -> list[AssistantStep]:

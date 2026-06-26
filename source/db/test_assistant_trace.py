@@ -323,8 +323,11 @@ def test_get_run_final_reply_returns_the_full_agent_reply(app_ctx):
     running = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=agent_uuid)
     try:
-        assert db.get_run_final_reply(run) == long_text       # full, not truncated
-        assert db.get_run_final_reply(running) is None         # not finished → no verdict
+        reply = db.get_run_final_reply(run)
+        assert reply is not None
+        assert reply["text"] == long_text                      # full, not truncated
+        assert reply["id"] is not None                         # int id for the chat anchor
+        assert db.get_run_final_reply(running) is None          # not finished → no verdict
     finally:
         _cleanup_run(run.uuid)
         _cleanup_run(running.uuid)

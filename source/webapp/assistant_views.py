@@ -438,6 +438,7 @@ ASSISTANT_TEMPLATE = """
       <div class="card">
         <div class="hd">
           <div class="card-title">Verdict</div>
+          {% if reply %}<a class="card-link" href="/chat?id={{ selected.room_uuid }}&msg={{ reply.id }}">chat ↗</a>{% endif %}
         </div>
         <div class="card-body">
           <pre>{{ verdict }}</pre>
@@ -641,6 +642,7 @@ def assistant_page() -> str:
     model_names: dict[str, str] = {}
     dash = None
     verdict = None
+    reply = None
     # Runs are addressed by uuid via ?id= (consistent with /chat, /cron).
     run_arg = request.args.get("id")
     if run_arg:
@@ -672,7 +674,8 @@ def assistant_page() -> str:
         trigger = db.get_run_trigger_message(selected)
         dash = _run_dashboard(selected, steps)
         # The full final reply (the run stores only a truncated final_summary).
-        verdict = db.get_run_final_reply(selected) or selected.final_summary
+        reply = db.get_run_final_reply(selected)
+        verdict = reply["text"] if reply else selected.final_summary
         # Resolve each step's model uuid to a display name for the timeline link.
         for muid in {s.model_uuid for s in steps if s.model_uuid}:
             mc = db.get_model_config(muid)
@@ -689,5 +692,6 @@ def assistant_page() -> str:
         action_descriptions=_ACTION_DESCRIPTIONS, unlinked=unlinked,
         pending_controls=pending_controls,
         duration=duration, model_names=model_names, dash=dash, verdict=verdict,
+        reply=reply,
         icon_open=_ICON_FOLDER_OPEN, icon_closed=_ICON_FOLDER,
     )
