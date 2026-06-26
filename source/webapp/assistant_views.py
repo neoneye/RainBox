@@ -309,13 +309,13 @@ ASSISTANT_TEMPLATE = """
           <div class="dlabel">Summary</div>
           {% if selected.summary %}
             <div>{{ selected.summary.trigger }}</div>
+            <div class="dlabel" style="margin-top:1.5rem">Obstacles</div>
             {% if selected.summary.obstacles %}
-              <div class="dlabel" style="margin-top:1.5rem">Obstacles</div>
               <ul class="obstacles">
                 {% for o in selected.summary.obstacles %}<li>{{ o }}</li>{% endfor %}
               </ul>
             {% else %}
-              <div class="muted">No obstacles reported.</div>
+              <div>None</div>
             {% endif %}
           {% else %}
             <div class="muted">Not yet summarized (runs shortly after the assistant finishes).</div>
