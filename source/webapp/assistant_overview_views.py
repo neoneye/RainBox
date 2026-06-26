@@ -40,8 +40,12 @@ OVERVIEW_TEMPLATE = """
   .ao-tab .ct{font-size:0.72rem;font-weight:600;color:#6b7280;background:#f3f4f6;
     padding:1px 8px;border-radius:999px;min-width:20px;text-align:center}
   .ao-tab.sel .ct{color:#2563eb;background:#dbeafe}
-  .ao-table{width:100%;border-collapse:collapse;border:1px solid #e5e7eb;
+  .ao-table{width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid #e5e7eb;
     border-radius:8px;overflow:hidden;background:#fff}
+  .ao-table th:nth-child(1),.ao-table td:nth-child(1){width:132px}
+  .ao-table th:nth-child(2),.ao-table td:nth-child(2){width:150px}
+  .ao-table th:nth-child(4),.ao-table td:nth-child(4){width:92px}
+  .ao-table th:nth-child(5),.ao-table td:nth-child(5){width:116px}
   .ao-table th{background:#fbfbfb;border-bottom:1px solid #e5e7eb;text-align:left;
     padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;
     letter-spacing:0.03em;color:#9ca3af;white-space:nowrap;user-select:none}
@@ -51,7 +55,7 @@ OVERVIEW_TEMPLATE = """
   .ao-table tbody tr:hover{background:#f1f5f9}
   .ao-date{font-size:0.8rem;color:#374151}
   .ao-time{font-size:0.72rem;color:#9ca3af;font-family:ui-monospace,Menlo,monospace;margin-top:2px}
-  .ao-sum{font-weight:600;color:#1a1a2e;max-width:0;overflow:hidden;
+  .ao-sum{font-weight:600;color:#1a1a2e;overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap}
   .ao-sum.pending{font-weight:400;color:#98a2b3;font-style:italic}
   .ao-mono{font-family:ui-monospace,Menlo,monospace;font-size:0.8rem;color:#374151}
