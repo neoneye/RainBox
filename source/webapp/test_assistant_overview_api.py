@@ -108,6 +108,42 @@ def test_pagination_clamps_and_paginates():
         _cleanup(created)
 
 
+def test_range_filters_by_recency():
+    created = []
+    tag = uuid4().hex[:8]
+    try:
+        # One recent run; one well outside any picker window.
+        _seed(created, f"recent {tag}", outcome="resolved")
+        a = db.make_app()
+        with a.app_context():
+            old = AssistantRun(
+                uuid=uuid4(), journal_id=uuid4(), room_uuid=uuid4(),
+                agent_uuid=uuid4(), status="finished", step_limit=6,
+                started_at=datetime.now(UTC) - timedelta(days=5),
+                finished_at=datetime.now(UTC) - timedelta(days=5),
+                summary={"trigger": f"old {tag}", "outcome": "resolved"})
+            db.db.session.add(old)
+            db.db.session.commit()
+            created.append(old.uuid)
+        out = app.test_client().get(
+            f"/assistant-overview/api/runs?q={tag}&range=24h").get_json()
+        assert out["total"] == 1
+        assert out["runs"][0]["summary"] == f"recent {tag}"
+        assert out["counts"]["all"] == 1  # counts honor the range too
+        # Any time sees both.
+        allout = app.test_client().get(
+            f"/assistant-overview/api/runs?q={tag}&range=all").get_json()
+        assert allout["total"] == 2
+    finally:
+        _cleanup(created)
+
+
+def test_bad_range_param_is_400():
+    resp = app.test_client().get("/assistant-overview/api/runs?range=bogus")
+    assert resp.status_code == 400
+    assert resp.get_json()["ok"] is False
+
+
 def test_bad_page_param_is_400():
     resp = app.test_client().get("/assistant-overview/api/runs?page=abc")
     assert resp.status_code == 400

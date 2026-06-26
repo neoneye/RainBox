@@ -6,7 +6,7 @@
 // paging scale past the inspector's 50-run left panel.
 'use strict';
 
-const aoState = { q: '', status: 'all', sort: 'started', dir: 'desc', page: 1, perPage: 25 };
+const aoState = { q: '', status: 'all', range: 'all', sort: 'started', dir: 'desc', page: 1, perPage: 25 };
 
 const AO_TABS = [
   ['all', 'All'], ['running', 'Running'], ['stopped', 'Stopped'],
@@ -137,8 +137,9 @@ function aoRender(data) {
 
 async function aoLoad() {
   const p = new URLSearchParams({
-    q: aoState.q, status: aoState.status, sort: aoState.sort,
-    dir: aoState.dir, page: aoState.page, per_page: aoState.perPage,
+    q: aoState.q, status: aoState.status, range: aoState.range,
+    sort: aoState.sort, dir: aoState.dir, page: aoState.page,
+    per_page: aoState.perPage,
   });
   try {
     const r = await fetch('/assistant-overview/api/runs?' + p.toString());
@@ -160,6 +161,11 @@ function aoInit() {
       aoState.page = 1;
       aoLoad();
     }, 250);
+  });
+  aoEl('ao-range').addEventListener('change', (e) => {
+    aoState.range = e.target.value;
+    aoState.page = 1;
+    aoLoad();
   });
   aoLoad();
 }

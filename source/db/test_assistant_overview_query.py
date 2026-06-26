@@ -114,6 +114,24 @@ def test_status_facet_counts_and_filter(app_ctx):
         _cleanup(created)
 
 
+def test_since_filters_by_started_at(app_ctx):
+    created = []
+    tag = uuid4().hex[:8]
+    now = datetime.now(UTC)
+    try:
+        _mk_run(created, summary_trigger=f"recent {tag}", outcome="resolved",
+                started=now - timedelta(hours=1))
+        _mk_run(created, summary_trigger=f"old {tag}", outcome="resolved",
+                started=now - timedelta(days=5))
+        runs, total, counts = db.list_assistant_runs_page(
+            q=tag, since=now - timedelta(hours=3))
+        assert total == 1
+        assert runs[0].summary["trigger"] == f"recent {tag}"
+        assert counts["all"] == 1  # counts honor the time range too
+    finally:
+        _cleanup(created)
+
+
 def test_pagination_slices(app_ctx):
     created = []
     tag = uuid4().hex[:8]

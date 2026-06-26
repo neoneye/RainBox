@@ -289,23 +289,28 @@ _OVERVIEW_STATUS_PREDICATES = {
 
 
 def list_assistant_runs_page(
-    *, q: str = "", status: str = "all", sort: str = "started",
-    direction: str = "desc", offset: int = 0, limit: int = 25,
+    *, q: str = "", status: str = "all", since: datetime | None = None,
+    sort: str = "started", direction: str = "desc", offset: int = 0,
+    limit: int = 25,
 ) -> tuple[list[AssistantRun], int, dict[str, int]]:
     """A filtered/sorted/paginated page of runs for /assistant-overview.
 
     Returns `(page_runs, total, counts)`:
       - `page_runs` — the requested slice, with running runs pinned ahead of
         the rest and the chosen `sort`/`direction` ordering within each group.
-      - `total` — rows matching `q` AND `status` (drives the pager).
-      - `counts` — per-facet counts over the `q`-filtered set only (so the
-        status tabs show their numbers independent of the active tab).
+      - `total` — rows matching `q` AND `since` AND `status` (drives the pager).
+      - `counts` — per-facet counts over the `q`+`since`-filtered set only (so
+        the status tabs show their numbers independent of the active tab).
 
-    Sort keys: started (started_at), summary (summary->>'trigger'), steps
-    (assistant_step count), duration (finished_at - started_at).
+    `since` keeps only runs started at or after that instant (the time-range
+    picker); None means any time. Sort keys: started (started_at), summary
+    (summary->>'trigger'), steps (assistant_step count), duration (finished_at
+    - started_at).
     """
     base = (_overview_q_filter(db.session.query(AssistantRun), q)
             if q.strip() else db.session.query(AssistantRun))
+    if since is not None:
+        base = base.filter(AssistantRun.started_at >= since)
 
     counts = {"all": base.count()}
     for key, pred in _OVERVIEW_STATUS_PREDICATES.items():

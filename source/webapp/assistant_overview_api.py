@@ -7,6 +7,7 @@ The status chip mirrors _dash_status in assistant_views.py (Running / Resolved
 / Unresolved / pending) and additionally surfaces Stopped as its own kind,
 matching the overview's Stopped facet."""
 import math
+from datetime import UTC, datetime, timedelta
 
 from flask import Response, jsonify, request
 
@@ -17,6 +18,18 @@ from .core import app
 
 _SORT_KEYS = {"started", "summary", "steps", "duration"}
 _STATUS_KEYS = {"all", "running", "stopped", "resolved", "unresolved"}
+
+# Time-range picker → how far back to look. "all" (any time) maps to no cutoff.
+_RANGE_DELTAS = {
+    "3h": timedelta(hours=3),
+    "6h": timedelta(hours=6),
+    "12h": timedelta(hours=12),
+    "24h": timedelta(hours=24),
+    "48h": timedelta(hours=48),
+    "7d": timedelta(days=7),
+    "30d": timedelta(days=30),
+}
+_RANGE_KEYS = {"all", *_RANGE_DELTAS}
 
 
 def _overview_status(run) -> tuple[str, str]:
@@ -60,10 +73,13 @@ def assistant_overview_runs() -> tuple[Response, int] | Response:
     """A page of runs for the overview table: ?q&status&sort&dir&page&per_page."""
     q = request.args.get("q", "")
     status = request.args.get("status", "all")
+    range_ = request.args.get("range", "all")
     sort = request.args.get("sort", "started")
     direction = request.args.get("dir", "desc")
     if status not in _STATUS_KEYS:
         return jsonify({"ok": False, "error": "bad status"}), 400
+    if range_ not in _RANGE_KEYS:
+        return jsonify({"ok": False, "error": "bad range"}), 400
     if sort not in _SORT_KEYS:
         return jsonify({"ok": False, "error": "bad sort"}), 400
     if direction not in ("asc", "desc"):
@@ -76,9 +92,11 @@ def assistant_overview_runs() -> tuple[Response, int] | Response:
                         "error": "page/per_page must be integers"}), 400
     per_page = max(5, min(100, per_page))
     page = max(1, page)
+    delta = _RANGE_DELTAS.get(range_)
+    since = datetime.now(UTC) - delta if delta else None
 
     runs, total, counts = db.list_assistant_runs_page(
-        q=q, status=status, sort=sort, direction=direction,
+        q=q, status=status, since=since, sort=sort, direction=direction,
         offset=(page - 1) * per_page, limit=per_page,
     )
     step_counts = db.assistant_step_counts([r.uuid for r in runs])

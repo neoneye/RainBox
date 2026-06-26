@@ -32,6 +32,9 @@ OVERVIEW_TEMPLATE = """
   .ao-search{flex:1 1 260px;min-width:200px;padding:8px 12px;border:1px solid #e5e7eb;
     border-radius:6px;font:inherit;font-size:0.9rem;background:#fff;color:#1a1a2e}
   .ao-search:focus{outline:none;border-color:#2563eb}
+  .ao-select{padding:8px 11px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;
+    font:inherit;font-size:0.9rem;color:#1a1a2e;cursor:pointer}
+  .ao-select:focus{outline:none;border-color:#2563eb}
   .ao-tabs{display:flex;gap:2px}
   .ao-tab{appearance:none;background:none;border:none;border-bottom:2px solid transparent;
     cursor:pointer;padding:9px 15px;font:inherit;font-size:0.9rem;font-weight:500;
@@ -88,6 +91,16 @@ OVERVIEW_TEMPLATE = """
 <div class="ao-wrap">
   <div class="ao-filters">
     <input id="ao-search" class="ao-search" type="search" placeholder="Search summary&hellip;">
+    <select id="ao-range" class="ao-select" aria-label="Time range">
+      <option value="all">Any time</option>
+      <option value="3h">Last 3 hours</option>
+      <option value="6h">Last 6 hours</option>
+      <option value="12h">Last 12 hours</option>
+      <option value="24h">Last 24 hours</option>
+      <option value="48h">Last 48 hours</option>
+      <option value="7d">Last 7 days</option>
+      <option value="30d">Last 30 days</option>
+    </select>
     <div id="ao-tabs" class="ao-tabs"></div>
   </div>
   <table class="ao-table" id="ao-table">
