@@ -84,8 +84,8 @@ NAV_TEMPLATE = """
   .pp-nav a.pp-active{color:#1a1a2e;font-weight:600}
   .pp-nav .pp-links{display:flex;align-items:center;gap:18px;flex:1 1 auto;flex-wrap:wrap}
   .pp-nav .pp-spacer{flex:1 1 auto}
-  .pp-nav a.pp-admin{padding:6px 16px;background:#2563eb;color:#fff;border-radius:8px}
-  .pp-nav a.pp-admin:hover{background:#1d4ed8;color:#fff}
+  .pp-nav a.pp-admin{padding:5px 14px;border:1px solid #cbd5e1;color:#6c757d;border-radius:8px}
+  .pp-nav a.pp-admin:hover{border-color:#9aa3af;color:#1a1a2e}
   .pp-content{padding:0 24px 2em}
   /* Benchmark dropdown — native <details>, no JS. */
   .pp-nav details.pp-dd{position:relative}
