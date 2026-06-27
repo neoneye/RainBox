@@ -226,7 +226,6 @@ def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert str(run.uuid) in body
         assert "Copy run id" in body
-        assert "as-main-head" in body                 # header bar with the kebab
         assert f"asKebab(event, '{run.uuid}'" in body  # kebab wired to this run
         assert "No run selected" not in body           # a run is selected
         # Only a uuid ?id= resolves: a non-uuid value and the old ?run= don't.

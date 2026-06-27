@@ -77,9 +77,6 @@ ASSISTANT_TEMPLATE = """
   .as-empty a { color:#2563eb; }
 
   /* Detail header: run id + kebab actions menu. */
-  .as-main-head { display:flex; align-items:center; gap:0.75rem; margin:0.2rem 0 0.7rem; }
-  .as-main-head .as-runid { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-             font-size:0.95rem; font-weight:600; color:#1a1a2e; word-break:break-all; }
   .as-kebab { margin-left:auto; flex:0 0 auto; border:none; background:none; cursor:pointer;
              color:#6b7280; width:1.9rem; height:1.9rem; padding:0; border-radius:6px;
              display:inline-flex; align-items:center; justify-content:center; }
@@ -231,9 +228,6 @@ ASSISTANT_TEMPLATE = """
         <a href="{{ url_for('assistant_overview_page') }}">Assistant overview</a>
         to pick a run.</div>
     {% else %}
-      <div class="as-main-head">
-        <span class="as-runid">Run {{ selected.uuid }}</span>
-      </div>
       <div class="dash">
         <button class="as-kebab" title="actions"
                 onclick="asKebab(event, '{{ selected.uuid }}', '{{ selected.status }}', '{{ selected.journal_id or '' }}')"></button>
