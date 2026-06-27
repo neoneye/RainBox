@@ -643,15 +643,24 @@ class AssistantRunView(ModelView):
 
 def _format_step_trace_link(view, context, model, name):
     """Render a step's uuid cell as a link to its /assistant trace location —
-    the run, scrolled to this step's anchor (id="step-<uuid>")."""
-    href = f"/assistant?id={escape(model.run_uuid)}#step-{escape(model.uuid)}"
-    return Markup(f'<a href="{href}"><code>{escape(model.uuid)}</code> ↗</a>')
+    the run, scrolled to this step's anchor (id="step-<uuid>"). Shows only the
+    first 6 chars (full value on hover), to match the other uuid columns."""
+    full = str(model.uuid)
+    href = f"/assistant?id={escape(model.run_uuid)}#step-{escape(full)}"
+    return Markup(f'<a href="{href}" title="{escape(full)}">'
+                  f'<code>{escape(full[:6])}</code> ↗</a>')
 
 
 class AssistantStepView(ModelView):
     # Newest first; the uuid links to the run's trace, scrolled to this step.
+    # uuids are shown short (first 6 chars, full on hover) so columns stay narrow.
     column_default_sort = ("id", True)
-    column_formatters = {"uuid": _format_step_trace_link}
+    column_formatters = {
+        "uuid": _format_step_trace_link,
+        "run_uuid": _fmt_short_uuid,
+        "model_uuid": _fmt_short_uuid,
+        "model_group_uuid": _fmt_short_uuid,
+    }
 
 
 admin.add_view(AssistantRunView(AssistantRun, db, category="Assistant"))

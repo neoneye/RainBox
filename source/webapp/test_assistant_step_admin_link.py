@@ -16,5 +16,8 @@ def test_trace_link_points_at_run_and_step():
     html = str(_format_step_trace_link(None, None,
                                        _FakeStep(run_uuid, step_uuid), "uuid"))
     assert f"/assistant?id={run_uuid}#step-{step_uuid}" in html
-    assert str(step_uuid) in html      # uuid still shown as the link text
     assert html.startswith("<a ")
+    # The visible link text is the 6-char prefix; the full uuid stays in the
+    # href and the hover title.
+    assert f"<code>{str(step_uuid)[:6]}</code>" in html
+    assert f'title="{step_uuid}"' in html
