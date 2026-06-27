@@ -29,7 +29,7 @@ _ACTION_DESCRIPTIONS = {
 
 ASSISTANT_TEMPLATE = """
 <!doctype html>
-<title>Assistant runs &mdash; rainbox</title>
+<title>Assistant run &mdash; rainbox</title>
 {% macro render_intent(it) %}
   <div class="intent {{ it.state }}">
     <span class="cap">{{ it.capability_name }}</span>
