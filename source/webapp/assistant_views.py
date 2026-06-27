@@ -103,9 +103,11 @@ ASSISTANT_TEMPLATE = """
   /* Right detail pane. */
   /* Full-bleed band: negative margins cancel .as-main's 12px/18px padding so it
      reaches the pane edges; only a bottom divider, no rounded box. */
-  .as-main .dash { display:grid; grid-template-columns:1.2fr 1fr 1.4fr 1fr;
+  .as-main .dash { position:relative; display:grid; grid-template-columns:1.2fr 1fr 1.4fr 1fr;
                    gap:24px; margin:-12px -18px 1.4rem; padding:18px 18px;
                    border-bottom:1px solid #e5e7eb; }
+  /* Kebab sits in the dash's top-right free space (over the Tokens cell). */
+  .as-main .dash .as-kebab { position:absolute; top:12px; right:14px; margin:0; }
   .as-main .dash .dcell { display:flex; flex-direction:column; }
   .as-main .dash .dlabel { font-size:0.66rem; font-weight:700; text-transform:uppercase;
                            letter-spacing:0.05em; color:#9ca3af; margin-bottom:8px; }
@@ -231,10 +233,10 @@ ASSISTANT_TEMPLATE = """
     {% else %}
       <div class="as-main-head">
         <span class="as-runid">Run {{ selected.uuid }}</span>
-        <button class="as-kebab" title="actions"
-                onclick="asKebab(event, '{{ selected.uuid }}', '{{ selected.status }}', '{{ selected.journal_id or '' }}')"></button>
       </div>
       <div class="dash">
+        <button class="as-kebab" title="actions"
+                onclick="asKebab(event, '{{ selected.uuid }}', '{{ selected.status }}', '{{ selected.journal_id or '' }}')"></button>
         <div class="dcell">
           <div class="dlabel">Status</div>
           <div class="dval-big dstatus-{{ dash.status_class }}">{{ dash.status }}</div>
