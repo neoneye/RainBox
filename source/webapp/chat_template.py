@@ -20,7 +20,6 @@ CHAT_TEMPLATE: str = """
 
   .rooms{overflow:auto;min-height:0;border-right:1px solid #ddd;background:#fbfbfb;padding:0.5em;font-size:0.9rem}
   .rooms-head{display:flex;align-items:center;justify-content:space-between;padding:0.2em 0.4em 0.5em}
-  .rooms-head .title{font-weight:600;color:#333;font-size:0.9rem}
   .new-room-btn{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
                 padding:0.25em 0.6em;cursor:pointer;font:inherit;font-size:0.78rem;margin-left:0.4em}
   .new-room-btn:hover{border-color:#2563eb;color:#2563eb}
@@ -211,7 +210,6 @@ CHAT_TEMPLATE: str = """
 <div class="chat-split">
   <div class="rooms">
     <div class="rooms-head">
-      <span class="title">Rooms</span>
       <span>
         <button class="new-folder-btn" id="new-folder-btn" type="button">+ Folder</button>
         <button class="new-room-btn" id="new-room-btn" type="button">+ New room</button>
