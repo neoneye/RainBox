@@ -653,8 +653,10 @@ def _format_step_trace_link(view, context, model, name):
 
 class AssistantStepView(ModelView):
     # Newest first; the uuid links to the run's trace, scrolled to this step.
-    # uuids are shown short (first 6 chars, full on hover) so columns stay narrow.
+    # uuids are shown short (first 6 chars, full on hover) so columns stay narrow,
+    # and datetimes drop sub-seconds (requested_at / created_at / settled_at).
     column_default_sort = ("id", True)
+    column_type_formatters = CRON_TYPE_FORMATTERS
     column_formatters = {
         "uuid": _format_step_trace_link,
         "run_uuid": _fmt_short_uuid,
