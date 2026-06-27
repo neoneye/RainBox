@@ -136,7 +136,9 @@ CRON_TEMPLATE = """
   .cron-timestamps{color:#6b7280;font-size:0.8rem;flex-basis:100%;margin-top:2px}
   .folder-detail .hint{color:#991b1b;font-size:0.8rem}
   .cron-tree-actions{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
-  .cron-tree-actions button{padding:3px 8px;font-size:0.75rem}
+  .cron-tree-actions button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:0.25em 0.6em;font:inherit;font-size:0.78rem;cursor:pointer}
+  .cron-tree-actions button:hover{border-color:#2563eb;color:#2563eb}
   .cron-tree-list,.cron-tree-list ul{list-style:none;margin:0;padding:0}
   .cron-tree-list ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
   .cron-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:6px 0}

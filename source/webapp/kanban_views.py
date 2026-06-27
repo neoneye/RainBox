@@ -61,12 +61,16 @@ KANBAN_TEMPLATE = """
   /* Developer mode: one row per serialization format with View/Copy actions. */
   .kb-dev-row{display:flex;align-items:center;gap:6px;padding:0.35em 0;font-size:0.9rem;border-bottom:1px solid #eee}
   .kb-dev-row .kb-dev-label{flex:1 1 auto;font-weight:600}
-  .kb-dev-row button{padding:3px 10px;font-size:0.78rem}
+  .kb-dev-row button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:0.25em 0.6em;font:inherit;font-size:0.78rem;cursor:pointer}
+  .kb-dev-row button:hover{border-color:#2563eb;color:#2563eb}
   .kb-sidebar-mode{font:inherit;font-size:0.8rem;color:#6c757d;border:1px solid #ccc;border-radius:6px;
     padding:0.2em 0.4em;background:#fff;cursor:pointer;margin-left:auto}
   .kb-side{overflow:auto;min-height:0;border-right:1px solid #e5e7eb;background:#fbfbfb;padding:10px;font-size:0.9rem}
   .kb-side-head{display:flex;gap:6px}
-  .kb-side-head button{padding:3px 10px;font-size:0.8rem}
+  .kb-side-head button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:0.25em 0.6em;font:inherit;font-size:0.78rem;cursor:pointer}
+  .kb-side-head button:hover{border-color:#2563eb;color:#2563eb}
   .kb-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:6px 0}
   /* Tree: nested <ul>s. Indentation + guide line are pure CSS on NESTED lists
      only (the double-descendant selector skips the root list). */
