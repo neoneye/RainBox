@@ -641,8 +641,21 @@ class AssistantRunView(ModelView):
     column_default_sort = ("started_at", True)
 
 
+def _format_step_trace_link(view, context, model, name):
+    """Render a step's uuid cell as a link to its /assistant trace location —
+    the run, scrolled to this step's anchor (id="step-<uuid>")."""
+    href = f"/assistant?id={escape(model.run_uuid)}#step-{escape(model.uuid)}"
+    return Markup(f'<a href="{href}"><code>{escape(model.uuid)}</code> ↗</a>')
+
+
+class AssistantStepView(ModelView):
+    # Newest first; the uuid links to the run's trace, scrolled to this step.
+    column_default_sort = ("id", True)
+    column_formatters = {"uuid": _format_step_trace_link}
+
+
 admin.add_view(AssistantRunView(AssistantRun, db, category="Assistant"))
-admin.add_view(ModelView(AssistantStep, db, category="Assistant"))
+admin.add_view(AssistantStepView(AssistantStep, db, category="Assistant"))
 admin.add_view(ModelView(AssistantControl, db, category="Assistant"))
 admin.add_view(ModelView(AssistantWriteIntent, db, category="Assistant"))
 
