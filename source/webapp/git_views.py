@@ -35,8 +35,9 @@ GIT_TEMPLATE = """
   .git-main{overflow:auto;padding:16px 20px}
   .git-actions{display:flex;gap:6px}
   /* Small blue pill buttons, matching /cron's tree-action buttons. */
-  .git-actions button{padding:3px 8px;font-size:0.75rem;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer}
-  .git-actions button:hover{background:#1d4ed8}
+  .git-actions button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:0.25em 0.6em;font:inherit;font-size:0.78rem;cursor:pointer}
+  .git-actions button:hover{border-color:#2563eb;color:#2563eb}
   /* Hairline dividers between the root node, the actions, and the tree (like /cron). */
   .git-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:6px 0}
   /* Nested items indent past the parent's label with a guide line, like /cron. */
