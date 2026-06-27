@@ -146,6 +146,12 @@ ASSISTANT_TEMPLATE = """
   .as-main .step, .as-main .card { border:1px solid #e5e7eb; border-radius:8px;
                    overflow:hidden; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05);
                    margin-bottom:16px; }
+  .as-main .step { scroll-margin-top:14px; }
+  .as-main .step:target { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.25); }
+  .as-main .step-anchor { color:#b6bdc8; text-decoration:none; font-weight:700;
+                   padding:0 0.3rem; border-radius:4px; }
+  .as-main .step-anchor:hover { color:#2563eb; background:#eef2ff; }
+  .as-main .step:target .step-anchor { color:#2563eb; }
   .as-main .step .hd, .as-main .card .hd { display:flex; gap:0.5rem; align-items:center;
                        flex-wrap:wrap; padding:10px 14px; background:#fbfdff;
                        border-bottom:1px solid #e5e7eb; }
@@ -305,9 +311,10 @@ ASSISTANT_TEMPLATE = """
 
       {% if not timeline %}<div class="as-empty">This run has no steps.</div>{% endif %}
       {% for step, intents in timeline %}
-      <div class="step phase-{{ step.phase }}">
+      <div class="step phase-{{ step.phase }}" id="step-{{ step.uuid }}">
         <div class="hd">
           <span class="ix" title="internal step index={{ step.step_index }}">Step {{ step.step_index + 1 }} of {{ timeline|length }}</span>
+          <a class="step-anchor" href="#step-{{ step.uuid }}" title="Link to this step">#</a>
           <span class="action" title="The action the model decided to take for this step">{{ step.action or '—' }}</span>
           {% if step.action and action_descriptions.get(step.action) %}<span class="action-desc">{{ action_descriptions[step.action] }}</span>{% endif %}
         </div>
@@ -482,6 +489,16 @@ ASSISTANT_TEMPLATE = """
     }).then(function () { location.reload(); })
       .catch(function (e) { alert('Request failed: ' + e); });
   }
+
+  // Deep-link to a step: #step-<uuid> scrolls the .as-main pane to it on load.
+  // (.as-main is the scroll container, so a bare fragment isn't reliable here.)
+  (function () {
+    var h = location.hash;
+    if (h.indexOf('#step-') === 0) {
+      var el = document.getElementById(h.slice(1));
+      if (el) el.scrollIntoView();
+    }
+  })();
 </script>
 """
 

@@ -96,6 +96,22 @@ def test_timeline_shows_step_with_inline_intent_and_undo(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_step_is_anchored_and_has_permalink(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="query_qa", reason="look")
+    db.settle_assistant_step(step, phase="observed", observation_preview="ok")
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert f'id="step-{step.uuid}"' in body          # anchor target
+        assert f'href="#step-{step.uuid}"' in body        # permalink
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_undone_intent_is_marked_in_the_timeline(app_ctx, client):
     room = _room()
     run = db.start_assistant_run(
