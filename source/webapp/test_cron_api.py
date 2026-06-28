@@ -40,6 +40,16 @@ def test_message_target_must_be_a_chatroom_uuid(app_ctx):
     }])
 
 
+def test_one_shot_message_job_allows_empty_cron(app_ctx):
+    # Reminders create one-shot 'message' jobs with an empty cron_expr — they fire
+    # once at next_run_at and retire. Re-saving the tree (e.g. toggling Active on
+    # such a job) must not reject "" as "cron expression must have 5 fields".
+    db.validate_cron_tree([], [{
+        "uuid": str(uuid4()), "name": "Reminder", "type": "message",
+        "cron": "", "target": str(uuid4()), "message": "hi",
+    }])
+
+
 def test_cron_load_tree_includes_chatrooms(app_ctx):
     out = db.cron_load_tree()
     assert isinstance(out.get("chatrooms"), list)
@@ -147,6 +157,28 @@ def test_cron_save_and_load_tree(app_ctx, cron_tree_snapshot):
         {"uuid": str(uuid4()), "name": "noTz", "folderId": None,
          "cron": "* * * * *", "type": "command", "command": "ls"}])
     assert db.cron_load_tree()["jobs"][0]["timezone"] == "localtime"
+
+
+def test_toggling_active_on_one_shot_reminder_persists(app_ctx, cron_tree_snapshot):
+    # The user's flow: a reminder is a one-shot 'message' job with an empty cron.
+    # Deselect Active, save, reload — it must stay inactive (not snap back to
+    # Active), and its pre-set fire time must survive the save.
+    from datetime import UTC, datetime, timedelta
+
+    job = db.cron_create_one_shot_message(
+        message="⏰ Reminder: brush teeth",
+        fire_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    tree = db.cron_load_tree()
+    row = next(j for j in tree["jobs"] if j["uuid"] == str(job.uuid))
+    assert row["enabled"] is True and row["cron"] == ""
+    row["enabled"] = False
+    db.cron_save_tree(tree["folders"], tree["jobs"])  # must not raise on empty cron
+
+    saved = next(j for j in db.cron_load_tree()["jobs"] if j["uuid"] == str(job.uuid))
+    assert saved["enabled"] is False         # the toggle persisted
+    assert saved["cron"] == ""               # still a one-shot
+    assert saved["next_run_at"] is not None  # fire time survived the save
 
 
 def test_cron_save_tree_replaces(app_ctx, cron_tree_snapshot):

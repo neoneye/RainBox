@@ -210,6 +210,12 @@ def validate_cron_expr(expr: Any) -> None:
     """Reject anything that isn't a 5-field cron of UI-shaped tokens."""
     if not isinstance(expr, str):
         raise CronTreeError(f"cron expression must be a string, got {type(expr).__name__}")
+    # An empty expression is a one-shot job (created by reminders): it has no
+    # recurrence and fires once at its pre-set next_run_at, so there's nothing to
+    # validate. Without this, re-saving the tree — e.g. toggling Active on a
+    # reminder — would be rejected as "must have 5 fields".
+    if not expr.strip():
+        return
     parts = expr.split()
     if len(parts) != 5:
         raise CronTreeError(f"cron expression must have 5 fields: {expr!r}")
