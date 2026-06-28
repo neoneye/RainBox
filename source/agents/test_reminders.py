@@ -152,3 +152,34 @@ def test_one_shot_fires_once_then_retires(app_ctx):
         db.db.session.query(ChatMessage).filter_by(room_uuid=chatroom.uuid).delete()
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
         db.db.session.commit()
+
+
+def test_proposal_meta_attached_to_reply(app_ctx):
+    tag = f"rem-{uuid4()}"
+    chatroom = _room()
+    db.post_chat_message(chatroom.uuid, db.get_human_user().uuid, "remind me")
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent._decide_next_step = scripted_decisions(
+        AssistantStepDecision(reason="remind", action=AssistantActionName.SET_REMINDER,
+                              args={"text": tag, "when": "2026-06-29T09:00"}),
+        AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
+                              args={"message": "awaits your confirmation"}),
+    )
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        msgs = db.list_room_messages(chatroom.uuid)
+        reply = next(m for m in msgs
+                     if m["sender_type"] == "agent" and m["kind"] == "message"
+                     and m["meta"].get("write_intent"))
+        assert reply["meta"]["capability"] == "set_reminder"
+        assert reply["meta"]["step_link"].startswith("/assistant?id=")
+        assert "#step-" in reply["meta"]["step_link"]
+        # The intent the card points at really exists and is proposed.
+        assert reply["meta"]["intent_state"] == "proposed"
+    finally:
+        db.db.session.query(db.AssistantWriteIntent).filter(
+            db.AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.AssistantRun).filter(
+            db.AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()

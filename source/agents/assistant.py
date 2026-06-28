@@ -1317,6 +1317,9 @@ class AssistantAgent(ModelGroupAgent):
             # Relative links a write surfaced (e.g. /kanban?id=...), appended to the
             # reply so the operator can jump to what just changed. Order-preserving.
             result_links: list[str] = []
+            # The card payload for a confirm-tier write proposed this turn, attached
+            # as `meta` on the terminal reply so chat can render confirm/reject.
+            pending_proposal: dict[str, Any] | None = None
 
             for step_index in range(self.step_limit):
                 current_step = step_index
@@ -1363,7 +1366,8 @@ class AssistantAgent(ModelGroupAgent):
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
                         text = self._append_result_links(text, result_links)
-                    db.post_chat_message(room_uuid, self.agent_uuid, text, kind="message")
+                    db.post_chat_message(room_uuid, self.agent_uuid, text,
+                                         kind="message", meta=pending_proposal)
                     db.finish_run(run, "finished", final_summary=text[:200])
                     logger.info(
                         "assistant finished run %s in room %s at step %d",
@@ -1420,6 +1424,9 @@ class AssistantAgent(ModelGroupAgent):
                     link = observation.data.get("link")
                     if link and link not in result_links:
                         result_links.append(link)
+                    proposal = observation.data.get("proposal")
+                    if proposal:
+                        pending_proposal = proposal
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._settle_step(
                     step_row,
@@ -1706,6 +1713,12 @@ class AssistantAgent(ModelGroupAgent):
             room_uuid=ctx.room_uuid,
             agent_uuid=ctx.agent_uuid,
         )
+        proposal: dict[str, Any] = {
+            "write_intent": str(intent.uuid),
+            "capability": cap.name.value,
+        }
+        if ctx.step_uuid is not None:
+            proposal["step_link"] = db.assistant_step_path(self._run.uuid, ctx.step_uuid)
         return AssistantObservation(
             ok=True,
             text=(f"Proposed for the operator's approval: {preview}. "
@@ -1713,7 +1726,8 @@ class AssistantAgent(ModelGroupAgent):
                   f"action you can take to apply it yourself; the operator "
                   f"confirms it. Reply to the operator that it awaits their "
                   f"confirmation, and do not take any further action."),
-            data={"write_intent_uuid": str(intent.uuid), "state": "proposed"},
+            data={"write_intent_uuid": str(intent.uuid), "state": "proposed",
+                  "proposal": proposal},
         )
 
     def _record_log_and_undo(
