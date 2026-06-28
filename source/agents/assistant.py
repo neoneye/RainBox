@@ -794,9 +794,14 @@ def _action_set_reminder(
             ok=True, text=f"Would remind you at {when_str}: {text}",
             data={"fire_at": when_str},
         )
+    origin_run_uuid = None
+    if ctx.step_uuid is not None:
+        step = db.db.session.query(db.AssistantStep).filter_by(uuid=ctx.step_uuid).first()
+        origin_run_uuid = step.run_uuid if step is not None else None
     job = db.cron_create_one_shot_message(
         message=f"⏰ Reminder: {text}", fire_at=fire_at, target=str(ctx.room_uuid),
         name=f"Reminder: {text[:40]}",
+        origin_run_uuid=origin_run_uuid, origin_step_uuid=ctx.step_uuid,
     )
     return AssistantObservation(
         ok=True, text=f"Reminder set for {when_str}: {text}",

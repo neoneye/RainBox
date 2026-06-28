@@ -154,6 +154,31 @@ def test_one_shot_fires_once_then_retires(app_ctx):
         db.db.session.commit()
 
 
+def test_set_reminder_records_origin_from_step(app_ctx):
+    from agents.config import ASSISTANT_UUID as _A
+    chatroom = _room()
+    room = chatroom.uuid
+    run = db.start_assistant_run(journal_id=uuid4(), room_uuid=room, agent_uuid=_A)
+    step = db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="observed", action="set_reminder")
+    tag = f"rem-{uuid4()}"
+    ctx = AssistantActionContext(
+        journal_id=None, room_uuid=room, agent_uuid=_A, step_index=0,
+        step_uuid=step.uuid,
+    )
+    obs = _action_set_reminder(ctx, {"text": tag, "when": "2026-06-29T09:00"})
+    try:
+        assert obs.ok is True
+        job = _jobs_with(tag)[0]
+        assert job.origin_run_uuid == run.uuid
+        assert job.origin_step_uuid == step.uuid
+    finally:
+        _cleanup_cron(tag)
+        db.db.session.query(db.AssistantRun).filter(db.AssistantRun.uuid == run.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
+
+
 def test_proposal_meta_attached_to_reply(app_ctx):
     tag = f"rem-{uuid4()}"
     chatroom = _room()
