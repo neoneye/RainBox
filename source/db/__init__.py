@@ -382,6 +382,9 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("assistant_step", "settled_at", "settled_at TIMESTAMPTZ")
         # Structured attachment on a chat message (write-proposal card data).
         _add_column_if_missing("chat_message", "meta", "meta jsonb NOT NULL DEFAULT '{}'::jsonb")
+        # Assistant provenance for jobs created by the assistant (reminders).
+        _add_column_if_missing("cron_job", "origin_run_uuid", "origin_run_uuid uuid")
+        _add_column_if_missing("cron_job", "origin_step_uuid", "origin_step_uuid uuid")
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(

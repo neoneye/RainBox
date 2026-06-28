@@ -433,3 +433,22 @@ def test_cron_save_tree_populates_next_run_at(app_ctx, cron_tree_snapshot):
     job = db.db.session.execute(
         sa.select(db.CronJob).where(db.CronJob.uuid == UUID(ju))).scalar_one()
     assert job.next_run_at is not None
+
+
+def test_one_shot_message_stores_origin(app_ctx, cron_tree_snapshot):
+    from datetime import UTC, datetime, timedelta
+    run, step = uuid4(), uuid4()
+    job = db.cron_create_one_shot_message(
+        message="⏰ Reminder: x", fire_at=datetime.now(UTC) + timedelta(hours=1),
+        origin_run_uuid=run, origin_step_uuid=step)
+    fetched = db.db.session.get(db.CronJob, job.id)
+    assert fetched.origin_run_uuid == run
+    assert fetched.origin_step_uuid == step
+
+
+def test_one_shot_message_origin_defaults_null(app_ctx, cron_tree_snapshot):
+    from datetime import UTC, datetime, timedelta
+    job = db.cron_create_one_shot_message(
+        message="⏰ Reminder: y", fire_at=datetime.now(UTC) + timedelta(hours=1))
+    fetched = db.db.session.get(db.CronJob, job.id)
+    assert fetched.origin_run_uuid is None and fetched.origin_step_uuid is None

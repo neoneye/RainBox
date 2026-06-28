@@ -283,6 +283,10 @@ class CronJob(db.Model):
     # Auto-retry on failure: refire (trigger='retry') up to this many times
     # after an error outcome, then wait for the next scheduled slot. 0 = off.
     max_retries: Mapped[int] = mapped_column(default=0)
+    # Provenance: the assistant run+step that created this job (e.g. a reminder via
+    # set_reminder). Null for manually-created jobs. Surfaced read-only on /cron.
+    origin_run_uuid: Mapped[UUID | None] = mapped_column(default=None)
+    origin_step_uuid: Mapped[UUID | None] = mapped_column(default=None)
     # firing-phase columns (unused until the scheduler lands)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

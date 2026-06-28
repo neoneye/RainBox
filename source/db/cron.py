@@ -872,6 +872,7 @@ def cron_job_health(job_uuid: UUID) -> dict[str, Any] | None:
 def cron_create_one_shot_message(
     *, message: str, fire_at: datetime, target: str = "", name: str = "",
     folder_uuid: UUID | None = None,
+    origin_run_uuid: UUID | None = None, origin_step_uuid: UUID | None = None,
 ) -> CronJob:
     """Create an enabled one-shot 'message' cron job: empty cron_expr + a pre-set
     next_run_at, so it fires once at `fire_at` and then retires (cron_tick
@@ -881,6 +882,7 @@ def cron_create_one_shot_message(
         name=name or "Reminder", enabled=True, folder_uuid=folder_uuid,
         cron_expr="", timezone="localtime", action_type="message",
         target=target, message=message, next_run_at=fire_at,
+        origin_run_uuid=origin_run_uuid, origin_step_uuid=origin_step_uuid,
     )
     db.session.add(job)
     db.session.commit()
