@@ -52,6 +52,12 @@ def start_assistant_run(
     return run
 
 
+def assistant_step_path(run_uuid: UUID, step_uuid: UUID) -> str:
+    """The /assistant deep link to one step of one run: the run page scrolled to
+    (and :target-highlighting) the element with id="step-<step_uuid>"."""
+    return f"/assistant?id={run_uuid}#step-{step_uuid}"
+
+
 _TERMINAL_PHASES = ("observed", "failed", "final")
 
 

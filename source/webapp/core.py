@@ -26,6 +26,7 @@ from db import (
     AssistantRun,
     AssistantStep,
     AssistantWriteIntent,
+    assistant_step_path,
     ChatMessage,
     Chatroom,
     ChatroomFolder,
@@ -646,8 +647,8 @@ def _format_step_trace_link(view, context, model, name):
     the run, scrolled to this step's anchor (id="step-<uuid>"). Shows only the
     first 6 chars (full value on hover), to match the other uuid columns."""
     full = str(model.uuid)
-    href = f"/assistant?id={escape(model.run_uuid)}#step-{escape(full)}"
-    return Markup(f'<a href="{href}" title="{escape(full)}">'
+    href = assistant_step_path(model.run_uuid, model.uuid)
+    return Markup(f'<a href="{escape(href)}" title="{escape(full)}">'
                   f'<code>{escape(full[:6])}</code> ↗</a>')
 
 
