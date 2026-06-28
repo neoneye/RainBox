@@ -83,3 +83,43 @@ def test_list_room_messages_meta_empty_for_plain_message(app_ctx):
     db.post_chat_message(room.uuid, db.get_human_user().uuid, "plain")
     msg = db.list_room_messages(room.uuid)[-1]
     assert msg["meta"] == {} and "intent_state" not in msg["meta"]
+
+
+def test_list_room_messages_exposes_result_link_when_completed(app_ctx):
+    # Once a reminder is confirmed, the intent's stored result carries a `link`
+    # to the created cron job; list_room_messages surfaces it as meta.result_link
+    # so the card can show "View reminder ↗" on reload (not just right after click).
+    room = _room()
+    run, step = _run_and_step(room.uuid)
+    intent = db.create_write_intent(
+        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="set_reminder",
+        payload={"text": "t", "when": "2026-06-29T09:00"}, preview_text="p",
+        room_uuid=room.uuid, agent_uuid=ASSISTANT_UUID,
+    )
+    cron_link = "/cron?id=ea3f06e6-1df0-484a-b15f-38f73f2e2cad"
+    db.set_write_intent_state(intent, "completed", result={"link": cron_link})
+    db.post_chat_message(
+        room.uuid, ASSISTANT_UUID, "done",
+        meta={"write_intent": str(intent.uuid), "capability": "set_reminder"},
+    )
+    card = next(m for m in db.list_room_messages(room.uuid)
+                if m["meta"].get("write_intent") == str(intent.uuid))
+    assert card["meta"]["intent_state"] == "completed"
+    assert card["meta"]["result_link"] == cron_link
+
+
+def test_list_room_messages_no_result_link_while_proposed(app_ctx):
+    room = _room()
+    run, step = _run_and_step(room.uuid)
+    intent = db.create_write_intent(
+        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="set_reminder",
+        payload={"text": "t", "when": "2026-06-29T09:00"}, preview_text="p",
+        room_uuid=room.uuid, agent_uuid=ASSISTANT_UUID,
+    )
+    db.post_chat_message(
+        room.uuid, ASSISTANT_UUID, "awaiting",
+        meta={"write_intent": str(intent.uuid), "capability": "set_reminder"},
+    )
+    card = next(m for m in db.list_room_messages(room.uuid)
+                if m["meta"].get("write_intent") == str(intent.uuid))
+    assert "result_link" not in card["meta"]

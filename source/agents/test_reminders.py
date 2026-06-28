@@ -85,6 +85,18 @@ def test_real_execution_creates_one_shot_job(app_ctx):
         _cleanup_cron(tag)
 
 
+def test_set_reminder_result_includes_cron_link(app_ctx):
+    # The confirm response carries a link to the created cron job so the chat
+    # card can show "View reminder ↗" pointing at /cron?id=<cron_job_uuid>.
+    tag = f"rem-{uuid4()}"
+    obs = _action_set_reminder(_ctx(), {"text": tag, "when": "2026-06-29T09:00"})
+    try:
+        assert obs.ok is True
+        assert obs.data["link"] == f"/cron?id={obs.data['cron_job_uuid']}"
+    finally:
+        _cleanup_cron(tag)
+
+
 def test_bad_datetime_rejected(app_ctx):
     assert _action_set_reminder(_ctx(dry_run=True), {"text": "x", "when": "friday"}).ok is False
     assert _action_set_reminder(_ctx(), {"text": "x", "when": "friday"}).ok is False

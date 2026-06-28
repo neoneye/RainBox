@@ -563,6 +563,10 @@ def list_room_messages(room_uuid: UUID, after_id: int = 0) -> list[dict[str, Any
     # Live write-intent state for proposal messages (meta.write_intent set), so a
     # card reflects a confirm/reject performed on /assistant. One batched lookup.
     intent_state: dict[str, str] = {}
+    # A completed write's result may carry a `link` to what it created (e.g. a
+    # reminder's /cron?id=... job); surfaced as meta.result_link so the card can
+    # link to it on reload, not just right after the click.
+    intent_result_link: dict[str, str] = {}
     wanted: list[UUID] = []
     for r in rows:
         wid = (r.meta or {}).get("write_intent")
@@ -572,12 +576,16 @@ def list_room_messages(room_uuid: UUID, after_id: int = 0) -> list[dict[str, Any
             except ValueError:
                 pass
     if wanted:
-        for iu, st in (
-            db.session.query(AssistantWriteIntent.uuid, AssistantWriteIntent.state)
+        for iu, st, res in (
+            db.session.query(AssistantWriteIntent.uuid, AssistantWriteIntent.state,
+                             AssistantWriteIntent.result)
             .filter(AssistantWriteIntent.uuid.in_(wanted))
             .all()
         ):
             intent_state[str(iu)] = st
+            link = res.get("link") if isinstance(res, dict) else None
+            if link:
+                intent_result_link[str(iu)] = link
     out: list[dict[str, Any]] = []
     for r in rows:
         sender = users.get(r.sender_uuid)
@@ -585,6 +593,8 @@ def list_room_messages(room_uuid: UUID, after_id: int = 0) -> list[dict[str, Any
         wid = meta.get("write_intent")
         if wid and str(wid) in intent_state:
             meta["intent_state"] = intent_state[str(wid)]
+        if wid and str(wid) in intent_result_link:
+            meta["result_link"] = intent_result_link[str(wid)]
         out.append(
             {
                 "id": r.id,

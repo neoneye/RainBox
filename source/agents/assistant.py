@@ -805,7 +805,11 @@ def _action_set_reminder(
     )
     return AssistantObservation(
         ok=True, text=f"Reminder set for {when_str}: {text}",
-        data={"cron_job_uuid": str(job.uuid), "fire_at": when_str},
+        data={"cron_job_uuid": str(job.uuid), "fire_at": when_str,
+              # Link to the created cron job; the chat card surfaces it as
+              # "View reminder ↗" both on confirm and on reload (via the stored
+              # intent result), and the run loop's result_links harvest reuses it.
+              "link": f"/cron?id={job.uuid}"},
     )
 
 

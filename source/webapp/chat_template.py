@@ -217,6 +217,7 @@ CHAT_TEMPLATE: str = """
   .write-proposal .wp-rejected{color:#b91c1c}
   .write-proposal .wp-failed{color:#b45309}
   .write-proposal .wp-step{margin-left:auto;font-size:.85em}
+  .write-proposal .wp-result-link{margin-left:.6rem;font-size:.85em}
   .write-proposal .wp-result{flex-basis:100%;font-size:.85em}
 </style>
 {% include "_nav.html" %}
@@ -678,12 +679,12 @@ function renderProposalCard(m) {
     confirmBtn.addEventListener('click', () => proposalAct(wrap, base + 'confirm', cap, meta.step_link));
     rejectBtn.addEventListener('click',  () => proposalAct(wrap, base + 'reject',  cap, meta.step_link));
   } else {
-    proposalFillStatus(wrap, cap, state, meta.step_link);
+    proposalFillStatus(wrap, cap, state, meta.step_link, meta.result_link);
   }
   return wrap;
 }
 
-function proposalFillStatus(wrap, cap, state, stepLink) {
+function proposalFillStatus(wrap, cap, state, stepLink, resultLink) {
   wrap.innerHTML = '';
   const capSpan = document.createElement('span');
   capSpan.className = 'wp-cap';
@@ -702,6 +703,14 @@ function proposalFillStatus(wrap, cap, state, stepLink) {
     a.textContent = 'View step ↗';
     wrap.appendChild(a);
   }
+  // A confirmed write that created something (a reminder's cron job) links to it.
+  if (resultLink) {
+    const a = document.createElement('a');
+    a.className = 'wp-result-link';
+    a.setAttribute('href', resultLink);
+    a.textContent = cap === 'set_reminder' ? 'View reminder ↗' : 'View result ↗';
+    wrap.appendChild(a);
+  }
 }
 
 async function proposalAct(wrap, url, cap, stepLink) {
@@ -715,7 +724,8 @@ async function proposalAct(wrap, url, cap, stepLink) {
   }
   const isConfirm = url.endsWith('/confirm');
   const state = isConfirm ? (j.ok ? 'completed' : 'failed') : (j.ok ? 'rejected' : 'proposed');
-  proposalFillStatus(wrap, cap, state, stepLink);
+  const resultLink = (j.data && j.data.link) || null;
+  proposalFillStatus(wrap, cap, state, stepLink, resultLink);
   if (j.text) {
     const t = document.createElement('div');
     t.className = 'wp-result muted';
