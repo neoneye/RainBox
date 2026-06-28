@@ -452,3 +452,20 @@ def test_one_shot_message_origin_defaults_null(app_ctx, cron_tree_snapshot):
         message="⏰ Reminder: y", fire_at=datetime.now(UTC) + timedelta(hours=1))
     fetched = db.db.session.get(db.CronJob, job.id)
     assert fetched.origin_run_uuid is None and fetched.origin_step_uuid is None
+
+
+def test_cron_load_tree_exposes_origin_step_link(app_ctx, cron_tree_snapshot):
+    from datetime import UTC, datetime, timedelta
+    run, step = uuid4(), uuid4()
+    job = db.cron_create_one_shot_message(
+        message="⏰ Reminder: z", fire_at=datetime.now(UTC) + timedelta(hours=1),
+        origin_run_uuid=run, origin_step_uuid=step)
+    out = db.cron_load_tree()
+    row = next(j for j in out["jobs"] if j["uuid"] == str(job.uuid))
+    assert row["origin_step_link"] == db.assistant_step_path(run, step)
+
+    plain = db.cron_create_one_shot_message(
+        message="⏰ Reminder: nolink", fire_at=datetime.now(UTC) + timedelta(hours=1))
+    out2 = db.cron_load_tree()
+    prow = next(j for j in out2["jobs"] if j["uuid"] == str(plain.uuid))
+    assert prow["origin_step_link"] is None
