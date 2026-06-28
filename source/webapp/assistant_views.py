@@ -148,9 +148,8 @@ ASSISTANT_TEMPLATE = """
                    margin-bottom:16px; }
   .as-main .step { scroll-margin-top:14px; }
   .as-main .step:target { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.25); }
-  .as-main .step-anchor { color:#b6bdc8; text-decoration:none; font-weight:700;
-                   padding:0 0.3rem; border-radius:4px; }
-  .as-main .step-anchor:hover { color:#2563eb; background:#eef2ff; }
+  .as-main .step-anchor { text-decoration:none; padding:0.05rem 0.3rem; border-radius:4px; }
+  .as-main .step .step-anchor:hover { color:#2563eb; background:#eef2ff; }
   .as-main .step:target .step-anchor { color:#2563eb; }
   .as-main .step .hd, .as-main .card .hd { display:flex; gap:0.5rem; align-items:center;
                        flex-wrap:wrap; padding:10px 14px; background:#fbfdff;
@@ -313,8 +312,7 @@ ASSISTANT_TEMPLATE = """
       {% for step, intents in timeline %}
       <div class="step phase-{{ step.phase }}" id="step-{{ step.uuid }}">
         <div class="hd">
-          <span class="ix" title="internal step index={{ step.step_index }}">Step {{ step.step_index + 1 }} of {{ timeline|length }}</span>
-          <a class="step-anchor" href="#step-{{ step.uuid }}" title="Link to this step">#</a>
+          <a class="ix step-anchor" href="#step-{{ step.uuid }}" title="Link to this step (internal step index={{ step.step_index }})">Step {{ step.step_index + 1 }} of {{ timeline|length }}</a>
           <span class="action" title="The action the model decided to take for this step">{{ step.action or '—' }}</span>
           {% if step.action and action_descriptions.get(step.action) %}<span class="action-desc">{{ action_descriptions[step.action] }}</span>{% endif %}
         </div>
