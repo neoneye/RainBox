@@ -639,6 +639,7 @@ def post_chat_message(
     content_type: str = "markdown",
     kind: str = "message",
     streaming: bool = False,
+    meta: dict | None = None,
 ) -> ChatMessage:
     """Insert a message and NOTIFY the chat channel in the same transaction, so
     every connected SSE stream is pushed the new message id on commit.
@@ -649,6 +650,9 @@ def post_chat_message(
     `streaming=True` marks a row whose `text` will grow in place via
     update_chat_message (token-by-token); the NOTIFY then carries the streaming
     flag + kind so browsers create the bubble in upsert mode.
+
+    `meta` carries an optional structured attachment (e.g. write-proposal card
+    data with write_intent, capability, step_link); defaults to {}.
 
     When `kind` is a *terminal* agent output (`"message"` or `"notice"` — a
     real reply or an operational notice such as "the model server is down"),
@@ -664,6 +668,7 @@ def post_chat_message(
         content_type=content_type,
         kind=kind,
         streaming=streaming,
+        meta=meta or {},
     )
     db.session.add(msg)
     db.session.flush()  # assign msg.id for the notify payload

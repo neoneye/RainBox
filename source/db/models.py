@@ -647,6 +647,10 @@ class ChatMessage(db.Model):
     #   "debug-router" — the router agent's {subject, action} triage output
     # The UI can fold away non-"message" rows so they don't clutter the chat.
     kind: Mapped[str] = mapped_column(Text, default="message")
+    # Structured attachment for interactive messages (default {}). A confirm-tier
+    # write proposal stores {write_intent, capability, step_link} so chat can render
+    # confirm/reject controls; list_room_messages splices in the intent's live state.
+    meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     # True while a row is being streamed token-by-token (its `text` grows in
     # place via update_chat_message). Flipped to False on the final flush. The UI
     # shows a live cursor and withholds feedback buttons while True.

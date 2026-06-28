@@ -380,6 +380,8 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("assistant_step", "requested_at", "requested_at TIMESTAMPTZ")
         # When the step settled (observation recorded) — the "function result" time.
         _add_column_if_missing("assistant_step", "settled_at", "settled_at TIMESTAMPTZ")
+        # Structured attachment on a chat message (write-proposal card data).
+        _add_column_if_missing("chat_message", "meta", "meta jsonb NOT NULL DEFAULT '{}'::jsonb")
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(
