@@ -38,6 +38,7 @@ MEMORY_SYNC_CRON_JOB_UUID = UUID("b7e84415-2d1a-4c9f-8f3e-6a0d9c1e2b34")
 CRON_ACTION_TYPES = ("message", "command", "backup", "memory_sync")
 from db.queue import enqueue
 from db.chat import post_chat_message, post_cron_event
+from db.assistant import assistant_step_path
 
 
 def _cron_last_run_brief(run: "CronRun | None") -> dict[str, Any] | None:
@@ -107,6 +108,12 @@ def cron_load_tree() -> dict[str, Any]:
                 "last_run": _cron_last_run_brief(latest_run.get(j.uuid)),
                 # Read-only, for the lists' next-run column (the scheduler owns it).
                 "next_run_at": j.next_run_at.isoformat() if j.next_run_at else None,
+                # Provenance deep-link to the /assistant step that created the job
+                # (reminders); null for manual jobs. Read-only — ignored on save.
+                "origin_step_link": (
+                    assistant_step_path(j.origin_run_uuid, j.origin_step_uuid)
+                    if j.origin_run_uuid and j.origin_step_uuid else None
+                ),
             }
             for j in jobs
         ],
@@ -872,6 +879,7 @@ def cron_job_health(job_uuid: UUID) -> dict[str, Any] | None:
 def cron_create_one_shot_message(
     *, message: str, fire_at: datetime, target: str = "", name: str = "",
     folder_uuid: UUID | None = None,
+    origin_run_uuid: UUID | None = None, origin_step_uuid: UUID | None = None,
 ) -> CronJob:
     """Create an enabled one-shot 'message' cron job: empty cron_expr + a pre-set
     next_run_at, so it fires once at `fire_at` and then retires (cron_tick
@@ -881,6 +889,7 @@ def cron_create_one_shot_message(
         name=name or "Reminder", enabled=True, folder_uuid=folder_uuid,
         cron_expr="", timezone="localtime", action_type="message",
         target=target, message=message, next_run_at=fire_at,
+        origin_run_uuid=origin_run_uuid, origin_step_uuid=origin_step_uuid,
     )
     db.session.add(job)
     db.session.commit()

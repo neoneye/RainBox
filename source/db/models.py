@@ -283,6 +283,10 @@ class CronJob(db.Model):
     # Auto-retry on failure: refire (trigger='retry') up to this many times
     # after an error outcome, then wait for the next scheduled slot. 0 = off.
     max_retries: Mapped[int] = mapped_column(default=0)
+    # Provenance: the assistant run+step that created this job (e.g. a reminder via
+    # set_reminder). Null for manually-created jobs. Surfaced read-only on /cron.
+    origin_run_uuid: Mapped[UUID | None] = mapped_column(default=None)
+    origin_step_uuid: Mapped[UUID | None] = mapped_column(default=None)
     # firing-phase columns (unused until the scheduler lands)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
@@ -647,6 +651,10 @@ class ChatMessage(db.Model):
     #   "debug-router" — the router agent's {subject, action} triage output
     # The UI can fold away non-"message" rows so they don't clutter the chat.
     kind: Mapped[str] = mapped_column(Text, default="message")
+    # Structured attachment for interactive messages (default {}). A confirm-tier
+    # write proposal stores {write_intent, capability, step_link} so chat can render
+    # confirm/reject controls; list_room_messages splices in the intent's live state.
+    meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     # True while a row is being streamed token-by-token (its `text` grows in
     # place via update_chat_message). Flipped to False on the final flush. The UI
     # shows a live cursor and withholds feedback buttons while True.

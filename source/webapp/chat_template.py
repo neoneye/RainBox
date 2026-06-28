@@ -204,6 +204,20 @@ CHAT_TEMPLATE: str = """
     padding:10px 14px;border-radius:8px;font-size:0.9rem;box-shadow:0 4px 14px rgba(0,0,0,0.3);
     z-index:2000;opacity:0;transition:opacity .25s;pointer-events:none}
   .chat-toast.show{opacity:1}
+  /* Write-proposal card (confirm/reject) */
+  .write-proposal{margin-top:.4rem;padding:.4rem .6rem;border:1px solid #d1d5db;
+    border-radius:6px;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+  .write-proposal .wp-cap{font-weight:600}
+  .write-proposal button{cursor:pointer}
+  .write-proposal .wp-confirm{background:#2563eb;color:#fff;border:none;
+    border-radius:4px;padding:.2rem .6rem}
+  .write-proposal .wp-reject{background:#fff;color:#b91c1c;border:1px solid #b91c1c;
+    border-radius:4px;padding:.2rem .6rem}
+  .write-proposal .wp-completed{color:#15803d}
+  .write-proposal .wp-rejected{color:#b91c1c}
+  .write-proposal .wp-failed{color:#b45309}
+  .write-proposal .wp-step{margin-left:auto;font-size:.85em}
+  .write-proposal .wp-result{flex-basis:100%;font-size:.85em}
 </style>
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
@@ -629,6 +643,87 @@ function buildMessageMenu(uuid){
 }
 
 
+// ---- write-proposal card (confirm / reject) ----
+
+function renderProposalCard(m) {
+  const meta = m.meta || {};
+  if (!meta.write_intent) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'write-proposal';
+  const cap = meta.capability || 'write';
+  const state = meta.intent_state || 'proposed';
+  if (state === 'proposed') {
+    const capSpan = document.createElement('span');
+    capSpan.className = 'wp-cap';
+    capSpan.textContent = cap;
+    wrap.appendChild(capSpan);
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'wp-confirm';
+    confirmBtn.textContent = 'Confirm';
+    wrap.appendChild(confirmBtn);
+    const rejectBtn = document.createElement('button');
+    rejectBtn.type = 'button';
+    rejectBtn.className = 'wp-reject';
+    rejectBtn.textContent = 'Reject';
+    wrap.appendChild(rejectBtn);
+    if (meta.step_link) {
+      const a = document.createElement('a');
+      a.className = 'wp-step';
+      a.setAttribute('href', meta.step_link);
+      a.textContent = 'View step ↗';
+      wrap.appendChild(a);
+    }
+    const base = '/chat/api/assistant/write-intents/' + encodeURIComponent(meta.write_intent) + '/';
+    confirmBtn.addEventListener('click', () => proposalAct(wrap, base + 'confirm', cap, meta.step_link));
+    rejectBtn.addEventListener('click',  () => proposalAct(wrap, base + 'reject',  cap, meta.step_link));
+  } else {
+    proposalFillStatus(wrap, cap, state, meta.step_link);
+  }
+  return wrap;
+}
+
+function proposalFillStatus(wrap, cap, state, stepLink) {
+  wrap.innerHTML = '';
+  const capSpan = document.createElement('span');
+  capSpan.className = 'wp-cap';
+  capSpan.textContent = cap;
+  wrap.appendChild(capSpan);
+  const label = {completed: '✓ Confirmed', rejected: '✕ Rejected',
+                 failed: '⚠ Failed'}[state] || '… working';
+  const stateSpan = document.createElement('span');
+  stateSpan.className = 'wp-state wp-' + state;
+  stateSpan.textContent = label;
+  wrap.appendChild(stateSpan);
+  if (stepLink) {
+    const a = document.createElement('a');
+    a.className = 'wp-step';
+    a.setAttribute('href', stepLink);
+    a.textContent = 'View step ↗';
+    wrap.appendChild(a);
+  }
+}
+
+async function proposalAct(wrap, url, cap, stepLink) {
+  wrap.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  let j = {};
+  try {
+    const r = await fetch(url, {method: 'POST'});
+    j = await r.json();
+  } catch (e) {
+    j = {ok: false, text: 'network error'};
+  }
+  const isConfirm = url.endsWith('/confirm');
+  const state = isConfirm ? (j.ok ? 'completed' : 'failed') : (j.ok ? 'rejected' : 'proposed');
+  proposalFillStatus(wrap, cap, state, stepLink);
+  if (j.text) {
+    const t = document.createElement('div');
+    t.className = 'wp-result muted';
+    t.textContent = j.text;
+    wrap.appendChild(t);
+  }
+}
+
 function makeMessage(m){
   const msg = document.createElement('div');
   // Anything other than a real "message" (e.g. the router's "debug-router"
@@ -698,6 +793,9 @@ function makeMessage(m){
     msg.appendChild(toggleTop);
   }
   msg.appendChild(body);
+  // Write-proposal card (confirm / reject) — only on messages that carry meta.write_intent.
+  const proposalCard = renderProposalCard(m);
+  if (proposalCard) msg.appendChild(proposalCard);
   if (collapseNoun){
     toggleBottom = document.createElement('button');
     toggleBottom.type = 'button';

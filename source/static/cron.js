@@ -527,6 +527,13 @@ function cronRenderJobDetail(){
     (r.maxRetries > 0 ? ' — retries up to ' + r.maxRetries + '× on failure' : '') +
     (cronJobIsDraft(r) ? ' — draft: the scheduler skips this job until its action is filled in' : '');
   cronFillDescValue(document.getElementById('cjd-desc-value'), r.description);
+  const originSec = document.getElementById('cjd-origin-section');
+  if (r.origin_step_link) {
+    document.getElementById('cjd-origin-link').href = r.origin_step_link;
+    originSec.hidden = false;
+  } else {
+    originSec.hidden = true;
+  }
   document.getElementById('cjd-run-status').textContent = '';  // clear stale fire status
   cronLoadHealth(r.uuid);
 }

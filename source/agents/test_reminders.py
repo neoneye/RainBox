@@ -152,3 +152,59 @@ def test_one_shot_fires_once_then_retires(app_ctx):
         db.db.session.query(ChatMessage).filter_by(room_uuid=chatroom.uuid).delete()
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
         db.db.session.commit()
+
+
+def test_set_reminder_records_origin_from_step(app_ctx):
+    from agents.config import ASSISTANT_UUID as _A
+    chatroom = _room()
+    room = chatroom.uuid
+    run = db.start_assistant_run(journal_id=uuid4(), room_uuid=room, agent_uuid=_A)
+    step = db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="observed", action="set_reminder")
+    tag = f"rem-{uuid4()}"
+    ctx = AssistantActionContext(
+        journal_id=None, room_uuid=room, agent_uuid=_A, step_index=0,
+        step_uuid=step.uuid,
+    )
+    obs = _action_set_reminder(ctx, {"text": tag, "when": "2026-06-29T09:00"})
+    try:
+        assert obs.ok is True
+        job = _jobs_with(tag)[0]
+        assert job.origin_run_uuid == run.uuid
+        assert job.origin_step_uuid == step.uuid
+    finally:
+        _cleanup_cron(tag)
+        db.db.session.query(db.AssistantRun).filter(db.AssistantRun.uuid == run.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
+
+
+def test_proposal_meta_attached_to_reply(app_ctx):
+    tag = f"rem-{uuid4()}"
+    chatroom = _room()
+    db.post_chat_message(chatroom.uuid, db.get_human_user().uuid, "remind me")
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent._decide_next_step = scripted_decisions(
+        AssistantStepDecision(reason="remind", action=AssistantActionName.SET_REMINDER,
+                              args={"text": tag, "when": "2026-06-29T09:00"}),
+        AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
+                              args={"message": "awaits your confirmation"}),
+    )
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        msgs = db.list_room_messages(chatroom.uuid)
+        reply = next(m for m in msgs
+                     if m["sender_type"] == "agent" and m["kind"] == "message"
+                     and m["meta"].get("write_intent"))
+        assert reply["meta"]["capability"] == "set_reminder"
+        assert reply["meta"]["step_link"].startswith("/assistant?id=")
+        assert "#step-" in reply["meta"]["step_link"]
+        # The intent the card points at really exists and is proposed.
+        assert reply["meta"]["intent_state"] == "proposed"
+    finally:
+        db.db.session.query(db.AssistantWriteIntent).filter(
+            db.AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.AssistantRun).filter(
+            db.AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()

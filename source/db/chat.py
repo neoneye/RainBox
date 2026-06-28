@@ -20,6 +20,7 @@ from db.models import (
     CRON_ROOM_UUID,
     CRON_SYSTEM_NAME,
     CRON_SYSTEM_UUID,
+    AssistantWriteIntent,
     ChatMessage,
     ChatUser,
     Chatroom,
@@ -559,9 +560,31 @@ def list_room_messages(room_uuid: UUID, after_id: int = 0) -> list[dict[str, Any
             .all()
         ):
             latest_feedback[muuid] = rating
+    # Live write-intent state for proposal messages (meta.write_intent set), so a
+    # card reflects a confirm/reject performed on /assistant. One batched lookup.
+    intent_state: dict[str, str] = {}
+    wanted: list[UUID] = []
+    for r in rows:
+        wid = (r.meta or {}).get("write_intent")
+        if wid:
+            try:
+                wanted.append(UUID(str(wid)))
+            except ValueError:
+                pass
+    if wanted:
+        for iu, st in (
+            db.session.query(AssistantWriteIntent.uuid, AssistantWriteIntent.state)
+            .filter(AssistantWriteIntent.uuid.in_(wanted))
+            .all()
+        ):
+            intent_state[str(iu)] = st
     out: list[dict[str, Any]] = []
     for r in rows:
         sender = users.get(r.sender_uuid)
+        meta = dict(r.meta or {})
+        wid = meta.get("write_intent")
+        if wid and str(wid) in intent_state:
+            meta["intent_state"] = intent_state[str(wid)]
         out.append(
             {
                 "id": r.id,
@@ -575,6 +598,7 @@ def list_room_messages(room_uuid: UUID, after_id: int = 0) -> list[dict[str, Any
                 "streaming": r.streaming,
                 "timestamp": r.created_at.strftime("%Y-%m-%d %H:%M"),
                 "feedback": latest_feedback.get(r.uuid),
+                "meta": meta,
             }
         )
     return out
@@ -639,6 +663,7 @@ def post_chat_message(
     content_type: str = "markdown",
     kind: str = "message",
     streaming: bool = False,
+    meta: dict | None = None,
 ) -> ChatMessage:
     """Insert a message and NOTIFY the chat channel in the same transaction, so
     every connected SSE stream is pushed the new message id on commit.
@@ -649,6 +674,9 @@ def post_chat_message(
     `streaming=True` marks a row whose `text` will grow in place via
     update_chat_message (token-by-token); the NOTIFY then carries the streaming
     flag + kind so browsers create the bubble in upsert mode.
+
+    `meta` carries an optional structured attachment (e.g. write-proposal card
+    data with write_intent, capability, step_link); defaults to {}.
 
     When `kind` is a *terminal* agent output (`"message"` or `"notice"` — a
     real reply or an operational notice such as "the model server is down"),
@@ -664,6 +692,7 @@ def post_chat_message(
         content_type=content_type,
         kind=kind,
         streaming=streaming,
+        meta=meta or {},
     )
     db.session.add(msg)
     db.session.flush()  # assign msg.id for the notify payload

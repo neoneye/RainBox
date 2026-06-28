@@ -231,6 +231,10 @@ CRON_TEMPLATE = """
     <div class="cjd-value" id="cjd-desc-value"></div>
     <button onclick="cronEditDescription()">Edit description</button>
   </div>
+  <div class="cjd-section" id="cjd-origin-section" hidden>
+    <div class="cjd-label">Origin</div>
+    <div class="cjd-value">created by assistant — <a id="cjd-origin-link" href="#">View step ↗</a></div>
+  </div>
   <div class="cjd-section">
     <div class="cjd-label">Health</div>
     <div class="cjd-value" id="cjd-health"></div>
