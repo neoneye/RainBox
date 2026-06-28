@@ -74,7 +74,11 @@ def test_real_execution_creates_one_shot_job(app_ctx):
         assert obs.ok is True
         job = _jobs_with(tag)[0]
         assert job.action_type == "message" and job.cron_expr == ""
-        assert job.next_run_at == datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
+        # A naive 'when' is interpreted as the host's LOCAL time, not UTC, so the
+        # stored fire instant is 09:00 local (astimezone() is DST-correct for the
+        # given date). The job is tagged "localtime" to match.
+        assert job.next_run_at == datetime(2026, 6, 27, 9, 0).astimezone()
+        assert job.timezone == "localtime"
         assert job.target == str(room)
         assert job.message.startswith("⏰ Reminder:")
     finally:

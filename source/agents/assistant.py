@@ -783,7 +783,11 @@ def _action_set_reminder(
             text=f"invalid 'when' (use ISO-8601, e.g. 2026-06-27T09:00): {raw_when!r}",
         )
     if fire_at.tzinfo is None:
-        fire_at = fire_at.replace(tzinfo=UTC)
+        # A naive 'when' is the operator's local wall-clock time, not UTC.
+        # astimezone() on a naive datetime presumes local time and is DST-correct
+        # for the given date; the model is also told the current local time so a
+        # relative offset ("in 10 minutes") lands in the same local basis.
+        fire_at = fire_at.astimezone()
     when_str = fire_at.isoformat()
     if ctx.dry_run:
         return AssistantObservation(
@@ -1104,7 +1108,11 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.SET_REMINDER: Capability(
         name=AssistantActionName.SET_REMINDER, family="cron",
         description=('schedule a reminder that messages you at a time; needs your '
-                     'confirmation. args: {"text": "...", "when": "ISO-8601 datetime"}'),
+                     'confirmation. args: {"text": "...", "when": "ISO-8601 datetime"}. '
+                     "Express 'when' in the operator's local time (use the current "
+                     "local time given above to resolve relative offsets like 'in 10 "
+                     'minutes\'); a bare datetime with no offset is read as local time, '
+                     'not UTC.'),
         summary="schedule a reminder",
         required_args=("text", "when"), action=_action_set_reminder,
         read=False, write=True, tier="confirm", dry_run=True,
@@ -1569,6 +1577,12 @@ class AssistantAgent(ModelGroupAgent):
         step_index: int,
     ) -> str:
         parts = []
+        # The current local time is the operator's clock — the model's only other
+        # time anchor is the transcript's (UTC) message timestamps, which made
+        # relative reminders ("in 10 minutes") resolve in UTC. Stating local time
+        # explicitly lets set_reminder land in the operator's zone.
+        now_local = datetime.now().astimezone()
+        parts.append(f"Current local time: {now_local.strftime('%Y-%m-%d %H:%M %Z')}.")
         # Profile (who the operator is) before skills (how to do the task).
         if self._profile_block:
             parts.append(self._profile_block)

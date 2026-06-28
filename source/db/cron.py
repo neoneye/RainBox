@@ -873,7 +873,7 @@ def cron_create_one_shot_message(
     to post); empty → the cron room."""
     job = CronJob(
         name=name or "Reminder", enabled=True, folder_uuid=folder_uuid,
-        cron_expr="", timezone="UTC", action_type="message",
+        cron_expr="", timezone="localtime", action_type="message",
         target=target, message=message, next_run_at=fire_at,
     )
     db.session.add(job)

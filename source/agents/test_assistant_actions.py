@@ -38,6 +38,25 @@ def test_read_action_descriptions_disambiguate_query_qa_from_kanban():
     assert "kanban_read" in ASSISTANT_SYSTEM_PROMPT.lower()
 
 
+def test_set_reminder_description_anchors_to_local_time():
+    """A reminder time with no explicit offset must be read as the operator's
+    local time, not UTC. The capability description tells the model so."""
+    d = CAPABILITIES[AssistantActionName.SET_REMINDER].description.lower()
+    assert "local" in d
+
+
+def test_user_prompt_includes_current_local_time():
+    """The model's only time anchor was the (UTC) transcript timestamps, so a
+    relative offset like 'in 10 minutes' landed in UTC. Inject the current local
+    time so both absolute and relative reminders resolve in the operator's zone."""
+    from datetime import datetime
+
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    prompt = agent._build_user_prompt(transcript="<user> hi", scratchpad=[], step_index=0)
+    assert datetime.now().astimezone().strftime("%Y-%m-%d") in prompt
+    assert "local time" in prompt.lower()
+
+
 def test_system_prompt_forbids_claiming_unperformed_writes():
     """Run 19: the model read a task then replied 'successfully moved' with no
     kanban_move_task step. The prompt must forbid claiming a write it didn't perform."""
