@@ -928,6 +928,22 @@ def correct_belief(
         commit=False,
     )
 
+    # 8b. An unrelated correction must not silently resolve a DIFFERENT same-scope
+    # conflict. When no matching candidate pre-exists, record_belief auto-supersedes
+    # a same-scope active rival (outcome "superseded"). `old` was already superseded
+    # above, so a "superseded" outcome here always means record_belief hit a
+    # DIFFERENT rival than the claim being corrected — refuse (mirrors the
+    # corroborated same-bucket guard below). Raising rolls back the whole
+    # transaction, so `old` is left active.
+    if (result.outcome == "superseded" and result.claim is not None
+            and result.claim.supersedes_uuid not in (None, old.uuid)):
+        rival = get_memory_claim(result.claim.supersedes_uuid)
+        detail = f" ({rival.text!r})" if rival is not None else ""
+        raise ValueError(
+            f"cannot correct to {new_text!r}: it conflicts with active "
+            f"memory {result.claim.supersedes_uuid}{detail}; resolve that conflict first"
+        )
+
     # 9 / 9b. Disposition: promote to active with conditional conflict-clear.
     # The replace has NOT been committed yet; if we raise here the uncommitted
     # supersede of `old` is rolled back by the caller.

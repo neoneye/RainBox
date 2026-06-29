@@ -810,3 +810,29 @@ def test_correct_belief_plain_candidate_corroboration(app_ctx):
         assert db.get_memory_claim(note_uuid).status == "superseded"
     finally:
         _cleanup(room)
+
+
+def test_correct_belief_refuses_unrelated_correction_hitting_active_rival(app_ctx):
+    """No-candidate symmetric case: correcting an UNRELATED claim to a value that
+    conflicts with a same-scope active rival must REFUSE (not auto-supersede the
+    rival), rolling back so neither the unrelated claim nor the rival changes."""
+    room = uuid4()
+    tea = record_belief(actor="explicit_human_command", scope="room", kind="preference",
+                        text="yan prefers tea", confidence=1.0, room_uuid=room,
+                        subject="yan", predicate="prefers", object="tea", evidence=EV)
+    note = record_belief(actor="explicit_human_command", scope="room", kind="fact",
+                         text="yan memo is stale", confidence=1.0, room_uuid=room,
+                         subject="yan", predicate="memo", object="stale", evidence=EV)
+    with pytest.raises(ValueError):
+        db.correct_belief(note.claim.uuid, "yan prefers coffee",
+                          actor="explicit_human_command",
+                          evidence={"provenance": "confirmed_by_user",
+                                    "source_type": "manual", "excerpt": "c"})
+    db.db.session.rollback()
+    assert db.get_memory_claim(note.claim.uuid).status == "active"   # not superseded
+    assert db.get_memory_claim(tea.claim.uuid).status == "active"    # rival untouched
+    active_coffee = (db.db.session.query(MemoryClaim)
+                     .filter_by(room_uuid=room, status="active")
+                     .filter(MemoryClaim.text.like("%coffee%")).count())
+    assert active_coffee == 0
+    _cleanup(room)
