@@ -318,11 +318,14 @@ turn-derived); nullable fields may be omitted.
 the `/memory` web layer has **no authenticated operator UUID** — `memory_api.py`
 already calls `reject_memory`/`correct` with only `{"provenance":
 "confirmed_by_user", "source_type": "manual"}` (`memory_api.py:209,228`). So
-`manual.created_by_uuid` is **nullable**, and instead an **`excerpt` (or
-`reason`) is required** on manual review actions so the audit trail still explains
-*why* the human acted. (If an authenticated multi-operator identity is introduced
-later, `created_by_uuid` can be promoted to required for `manual` without a
-schema change — it is already a column on `memory_evidence`.)
+`manual.created_by_uuid` is **nullable**, and instead an **`excerpt` is
+required** on manual review actions so the audit trail still explains *why* the
+human acted. `MemoryEvidence` has no `reason` column — any "reason" captured from
+the review UI is stored **in `excerpt`** (do not introduce an abstract `reason`
+field; either reuse `excerpt`, or add an explicit `metadata`/`reason` column if a
+structured field is later wanted). (If an authenticated multi-operator identity is
+introduced later, `created_by_uuid` can be promoted to required for `manual`
+without a schema change — it is already a column on `memory_evidence`.)
 
 `agents/assistant.py::_action_remember` is fixed to pass the triggering message
 UUID as `source_id` and its text as `excerpt` (it currently passes neither —
@@ -609,6 +612,17 @@ atomic transaction (§3.2). The candidate is the claim created in §3.3 step 3 w
 | **not_conflict** | `active` | unchanged (`active`) | cleared | `confirmed_by_user` ("not a conflict") on candidate | none | refresh candidate |
 | **scoped_exception** | `active`, scope narrowed (e.g. → `room`) | unchanged (`active`) | cleared | `confirmed_by_user` ("scoped exception") on candidate | none | refresh candidate (new scope) |
 
+**Resolution re-checks state under lock.** A candidate may have gone stale between
+proposal and resolution (its rival superseded, a new tombstone written, its status
+or scope changed, `conflicts_with_uuid` cleared by another resolver). Each
+resolution therefore runs inside one transaction that first takes the advisory
+lock (§3.2) and **re-fetches the candidate and rival and re-checks tombstones,
+status, scope, and `conflicts_with_uuid`** before acting. If the candidate is no
+longer an active conflict (e.g. already resolved, or rival gone), the resolution
+is a no-op returning the current state — it never activates/rejects/supersedes on
+stale assumptions. This is the resolution-path mirror of the `record_belief`
+atomicity guarantee.
+
 Notes:
 
 - A useful non-conflict **does** become `active` after review (the reviewer
@@ -759,8 +773,12 @@ New/extended tests (alongside existing `db/test_memory.py`, `memory/test_*`,
   (joined with "; ") instead of raising on a duplicate `excerpt` kwarg; the
   scoped-exception and override paths preserve the original excerpt.
 - **Manual identity:** a `manual` review action with no `created_by_uuid` is
-  accepted when it carries an `excerpt`/`reason`, and rejected when it carries
-  neither.
+  accepted when it carries an `excerpt` (where the UI "reason" is stored), and
+  rejected when it carries neither.
+- **Resolution re-check:** resolving a candidate whose rival was superseded (or
+  whose `conflicts_with_uuid` was already cleared) between proposal and resolution
+  is a no-op returning current state — no activate/reject/supersede on stale
+  assumptions.
 - **Fence:** memory text containing `</recalled_memory>` or "ignore previous
   instructions" is neutralized; output carries the wrapper; empty input → empty
   output; a forced sanitizer error yields a fenced placeholder, never raw body
