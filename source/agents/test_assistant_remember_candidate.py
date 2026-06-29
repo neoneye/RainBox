@@ -5,7 +5,7 @@ import pytest
 from uuid import uuid4
 
 import db
-from db import MemoryClaim
+from db import AssistantRun, MemoryClaim
 from db.models import MemoryEvidence
 
 
@@ -69,3 +69,52 @@ def test_action_remember_creates_candidate_with_evidence(app_ctx):
         )
     finally:
         _cleanup(room)
+
+
+def test_handle_wires_message_uuid_into_evidence_source_id(app_ctx):
+    """When handle() receives message_uuid in the payload (as chat_api enqueues
+    it), the evidence source_id on the created candidate must equal that UUID —
+    proving the field is no longer inert dead code."""
+    from agents.assistant import AssistantActionContext, AssistantActionName, AssistantAgent, AssistantStepDecision
+    from agents.assistant_fakes import scripted_decisions
+    from agents.config import ASSISTANT_UUID
+
+    def _agent():
+        return AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+
+    def _decision(action, **args):
+        return AssistantStepDecision(reason="step", action=action, args=args)
+
+    human = db.get_human_user()
+    assert human is not None
+    text = f"wired-test fact {uuid4().hex[:6]}"
+    message = uuid4()
+    room = db.create_chatroom(f"wire-test-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    try:
+        agent = _agent()
+        agent._decide_next_step = scripted_decisions(
+            _decision(AssistantActionName.REMEMBER, text=text),
+            _decision(AssistantActionName.REPLY, message="Noted."),
+        )
+        agent.handle(uuid4(), {"room_uuid": str(room.uuid), "message_uuid": str(message)})
+
+        claim = db.db.session.query(MemoryClaim).filter(
+            MemoryClaim.room_uuid == room.uuid,
+            MemoryClaim.text == text,
+        ).first()
+        assert claim is not None, "no MemoryClaim was created"
+
+        ev = db.db.session.query(MemoryEvidence).filter_by(memory_uuid=claim.uuid).first()
+        assert ev is not None, "no MemoryEvidence was created"
+        assert ev.source_id == str(message), (
+            f"expected source_id={message!s}, got {ev.source_id!r} — "
+            "message_uuid must be wired through handle() into the evidence"
+        )
+        assert ev.source_type == "chat_message"
+    finally:
+        _cleanup(room.uuid)
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == room.uuid
+        ).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.db.session.commit()

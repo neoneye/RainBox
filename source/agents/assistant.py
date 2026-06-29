@@ -1306,8 +1306,18 @@ class AssistantAgent(ModelGroupAgent):
             raise ValueError("assistant payload missing 'room_uuid'")
         return raw if isinstance(raw, UUID) else UUID(str(raw))
 
+    @staticmethod
+    def _message_uuid(payload: dict[str, Any]) -> UUID | None:
+        """Extract the triggering chat message UUID from the payload (present
+        when enqueued by a human chat post; absent for test/manual handles)."""
+        raw = payload.get("message_uuid")
+        if not raw:
+            return None
+        return raw if isinstance(raw, UUID) else UUID(str(raw))
+
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
+        message_uuid = self._message_uuid(payload)
         # Resolve the operator-effective capability set for this turn.
         self._caps = enabled_capabilities()
         self._steps = []
@@ -1429,6 +1439,7 @@ class AssistantAgent(ModelGroupAgent):
                     agent_uuid=self.agent_uuid,
                     step_index=step_index,
                     step_uuid=step_row.uuid if step_row is not None else None,
+                    message_uuid=message_uuid,
                 )
                 cap = self._caps[decision.action]
                 write_sig = (
