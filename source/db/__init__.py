@@ -169,11 +169,11 @@ def _backfill_memory_trust_keys() -> None:
         "SELECT uuid, subject, predicate, object, text FROM memory_claim "
         "WHERE key_version IS NULL")).fetchall()
     for r in rows:
-        sp, val = db.belief_keys(r.subject, r.predicate, r.object, r.text)
+        sp, val = belief_keys(r.subject, r.predicate, r.object, r.text)
         db.session.execute(sa.text(
             "UPDATE memory_claim SET subj_pred_key=:sp, value_key=:v, key_version=:kv "
             "WHERE uuid=:u"),
-            {"sp": sp, "v": val, "kv": db.KEY_VERSION, "u": str(r.uuid)})
+            {"sp": sp, "v": val, "kv": KEY_VERSION, "u": str(r.uuid)})
     db.session.commit()
 
 

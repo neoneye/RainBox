@@ -26,18 +26,32 @@ def create_memory_claim(
     object: str | None = None,
     supersedes_uuid: UUID | None = None,
     expires_at: datetime | None = None,
+    support_count: int | None = None,
+    epistemic_confidence: float | None = None,
+    retrieval_strength: float | None = None,
+    conflicts_with_uuid: UUID | None = None,
+    subj_pred_key: str | None = None,
+    value_key: str | None = None,
+    key_version: int | None = None,
+    commit: bool = True,
 ) -> MemoryClaim:
     """Insert a memory_claim row. Defaults: status=candidate, sensitivity=private.
-    Returns the persisted claim with id/uuid/created_at populated."""
+    With commit=False the row is flushed (uuid assigned) but not committed, so a
+    caller (record_belief) can compose several writes in one transaction."""
     claim = MemoryClaim(
         scope=scope, kind=kind, text=text, confidence=confidence,
         status=status, sensitivity=sensitivity,
         agent_uuid=agent_uuid, room_uuid=room_uuid,
         subject=subject, predicate=predicate, object=object,
         supersedes_uuid=supersedes_uuid, expires_at=expires_at,
+        support_count=support_count, epistemic_confidence=epistemic_confidence,
+        retrieval_strength=retrieval_strength, conflicts_with_uuid=conflicts_with_uuid,
+        subj_pred_key=subj_pred_key, value_key=value_key, key_version=key_version,
     )
     db.session.add(claim)
-    db.session.commit()
+    db.session.flush()
+    if commit:
+        db.session.commit()
     return claim
 
 
@@ -54,6 +68,7 @@ def add_memory_evidence(
     source_id: str | None = None,
     excerpt: str | None = None,
     created_by_uuid: UUID | None = None,
+    commit: bool = True,
 ) -> MemoryEvidence:
     """Attach a provenance row to a memory claim. Returns the persisted
     evidence with id/uuid/created_at populated."""
@@ -66,7 +81,9 @@ def add_memory_evidence(
         created_by_uuid=created_by_uuid,
     )
     db.session.add(ev)
-    db.session.commit()
+    db.session.flush()
+    if commit:
+        db.session.commit()
     return ev
 
 
@@ -171,6 +188,7 @@ def supersede_memory(
     old_uuid: UUID,
     new_claim_args: dict[str, Any],
     evidence_args: dict[str, Any],
+    commit: bool = True,
 ) -> MemoryClaim:
     """In one transaction: mark `old_uuid` as superseded, create a new
     `active` claim with `new_claim_args` (its supersedes_uuid wired to
@@ -187,7 +205,9 @@ def supersede_memory(
     db.session.flush()  # assigns new_claim.uuid
     ev = MemoryEvidence(memory_uuid=new_claim.uuid, **evidence_args)
     db.session.add(ev)
-    db.session.commit()
+    db.session.flush()
+    if commit:
+        db.session.commit()
     return new_claim
 
 
@@ -211,7 +231,7 @@ def activate_memory_claim(
     return claim
 
 
-def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any]) -> None:
+def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any], commit: bool = True) -> None:
     """Mark a claim `rejected` and attach an evidence row recording the
     rejection. Existing evidence is left untouched (the audit trail
     survives)."""
@@ -221,7 +241,9 @@ def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any]) -> None:
     claim.status = "rejected"
     ev = MemoryEvidence(memory_uuid=memory_uuid, **evidence_args)
     db.session.add(ev)
-    db.session.commit()
+    db.session.flush()
+    if commit:
+        db.session.commit()
 
 
 # --- memory review UI: edits, reactivate, detail, guards ----------------------
