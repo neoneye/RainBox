@@ -170,7 +170,7 @@ Important fields:
 
 `MemoryEvidence` is deliberately not a mutable provenance field on the claim. Multiple evidence rows can accumulate, so a model-inferred candidate can later receive user confirmation without erasing its origin.
 
-`MemoryEmbedding` is separate and unique by `(memory_uuid, model_name, text_hash)`. This lets embeddings be rebuilt without corrupting claims. Both active and candidate claims are embedded.
+`MemoryEmbedding` is separate and unique by `(memory_uuid, model_name, text_hash)`. This lets embeddings be rebuilt without corrupting claims. Live claims — active or candidate and non-expired — are embedded; expired claims are skipped/pruned.
 
 `MemoryRejectedValue` is the tombstone table. Its uniqueness key is `(scope, COALESCE(room_uuid), COALESCE(agent_uuid), subj_pred_key, value_key)` — so a room/agent tombstone is scoped to that room/agent, and only a `global` tombstone (null room/agent) applies across all rooms. It snapshots the rejected belief's text and a hit counter. Model writes against a tombstoned value are refused (hit count incremented); human writes clear an exact-scope tombstone or create a scoped exception over a global one.
 
@@ -309,9 +309,9 @@ The `/memory` review page surfaces conflict candidates (claims with a `conflicts
 
 Live for embedding purposes means **active or candidate, and non-expired**:
 
-- `refresh_claim_embedding` embeds a claim while it is `active` or `candidate`, and prunes its embedding row once it is neither. `prune_stale_embeddings` also drops embeddings for active/candidate claims whose `expires_at` has passed.
+- A single predicate `_claim_is_live` (active/candidate and non-expired) is shared by refresh, backfill, and prune. `refresh_claim_embedding` embeds a live claim and prunes its row once it is not live (different status, or expired). `backfill_memory_embeddings` covers every live claim; `prune_stale_embeddings` drops the rest, including active/candidate claims whose `expires_at` has passed.
 - Candidates are embedded immediately on creation to keep the index warm for when they are later activated.
-- Both active and candidate claims survive `prune_stale_embeddings` and `backfill_memory_embeddings`.
+- Live (non-expired active/candidate) claims survive `prune_stale_embeddings` and are (re)embedded by `backfill_memory_embeddings`; expired claims are skipped/pruned by both.
 
 Candidates are never retrieved into prompts — `hard_filtered_claims` filters to `active` only — so a candidate never enters the answer context before operator confirmation.
 

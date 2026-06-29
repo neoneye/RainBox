@@ -825,10 +825,13 @@ class MemoryEvidence(db.Model):
 
 
 class MemoryRejectedValue(db.Model):
-    """A tombstone: a (scope, subject/predicate, value) that was rejected or
-    superseded and must not silently return. Snapshots the rejected claim's text
-    and evidence metadata so a later suppression is explainable even if the
-    original claim/evidence rows change."""
+    """A tombstone: a (scope, room_uuid, agent_uuid, subject/predicate, value)
+    that was rejected or superseded and must not silently return. The
+    room_uuid/agent_uuid are part of the uniqueness key (via COALESCE in the
+    unique index), so a room/agent tombstone is scoped to that room/agent and
+    only a global tombstone (null room/agent) applies across all rooms. Snapshots
+    the rejected claim's text and evidence metadata so a later suppression is
+    explainable even if the original claim/evidence rows change."""
 
     __tablename__ = "memory_rejected_value"
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -327,16 +327,19 @@ contribute to vector similarity.
 
 Live for embedding purposes means **active or candidate, and non-expired**:
 
-- `refresh_claim_embedding` embeds a claim while it is `active` or `candidate`,
-  and prunes its embedding row once it is neither. The write path (remember,
-  confirm, correct, forget, assistant activate) calls this hook after each status
-  change.
+- `_claim_is_live(claim)` is the single liveness predicate (active/candidate and
+  non-expired) shared by all three functions below.
+- `refresh_claim_embedding` embeds a claim while it is live, and prunes its
+  embedding row once it is not (a different status, or an expiry in the past).
+  The write path (remember, confirm, correct, forget, assistant activate) calls
+  this hook after each status change.
 - `prune_stale_embeddings` is the lazy safety net: it drops embedding rows for
-  claims that are no longer `active`/`candidate` **or whose `expires_at` has
-  passed**, so a periodic `sync_memory_embeddings` reconciles any missed pruning.
-- `backfill_memory_embeddings` ensures an embedding for every `active` or
-  `candidate` claim, so a candidate survives a sync cycle without losing its
-  embedding.
+  claims that are no longer live (not `active`/`candidate`, **or whose
+  `expires_at` has passed**), so a periodic `sync_memory_embeddings` reconciles
+  any missed pruning.
+- `backfill_memory_embeddings` ensures an embedding for every live claim
+  (active/candidate and non-expired), so a candidate survives a sync cycle
+  without losing its embedding; expired claims are skipped to match prune.
 
 Candidates are embedded immediately on creation to keep the index warm: when a
 candidate is later activated, its embedding is already present and survives the
