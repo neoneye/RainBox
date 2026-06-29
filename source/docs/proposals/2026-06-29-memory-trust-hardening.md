@@ -53,13 +53,16 @@ further migration or interface break**.
 
 These policy forks were decided up front:
 
-- **Actor model — four actors, narrow override authority.** Writes are tagged
-  with one of four actors (§3.1). Only **`human_review_ui`** and the
-  **deterministic `explicit_human_command`** may override a tombstone or
-  auto-supersede a conflicting claim. **`assistant_interpreted`** and
-  **`model_inferred`** are candidate-by-default and can *never* clear a
-  tombstone. The trust boundary is *deterministic human input is trusted;
-  model-phrased text is not, regardless of who triggered it.*
+- **Actor model — narrow override authority.** Writes are tagged with one of five
+  actors (§3.1). The three human actors — **`human_review_ui`**, the
+  **deterministic `explicit_human_command`**, and the hash-verified confirm-tier
+  **`human_confirmed_write_intent`** — may override a tombstone (subject to the
+  scope rule, §5) or auto-supersede a conflicting claim.
+  **`assistant_interpreted`** and **`model_inferred`** are candidate-by-default
+  and can *never* clear a tombstone. The trust boundary is *deterministic or
+  explicitly-confirmed human input is trusted; model-phrased text is not,
+  regardless of who triggered it.* (`human_confirmed_write_intent` qualifies as
+  the latter because the operator approved the exact, hash-verified payload.)
 - **Conflict scope — scope honestly + light deterministic keying.** Tier 1 adds
   deterministic keying for common structured shapes (`X is Y`, `X prefers Y`,
   `X uses Y`, …) so conflict detection fires on real writes **without adding any
@@ -131,16 +134,27 @@ gives Tier 2's confidence logic one tested home.
 
 ```python
 ACTORS = (
-    "human_review_ui",        # operator acting in /memory — full trust
-    "explicit_human_command", # ops.py deterministically-parsed command — full trust
-    "assistant_interpreted",  # assistant `remember` action; model composed the text
-    "model_inferred",         # background/extracted inference
+    "human_review_ui",            # operator acting in /memory — full trust
+    "explicit_human_command",     # ops.py deterministically-parsed command — full trust
+    "human_confirmed_write_intent", # confirm-tier: operator approved an exact payload (hash-verified)
+    "assistant_interpreted",      # assistant `remember` action; model composed the text
+    "model_inferred",             # background/extracted inference
 )
-TOMBSTONE_OVERRIDE_ACTORS = {"human_review_ui", "explicit_human_command"}
+TOMBSTONE_OVERRIDE_ACTORS = {
+    "human_review_ui", "explicit_human_command", "human_confirmed_write_intent",
+}
 ```
 
 - **`human_review_ui`, `explicit_human_command`** — may override (clear) a
-  tombstone; a conflicting write auto-supersedes; default new status `active`.
+  tombstone (subject to the scope rule in §5); a conflicting write
+  auto-supersedes; default new status `active`.
+- **`human_confirmed_write_intent`** — the confirm-tier path
+  (`assistant_writes.py::execute_write_intent`): the claim text was model-proposed
+  but the operator approved the *exact* payload, which is hash-verified
+  (`assistant_writes.py:39`) before execution. Because the human approved the
+  literal payload, it carries override authority like the other human actors.
+  This is the path that activates conflict candidates (§6.3) and runs
+  `_action_activate_memory`.
 - **`assistant_interpreted`, `model_inferred`** — never clear a tombstone (a
   tombstone hit refuses the write); default new status `candidate`; a conflicting
   write lands as a `candidate` linked via `conflicts_with_uuid`.
@@ -151,6 +165,7 @@ Mapping of existing call sites:
 |---|---|---|
 | `memory/ops.py::_handle_remember` / `_handle_correct` (deterministic command parse) | `explicit_human_command` | none (stays active; can override) |
 | `webapp/memory_api.py` lifecycle actions | `human_review_ui` | none |
+| `agents/assistant.py::_action_activate_memory` (via `execute_write_intent`) | `human_confirmed_write_intent` | none (already confirm-tier); now drives §6.3 resolution |
 | `agents/assistant.py::_action_remember` | `assistant_interpreted` | **now candidate-by-default** (today it writes `active`); never clears a tombstone |
 | future model extraction | `model_inferred` | n/a (new) |
 
@@ -171,6 +186,15 @@ Fix: add `commit: bool = True` to those primitives (default preserves existing
 callers) and have `record_belief` call them with `commit=False`, using
 `session.flush()` to assign UUIDs, then a **single terminal `commit()`**. Any
 exception rolls the whole unit back.
+
+**Every mutating outcome commits exactly once before returning** — this includes
+the early-return branches: `corroborated` (evidence row + `++support_count`),
+`refused_tombstone` (the `hit_count`/`last_hit_at` increment), `superseded`,
+`conflict_candidate`, and `created`. The only non-committing outcome is a refusal
+with no mutation (there is none in the current design — even a tombstone refusal
+mutates `hit_count`). The hit-count increment is best-effort *within* the same
+transaction: if it raises, the whole unit rolls back and the write is still
+refused (a refusal is never converted into an accepted write — see §9).
 
 To close the check-then-write race between concurrent `model_inferred` writes,
 `record_belief` takes a Postgres **transaction advisory lock** keyed on a hash of
@@ -193,22 +217,33 @@ record_belief(actor, ...):
   validate_evidence_complete(evidence)                              # §3.4
   acquire advisory lock on (scope, room/agent, sp_key)
 
+  # Every branch below ends in exactly one commit() (or a rollback on exception).
+
   # 1. Dedupe (existing behavior, preserved)
   existing = find_equivalent_claim(text, scope=scope, room_uuid, agent_uuid,
                                    statuses=("active", "candidate"))
   if existing:
-      corroborate(existing, evidence)        # add evidence; ++support_count; nudge epistemic_confidence
-      return BeliefWriteResult("corroborated", existing)
+      corroborate(existing, evidence)        # add evidence (commit=False); ++support_count; nudge epistemic_confidence
+      commit; return BeliefWriteResult("corroborated", existing)
 
   # 2. Tombstone check (exact-scope then global fallback — §5)
   tomb = check_tombstone(scope, room_uuid, agent_uuid, sp_key, val_key)
   if tomb:
-      if actor in TOMBSTONE_OVERRIDE_ACTORS:
+      if actor in TOMBSTONE_OVERRIDE_ACTORS and may_clear(actor, scope, tomb):  # §5 scope rule
           clear_tombstone(tomb)              # human override; evidence notes it
           # fall through to create
+      elif actor in TOMBSTONE_OVERRIDE_ACTORS and tomb.scope == "global" and scope != "global":
+          # room/agent human write hits a GLOBAL tombstone: do not clear it.
+          # Create a scoped exception at the write's own scope (§5).
+          new = create_memory_claim(..., status="active",
+                                    scope=scope, commit=False)
+          add_memory_evidence(new.uuid, **evidence,
+                              excerpt="scoped exception over global tombstone", commit=False)
+          commit; return BeliefWriteResult("created", new,
+                                           reason="scoped exception; global tombstone left intact")
       else:
-          record_tombstone_hit(tomb)         # ++hit_count, last_hit_at
-          return BeliefWriteResult("refused_tombstone", None, reason=...)
+          record_tombstone_hit(tomb)         # ++hit_count, last_hit_at (commit=False)
+          commit; return BeliefWriteResult("refused_tombstone", None, reason=...)
 
   # 3. Conflict check (structured claims only; sp_key != "")
   if sp_key:
@@ -228,6 +263,7 @@ record_belief(actor, ...):
   # 4. Plain create
   status = "active" if actor in TOMBSTONE_OVERRIDE_ACTORS else "candidate"
   new = create_memory_claim(..., status=status, support_count=1,
+                            subj_pred_key=sp_key, value_key=val_key,    # §6.1 persisted
                             epistemic_confidence=confidence,
                             retrieval_strength=confidence, commit=False)
   add_memory_evidence(new.uuid, **evidence, commit=False)
@@ -235,17 +271,30 @@ record_belief(actor, ...):
 ```
 
 Embedding refresh stays with the callers (as today) and runs only on a
-non-refusal outcome; `record_belief` itself stays pure DB.
+non-refusal outcome; `record_belief` itself stays pure DB. `commit` is the single
+terminal `session.commit()`; an exception anywhere rolls the whole unit back.
 
 ### 3.4 Evidence completeness
 
-`record_belief` validates that `evidence` carries `provenance`, `source_type`,
-`excerpt`, and `created_by_uuid`, and `source_id` when the source has an
-identifier (e.g. a chat message). A missing required field is a programming error
-(raise `ValueError` at the call boundary — this is caller-supplied, not
-turn-derived). `agents/assistant.py::_action_remember` is fixed to pass the
-triggering message UUID as `source_id` and its text as `excerpt` (it currently
-passes neither — `assistant.py:342-345`).
+`record_belief` validates `evidence` against a per-`source_type` matrix. `provenance`
+and `source_type` are always required. A missing *required* field is a programming
+error (raise `ValueError` at the call boundary — this is caller-supplied, not
+turn-derived); nullable fields may be omitted.
+
+| `source_type` | `source_id` | `excerpt` | `created_by_uuid` | notes |
+|---|---|---|---|---|
+| `chat_message` | **required** (message uuid) | **required** | **required** | the common assistant/ops path |
+| `journal` | **required** (journal id) | **required** | **required** | |
+| `transcript` | **required** (transcript id) | **required** | nullable | bulk import may lack an actor |
+| `file` | **required** (path) | **required** | nullable | system import may lack an actor |
+| `api` | **required** | nullable | nullable | external caller |
+| `manual` | nullable (no external source) | nullable | **required** | a human in `/memory`; the human is the source |
+
+`agents/assistant.py::_action_remember` is fixed to pass the triggering message
+UUID as `source_id` and its text as `excerpt` (it currently passes neither —
+`assistant.py:342-345`), satisfying the `chat_message` row. The matrix is the
+single source of truth for both implementation and tests so no call site invents
+its own rule.
 
 ## 4. Recall fencing
 
@@ -370,6 +419,29 @@ performs an explicit two-step lookup:
 The first hit wins. This makes the "global tombstones apply across rooms"
 guarantee concrete rather than implied.
 
+### Override scope rule (a human may only clear a same-scope tombstone)
+
+A human actor's override clears a tombstone **only when the tombstone's scope
+equals the write's scope** (`may_clear(actor, scope, tomb)` ≡ `tomb.scope ==
+scope`). Otherwise a room-scoped `explicit_human_command` matching a `global`
+tombstone (via the fallback above) would silently un-block that wrong value for
+*every* room — a dangerous blast radius.
+
+Concretely:
+
+- **Same scope** (e.g. a global human action vs a global tombstone, or a room
+  action vs a room tombstone) → `clear_tombstone`, then create active.
+- **Narrower write vs a global tombstone** (room/agent human write hits a global
+  tombstone) → **leave the global tombstone intact** and create a *scoped
+  exception*: an active claim at the write's own (narrower) scope, with evidence
+  noting "scoped exception over global tombstone". The global block still applies
+  everywhere else.
+- To actually clear a global tombstone, the operator must perform an explicit
+  **global-scope** action (in `/memory`, or a global-scope command).
+
+This keeps operator sovereignty (you can always override) while making the blast
+radius of an override match the scope you acted at.
+
 ### Helpers (`db/memory.py`)
 
 ```python
@@ -422,6 +494,20 @@ tombstone applies across rooms (per the lookup order above).
 limitation, documented**: free-text claims get no conflict detection. LLM
 extraction for arbitrary text is Tier 3.
 
+**Keys are persisted on `memory_claim`.** `record_belief` writes the derived
+`subj_pred_key` and `value_key` into columns on the claim (not only on
+tombstones). Otherwise `active_claim_with_same_key_different_value` would have to
+scan and re-parse every active claim on every write, and the lookup could not be
+indexed. Persisting them keeps the conflict check a single indexed query and
+keeps the "no further migration for Tier 2/3" promise honest.
+
+**Parser-version risk.** Stored keys reflect the parser version that wrote them.
+If the deterministic shape table changes later, old claims carry stale keys.
+Mitigation mirrors the embedding model: a `key_version` stamp on the claim and a
+backfill/reindex path (analogous to `memory/embeddings.py` sync) that recomputes
+keys. Tier 1 ships `key_version = 1`; the reindex job itself is Tier 3 (only
+needed when the parser actually changes).
+
 ### 6.2 Conflict handling
 
 Within `record_belief` (§3.3, step 3), for structured claims (`sp_key != ""`):
@@ -443,16 +529,30 @@ New nullable column on `memory_claim`: `conflicts_with_uuid: UUID | None`.
 ### 6.3 Conflict resolution vocabulary (review UI)
 
 Activate/reject alone is too binary (Engram exposes a richer judgment set). Tier
-1 supports four resolutions on a `conflict_candidate`:
+1 supports four resolutions on a `conflict_candidate`, each performed by a human
+actor (`human_review_ui` or `human_confirmed_write_intent`). A resolution is one
+atomic transaction (§3.2). The candidate is the claim created in §3.3 step 3 with
+`status="candidate"` and `conflicts_with_uuid` set to the rival.
 
-- **supersede** — activate the candidate; it supersedes the rival and writes a
-  tombstone for the rival's old value.
-- **reject** — reject the candidate and tombstone its value (model can't
-  re-propose it).
-- **not_conflict** — clear `conflicts_with_uuid`; both claims stay (they were not
-  actually contradictory, e.g. different facets). No tombstone.
-- **scoped_exception** — keep both, narrowing the candidate to a more specific
-  scope (e.g. `room`) so it coexists with a broader rival. No tombstone.
+| Resolution | Candidate final status | Rival | `conflicts_with_uuid` | Evidence row | Tombstone | Embedding |
+|---|---|---|---|---|---|---|
+| **supersede** | `active` | → `superseded` | cleared | `confirmed_by_user` on candidate | rival's old value tombstoned | refresh candidate; prune rival |
+| **reject** | `rejected` | unchanged (`active`) | cleared | rejection evidence on candidate | **candidate's** value tombstoned | prune candidate |
+| **not_conflict** | `active` | unchanged (`active`) | cleared | `confirmed_by_user` ("not a conflict") on candidate | none | refresh candidate |
+| **scoped_exception** | `active`, scope narrowed (e.g. → `room`) | unchanged (`active`) | cleared | `confirmed_by_user` ("scoped exception") on candidate | none | refresh candidate (new scope) |
+
+Notes:
+
+- A useful non-conflict **does** become `active` after review (the reviewer
+  affirmed it); it does not linger as a candidate.
+- `not_conflict` keeps both as active facts (they were different facets, not
+  contradictions). `scoped_exception` keeps both but the candidate is narrowed so
+  it coexists with the broader rival rather than contradicting it.
+- `reject` is the only resolution that writes a tombstone (for the candidate's
+  own value, so the model can't re-propose it); `supersede` tombstones the
+  *rival's* old value as part of the supersession.
+- All four clear `conflicts_with_uuid` so a resolved candidate never re-appears
+  in the conflict queue.
 
 `not_conflict` and `scoped_exception` exist so reviewers don't encode nuance by
 wrongly rejecting useful candidates.
@@ -465,7 +565,13 @@ New `memory_claim` columns (besides `conflicts_with_uuid`):
 epistemic_confidence: Mapped[float | None] = mapped_column()  # "is it true"
 retrieval_strength:   Mapped[float | None] = mapped_column()  # "how reachable"
 support_count:        Mapped[int   | None] = mapped_column()  # corroboration count
+subj_pred_key:        Mapped[str   | None] = mapped_column(Text)  # §6.1 (indexed)
+value_key:            Mapped[str   | None] = mapped_column(Text)  # §6.1
+key_version:          Mapped[int   | None] = mapped_column()      # parser version that wrote the keys
 ```
+
+`subj_pred_key`/`value_key`/`key_version` make the conflict lookup a single
+indexed query (see §6.1) and carry the parser-version stamp for a future reindex.
 
 Tier 1 behavior:
 
@@ -495,6 +601,9 @@ _add_column_if_missing("memory_claim", "conflicts_with_uuid",   "conflicts_with_
 _add_column_if_missing("memory_claim", "epistemic_confidence",  "epistemic_confidence DOUBLE PRECISION")
 _add_column_if_missing("memory_claim", "retrieval_strength",    "retrieval_strength DOUBLE PRECISION")
 _add_column_if_missing("memory_claim", "support_count",         "support_count INTEGER")
+_add_column_if_missing("memory_claim", "subj_pred_key",         "subj_pred_key TEXT")
+_add_column_if_missing("memory_claim", "value_key",             "value_key TEXT")
+_add_column_if_missing("memory_claim", "key_version",           "key_version INTEGER")
 ```
 
 - One-time backfill (guarded so it runs only while NULLs exist, mirroring the
@@ -506,8 +615,15 @@ UPDATE memory_claim SET retrieval_strength   = confidence WHERE retrieval_streng
 UPDATE memory_claim SET support_count        = 1          WHERE support_count        IS NULL;
 ```
 
-- The unique functional index on `memory_rejected_value` (§5) is created with
-  `CREATE UNIQUE INDEX IF NOT EXISTS` after `create_all()`.
+  Key columns are backfilled by recomputing `belief_keys` over existing claims
+  (a one-time pass in Python, since the parser is Python, not SQL), stamping
+  `key_version = 1`. Claims whose text yields no structured shape get
+  `subj_pred_key = ''`.
+
+- Indexes created after `create_all()` with `CREATE ... IF NOT EXISTS`:
+  - the unique functional index on `memory_rejected_value` (§5);
+  - `memory_claim_conflict_key` on `memory_claim (scope, room_uuid, agent_uuid,
+    subj_pred_key)` filtered to `status = 'active'` (the conflict lookup).
 
 Columns are left nullable (no `NOT NULL DEFAULT`) so the add takes no table
 rewrite / exclusive lock; the backfill fills history, and `record_belief` always
@@ -527,12 +643,12 @@ populates them on new rows. Idempotent on re-run.
 
 | File | Change |
 |---|---|
-| `db/models.py` | `MemoryRejectedValue` model (with snapshot fields); `memory_claim` columns `conflicts_with_uuid`, `epistemic_confidence`, `retrieval_strength`, `support_count` |
-| `db/__init__.py` | new table via `create_all`; four `_add_column_if_missing`; guarded backfill; unique functional index |
-| `db/memory.py` | `record_belief` + `BeliefWriteResult`; `belief_keys` (deterministic keying); `write_tombstone`/`check_tombstone` (two-step lookup)/`clear_tombstone`/`record_tombstone_hit`/`list_tombstones_with_hits`; `active_claim_with_same_key_different_value`; advisory-lock helper; `commit=False` params on `create_memory_claim`/`add_memory_evidence`/`supersede_memory`/`reject_memory`; tombstone writes (with snapshot) in `reject_memory`/`supersede_memory`; conflict-aware activate + `not_conflict`/`scoped_exception` |
+| `db/models.py` | `MemoryRejectedValue` model (with snapshot fields); `memory_claim` columns `conflicts_with_uuid`, `epistemic_confidence`, `retrieval_strength`, `support_count`, `subj_pred_key`, `value_key`, `key_version` |
+| `db/__init__.py` | new table via `create_all`; seven `_add_column_if_missing`; guarded backfill (incl. Python key recompute); unique functional index + conflict index |
+| `db/memory.py` | `record_belief` + `BeliefWriteResult` (single terminal commit per outcome); `belief_keys` (deterministic keying, persisted on the claim); `write_tombstone`/`check_tombstone` (two-step lookup + `may_clear` scope rule)/`clear_tombstone`/`record_tombstone_hit`/`list_tombstones_with_hits`; `active_claim_with_same_key_different_value` (indexed query on persisted keys); advisory-lock helper; per-`source_type` evidence validation; `commit=False` params on `create_memory_claim`/`add_memory_evidence`/`supersede_memory`/`reject_memory`; tombstone writes (with snapshot) in `reject_memory`/`supersede_memory`; the four conflict resolutions |
 | `memory/retrieval.py` | `fence_recalled_memory` + fail-closed neutralization |
 | `agents/chat_context.py` | wrap assembled block in the fence |
-| `agents/assistant.py` | `_action_remember` → `record_belief(actor="assistant_interpreted")` (now candidate-by-default); pass source message UUID + excerpt as evidence; fence `query_memory` observation |
+| `agents/assistant.py` | `_action_remember` → `record_belief(actor="assistant_interpreted")` (now candidate-by-default); pass source message UUID + excerpt as evidence; `_action_activate_memory` carries `human_confirmed_write_intent` and drives §6.3 resolution; fence `query_memory` observation |
 | `memory/ops.py` | `_handle_remember`/`_handle_correct` → `record_belief(actor="explicit_human_command")` |
 | `webapp/memory_api.py`, `static/memory.js`, `webapp/memory_views.py` | `human_review_ui` writes; surface conflict candidates (`conflicts_with` link) + the four resolutions; surface tombstones with `hit_count > 0` |
 
@@ -542,13 +658,26 @@ New/extended tests (alongside existing `db/test_memory.py`, `memory/test_*`,
 `agents/test_*`, `webapp/test_memory_api.py`):
 
 - **Atomicity:** a forced failure mid-`record_belief` (e.g. evidence insert
-  raises) leaves no claim and no tombstone (full rollback). The advisory lock is
+  raises) leaves no claim and no tombstone (full rollback). Every mutating
+  outcome (`corroborated`, `refused_tombstone`, `superseded`,
+  `conflict_candidate`, `created`) commits exactly once. The advisory lock is
   taken and released within the transaction.
-- **Actor matrix:** for each of the four actors × {plain, tombstoned, conflict}
-  inputs, assert the outcome and resulting status — only `human_review_ui` /
-  `explicit_human_command` override tombstones and auto-supersede;
-  `assistant_interpreted` is candidate-by-default and is refused by a tombstone;
-  `model_inferred` likewise.
+- **Actor matrix:** for each of the five actors × {plain, tombstoned, conflict}
+  inputs, assert the outcome and resulting status — `human_review_ui` /
+  `explicit_human_command` / `human_confirmed_write_intent` override tombstones
+  (subject to the scope rule) and auto-supersede; `assistant_interpreted` is
+  candidate-by-default and is refused by a tombstone; `model_inferred` likewise.
+- **Override scope rule:** a same-scope human override clears the tombstone; a
+  room/agent human write against a *global* tombstone creates a scoped exception
+  and leaves the global tombstone intact; only a global-scope human action clears
+  a global tombstone.
+- **Conflict resolutions:** for each of `supersede` / `reject` / `not_conflict` /
+  `scoped_exception`, assert candidate final status, rival status,
+  `conflicts_with_uuid` cleared, evidence row, tombstone presence/absence, and
+  embedding refresh/prune per the §6.3 table.
+- **Persisted keys:** `record_belief` writes `subj_pred_key`/`value_key`/
+  `key_version`; `active_claim_with_same_key_different_value` finds a rival via
+  the indexed columns without re-parsing.
 - **Fence:** memory text containing `</recalled_memory>` or "ignore previous
   instructions" is neutralized; output carries the wrapper; empty input → empty
   output; a forced sanitizer error yields a fenced placeholder, never raw body
@@ -567,8 +696,10 @@ New/extended tests (alongside existing `db/test_memory.py`, `memory/test_*`,
   written); assistant/model conflicting structured value → `candidate` with
   `conflicts_with_uuid`, rival stays active; `not_conflict` clears the link
   without a tombstone; `scoped_exception` narrows scope and keeps both.
-- **Evidence completeness:** `record_belief` rejects an incomplete `evidence`
-  dict; `_action_remember` now writes `source_id` + `excerpt`.
+- **Evidence completeness:** the per-`source_type` matrix is enforced —
+  `record_belief` rejects a `chat_message` evidence dict missing `source_id`,
+  `excerpt`, or `created_by_uuid`, but accepts a `manual` dict without
+  `source_id`; `_action_remember` now writes `source_id` + `excerpt`.
 - **record_belief / support:** dedupe still corroborates an equivalent live
   claim; corroboration `++support_count` and bumps `epistemic_confidence`; create
   sets all new columns.
