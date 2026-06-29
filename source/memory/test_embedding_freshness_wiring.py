@@ -110,16 +110,16 @@ def test_assistant_activate_memory_embeds_the_claim(app_ctx):
         db.db.session.commit()
 
 
-def test_assistant_remember_embeds_the_active_claim(app_ctx):
-    """An explicit `remember` lands an active claim AND embeds it immediately, so
-    query_memory can retrieve it without an activate step."""
+def test_assistant_remember_embeds_the_candidate_claim(app_ctx):
+    """An assistant `remember` lands a *candidate* claim AND embeds it immediately,
+    so query_memory can retrieve it before the operator activates it."""
     ctx = AssistantActionContext(
         journal_id=None, room_uuid=uuid4(), agent_uuid=uuid4(), step_index=0)
     text = f"freshness remember {uuid4()}"
     try:
         obs = _action_remember(ctx, {"text": text})
         claim = db.get_memory_claim(UUID(obs.data["memory_uuid"]))
-        assert claim.status == "active"
+        assert claim.status == "candidate"
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
     finally:
         db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete(

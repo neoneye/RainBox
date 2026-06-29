@@ -217,18 +217,16 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
         refresh_claim_embedding(new_claim)
         refresh_claim_embedding(old)
         return f"Corrected: {old.text} → {new_text}"
-    # Fall back to explicit supersede for free-text claims (no structured key)
-    # where record_belief could not detect the conflict automatically.
-    new_claim = db.supersede_memory(
-        old.uuid,
-        new_claim_args=dict(
-            scope=old.scope, kind=old.kind, text=new_text,
-            confidence=1.0, sensitivity=old.sensitivity,
-            agent_uuid=old.agent_uuid, room_uuid=old.room_uuid,
-            subject=old.subject, predicate=old.predicate, object=old.object,
-        ),
-        evidence_args=evidence,
-    )
+    # For free-text claims (no structured key), record_belief created the new
+    # claim but could not auto-detect the old one as the rival. Supersede the
+    # old claim in-place and link the already-created new claim to it. This
+    # avoids calling supersede_memory() which would create a second new claim.
+    new_claim = result.claim
+    if new_claim is not None:
+        old.status = "superseded"
+        db.write_tombstone(old, reason="superseded", commit=False)
+        new_claim.supersedes_uuid = old.uuid
+        db.db.session.commit()
     # New active claim gets a fresh embedding; the superseded old one is pruned.
     refresh_claim_embedding(new_claim)
     refresh_claim_embedding(old)

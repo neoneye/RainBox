@@ -96,9 +96,11 @@ def refresh_claim_embedding(
 ) -> None:
     """Keep one claim's embedding in sync with its current status — the hook for
     the memory write path. Embed (or re-embed on text change) while the claim is
-    active; prune its embedding once it is no longer active. Best-effort: the
-    underlying embed/delete already swallow their own failures."""
-    if claim.status == "active":
+    active or candidate (candidates are embedded immediately so query_memory can
+    retrieve them before operator activation); prune its embedding once it is
+    neither active nor candidate. Best-effort: the underlying embed/delete already
+    swallow their own failures."""
+    if claim.status in ("active", "candidate"):
         ensure_memory_embedding(claim, embed_fn=embed_fn)
     else:
         db.delete_memory_embeddings(claim.uuid)
