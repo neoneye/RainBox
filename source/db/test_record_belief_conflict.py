@@ -129,3 +129,167 @@ def test_supersede_memory_writes_tombstone_for_old_value(app_ctx):
     tomb = db.check_tombstone("room", room, None, "frank\x1fprefers", "water")
     assert tomb is not None, "supersede_memory must tombstone the old value"
     _cleanup(room)
+
+
+# ---------------------------------------------------------------------------
+# correct_belief: P1b — keys must be derived from new_text, NOT copied from old
+# ---------------------------------------------------------------------------
+
+def _cleanup_correct(uuids):
+    """Delete all claims+evidence by uuid, then tombstones by created_from_uuid."""
+    db.db.session.query(MemoryEvidence).filter(
+        MemoryEvidence.memory_uuid.in_(uuids)
+    ).delete(synchronize_session=False)
+    db.db.session.query(MemoryClaim).filter(
+        MemoryClaim.uuid.in_(uuids)
+    ).delete(synchronize_session=False)
+    db.db.session.query(MemoryRejectedValue).filter(
+        MemoryRejectedValue.created_from_uuid.in_(uuids)
+    ).delete(synchronize_session=False)
+    db.db.session.commit()
+
+
+def test_correct_belief_keys_derived_from_new_text(app_ctx):
+    """P1b: correct_belief must derive value_key/subj_pred_key from new_text,
+    not copy them from the old claim. Old='probe-X is red', new='probe-X is blue'
+    => new claim's value_key must end with 'blue', NOT 'red'."""
+    from db.memory import correct_belief, KEY_VERSION
+    marker = f"probe-{uuid4().hex[:8]}"
+    text_old = f"{marker} is red"
+    text_new = f"{marker} is blue"
+    evidence = {"provenance": "confirmed_by_user", "source_type": "manual",
+                "excerpt": "test correction"}
+
+    old = db.create_memory_claim(
+        scope="global", kind="fact", text=text_old,
+        confidence=1.0, status="active", sensitivity="private",
+        subj_pred_key=marker + "\x1fis", value_key="red", key_version=KEY_VERSION,
+    )
+    try:
+        new = correct_belief(
+            old.uuid, text_new,
+            actor="explicit_human_command",
+            evidence=evidence,
+        )
+        db.db.session.expire_all()
+
+        # New claim must be active with correct lineage
+        assert new.status == "active", f"Expected active, got {new.status!r}"
+        assert new.supersedes_uuid == old.uuid, "new.supersedes_uuid must point to old"
+
+        # Old must be superseded
+        old_reloaded = db.get_memory_claim(old.uuid)
+        assert old_reloaded.status == "superseded", \
+            f"Expected old to be superseded, got {old_reloaded.status!r}"
+
+        # Keys must be derived from new_text ('blue'), not copied from old ('red')
+        assert new.value_key == "blue", \
+            f"value_key must be 'blue' (from new_text), got {new.value_key!r}"
+        assert new.subj_pred_key and "\x1fis" in new.subj_pred_key, \
+            f"subj_pred_key must contain 'is', got {new.subj_pred_key!r}"
+        assert new.key_version == KEY_VERSION, \
+            f"key_version must be {KEY_VERSION}, got {new.key_version!r}"
+
+        # Structured columns must match new_text
+        assert new.object == "blue", \
+            f"object must be 'blue' (from new_text), got {new.object!r}"
+
+    finally:
+        uuids = [old.uuid]
+        new_uuid = getattr(new, "uuid", None) if "new" in dir() else None
+        if new_uuid:
+            uuids.append(new_uuid)
+        _cleanup_correct(uuids)
+
+
+def test_correct_belief_atomicity_one_active_claim(app_ctx):
+    """correct_belief must leave exactly ONE active claim with new_text and the old
+    superseded — no duplicate active claims."""
+    from db.memory import correct_belief, KEY_VERSION
+    marker = f"atomic-{uuid4().hex[:8]}"
+    text_old = f"{marker} prefers cats"
+    text_new = f"{marker} prefers dogs"
+    evidence = {"provenance": "confirmed_by_user", "source_type": "manual",
+                "excerpt": "atomicity test"}
+
+    old = db.create_memory_claim(
+        scope="global", kind="fact", text=text_old,
+        confidence=1.0, status="active", sensitivity="private",
+        subj_pred_key=marker + "\x1fprefers", value_key="cats", key_version=KEY_VERSION,
+    )
+    try:
+        new = correct_belief(
+            old.uuid, text_new,
+            actor="explicit_human_command",
+            evidence=evidence,
+        )
+        db.db.session.expire_all()
+
+        # Exactly one active claim with new_text
+        active_new = (
+            db.db.session.query(MemoryClaim)
+            .filter(MemoryClaim.text == text_new, MemoryClaim.status == "active")
+            .all()
+        )
+        assert len(active_new) == 1, \
+            f"Expected exactly 1 active claim with new text, found {len(active_new)}"
+
+        # Old must be superseded (not active, not deleted)
+        old_reloaded = db.get_memory_claim(old.uuid)
+        assert old_reloaded is not None
+        assert old_reloaded.status == "superseded"
+
+    finally:
+        uuids = [old.uuid]
+        new_uuid = getattr(new, "uuid", None) if "new" in dir() else None
+        if new_uuid:
+            uuids.append(new_uuid)
+        _cleanup_correct(uuids)
+
+
+def test_correct_belief_bad_actor_raises(app_ctx):
+    """correct_belief with a non-override actor raises ValueError."""
+    from db.memory import correct_belief, KEY_VERSION
+    marker = f"badactor-{uuid4().hex[:8]}"
+    old = db.create_memory_claim(
+        scope="global", kind="fact", text=f"{marker} is red",
+        confidence=1.0, status="active", sensitivity="private",
+    )
+    try:
+        with pytest.raises(ValueError, match="override"):
+            correct_belief(
+                old.uuid, f"{marker} is blue",
+                actor="model_inferred",
+                evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                          "excerpt": "test"},
+            )
+    finally:
+        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=old.uuid).delete()
+        db.db.session.query(MemoryClaim).filter_by(uuid=old.uuid).delete()
+        db.db.session.commit()
+
+
+def test_correct_belief_stale_guard_raises(app_ctx):
+    """correct_belief raises StaleWriteError when expected_updated_at mismatches."""
+    from datetime import timedelta
+    from db.memory import correct_belief, KEY_VERSION
+    from db import StaleWriteError
+    marker = f"stale-{uuid4().hex[:8]}"
+    old = db.create_memory_claim(
+        scope="global", kind="fact", text=f"{marker} is red",
+        confidence=1.0, status="active", sensitivity="private",
+    )
+    stale_time = old.updated_at - timedelta(days=1)
+    try:
+        with pytest.raises(StaleWriteError):
+            correct_belief(
+                old.uuid, f"{marker} is blue",
+                actor="explicit_human_command",
+                evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                          "excerpt": "test"},
+                expected_updated_at=stale_time,
+            )
+    finally:
+        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=old.uuid).delete()
+        db.db.session.query(MemoryClaim).filter_by(uuid=old.uuid).delete()
+        db.db.session.commit()

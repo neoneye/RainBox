@@ -238,17 +238,14 @@ def _dispatch_action(claim, action, data, expected) -> dict:
         new_text = str(data.get("new_text", "")).strip()
         if not new_text:
             raise ValueError("correct needs new_text")
-        db.assert_claim_unchanged(claim, expected)
-        new = db.supersede_memory(
-            cu,
-            {"scope": claim.scope, "kind": claim.kind, "text": new_text,
-             "confidence": claim.confidence, "sensitivity": claim.sensitivity,
-             "subject": claim.subject, "predicate": claim.predicate,
-             "object": claim.object, "agent_uuid": claim.agent_uuid,
-             "room_uuid": claim.room_uuid},
-            {"provenance": "confirmed_by_user", "source_type": "manual"})
+        new = db.correct_belief(
+            cu, new_text, actor="human_review_ui",
+            evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                      "excerpt": f"corrected via /memory to: {new_text}"},
+            expected_updated_at=expected,
+        )
         _refresh_embedding(new)
-        _refresh_embedding(db.get_memory_claim(cu))  # old is now superseded -> prune
+        _refresh_embedding(db.get_memory_claim(cu))  # old now superseded -> prune
         return {"new_uuid": str(new.uuid)}
     if action == "sensitivity":
         db.set_memory_sensitivity(cu, str(data.get("sensitivity", "")),

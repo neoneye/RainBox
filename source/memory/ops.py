@@ -195,72 +195,19 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
             f"before I correct one."
         )
     old = matches[0]
-    evidence = dict(
-        provenance="confirmed_by_user",
-        source_type="manual",
-        source_id=_human_message_uuid(ctx),
-        excerpt=ctx.query,
-    )
-    # Try the governed path first: for keyed (structured) claims, record_belief
-    # will detect the same-key conflict and auto-supersede the old claim.
-    result = db.record_belief(
-        actor="explicit_human_command",
-        scope=old.scope, kind=old.kind, text=new_text,
-        confidence=1.0, sensitivity=old.sensitivity,
-        agent_uuid=old.agent_uuid, room_uuid=old.room_uuid,
-        subject=old.subject, predicate=old.predicate, object=old.object,
-        evidence=evidence,
-    )
-    if result.outcome == "superseded":
-        # record_belief auto-superseded the rival; both embeddings need refresh.
-        new_claim = result.claim
-        refresh_claim_embedding(new_claim)
-        refresh_claim_embedding(old)
-        return f"Corrected: {old.text} → {new_text}"
-    # record_belief already committed new_claim (or a pre-existing candidate it
-    # corroborated). It could not auto-detect the old claim as the rival. We
-    # must now supersede the old claim AND ensure new_claim is active, all in
-    # one commit, so the two mutations are atomic.
-    new_claim = result.claim
-    if new_claim is None:
-        # record_belief refused (e.g. the new value was previously rejected via
-        # a tombstone). Leave the original claim untouched and report why.
-        return (
-            f"Could not correct {old_text!r} → {new_text!r}: "
-            f"the new value was previously rejected and cannot be re-added. "
-            f"({result.reason})"
-        )
-    # record_belief already committed new_claim. The try/except below wraps
-    # ONLY the old-claim supersession + new_claim activation. On failure we
-    # rollback() those changes (leaving old active and new_claim as
-    # record_belief left it), so the original A is never lost.
     old_text_snapshot = old.text  # capture before session state may change
-    needs_activation = new_claim.status != "active"
-    try:
-        if needs_activation:
-            # An explicit human correction overrides any conflict-candidate state.
-            new_claim.status = "active"
-            new_claim.conflicts_with_uuid = None
-            db.add_memory_evidence(
-                memory_uuid=new_claim.uuid,
-                provenance="confirmed_by_user",
-                source_type="manual",
-                excerpt="activated by correct command",
-                commit=False,
-            )
-        old.status = "superseded"
-        db.write_tombstone(old, reason="superseded", commit=False)
-        new_claim.supersedes_uuid = old.uuid
-        db.db.session.commit()
-    except Exception:
-        db.db.session.rollback()
-        return (
-            f"Could not complete correction of {old_text!r} → {new_text!r}: "
-            f"an error occurred while superseding the original claim; no changes were saved."
-        )
-    # New active claim gets a fresh embedding; the superseded old one is pruned.
-    refresh_claim_embedding(new_claim)
-    refresh_claim_embedding(old)
+    new = db.correct_belief(
+        old.uuid, new_text,
+        actor="explicit_human_command",
+        evidence={
+            "provenance": "confirmed_by_user",
+            "source_type": "manual",
+            "source_id": _human_message_uuid(ctx),
+            "excerpt": ctx.query,
+        },
+    )
+    refresh_claim_embedding(new)
+    refresh_claim_embedding(db.get_memory_claim(old.uuid))  # now superseded -> prune
     return f"Corrected: {old_text_snapshot} → {new_text}"
 
 

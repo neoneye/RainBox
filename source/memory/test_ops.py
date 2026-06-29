@@ -484,42 +484,71 @@ def test_handle_used_reports_memories_from_most_recent_debug_memory(
         _cleanup_by_subject(fresh_subject)
 
 
-# --- Finding D: _handle_correct None guard -----------------------------------
+# --- Finding D: _handle_correct clears tombstone and always corrects -----------
 
 
-def test_correct_refused_tombstone_returns_message_without_crash(app_ctx, fresh_subject):
-    """When record_belief returns refused_tombstone (new_claim=None), _handle_correct
-    must NOT crash with AttributeError and must return a sensible message without
-    superseding the original claim."""
-    import memory.embeddings as embeddings
-    from unittest.mock import patch
+def test_correct_clears_exact_tombstone_and_succeeds(app_ctx, fresh_subject):
+    """correct_belief clears an exact-scope tombstone on the new value and always
+    produces an active replacement. (The old 'refused_tombstone' fallback was
+    removed when _handle_correct was routed through correct_belief.)"""
+    from db.models import MemoryRejectedValue
+    from db.memory import write_tombstone
+
+    marker = f"tombclr-{uuid4().hex[:8]}"
+    old_text = f"{marker} is old"
+    new_text = f"{marker} is new"
 
     # Create the original claim to be "corrected from".
     old = db.create_memory_claim(
-        scope="global", kind="fact", text="correct refused old value",
+        scope="global", kind="fact", text=old_text,
         confidence=1.0, status="active", sensitivity="private",
         subject=fresh_subject,
     )
-    new_text = f"correct refused new value {uuid4()}"
-    # Simulate record_belief returning refused_tombstone with claim=None.
-    from db.memory import BeliefWriteResult
 
-    with patch("memory.ops.db.record_belief") as mock_rb:
-        mock_rb.return_value = BeliefWriteResult("refused_tombstone", None, reason="value previously rejected")
-        cmd = parse_memory_command(f"correct that correct refused old value -> {new_text}")
-        ctx = _ctx(query=f"correct that correct refused old value -> {new_text}")
-        # Must not raise AttributeError or any exception.
-        reply = handle_memory_command(ctx, cmd)
-
-    # Original claim must NOT have been superseded.
+    # Write a tombstone for the NEW value so it would normally block record_belief.
+    # correct_belief must clear it and proceed.
+    placeholder = db.create_memory_claim(
+        scope="global", kind="fact", text=new_text,
+        confidence=1.0, status="rejected", sensitivity="private",
+        subject=fresh_subject,
+    )
+    write_tombstone(placeholder, reason="rejected", commit=True)
     db.db.session.expire_all()
+
+    cmd = parse_memory_command(f"correct that {old_text} -> {new_text}")
+    ctx = _ctx(query=f"correct that {old_text} -> {new_text}")
+    reply = handle_memory_command(ctx, cmd)
+
+    db.db.session.expire_all()
+    # Original claim must be superseded.
     old_reloaded = db.get_memory_claim(old.uuid)
     assert old_reloaded is not None
-    assert old_reloaded.status == "active", \
-        f"original claim was wrongly superseded; status={old_reloaded.status!r}"
-    # Reply must be a sensible non-empty string mentioning rejection.
-    assert reply and len(reply) > 5
-    _cleanup_by_subject(fresh_subject)
+    assert old_reloaded.status == "superseded", \
+        f"original claim must be superseded; status={old_reloaded.status!r}"
+    # Reply must mention 'Corrected'.
+    assert "Corrected" in reply, f"Expected 'Corrected' in reply, got {reply!r}"
+
+    # Capture uuids before cleanup (avoid accessing deleted ORM objects)
+    old_uuid = old.uuid
+    placeholder_uuid = placeholder.uuid
+
+    # Clean up: tombstones by created_from_uuid first, then evidence, then claims
+    db.db.session.query(MemoryRejectedValue).filter(
+        MemoryRejectedValue.created_from_uuid.in_([old_uuid, placeholder_uuid])
+    ).delete(synchronize_session=False)
+    # Collect all claim uuids with these texts (all statuses)
+    all_uuids = [
+        r.uuid for r in db.db.session.query(MemoryClaim).filter(
+            MemoryClaim.text.in_([old_text, new_text])
+        ).all()
+    ]
+    db.db.session.query(MemoryEvidence).filter(
+        MemoryEvidence.memory_uuid.in_(all_uuids)
+    ).delete(synchronize_session=False)
+    db.db.session.query(MemoryClaim).filter(
+        MemoryClaim.uuid.in_(all_uuids)
+    ).delete(synchronize_session=False)
+    db.db.session.commit()
 
 
 def test_handle_used_reports_no_history_when_no_debug_row(app_ctx):

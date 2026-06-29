@@ -158,6 +158,54 @@ def test_correct_supersedes(client):
         _cleanup(c.uuid, *( [new_uuid] if new_uuid else []))
 
 
+def test_correct_produces_keyed_claim(client):
+    """POST /memory/api/claims/<uuid>/correct via UI must produce a keyed claim
+    (non-empty subj_pred_key/value_key/key_version), NOT an unkeyed one (P1b via UI)."""
+    from db.memory import KEY_VERSION
+    marker = f"ui-correct-{uuid4().hex[:8]}"
+    # Create a structured claim via record_belief so it gets proper keys
+    result = db.record_belief(
+        actor="explicit_human_command", scope="global", kind="fact",
+        text=f"{marker} is red", confidence=1.0, sensitivity="private",
+        evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                  "excerpt": "setup"},
+    )
+    c = result.claim
+    new_uuid = None
+    try:
+        r = _post(client, c.uuid, "correct",
+                  new_text=f"{marker} is blue",
+                  expected_updated_at=c.updated_at.isoformat())
+        assert r.status_code == 200
+        new_uuid = r.get_json()["new_uuid"]
+        db.db.session.expire_all()
+        new = db.get_memory_claim(new_uuid)
+        assert new is not None
+        assert new.status == "active"
+        assert new.subj_pred_key, \
+            f"subj_pred_key must be non-empty (keyed); got {new.subj_pred_key!r}"
+        assert new.value_key == "blue", \
+            f"value_key must be 'blue' (derived from new text); got {new.value_key!r}"
+        assert new.key_version == KEY_VERSION, \
+            f"key_version must be {KEY_VERSION}; got {new.key_version!r}"
+    finally:
+        uuids = [c.uuid]
+        if new_uuid:
+            uuids.append(new_uuid)
+        # Clean up evidence, claims, tombstones (by created_from_uuid)
+        from db.models import MemoryRejectedValue
+        db.db.session.query(MemoryEvidence).filter(
+            MemoryEvidence.memory_uuid.in_(uuids)
+        ).delete(synchronize_session=False)
+        db.db.session.query(MemoryRejectedValue).filter(
+            MemoryRejectedValue.created_from_uuid.in_(uuids)
+        ).delete(synchronize_session=False)
+        db.db.session.query(MemoryClaim).filter(
+            MemoryClaim.uuid.in_(uuids)
+        ).delete(synchronize_session=False)
+        db.db.session.commit()
+
+
 def test_sensitivity_change(client):
     c = _claim(sensitivity="private")
     try:

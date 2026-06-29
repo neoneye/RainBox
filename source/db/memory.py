@@ -139,6 +139,19 @@ _SHAPE_RULES: tuple[tuple[_re.Pattern, str], ...] = (
 )
 
 
+def parse_structured(text: str) -> tuple[str | None, str | None, str | None]:
+    """Parse `text` with the same _SHAPE_RULES used by belief_keys and return
+    (subject, predicate_canonical, object) on a match, else (None, None, None).
+    Pure string work — no model call. belief_keys and parse_structured agree
+    because they share _SHAPE_RULES."""
+    norm = normalize_claim_text(text)
+    for pattern, pred in _SHAPE_RULES:
+        m = pattern.match(norm)
+        if m:
+            return m.group("s"), pred, m.group("o")
+    return None, None, None
+
+
 def belief_keys(
     subject: str | None, predicate: str | None,
     object: str | None, text: str,
@@ -824,3 +837,86 @@ def resolve_conflict(candidate_uuid, resolution, *, narrowed_scope=None,
     cand.updated_at = datetime.now(UTC)
     db.session.commit()
     return cand
+
+
+# --- correct_belief: atomic governed human correction ------------------------
+
+def correct_belief(
+    old_uuid: UUID,
+    new_text: str,
+    *,
+    actor: str,
+    evidence: dict[str, Any],
+    sensitivity: str | None = None,
+    expected_updated_at: "datetime | None" = None,
+) -> "MemoryClaim":
+    """Atomic human correction: supersede `old_uuid` and create an ACTIVE
+    replacement carrying `new_text`, with subj_pred_key/value_key/key_version and
+    structured columns DERIVED FROM new_text (never copied from the old claim),
+    in ONE transaction. Inherits scope/kind/agent/room from old (sensitivity
+    overridable). `actor` must be override-authorized (a human). `expected_updated_at`
+    guards the old claim and raises StaleWriteError on mismatch (callers map to 409)."""
+    # 1. Actor guard
+    if actor not in TOMBSTONE_OVERRIDE_ACTORS:
+        raise ValueError(
+            f"correct_belief requires an override-authorized actor; got {actor!r}"
+        )
+
+    # 2. Fetch old claim
+    old = get_memory_claim(old_uuid)
+    if old is None:
+        raise ValueError(f"memory claim not found: {old_uuid}")
+
+    # 3. Optimistic-concurrency guard (raises StaleWriteError — do NOT catch)
+    assert_claim_unchanged(old, expected_updated_at)
+
+    # 4. Evidence validation
+    validate_evidence(evidence)
+
+    # 5. Derive keys + structured columns FROM new_text (never from old)
+    subj, pred, obj = parse_structured(new_text)
+    sp_key, val_key = belief_keys(None, None, None, new_text)
+
+    # 6. Advisory lock
+    _lock_belief(old.scope, old.room_uuid, old.agent_uuid, sp_key, val_key)
+
+    # 7. Supersede old claim
+    old.status = "superseded"
+    old.updated_at = datetime.now(UTC)
+    write_tombstone(old, reason="superseded", commit=False)
+    delete_memory_embeddings(old.uuid, commit=False)
+
+    # 8. Clear exact-scope tombstone for the new value (so replacement isn't shadowed)
+    tomb = check_tombstone(old.scope, old.room_uuid, old.agent_uuid, sp_key, val_key)
+    if tomb is not None:
+        clear_tombstone(tomb, commit=False)
+
+    # 9. Create new active replacement with keys derived from new_text
+    new = create_memory_claim(
+        scope=old.scope,
+        kind=old.kind,
+        text=new_text,
+        confidence=1.0,
+        status="active",
+        sensitivity=sensitivity or old.sensitivity,
+        agent_uuid=old.agent_uuid,
+        room_uuid=old.room_uuid,
+        subject=subj,
+        predicate=pred,
+        object=obj,
+        support_count=1,
+        epistemic_confidence=1.0,
+        retrieval_strength=1.0,
+        subj_pred_key=sp_key,
+        value_key=val_key,
+        key_version=KEY_VERSION,
+        supersedes_uuid=old.uuid,
+        commit=False,
+    )
+
+    # 10. Attach evidence to new claim
+    add_memory_evidence(memory_uuid=new.uuid, commit=False, **evidence)
+
+    # 11. Commit once
+    db.session.commit()
+    return new

@@ -111,14 +111,80 @@ def test_correct_via_candidate_leaves_active_replacement(app_ctx):
             f"No active claim with text {text_b!r} found after correct; reply={reply!r}"
         )
     finally:
-        # Clean up: delete by text (both A and B texts, all statuses)
+        # Collect all claim uuids by text (all statuses) before deleting
+        all_uuids = []
         for text in (text_a, text_b):
             rows = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
-            for r in rows:
-                db.db.session.query(MemoryEvidence).filter_by(memory_uuid=r.uuid).delete()
-            db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
-        from db.models import MemoryRejectedValue
+            all_uuids.extend(r.uuid for r in rows)
+        # Delete evidence first (FK), then tombstones by created_from_uuid, then claims
+        db.db.session.query(MemoryEvidence).filter(
+            MemoryEvidence.memory_uuid.in_(all_uuids)
+        ).delete(synchronize_session=False)
         db.db.session.query(MemoryRejectedValue).filter(
-            MemoryRejectedValue.value_key.in_([text_a.lower(), text_b.lower()])
+            MemoryRejectedValue.created_from_uuid.in_(all_uuids)
+        ).delete(synchronize_session=False)
+        db.db.session.query(MemoryClaim).filter(
+            MemoryClaim.uuid.in_(all_uuids)
+        ).delete(synchronize_session=False)
+        db.db.session.commit()
+
+
+def test_handle_correct_keys_derived_from_new_text(app_ctx):
+    """P1b via ops path: _handle_correct must leave a new active claim whose
+    value_key is derived from new_text (not copied from old claim)."""
+    marker = f"p1b-ops-{uuid4().hex[:8]}"
+    text_a = f"{marker} is red"
+    text_b = f"{marker} is blue"
+
+    # Create A via record_belief so it gets keys derived from text_a
+    a_result = db.record_belief(
+        actor="explicit_human_command", scope="global", kind="fact",
+        text=text_a, confidence=1.0, sensitivity="private",
+        evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                  "excerpt": "setup"},
+    )
+    a_claim = a_result.claim
+    assert a_claim is not None and a_claim.status == "active"
+    assert a_claim.value_key == "red", f"Setup: expected value_key='red', got {a_claim.value_key!r}"
+
+    class _CorrectCtx:
+        query = f"correct that {text_a} -> {text_b}"
+        payload = {"message_uuid": str(uuid4())}
+        room_uuid = None
+
+    try:
+        reply = _handle_correct(_CorrectCtx(), text_a, text_b)
+        assert "Corrected" in reply, f"Expected 'Corrected' in reply, got {reply!r}"
+
+        db.db.session.expire_all()
+
+        # Find the new active claim with text_b
+        new_active = (
+            db.db.session.query(MemoryClaim)
+            .filter(MemoryClaim.text == text_b, MemoryClaim.status == "active")
+            .first()
+        )
+        assert new_active is not None, \
+            f"No active claim with text {text_b!r} after correct; reply={reply!r}"
+
+        # Keys MUST be derived from new_text ('blue'), NOT copied from old ('red')
+        assert new_active.value_key == "blue", \
+            f"value_key must be 'blue' (derived from new_text), got {new_active.value_key!r}"
+        assert new_active.subj_pred_key, \
+            f"subj_pred_key must be non-empty for structured text, got {new_active.subj_pred_key!r}"
+
+    finally:
+        all_uuids = []
+        for text in (text_a, text_b):
+            rows = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
+            all_uuids.extend(r.uuid for r in rows)
+        db.db.session.query(MemoryEvidence).filter(
+            MemoryEvidence.memory_uuid.in_(all_uuids)
+        ).delete(synchronize_session=False)
+        db.db.session.query(MemoryRejectedValue).filter(
+            MemoryRejectedValue.created_from_uuid.in_(all_uuids)
+        ).delete(synchronize_session=False)
+        db.db.session.query(MemoryClaim).filter(
+            MemoryClaim.uuid.in_(all_uuids)
         ).delete(synchronize_session=False)
         db.db.session.commit()
