@@ -603,3 +603,29 @@ def test_correct_belief_normal_same_scope_no_scoped_exception_note(app_ctx):
 
     finally:
         _cleanup_correct(all_uuids)
+
+
+def test_correct_corroborating_candidate_clears_conflict_pointer(app_ctx):
+    """P1: correcting to a value that already exists as a *conflict candidate*
+    must promote it to active AND clear its conflicts_with_uuid (an active claim
+    never carries a dangling conflict pointer)."""
+    room = uuid4()
+    tea = record_belief(actor="explicit_human_command", scope="room", kind="preference",
+                        text="xavier prefers tea", confidence=1.0, room_uuid=room,
+                        subject="xavier", predicate="prefers", object="tea", evidence=EV)
+    coffee = record_belief(actor="model_inferred", scope="room", kind="preference",
+                           text="xavier prefers coffee", confidence=0.6, room_uuid=room,
+                           subject="xavier", predicate="prefers", object="coffee", evidence=MEV)
+    assert coffee.outcome == "conflict_candidate"
+    assert coffee.claim.status == "candidate"
+    assert coffee.claim.conflicts_with_uuid == tea.claim.uuid
+
+    new = db.correct_belief(
+        tea.claim.uuid, "xavier prefers coffee", actor="explicit_human_command",
+        evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                  "excerpt": "correct tea -> coffee"})
+    assert new.uuid == coffee.claim.uuid            # corroborated the existing candidate
+    assert new.status == "active"
+    assert new.conflicts_with_uuid is None          # the bug: was left dangling
+    assert db.get_memory_claim(tea.claim.uuid).status == "superseded"
+    _cleanup(room)
