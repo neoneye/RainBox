@@ -137,7 +137,9 @@ def test_remember_dedupes_an_existing_claim(room):
         db.db.session.commit()
 
 
-def test_remember_creates_active_memory_and_is_undoable(room):
+def test_remember_creates_candidate_memory_and_is_undoable(room):
+    """_action_remember creates a candidate (not active) — assistant_interpreted
+    actor is candidate-by-default per spec §3.1."""
     agent = _agent()
     text = f"the build server is ci-{uuid4().hex[:6]}"
     agent._decide_next_step = scripted_decisions(
@@ -149,7 +151,7 @@ def test_remember_creates_active_memory_and_is_undoable(room):
         assert result["status"] == "finished"
         claims = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
         assert len(claims) == 1
-        assert claims[0].status == "active"  # an explicit "remember" is active now
+        assert claims[0].status == "candidate"  # assistant_interpreted → candidate
         # Undo: rejecting it reverses the write.
         db.reject_memory(claims[0].uuid, {"provenance": "confirmed_by_user",
                                           "source_type": "manual"})
@@ -181,7 +183,7 @@ def test_remember_is_undoable_through_the_write_intent_ledger(room):
         step_uuids = {s.uuid for s in db.list_assistant_steps(result["assistant_run_uuid"])}
         assert intent.step_uuid in step_uuids
         mem_uuid = UUID(intent.result["undo"]["payload"]["memory_uuid"])
-        assert db.get_memory_claim(mem_uuid).status == "active"
+        assert db.get_memory_claim(mem_uuid).status == "candidate"  # active→candidate (spec §3.1)
         obs = undo_write_intent(intent.uuid)
         assert obs.ok is True
         assert db.get_memory_claim(mem_uuid).status == "rejected"  # undo rejected it
@@ -215,7 +217,7 @@ def test_undo_remember_leaves_no_tombstone_but_direct_reject_does(room):
         mem_uuid = UUID(intent.result["undo"]["payload"]["memory_uuid"])
         claim = db.get_memory_claim(mem_uuid)
 
-        # Derive tombstone lookup keys before the undo (claim still active).
+        # Derive tombstone lookup keys before the undo (claim is candidate).
         sp_key, val_key = belief_keys(
             claim.subject, claim.predicate, claim.object, claim.text
         )

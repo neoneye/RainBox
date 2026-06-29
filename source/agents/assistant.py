@@ -134,6 +134,10 @@ class AssistantActionContext:
     # True only inside _propose_write's preview call: a dry_run-capable action
     # must compute + return a preview without mutating anything.
     dry_run: bool = False
+    # The chat message UUID that triggered this action (the operator's last
+    # message). Used as evidence source_id so every belief write can be traced
+    # back to the specific message that motivated it. None when not available.
+    message_uuid: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -317,16 +321,37 @@ def _action_kanban_read(
 def _action_remember(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Log-and-undo write: create an *active* memory claim. The operator
-    explicitly asked to remember this, so it goes straight to active (no candidate
-    review step) and is embedded for immediate retrieval; undo rejects it."""
+    """Log-and-undo write: create a *candidate* memory claim for operator
+    confirmation. The model composed the claim text, so it is
+    assistant_interpreted (candidate-by-default) and must never override a
+    tombstone. Embedding is deferred until the operator activates it; undo
+    rejects the candidate."""
     text = str(args.get("text", "")).strip()
-    # Don't store the same belief twice: if an equivalent live claim already
-    # exists in this room, return it instead of creating a duplicate (the
-    # exact-normalized-duplicate rule, docs/memory-architecture.md §3). `noop`
-    # tells the loop not to record a log-and-undo ledger row (nothing changed).
-    existing = db.find_equivalent_claim(text, scope="room", room_uuid=ctx.room_uuid)
-    if existing is not None:
+    # source_id: prefer the specific triggering message; fall back to the
+    # journal handle UUID so evidence is never left without a provenance anchor.
+    source_id = str(ctx.message_uuid or ctx.journal_id or "")
+    if source_id:
+        evidence = {"provenance": "confirmed_by_user", "source_type": "chat_message",
+                    "source_id": source_id, "excerpt": text,
+                    "created_by_uuid": ctx.agent_uuid}
+    else:
+        evidence = {"provenance": "confirmed_by_user", "source_type": "manual",
+                    "excerpt": text, "created_by_uuid": None}
+    result = db.record_belief(
+        actor="assistant_interpreted", scope="room", kind="fact", text=text,
+        confidence=1.0, sensitivity="private",
+        agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
+        evidence=evidence,
+    )
+    if result.outcome == "refused_tombstone":
+        return AssistantObservation(
+            ok=True,
+            text=("That was previously rejected, so I did not re-add it. "
+                  "Reply to the operator."),
+            data={"noop": True, "reason": result.reason},
+        )
+    if result.outcome == "corroborated":
+        existing = result.claim
         return AssistantObservation(
             ok=True,
             text=(f"Already remembered (no duplicate created). memory_uuid: "
@@ -334,23 +359,16 @@ def _action_remember(
             data={"memory_uuid": str(existing.uuid), "status": existing.status,
                   "link": _memory_link(existing.uuid), "noop": True},
         )
-    claim = db.create_memory_claim(
-        scope="room", kind="fact", text=text, confidence=1.0,
-        status="active", sensitivity="private",
-        agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
-    )
-    db.add_memory_evidence(
-        memory_uuid=claim.uuid, provenance="confirmed_by_user",
-        source_type="chat_message", created_by_uuid=ctx.agent_uuid,
-    )
+    claim = result.claim
     from memory.embeddings import refresh_claim_embedding
-    refresh_claim_embedding(claim)  # active now → embed so query_memory finds it
+    refresh_claim_embedding(claim)  # embed now so query_memory can find candidates
     return AssistantObservation(
         ok=True,
-        text=(f"Remembered as an active memory. memory_uuid: {claim.uuid}. "
+        text=(f"Remembered as a candidate memory (pending operator confirmation). "
+              f"memory_uuid: {claim.uuid}. "
               f"Done — reply to the operator. To forget it later, use this exact "
               f"memory_uuid (never invent one)."),
-        data={"memory_uuid": str(claim.uuid), "status": "active",
+        data={"memory_uuid": str(claim.uuid), "status": claim.status,
               "link": _memory_link(claim.uuid),
               "undo": {"capability": "reject_memory_candidate",
                        "payload": {"memory_uuid": str(claim.uuid)}}},
@@ -473,7 +491,16 @@ def _action_activate_memory(
     claim = db.get_memory_claim(memory_uuid)
     if claim is None:
         return AssistantObservation(ok=False, text="no such memory claim")
-    activated = db.activate_memory_claim(memory_uuid, confirmed_by_uuid=ctx.agent_uuid)
+    # human_confirmed_write_intent actor: operator approved this exact payload.
+    # If the candidate was flagged as conflicting with a rival, route through
+    # resolve_conflict (supersede) so the rival's tombstone is written correctly.
+    # Otherwise, plain activate is sufficient.
+    if claim.conflicts_with_uuid is not None:
+        activated = db.resolve_conflict(
+            memory_uuid, "supersede", created_by_uuid=ctx.agent_uuid)
+    else:
+        activated = db.activate_memory_claim(
+            memory_uuid, confirmed_by_uuid=ctx.agent_uuid)
     # Newly active → embed it so hybrid retrieval can use it immediately
     # (best-effort; falls back to lexical-only if no embedder is available).
     from memory.embeddings import refresh_claim_embedding
