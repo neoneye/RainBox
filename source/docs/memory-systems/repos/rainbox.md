@@ -172,7 +172,7 @@ Important fields:
 
 `MemoryEmbedding` is separate and unique by `(memory_uuid, model_name, text_hash)`. This lets embeddings be rebuilt without corrupting claims. Both active and candidate claims are embedded.
 
-`MemoryRejectedValue` is the tombstone table. It records `(scope, subj_pred_key, value_key)` tuples for rejected or superseded beliefs, with a text snapshot and hit counter. Model writes against a tombstoned value are refused (hit count incremented); human writes clear an exact-scope tombstone or create a scoped exception over a global one.
+`MemoryRejectedValue` is the tombstone table. Its uniqueness key is `(scope, COALESCE(room_uuid), COALESCE(agent_uuid), subj_pred_key, value_key)` — so a room/agent tombstone is scoped to that room/agent, and only a `global` tombstone (null room/agent) applies across all rooms. It snapshots the rejected belief's text and a hit counter. Model writes against a tombstoned value are refused (hit count incremented); human writes clear an exact-scope tombstone or create a scoped exception over a global one.
 
 ### Actor / Trust Model
 
@@ -307,9 +307,9 @@ The `/memory` review page surfaces conflict candidates (claims with a `conflicts
 
 `memory/embeddings.py` uses `embeddinggemma:300m`, 768 dimensions. The embedding text is claim text plus optional subject/predicate/object.
 
-Live for embedding purposes means **active or candidate**:
+Live for embedding purposes means **active or candidate, and non-expired**:
 
-- `refresh_claim_embedding` embeds a claim while it is `active` or `candidate`, and prunes its embedding row once it is neither.
+- `refresh_claim_embedding` embeds a claim while it is `active` or `candidate`, and prunes its embedding row once it is neither. `prune_stale_embeddings` also drops embeddings for active/candidate claims whose `expires_at` has passed.
 - Candidates are embedded immediately on creation to keep the index warm for when they are later activated.
 - Both active and candidate claims survive `prune_stale_embeddings` and `backfill_memory_embeddings`.
 

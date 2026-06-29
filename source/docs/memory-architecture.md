@@ -159,7 +159,11 @@ Keys are persisted on `memory_claim` so conflict and tombstone lookups are index
 ### Rejected-Value Tombstones (Anti-Laundering)
 
 When a claim is rejected or superseded, `write_tombstone` upserts a
-`memory_rejected_value` row keyed on `(scope, subj_pred_key, value_key)`. The
+`memory_rejected_value` row whose uniqueness key is `(scope,
+COALESCE(room_uuid), COALESCE(agent_uuid), subj_pred_key, value_key)` — so a
+room-scoped tombstone applies only to that room/agent, not to every room that
+shares `scope == "room"`; only a `global` tombstone (null room/agent) applies
+everywhere. The
 tombstone snapshots the claim's text (`claim_text`) and a one-line evidence
 digest (`evidence_summary`) so a later suppression is explainable even if the
 original claim/evidence rows change. It also tracks `hit_count` and
@@ -321,15 +325,15 @@ memory context as an observation inside the persisted assistant trace.
 `subject`, `predicate`, and `object` alongside the main `text` so entity terms
 contribute to vector similarity.
 
-Live for embedding purposes means **active or candidate**:
+Live for embedding purposes means **active or candidate, and non-expired**:
 
 - `refresh_claim_embedding` embeds a claim while it is `active` or `candidate`,
   and prunes its embedding row once it is neither. The write path (remember,
   confirm, correct, forget, assistant activate) calls this hook after each status
   change.
 - `prune_stale_embeddings` is the lazy safety net: it drops embedding rows for
-  claims no longer in `active` or `candidate` status, so a periodic
-  `sync_memory_embeddings` reconciles any missed pruning.
+  claims that are no longer `active`/`candidate` **or whose `expires_at` has
+  passed**, so a periodic `sync_memory_embeddings` reconciles any missed pruning.
 - `backfill_memory_embeddings` ensures an embedding for every `active` or
   `candidate` claim, so a candidate survives a sync cycle without losing its
   embedding.
