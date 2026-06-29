@@ -24,7 +24,7 @@ claim/evidence -> retrieval -> prompt injection/action observation
 -> debug row + retrieval events -> feedback -> eval case -> gated change
 ```
 
-Main residual limitation: retrieval is still lexical for the chat path (legacy `retrieve_memories` used as the retrieval signal inside `build_chat_memory_block`, which then calls `retrieve_memories_hybrid` — so chat now uses hybrid retrieval). Candidate claims are embedded but never enter prompts until confirmed. No automatic extraction of candidate memories from chat or journal yet.
+Main residual limitations: hybrid retrieval (used by both the chat path via `build_chat_memory_block` and the assistant's `query_memory`) degrades to lexical/full-text/entity signals when the embedder is unavailable; candidate claims are embedded but never enter prompts until confirmed; there is no automatic extraction of candidate memories from chat or journal yet; and the `epistemic_confidence`/`retrieval_strength` columns are schema groundwork that the Tier-1 ranker does not yet use (it still ranks on `confidence`).
 
 ## 2. Mental Model
 
@@ -262,7 +262,7 @@ The result is always an active replacement claim with no dangling `conflicts_wit
 
 `build_chat_memory_block()` (called by `ChatAgent`) uses `retrieve_memories_hybrid` and records retrieval telemetry.
 
-`retrieve_memories()` — the legacy lexical path — still exists as a fallback for contexts where hybrid retrieval has not yet been wired in, but `build_chat_memory_block` now uses hybrid.
+`retrieve_memories()` — the legacy lexical path (token overlap) — is retained only for deterministic memory-retrieval eval cases in `evals/runner.py`; runtime chat and assistant retrieval both use the hybrid path.
 
 Weights:
 
