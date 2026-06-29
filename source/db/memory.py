@@ -101,6 +101,44 @@ def normalize_claim_text(text: str) -> str:
     return " ".join((text or "").split()).casefold()
 
 
+import re as _re
+
+KEY_VERSION = 1
+_KEY_SEP = "\x1f"
+
+# (regex over the *normalized* text -> canonical predicate). First match wins.
+# Each regex has named groups `s` (subject) and `o` (object/value).
+_SHAPE_RULES: tuple[tuple[_re.Pattern, str], ...] = (
+    (_re.compile(r"^(?P<s>.+?) is a (?P<o>.+)$"), "is"),
+    (_re.compile(r"^(?P<s>.+?) is (?P<o>.+)$"), "is"),
+    (_re.compile(r"^(?P<s>.+?) prefers (?P<o>.+)$"), "prefers"),
+    (_re.compile(r"^(?P<s>.+?) likes (?P<o>.+)$"), "likes"),
+    (_re.compile(r"^(?P<s>.+?) uses (?P<o>.+)$"), "uses"),
+    (_re.compile(r"^(?P<s>.+?) works with (?P<o>.+)$"), "uses"),
+)
+
+
+def belief_keys(
+    subject: str | None, predicate: str | None,
+    object: str | None, text: str,
+) -> tuple[str, str]:
+    """Return (subj_pred_key, value_key) for conflict/tombstone matching.
+
+    If the caller supplied subject+predicate, key on those. Otherwise run a
+    deterministic parser over `text` for a few common shapes; on a match key on
+    (subject, predicate)+object. No match -> ("", normalized text). Pure string
+    work — no model call. See KEY_VERSION."""
+    if subject and predicate:
+        sp = normalize_claim_text(subject) + _KEY_SEP + normalize_claim_text(predicate)
+        return sp, normalize_claim_text(object or text)
+    norm = normalize_claim_text(text)
+    for pattern, pred in _SHAPE_RULES:
+        m = pattern.match(norm)
+        if m:
+            return (m.group("s") + _KEY_SEP + pred), m.group("o")
+    return "", norm
+
+
 def find_equivalent_claim(
     text: str,
     *,

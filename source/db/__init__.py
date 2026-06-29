@@ -162,6 +162,21 @@ def _backfill_memory_trust_numeric() -> None:
     db.session.commit()
 
 
+def _backfill_memory_trust_keys() -> None:
+    """One-time: stamp subj_pred_key/value_key/key_version on legacy claims via
+    the Python deterministic keyer. Idempotent — only rows with NULL key_version."""
+    rows = db.session.execute(sa.text(
+        "SELECT uuid, subject, predicate, object, text FROM memory_claim "
+        "WHERE key_version IS NULL")).fetchall()
+    for r in rows:
+        sp, val = db.belief_keys(r.subject, r.predicate, r.object, r.text)
+        db.session.execute(sa.text(
+            "UPDATE memory_claim SET subj_pred_key=:sp, value_key=:v, key_version=:kv "
+            "WHERE uuid=:u"),
+            {"sp": sp, "v": val, "kv": db.KEY_VERSION, "u": str(r.uuid)})
+    db.session.commit()
+
+
 def _migrate_journal_id_to_uuid() -> None:
     """Convert `journal.id` from an integer autoincrement to a uuid, remapping
     every loose `journal_id` reference (there are no FK constraints). Idempotent:
@@ -419,6 +434,7 @@ def init_db(app: Flask) -> None:
             "WHERE status = 'active'"))
         db.session.commit()
         _backfill_memory_trust_numeric()
+        _backfill_memory_trust_keys()
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(
