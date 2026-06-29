@@ -8,7 +8,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from db.models import MemoryClaim, MemoryEmbedding, MemoryEvidence, db
+import hashlib as _hashlib
+
+from db.models import MemoryClaim, MemoryEmbedding, MemoryEvidence, MemoryRejectedValue, db
 
 
 def create_memory_claim(
@@ -440,3 +442,100 @@ def delete_memory_embeddings(memory_uuid: UUID) -> int:
     )
     db.session.commit()
     return n
+
+
+# --- tombstone (anti-laundering) helpers -------------------------------------
+
+_NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+def with_note(evidence: dict[str, Any], note: str) -> dict[str, Any]:
+    """Return a copy of `evidence` with `note` appended to `excerpt` (joined with
+    "; ") — never passes a duplicate excerpt kwarg into add_memory_evidence."""
+    out = dict(evidence)
+    existing = out.get("excerpt")
+    out["excerpt"] = f"{existing}; {note}" if existing else note
+    return out
+
+
+def evidence_summary(evidence: dict[str, Any]) -> str:
+    """Compact provenance digest stored on a tombstone snapshot."""
+    return "/".join(str(evidence.get(k, "")) for k in
+                    ("provenance", "source_type", "source_id"))
+
+
+def advisory_key(scope, room_uuid, agent_uuid, sp_key, value_key) -> int:
+    """Stable signed 63-bit int for pg_advisory_xact_lock, derived from the
+    belief-key tuple."""
+    raw = "|".join((scope, str(room_uuid or _NIL_UUID), str(agent_uuid or _NIL_UUID),
+                    sp_key, value_key))
+    h = int.from_bytes(_hashlib.blake2b(raw.encode(), digest_size=8).digest(), "big")
+    return h - (1 << 63)   # map to signed range
+
+
+def write_tombstone(claim, *, reason, created_by_uuid=None, commit: bool = True):
+    """Upsert a tombstone for `claim`'s (scope, key, value), snapshotting its text
+    and a one-line evidence digest. Idempotent on the unique key."""
+    sp, val = belief_keys(claim.subject, claim.predicate, claim.object, claim.text)
+    existing = check_tombstone(claim.scope, claim.room_uuid, claim.agent_uuid, sp, val)
+    latest_ev = (db.session.query(MemoryEvidence)
+                 .filter_by(memory_uuid=claim.uuid)
+                 .order_by(MemoryEvidence.id.desc()).first())
+    ev_sum = evidence_summary({
+        "provenance": getattr(latest_ev, "provenance", ""),
+        "source_type": getattr(latest_ev, "source_type", ""),
+        "source_id": getattr(latest_ev, "source_id", ""),
+    }) if latest_ev else None
+    if existing is not None:
+        existing.reason = reason
+        existing.claim_text = claim.text
+        existing.evidence_summary = ev_sum
+        existing.created_from_uuid = claim.uuid
+        row = existing
+    else:
+        row = MemoryRejectedValue(
+            scope=claim.scope, room_uuid=claim.room_uuid, agent_uuid=claim.agent_uuid,
+            subj_pred_key=sp, value_key=val, claim_text=claim.text,
+            evidence_summary=ev_sum, reason=reason, created_from_uuid=claim.uuid,
+            created_by_uuid=created_by_uuid, hit_count=0)
+        db.session.add(row)
+    db.session.flush()
+    if commit:
+        db.session.commit()
+    return row
+
+
+def check_tombstone(scope, room_uuid, agent_uuid, sp_key, value_key):
+    """Exact-scope tombstone lookup. Callers consult exact + global separately."""
+    q = db.session.query(MemoryRejectedValue).filter(
+        MemoryRejectedValue.scope == scope,
+        MemoryRejectedValue.subj_pred_key == sp_key,
+        MemoryRejectedValue.value_key == value_key)
+    q = (q.filter(MemoryRejectedValue.room_uuid == room_uuid) if room_uuid is not None
+         else q.filter(MemoryRejectedValue.room_uuid.is_(None)))
+    q = (q.filter(MemoryRejectedValue.agent_uuid == agent_uuid) if agent_uuid is not None
+         else q.filter(MemoryRejectedValue.agent_uuid.is_(None)))
+    return q.first()
+
+
+def clear_tombstone(tomb, *, commit: bool = True) -> None:
+    db.session.delete(tomb)
+    db.session.flush()
+    if commit:
+        db.session.commit()
+
+
+def record_tombstone_hit(tomb, *, commit: bool = True) -> None:
+    tomb.hit_count = (tomb.hit_count or 0) + 1
+    tomb.last_hit_at = datetime.now(UTC)
+    db.session.flush()
+    if commit:
+        db.session.commit()
+
+
+def list_tombstones_with_hits(*, room_uuid: UUID | None = None
+                              ) -> list[MemoryRejectedValue]:
+    q = db.session.query(MemoryRejectedValue).filter(MemoryRejectedValue.hit_count > 0)
+    if room_uuid is not None:
+        q = q.filter(MemoryRejectedValue.room_uuid == room_uuid)
+    return q.order_by(MemoryRejectedValue.last_hit_at.desc()).all()
