@@ -744,3 +744,62 @@ def record_belief(*, actor, scope, kind, text, confidence, evidence,
     add_memory_evidence(memory_uuid=new.uuid, commit=False, **ev)
     db.session.commit()
     return BeliefWriteResult("created", new)
+
+
+# --- conflict resolution (spec §6.3) -----------------------------------------
+
+_RESOLUTIONS = ("supersede", "reject", "not_conflict", "scoped_exception")
+
+
+def resolve_conflict(candidate_uuid, resolution, *, narrowed_scope=None,
+                     narrowed_room_uuid=None, created_by_uuid=None) -> "MemoryClaim":
+    """Resolve a conflict candidate (spec §6.3). Re-fetches state under the
+    advisory lock and re-checks status/conflicts_with_uuid before acting; a stale
+    candidate (already resolved, rival gone) is a no-op returning current state."""
+    if resolution not in _RESOLUTIONS:
+        raise ValueError(f"invalid resolution: {resolution!r}")
+    cand = get_memory_claim(candidate_uuid)
+    if cand is None:
+        raise ValueError(f"memory claim not found: {candidate_uuid}")
+    _lock_belief(cand.scope, cand.room_uuid, cand.agent_uuid,
+                 cand.subj_pred_key or "", cand.value_key or "")
+    cand = get_memory_claim(candidate_uuid)            # re-fetch under lock
+    if cand.status != "candidate" or cand.conflicts_with_uuid is None:
+        return cand                                    # stale -> no-op
+    rival = get_memory_claim(cand.conflicts_with_uuid)
+    note_ev = {"provenance": "confirmed_by_user", "source_type": "manual"}
+
+    if resolution == "supersede":
+        if rival is not None and rival.status == "active":
+            rival.status = "superseded"
+            write_tombstone(rival, reason="superseded", commit=False)
+            delete_memory_embeddings(rival.uuid)
+        cand.status = "active"
+        cand.conflicts_with_uuid = None
+        add_memory_evidence(memory_uuid=cand.uuid, commit=False,
+                            **with_note(note_ev, "conflict resolved: supersede"))
+    elif resolution == "reject":
+        cand.status = "rejected"
+        cand.conflicts_with_uuid = None
+        write_tombstone(cand, reason="rejected", created_by_uuid=created_by_uuid,
+                        commit=False)
+        delete_memory_embeddings(cand.uuid)
+        add_memory_evidence(memory_uuid=cand.uuid, commit=False,
+                            **with_note(note_ev, "conflict resolved: reject"))
+    elif resolution == "not_conflict":
+        cand.status = "active"
+        cand.conflicts_with_uuid = None
+        add_memory_evidence(memory_uuid=cand.uuid, commit=False,
+                            **with_note(note_ev, "not a conflict"))
+    else:   # scoped_exception
+        cand.status = "active"
+        cand.conflicts_with_uuid = None
+        if narrowed_scope:
+            cand.scope = narrowed_scope
+        if narrowed_room_uuid is not None:
+            cand.room_uuid = narrowed_room_uuid
+        add_memory_evidence(memory_uuid=cand.uuid, commit=False,
+                            **with_note(note_ev, "scoped exception"))
+    cand.updated_at = datetime.now(UTC)
+    db.session.commit()
+    return cand
