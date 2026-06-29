@@ -60,8 +60,14 @@ Shows evidence/provenance for matching memories.
 correct that <old> -> <new>
 ```
 
-Supersedes the old active claim and creates a new active claim with
-`confirmed_by_user` evidence.
+Routes through the governed `correct_belief` path: in one atomic transaction it
+supersedes the old claim, tombstones the old value (so it cannot silently
+re-enter via model inference), and creates a new active claim with
+`confirmed_by_user` evidence whose conflict/tombstone keys are derived from the
+new text. If the new value conflicts with a *different* same-scope active claim,
+the correction is refused (and rolled back) so two contradicting beliefs are
+never left active; resolve that conflict first. A conflict with a broader-scope
+claim is kept as a scoped exception.
 
 Example:
 
@@ -75,7 +81,10 @@ correct that I prefer long answers -> I prefer concise answers
 forget <topic>
 ```
 
-Marks matching memory claims as `rejected`. Evidence remains for audit.
+Marks matching memory claims as `rejected` and tombstones the rejected value so
+the model cannot silently re-learn it. Evidence remains for audit. (The
+assistant's internal undo of its own `remember` is the one rejection that does
+*not* tombstone — undo means "didn't mean to add that", not "this is wrong".)
 
 ### Last Used Memories
 
@@ -125,7 +134,10 @@ should only be used when directly relevant.
 - Command parsing and command lookups are currently lexical/exact-match oriented.
 - Normal chat memory retrieval is still lexical; hybrid retrieval is currently
   additive and mainly used by the assistant.
-- Conflict detection is basic and should be improved.
+- Write-time conflict detection is deterministic and keyed on common structured
+  shapes ("X is Y", "X prefers Y", "X uses Y", …); free-text claims have no
+  structured key and are conflict-exempt (semantic conflict detection is future
+  work).
 - Automatic memory extraction from chat/journal is not implemented yet.
 
 ## Operator Notes
@@ -133,9 +145,11 @@ should only be used when directly relevant.
 Inspect and curate memory on the **`/memory` page**: claims grouped by status,
 with an evidence timeline, supersession lineage, embedding freshness, and
 provenance-safe lifecycle actions (activate / reject / reactivate / correct /
-sensitivity / expiry). See `docs/memory-architecture.md` §8.
+sensitivity / expiry). It also surfaces conflict candidates with resolution
+actions (supersede / reject / not_conflict / scoped_exception) and tombstones
+that have suppressed a model re-assertion. See `docs/memory-architecture.md` §8.
 
 The raw tables are also browsable in Flask-Admin (`MemoryClaim`,
-`MemoryEvidence`, `MemoryEmbedding`).
+`MemoryEvidence`, `MemoryEmbedding`, `MemoryRejectedValue`).
 
 For architecture details, see `docs/memory-architecture.md`.

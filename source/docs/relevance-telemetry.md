@@ -115,6 +115,15 @@ Diagnostic lookup is scoped to the rated turn:
 That prevents a downvote on a no-memory turn from penalizing a memory used in an
 earlier turn.
 
+### Not Here: Suppressed Re-assertions
+
+When a tombstone blocks a model/assistant attempt to re-add a rejected value,
+that suppression is counted on the tombstone row itself (`memory_rejected_value`
+`hit_count` / `last_hit_at`), **not** as a `retrieval_event`. `retrieval_event`
+has a fixed `stage` set and requires a real target claim; a blocked write has no
+created claim, so there is no "suppressed" retrieval stage. The `/memory` page
+surfaces tombstones with hits directly.
+
 ## Data Model
 
 ```text

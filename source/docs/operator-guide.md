@@ -62,11 +62,17 @@ forget concise technical answers
 which memories did you use?
 ```
 
+`correct` and `forget` tombstone the old/rejected value so the model cannot
+silently re-learn it; a `correct` whose new value conflicts with a different
+same-scope active claim is refused. Curate claims, resolve conflicts, and review
+suppressed re-assertions on the `/memory` page (see `docs/memory-commands.md`).
+
 Memory tables are inspectable in Flask-Admin under the Memory category:
 
 - `MemoryClaim`
 - `MemoryEvidence`
 - `MemoryEmbedding`
+- `MemoryRejectedValue`
 
 ## Feedback
 
