@@ -160,7 +160,7 @@ def _action_query_memory(
     """Hybrid memory retrieval over dynamic claims PLUS curated seed memories.
     Results are tiered: user-overlay seed, then upstream seed, then dynamic
     claims. Secrets are never returned (include_secret stays False)."""
-    from memory.retrieval import format_memory_context, retrieve_memories_hybrid
+    from memory.retrieval import fence_recalled_memory, format_memory_context, retrieve_memories_hybrid
     from memory.seed_memory import retrieve_seed_memories
 
     query = str(args.get("query", "")).strip()
@@ -190,6 +190,7 @@ def _action_query_memory(
         # format_memory_context(include_uuid=True) emits TWO header lines (title +
         # the "{memory_uuid}, ..." legend); skip both and append only its fact lines.
         text += "\n" + "\n".join(dynamic_block.split("\n")[2:])
+    text, _ = fence_recalled_memory(text)
     return AssistantObservation(
         ok=True, text=text,
         data={"seed_count": len(seeds), "dynamic_count": len(memories),

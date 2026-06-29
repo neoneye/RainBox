@@ -62,4 +62,7 @@ def build_chat_context_block(
     except Exception:
         logger.warning("chat: profile block failed", exc_info=True)
     parts = [b for b in (profile_block, seed_block, memory_block) if b]
-    return "\n\n".join(parts), retrieved_query, memories
+    joined = "\n\n".join(parts)
+    if joined:
+        joined, _ = memory_retrieval.fence_recalled_memory(joined)
+    return joined, retrieved_query, memories

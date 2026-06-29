@@ -163,6 +163,21 @@ def test_query_memory_merges_seed_and_dynamic_without_duplicate_legend(app_ctx, 
         _cleanup_subject(fresh_subject)
 
 
+def test_query_memory_observation_is_fenced_when_memories_present(app_ctx, fresh_subject):
+    """The query_memory observation must wrap retrieved facts in a recalled_memory
+    fence so they enter the model context as untrusted reference data."""
+    try:
+        db.create_memory_claim(
+            scope="global", kind="fact", text="the deploy host is prod-web-01 fenced",
+            confidence=0.9, status="active", sensitivity="public", subject=fresh_subject)
+        obs = _action_query_memory(_ctx(), {"query": "deploy host fenced"})
+        assert obs.ok
+        assert "<recalled_memory" in obs.text
+        assert obs.text.rstrip().endswith("</recalled_memory>")
+    finally:
+        _cleanup_subject(fresh_subject)
+
+
 # --- query_qa (reuses the QueryAgent pipeline) --------------------------------
 
 
