@@ -4,11 +4,13 @@ Split out of db.py. Holds the memory claim/evidence operations
 (create_memory_claim, add_memory_evidence, list_memory_claims, supersede_memory,
 reject_memory, ...). Re-exported from db for import compatibility.
 """
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 import hashlib as _hashlib
+import sqlalchemy as sa
 
 from db.models import MemoryClaim, MemoryEmbedding, MemoryEvidence, MemoryRejectedValue, db
 
@@ -234,9 +236,9 @@ def activate_memory_claim(
 
 
 def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any], commit: bool = True) -> None:
-    """Mark a claim `rejected` and attach an evidence row recording the
-    rejection. Existing evidence is left untouched (the audit trail
-    survives)."""
+    """Mark a claim `rejected`, attach an evidence row recording the rejection,
+    and write a tombstone so the value is not re-learned. Existing evidence is
+    left untouched (the audit trail survives)."""
     claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
     if claim is None:
         raise ValueError(f"memory claim not found: {memory_uuid}")
@@ -244,6 +246,7 @@ def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any], commit: bool
     ev = MemoryEvidence(memory_uuid=memory_uuid, **evidence_args)
     db.session.add(ev)
     db.session.flush()
+    write_tombstone(claim, reason="rejected by operator", commit=False)
     if commit:
         db.session.commit()
 
@@ -475,9 +478,16 @@ def advisory_key(scope, room_uuid, agent_uuid, sp_key, value_key) -> int:
 
 def write_tombstone(claim, *, reason, created_by_uuid=None, commit: bool = True):
     """Upsert a tombstone for `claim`'s (scope, key, value), snapshotting its text
-    and a one-line evidence digest. Idempotent on the unique key."""
+    and a one-line evidence digest. Idempotent on the unique key.
+
+    Global-scope tombstones are keyed on (scope="global", room_uuid=None,
+    agent_uuid=None) regardless of the claim's own room_uuid — a global rejection
+    is cross-room."""
     sp, val = belief_keys(claim.subject, claim.predicate, claim.object, claim.text)
-    existing = check_tombstone(claim.scope, claim.room_uuid, claim.agent_uuid, sp, val)
+    # Normalize: global tombstones are not room- or agent-scoped.
+    tomb_room = None if claim.scope == "global" else claim.room_uuid
+    tomb_agent = None if claim.scope == "global" else claim.agent_uuid
+    existing = check_tombstone(claim.scope, tomb_room, tomb_agent, sp, val)
     latest_ev = (db.session.query(MemoryEvidence)
                  .filter_by(memory_uuid=claim.uuid)
                  .order_by(MemoryEvidence.id.desc()).first())
@@ -494,7 +504,7 @@ def write_tombstone(claim, *, reason, created_by_uuid=None, commit: bool = True)
         row = existing
     else:
         row = MemoryRejectedValue(
-            scope=claim.scope, room_uuid=claim.room_uuid, agent_uuid=claim.agent_uuid,
+            scope=claim.scope, room_uuid=tomb_room, agent_uuid=tomb_agent,
             subj_pred_key=sp, value_key=val, claim_text=claim.text,
             evidence_summary=ev_sum, reason=reason, created_from_uuid=claim.uuid,
             created_by_uuid=created_by_uuid, hit_count=0)
@@ -539,3 +549,126 @@ def list_tombstones_with_hits(*, room_uuid: UUID | None = None
     if room_uuid is not None:
         q = q.filter(MemoryRejectedValue.room_uuid == room_uuid)
     return q.order_by(MemoryRejectedValue.last_hit_at.desc()).all()
+
+
+# --- record_belief: the single governed write path ---------------------------
+
+TOMBSTONE_OVERRIDE_ACTORS = {
+    "human_review_ui", "explicit_human_command", "human_confirmed_write_intent",
+}
+
+# per-source_type evidence requirements: field -> required?
+_EVIDENCE_MATRIX = {
+    "chat_message": {"source_id": True, "excerpt": True, "created_by_uuid": True},
+    "journal":      {"source_id": True, "excerpt": True, "created_by_uuid": True},
+    "transcript":   {"source_id": True, "excerpt": True, "created_by_uuid": False},
+    "file":         {"source_id": True, "excerpt": True, "created_by_uuid": False},
+    "api":          {"source_id": True, "excerpt": False, "created_by_uuid": False},
+    "manual":       {"source_id": False, "excerpt": True, "created_by_uuid": False},
+}
+
+
+def validate_evidence(evidence: dict[str, Any]) -> None:
+    """Enforce the per-source_type evidence matrix (spec §3.4). Raises ValueError
+    on a missing required field. provenance + source_type always required."""
+    if not evidence.get("provenance"):
+        raise ValueError("evidence.provenance is required")
+    st = evidence.get("source_type")
+    if st not in _EVIDENCE_MATRIX:
+        raise ValueError(f"evidence.source_type invalid: {st!r}")
+    for field, required in _EVIDENCE_MATRIX[st].items():
+        if required and not evidence.get(field):
+            raise ValueError(f"evidence.{field} required for source_type={st!r}")
+
+
+@dataclass
+class BeliefWriteResult:
+    outcome: str
+    claim: "MemoryClaim | None"
+    reason: str | None = None
+    conflicts_with_uuid: "UUID | None" = None
+
+
+def _lock_belief(scope, room_uuid, agent_uuid, sp_key, val_key) -> None:
+    """Take advisory locks covering the exact-scope key and the global key, in
+    sorted order to avoid deadlock."""
+    keys = sorted({
+        advisory_key(scope, room_uuid, agent_uuid, sp_key, val_key),
+        advisory_key("global", None, None, sp_key, val_key),
+    })
+    for k in keys:
+        db.session.execute(sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": k})
+
+
+def record_belief(*, actor, scope, kind, text, confidence, evidence,
+                  sensitivity="private", agent_uuid=None, room_uuid=None,
+                  subject=None, predicate=None, object=None, expires_at=None
+                  ) -> BeliefWriteResult:
+    """The single governed write path (spec §3). One atomic transaction:
+    dedupe -> tombstone (exact+global) -> [conflict, Task 7] -> create. Never
+    raises for policy outcomes; raises ValueError for incomplete evidence."""
+    validate_evidence(evidence)
+    sp_key, val_key = belief_keys(subject, predicate, object, text)
+    _lock_belief(scope, room_uuid, agent_uuid, sp_key, val_key)
+    human = actor in TOMBSTONE_OVERRIDE_ACTORS
+
+    # 1. Dedupe
+    existing = find_equivalent_claim(text, scope=scope, room_uuid=room_uuid,
+                                     agent_uuid=agent_uuid,
+                                     statuses=("active", "candidate"))
+    if existing is not None:
+        existing.support_count = (existing.support_count or 1) + 1
+        existing.epistemic_confidence = min(
+            1.0, (existing.epistemic_confidence or existing.confidence) + 0.05)
+        add_memory_evidence(memory_uuid=existing.uuid, commit=False, **evidence)
+        db.session.commit()
+        return BeliefWriteResult("corroborated", existing)
+
+    # 2. Tombstone — exact + global, considered separately (spec §3.3/§5)
+    cleared_exact = False
+    exact = check_tombstone(scope, room_uuid, agent_uuid, sp_key, val_key)
+    glob = (check_tombstone("global", None, None, sp_key, val_key)
+            if scope != "global" else None)
+    if exact is not None and human:
+        clear_tombstone(exact, commit=False)
+        exact = None
+        cleared_exact = True
+    if glob is not None:
+        if human:
+            ev = with_note(evidence, "scoped exception over global tombstone")
+            new = create_memory_claim(
+                scope=scope, kind=kind, text=text, confidence=confidence,
+                status="active", sensitivity=sensitivity, agent_uuid=agent_uuid,
+                room_uuid=room_uuid, subject=subject, predicate=predicate, object=object,
+                support_count=1, epistemic_confidence=confidence,
+                retrieval_strength=confidence, subj_pred_key=sp_key, value_key=val_key,
+                key_version=KEY_VERSION, expires_at=expires_at, commit=False)
+            add_memory_evidence(memory_uuid=new.uuid, commit=False, **ev)
+            db.session.commit()
+            return BeliefWriteResult("created", new,
+                                     reason="scoped exception; global tombstone intact")
+        record_tombstone_hit(glob, commit=False)
+        db.session.commit()
+        return BeliefWriteResult("refused_tombstone", None,
+                                 reason="value previously rejected (global)")
+    if exact is not None:   # non-override actor, exact tombstone
+        record_tombstone_hit(exact, commit=False)
+        db.session.commit()
+        return BeliefWriteResult("refused_tombstone", None,
+                                 reason="value previously rejected")
+
+    # 3. (conflict detection added in Task 7)
+
+    # 4. Plain create
+    status = "active" if human else "candidate"
+    ev = with_note(evidence, "operator override of prior rejection") if cleared_exact else evidence
+    new = create_memory_claim(
+        scope=scope, kind=kind, text=text, confidence=confidence, status=status,
+        sensitivity=sensitivity, agent_uuid=agent_uuid, room_uuid=room_uuid,
+        subject=subject, predicate=predicate, object=object, support_count=1,
+        epistemic_confidence=confidence, retrieval_strength=confidence,
+        subj_pred_key=sp_key, value_key=val_key, key_version=KEY_VERSION,
+        expires_at=expires_at, commit=False)
+    add_memory_evidence(memory_uuid=new.uuid, commit=False, **ev)
+    db.session.commit()
+    return BeliefWriteResult("created", new)
