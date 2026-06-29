@@ -274,6 +274,10 @@ def resolve_memory_conflict(memory_uuid: UUID) -> tuple[Response, int] | Respons
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    if claim is not None and claim.status == "active":
+    if claim is None:
+        # resolve_conflict returns None only if the claim vanished between the
+        # initial fetch and the re-fetch under lock — treat as not-found.
+        return jsonify({"error": "memory claim not found"}), 404
+    if claim.status == "active":
         _refresh_embedding(claim)
-    return jsonify({"ok": True, "status": claim.status if claim is not None else None})
+    return jsonify({"ok": True, "status": claim.status})
