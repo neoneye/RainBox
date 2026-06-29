@@ -230,14 +230,27 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
             f"the new value was previously rejected and cannot be re-added. "
             f"({result.reason})"
         )
-    old.status = "superseded"
-    db.write_tombstone(old, reason="superseded", commit=False)
-    new_claim.supersedes_uuid = old.uuid
-    db.db.session.commit()
+    # For free-text claims, record_belief already committed the new claim but
+    # could not auto-detect the old one as the rival.  Supersede the old claim
+    # and link it to the new one in a single commit so the two mutations are
+    # atomic.  On any error, roll back the whole unit (including the new claim)
+    # so we never leave two contradicting live facts.
+    old_text_snapshot = old.text  # capture before session state may change
+    try:
+        old.status = "superseded"
+        db.write_tombstone(old, reason="superseded", commit=False)
+        new_claim.supersedes_uuid = old.uuid
+        db.db.session.commit()
+    except Exception:
+        db.db.session.rollback()
+        return (
+            f"Could not complete correction of {old_text!r} → {new_text!r}: "
+            f"an error occurred while superseding the original claim; no changes were saved."
+        )
     # New active claim gets a fresh embedding; the superseded old one is pruned.
     refresh_claim_embedding(new_claim)
     refresh_claim_embedding(old)
-    return f"Corrected: {old.text} → {new_text}"
+    return f"Corrected: {old_text_snapshot} → {new_text}"
 
 
 def _handle_recall(ctx: QueryContext, topic: str) -> str:

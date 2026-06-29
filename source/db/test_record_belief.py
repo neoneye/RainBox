@@ -115,3 +115,16 @@ def test_validate_evidence_requires_chat_message_fields():
 def test_validate_evidence_manual_allows_missing_created_by():
     validate_evidence({"provenance": "confirmed_by_user", "source_type": "manual",
                        "excerpt": "reason text"})   # no raise
+
+
+def test_record_belief_raises_for_unknown_actor(app_ctx):
+    room = uuid4()
+    try:
+        with pytest.raises(ValueError, match="unknown actor"):
+            record_belief(
+                actor="bogus",
+                scope="room", kind="fact", text="test unknown actor fact",
+                confidence=1.0, room_uuid=room, evidence=EV,
+            )
+    finally:
+        _cleanup(room)

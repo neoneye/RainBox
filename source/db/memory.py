@@ -599,6 +599,14 @@ def active_claim_with_same_key_different_value(scope, room_uuid, agent_uuid,
 
 # --- record_belief: the single governed write path ---------------------------
 
+ACTORS = (
+    "human_review_ui",
+    "explicit_human_command",
+    "human_confirmed_write_intent",
+    "assistant_interpreted",
+    "model_inferred",
+)
+
 TOMBSTONE_OVERRIDE_ACTORS = {
     "human_review_ui", "explicit_human_command", "human_confirmed_write_intent",
 }
@@ -652,7 +660,10 @@ def record_belief(*, actor, scope, kind, text, confidence, evidence,
                   ) -> BeliefWriteResult:
     """The single governed write path (spec §3). One atomic transaction:
     dedupe -> tombstone (exact+global) -> [conflict, Task 7] -> create. Never
-    raises for policy outcomes; raises ValueError for incomplete evidence."""
+    raises for policy outcomes; raises ValueError for incomplete evidence or an
+    unknown actor."""
+    if actor not in ACTORS:
+        raise ValueError(f"unknown actor: {actor!r}")
     validate_evidence(evidence)
     sp_key, val_key = belief_keys(subject, predicate, object, text)
     _lock_belief(scope, room_uuid, agent_uuid, sp_key, val_key)

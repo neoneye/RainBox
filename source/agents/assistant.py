@@ -508,7 +508,7 @@ def _action_activate_memory(
     refresh_claim_embedding(activated)
     return AssistantObservation(
         ok=True, text=f"Activated memory {memory_uuid}",
-        data={"memory_uuid": str(memory_uuid), "status": "active"},
+        data={"memory_uuid": str(memory_uuid), "status": activated.status},
     )
 
 
