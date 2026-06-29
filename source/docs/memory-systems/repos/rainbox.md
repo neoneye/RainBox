@@ -412,7 +412,7 @@ RainBox has strong correction semantics:
 - undo for some assistant writes (undo skips tombstone; explicit forget tombstones);
 - embedding prune on non-active-or-candidate status.
 
-Rejected-value tombstones (`MemoryRejectedValue`) prevent future model writes of the same (scope, subject/predicate, value) — the same anti-laundering guarantee as Verel-style tombstones. Human operators can create scoped exceptions. Tombstone hits are surfaced in the review UI so operators can see which rejected beliefs the model is still trying to write.
+Rejected-value tombstones (`MemoryRejectedValue`) prevent future model writes of the same (scope, room_uuid, agent_uuid, subject/predicate, value) — the same anti-laundering guarantee as Verel-style tombstones (room/agent-scoped, with global tombstones applying across all rooms). Human operators can create scoped exceptions. Tombstone hits are surfaced in the review UI so operators can see which rejected beliefs the model is still trying to write.
 
 ## 8. Trust, Provenance, and Safety
 

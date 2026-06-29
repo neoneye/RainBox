@@ -64,9 +64,9 @@ similarity without changing the claim/evidence source of truth. Claims without a
 current embedding still remain retrievable through lexical and entity signals.
 
 `MemoryRejectedValue` is the tombstone table (see §Rejected-Value Tombstones
-below). It records (scope, subject/predicate key, value) tuples for beliefs that
-were rejected or superseded, preventing the same value from silently re-entering
-memory via model writes.
+below). It records (scope, room_uuid, agent_uuid, subject/predicate key, value)
+tuples for beliefs that were rejected or superseded, preventing the same value
+from silently re-entering memory via model writes.
 
 ### Claim Lifecycle
 

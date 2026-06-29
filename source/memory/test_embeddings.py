@@ -263,3 +263,28 @@ def test_sync_candidate_embedding_survives(app_ctx, fresh_subject):
         assert db.get_memory_embedding(superseded.uuid, EMBED_MODEL_NAME) is None
     finally:
         _cleanup(fresh_subject)
+
+
+def test_expired_active_claim_is_not_embedded_and_is_pruned(app_ctx, fresh_subject):
+    """Live = active/candidate AND non-expired. An active-but-expired claim must
+    not be embedded by refresh or backfill, and an existing embedding is pruned."""
+    from datetime import UTC, datetime, timedelta
+    past = datetime.now(UTC) - timedelta(days=1)
+    claim = db.create_memory_claim(
+        scope="global", kind="fact", text="expired host is old-web-01",
+        confidence=0.9, status="active", sensitivity="public",
+        subject=fresh_subject, expires_at=past,
+    )
+    try:
+        # refresh must NOT embed an expired claim (and prunes any existing row)
+        refresh_claim_embedding(claim, embed_fn=_fake_embed)
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
+        # backfill must skip it too
+        backfill_memory_embeddings(embed_fn=_fake_embed)
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
+        # and if one somehow exists, prune removes it
+        ensure_memory_embedding(claim, embed_fn=_fake_embed)  # force-create
+        prune_stale_embeddings()
+        assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
+    finally:
+        _cleanup(fresh_subject)

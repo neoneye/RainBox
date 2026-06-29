@@ -111,8 +111,9 @@ def test_assistant_activate_memory_embeds_the_claim(app_ctx):
 
 
 def test_assistant_remember_embeds_the_candidate_claim(app_ctx):
-    """An assistant `remember` lands a *candidate* claim AND embeds it immediately,
-    so query_memory can retrieve it before the operator activates it."""
+    """An assistant `remember` lands a *candidate* claim AND embeds it immediately
+    to keep the index warm for later activation (candidates are not retrieved into
+    prompts; retrieval is active-only)."""
     ctx = AssistantActionContext(
         journal_id=None, room_uuid=uuid4(), agent_uuid=uuid4(), step_index=0)
     text = f"freshness remember {uuid4()}"

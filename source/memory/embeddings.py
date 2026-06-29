@@ -93,17 +93,26 @@ def ensure_memory_embedding(
     return True
 
 
+def _claim_is_live(claim: MemoryClaim) -> bool:
+    """A claim is *live* for embedding purposes when it is active or candidate
+    AND not past its expiry. Single source of truth for the embed/prune contract
+    shared by refresh, backfill, and prune."""
+    if claim.status not in ("active", "candidate"):
+        return False
+    return claim.expires_at is None or claim.expires_at > datetime.now(UTC)
+
+
 def refresh_claim_embedding(
     claim: MemoryClaim, *, embed_fn: EmbedFn | None = None
 ) -> None:
     """Keep one claim's embedding in sync with its current status — the hook for
     the memory write path. Embed (or re-embed on text change) while the claim is
-    active or candidate (candidates are embedded immediately to keep the index
-    warm for later activation — they are NOT retrieved into prompts, since
-    `hard_filtered_claims` is active-only); prune its embedding once it is neither
-    active nor candidate. Best-effort: the underlying embed/delete already swallow
-    their own failures."""
-    if claim.status in ("active", "candidate"):
+    live — active or candidate and non-expired (candidates are embedded
+    immediately to keep the index warm for later activation — they are NOT
+    retrieved into prompts, since `hard_filtered_claims` is active-only); prune
+    its embedding once it is not live. Best-effort: the underlying embed/delete
+    already swallow their own failures."""
+    if _claim_is_live(claim):
         ensure_memory_embedding(claim, embed_fn=embed_fn)
     else:
         db.delete_memory_embeddings(claim.uuid)
@@ -116,9 +125,9 @@ def prune_stale_embeddings() -> int:
     This is the safety net for deactivation paths — forget/supersede/expiry —
     that don't individually refresh: even if a write site forgets to prune, a
     periodic `sync` reconciles the embedding table with live claims. Candidate
-    claims are kept because refresh_claim_embedding embeds them immediately (so
-    query_memory can retrieve them before operator activation) and they must
-    survive a sync cycle.
+    claims are kept because refresh_claim_embedding embeds them immediately (to
+    keep the index warm for later activation — candidates are NOT retrieved into
+    prompts) and they must survive a sync cycle.
     """
     now = datetime.now(UTC)
     retrievable = db.db.session.query(MemoryClaim.uuid).filter(
@@ -137,11 +146,21 @@ def prune_stale_embeddings() -> int:
 def backfill_memory_embeddings(
     *, embed_fn: EmbedFn | None = None, limit: int | None = None
 ) -> int:
-    """Ensure an embedding for every active or candidate claim. Returns the
-    number of claims with an up-to-date embedding afterward (capped by
-    `limit`). Candidates are included so a full sync covers freshly-created
-    candidates whose write-path embedding may have been skipped."""
-    claims = db.list_memory_claims(status="active") + db.list_memory_claims(status="candidate")
+    """Ensure an embedding for every *live* claim (active or candidate and
+    non-expired). Returns the number of claims with an up-to-date embedding
+    afterward (capped by `limit`). Candidates are included so a full sync covers
+    freshly-created candidates whose write-path embedding may have been skipped;
+    expired claims are excluded so backfill matches prune (which drops them)."""
+    now = datetime.now(UTC)
+    claims = (
+        db.db.session.query(MemoryClaim)
+        .filter(
+            MemoryClaim.status.in_(("active", "candidate")),
+            sa.or_(MemoryClaim.expires_at.is_(None), MemoryClaim.expires_at > now),
+        )
+        .order_by(MemoryClaim.id.asc())
+        .all()
+    )
     ensured = 0
     for claim in claims:
         if limit is not None and ensured >= limit:

@@ -362,7 +362,7 @@ def _action_remember(
         )
     claim = result.claim
     from memory.embeddings import refresh_claim_embedding
-    refresh_claim_embedding(claim)  # embed now so query_memory can find candidates
+    refresh_claim_embedding(claim)  # embed now to keep the index warm for activation
     return AssistantObservation(
         ok=True,
         text=(f"Remembered as a candidate memory (pending operator confirmation). "
