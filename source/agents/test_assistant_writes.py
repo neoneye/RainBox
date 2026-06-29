@@ -13,6 +13,8 @@ import pytest
 
 import db
 from db import AssistantRun, AssistantWriteIntent, MemoryClaim
+from db.memory import belief_keys
+from db.models import MemoryEvidence, MemoryRejectedValue
 from agents.assistant import (
     CAPABILITIES,
     AssistantActionContext,
@@ -186,6 +188,82 @@ def test_remember_is_undoable_through_the_write_intent_ledger(room):
         assert db.get_write_intent(intent.uuid).state == "undone"
     finally:
         db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
+        db.db.session.commit()
+
+
+def test_undo_remember_leaves_no_tombstone_but_direct_reject_does(room):
+    """Regression guard: undo-of-remember must NOT write a tombstone (so the
+    value stays re-learnable), whereas a direct reject (with default
+    tombstone=True) MUST write one. A regression that drops tombstone=False from
+    _action_reject_memory_candidate would create an unwanted tombstone and fail
+    the first assertion."""
+    from agents.assistant_writes import undo_write_intent
+
+    agent = _agent()
+    text_undo = f"undo-no-tomb {uuid4().hex[:6]}"
+    text_direct = f"direct-reject-tomb {uuid4().hex[:6]}"
+    agent._decide_next_step = scripted_decisions(
+        _decision(AssistantActionName.REMEMBER, text=text_undo),
+        _decision(AssistantActionName.REPLY, message="ok"),
+    )
+    try:
+        # --- path 1: remember then undo via write-intent ledger ---------------
+        result = agent.handle(uuid4(), {"room_uuid": str(room)})
+        intent = db.db.session.query(AssistantWriteIntent).filter(
+            AssistantWriteIntent.run_uuid == result["assistant_run_uuid"]
+        ).one()
+        mem_uuid = UUID(intent.result["undo"]["payload"]["memory_uuid"])
+        claim = db.get_memory_claim(mem_uuid)
+
+        # Derive tombstone lookup keys before the undo (claim still active).
+        sp_key, val_key = belief_keys(
+            claim.subject, claim.predicate, claim.object, claim.text
+        )
+
+        obs = undo_write_intent(intent.uuid)
+        assert obs.ok is True
+        assert db.get_memory_claim(mem_uuid).status == "rejected"
+
+        # Core assertion: undo must NOT write a tombstone.
+        tomb = db.check_tombstone(
+            claim.scope, claim.room_uuid, claim.agent_uuid, sp_key, val_key
+        )
+        assert tomb is None, (
+            "undo-of-remember wrote a tombstone — tombstone=False was dropped "
+            "from _action_reject_memory_candidate"
+        )
+
+        # --- path 2: direct reject (tombstone=True by default) for contrast ---
+        claim2 = db.create_memory_claim(
+            scope="room", kind="fact", text=text_direct, confidence=1.0,
+            status="active", sensitivity="private",
+            agent_uuid=ASSISTANT_UUID, room_uuid=room,
+        )
+        sp2, val2 = belief_keys(
+            claim2.subject, claim2.predicate, claim2.object, claim2.text
+        )
+        db.reject_memory(claim2.uuid, {"provenance": "confirmed_by_user",
+                                       "source_type": "manual"})
+        # Default tombstone=True: a tombstone MUST be present.
+        tomb2 = db.check_tombstone(
+            claim2.scope, claim2.room_uuid, claim2.agent_uuid, sp2, val2
+        )
+        assert tomb2 is not None, (
+            "direct reject (tombstone=True) did not write a tombstone — "
+            "tombstone logic is broken"
+        )
+    finally:
+        db.db.session.query(MemoryRejectedValue).filter(
+            MemoryRejectedValue.room_uuid == room
+        ).delete()
+        db.db.session.query(MemoryEvidence).filter(
+            MemoryEvidence.memory_uuid.in_(
+                db.db.session.query(MemoryClaim.uuid).filter(
+                    MemoryClaim.room_uuid == room
+                )
+            )
+        ).delete(synchronize_session=False)
+        db.db.session.query(MemoryClaim).filter(MemoryClaim.room_uuid == room).delete()
         db.db.session.commit()
 
 
