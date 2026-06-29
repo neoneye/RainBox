@@ -118,18 +118,20 @@ def _human_message_uuid(ctx: QueryContext) -> str | None:
 
 
 def _handle_remember(ctx: QueryContext, text: str) -> str:
-    claim = db.create_memory_claim(
-        scope="global", kind="fact", text=text, confidence=1.0,
-        status="active", sensitivity="private",
+    result = db.record_belief(
+        actor="explicit_human_command", scope="global", kind="fact",
+        text=text, confidence=1.0, sensitivity="private",
+        evidence={
+            "provenance": "confirmed_by_user",
+            "source_type": "manual",
+            "source_id": _human_message_uuid(ctx),
+            "excerpt": ctx.query,
+        },
     )
-    db.add_memory_evidence(
-        memory_uuid=claim.uuid,
-        provenance="confirmed_by_user",
-        source_type="chat_message",
-        source_id=_human_message_uuid(ctx),
-        excerpt=ctx.query,
-    )
-    refresh_claim_embedding(claim)
+    if result.outcome == "refused_tombstone":
+        return f"I previously rejected that; not re-adding it. ({result.reason})"
+    if result.claim is not None:
+        refresh_claim_embedding(result.claim)
     return f"Remembered: {text}"
 
 
@@ -193,6 +195,30 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
             f"before I correct one."
         )
     old = matches[0]
+    evidence = dict(
+        provenance="confirmed_by_user",
+        source_type="manual",
+        source_id=_human_message_uuid(ctx),
+        excerpt=ctx.query,
+    )
+    # Try the governed path first: for keyed (structured) claims, record_belief
+    # will detect the same-key conflict and auto-supersede the old claim.
+    result = db.record_belief(
+        actor="explicit_human_command",
+        scope=old.scope, kind=old.kind, text=new_text,
+        confidence=1.0, sensitivity=old.sensitivity,
+        agent_uuid=old.agent_uuid, room_uuid=old.room_uuid,
+        subject=old.subject, predicate=old.predicate, object=old.object,
+        evidence=evidence,
+    )
+    if result.outcome == "superseded":
+        # record_belief auto-superseded the rival; both embeddings need refresh.
+        new_claim = result.claim
+        refresh_claim_embedding(new_claim)
+        refresh_claim_embedding(old)
+        return f"Corrected: {old.text} → {new_text}"
+    # Fall back to explicit supersede for free-text claims (no structured key)
+    # where record_belief could not detect the conflict automatically.
     new_claim = db.supersede_memory(
         old.uuid,
         new_claim_args=dict(
@@ -201,12 +227,7 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
             agent_uuid=old.agent_uuid, room_uuid=old.room_uuid,
             subject=old.subject, predicate=old.predicate, object=old.object,
         ),
-        evidence_args=dict(
-            provenance="confirmed_by_user",
-            source_type="chat_message",
-            source_id=_human_message_uuid(ctx),
-            excerpt=ctx.query,
-        ),
+        evidence_args=evidence,
     )
     # New active claim gets a fresh embedding; the superseded old one is pruned.
     refresh_claim_embedding(new_claim)

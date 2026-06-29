@@ -228,7 +228,7 @@ def test_remember_creates_active_private_claim_and_confirmed_evidence(app_ctx, f
         ev = _evidence_for(claim.uuid)
         assert len(ev) == 1
         assert ev[0].provenance == "confirmed_by_user"
-        assert ev[0].source_type == "chat_message"
+        assert ev[0].source_type == "manual"  # ops.py has no operator UUID; manual is correct
         assert ev[0].source_id == msg_uuid
         assert ev[0].excerpt == "remember that the sky is blue"
         assert "the sky is blue" in reply.lower()
