@@ -667,6 +667,11 @@ def _lock_belief(scope, room_uuid, agent_uuid, sp_key, val_key) -> None:
         db.session.execute(sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": k})
 
 
+def _same_bucket(a: "MemoryClaim", b: "MemoryClaim") -> bool:
+    """True iff two claims live in the same scope bucket (scope + room + agent)."""
+    return a.scope == b.scope and a.room_uuid == b.room_uuid and a.agent_uuid == b.agent_uuid
+
+
 def record_belief(*, actor, scope, kind, text, confidence, evidence,
                   sensitivity="private", agent_uuid=None, room_uuid=None,
                   subject=None, predicate=None, object=None, expires_at=None,
@@ -923,37 +928,75 @@ def correct_belief(
         commit=False,
     )
 
-    # 9. Ensure the replacement claim is active. If record_belief corroborated a
-    # candidate (pre-existing claim with status="candidate"), promote it: a human
-    # correction must always yield an active belief.
-    if result.claim is not None and result.claim.status != "active":
-        result.claim.status = "active"
-        result.claim.updated_at = datetime.now(UTC)
+    # 9 / 9b. Disposition: promote to active with conditional conflict-clear.
+    # The replace has NOT been committed yet; if we raise here the uncommitted
+    # supersede of `old` is rolled back by the caller.
+    if result.claim is not None:
+        claim = result.claim
 
-    # 9b. An active claim must never carry a dangling conflicts_with_uuid. The
-    # replacement can acquire one two ways: record_belief returned
-    # conflict_candidate (new_text conflicted with a BROADER-scope rival — the
-    # narrower correction is a scoped exception that legitimately coexists with the
-    # broader belief, which is intentionally left untouched), OR it corroborated a
-    # PRE-EXISTING candidate that already carried its own conflicts_with_uuid. In
-    # both cases, promoting to active here means the human correction resolves that
-    # conflict, so we clear the pointer (invariant: active ⇒ conflicts_with_uuid is
-    # None) and record an audit note. Gate on the flag itself, not the outcome, so
-    # the corroborated-candidate path is covered too.
-    if result.claim is not None and result.claim.conflicts_with_uuid is not None:
-        result.claim.conflicts_with_uuid = None
-        note = (
-            "scoped exception over broader conflicting belief (via correction)"
-            if result.outcome == "conflict_candidate"
-            else "conflict pointer cleared on activation via correction"
-        )
-        add_memory_evidence(
-            memory_uuid=result.claim.uuid,
-            commit=False,
-            provenance="confirmed_by_user",
-            source_type="manual",
-            excerpt=note,
-        )
+        if result.outcome == "conflict_candidate":
+            # record_belief returns conflict_candidate for a human only when the
+            # rival is a BROADER-scope claim. That is a scoped exception that
+            # legitimately coexists with the broader belief.
+            claim.status = "active"
+            claim.updated_at = datetime.now(UTC)
+            claim.conflicts_with_uuid = None
+            add_memory_evidence(
+                memory_uuid=claim.uuid, commit=False,
+                provenance="confirmed_by_user", source_type="manual",
+                excerpt="scoped exception over broader conflicting belief (via correction)",
+            )
+        else:
+            # outcome is created / corroborated / superseded
+            if claim.status == "active" and claim.conflicts_with_uuid is None:
+                pass  # nothing to do; already clean
+            else:
+                cw = claim.conflicts_with_uuid
+                if cw is None:
+                    # plain candidate with no conflict — safe to activate
+                    claim.status = "active"
+                    claim.updated_at = datetime.now(UTC)
+                elif cw == old.uuid:
+                    # the candidate conflicted with the very claim being corrected;
+                    # superseding old resolves it
+                    claim.status = "active"
+                    claim.updated_at = datetime.now(UTC)
+                    claim.conflicts_with_uuid = None
+                    add_memory_evidence(
+                        memory_uuid=claim.uuid, commit=False,
+                        provenance="confirmed_by_user", source_type="manual",
+                        excerpt="conflict resolved by correcting the conflicting claim",
+                    )
+                else:
+                    # conflict pointer points to a DIFFERENT claim
+                    rival = get_memory_claim(cw)
+                    if rival is None or rival.status != "active":
+                        # stale/resolved conflict — safe to activate and clear
+                        claim.status = "active"
+                        claim.updated_at = datetime.now(UTC)
+                        claim.conflicts_with_uuid = None
+                        add_memory_evidence(
+                            memory_uuid=claim.uuid, commit=False,
+                            provenance="confirmed_by_user", source_type="manual",
+                            excerpt="stale conflict pointer cleared on activation via correction",
+                        )
+                    elif _same_bucket(rival, claim):
+                        # a different, still-active, SAME-scope rival — refuse
+                        # (the uncommitted supersede of old will be rolled back)
+                        raise ValueError(
+                            f"cannot correct to {new_text!r}: it conflicts with active "
+                            f"memory {rival.uuid} ({rival.text!r}); resolve that conflict first"
+                        )
+                    else:
+                        # rival is active but in a different/broader scope — scoped exception
+                        claim.status = "active"
+                        claim.updated_at = datetime.now(UTC)
+                        claim.conflicts_with_uuid = None
+                        add_memory_evidence(
+                            memory_uuid=claim.uuid, commit=False,
+                            provenance="confirmed_by_user", source_type="manual",
+                            excerpt="scoped exception over broader conflicting belief (via correction)",
+                        )
 
     # 10. Link lineage without overwriting a pre-existing supersedes_uuid
     if result.claim is not None and result.claim.supersedes_uuid is None:

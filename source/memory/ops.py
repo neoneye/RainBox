@@ -196,16 +196,20 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
         )
     old = matches[0]
     old_text_snapshot = old.text  # capture before session state may change
-    new = db.correct_belief(
-        old.uuid, new_text,
-        actor="explicit_human_command",
-        evidence={
-            "provenance": "confirmed_by_user",
-            "source_type": "manual",
-            "source_id": _human_message_uuid(ctx),
-            "excerpt": ctx.query,
-        },
-    )
+    try:
+        new = db.correct_belief(
+            old.uuid, new_text,
+            actor="explicit_human_command",
+            evidence={
+                "provenance": "confirmed_by_user",
+                "source_type": "manual",
+                "source_id": _human_message_uuid(ctx),
+                "excerpt": ctx.query,
+            },
+        )
+    except ValueError as exc:
+        db.db.session.rollback()
+        return f"Could not correct {old_text_snapshot!r} → {new_text!r}: {exc}"
     refresh_claim_embedding(new)
     refresh_claim_embedding(db.get_memory_claim(old.uuid))  # now superseded -> prune
     return f"Corrected: {old_text_snapshot} → {new_text}"

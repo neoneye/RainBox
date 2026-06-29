@@ -629,3 +629,184 @@ def test_correct_corroborating_candidate_clears_conflict_pointer(app_ctx):
     assert new.conflicts_with_uuid is None          # the bug: was left dangling
     assert db.get_memory_claim(tea.claim.uuid).status == "superseded"
     _cleanup(room)
+
+
+# ---------------------------------------------------------------------------
+# Conditional conflict-clear: the laundering-hole fix
+# ---------------------------------------------------------------------------
+
+def test_correct_belief_refuse_same_scope_conflicting_corroboration(app_ctx):
+    """BUG REPRO: correcting an UNRELATED claim to a value that conflicts with a
+    DIFFERENT still-active same-scope claim must RAISE ValueError and roll back
+    the entire operation — not silently launder both active claims into existence.
+
+    Setup:
+      tea   — active "Y prefers tea"
+      coffee — conflict_candidate "Y prefers coffee" (conflicts_with_uuid=tea)
+      note   — active "Y note is stale" (unrelated)
+
+    Correcting note -> "Y prefers coffee" must RAISE ValueError because coffee's
+    rival (tea) is still active and in the same scope.  The entire transaction
+    must roll back: note stays active, tea stays active, coffee stays candidate
+    with conflicts_with_uuid==tea.
+    """
+    from db.memory import correct_belief
+    room = uuid4()
+    marker = f"launder-{uuid4().hex[:8]}"
+    tea_text    = f"{marker} prefers tea"
+    coffee_text = f"{marker} prefers coffee"
+    note_text   = f"{marker} note is stale"
+
+    tea_res = record_belief(
+        actor="explicit_human_command", scope="room", kind="preference",
+        text=tea_text, confidence=1.0, room_uuid=room,
+        subject=marker, predicate="prefers", object="tea", evidence=EV)
+    coffee_res = record_belief(
+        actor="model_inferred", scope="room", kind="preference",
+        text=coffee_text, confidence=0.6, room_uuid=room,
+        subject=marker, predicate="prefers", object="coffee", evidence=MEV)
+    note_res = record_belief(
+        actor="explicit_human_command", scope="room", kind="fact",
+        text=note_text, confidence=1.0, room_uuid=room, evidence=EV)
+
+    assert tea_res.outcome in ("created", "superseded", "corroborated")
+    assert tea_res.claim.status == "active"
+    assert coffee_res.outcome == "conflict_candidate"
+    assert coffee_res.claim.status == "candidate"
+    assert coffee_res.claim.conflicts_with_uuid == tea_res.claim.uuid
+    assert note_res.claim.status == "active"
+
+    tea_uuid    = tea_res.claim.uuid
+    coffee_uuid = coffee_res.claim.uuid
+    note_uuid   = note_res.claim.uuid
+
+    try:
+        with pytest.raises(ValueError, match=r"conflict"):
+            correct_belief(
+                note_uuid, coffee_text,
+                actor="explicit_human_command",
+                evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                          "excerpt": "correcting note to coffee"},
+            )
+        # Roll back uncommitted changes left by the failed correct_belief
+        db.db.session.rollback()
+        db.db.session.expire_all()
+
+        # note must still be active (not superseded — whole op rolled back)
+        note_reloaded = db.get_memory_claim(note_uuid)
+        assert note_reloaded is not None
+        assert note_reloaded.status == "active", \
+            f"note must stay active after refused correction, got {note_reloaded.status!r}"
+
+        # tea must still be active
+        tea_reloaded = db.get_memory_claim(tea_uuid)
+        assert tea_reloaded is not None
+        assert tea_reloaded.status == "active", \
+            f"tea must stay active, got {tea_reloaded.status!r}"
+
+        # coffee must still be a candidate with its conflict pointer intact
+        coffee_reloaded = db.get_memory_claim(coffee_uuid)
+        assert coffee_reloaded is not None
+        assert coffee_reloaded.status == "candidate", \
+            f"coffee must stay candidate, got {coffee_reloaded.status!r}"
+        assert coffee_reloaded.conflicts_with_uuid == tea_uuid, \
+            f"coffee conflicts_with_uuid must still point to tea"
+
+        # There must NOT be two active claims for the tea/coffee predicate
+        active_pref = (
+            db.db.session.query(db.MemoryClaim)
+            .filter(
+                db.MemoryClaim.room_uuid == room,
+                db.MemoryClaim.status == "active",
+                db.MemoryClaim.subj_pred_key == coffee_reloaded.subj_pred_key,
+            )
+            .all()
+        )
+        assert len(active_pref) <= 1, (
+            f"Must not have two active same-scope claims for the same predicate; "
+            f"found {len(active_pref)}: {[c.text for c in active_pref]}"
+        )
+    finally:
+        _cleanup(room)
+
+
+def test_correct_belief_safe_conflict_with_old(app_ctx):
+    """SAFE: correcting the claim that IS the rival (tea) to the coffee candidate
+    value must succeed: coffee goes active, conflicts_with_uuid cleared, tea superseded."""
+    from db.memory import correct_belief
+    room = uuid4()
+    marker = f"safe-old-{uuid4().hex[:8]}"
+    tea_text    = f"{marker} prefers tea"
+    coffee_text = f"{marker} prefers coffee"
+
+    tea_res = record_belief(
+        actor="explicit_human_command", scope="room", kind="preference",
+        text=tea_text, confidence=1.0, room_uuid=room,
+        subject=marker, predicate="prefers", object="tea", evidence=EV)
+    coffee_res = record_belief(
+        actor="model_inferred", scope="room", kind="preference",
+        text=coffee_text, confidence=0.6, room_uuid=room,
+        subject=marker, predicate="prefers", object="coffee", evidence=MEV)
+    assert coffee_res.outcome == "conflict_candidate"
+    assert coffee_res.claim.conflicts_with_uuid == tea_res.claim.uuid
+
+    tea_uuid    = tea_res.claim.uuid
+    coffee_uuid = coffee_res.claim.uuid
+    try:
+        # Correct TEA -> coffee text (correcting the very claim that coffee conflicts with)
+        new = correct_belief(
+            tea_uuid, coffee_text,
+            actor="explicit_human_command",
+            evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                      "excerpt": "correct tea to coffee"},
+        )
+        db.db.session.expire_all()
+
+        assert new is not None
+        assert new.uuid == coffee_uuid, "should corroborate the pre-existing coffee candidate"
+        assert new.status == "active"
+        assert new.conflicts_with_uuid is None, "conflict pointer must be cleared"
+        assert db.get_memory_claim(tea_uuid).status == "superseded"
+    finally:
+        _cleanup(room)
+
+
+def test_correct_belief_plain_candidate_corroboration(app_ctx):
+    """SAFE: correcting to a value that exists as a plain candidate (no conflict pointer)
+    must promote it to active with no spurious ValueError."""
+    from db.memory import correct_belief
+    room = uuid4()
+    marker = f"plain-cand-{uuid4().hex[:8]}"
+    note_text  = f"{marker} note old"
+    plain_text = f"{marker} likes hiking"
+
+    note_res = record_belief(
+        actor="explicit_human_command", scope="room", kind="fact",
+        text=note_text, confidence=1.0, room_uuid=room, evidence=EV)
+    # Create a plain candidate (no conflict) via a model write to a new subject-predicate
+    plain_res = record_belief(
+        actor="model_inferred", scope="room", kind="fact",
+        text=plain_text, confidence=0.6, room_uuid=room, evidence=MEV)
+
+    note_uuid  = note_res.claim.uuid
+    plain_uuid = plain_res.claim.uuid
+    # plain_res is a plain candidate (no rival for "likes hiking")
+    assert plain_res.claim.status == "candidate"
+    assert plain_res.claim.conflicts_with_uuid is None
+
+    try:
+        new = correct_belief(
+            note_uuid, plain_text,
+            actor="explicit_human_command",
+            evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                      "excerpt": "correct note to plain candidate"},
+        )
+        db.db.session.expire_all()
+
+        assert new is not None
+        assert new.uuid == plain_uuid, "should corroborate the pre-existing plain candidate"
+        assert new.status == "active"
+        assert new.conflicts_with_uuid is None
+        assert db.get_memory_claim(note_uuid).status == "superseded"
+    finally:
+        _cleanup(room)
