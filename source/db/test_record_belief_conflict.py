@@ -460,3 +460,146 @@ def test_correct_belief_global_tombstone_scoped_exception(app_ctx):
             created_from_uuid=g_uuid
         ).delete()
         db.db.session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Critical bug repro: correct_belief leaves a dangling conflicts_with_uuid
+# when new_text conflicts with a BROADER-scope (global) rival.
+# ---------------------------------------------------------------------------
+
+def test_correct_belief_broader_rival_scoped_exception(app_ctx):
+    """Repro Critical bug: correct_belief(A, new_text) where new_text conflicts with
+    a GLOBAL rival must produce a SCOPED EXCEPTION — the returned claim must be:
+      - status == "active"
+      - scope == "room" (inherited from the corrected claim A)
+      - conflicts_with_uuid is None  (NOT dangling — this is the bug)
+      - supersedes_uuid == A.uuid
+    The GLOBAL rival must remain status == "active" (untouched).
+    An evidence row on the new claim must mention "scoped exception".
+    """
+    from db.memory import correct_belief, belief_keys, KEY_VERSION
+    room = uuid4()
+    marker = f"broader-{uuid4().hex[:8]}"
+    text_global = f"{marker} prefers globalvalue"
+    text_old   = f"{marker} prefers oldvalue"
+    text_new   = f"{marker} prefers newvalue"
+
+    # Set up: active ROOM claim A FIRST (no rival yet -> becomes active)
+    a_result = record_belief(
+        actor="explicit_human_command", scope="room", kind="preference",
+        text=text_old, confidence=1.0, room_uuid=room, evidence=EV,
+    )
+    a = a_result.claim
+    assert a.status == "active", f"A must be active before global rival exists"
+
+    # Set up: active GLOBAL claim (the broader rival) AFTER A
+    g_result = record_belief(
+        actor="explicit_human_command", scope="global", kind="preference",
+        text=text_global, confidence=1.0, evidence=EV,
+    )
+    g = g_result.claim
+    assert g.status == "active"
+
+    all_uuids = [g.uuid, a.uuid]
+    new_uuid = None
+    try:
+        # Correct A -> new_text which differs from g's value, causing conflict_candidate
+        new_claim = correct_belief(
+            a.uuid, text_new,
+            actor="explicit_human_command",
+            evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                      "excerpt": "human correction"},
+        )
+        new_uuid = new_claim.uuid if new_claim is not None else None
+        if new_uuid is not None:
+            all_uuids.append(new_uuid)
+
+        db.db.session.expire_all()
+
+        # The returned claim must be active (human correction always yields active)
+        assert new_claim is not None, "correct_belief must return a claim"
+        assert new_claim.status == "active", \
+            f"Expected active, got {new_claim.status!r}"
+
+        # Scope must be room (inherited from A)
+        assert new_claim.scope == "room", \
+            f"Expected scope='room', got {new_claim.scope!r}"
+
+        # conflicts_with_uuid MUST be cleared — this is the bug (dangling pointer)
+        assert new_claim.conflicts_with_uuid is None, (
+            f"conflicts_with_uuid must be None after scoped-exception promotion; "
+            f"got {new_claim.conflicts_with_uuid!r} (dangling pointer — Critical bug)"
+        )
+
+        # Lineage: new supersedes A
+        assert new_claim.supersedes_uuid == a.uuid, \
+            f"supersedes_uuid must point to A ({a.uuid}), got {new_claim.supersedes_uuid!r}"
+
+        # The GLOBAL rival must still be active (do NOT blast it)
+        g_reloaded = db.get_memory_claim(g.uuid)
+        assert g_reloaded.status == "active", \
+            f"Global rival must stay active, got {g_reloaded.status!r}"
+
+        # Evidence on new claim must contain "scoped exception" note
+        ev_rows = (
+            db.db.session.query(MemoryEvidence)
+            .filter_by(memory_uuid=new_uuid)
+            .all()
+        )
+        ev_texts = " ".join((e.excerpt or "") for e in ev_rows)
+        assert "scoped exception" in ev_texts.lower(), (
+            f"Expected scoped-exception note in evidence excerpts, got: {ev_texts!r}"
+        )
+
+    finally:
+        _cleanup_correct(all_uuids)
+
+
+def test_correct_belief_normal_same_scope_no_scoped_exception_note(app_ctx):
+    """Normal same-scope correction (no broader rival) must NOT add a scoped-exception
+    evidence note — the note is only for the conflict_candidate (broader-rival) case."""
+    from db.memory import correct_belief, KEY_VERSION
+    room = uuid4()
+    marker = f"noscp-{uuid4().hex[:8]}"
+    text_old = f"{marker} prefers cats"
+    text_new = f"{marker} prefers dogs"
+
+    # Single room-scoped active claim — no global rival
+    a_result = record_belief(
+        actor="explicit_human_command", scope="room", kind="preference",
+        text=text_old, confidence=1.0, room_uuid=room, evidence=EV,
+    )
+    a = a_result.claim
+
+    all_uuids = [a.uuid]
+    new_uuid = None
+    try:
+        new_claim = correct_belief(
+            a.uuid, text_new,
+            actor="explicit_human_command",
+            evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                      "excerpt": "plain correction"},
+        )
+        new_uuid = new_claim.uuid if new_claim is not None else None
+        if new_uuid is not None:
+            all_uuids.append(new_uuid)
+
+        db.db.session.expire_all()
+
+        assert new_claim is not None
+        assert new_claim.status == "active"
+        assert new_claim.conflicts_with_uuid is None
+
+        # Evidence must NOT contain the scoped-exception note
+        ev_rows = (
+            db.db.session.query(MemoryEvidence)
+            .filter_by(memory_uuid=new_uuid)
+            .all()
+        )
+        ev_texts = " ".join((e.excerpt or "") for e in ev_rows)
+        assert "scoped exception over broader conflicting belief" not in ev_texts.lower(), (
+            f"Normal correction must not add scoped-exception note; got: {ev_texts!r}"
+        )
+
+    finally:
+        _cleanup_correct(all_uuids)

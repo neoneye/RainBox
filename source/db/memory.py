@@ -930,6 +930,24 @@ def correct_belief(
         result.claim.status = "active"
         result.claim.updated_at = datetime.now(UTC)
 
+    # 9b. Scoped-exception handling: when record_belief returned conflict_candidate
+    # (new_text conflicted with a BROADER-scope rival), the new claim is a narrower
+    # scoped exception that legitimately coexists with the broader belief.  The
+    # narrower claim wins at retrieval (more-specific scope); the broader rival is
+    # intentionally left untouched.  We must clear conflicts_with_uuid so the claim
+    # satisfies the invariant that every active claim has conflicts_with_uuid=None,
+    # and add an evidence note for auditability.
+    if result.claim is not None and result.outcome == "conflict_candidate":
+        if result.claim.conflicts_with_uuid is not None:
+            result.claim.conflicts_with_uuid = None
+            add_memory_evidence(
+                memory_uuid=result.claim.uuid,
+                commit=False,
+                provenance="confirmed_by_user",
+                source_type="manual",
+                excerpt="scoped exception over broader conflicting belief (via correction)",
+            )
+
     # 10. Link lineage without overwriting a pre-existing supersedes_uuid
     if result.claim is not None and result.claim.supersedes_uuid is None:
         result.claim.supersedes_uuid = old.uuid
