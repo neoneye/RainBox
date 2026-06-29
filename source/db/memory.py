@@ -669,7 +669,8 @@ def _lock_belief(scope, room_uuid, agent_uuid, sp_key, val_key) -> None:
 
 def record_belief(*, actor, scope, kind, text, confidence, evidence,
                   sensitivity="private", agent_uuid=None, room_uuid=None,
-                  subject=None, predicate=None, object=None, expires_at=None
+                  subject=None, predicate=None, object=None, expires_at=None,
+                  commit: bool = True,
                   ) -> BeliefWriteResult:
     """The single governed write path (spec §3). One atomic transaction:
     dedupe -> tombstone (exact+global) -> [conflict, Task 7] -> create. Never
@@ -691,7 +692,8 @@ def record_belief(*, actor, scope, kind, text, confidence, evidence,
         existing.epistemic_confidence = min(
             1.0, (existing.epistemic_confidence or existing.confidence) + 0.05)
         add_memory_evidence(memory_uuid=existing.uuid, commit=False, **evidence)
-        db.session.commit()
+        if commit:
+            db.session.commit()
         return BeliefWriteResult("corroborated", existing)
 
     # 2. Tombstone — exact + global, considered separately (spec §3.3/§5)
@@ -714,16 +716,19 @@ def record_belief(*, actor, scope, kind, text, confidence, evidence,
                 retrieval_strength=confidence, subj_pred_key=sp_key, value_key=val_key,
                 key_version=KEY_VERSION, expires_at=expires_at, commit=False)
             add_memory_evidence(memory_uuid=new.uuid, commit=False, **ev)
-            db.session.commit()
+            if commit:
+                db.session.commit()
             return BeliefWriteResult("created", new,
                                      reason="scoped exception; global tombstone intact")
         record_tombstone_hit(glob, commit=False)
-        db.session.commit()
+        if commit:
+            db.session.commit()
         return BeliefWriteResult("refused_tombstone", None,
                                  reason="value previously rejected (global)")
     if exact is not None:   # non-override actor, exact tombstone
         record_tombstone_hit(exact, commit=False)
-        db.session.commit()
+        if commit:
+            db.session.commit()
         return BeliefWriteResult("refused_tombstone", None,
                                  reason="value previously rejected")
 
@@ -743,7 +748,8 @@ def record_belief(*, actor, scope, kind, text, confidence, evidence,
                 # supersede_memory already writes a tombstone for rival (delta #3),
                 # so no redundant write_tombstone(rival,...) call here.
                 new = supersede_memory(rival.uuid, new_args, dict(evidence), commit=False)
-                db.session.commit()
+                if commit:
+                    db.session.commit()
                 return BeliefWriteResult("superseded", new)
             # model/assistant, OR human vs a broader rival -> candidate for review
             new = create_memory_claim(
@@ -755,7 +761,8 @@ def record_belief(*, actor, scope, kind, text, confidence, evidence,
                 key_version=KEY_VERSION, conflicts_with_uuid=rival.uuid,
                 expires_at=expires_at, commit=False)
             add_memory_evidence(memory_uuid=new.uuid, commit=False, **evidence)
-            db.session.commit()
+            if commit:
+                db.session.commit()
             return BeliefWriteResult("conflict_candidate", new,
                                      conflicts_with_uuid=rival.uuid)
 
@@ -770,7 +777,8 @@ def record_belief(*, actor, scope, kind, text, confidence, evidence,
         subj_pred_key=sp_key, value_key=val_key, key_version=KEY_VERSION,
         expires_at=expires_at, commit=False)
     add_memory_evidence(memory_uuid=new.uuid, commit=False, **ev)
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return BeliefWriteResult("created", new)
 
 
@@ -873,50 +881,59 @@ def correct_belief(
     # 4. Evidence validation
     validate_evidence(evidence)
 
-    # 5. Derive keys + structured columns FROM new_text (never from old)
-    subj, pred, obj = parse_structured(new_text)
-    sp_key, val_key = belief_keys(None, None, None, new_text)
+    # 5. Derive belief keys for BOTH old and new texts
+    new_sp, new_val = belief_keys(None, None, None, new_text)
+    old_sp, old_val = belief_keys(old.subject, old.predicate, old.object, old.text)
 
-    # 6. Advisory lock
-    _lock_belief(old.scope, old.room_uuid, old.agent_uuid, sp_key, val_key)
+    # 6. Lock BOTH old and new belief keys (each with its global), sorted to avoid deadlock
+    lock_keys = sorted({
+        advisory_key(old.scope, old.room_uuid, old.agent_uuid, old_sp, old_val),
+        advisory_key("global", None, None, old_sp, old_val),
+        advisory_key(old.scope, old.room_uuid, old.agent_uuid, new_sp, new_val),
+        advisory_key("global", None, None, new_sp, new_val),
+    })
+    for k in lock_keys:
+        db.session.execute(sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": k})
 
-    # 7. Supersede old claim
+    # 7. Supersede old claim and tombstone it
     old.status = "superseded"
     old.updated_at = datetime.now(UTC)
     write_tombstone(old, reason="superseded", commit=False)
     delete_memory_embeddings(old.uuid, commit=False)
 
-    # 8. Clear exact-scope tombstone for the new value (so replacement isn't shadowed)
-    tomb = check_tombstone(old.scope, old.room_uuid, old.agent_uuid, sp_key, val_key)
-    if tomb is not None:
-        clear_tombstone(tomb, commit=False)
-
-    # 9. Create new active replacement with keys derived from new_text
-    new = create_memory_claim(
+    # 8. Delegate replacement-claim creation to record_belief (commit=False).
+    # record_belief handles: dedupe (corroborate instead of duplicate), exact+global
+    # tombstone (human clears exact, global→scoped-exception annotation), conflict
+    # detection, and derives keys from new_text.
+    # Parse structured columns from new_text so the claim row is fully populated.
+    new_subj, new_pred, new_obj = parse_structured(new_text)
+    result = record_belief(
+        actor=actor,
         scope=old.scope,
         kind=old.kind,
         text=new_text,
         confidence=1.0,
-        status="active",
         sensitivity=sensitivity or old.sensitivity,
         agent_uuid=old.agent_uuid,
         room_uuid=old.room_uuid,
-        subject=subj,
-        predicate=pred,
-        object=obj,
-        support_count=1,
-        epistemic_confidence=1.0,
-        retrieval_strength=1.0,
-        subj_pred_key=sp_key,
-        value_key=val_key,
-        key_version=KEY_VERSION,
-        supersedes_uuid=old.uuid,
+        subject=new_subj,
+        predicate=new_pred,
+        object=new_obj,
+        evidence=evidence,
         commit=False,
     )
 
-    # 10. Attach evidence to new claim
-    add_memory_evidence(memory_uuid=new.uuid, commit=False, **evidence)
+    # 9. Ensure the replacement claim is active. If record_belief corroborated a
+    # candidate (pre-existing claim with status="candidate"), promote it: a human
+    # correction must always yield an active belief.
+    if result.claim is not None and result.claim.status != "active":
+        result.claim.status = "active"
+        result.claim.updated_at = datetime.now(UTC)
 
-    # 11. Commit once
+    # 10. Link lineage without overwriting a pre-existing supersedes_uuid
+    if result.claim is not None and result.claim.supersedes_uuid is None:
+        result.claim.supersedes_uuid = old.uuid
+
+    # 11. Commit once for the whole transaction
     db.session.commit()
-    return new
+    return result.claim

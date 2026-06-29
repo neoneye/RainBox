@@ -293,3 +293,170 @@ def test_correct_belief_stale_guard_raises(app_ctx):
         db.db.session.query(MemoryEvidence).filter_by(memory_uuid=old.uuid).delete()
         db.db.session.query(MemoryClaim).filter_by(uuid=old.uuid).delete()
         db.db.session.commit()
+
+
+# ---------------------------------------------------------------------------
+# P1 dedupe: correct_belief must corroborate an existing claim instead of
+# creating a duplicate when new_text matches an already-active claim.
+# This repros the bug in the pre-fix correct_belief which always calls
+# create_memory_claim directly, bypassing the dedupe check.
+# ---------------------------------------------------------------------------
+
+def test_correct_belief_dedupes_against_existing_active_claim(app_ctx):
+    """P1 dedupe repro: correct A→Y when B(Y) is already active must leave
+    exactly ONE active claim with text Y (B is corroborated, not duplicated)."""
+    from db.memory import correct_belief, KEY_VERSION
+    room = uuid4()
+    marker = f"dedup-{uuid4().hex[:8]}"
+    text_x = f"{marker} is red"
+    text_y = f"{marker} is blue"
+    evidence = {"provenance": "confirmed_by_user", "source_type": "manual",
+                "excerpt": "dedupe test"}
+
+    # Create claim A (text X) and claim B (text Y) both active in same scope
+    a_result = record_belief(
+        actor="explicit_human_command", scope="room", kind="fact",
+        text=text_x, confidence=1.0, room_uuid=room, evidence=EV,
+    )
+    a = a_result.claim
+
+    b_result = record_belief(
+        actor="explicit_human_command", scope="room", kind="fact",
+        text=text_y, confidence=1.0, room_uuid=room, evidence=EV,
+    )
+    b = b_result.claim
+
+    a_uuid = a.uuid
+    b_uuid = b.uuid
+    result_uuid = None
+    try:
+        # correct A -> Y (same text as B which is already active)
+        result_claim = correct_belief(
+            a_uuid, text_y,
+            actor="explicit_human_command",
+            evidence=evidence,
+        )
+        result_uuid = result_claim.uuid if result_claim is not None else None
+
+        # A must be superseded
+        a_reloaded = db.get_memory_claim(a_uuid)
+        assert a_reloaded.status == "superseded", \
+            f"Expected A to be superseded, got {a_reloaded.status!r}"
+
+        # Exactly ONE active claim with text_y (B must NOT have been duplicated)
+        active_y = (
+            db.db.session.query(MemoryClaim)
+            .filter(MemoryClaim.text == text_y, MemoryClaim.status == "active")
+            .all()
+        )
+        assert len(active_y) == 1, (
+            f"Expected exactly 1 active claim with text {text_y!r}, "
+            f"found {len(active_y)} — pre-fix code creates a duplicate"
+        )
+
+        # The returned claim must be B (corroborated, not a new duplicate)
+        assert result_uuid == b_uuid, \
+            f"Expected result to be B ({b_uuid}), got {result_uuid}"
+
+    finally:
+        uuids = {a_uuid, b_uuid}
+        if result_uuid is not None:
+            uuids.add(result_uuid)
+        _cleanup_correct(list(uuids))
+
+
+# ---------------------------------------------------------------------------
+# P3 global tombstone scoped-exception: correct_belief must mirror
+# record_belief's global-tombstone handling: the global tombstone stays intact
+# and the new room-scoped claim has evidence annotated with the scoped-exception
+# note (just as record_belief does when a human creates a room claim over a
+# global tombstone).
+# ---------------------------------------------------------------------------
+
+def test_correct_belief_global_tombstone_scoped_exception(app_ctx):
+    """P3: correct_belief(old_room_claim, new_text_matching_global_tombstone)
+    must: (a) supersede the old claim, (b) still create the room-scoped claim
+    (human override), (c) leave the global tombstone intact, (d) annotate
+    evidence with the scoped-exception note."""
+    from db.memory import correct_belief, belief_keys, KEY_VERSION
+    room = uuid4()
+    marker = f"gtomb-{uuid4().hex[:8]}"
+    text_global = f"{marker} is forbidden"
+    text_old_room = f"{marker} is allowed"
+
+    # Build a global tombstone: create+reject a global claim with text_global
+    g_result = record_belief(
+        actor="explicit_human_command", scope="global", kind="fact",
+        text=text_global, confidence=1.0, room_uuid=room, evidence=EV,
+    )
+    g = g_result.claim
+    g_uuid = g.uuid  # capture before session state may change
+    db.reject_memory(g_uuid, {"provenance": "confirmed_by_user",
+                               "source_type": "manual", "excerpt": "reject global"})
+
+    # Verify tombstone is in place at global scope
+    sp, val = belief_keys(None, None, None, text_global)
+    global_tomb = db.check_tombstone("global", None, None, sp, val)
+    assert global_tomb is not None, "Setup: global tombstone must exist"
+
+    # Create an existing room-scoped active claim (something to correct FROM)
+    old_room_result = record_belief(
+        actor="explicit_human_command", scope="room", kind="fact",
+        text=text_old_room, confidence=1.0, room_uuid=room, evidence=EV,
+    )
+    old_room = old_room_result.claim
+    old_room_uuid = old_room.uuid  # capture before session state may change
+    assert old_room.status == "active"
+
+    all_created_uuids = [g_uuid, old_room_uuid]
+    try:
+        # Now correct old_room -> text_global (which has a global tombstone)
+        # A human actor should get a scoped exception (claim created at room scope)
+        new_claim = correct_belief(
+            old_room_uuid, text_global,
+            actor="explicit_human_command",
+            evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                      "excerpt": "correction to globally-tombstoned text"},
+        )
+
+        new_uuid = new_claim.uuid if new_claim is not None else None
+        if new_uuid is not None:
+            all_created_uuids.append(new_uuid)
+
+        # (a) old_room must be superseded
+        old_reloaded = db.get_memory_claim(old_room_uuid)
+        assert old_reloaded.status == "superseded", \
+            f"Expected old room claim to be superseded, got {old_reloaded.status!r}"
+
+        # (b) a new room-scoped claim with text_global must exist and be active
+        assert new_uuid is not None, "Expected a new claim (human scoped exception)"
+        new_reloaded = db.get_memory_claim(new_uuid)
+        assert new_reloaded is not None, "New claim must exist in DB"
+        assert new_reloaded.status == "active", \
+            f"Expected active new claim, got {new_reloaded.status!r}"
+        assert new_reloaded.scope == "room" or new_reloaded.scope == old_room_result.claim.scope
+
+        # (c) global tombstone must still exist (not cleared by correct_belief)
+        global_tomb_after = db.check_tombstone("global", None, None, sp, val)
+        assert global_tomb_after is not None, \
+            "Global tombstone must survive a room-scope correction (scoped exception)"
+
+        # (d) evidence on the new claim must contain the scoped-exception annotation
+        ev_rows = (
+            db.db.session.query(MemoryEvidence)
+            .filter_by(memory_uuid=new_uuid)
+            .all()
+        )
+        ev_texts = " ".join((e.excerpt or "") + " " + (e.provenance or "")
+                            for e in ev_rows)
+        assert "scoped exception" in ev_texts.lower(), (
+            f"Expected scoped-exception note in evidence, got: {ev_texts!r}"
+        )
+
+    finally:
+        _cleanup_correct(all_created_uuids)
+        # Also clean up the global tombstone created from g
+        db.db.session.query(MemoryRejectedValue).filter_by(
+            created_from_uuid=g_uuid
+        ).delete()
+        db.db.session.commit()
