@@ -441,14 +441,18 @@ def get_memory_embedding(
     )
 
 
-def delete_memory_embeddings(memory_uuid: UUID) -> int:
-    """Drop all embedding rows for a claim. Returns the number removed."""
+def delete_memory_embeddings(memory_uuid: UUID, commit: bool = True) -> int:
+    """Drop all embedding rows for a claim. Returns the number removed.
+    With commit=False the deletes are flushed but not committed, so the caller
+    (e.g. resolve_conflict) can include this in a single surrounding transaction."""
     n = (
         db.session.query(MemoryEmbedding)
         .filter(MemoryEmbedding.memory_uuid == memory_uuid)
         .delete()
     )
-    db.session.commit()
+    db.session.flush()
+    if commit:
+        db.session.commit()
     return n
 
 
@@ -764,6 +768,8 @@ def resolve_conflict(candidate_uuid, resolution, *, narrowed_scope=None,
     _lock_belief(cand.scope, cand.room_uuid, cand.agent_uuid,
                  cand.subj_pred_key or "", cand.value_key or "")
     cand = get_memory_claim(candidate_uuid)            # re-fetch under lock
+    if cand is None:
+        return None
     if cand.status != "candidate" or cand.conflicts_with_uuid is None:
         return cand                                    # stale -> no-op
     rival = get_memory_claim(cand.conflicts_with_uuid)
@@ -773,7 +779,7 @@ def resolve_conflict(candidate_uuid, resolution, *, narrowed_scope=None,
         if rival is not None and rival.status == "active":
             rival.status = "superseded"
             write_tombstone(rival, reason="superseded", commit=False)
-            delete_memory_embeddings(rival.uuid)
+            delete_memory_embeddings(rival.uuid, commit=False)
         cand.status = "active"
         cand.conflicts_with_uuid = None
         add_memory_evidence(memory_uuid=cand.uuid, commit=False,
@@ -783,7 +789,7 @@ def resolve_conflict(candidate_uuid, resolution, *, narrowed_scope=None,
         cand.conflicts_with_uuid = None
         write_tombstone(cand, reason="rejected", created_by_uuid=created_by_uuid,
                         commit=False)
-        delete_memory_embeddings(cand.uuid)
+        delete_memory_embeddings(cand.uuid, commit=False)
         add_memory_evidence(memory_uuid=cand.uuid, commit=False,
                             **with_note(note_ev, "conflict resolved: reject"))
     elif resolution == "not_conflict":

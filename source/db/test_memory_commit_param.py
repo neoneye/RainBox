@@ -24,6 +24,38 @@ def test_create_with_commit_false_is_rolled_back(app_ctx):
     assert db.get_memory_claim(c.uuid) is None   # nothing persisted
 
 
+def test_delete_memory_embeddings_commit_false_is_rolled_back(app_ctx):
+    """delete_memory_embeddings(commit=False) must leave the row when rolled back."""
+    claim = db.create_memory_claim(
+        scope="global", kind="fact", text="embedding target for rollback test",
+        confidence=0.9, status="active", sensitivity="public",
+    )
+    vec = [0.1] * 768
+    db.upsert_memory_embedding(
+        memory_uuid=claim.uuid, model_name="test-model",
+        embed_dim=768, text_hash="testhash", embedding=vec,
+    )
+    # Verify embedding exists before deletion attempt
+    assert db.get_memory_embedding(claim.uuid, "test-model") is not None
+
+    # Delete with commit=False then rollback — embedding must survive
+    n = db.delete_memory_embeddings(claim.uuid, commit=False)
+    assert n == 1
+    db.db.session.rollback()
+    assert db.get_memory_embedding(claim.uuid, "test-model") is not None, (
+        "embedding was committed despite commit=False"
+    )
+
+    # Cleanup: delete with default commit=True — embedding must be gone
+    n2 = db.delete_memory_embeddings(claim.uuid)
+    assert n2 == 1
+    assert db.get_memory_embedding(claim.uuid, "test-model") is None
+
+    # Cleanup claim
+    db.db.session.query(db.MemoryClaim).filter_by(uuid=claim.uuid).delete()
+    db.db.session.commit()
+
+
 def test_create_accepts_trust_kwargs(app_ctx):
     from uuid import uuid4
     marker = uuid4()
