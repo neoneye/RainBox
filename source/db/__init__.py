@@ -385,6 +385,25 @@ def init_db(app: Flask) -> None:
         # Assistant provenance for jobs created by the assistant (reminders).
         _add_column_if_missing("cron_job", "origin_run_uuid", "origin_run_uuid uuid")
         _add_column_if_missing("cron_job", "origin_step_uuid", "origin_step_uuid uuid")
+        # Memory trust hardening: new columns on memory_claim + tombstone index.
+        _add_column_if_missing("memory_claim", "conflicts_with_uuid",  "conflicts_with_uuid UUID")
+        _add_column_if_missing("memory_claim", "epistemic_confidence", "epistemic_confidence DOUBLE PRECISION")
+        _add_column_if_missing("memory_claim", "retrieval_strength",   "retrieval_strength DOUBLE PRECISION")
+        _add_column_if_missing("memory_claim", "support_count",        "support_count INTEGER")
+        _add_column_if_missing("memory_claim", "subj_pred_key",        "subj_pred_key TEXT")
+        _add_column_if_missing("memory_claim", "value_key",            "value_key TEXT")
+        _add_column_if_missing("memory_claim", "key_version",          "key_version INTEGER")
+        db.session.execute(sa.text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS memory_rejected_value_key_uniq "
+            "ON memory_rejected_value (scope, "
+            "COALESCE(room_uuid,  '00000000-0000-0000-0000-000000000000'::uuid), "
+            "COALESCE(agent_uuid, '00000000-0000-0000-0000-000000000000'::uuid), "
+            "subj_pred_key, value_key)"))
+        db.session.execute(sa.text(
+            "CREATE INDEX IF NOT EXISTS memory_claim_conflict_key "
+            "ON memory_claim (scope, room_uuid, agent_uuid, subj_pred_key) "
+            "WHERE status = 'active'"))
+        db.session.commit()
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(

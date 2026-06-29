@@ -759,6 +759,13 @@ class MemoryClaim(db.Model):
         onupdate=lambda: datetime.now(UTC),
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    conflicts_with_uuid: Mapped[UUID | None] = mapped_column()
+    epistemic_confidence: Mapped[float | None] = mapped_column()
+    retrieval_strength: Mapped[float | None] = mapped_column()
+    support_count: Mapped[int | None] = mapped_column()
+    subj_pred_key: Mapped[str | None] = mapped_column(Text)
+    value_key: Mapped[str | None] = mapped_column(Text)
+    key_version: Mapped[int | None] = mapped_column()
     __table_args__ = (
         CheckConstraint(
             "scope IN ('global','agent','room','project')",
@@ -814,6 +821,35 @@ class MemoryEvidence(db.Model):
             "'manual','transcript')",
             name="memory_evidence_source_type_check",
         ),
+    )
+
+
+class MemoryRejectedValue(db.Model):
+    """A tombstone: a (scope, subject/predicate, value) that was rejected or
+    superseded and must not silently return. Snapshots the rejected claim's text
+    and evidence metadata so a later suppression is explainable even if the
+    original claim/evidence rows change."""
+
+    __tablename__ = "memory_rejected_value"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    scope: Mapped[str] = mapped_column(Text)
+    agent_uuid: Mapped[UUID | None] = mapped_column()
+    room_uuid: Mapped[UUID | None] = mapped_column()
+    subj_pred_key: Mapped[str] = mapped_column(Text)
+    value_key: Mapped[str] = mapped_column(Text)
+    claim_text: Mapped[str] = mapped_column(Text)
+    evidence_summary: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_from_uuid: Mapped[UUID | None] = mapped_column()
+    created_by_uuid: Mapped[UUID | None] = mapped_column()
+    hit_count: Mapped[int] = mapped_column(default=0)
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    __table_args__ = (
+        CheckConstraint("scope IN ('global','agent','room','project')",
+                        name="memory_rejected_value_scope_check"),
     )
 
 
