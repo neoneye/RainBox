@@ -375,7 +375,7 @@ def _action_reject_memory_candidate(
         return AssistantObservation(
             ok=False, text="memory is no longer candidate/active; not rejecting")
     db.reject_memory(memory_uuid, {"provenance": "confirmed_by_user",
-                                   "source_type": "manual"})
+                                   "source_type": "manual"}, tombstone=False)
     return AssistantObservation(
         ok=True, text=f"Rejected candidate memory {memory_uuid}",
         data={"memory_uuid": str(memory_uuid)})

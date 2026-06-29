@@ -201,6 +201,7 @@ def supersede_memory(
     if old is None:
         raise ValueError(f"memory claim not found: {old_uuid}")
     old.status = "superseded"
+    write_tombstone(old, reason="superseded", commit=False)
     new_args = dict(new_claim_args)
     new_args["supersedes_uuid"] = old_uuid
     new_args.setdefault("status", "active")
@@ -235,10 +236,13 @@ def activate_memory_claim(
     return claim
 
 
-def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any], commit: bool = True) -> None:
+def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any],
+                  commit: bool = True, tombstone: bool = True) -> None:
     """Mark a claim `rejected`, attach an evidence row recording the rejection,
-    and write a tombstone so the value is not re-learned. Existing evidence is
-    left untouched (the audit trail survives)."""
+    and (by default) write a tombstone so the value is not re-learned. Pass
+    tombstone=False to skip the tombstone — used by the undo-inverse of remember
+    so that undoing a just-created memory does not permanently block re-learning
+    the same value. Existing evidence is left untouched (the audit trail survives)."""
     claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
     if claim is None:
         raise ValueError(f"memory claim not found: {memory_uuid}")
@@ -246,7 +250,8 @@ def reject_memory(memory_uuid: UUID, evidence_args: dict[str, Any], commit: bool
     ev = MemoryEvidence(memory_uuid=memory_uuid, **evidence_args)
     db.session.add(ev)
     db.session.flush()
-    write_tombstone(claim, reason="rejected by operator", commit=False)
+    if tombstone:
+        write_tombstone(claim, reason="rejected by operator", commit=False)
     if commit:
         db.session.commit()
 
@@ -551,6 +556,43 @@ def list_tombstones_with_hits(*, room_uuid: UUID | None = None
     return q.order_by(MemoryRejectedValue.last_hit_at.desc()).all()
 
 
+def active_claim_with_same_key_different_value(scope, room_uuid, agent_uuid,
+                                               sp_key, value_key):
+    """Active claim across the applicable scope lattice whose subj_pred_key == sp_key
+    but value differs. Most-specific scope wins (room > agent > global). Structured
+    only (sp_key != "")."""
+    if not sp_key:
+        return None
+    levels = []   # (scope, room_uuid, agent_uuid) most-specific first
+    if scope == "room":
+        levels = [("room", room_uuid, agent_uuid), ("agent", None, agent_uuid),
+                  ("global", None, None)]
+    elif scope == "agent":
+        levels = [("agent", None, agent_uuid), ("global", None, None)]
+    elif scope == "project":
+        levels = [("project", room_uuid, agent_uuid), ("global", None, None)]
+    else:
+        levels = [("global", None, None)]
+    for lv_scope, lv_room, lv_agent in levels:
+        q = db.session.query(MemoryClaim).filter(
+            MemoryClaim.status == "active",
+            MemoryClaim.scope == lv_scope,
+            MemoryClaim.subj_pred_key == sp_key,
+            MemoryClaim.value_key != value_key)
+        if lv_scope != "global":
+            # For non-global scopes, filter by the exact room/agent context.
+            q = (q.filter(MemoryClaim.room_uuid == lv_room) if lv_room is not None
+                 else q.filter(MemoryClaim.room_uuid.is_(None)))
+            q = (q.filter(MemoryClaim.agent_uuid == lv_agent) if lv_agent is not None
+                 else q.filter(MemoryClaim.agent_uuid.is_(None)))
+        # For global scope, room_uuid/agent_uuid are irrelevant — a global belief
+        # applies regardless of which room it was originally recorded in.
+        hit = q.order_by(MemoryClaim.id.desc()).first()
+        if hit is not None:
+            return hit
+    return None
+
+
 # --- record_belief: the single governed write path ---------------------------
 
 TOMBSTONE_OVERRIDE_ACTORS = {
@@ -657,7 +699,37 @@ def record_belief(*, actor, scope, kind, text, confidence, evidence,
         return BeliefWriteResult("refused_tombstone", None,
                                  reason="value previously rejected")
 
-    # 3. (conflict detection added in Task 7)
+    # 3. Conflict (structured claims only) — lattice-aware (spec §6)
+    if sp_key:
+        rival = active_claim_with_same_key_different_value(
+            scope, room_uuid, agent_uuid, sp_key, val_key)
+        if rival is not None:
+            if human and rival.scope == scope:        # same-scope: safe auto-supersede
+                new_args = dict(
+                    scope=scope, kind=kind, text=text, confidence=confidence,
+                    status="active", sensitivity=sensitivity, agent_uuid=agent_uuid,
+                    room_uuid=room_uuid, subject=subject, predicate=predicate,
+                    object=object, support_count=1, epistemic_confidence=confidence,
+                    retrieval_strength=confidence, subj_pred_key=sp_key,
+                    value_key=val_key, key_version=KEY_VERSION, expires_at=expires_at)
+                # supersede_memory already writes a tombstone for rival (delta #3),
+                # so no redundant write_tombstone(rival,...) call here.
+                new = supersede_memory(rival.uuid, new_args, dict(evidence), commit=False)
+                db.session.commit()
+                return BeliefWriteResult("superseded", new)
+            # model/assistant, OR human vs a broader rival -> candidate for review
+            new = create_memory_claim(
+                scope=scope, kind=kind, text=text, confidence=confidence,
+                status="candidate", sensitivity=sensitivity, agent_uuid=agent_uuid,
+                room_uuid=room_uuid, subject=subject, predicate=predicate, object=object,
+                support_count=1, epistemic_confidence=confidence,
+                retrieval_strength=confidence, subj_pred_key=sp_key, value_key=val_key,
+                key_version=KEY_VERSION, conflicts_with_uuid=rival.uuid,
+                expires_at=expires_at, commit=False)
+            add_memory_evidence(memory_uuid=new.uuid, commit=False, **evidence)
+            db.session.commit()
+            return BeliefWriteResult("conflict_candidate", new,
+                                     conflicts_with_uuid=rival.uuid)
 
     # 4. Plain create
     status = "active" if human else "candidate"
