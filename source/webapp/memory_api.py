@@ -82,6 +82,7 @@ def _claim_row(claim: db.MemoryClaim, used_ids: set[str]) -> dict:
         .filter_by(memory_uuid=claim.uuid).count(),
         "embedding_state": _embedding_state(claim),
         "supersedes_uuid": str(claim.supersedes_uuid) if claim.supersedes_uuid else None,
+        "conflicts_with_uuid": str(claim.conflicts_with_uuid) if claim.conflicts_with_uuid else None,
         "used_recently": str(claim.uuid) in used_ids,
     }
 
@@ -92,11 +93,27 @@ def _lineage_short(claim: db.MemoryClaim | None) -> dict | None:
     return {"uuid": str(claim.uuid), "text": claim.text, "status": claim.status}
 
 
+def _tombstone_hit_row(t: db.MemoryRejectedValue) -> dict:
+    return {
+        "uuid": str(t.uuid),
+        "scope": t.scope,
+        "room_uuid": str(t.room_uuid) if t.room_uuid else None,
+        "claim_text": t.claim_text,
+        "reason": t.reason,
+        "hit_count": t.hit_count,
+        "last_hit_at": _iso(t.last_hit_at),
+    }
+
+
 @app.route("/memory/api/claims")
 def memory_list_claims() -> Response:
     used = _used_recently_ids()
     claims = db.list_memory_claims()
-    return jsonify({"claims": [_claim_row(c, used) for c in claims]})
+    tombstone_hits = db.list_tombstones_with_hits()
+    return jsonify({
+        "claims": [_claim_row(c, used) for c in claims],
+        "tombstone_hits": [_tombstone_hit_row(t) for t in tombstone_hits],
+    })
 
 
 @app.route("/memory/api/claims/<claim_uuid>")
@@ -130,6 +147,7 @@ def memory_claim_detail(claim_uuid: str) -> tuple[Response, int] | Response:
         "expires_at": _iso(claim.expires_at),
         "stale": db.claim_stale(claim),
         "embedding_state": _embedding_state(claim),
+        "conflicts_with_uuid": str(claim.conflicts_with_uuid) if claim.conflicts_with_uuid else None,
         "supersedes": _lineage_short(detail["supersedes"]),
         "superseded_by": _lineage_short(superseded_by),
         "evidence": [
@@ -239,3 +257,23 @@ def _dispatch_action(claim, action, data, expected) -> dict:
         db.set_memory_expiry(cu, when, expected_updated_at=expected)
         return {}
     raise ValueError(f"unhandled action {action!r}")  # pragma: no cover
+
+
+@app.route("/api/memory/<uuid:memory_uuid>/resolve", methods=["POST"])
+def resolve_memory_conflict(memory_uuid: UUID) -> tuple[Response, int] | Response:
+    """Resolve a conflict candidate (supersede / reject / not_conflict / scoped_exception).
+    Returns {"ok": True, "status": <new status>} on success, {"error": ...} + 400 on
+    invalid resolution or not-found claim."""
+    data = request.get_json(silent=True) or {}
+    resolution = data.get("resolution")
+    try:
+        claim = db.resolve_conflict(
+            memory_uuid, resolution,
+            narrowed_scope=data.get("narrowed_scope"),
+            narrowed_room_uuid=data.get("narrowed_room_uuid"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if claim is not None and claim.status == "active":
+        _refresh_embedding(claim)
+    return jsonify({"ok": True, "status": claim.status if claim is not None else None})

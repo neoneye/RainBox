@@ -70,3 +70,21 @@ def test_claim_kebab_has_copy_id():
     assert "Copy memory id" in body
     assert "function memCopyId" in body
     assert "navigator.clipboard.writeText(uuid)" in body
+
+
+def test_conflict_resolution_ui_present():
+    body = _body()
+    # conflict badge CSS is in the HTML shell
+    assert '.mem-badge.conflict' in body
+    # JS includes the resolve endpoint call and the section builder
+    assert 'function memResolveConflict' in body
+    assert '/api/memory/' in body
+    assert 'function conflictSectionHtml' in body
+    assert 'Conflict resolution' in body
+
+
+def test_tombstone_hits_ui_present():
+    body = _body()
+    assert 'function tombstoneHitsHtml' in body
+    assert 'tombstone_hits' in body
+    assert 'Suppressed re-assertions' in body

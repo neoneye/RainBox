@@ -210,3 +210,125 @@ def test_bad_sensitivity_returns_400(client):
 def test_missing_claim_returns_404(client):
     r = client.get(f"/memory/api/claims/{uuid4()}")
     assert r.status_code == 404
+
+
+# --- resolve conflict endpoint ------------------------------------------------
+
+_MEV_USER = "00000000-0000-0000-0000-000000000001"
+
+
+def _cleanup_room(room_uuid):
+    """Delete all memory rows seeded for a test room (claims, evidence, tombstones)."""
+    from db import MemoryClaim, MemoryEvidence
+    from db.models import MemoryRejectedValue
+    db.db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
+        db.db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room_uuid)
+    )).delete(synchronize_session=False)
+    db.db.session.query(MemoryClaim).filter_by(room_uuid=room_uuid).delete()
+    db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room_uuid).delete()
+    db.db.session.commit()
+
+
+def _seed_conflict(room):
+    """Seed an active claim + a model conflict candidate in `room`. Returns the candidate claim."""
+    db.record_belief(
+        actor="explicit_human_command", scope="room", kind="preference",
+        text="gus prefers tea", confidence=1.0, room_uuid=room,
+        subject="gus", predicate="prefers", object="tea",
+        evidence={"provenance": "confirmed_by_user", "source_type": "manual", "excerpt": "x"})
+    result = db.record_belief(
+        actor="model_inferred", scope="room", kind="preference",
+        text="gus prefers coffee", confidence=0.6, room_uuid=room,
+        subject="gus", predicate="prefers", object="coffee",
+        evidence={"provenance": "inferred_by_model", "source_type": "chat_message",
+                  "source_id": "m", "excerpt": "e", "created_by_uuid": _MEV_USER})
+    assert result.outcome == "conflict_candidate"
+    return result.claim
+
+
+def test_resolve_conflict_not_conflict(client):
+    """POST /api/memory/<cand>/resolve with resolution=not_conflict activates the candidate."""
+    room = uuid4()
+    cand = _seed_conflict(room)
+    try:
+        resp = client.post(f"/api/memory/{cand.uuid}/resolve",
+                           json={"resolution": "not_conflict"})
+        db.db.session.expire_all()
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["ok"] is True
+        assert body["status"] == "active"
+        assert db.get_memory_claim(cand.uuid).status == "active"
+    finally:
+        _cleanup_room(room)
+
+
+def test_resolve_conflict_reject(client):
+    """POST /api/memory/<cand>/resolve with resolution=reject rejects the candidate and creates a tombstone."""
+    from db.models import MemoryRejectedValue
+    room = uuid4()
+    cand = _seed_conflict(room)
+    try:
+        resp = client.post(f"/api/memory/{cand.uuid}/resolve",
+                           json={"resolution": "reject"})
+        db.db.session.expire_all()
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["ok"] is True
+        assert body["status"] == "rejected"
+        assert db.get_memory_claim(cand.uuid).status == "rejected"
+        # a tombstone must exist for the rejected value
+        assert db.check_tombstone("room", room, None,
+                                  cand.subj_pred_key, cand.value_key) is not None
+    finally:
+        _cleanup_room(room)
+
+
+def test_resolve_conflict_invalid_resolution_returns_400(client):
+    """POST /api/memory/<cand>/resolve with an unknown resolution returns 400."""
+    room = uuid4()
+    cand = _seed_conflict(room)
+    try:
+        resp = client.post(f"/api/memory/{cand.uuid}/resolve",
+                           json={"resolution": "totally_invalid"})
+        assert resp.status_code == 400
+        assert "error" in resp.get_json()
+    finally:
+        _cleanup_room(room)
+
+
+def test_list_includes_conflicts_with_uuid(client):
+    """GET /memory/api/claims returns conflicts_with_uuid on each claim row."""
+    room = uuid4()
+    cand = _seed_conflict(room)
+    try:
+        r = client.get("/memory/api/claims")
+        assert r.status_code == 200
+        row = _find(r.get_json()["claims"], cand.uuid)
+        assert row is not None
+        assert "conflicts_with_uuid" in row
+        assert row["conflicts_with_uuid"] == str(cand.conflicts_with_uuid)
+    finally:
+        _cleanup_room(room)
+
+
+def test_list_includes_tombstone_hits_summary(client):
+    """GET /memory/api/claims returns a top-level tombstone_hits list."""
+    r = client.get("/memory/api/claims")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert "tombstone_hits" in body
+
+
+def test_detail_includes_conflicts_with_uuid(client):
+    """GET /memory/api/claims/<uuid> returns conflicts_with_uuid on a conflict candidate."""
+    room = uuid4()
+    cand = _seed_conflict(room)
+    try:
+        r = client.get(f"/memory/api/claims/{cand.uuid}")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert "conflicts_with_uuid" in body
+        assert body["conflicts_with_uuid"] == str(cand.conflicts_with_uuid)
+    finally:
+        _cleanup_room(room)

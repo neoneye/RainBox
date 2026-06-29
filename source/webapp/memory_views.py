@@ -99,6 +99,7 @@ MEMORY_TEMPLATE = """
   .mem-badge.status-expired{background:#f3f4f6;color:#6b7280}
   .mem-badge.sens-secret{background:#fee2e2;color:#991b1b}
   .mem-badge.stale{background:#fef3c7;color:#92400e}
+  .mem-badge.conflict{background:#fce7f3;color:#9d174d}
   .mem-section{margin:0 0 0.9em;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#fbfbfb}
   .mem-section-label{font-weight:700;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.03em;color:#6b7280;margin-bottom:6px}
   .mem-actions{display:flex;flex-wrap:wrap;gap:6px}

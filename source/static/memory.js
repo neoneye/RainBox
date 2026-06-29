@@ -24,6 +24,7 @@ const STATUS_LABEL = {
 const EXPAND_KEY = 'memory.expandedGroups';
 
 let claims = [];                 // [{uuid, text, status, ...}] from the API
+let tombstoneHits = [];          // [{uuid, claim_text, hit_count, ...}] from the API
 let selectedGroup = null;        // status string, 'all', or null
 let currentClaimUuid = null;     // open claim in the detail pane
 let expanded = {};               // status -> false when collapsed (default expanded)
@@ -52,6 +53,7 @@ async function hydrate() {
   const r = await fetch('/memory/api/claims');
   const data = await r.json();
   claims = data.claims || [];
+  tombstoneHits = data.tombstone_hits || [];
   renderTree();
 }
 
@@ -204,7 +206,8 @@ function renderDetail(d) {
     badge('', d.kind) +
     badge(d.sensitivity === 'secret' ? 'sens-secret' : '', d.sensitivity) +
     badge('', 'conf ' + d.confidence) +
-    (d.stale ? badge('stale', 'stale (expired)') : '') + '</div>';
+    (d.stale ? badge('stale', 'stale (expired)') : '') +
+    (d.conflicts_with_uuid ? badge('conflict', 'conflict') : '') + '</div>';
 
   const ts = '<div class="mem-section"><div class="mem-section-label">Timestamps</div>' +
     '<div class="muted">created ' + fmt(d.created_at) + ' · updated ' + fmt(d.updated_at) +
@@ -240,7 +243,9 @@ function renderDetail(d) {
   });
   ret += '</div>';
 
-  el.innerHTML = textHtml + badges + actionsHtml(d) + ts + lineage + emb + evi + ret;
+  const conflictHtml = conflictSectionHtml(d);
+  const tombstoneHtml = tombstoneHitsHtml(d);
+  el.innerHTML = textHtml + badges + actionsHtml(d) + conflictHtml + ts + lineage + emb + evi + ret + tombstoneHtml;
 }
 
 function actionsHtml(d) {
@@ -262,6 +267,41 @@ function actionsHtml(d) {
   }
   return '<div class="mem-section"><div class="mem-section-label">Actions</div><div class="mem-actions">' +
     (btns.join('') || '<span class="muted">read-only</span>') + '</div></div>';
+}
+
+function conflictSectionHtml(d) {
+  if (!d.conflicts_with_uuid) return '';
+  const rival = claimByUuid(d.conflicts_with_uuid);
+  const rivalText = rival ? rival.text : d.conflicts_with_uuid;
+  const btn = (label, res, cls) =>
+    '<button class="' + cls + '" onclick="memResolveConflict(\'' + d.uuid + '\',\'' + res + '\')">' + label + '</button>';
+  return '<div class="mem-section">' +
+    '<div class="mem-section-label">Conflict resolution</div>' +
+    '<div class="muted" style="margin-bottom:6px">Conflicts with: <a onclick="openClaim(\'' + d.conflicts_with_uuid + '\')">' +
+    escapeHtml(rivalText) + '</a></div>' +
+    '<div class="mem-actions">' +
+    btn('Supersede rival', 'supersede', '') +
+    btn('Not a conflict', 'not_conflict', 'secondary') +
+    btn('Reject this claim', 'reject', 'danger') +
+    btn('Scoped exception', 'scoped_exception', 'secondary') +
+    '</div></div>';
+}
+
+function tombstoneHitsHtml(d) {
+  // Show tombstones that match this claim's room (or global if no room)
+  const matching = tombstoneHits.filter(t =>
+    (d.room_uuid ? t.room_uuid === d.room_uuid : t.room_uuid === null) ||
+    t.room_uuid === null);
+  if (!matching.length) return '';
+  let html = '<div class="mem-section"><div class="mem-section-label">Suppressed re-assertions (' + matching.length + ')</div>';
+  matching.forEach(t => {
+    html += '<div class="mem-evi-row"><b>' + escapeHtml(t.claim_text) + '</b>' +
+      ' · suppressed <b>' + t.hit_count + '</b>×' +
+      (t.reason ? ' · ' + escapeHtml(t.reason) : '') +
+      ' · <span class="muted">last ' + fmt(t.last_hit_at) + '</span></div>';
+  });
+  html += '</div>';
+  return html;
 }
 
 function fmt(iso) { if (!iso) return '—'; try { return new Date(iso).toLocaleString(); } catch (_) { return iso; } }
@@ -331,6 +371,15 @@ async function afterMutation(focusUuid) {
 
 function memActivate(uuid) { doAction(uuid, 'activate', {}); }
 function memReactivate(uuid) { doAction(uuid, 'reactivate', {}); }
+async function memResolveConflict(uuid, resolution) {
+  const r = await fetch('/api/memory/' + uuid + '/resolve', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({resolution}),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { memToast(data.error || ('resolve failed (' + r.status + ')')); return; }
+  await afterMutation(uuid);
+}
 
 // --- modals: correct / sensitivity / expiry / reject -----------------------
 function openBackdrop() { document.getElementById('ui-modal-backdrop').hidden = false; }
