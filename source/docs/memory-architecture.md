@@ -333,10 +333,13 @@ Live for embedding purposes means **active or candidate**:
   `candidate` claim, so a candidate survives a sync cycle without losing its
   embedding.
 
-Candidates are embedded immediately on creation so `query_memory` (the assistant
-action) can consider them before operator confirmation. However, they are not
-retrieved into prompts: `hard_filtered_claims` is `active`-only, so candidates
-never enter the answer context.
+Candidates are embedded immediately on creation to keep the index warm: when a
+candidate is later activated, its embedding is already present and survives the
+periodic sync, so it is retrievable the moment it becomes active. Candidates
+themselves are not retrieved into prompts — both the chat path and the
+assistant's `query_memory` (which uses `retrieve_memories_hybrid` →
+`hard_filtered_claims`) filter to `active` only, so a candidate never enters the
+answer context before operator confirmation.
 
 ### Memory-Use Audit
 
@@ -507,8 +510,11 @@ retrieval control.
 
 The current architecture has a good foundation:
 
-- Provenance is modeled explicitly, with per-source-type evidence requirements
-  enforced at write time (`validate_evidence`).
+- Provenance is modeled explicitly. The governed belief-write paths
+  (`record_belief` / `correct_belief`) enforce per-source-type evidence
+  requirements via `validate_evidence`. Lifecycle-only evidence writes (e.g. the
+  rejection audit row added by `reject_memory`) attach provenance directly
+  without that gate, since they record an action rather than a new belief.
 - User confirmation does not erase earlier evidence.
 - All belief writes go through a single governed path (`record_belief`) with
   advisory locking, dedupe, tombstone checks, and conflict detection.
