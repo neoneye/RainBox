@@ -9,10 +9,11 @@ Commands are parsed by `memory/ops.py` and handled through `QueryAgent` before
 the Q&A/vector path is initialized. That means explicit memory operations do not
 depend on LM Studio embeddings or the Q&A registry being available.
 
-These commands are separate from prompt-time memory retrieval. Normal chat still
-uses the legacy lexical `retrieve_memories` path; the assistant's `query_memory`
-action uses the newer hybrid `retrieve_memories_hybrid` path backed by
-`memory_embedding` when embeddings are available.
+These commands are separate from prompt-time memory retrieval. Both normal chat
+(via `build_chat_memory_block`) and the assistant's `query_memory` action use
+the hybrid `retrieve_memories_hybrid` path backed by `memory_embedding` when
+embeddings are available. The legacy lexical `retrieve_memories` function is
+retained only for deterministic memory-retrieval eval cases in `evals/runner.py`.
 
 ## Commands
 
@@ -132,8 +133,8 @@ should only be used when directly relevant.
 ## Limitations
 
 - Command parsing and command lookups are currently lexical/exact-match oriented.
-- Normal chat memory retrieval is still lexical; hybrid retrieval is currently
-  additive and mainly used by the assistant.
+- Chat memory retrieval quality depends on hybrid scoring (vector + full-text +
+  entity); semantic recall degrades when embeddings are unavailable.
 - Write-time conflict detection is deterministic and keyed on common structured
   shapes ("X is Y", "X prefers Y", "X uses Y", …); free-text claims have no
   structured key and are conflict-exempt (semantic conflict detection is future

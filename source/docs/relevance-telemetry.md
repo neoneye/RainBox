@@ -23,7 +23,8 @@ from events.
 ### Chat Memory Retrieval
 
 `ChatAgent` retrieves first-class memory claims through
-`memory.retrieval.retrieve_memories`.
+`build_chat_memory_block`, which calls `retrieve_memories_hybrid` (vector +
+Postgres full-text + entity boost, hard-filtered by status/sensitivity/scope).
 
 For each memory returned, it writes:
 
