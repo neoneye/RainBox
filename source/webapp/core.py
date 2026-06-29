@@ -52,6 +52,7 @@ from db import (
     MemoryClaim,
     MemoryEmbedding,
     MemoryEvidence,
+    MemoryRejectedValue,
     ModelConfig,
     ModelConfigOverride,
     ModelGroup,
@@ -569,6 +570,16 @@ class MemoryEvidenceView(ModelView):
     column_default_sort = ("created_at", False)
 
 
+class MemoryRejectedValueView(ModelView):
+    column_list = (
+        "uuid", "scope", "subj_pred_key", "value_key", "claim_text",
+        "hit_count", "last_hit_at", "created_at",
+    )
+    # Newest tombstones first — operators reviewing suppressions want the
+    # most recently rejected values (and the most-recently-hit) on top.
+    column_default_sort = ("created_at", True)
+
+
 class FeedbackEventView(ModelView):
     column_list = (
         "created_at", "rating", "room_uuid", "agent_uuid",
@@ -627,6 +638,7 @@ class MemoryEmbeddingView(ModelView):
 admin.add_view(MemoryClaimView(MemoryClaim, db, category="Memory"))
 admin.add_view(MemoryEvidenceView(MemoryEvidence, db, category="Memory"))
 admin.add_view(MemoryEmbeddingView(MemoryEmbedding, db, category="Memory"))
+admin.add_view(MemoryRejectedValueView(MemoryRejectedValue, db, category="Memory"))
 admin.add_view(FeedbackEventView(FeedbackEvent, db, category="Feedback"))
 admin.add_view(RetrievalEventView(RetrievalEvent, db, category="Telemetry"))
 admin.add_view(EvalCaseView(EvalCase, db, category="Feedback"))
