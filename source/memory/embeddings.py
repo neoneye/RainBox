@@ -1,20 +1,22 @@
-"""Embed active memory claims into the rainbox-owned memory_embedding table.
+"""Embed live memory claims into the rainbox-owned memory_embedding table.
 
 Reuses the Q&A embedding path (Ollama embeddinggemma:300m, 768-d) but keeps the
 dependency lazy and injectable so retrieval/backfill stay testable without a
 live model. Best-effort everywhere: a failed embed leaves the claim usable via
 lexical-only retrieval rather than raising.
 
-Freshness model:
+Freshness model (invariant: every *live* claim — active or candidate — has a
+fresh embedding):
 - `ensure_memory_embedding()` embeds a single claim, re-embedding in place when
   its text changes (at most one embedding row per claim).
 - `refresh_claim_embedding()` is the write-path hook: embed while a claim is
-  active, prune once it isn't. The memory write path (remember/confirm/correct/
-  forget and the assistant's activate_memory) calls it after a status change.
+  active or candidate; prune its embedding once it is neither. The memory write
+  path (remember/confirm/correct/forget and the assistant's activate_memory)
+  calls it after a status change.
 - `prune_stale_embeddings()` is the lazy safety net: drop embeddings for claims
-  that are no longer retrievable (non-active or expired).
+  that are no longer live (not active/candidate, or expired).
 - `backfill_memory_embeddings()` / `sync_memory_embeddings()` are the
-  one-shot / triggered full reconcile (backfill active claims, then prune).
+  one-shot / triggered full reconcile (backfill live claims, then prune).
 """
 
 import hashlib
@@ -107,16 +109,19 @@ def refresh_claim_embedding(
 
 
 def prune_stale_embeddings() -> int:
-    """Lazy prune: drop embedding rows whose claim is no longer *retrievable*
-    (not active, or active-but-expired). Returns the number removed.
+    """Lazy prune: drop embedding rows whose claim is no longer *live*
+    (not active or candidate, or active-but-expired). Returns the number removed.
 
     This is the safety net for deactivation paths — forget/supersede/expiry —
     that don't individually refresh: even if a write site forgets to prune, a
-    periodic `sync` reconciles the embedding table with what retrieval can use.
+    periodic `sync` reconciles the embedding table with live claims. Candidate
+    claims are kept because refresh_claim_embedding embeds them immediately (so
+    query_memory can retrieve them before operator activation) and they must
+    survive a sync cycle.
     """
     now = datetime.now(UTC)
     retrievable = db.db.session.query(MemoryClaim.uuid).filter(
-        MemoryClaim.status == "active",
+        MemoryClaim.status.in_(("active", "candidate")),
         sa.or_(MemoryClaim.expires_at.is_(None), MemoryClaim.expires_at > now),
     )
     n = (
@@ -131,9 +136,11 @@ def prune_stale_embeddings() -> int:
 def backfill_memory_embeddings(
     *, embed_fn: EmbedFn | None = None, limit: int | None = None
 ) -> int:
-    """Ensure an embedding for every active claim. Returns the number of claims
-    with an up-to-date embedding afterward (capped by `limit`)."""
-    claims = db.list_memory_claims(status="active")
+    """Ensure an embedding for every active or candidate claim. Returns the
+    number of claims with an up-to-date embedding afterward (capped by
+    `limit`). Candidates are included so a full sync covers freshly-created
+    candidates whose write-path embedding may have been skipped."""
+    claims = db.list_memory_claims(status="active") + db.list_memory_claims(status="candidate")
     ensured = 0
     for claim in claims:
         if limit is not None and ensured >= limit:

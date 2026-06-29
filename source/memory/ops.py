@@ -222,11 +222,18 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
     # old claim in-place and link the already-created new claim to it. This
     # avoids calling supersede_memory() which would create a second new claim.
     new_claim = result.claim
-    if new_claim is not None:
-        old.status = "superseded"
-        db.write_tombstone(old, reason="superseded", commit=False)
-        new_claim.supersedes_uuid = old.uuid
-        db.db.session.commit()
+    if new_claim is None:
+        # record_belief refused (e.g. the new value was previously rejected via
+        # a tombstone). Leave the original claim untouched and report why.
+        return (
+            f"Could not correct {old_text!r} → {new_text!r}: "
+            f"the new value was previously rejected and cannot be re-added. "
+            f"({result.reason})"
+        )
+    old.status = "superseded"
+    db.write_tombstone(old, reason="superseded", commit=False)
+    new_claim.supersedes_uuid = old.uuid
+    db.db.session.commit()
     # New active claim gets a fresh embedding; the superseded old one is pruned.
     refresh_claim_embedding(new_claim)
     refresh_claim_embedding(old)

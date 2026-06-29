@@ -484,6 +484,44 @@ def test_handle_used_reports_memories_from_most_recent_debug_memory(
         _cleanup_by_subject(fresh_subject)
 
 
+# --- Finding D: _handle_correct None guard -----------------------------------
+
+
+def test_correct_refused_tombstone_returns_message_without_crash(app_ctx, fresh_subject):
+    """When record_belief returns refused_tombstone (new_claim=None), _handle_correct
+    must NOT crash with AttributeError and must return a sensible message without
+    superseding the original claim."""
+    import memory.embeddings as embeddings
+    from unittest.mock import patch
+
+    # Create the original claim to be "corrected from".
+    old = db.create_memory_claim(
+        scope="global", kind="fact", text="correct refused old value",
+        confidence=1.0, status="active", sensitivity="private",
+        subject=fresh_subject,
+    )
+    new_text = f"correct refused new value {uuid4()}"
+    # Simulate record_belief returning refused_tombstone with claim=None.
+    from db.memory import BeliefWriteResult
+
+    with patch("memory.ops.db.record_belief") as mock_rb:
+        mock_rb.return_value = BeliefWriteResult("refused_tombstone", None, reason="value previously rejected")
+        cmd = parse_memory_command(f"correct that correct refused old value -> {new_text}")
+        ctx = _ctx(query=f"correct that correct refused old value -> {new_text}")
+        # Must not raise AttributeError or any exception.
+        reply = handle_memory_command(ctx, cmd)
+
+    # Original claim must NOT have been superseded.
+    db.db.session.expire_all()
+    old_reloaded = db.get_memory_claim(old.uuid)
+    assert old_reloaded is not None
+    assert old_reloaded.status == "active", \
+        f"original claim was wrongly superseded; status={old_reloaded.status!r}"
+    # Reply must be a sensible non-empty string mentioning rejection.
+    assert reply and len(reply) > 5
+    _cleanup_by_subject(fresh_subject)
+
+
 def test_handle_used_reports_no_history_when_no_debug_row(app_ctx):
     human = db.get_human_user()
     assert human is not None

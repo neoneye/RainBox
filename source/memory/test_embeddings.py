@@ -108,29 +108,22 @@ def test_ensure_returns_false_on_embed_failure(app_ctx, fresh_subject):
         _cleanup(fresh_subject)
 
 
-def test_backfill_embeds_only_active_claims(app_ctx, fresh_subject):
+def test_backfill_embeds_active_and_candidate_claims(app_ctx, fresh_subject):
     _claim(fresh_subject, text="active one")
     _claim(fresh_subject, text="active two")
     _claim(fresh_subject, text="a candidate", status="candidate")
     try:
         n = backfill_memory_embeddings(embed_fn=_fake_embed)
-        # Only the active claims tagged with our subject are embedded; the
-        # candidate is not. (Other active claims may exist in the shared DB, so
-        # assert our two are embedded rather than an exact global count.)
+        # Active and candidate claims are all embedded. Other claims may exist
+        # in the shared DB so assert our three are covered rather than exact count.
         ours = (
             db.db.session.query(MemoryClaim)
-            .filter(MemoryClaim.subject == fresh_subject, MemoryClaim.status == "active")
+            .filter(MemoryClaim.subject == fresh_subject)
             .all()
         )
-        assert n >= 2
+        assert n >= 3
         for c in ours:
             assert db.get_memory_embedding(c.uuid, EMBED_MODEL_NAME) is not None
-        cand = (
-            db.db.session.query(MemoryClaim)
-            .filter(MemoryClaim.subject == fresh_subject, MemoryClaim.status == "candidate")
-            .one()
-        )
-        assert db.get_memory_embedding(cand.uuid, EMBED_MODEL_NAME) is None
     finally:
         _cleanup(fresh_subject)
 
@@ -204,5 +197,69 @@ def test_sync_backfills_active_and_prunes_stale(app_ctx, fresh_subject):
         assert pruned >= 1
         assert db.get_memory_embedding(active.uuid, EMBED_MODEL_NAME) is not None
         assert db.get_memory_embedding(stale.uuid, EMBED_MODEL_NAME) is None
+    finally:
+        _cleanup(fresh_subject)
+
+
+# --- candidate embedding policy (Finding C) -----------------------------------
+
+
+def test_candidate_embedding_survives_prune(app_ctx, fresh_subject):
+    """prune_stale_embeddings must NOT prune embeddings for candidate claims —
+    they are live (pending activation) and must survive a sync cycle."""
+    candidate = _claim(fresh_subject, text="candidate survives prune", status="candidate")
+    superseded = _claim(fresh_subject, text="superseded gets pruned", status="active")
+    try:
+        # Embed both up-front.
+        ensure_memory_embedding(candidate, embed_fn=_fake_embed)
+        ensure_memory_embedding(superseded, embed_fn=_fake_embed)
+        assert db.get_memory_embedding(candidate.uuid, EMBED_MODEL_NAME) is not None
+        assert db.get_memory_embedding(superseded.uuid, EMBED_MODEL_NAME) is not None
+        # Mark one superseded so prune has something to actually prune.
+        superseded.status = "superseded"
+        db.db.session.commit()
+        # Run prune — candidate's embedding must survive, superseded's must vanish.
+        pruned = prune_stale_embeddings()
+        assert pruned >= 1
+        assert db.get_memory_embedding(candidate.uuid, EMBED_MODEL_NAME) is not None, \
+            "candidate embedding was incorrectly pruned"
+        assert db.get_memory_embedding(superseded.uuid, EMBED_MODEL_NAME) is None
+    finally:
+        _cleanup(fresh_subject)
+
+
+def test_candidate_embedded_by_backfill(app_ctx, fresh_subject):
+    """backfill_memory_embeddings must embed candidate claims (not only active ones)
+    so that a full sync immediately covers freshly-created candidates."""
+    candidate = _claim(fresh_subject, text="backfill candidate", status="candidate")
+    try:
+        assert db.get_memory_embedding(candidate.uuid, EMBED_MODEL_NAME) is None
+        n = backfill_memory_embeddings(embed_fn=_fake_embed)
+        assert n >= 1
+        assert db.get_memory_embedding(candidate.uuid, EMBED_MODEL_NAME) is not None, \
+            "backfill did not embed the candidate claim"
+    finally:
+        _cleanup(fresh_subject)
+
+
+def test_sync_candidate_embedding_survives(app_ctx, fresh_subject):
+    """Full sync_memory_embeddings cycle: a candidate's embedding created by
+    refresh_claim_embedding must NOT be pruned by the subsequent prune pass."""
+    candidate = _claim(fresh_subject, text="sync candidate survives", status="candidate")
+    superseded = _claim(fresh_subject, text="sync superseded pruned", status="active")
+    try:
+        # Embed the candidate the write-path way.
+        refresh_claim_embedding(candidate, embed_fn=_fake_embed)
+        assert db.get_memory_embedding(candidate.uuid, EMBED_MODEL_NAME) is not None
+        # Give the superseded claim an embedding so prune has a concrete job.
+        ensure_memory_embedding(superseded, embed_fn=_fake_embed)
+        superseded.status = "superseded"
+        db.db.session.commit()
+        # Full sync.
+        embedded, pruned = sync_memory_embeddings(embed_fn=_fake_embed)
+        assert pruned >= 1  # superseded was pruned
+        assert db.get_memory_embedding(candidate.uuid, EMBED_MODEL_NAME) is not None, \
+            "sync pruned the candidate embedding — policy is still inconsistent"
+        assert db.get_memory_embedding(superseded.uuid, EMBED_MODEL_NAME) is None
     finally:
         _cleanup(fresh_subject)
