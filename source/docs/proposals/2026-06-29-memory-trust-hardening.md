@@ -77,7 +77,8 @@ These policy forks were decided up front:
   store stays Tier 3.
 - **Schema groundwork — add columns now, use minimally.** The Tier 1 migration
   adds `epistemic_confidence`, `retrieval_strength`, `support_count`,
-  `conflicts_with_uuid`, and the tombstone table in one pass. Tier 1 logic
+  `conflicts_with_uuid`, the belief-key columns (`subj_pred_key`, `value_key`,
+  `key_version`, §6.1/§7), and the tombstone table in one pass. Tier 1 logic
   populates them lightly; the ranker still reads `confidence` until Tier 2 cuts
   over.
 
@@ -196,18 +197,25 @@ mutates `hit_count`). The hit-count increment is best-effort *within* the same
 transaction: if it raises, the whole unit rolls back and the write is still
 refused (a refusal is never converted into an accepted write — see §9).
 
-To close the check-then-write race between concurrent `model_inferred` writes,
-`record_belief` takes a Postgres **transaction advisory lock** keyed on a hash of
-`(scope, room_uuid, agent_uuid, subj_pred_key)` before the tombstone/conflict
-checks:
+To close the check-then-write race between concurrent writes, `record_belief`
+takes Postgres **transaction advisory locks** before the tombstone/conflict
+checks. Because a narrower write also consults the **global** tombstone (§5) and
+the broader-scope conflict lattice (§6.2), the lock set must cover *both* the
+write's exact-scope key and the global key for the same value — otherwise a
+concurrent global tombstone create/clear could race a room write:
 
 ```python
-session.execute(sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": key_hash})
+keys = sorted({
+    advisory_key(scope, room_uuid, agent_uuid, subj_pred_key, value_key),
+    advisory_key("global", None, None, subj_pred_key, value_key),
+})
+for k in keys:                              # sorted → no deadlock from lock ordering
+    session.execute(sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": k})
 ```
 
-This serializes writes that target the same belief key without locking unrelated
-writes. It is backed by a unique functional index (§5) as the last-resort
-invariant.
+This serializes writes that target the same belief value (across the relevant
+scopes) without locking unrelated writes. It is backed by the unique functional
+index (§5) as the last-resort invariant.
 
 ### 3.3 Algorithm
 
@@ -226,35 +234,51 @@ record_belief(actor, ...):
       corroborate(existing, evidence)        # add evidence (commit=False); ++support_count; nudge epistemic_confidence
       commit; return BeliefWriteResult("corroborated", existing)
 
-  # 2. Tombstone check (exact-scope then global fallback — §5)
-  tomb = check_tombstone(scope, room_uuid, agent_uuid, sp_key, val_key)
-  if tomb:
-      if actor in TOMBSTONE_OVERRIDE_ACTORS and may_clear(actor, scope, tomb):  # §5 scope rule
-          clear_tombstone(tomb)              # human override; evidence notes it
-          # fall through to create
-      elif actor in TOMBSTONE_OVERRIDE_ACTORS and tomb.scope == "global" and scope != "global":
-          # room/agent human write hits a GLOBAL tombstone: do not clear it.
-          # Create a scoped exception at the write's own scope (§5).
-          new = create_memory_claim(..., status="active",
-                                    scope=scope, commit=False)
-          add_memory_evidence(new.uuid, **evidence,
-                              excerpt="scoped exception over global tombstone", commit=False)
-          commit; return BeliefWriteResult("created", new,
-                                           reason="scoped exception; global tombstone left intact")
-      else:
-          record_tombstone_hit(tomb)         # ++hit_count, last_hit_at (commit=False)
-          commit; return BeliefWriteResult("refused_tombstone", None, reason=...)
+  # 2. Tombstone check — consider BOTH the exact-scope and the global tombstone,
+  #    so clearing the exact one can never bypass a still-blocking global one (§5).
+  exact = check_tombstone(scope, room_uuid, agent_uuid, sp_key, val_key)   # exact.scope == scope
+  glob  = check_tombstone("global", None, None, sp_key, val_key) if scope != "global" else None
 
-  # 3. Conflict check (structured claims only; sp_key != "")
+  if exact and actor in TOMBSTONE_OVERRIDE_ACTORS:    # same-scope: human may clear
+      clear_tombstone(exact); exact = None            # evidence notes the override
+
+  if glob:                                            # narrower write vs a GLOBAL tombstone
+      if actor in TOMBSTONE_OVERRIDE_ACTORS:
+          # Do NOT clear the global tombstone. Create a scoped exception at the
+          # write's own (narrower) scope, using the normal full claim args, and
+          # APPEND the note to evidence rather than colliding with its excerpt.
+          ev = with_note(evidence, "scoped exception over global tombstone")  # see §3.4
+          new = create_memory_claim(..., status="active", scope=scope,
+                                    support_count=1, subj_pred_key=sp_key,
+                                    value_key=val_key, key_version=KEY_VERSION,
+                                    epistemic_confidence=confidence,
+                                    retrieval_strength=confidence, commit=False)
+          add_memory_evidence(new.uuid, **ev, commit=False)
+          commit; return BeliefWriteResult("created", new,
+                                           reason="scoped exception; global tombstone intact")
+      else:
+          record_tombstone_hit(glob); commit
+          return BeliefWriteResult("refused_tombstone", None, reason=...)
+  elif exact:                                         # exact tombstone, non-override actor
+      record_tombstone_hit(exact); commit
+      return BeliefWriteResult("refused_tombstone", None, reason=...)
+  # else: no blocking tombstone — fall through
+
+  # 3. Conflict check (structured claims only; sp_key != "") — lattice-aware (§6.2)
   if sp_key:
       rival = active_claim_with_same_key_different_value(
                   scope, room_uuid, agent_uuid, sp_key, val_key)
       if rival:
-          if actor in TOMBSTONE_OVERRIDE_ACTORS:
+          human = actor in TOMBSTONE_OVERRIDE_ACTORS
+          if human and rival.scope == scope:          # same-scope: safe to auto-supersede
               new = supersede_memory(rival.uuid, new_claim_args, evidence, commit=False)
               commit; return BeliefWriteResult("superseded", new)
           else:
-              new = create_memory_claim(..., status="candidate",
+              # model/assistant, OR a human write whose rival is BROADER than its
+              # scope (don't let a room command silently overturn a global belief —
+              # surface for review; human resolves via supersede/scoped_exception/…).
+              new = create_memory_claim(..., status="candidate", subj_pred_key=sp_key,
+                                        value_key=val_key, key_version=KEY_VERSION,
                                         conflicts_with_uuid=rival.uuid, commit=False)
               add_memory_evidence(new.uuid, **evidence, commit=False)
               commit; return BeliefWriteResult("conflict_candidate", new,
@@ -288,13 +312,30 @@ turn-derived); nullable fields may be omitted.
 | `transcript` | **required** (transcript id) | **required** | nullable | bulk import may lack an actor |
 | `file` | **required** (path) | **required** | nullable | system import may lack an actor |
 | `api` | **required** | nullable | nullable | external caller |
-| `manual` | nullable (no external source) | nullable | **required** | a human in `/memory`; the human is the source |
+| `manual` | nullable (no external source) | **required** | nullable | a human in `/memory`; see below |
+
+**`manual` and operator identity.** RainBox is a single-operator local app and
+the `/memory` web layer has **no authenticated operator UUID** — `memory_api.py`
+already calls `reject_memory`/`correct` with only `{"provenance":
+"confirmed_by_user", "source_type": "manual"}` (`memory_api.py:209,228`). So
+`manual.created_by_uuid` is **nullable**, and instead an **`excerpt` (or
+`reason`) is required** on manual review actions so the audit trail still explains
+*why* the human acted. (If an authenticated multi-operator identity is introduced
+later, `created_by_uuid` can be promoted to required for `manual` without a
+schema change — it is already a column on `memory_evidence`.)
 
 `agents/assistant.py::_action_remember` is fixed to pass the triggering message
 UUID as `source_id` and its text as `excerpt` (it currently passes neither —
 `assistant.py:342-345`), satisfying the `chat_message` row. The matrix is the
 single source of truth for both implementation and tests so no call site invents
 its own rule.
+
+**Annotating evidence without collision.** When `record_belief` needs to attach a
+note (e.g. "scoped exception over global tombstone", "operator override of prior
+rejection"), it must not pass a second `excerpt=` kwarg alongside a caller-supplied
+one. A helper `with_note(evidence: dict, note: str) -> dict` returns a *copy* that
+appends the note to `excerpt` (joined with "; ") when present, or sets it
+otherwise — so the original caller excerpt is preserved, not overwritten.
 
 ## 4. Recall fencing
 
@@ -422,25 +463,33 @@ guarantee concrete rather than implied.
 ### Override scope rule (a human may only clear a same-scope tombstone)
 
 A human actor's override clears a tombstone **only when the tombstone's scope
-equals the write's scope** (`may_clear(actor, scope, tomb)` ≡ `tomb.scope ==
-scope`). Otherwise a room-scoped `explicit_human_command` matching a `global`
-tombstone (via the fallback above) would silently un-block that wrong value for
-*every* room — a dangerous blast radius.
+equals the write's scope**. Otherwise a room-scoped `explicit_human_command`
+matching a `global` tombstone would silently un-block that wrong value for *every*
+room — a dangerous blast radius.
 
-Concretely:
+To enforce this without a separate `may_clear` predicate, `record_belief` looks up
+the exact-scope tombstone and the global tombstone **separately** (§3.3 step 2)
+rather than collapsing them in one "first hit wins" call. The exact-scope
+tombstone (by construction `tomb.scope == scope`) is the only one an override may
+clear; the global tombstone is consulted *after* any exact clear, so clearing the
+narrower one can never bypass it. Concretely:
 
-- **Same scope** (e.g. a global human action vs a global tombstone, or a room
-  action vs a room tombstone) → `clear_tombstone`, then create active.
-- **Narrower write vs a global tombstone** (room/agent human write hits a global
-  tombstone) → **leave the global tombstone intact** and create a *scoped
-  exception*: an active claim at the write's own (narrower) scope, with evidence
-  noting "scoped exception over global tombstone". The global block still applies
-  everywhere else.
+- **Same scope** (global action vs global tombstone, or room action vs room
+  tombstone) → `clear_tombstone`, then continue.
+- **Narrower write vs a global tombstone** (room/agent human write, with or
+  without its own room tombstone) → **leave the global tombstone intact** and
+  create a *scoped exception*: an active claim at the write's own (narrower)
+  scope, with evidence noting "scoped exception over global tombstone" (appended
+  via `with_note`, §3.4). The global block still applies everywhere else.
 - To actually clear a global tombstone, the operator must perform an explicit
   **global-scope** action (in `/memory`, or a global-scope command).
 
-This keeps operator sovereignty (you can always override) while making the blast
-radius of an override match the scope you acted at.
+The "exact-scope then global fallback" order in `check_tombstone` is for the
+*non-override* refusal path (any matching tombstone blocks a model/assistant
+write); the override path uses the explicit two-lookup form above so it can never
+clear the narrower tombstone and miss the broader one. This keeps operator
+sovereignty (you can always override) while making the blast radius of an
+override match the scope you acted at.
 
 ### Helpers (`db/memory.py`)
 
@@ -515,12 +564,31 @@ Within `record_belief` (§3.3, step 3), for structured claims (`sp_key != ""`):
 ```python
 def active_claim_with_same_key_different_value(
     scope, room_uuid, agent_uuid, sp_key, value_key) -> MemoryClaim | None:
-    """The active claim in this scope whose (subject,predicate) key == sp_key but
-    whose value differs from value_key, or None."""
+    """The active claim, across the APPLICABLE SCOPE LATTICE for this write, whose
+    (subject,predicate) key == sp_key but whose value differs from value_key, or
+    None. The lattice for a write at `scope` is that scope plus its broader
+    ancestors:
+        room   -> {room (this room), agent (this agent), global}
+        agent  -> {agent (this agent), global}
+        global -> {global}
+        project-> {project (this project), global}   # project context required
+    The most specific match wins (room beats agent beats global), so a narrower
+    claim is preferred as the rival. This is what lets `scoped_exception` work: a
+    room write can detect a broader (e.g. global) rival and coexist under it."""
 ```
 
-- **human actor** (`human_review_ui` / `explicit_human_command`) →
-  auto-supersede the rival (`supersede_memory`), new active.
+A lattice-aware lookup (not exact-scope only) is required — otherwise a room
+write could never see a global rival and `scoped_exception` would be unreachable.
+It is a small set of indexed point-lookups (one per lattice level), not a scan.
+
+- **human actor** (`human_review_ui` / `explicit_human_command` /
+  `human_confirmed_write_intent`) → auto-supersede the rival
+  (`supersede_memory`), new active. (When the rival is *broader* than the write's
+  scope, the human may instead choose `scoped_exception` at review time rather
+  than superseding a global belief from a room; the auto path supersedes only a
+  same-scope rival, and surfaces a broader-scope rival as a `conflict_candidate`
+  for the human to resolve. This avoids a room command silently overturning a
+  global belief — the same blast-radius caution as §5.)
 - **assistant/model actor** → new claim `status="candidate"` with
   `conflicts_with_uuid` → rival; rival stays active; surfaced for review.
 
@@ -645,7 +713,7 @@ populates them on new rows. Idempotent on re-run.
 |---|---|
 | `db/models.py` | `MemoryRejectedValue` model (with snapshot fields); `memory_claim` columns `conflicts_with_uuid`, `epistemic_confidence`, `retrieval_strength`, `support_count`, `subj_pred_key`, `value_key`, `key_version` |
 | `db/__init__.py` | new table via `create_all`; seven `_add_column_if_missing`; guarded backfill (incl. Python key recompute); unique functional index + conflict index |
-| `db/memory.py` | `record_belief` + `BeliefWriteResult` (single terminal commit per outcome); `belief_keys` (deterministic keying, persisted on the claim); `write_tombstone`/`check_tombstone` (two-step lookup + `may_clear` scope rule)/`clear_tombstone`/`record_tombstone_hit`/`list_tombstones_with_hits`; `active_claim_with_same_key_different_value` (indexed query on persisted keys); advisory-lock helper; per-`source_type` evidence validation; `commit=False` params on `create_memory_claim`/`add_memory_evidence`/`supersede_memory`/`reject_memory`; tombstone writes (with snapshot) in `reject_memory`/`supersede_memory`; the four conflict resolutions |
+| `db/memory.py` | `record_belief` + `BeliefWriteResult` (single terminal commit per outcome; exact + global tombstone handling, §3.3); `belief_keys` (deterministic keying, persisted on the claim); `write_tombstone`/`check_tombstone` (exact-scope lookup, called for exact + global)/`clear_tombstone`/`record_tombstone_hit`/`list_tombstones_with_hits`; `active_claim_with_same_key_different_value` (lattice-aware indexed query); `with_note` (non-colliding evidence annotation); dual advisory-lock helper (exact + global key); per-`source_type` evidence validation; `commit=False` params on `create_memory_claim`/`add_memory_evidence`/`supersede_memory`/`reject_memory`; tombstone writes (with snapshot) in `reject_memory`/`supersede_memory`; the four conflict resolutions |
 | `memory/retrieval.py` | `fence_recalled_memory` + fail-closed neutralization |
 | `agents/chat_context.py` | wrap assembled block in the fence |
 | `agents/assistant.py` | `_action_remember` → `record_belief(actor="assistant_interpreted")` (now candidate-by-default); pass source message UUID + excerpt as evidence; `_action_activate_memory` carries `human_confirmed_write_intent` and drives §6.3 resolution; fence `query_memory` observation |
@@ -671,6 +739,11 @@ New/extended tests (alongside existing `db/test_memory.py`, `memory/test_*`,
   room/agent human write against a *global* tombstone creates a scoped exception
   and leaves the global tombstone intact; only a global-scope human action clears
   a global tombstone.
+- **No global bypass:** with *both* a room and a global tombstone for the same
+  value, a room human write clears the room tombstone but still hits the global
+  one (→ scoped exception, global intact) — it does not silently un-block.
+- **Lock coverage:** the advisory-lock set includes the global key so a
+  concurrent global tombstone create/clear cannot race a room write.
 - **Conflict resolutions:** for each of `supersede` / `reject` / `not_conflict` /
   `scoped_exception`, assert candidate final status, rival status,
   `conflicts_with_uuid` cleared, evidence row, tombstone presence/absence, and
@@ -678,6 +751,16 @@ New/extended tests (alongside existing `db/test_memory.py`, `memory/test_*`,
 - **Persisted keys:** `record_belief` writes `subj_pred_key`/`value_key`/
   `key_version`; `active_claim_with_same_key_different_value` finds a rival via
   the indexed columns without re-parsing.
+- **Lattice conflict lookup:** a room write detects a broader (agent/global)
+  rival with the same key; a same-scope rival is preferred (most specific wins);
+  a human write whose rival is broader yields a `conflict_candidate` (not a
+  silent supersede), while a same-scope human rival auto-supersedes.
+- **Evidence annotation:** `with_note` appends to a caller-supplied `excerpt`
+  (joined with "; ") instead of raising on a duplicate `excerpt` kwarg; the
+  scoped-exception and override paths preserve the original excerpt.
+- **Manual identity:** a `manual` review action with no `created_by_uuid` is
+  accepted when it carries an `excerpt`/`reason`, and rejected when it carries
+  neither.
 - **Fence:** memory text containing `</recalled_memory>` or "ignore previous
   instructions" is neutralized; output carries the wrapper; empty input → empty
   output; a forced sanitizer error yields a fenced placeholder, never raw body
