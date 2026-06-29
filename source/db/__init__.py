@@ -148,6 +148,20 @@ def _backfill_chatroom_positions() -> None:
     db.session.commit()
 
 
+def _backfill_memory_trust_numeric() -> None:
+    """One-time: seed the Tier 1 numeric trust columns from `confidence`.
+    Idempotent — each UPDATE is guarded by an IS NULL filter."""
+    db.session.execute(sa.text(
+        "UPDATE memory_claim SET epistemic_confidence = confidence "
+        "WHERE epistemic_confidence IS NULL"))
+    db.session.execute(sa.text(
+        "UPDATE memory_claim SET retrieval_strength = confidence "
+        "WHERE retrieval_strength IS NULL"))
+    db.session.execute(sa.text(
+        "UPDATE memory_claim SET support_count = 1 WHERE support_count IS NULL"))
+    db.session.commit()
+
+
 def _migrate_journal_id_to_uuid() -> None:
     """Convert `journal.id` from an integer autoincrement to a uuid, remapping
     every loose `journal_id` reference (there are no FK constraints). Idempotent:
@@ -404,6 +418,7 @@ def init_db(app: Flask) -> None:
             "ON memory_claim (scope, room_uuid, agent_uuid, subj_pred_key) "
             "WHERE status = 'active'"))
         db.session.commit()
+        _backfill_memory_trust_numeric()
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(
