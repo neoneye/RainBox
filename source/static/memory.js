@@ -288,10 +288,14 @@ function conflictSectionHtml(d) {
 }
 
 function tombstoneHitsHtml(d) {
-  // Show tombstones that match this claim's room (or global if no room)
-  const matching = tombstoneHits.filter(t =>
-    (d.room_uuid ? t.room_uuid === d.room_uuid : t.room_uuid === null) ||
-    t.room_uuid === null);
+  // Show tombstones that match this claim's room (or global if no room) AND
+  // whose subj_pred_key matches this claim's key (skip free-text hits with empty key).
+  const matching = tombstoneHits.filter(t => {
+    const roomMatch = (d.room_uuid ? t.room_uuid === d.room_uuid : t.room_uuid === null) ||
+      t.room_uuid === null;
+    const keyMatch = t.subj_pred_key && d.subj_pred_key && t.subj_pred_key === d.subj_pred_key;
+    return roomMatch && keyMatch;
+  });
   if (!matching.length) return '';
   let html = '<div class="mem-section"><div class="mem-section-label">Suppressed re-assertions (' + matching.length + ')</div>';
   matching.forEach(t => {

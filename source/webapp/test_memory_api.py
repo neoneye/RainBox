@@ -332,3 +332,77 @@ def test_detail_includes_conflicts_with_uuid(client):
         assert body["conflicts_with_uuid"] == str(cand.conflicts_with_uuid)
     finally:
         _cleanup_room(room)
+
+
+# ---------------------------------------------------------------------------
+# P3: tombstone-hit rows must include subj_pred_key; claim detail must too
+# ---------------------------------------------------------------------------
+
+def test_tombstone_hit_row_includes_subj_pred_key(client):
+    """GET /memory/api/claims returns tombstone_hits whose rows include subj_pred_key
+    so the frontend can filter suppressions to the specific (subject, predicate) pair."""
+    from db.models import MemoryRejectedValue
+    room = uuid4()
+    # Create a claim to tombstone and bump hit_count > 0 so it appears in the list.
+    c = db.create_memory_claim(
+        scope="room", kind="fact", text="bob is tall",
+        confidence=1.0, status="active", sensitivity="private",
+        room_uuid=room, subject="bob", predicate="is", object="tall",
+    )
+    # Write a tombstone with a non-zero hit_count so list_tombstones_with_hits returns it.
+    from db.memory import write_tombstone
+    tomb = write_tombstone(c, reason="superseded", commit=True)
+    # Bump hit_count to 1 so it shows in the list.
+    from db.memory import record_tombstone_hit
+    record_tombstone_hit(tomb, commit=True)
+    db.db.session.expire_all()
+
+    try:
+        r = client.get("/memory/api/claims")
+        assert r.status_code == 200
+        hits = r.get_json().get("tombstone_hits", [])
+        # Find our tombstone row by room_uuid or claim_text
+        our_hit = next(
+            (t for t in hits if t.get("claim_text") == "bob is tall"), None
+        )
+        assert our_hit is not None, \
+            f"tombstone for 'bob is tall' not found in tombstone_hits; got: {hits}"
+        assert "subj_pred_key" in our_hit, \
+            f"subj_pred_key missing from tombstone_hit_row; row keys: {list(our_hit.keys())}"
+    finally:
+        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=c.uuid).delete()
+        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+        db.db.session.commit()
+
+
+def test_claim_detail_includes_subj_pred_key(client):
+    """GET /memory/api/claims/<uuid> returns subj_pred_key on the claim detail
+    so the frontend tombstoneHitsHtml can match suppression rows to this specific claim."""
+    room = uuid4()
+    # Use record_belief so subj_pred_key is automatically computed and stored.
+    result = db.record_belief(
+        actor="explicit_human_command", scope="room", kind="fact",
+        text="carol is short", confidence=1.0, sensitivity="private",
+        room_uuid=room, subject="carol", predicate="is", object="short",
+        evidence={"provenance": "confirmed_by_user", "source_type": "manual",
+                  "excerpt": "test"},
+    )
+    c = result.claim
+    assert c is not None and c.subj_pred_key, \
+        f"Setup failed: claim has no subj_pred_key (outcome={result.outcome!r})"
+    try:
+        r = client.get(f"/memory/api/claims/{c.uuid}")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert "subj_pred_key" in body, \
+            f"subj_pred_key missing from claim detail; keys: {list(body.keys())}"
+        # The key must be non-empty for a structured (subject+predicate) claim.
+        assert body["subj_pred_key"], \
+            f"subj_pred_key is empty for structured claim; got {body['subj_pred_key']!r}"
+    finally:
+        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=c.uuid).delete()
+        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        from db.models import MemoryRejectedValue
+        db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+        db.db.session.commit()

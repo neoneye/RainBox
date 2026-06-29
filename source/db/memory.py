@@ -787,10 +787,14 @@ def resolve_conflict(candidate_uuid, resolution, *, narrowed_scope=None,
     note_ev = {"provenance": "confirmed_by_user", "source_type": "manual"}
 
     if resolution == "supersede":
-        if rival is not None and rival.status == "active":
-            rival.status = "superseded"
-            write_tombstone(rival, reason="superseded", commit=False)
-            delete_memory_embeddings(rival.uuid, commit=False)
+        if rival is not None:
+            # Link lineage regardless of rival's current status, so the review
+            # UI can show what the activated candidate superseded.
+            cand.supersedes_uuid = rival.uuid
+            if rival.status == "active":
+                rival.status = "superseded"
+                write_tombstone(rival, reason="superseded", commit=False)
+                delete_memory_embeddings(rival.uuid, commit=False)
         cand.status = "active"
         cand.conflicts_with_uuid = None
         add_memory_evidence(memory_uuid=cand.uuid, commit=False,

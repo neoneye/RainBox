@@ -77,3 +77,28 @@ def test_resolution_noop_when_already_resolved(app_ctx):
     out = resolve_conflict(cand.uuid, "supersede")   # stale: already rejected
     assert out.status == "rejected"                  # unchanged, no exception
     _cleanup(room)
+
+
+# ---------------------------------------------------------------------------
+# P2: resolve_conflict supersede must set supersedes_uuid lineage
+# ---------------------------------------------------------------------------
+
+def test_supersede_sets_supersedes_uuid_on_candidate(app_ctx):
+    """After resolve_conflict(cand, 'supersede'), the activated candidate must
+    have cand.supersedes_uuid == rival.uuid so lineage is preserved in the UI
+    (memory_claim_detail / supersede_memory rely on supersedes_uuid)."""
+    room = uuid4()
+    cand = _candidate(room)
+    rival_uuid = cand.conflicts_with_uuid
+    assert rival_uuid is not None, "Test setup error: candidate has no conflicts_with_uuid"
+
+    out = resolve_conflict(cand.uuid, "supersede")
+
+    db.db.session.expire_all()
+    refreshed = db.get_memory_claim(cand.uuid)
+    assert refreshed is not None
+    assert refreshed.status == "active", f"Expected active, got {refreshed.status!r}"
+    assert refreshed.supersedes_uuid == rival_uuid, (
+        f"Expected supersedes_uuid={rival_uuid}, got {refreshed.supersedes_uuid!r}"
+    )
+    _cleanup(room)

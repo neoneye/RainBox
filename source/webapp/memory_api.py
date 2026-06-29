@@ -102,6 +102,8 @@ def _tombstone_hit_row(t: db.MemoryRejectedValue) -> dict:
         "reason": t.reason,
         "hit_count": t.hit_count,
         "last_hit_at": _iso(t.last_hit_at),
+        "subj_pred_key": t.subj_pred_key or "",
+        "value_key": t.value_key or "",
     }
 
 
@@ -140,6 +142,7 @@ def memory_claim_detail(claim_uuid: str) -> tuple[Response, int] | Response:
         "subject": claim.subject,
         "predicate": claim.predicate,
         "object": claim.object,
+        "subj_pred_key": claim.subj_pred_key or "",
         "room_uuid": str(claim.room_uuid) if claim.room_uuid else None,
         "room_name": _room_name(claim.room_uuid),
         "created_at": _iso(claim.created_at),

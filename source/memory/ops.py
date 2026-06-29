@@ -217,10 +217,10 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
         refresh_claim_embedding(new_claim)
         refresh_claim_embedding(old)
         return f"Corrected: {old.text} → {new_text}"
-    # For free-text claims (no structured key), record_belief created the new
-    # claim but could not auto-detect the old one as the rival. Supersede the
-    # old claim in-place and link the already-created new claim to it. This
-    # avoids calling supersede_memory() which would create a second new claim.
+    # record_belief already committed new_claim (or a pre-existing candidate it
+    # corroborated). It could not auto-detect the old claim as the rival. We
+    # must now supersede the old claim AND ensure new_claim is active, all in
+    # one commit, so the two mutations are atomic.
     new_claim = result.claim
     if new_claim is None:
         # record_belief refused (e.g. the new value was previously rejected via
@@ -230,13 +230,24 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
             f"the new value was previously rejected and cannot be re-added. "
             f"({result.reason})"
         )
-    # For free-text claims, record_belief already committed the new claim but
-    # could not auto-detect the old one as the rival.  Supersede the old claim
-    # and link it to the new one in a single commit so the two mutations are
-    # atomic.  On any error, roll back the whole unit (including the new claim)
-    # so we never leave two contradicting live facts.
+    # record_belief already committed new_claim. The try/except below wraps
+    # ONLY the old-claim supersession + new_claim activation. On failure we
+    # rollback() those changes (leaving old active and new_claim as
+    # record_belief left it), so the original A is never lost.
     old_text_snapshot = old.text  # capture before session state may change
+    needs_activation = new_claim.status != "active"
     try:
+        if needs_activation:
+            # An explicit human correction overrides any conflict-candidate state.
+            new_claim.status = "active"
+            new_claim.conflicts_with_uuid = None
+            db.add_memory_evidence(
+                memory_uuid=new_claim.uuid,
+                provenance="confirmed_by_user",
+                source_type="manual",
+                excerpt="activated by correct command",
+                commit=False,
+            )
         old.status = "superseded"
         db.write_tombstone(old, reason="superseded", commit=False)
         new_claim.supersedes_uuid = old.uuid
