@@ -188,3 +188,31 @@ def test_handle_correct_keys_derived_from_new_text(app_ctx):
             MemoryClaim.uuid.in_(all_uuids)
         ).delete(synchronize_session=False)
         db.db.session.commit()
+
+
+def test_handle_confirm_refuses_conflict_candidate(app_ctx):
+    """`confirm that <conflict candidate>` must refuse and point to /memory,
+    not blindly activate (which would leave two conflicting active beliefs)."""
+    from memory.ops import _handle_confirm
+    room = uuid4()
+    mev = {"provenance": "inferred_by_model", "source_type": "chat_message",
+           "source_id": str(uuid4()), "excerpt": "e", "created_by_uuid": str(uuid4())}
+    ev = {"provenance": "confirmed_by_user", "source_type": "manual", "excerpt": "x"}
+    db.record_belief(actor="explicit_human_command", scope="room", kind="preference",
+                     text="gail prefers tea", confidence=1.0, room_uuid=room,
+                     subject="gail", predicate="prefers", object="tea", evidence=ev)
+    cand = db.record_belief(actor="model_inferred", scope="room", kind="preference",
+                            text="gail prefers coffee", confidence=0.6, room_uuid=room,
+                            subject="gail", predicate="prefers", object="coffee",
+                            evidence=mev).claim
+    assert cand.conflicts_with_uuid is not None
+    out = _handle_confirm(_Ctx(room), "gail prefers coffee")
+    assert "conflict candidate" in out.lower()
+    assert db.get_memory_claim(cand.uuid).status == "candidate"  # not activated
+    # cleanup
+    db.db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
+        db.db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room))).delete(
+        synchronize_session=False)
+    db.db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
+    db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+    db.db.session.commit()

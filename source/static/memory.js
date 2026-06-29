@@ -252,7 +252,12 @@ function actionsHtml(d) {
   const btns = [];
   const act = (label, cls, fn) => '<button class="' + cls + '" onclick="' + fn + '">' + label + '</button>';
   if (d.status === 'candidate') {
-    btns.push(act('Activate', '', 'memActivate(\'' + d.uuid + '\')'));
+    // A conflict candidate must be resolved via the conflict buttons (rendered
+    // separately), not activated directly — Activate would leave two conflicting
+    // active beliefs and a dangling conflict pointer (the server refuses it too).
+    if (!d.conflicts_with_uuid) {
+      btns.push(act('Activate', '', 'memActivate(\'' + d.uuid + '\')'));
+    }
     btns.push(act('Correct…', 'secondary', 'memOpenCorrect(\'' + d.uuid + '\')'));
     btns.push(act('Reject', 'danger', 'memOpenReject(\'' + d.uuid + '\')'));
   } else if (d.status === 'active') {

@@ -169,6 +169,15 @@ def _handle_confirm(ctx: QueryContext, text: str) -> str:
         # No prior memory — confirm degenerates to remember.
         return _handle_remember(ctx, text)
     claim = matches[0]
+    if claim.conflicts_with_uuid is not None:
+        # A conflict candidate must be resolved (supersede/reject/not_conflict/
+        # scoped_exception), not blindly activated — otherwise two conflicting
+        # beliefs go active with a dangling conflict pointer.
+        return (
+            f"{text!r} is a conflict candidate; resolve the conflict on the "
+            f"/memory page (supersede / reject / not a conflict / scoped "
+            f"exception) instead of confirming it here."
+        )
     claim.status = "active"
     claim.confidence = 1.0
     db.db.session.commit()

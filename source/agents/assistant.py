@@ -325,8 +325,9 @@ def _action_remember(
     """Log-and-undo write: create a *candidate* memory claim for operator
     confirmation. The model composed the claim text, so it is
     assistant_interpreted (candidate-by-default) and must never override a
-    tombstone. Embedding is deferred until the operator activates it; undo
-    rejects the candidate."""
+    tombstone. The candidate is embedded immediately to keep the index warm for
+    later activation (candidates are not retrieved into prompts — retrieval is
+    active-only); undo rejects the candidate."""
     text = str(args.get("text", "")).strip()
     # source_id: prefer the specific triggering message; fall back to the
     # journal handle UUID so evidence is never left without a provenance anchor.

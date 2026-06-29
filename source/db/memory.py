@@ -233,10 +233,20 @@ def activate_memory_claim(
     memory_uuid: UUID, *, confirmed_by_uuid: UUID | None = None
 ) -> MemoryClaim:
     """Promote a claim to `active` and record a confirmation evidence row. Used
-    by the confirm-tier activate_memory write once an operator approves it."""
+    by the confirm-tier activate_memory write once an operator approves it.
+
+    Refuses a conflict candidate (one with `conflicts_with_uuid` set): activating
+    it directly would leave two conflicting active beliefs and a dangling conflict
+    pointer. Such a candidate must go through `resolve_conflict`
+    (supersede / reject / not_conflict / scoped_exception)."""
     claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
     if claim is None:
         raise ValueError(f"memory claim not found: {memory_uuid}")
+    if claim.conflicts_with_uuid is not None:
+        raise ValueError(
+            f"memory claim {memory_uuid} is a conflict candidate; resolve the "
+            f"conflict (supersede/reject/not_conflict/scoped_exception) instead "
+            f"of activating it directly")
     claim.status = "active"
     claim.updated_at = datetime.now(UTC)
     db.session.add(
@@ -348,7 +358,12 @@ def reactivate_memory_claim(
     confirmation evidence row. Refuses any other starting status (an active or
     superseded claim is not a thing to "reactivate"). Guarded by
     `expected_updated_at`. The DB-level sibling of the assistant's internal
-    forget-undo inverse."""
+    forget-undo inverse.
+
+    Reactivation is a human override, so it also clears the exact-scope tombstone
+    for this value (a `reject` writes one by default). Otherwise the reactivated
+    active claim would coexist with a tombstone for its own value, which would
+    keep suppressing later model writes of that value."""
     claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
     if claim is None:
         raise ValueError(f"memory claim not found: {memory_uuid}")
@@ -358,6 +373,10 @@ def reactivate_memory_claim(
     assert_claim_unchanged(claim, expected_updated_at)
     claim.status = "active"
     claim.updated_at = datetime.now(UTC)
+    sp_key, val_key = belief_keys(claim.subject, claim.predicate, claim.object, claim.text)
+    tomb = check_tombstone(claim.scope, claim.room_uuid, claim.agent_uuid, sp_key, val_key)
+    if tomb is not None:
+        clear_tombstone(tomb, commit=False)
     db.session.add(
         MemoryEvidence(
             memory_uuid=memory_uuid, provenance="confirmed_by_user",

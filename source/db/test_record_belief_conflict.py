@@ -836,3 +836,39 @@ def test_correct_belief_refuses_unrelated_correction_hitting_active_rival(app_ct
                      .filter(MemoryClaim.text.like("%coffee%")).count())
     assert active_coffee == 0
     _cleanup(room)
+
+
+def test_activate_memory_claim_refuses_conflict_candidate(app_ctx):
+    """The generic activate path must refuse a conflict candidate — it would
+    otherwise leave two conflicting active beliefs + a dangling pointer."""
+    room = uuid4()
+    record_belief(actor="explicit_human_command", scope="room", kind="preference",
+                  text="erin prefers tea", confidence=1.0, room_uuid=room,
+                  subject="erin", predicate="prefers", object="tea", evidence=EV)
+    cand = record_belief(actor="model_inferred", scope="room", kind="preference",
+                         text="erin prefers coffee", confidence=0.6, room_uuid=room,
+                         subject="erin", predicate="prefers", object="coffee", evidence=MEV)
+    assert cand.outcome == "conflict_candidate"
+    with pytest.raises(ValueError):
+        db.activate_memory_claim(cand.claim.uuid)
+    db.db.session.rollback()
+    assert db.get_memory_claim(cand.claim.uuid).status == "candidate"
+    _cleanup(room)
+
+
+def test_reactivate_clears_exact_tombstone(app_ctx):
+    """Reactivation is a human override: it must clear the exact-scope tombstone
+    that reject_memory wrote, so the reactivated value isn't self-suppressed."""
+    room = uuid4()
+    a = record_belief(actor="explicit_human_command", scope="room", kind="preference",
+                      text="fred prefers tea", confidence=1.0, room_uuid=room,
+                      subject="fred", predicate="prefers", object="tea", evidence=EV)
+    db.reject_memory(a.claim.uuid, {"provenance": "confirmed_by_user",
+                                    "source_type": "manual", "excerpt": "no"})
+    assert db.check_tombstone("room", room, None, a.claim.subj_pred_key,
+                              a.claim.value_key) is not None
+    db.reactivate_memory_claim(a.claim.uuid)
+    assert db.get_memory_claim(a.claim.uuid).status == "active"
+    assert db.check_tombstone("room", room, None, a.claim.subj_pred_key,
+                              a.claim.value_key) is None
+    _cleanup(room)
