@@ -158,3 +158,25 @@ def test_repopulate_button_rendered_for_customize_dir(client):
     assert "repopulate_memory" in body
     assert "Repopulate Q&A memory" in body
     assert "customize.dir" in body
+
+
+def test_repopulate_surfaces_jsonl_file_and_line(client, monkeypatch, caplog):
+    """A JSONL parse failure during repopulate must surface the file:line in the
+    UI response AND the server log so the operator can fix the entry."""
+    import logging
+    import memory.seed_memory as seed_memory
+    msg = "/path/question_answer.jsonl:17: invalid JSON — Expecting ',' delimiter (column 279)"
+
+    def boom():
+        raise ValueError(msg)
+
+    monkeypatch.setattr(seed_memory, "rebuild_kb", boom)
+    with caplog.at_level(logging.WARNING, logger="webapp.settings_views"):
+        resp = client.post("/settings/api/repopulate_memory")
+
+    assert resp.status_code == 502
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert "question_answer.jsonl:17" in body["error"]   # UI carries file:line
+    assert any("question_answer.jsonl:17" in r.getMessage() for r in caplog.records), \
+        "log should carry the file:line"

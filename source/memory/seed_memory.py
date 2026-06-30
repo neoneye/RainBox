@@ -170,13 +170,23 @@ def _load_jsonl() -> list[dict[str, Any]]:
         sources.append((overlay, "user-overlay"))
     merged: dict[str, dict[str, Any]] = {}
     for path, source in sources:
-        for raw in path.read_text().splitlines():
+        for lineno, raw in enumerate(path.read_text().splitlines(), 1):
             line = raw.strip()
-            if line:
-                e = json.loads(line)
-                if e.get("id"):
-                    e["_source"] = source
-                    merged[e["id"]] = e
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as exc:
+                # Name the file + 1-based line + column so the operator can fix
+                # the offending entry. The /settings repopulate result shows this
+                # str(); the endpoint also logs it.
+                raise ValueError(
+                    f"{path}:{lineno}: invalid JSON — {exc.msg} "
+                    f"(column {exc.colno})"
+                ) from exc
+            if entry.get("id"):
+                entry["_source"] = source
+                merged[entry["id"]] = entry
     return list(merged.values())
 
 

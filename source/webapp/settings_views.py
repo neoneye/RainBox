@@ -11,11 +11,15 @@ a bad value (or an attempt to store a secret) is rejected with a 400 carrying th
 error message. This is the editable counterpart to the read-only Flask-Admin
 AppSetting view. See docs/proposals/2026-06-07-user-configuration-in-postgres.md.
 """
+import logging
+
 from flask import Response, jsonify, render_template_string, request
 
 import db
 
 from .core import app
+
+logger = logging.getLogger(__name__)
 
 
 def _setting_row(key: str) -> dict | None:
@@ -310,5 +314,9 @@ def settings_repopulate_memory() -> tuple[Response, int] | Response:
     except Exception as exc:  # noqa: BLE001 — any backend failure → 502 + message
         # Not dead code: rebuild_kb reads the customize.dir setting via db.session (get_setting); a failure there leaves the session in a failed state that must be rolled back before responding.
         db.db.session.rollback()
+        # Log it too (a JSONL parse error carries the file:line:column; an
+        # embedding failure carries the Ollama error) so the operator can
+        # troubleshoot from the log, not only the UI result.
+        logger.warning("repopulate_memory failed: %s", exc)
         return jsonify({"ok": False, "error": str(exc)}), 502
     return jsonify({"ok": True, **counts})
