@@ -330,7 +330,13 @@ function openClaimMenu(c, anchor) {
   menu.className = 'mem-menu';
   const items = [];
   const it = (label, danger, fn) => '<button class="item' + (danger ? ' danger' : '') + '" data-fn="' + fn + '">' + label + '</button>';
-  if (c.status === 'candidate') { items.push(it('Activate', false, 'activate')); items.push(it('Correct…', false, 'correct')); items.push(it('Reject', true, 'reject')); }
+  if (c.status === 'candidate') {
+    // Conflict candidates can't be activated directly (server refuses); they
+    // must be resolved from the detail pane's conflict buttons.
+    if (!c.conflicts_with_uuid) items.push(it('Activate', false, 'activate'));
+    items.push(it('Correct…', false, 'correct'));
+    items.push(it('Reject', true, 'reject'));
+  }
   else if (c.status === 'active') { items.push(it('Correct…', false, 'correct')); items.push(it('Forget', true, 'reject')); }
   else if (c.status === 'rejected' || c.status === 'expired') { items.push(it('Reactivate', false, 'reactivate')); }
   items.push(it('Copy memory id', false, 'copyid'));  // always available
