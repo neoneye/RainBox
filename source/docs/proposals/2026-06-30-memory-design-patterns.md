@@ -2009,7 +2009,7 @@ review UI, Flask-Admin, and fencing — no new table, no new migration.
 | `content_text` | `MemoryClaim.text` (the markdown brief) |
 | one row per compile, "latest wins" | new `active` claim that **supersedes** the prior brief (`supersedes_uuid`); old brief → `superseded` (kept as history) |
 | `source_refs uuid[]` | `MemoryEvidence` rows (one per source row, `source_id` = `ChatMessage`/`journal` UUID, `provenance="imported_from_transcript"`) |
-| `room_id` / `project_id` | `scope="room"` (`room_uuid`) or `scope="project"` |
+| `room_id` | `scope="room"` (`room_uuid`) — see the project-scope caveat below |
 | `compiler_version`, `compiled_until_source` | evidence excerpt / a small `metadata` note (or a couple of columns if you must) |
 | privacy later | `sensitivity` (already enforced before retrieval) |
 | review later | the `/memory` page, already built |
@@ -2022,6 +2022,16 @@ would parse into a real key and could collide with a genuine belief. So for
 `kind="episode_summary"`, persist `subj_pred_key=""`/`value_key=""` (or skip
 keying entirely). A brief is a *derived view*, not a belief that competes on a
 subject/predicate.
+
+**Project scope is out of scope for this no-migration alternative — this brief
+is room-scoped.** `MemoryClaim` has a `scope="project"` value but **no
+`project_uuid` column**, and `hard_filtered_claims` deliberately excludes
+project-scoped claims precisely because there is no project key to match on. So a
+true multi-room project brief cannot be modeled by setting `scope="project"`
+today (you would have a project claim tagged only with a `room_uuid`, which is
+incoherent). A project-level brief first needs a project key/association
+(a migration) — the same unresolved "project scope" gap the claim retriever
+already has. Until then, key the brief on `room_uuid`.
 
 ### Write path (cold path)
 
@@ -2044,8 +2054,8 @@ dedupe/conflict). Note three things this helper must get right, none of which
 # allowed MemoryEvidence.source_type per source row class
 _EVIDENCE_SOURCE_TYPE = {"chat": "chat_message", "journal": "journal"}
 
-def compile_session_brief(room_uuid, *, project_uuid=None):
-    prev = latest_active_brief(room_uuid, project_uuid)   # active episode_summary
+def compile_session_brief(room_uuid):                    # room-scoped (see caveat)
+    prev = latest_active_brief(room_uuid)                 # active episode_summary
     new_sources = chat_and_journal_rows_after(room_uuid, prev)  # read EXISTING rows
     if not new_sources:
         return prev
@@ -2055,10 +2065,10 @@ def compile_session_brief(room_uuid, *, project_uuid=None):
     # 1. Supersede the prior brief WITHOUT a tombstone (stale, not rejected).
     if prev is not None:
         prev.status = "superseded"
-        prev.updated_at = now()
+        prev.updated_at = datetime.now(UTC)
     # 2. Create the new active brief; conflict-exempt (empty keys, not belief_keys).
     new = db.create_memory_claim(
-        scope=("project" if project_uuid else "room"), kind="episode_summary",
+        scope="room", kind="episode_summary",
         text=brief_md, confidence=1.0, status="active", sensitivity="private",
         room_uuid=room_uuid,
         subj_pred_key="", value_key="", key_version=db.KEY_VERSION,
@@ -2087,7 +2097,7 @@ Load the brief **deterministically**, not through the hybrid ranker, and keep it
 out of the generic claim block so it is not double-injected:
 
 ```python
-brief = latest_active_brief(room_uuid, project_uuid)   # targeted query, not retrieve_memories_hybrid
+brief = latest_active_brief(room_uuid)   # targeted query, not retrieve_memories_hybrid
 # exclude kind="episode_summary" from build_chat_memory_block's candidate set
 block = fence_recalled_memory(render_brief(brief)) + recent_raw_turns(room_uuid, budget=4000)
 ```
