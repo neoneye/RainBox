@@ -2014,18 +2014,36 @@ review UI, Flask-Admin, and fencing — no new table, no new migration.
 | privacy later | `sensitivity` (already enforced before retrieval) |
 | review later | the `/memory` page, already built |
 
-`subj_pred_key`/`value_key`/`conflicts_with_uuid`/tombstones are vestigial for a
-brief — it is free-text, so `belief_keys` yields an empty key and it is
-conflict-exempt. That is fine: a brief is a *derived view*, not a belief that
-competes on a subject/predicate.
+`conflicts_with_uuid`/tombstones are vestigial for a brief, and it must be made
+**conflict-exempt explicitly** — do *not* run `belief_keys` over the brief text.
+`belief_keys` only returns an empty `subj_pred_key` when the text matches none of
+the deterministic shapes; a brief that happens to start "X is Y" / "X prefers Y"
+would parse into a real key and could collide with a genuine belief. So for
+`kind="episode_summary"`, persist `subj_pred_key=""`/`value_key=""` (or skip
+keying entirely). A brief is a *derived view*, not a belief that competes on a
+subject/predicate.
 
 ### Write path (cold path)
 
 A dedicated helper, **not** `record_belief` (which is for atomic beliefs with
-dedupe/conflict): each recompile supersedes the prior brief and attaches the
-source rows as evidence — one transaction.
+dedupe/conflict). Note three things this helper must get right, none of which
+`supersede_memory` gives you for free:
+
+- **No tombstone.** A superseded brief is *stale*, not a rejected value that must
+  never re-enter — and tombstoning would write the whole markdown brief as a
+  `value_key`. So do the supersession inline (set the prior brief
+  `status="superseded"`), do **not** call `supersede_memory` (it always writes a
+  tombstone) and do **not** call `write_tombstone`.
+- **One transaction.** Every write uses `commit=False`; a single `commit()` at
+  the end.
+- **Valid evidence `source_type`.** `MemoryEvidence.source_type` is constrained
+  to `chat_message | journal | file | api | manual | transcript`. Map each source
+  row class to one of those; never pass a raw `ChatMessage.kind`.
 
 ```python
+# allowed MemoryEvidence.source_type per source row class
+_EVIDENCE_SOURCE_TYPE = {"chat": "chat_message", "journal": "journal"}
+
 def compile_session_brief(room_uuid, *, project_uuid=None):
     prev = latest_active_brief(room_uuid, project_uuid)   # active episode_summary
     new_sources = chat_and_journal_rows_after(room_uuid, prev)  # read EXISTING rows
@@ -2034,26 +2052,34 @@ def compile_session_brief(room_uuid, *, project_uuid=None):
     overlap = overlap_rows_by_token_budget(room_uuid, before=new_sources[0], budget=1500)
     brief_md = call_compiler(prev.text if prev else "", new_sources, overlap, bootstrap())
 
-    # supersede prior brief + create the new one atomically (mirror supersede_memory)
-    new_args = dict(
+    # 1. Supersede the prior brief WITHOUT a tombstone (stale, not rejected).
+    if prev is not None:
+        prev.status = "superseded"
+        prev.updated_at = now()
+    # 2. Create the new active brief; conflict-exempt (empty keys, not belief_keys).
+    new = db.create_memory_claim(
         scope=("project" if project_uuid else "room"), kind="episode_summary",
         text=brief_md, confidence=1.0, status="active", sensitivity="private",
         room_uuid=room_uuid,
+        subj_pred_key="", value_key="", key_version=db.KEY_VERSION,
+        supersedes_uuid=(prev.uuid if prev else None),
+        commit=False,
     )
-    new = (db.supersede_memory(prev.uuid, new_args, _brief_evidence(new_sources[-1]))
-           if prev else
-           db.create_memory_claim(**new_args, status="active"))
-    for row in (overlap + new_sources):              # source_refs = evidence rows
-        db.add_memory_evidence(memory_uuid=new.uuid, provenance="imported_from_transcript",
-                               source_type=row.kind, source_id=str(row.uuid),
-                               excerpt=row.text[:200], commit=False)
-    db.db.session.commit()
+    # 3. source_refs = evidence rows pointing at EXISTING chat/journal rows.
+    for row in (overlap + new_sources):
+        db.add_memory_evidence(
+            memory_uuid=new.uuid, provenance="imported_from_transcript",
+            source_type=_EVIDENCE_SOURCE_TYPE[row.source_class],  # mapped, not row.kind
+            source_id=str(row.uuid), excerpt=row.text[:200], commit=False)
+    db.db.session.commit()                                # 4. single commit
     return new
 ```
 
 Recompile contradiction handling, idempotency, budgets, validation, and the
 doctor all stay exactly as this report specifies — only the storage target
-changes.
+changes. (If you would rather reuse `supersede_memory`, it first needs a
+`tombstone=False` option; until then, the inline supersession above is the
+correct path for a derived summary.)
 
 ### Hot path / startup
 
