@@ -1912,3 +1912,194 @@ that lets RainBox resume work after restart.
 Only after that works should RainBox grow structured memory,
 retrieval, trust, tombstones, review, experience, and graph layers.
 ```
+
+---
+
+## 50. Review: Reconcile This With the Memory System RainBox Already Has
+
+This report reads as if RainBox starts from an empty memory subsystem. It does
+not. The codebase already has the layers this roadmap files under "Phase 2–4":
+
+- **Structured items** — `MemoryClaim` (`db/models.py`): kinds `fact`,
+  `preference`, `project_decision`, `procedure`, `episode_summary`; scope,
+  status, sensitivity, expiry, supersession lineage.
+- **Evidence/provenance** — `MemoryEvidence` rows (append-only; `observed_from_source`,
+  `inferred_by_model`, `confirmed_by_user`, `imported_from_transcript`).
+- **Governed write path** — `record_belief()` (atomic, advisory-locked: dedupe →
+  tombstone → conflict → create) plus `correct_belief()`.
+- **Retrieval** — hybrid (`retrieve_memories_hybrid`: pgvector + Postgres
+  full-text + entity boost, hard-filtered) on both the chat and assistant paths.
+- **Trust/correction** — five-actor model, rejected-value tombstones, write-time
+  conflict detection, conflict-resolution UI.
+- **Review + fencing** — the `/memory` page and `fence_recalled_memory()`.
+- **Jobs** — a cron/queue system already exists.
+
+So the roadmap's phase numbering is misleading *for this repo*: pgvector,
+structured items, trust, tombstones, and a review UI are shipped, not future.
+The valuable, genuinely-missing idea in this report is narrower than the doc
+frames it: **claims answer "what do I believe"; they do not answer "what is the
+current state of this ongoing work / where were we." A session brief is that
+missing continuity layer.** The rest of the report should be re-scoped around
+that single insight.
+
+### What this report gets right
+
+- The continuity gap is real (after a restart/new room there is no
+  current-state artifact; claims are atomic beliefs, not working state).
+- Scope discipline and the Phase-1 non-goals list.
+- Provenance-not-chain-of-thought; source log as audit baseline, not truth.
+- The recent raw-turn bridge for the async race (a precompiled brief is always
+  stale by seconds).
+- Token-budgeted overlap, compiler idempotency, incremental compile,
+  contradiction handling, don't-block-chat-on-failure, quantitative evals, a
+  doctor, fenced recall.
+
+### What should change before building
+
+1. **Do not create `memory_source`.** It duplicates `ChatMessage` (and
+   `journal`/assistant-step rows). The hot-path pseudocode double-writes every
+   message into a second log that will drift. The compiler should *read*
+   existing rows; `source_refs` should point at the `ChatMessage`/`journal`
+   UUIDs already stored.
+2. **Reconcile the brief with the existing prompt memory block.**
+   `build_chat_context_block` already injects profile + seed facts + fenced
+   hybrid claims every turn. Brief + recent raw turns adds up to five overlapping
+   memory surfaces. Define precedence (extend "recent user correction > stale
+   brief" to brief vs. retrieved claims vs. profile) and dedupe, or the prompt
+   becomes noisy and self-contradictory.
+3. **Treat the compiled brief as model-generated content under the existing
+   trust rules.** A synthesized brief asserting "recent decisions" is exactly the
+   `assistant_interpreted` category the trust model says not to treat as durable
+   truth. Fencing mitigates injection but not a hallucinated decision that then
+   steers every future session until a *contradicting* source appears. The brief
+   should be inspectable/correctable, not write-only.
+4. **State the real justification for summarization.** The earlier comparative
+   report warned: do not add background summarization before raw-evidence
+   retrieval and correction semantics exist. RainBox now has both — which is
+   *why* it can add a brief safely. That argues for integrating the brief with
+   the evidence/correction machinery, not standing a parallel store beside it.
+5. **Fix the phase framing.** Re-label phases for the actual codebase, or readers
+   will rebuild things that exist.
+
+### Open questions the report does not answer
+
+- Replace, complement, or unknowingly duplicate the `MemoryClaim` system?
+  (Recommended: a thin continuity layer *on top*, reusing claims/evidence/retrieval.)
+- Who sets `project_id`, and how does a brief behave for a multi-room project?
+  (Same unresolved "project scope" problem the claim retriever already punts on.)
+- What stops a hallucinated brief decision from compounding across sessions?
+- Retention/privacy of a durable raw `memory_source` log, when claims already
+  carry a `sensitivity` model and the repo is strict about DB hygiene.
+- What is the eval baseline? The brief must beat "load recent turns + hybrid
+  claims," not beat nothing.
+
+---
+
+## 51. Alternative: The Brief as an `episode_summary` Claim
+
+Instead of a new `session_brief` table, store the brief as the artifact
+`MemoryClaim` was already designed to hold: an `episode_summary` claim. This
+reuses lifecycle, supersession lineage, evidence/provenance, sensitivity, the
+review UI, Flask-Admin, and fencing — no new table, no new migration.
+
+### Mapping
+
+| Standalone `session_brief` | `episode_summary` claim equivalent |
+|---|---|
+| `content_text` | `MemoryClaim.text` (the markdown brief) |
+| one row per compile, "latest wins" | new `active` claim that **supersedes** the prior brief (`supersedes_uuid`); old brief → `superseded` (kept as history) |
+| `source_refs uuid[]` | `MemoryEvidence` rows (one per source row, `source_id` = `ChatMessage`/`journal` UUID, `provenance="imported_from_transcript"`) |
+| `room_id` / `project_id` | `scope="room"` (`room_uuid`) or `scope="project"` |
+| `compiler_version`, `compiled_until_source` | evidence excerpt / a small `metadata` note (or a couple of columns if you must) |
+| privacy later | `sensitivity` (already enforced before retrieval) |
+| review later | the `/memory` page, already built |
+
+`subj_pred_key`/`value_key`/`conflicts_with_uuid`/tombstones are vestigial for a
+brief — it is free-text, so `belief_keys` yields an empty key and it is
+conflict-exempt. That is fine: a brief is a *derived view*, not a belief that
+competes on a subject/predicate.
+
+### Write path (cold path)
+
+A dedicated helper, **not** `record_belief` (which is for atomic beliefs with
+dedupe/conflict): each recompile supersedes the prior brief and attaches the
+source rows as evidence — one transaction.
+
+```python
+def compile_session_brief(room_uuid, *, project_uuid=None):
+    prev = latest_active_brief(room_uuid, project_uuid)   # active episode_summary
+    new_sources = chat_and_journal_rows_after(room_uuid, prev)  # read EXISTING rows
+    if not new_sources:
+        return prev
+    overlap = overlap_rows_by_token_budget(room_uuid, before=new_sources[0], budget=1500)
+    brief_md = call_compiler(prev.text if prev else "", new_sources, overlap, bootstrap())
+
+    # supersede prior brief + create the new one atomically (mirror supersede_memory)
+    new_args = dict(
+        scope=("project" if project_uuid else "room"), kind="episode_summary",
+        text=brief_md, confidence=1.0, status="active", sensitivity="private",
+        room_uuid=room_uuid,
+    )
+    new = (db.supersede_memory(prev.uuid, new_args, _brief_evidence(new_sources[-1]))
+           if prev else
+           db.create_memory_claim(**new_args, status="active"))
+    for row in (overlap + new_sources):              # source_refs = evidence rows
+        db.add_memory_evidence(memory_uuid=new.uuid, provenance="imported_from_transcript",
+                               source_type=row.kind, source_id=str(row.uuid),
+                               excerpt=row.text[:200], commit=False)
+    db.db.session.commit()
+    return new
+```
+
+Recompile contradiction handling, idempotency, budgets, validation, and the
+doctor all stay exactly as this report specifies — only the storage target
+changes.
+
+### Hot path / startup
+
+Load the brief **deterministically**, not through the hybrid ranker, and keep it
+out of the generic claim block so it is not double-injected:
+
+```python
+brief = latest_active_brief(room_uuid, project_uuid)   # targeted query, not retrieve_memories_hybrid
+# exclude kind="episode_summary" from build_chat_memory_block's candidate set
+block = fence_recalled_memory(render_brief(brief)) + recent_raw_turns(room_uuid, budget=4000)
+```
+
+Two concrete integration requirements fall out of this:
+
+- **Exclude `episode_summary` from `hard_filtered_claims`/`build_chat_memory_block`**
+  (or the 1–2k-token brief gets vector-ranked into the per-turn claims block and
+  injected twice). The brief is loaded by its own dedicated path.
+- **Reuse `fence_recalled_memory`** for the brief block — same untrusted-data
+  fence as the rest of recalled memory.
+
+### Why this is attractive
+
+- Operator can **inspect and correct the brief in `/memory`** the day it ships —
+  reject/supersede/sensitivity all work; brief history is the supersession chain.
+- "Evidence first, derived second" holds: the brief's `MemoryEvidence` rows point
+  at real `ChatMessage`/`journal` rows, so "where can I inspect the source?" is
+  answered by existing detail-pane lineage.
+- No second source-of-truth, no new table, no parallel doctor/admin surface.
+
+### Honest tradeoffs vs. a standalone table
+
+- **Conceptual mismatch:** a brief is a *volatile working-state view*, not a
+  belief; `confidence`/keys/conflict columns are dead weight on it. If you value
+  a clean "beliefs vs. working-state" separation, a small dedicated table is more
+  honest — at the cost of reimplementing lineage/evidence/sensitivity/review.
+- **Retrieval leakage risk:** you must remember to exclude `episode_summary` from
+  the generic retriever; forget it and the brief double-injects. A separate table
+  can't leak into the claim ranker by construction.
+- **Size:** a multi-section markdown brief in `MemoryClaim.text` is larger than a
+  typical claim — fine for Postgres, but it does change the "claims are compact"
+  assumption in the list UI (mask/truncate in the list view).
+
+**Recommendation:** if the goal is an operator-governable brief that reuses the
+hardened stack, the `episode_summary` claim is the lower-effort, higher-leverage
+choice — provided you (a) load it via a dedicated startup query, (b) exclude it
+from the generic claim retriever, and (c) fence it. If the team wants a strict
+beliefs/working-state separation, keep a *thin* `session_brief` table but still
+reference existing `ChatMessage`/`journal` rows for `source_refs` rather than
+introducing `memory_source`.
