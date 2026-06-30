@@ -313,7 +313,7 @@ function tombstoneHitsHtml(d) {
   return html;
 }
 
-function fmt(iso) { if (!iso) return '—'; try { return new Date(iso).toLocaleString(); } catch (_) { return iso; } }
+function fmt(iso) { if (!iso) return '—'; try { const d = new Date(iso); if (isNaN(d)) return iso; const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); } catch (_) { return iso; } }
 function memCopyId(uuid) {
   navigator.clipboard.writeText(uuid).then(
     () => memToast('Memory id copied: ' + uuid),
