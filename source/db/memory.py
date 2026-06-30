@@ -232,8 +232,10 @@ def supersede_memory(
 def activate_memory_claim(
     memory_uuid: UUID, *, confirmed_by_uuid: UUID | None = None
 ) -> MemoryClaim:
-    """Promote a claim to `active` and record a confirmation evidence row. Used
-    by the confirm-tier activate_memory write once an operator approves it.
+    """Promote a claim to `active` and record a confirmation evidence row. The
+    generic activation primitive, used by the `/memory` activate action, the
+    confirm-tier `_action_activate_memory` (only for non-conflicting candidates —
+    it routes conflict candidates to `resolve_conflict`), and `_action_reactivate_memory`.
 
     Refuses a conflict candidate (one with `conflicts_with_uuid` set): activating
     it directly would leave two conflicting active beliefs and a dangling conflict
