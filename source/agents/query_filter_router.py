@@ -78,6 +78,11 @@ Each candidate carries a `similarity score`: an integer from 0 to 1000 (higher
 means a closer semantic match; 1000 is an exact match). Treat it as a hint, not
 a hard threshold — a high score still has to be on-topic to count as relevant.
 
+Each candidate may also carry a `path`: a dotted namespace for the entry (for
+example `identity.name`). Candidates sharing the same `path` cover the same
+thing — when several relevant candidates are redundant, keep only the single
+best one instead of listing every duplicate.
+
 Return exactly one JSON object with one field:
 - `relevant_qa_ids`: a list of qa_id strings (a subset of the listed
   candidates). Empty list if none are relevant. Do not invent qa_ids.
@@ -299,6 +304,9 @@ class QueryFilterRouterAgent(ModelGroupAgent):
             entry = get_entry(c.qa_id) or {}
             kind = entry.get("kind", "?")
             lines.append(f"  - qa_id: {c.qa_id}")
+            path = entry.get("path")
+            if path:
+                lines.append(f"    path: {path}")
             lines.append(f"    similarity score: {score_permille(c.score)}")
             lines.append(f"    matched_question: {c.matched_question!r}")
             lines.append(f"    kind: {kind}")
@@ -452,7 +460,12 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                 json.dumps({
                     "query": query,
                     "candidates": [
-                        {"qa_id": c.qa_id, "score": score_permille(c.score), "matched_question": c.matched_question}
+                        {
+                            "id": c.qa_id,
+                            "path": (get_entry(c.qa_id) or {}).get("path", ""),
+                            "score": score_permille(c.score),
+                            "matched_question": c.matched_question,
+                        }
                         for c in candidates
                     ],
                     "filter_kept": relevant_qa_ids,
