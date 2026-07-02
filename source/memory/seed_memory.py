@@ -170,6 +170,13 @@ def _load_jsonl() -> list[dict[str, Any]]:
         sources.append((overlay, "user-overlay"))
     merged: dict[str, dict[str, Any]] = {}
     for path, source in sources:
+        # Track ids seen *within this file* (id → first 1-based line). Duplicate
+        # ids within one file are an operator mistake — the second entry would
+        # silently overwrite the first in `merged`, dropping its answer. Refuse
+        # instead. (Cross-file id reuse is intentional: an overlay entry with a
+        # base entry's id replaces it — see this function's docstring — so the
+        # tracker is reset per file, not shared across `sources`.)
+        seen_in_file: dict[str, int] = {}
         for lineno, raw in enumerate(path.read_text().splitlines(), 1):
             line = raw.strip()
             if not line:
@@ -184,9 +191,18 @@ def _load_jsonl() -> list[dict[str, Any]]:
                     f"{path}:{lineno}: invalid JSON — {exc.msg} "
                     f"(column {exc.colno})"
                 ) from exc
-            if entry.get("id"):
+            entry_id = entry.get("id")
+            if entry_id:
+                first = seen_in_file.get(entry_id)
+                if first is not None:
+                    raise ValueError(
+                        f"{path}:{lineno}: duplicate id {entry_id!r} "
+                        f"(first seen at line {first}) — ids must be unique "
+                        f"within a file"
+                    )
+                seen_in_file[entry_id] = lineno
                 entry["_source"] = source
-                merged[entry["id"]] = entry
+                merged[entry_id] = entry
     return list(merged.values())
 
 
