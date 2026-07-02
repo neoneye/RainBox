@@ -170,13 +170,15 @@ def _load_jsonl() -> list[dict[str, Any]]:
         sources.append((overlay, "user-overlay"))
     merged: dict[str, dict[str, Any]] = {}
     for path, source in sources:
-        # Track ids seen *within this file* (id → first 1-based line). Duplicate
-        # ids within one file are an operator mistake — the second entry would
-        # silently overwrite the first in `merged`, dropping its answer. Refuse
-        # instead. (Cross-file id reuse is intentional: an overlay entry with a
-        # base entry's id replaces it — see this function's docstring — so the
-        # tracker is reset per file, not shared across `sources`.)
-        seen_in_file: dict[str, int] = {}
+        # Track ids and paths seen *within this file* (value → first 1-based
+        # line). Duplicates within one file are an operator mistake: a repeated
+        # id silently overwrites the earlier entry in `merged` (dropping its
+        # answer), and a repeated path means two entries claim the same logical
+        # slot. Refuse either. (Cross-file reuse is intentional: an overlay entry
+        # with a base entry's id/path overrides it — see this function's
+        # docstring — so the trackers reset per file, not across `sources`.)
+        seen_ids: dict[str, int] = {}
+        seen_paths: dict[str, int] = {}
         for lineno, raw in enumerate(path.read_text().splitlines(), 1):
             line = raw.strip()
             if not line:
@@ -193,14 +195,24 @@ def _load_jsonl() -> list[dict[str, Any]]:
                 ) from exc
             entry_id = entry.get("id")
             if entry_id:
-                first = seen_in_file.get(entry_id)
+                first = seen_ids.get(entry_id)
                 if first is not None:
                     raise ValueError(
                         f"{path}:{lineno}: duplicate id {entry_id!r} "
                         f"(first seen at line {first}) — ids must be unique "
                         f"within a file"
                     )
-                seen_in_file[entry_id] = lineno
+                seen_ids[entry_id] = lineno
+                entry_path = entry.get("path")
+                if entry_path:
+                    first_path = seen_paths.get(entry_path)
+                    if first_path is not None:
+                        raise ValueError(
+                            f"{path}:{lineno}: duplicate path {entry_path!r} "
+                            f"(first seen at line {first_path}) — paths must be "
+                            f"unique within a file"
+                        )
+                    seen_paths[entry_path] = lineno
                 entry["_source"] = source
                 merged[entry_id] = entry
     return list(merged.values())
