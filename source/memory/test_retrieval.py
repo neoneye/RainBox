@@ -120,6 +120,46 @@ def test_room_scoped_memories_outrank_global(app_ctx, fresh_subject):
         _cleanup(fresh_subject)
 
 
+def test_retrieve_excludes_out_of_scope_room_agent_and_project(app_ctx, fresh_subject):
+    """retrieve_memories must apply the same scope hard-filter as hybrid
+    retrieval: a room/agent-scoped claim belonging to a *different* room/agent
+    must never enter the candidate set, and a project-scoped claim (no project
+    key to match the turn) is excluded entirely. Previously this path only
+    *sorted* by scope, so out-of-scope claims leaked through, ranked lower."""
+    my_room = uuid4()
+    other_room = uuid4()
+    other_agent = uuid4()
+    mine = db.create_memory_claim(
+        scope="room", kind="fact", text="widget alpha status",
+        confidence=0.9, status="active", sensitivity="public",
+        room_uuid=my_room, subject=fresh_subject,
+    )
+    other_room_claim = db.create_memory_claim(
+        scope="room", kind="fact", text="widget beta status",
+        confidence=0.9, status="active", sensitivity="public",
+        room_uuid=other_room, subject=fresh_subject,
+    )
+    other_agent_claim = db.create_memory_claim(
+        scope="agent", kind="fact", text="widget gamma status",
+        confidence=0.9, status="active", sensitivity="public",
+        agent_uuid=other_agent, subject=fresh_subject,
+    )
+    project_claim = db.create_memory_claim(
+        scope="project", kind="fact", text="widget delta status",
+        confidence=0.9, status="active", sensitivity="public",
+        subject=fresh_subject,
+    )
+    try:
+        out = retrieve_memories("widget", agent_uuid=None, room_uuid=my_room)
+        ids = _claim_uuids(out)
+        assert mine.uuid in ids
+        assert other_room_claim.uuid not in ids
+        assert other_agent_claim.uuid not in ids
+        assert project_claim.uuid not in ids
+    finally:
+        _cleanup(fresh_subject)
+
+
 def test_higher_confidence_outranks_lower_when_relevance_equal(app_ctx, fresh_subject):
     try:
         high = db.create_memory_claim(

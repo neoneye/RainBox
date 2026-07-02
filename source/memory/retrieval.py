@@ -117,21 +117,18 @@ def retrieve_memories(
     """Return up to `limit` active memories whose text/subject/object share
     at least one token with `query`. Secrets are excluded unless
     `include_secret=True`. Sort: scope tier (room > agent > global) →
-    confidence desc → updated_at desc."""
+    confidence desc → updated_at desc.
+
+    Candidate selection goes through the shared `hard_filtered_claims` so scope
+    is *filtered* (not merely used as a sort key) on the same 'filter before
+    rank' contract as hybrid retrieval: a room/agent-scoped claim from another
+    room/agent — and a project-scoped claim with no key to match the turn —
+    never enters the candidate set, so it can't leak across rooms/agents."""
     query_tokens = _tokenize(query)
     if not query_tokens:
         return []
 
-    q = db.db.session.query(MemoryClaim).filter(MemoryClaim.status == "active")
-    if not include_secret:
-        q = q.filter(MemoryClaim.sensitivity != "secret")
-    # Active rows with a past expires_at are stale and must not be retrieved
-    # even though their status hasn't been flipped to "expired" yet.
-    now = datetime.now(UTC)
-    q = q.filter(
-        (MemoryClaim.expires_at.is_(None)) | (MemoryClaim.expires_at > now)
-    )
-    candidates = q.all()
+    candidates = hard_filtered_claims(include_secret, room_uuid, agent_uuid)
 
     scored: list[tuple[int, float, Any, MemoryClaim, int]] = []
     for c in candidates:
