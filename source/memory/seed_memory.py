@@ -225,7 +225,20 @@ def _build_documents(entries: list[dict[str, Any]]) -> list[Document]:
                 md["answer"] = e.get("answer", "")
             elif kind == "dynamic":
                 md["handler"] = e.get("handler", "")
-            docs.append(Document(text=q, metadata=md))
+            # Embed the QUESTION alone. LlamaIndex otherwise folds every metadata
+            # value into the embedded text (MetadataMode.EMBED) and, before
+            # embedding, guards the metadata length against the chunk size — a
+            # long `answer` in metadata then both pollutes the question-only
+            # vector and trips "Metadata length (N) is longer than chunk size".
+            # Excluding all keys keeps them retrievable from node.metadata while
+            # the vector stays derived from `q` only.
+            keys = list(md.keys())
+            docs.append(Document(
+                text=q,
+                metadata=md,
+                excluded_embed_metadata_keys=keys,
+                excluded_llm_metadata_keys=keys,
+            ))
     return docs
 
 
