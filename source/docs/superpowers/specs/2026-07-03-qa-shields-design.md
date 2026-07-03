@@ -254,15 +254,16 @@ node is absent from top-K).
   grows. Follow the pattern already proven for memory-claim embeddings in
   `memory/embeddings.py` (`_text_hash` + `ensure_memory_embedding` skips when the
   stored hash matches; `sync_memory_embeddings` embeds only the dirty and prunes
-  stale): store a per-entry sha256 on the node metadata and, on repopulate,
-  re-embed/update only changed or new entries and delete removed ones.
-  - **Gotcha:** hash the *whole entry* (questions + answer/handler + kind +
-    `shield`), not just the embedded question text. A shield-only edit must count
-    as dirty, or layer 1 (the pgvector metadata filter) keeps running on stale
-    metadata and correctness falls entirely to the layer-2 backstop.
-  - **Refinement:** a change to `questions` needs a fresh embedding; a change to
-    metadata only (answer / `shield`) needs a metadata *update*, not a new
-    vector. Splitting the two avoids re-embedding on a pure shield edit.
+  stale): store a **sha256 of the entire JSONL row** on the node metadata and, on
+  repopulate, re-embed only rows whose hash changed, add new ones, and delete
+  removed ones.
+  - Hashing the whole row means every field that matters — `questions`,
+    `answer`/`handler`, `kind`, `path`, and `shield` — is covered by one dirty
+    bit, so a shield-only edit correctly counts as dirty (no risk of layer 1
+    running on stale metadata). Any change to a row simply re-embeds that row.
+  - Over-invalidation is safe: a cosmetic change (reordered keys, whitespace)
+    flips the hash and re-embeds one row unnecessarily — cheap, and never wrong.
+    Hash the raw line, or a canonical serialization if that churn ever matters.
 
 ## Constraint
 
