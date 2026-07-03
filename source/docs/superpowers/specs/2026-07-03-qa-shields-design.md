@@ -51,7 +51,7 @@ New registry entry in `db/settings.py`:
 Unlocking/locking a shield is instant — it changes retrieval, not the
 embeddings, so no repopulate is needed (see Non-goals).
 
-## Filter placement — one chokepoint, all three agents
+## Filter placement — exclude at the vector query, plus an in-memory backstop
 
 All three agents reach Q&A content through the same functions in
 `memory/seed_memory.py`. Verified call sites:
@@ -62,19 +62,71 @@ All three agents reach Q&A content through the same functions in
 - `assistant` → `_exact_match`, `_semantic_match`, `retrieve_seed_memories`,
   `_resolve_match`
 
-`_semantic_match` is a gate on top of `_semantic_ranked`. So filtering at three
-functions covers everything, matching the codebase's existing "filter before
-rank" contract:
+`_semantic_match` is a gate on top of `_semantic_ranked`. Two layers cooperate,
+so a locked entry is excluded *before* it can consume a top-K slot:
 
-1. `_exact_match` — after resolving the alias to a qa_id, if that entry is
-   shielded (locked), return `None` (a locked exact hit is treated as no match).
-2. `_semantic_ranked` — drop locked qa_ids from the candidate list before
-   ranking/returning. `_semantic_match` inherits this automatically.
-3. `retrieve_seed_memories` — skip locked entries.
+**Layer 1 — vector-query metadata filter (the important one).** The shield is
+stored in each node's pgvector metadata (see `_build_documents` below), so the
+retriever excludes locked entries in SQL. Top-K then never *considers* a locked
+entry — it can't crowd out legitimate results. In `_semantic_ranked`:
+
+```python
+from llama_index.core.vector_stores import (
+    MetadataFilter, MetadataFilters, FilterCondition, FilterOperator,
+)
+
+def _shield_filters(unlocked: set[str]) -> MetadataFilters:
+    # Unshielded nodes have no "shield" metadata key -> IS_EMPTY keeps them.
+    keep = [MetadataFilter(key="shield", operator=FilterOperator.IS_EMPTY)]
+    if unlocked:
+        keep.append(MetadataFilter(
+            key="shield", value=sorted(unlocked), operator=FilterOperator.IN))
+    return MetadataFilters(filters=keep, condition=FilterCondition.OR)
+
+nodes = index.as_retriever(
+    similarity_top_k=TOP_K, filters=_shield_filters(unlocked),
+).retrieve(query)
+```
+
+`IS_EMPTY` matches nodes with no `shield` key, so unshielded entries — and any
+node embedded before this feature shipped — always pass. Deploying therefore
+needs **no** immediate re-embed; a repopulate is only required once the operator
+actually shields something (so the new metadata lands in the table).
+
+**Layer 2 — in-memory backstop.** After retrieval, `_semantic_ranked` still
+drops any candidate whose *current* in-memory entry is locked, via
+`_entry_locked(_entries_by_id[qa_id], unlocked)`. This enforces a lock correctly
+even in the window where the operator has just edited the overlay to add a shield
+but has not yet pressed "Repopulate Q&A memory" (stale table metadata would
+otherwise let it through). Same `unlocked` set drives both layers.
+
+**Exact + seed paths.**
+
+1. `_exact_match` — resolves via the alias table (not the vector store), so it
+   post-filters with `_entry_locked`: a locked exact hit returns `None`.
+2. `retrieve_seed_memories` — runs through `_semantic_ranked`, so it inherits
+   both layers.
 
 `_resolve_match` and `get_entry` need no change: they only ever receive qa_ids
-that already passed the filter above. Keeping the filter at the retrieval
-boundary (not the resolve boundary) means one source of truth.
+that already passed the filters above.
+
+### Storing the shield in node metadata (`_build_documents`)
+
+Write the shield into each node's metadata **only when the entry has one**, so
+unshielded entries keep no `shield` key (the `IS_EMPTY` filter depends on this):
+
+```python
+shield = e.get("shield")
+if shield:
+    md["shield"] = shield
+```
+
+It is added before `keys = list(md.keys())`, so it is already covered by
+`excluded_embed_metadata_keys` / `excluded_llm_metadata_keys` — the shield never
+pollutes the question-only embedding. Changing/adding/removing a shield in the
+overlay requires the existing "Repopulate Q&A memory" flow to refresh the table;
+toggling a shield's lock in Settings does not (it only rebuilds the per-query
+filter).
 
 ### New helpers in `memory/seed_memory.py`
 
@@ -92,10 +144,21 @@ def _entry_locked(entry: dict[str, Any], unlocked: set[str]) -> bool:
     """True if the entry is hidden: it carries a shield that is not unlocked."""
     shield = entry.get("shield")
     return bool(shield) and shield not in unlocked
+
+def _drop_locked(matches: list[Match], unlocked: set[str]) -> list[Match]:
+    """Layer-2 backstop: drop matches whose *current* in-memory entry is locked
+    (order preserved). Pure over `_entries_by_id`, so unit-testable with no DB."""
+    return [
+        m for m in matches
+        if not _entry_locked(_entries_by_id.get(m.qa_id) or {}, unlocked)
+    ]
 ```
 
-The three filtered functions gain an optional injected parameter
-(`unlocked_shields: set[str] | None = None`) that defaults to
+`_semantic_ranked` applies `_drop_locked` to its retrieved candidates;
+`_exact_match` uses `_entry_locked` on the single resolved entry.
+
+`_exact_match`, `_semantic_ranked`, and `retrieve_seed_memories` gain an optional
+injected parameter (`unlocked_shields: set[str] | None = None`) that defaults to
 `_unlocked_shields()` when omitted. Production callers pass nothing (they run
 inside an app context); tests inject an explicit set. Existing callers need no
 change.
@@ -121,11 +184,13 @@ one indexed lookup and retrieval already touches the DB.
 
 ## Non-goals / honest limitations
 
-- **Not encryption-at-rest.** A locked shield stops an entry from reaching the
-  LLM's prompt. The entry's text still lives (embedded) in the `data_seed_memory`
-  pgvector table and in database backups. This is a prompt-level filter only.
-- **No re-embed on toggle.** Shields filter at retrieval time; embeddings are
-  unchanged. Adding/removing entries in the overlay still uses the existing
+- **Not encryption-at-rest.** A locked shield keeps an entry out of the top-K
+  retrieval and out of the LLM's prompt, but its row (text + embedding) still
+  physically exists in the `data_seed_memory` pgvector table and in database
+  backups. This is a retrieval-level filter, not encryption.
+- **No re-embed on toggle.** The lock is applied as a per-query metadata filter
+  rebuilt from the setting each call; embeddings are unchanged. Editing the
+  overlay (adding/removing/renaming a shield or entry) still uses the existing
   "Repopulate Q&A memory" flow; unlocking a shield does not.
 - **Global, not per-room.** One operator-wide setting (the chosen scope). A
   per-room override is out of scope for this spec.
@@ -140,16 +205,29 @@ set). All shield names in tests are neutral placeholders (e.g. `alpha`, `beta`,
 
 - `_entry_locked` truth table: no shield always visible; shield locked ⇒ hidden;
   shield unlocked ⇒ visible.
+- `_shield_filters`: builds `IS_EMPTY`-only filter when nothing is unlocked;
+  `IS_EMPTY OR IN[...]` when some are — the mechanism, without a live store.
+- `_build_documents`: shield present ⇒ `shield` key on the node metadata and in
+  the excluded-metadata keys; shield absent ⇒ no key.
 - `_exact_match`: a locked exact hit returns `None`; unlocking it returns the
-  match; unshielded entries unaffected.
-- `_semantic_ranked`: locked qa_ids dropped from candidates; ordering of the
-  survivors preserved; `_semantic_match` inherits the exclusion.
+  match; unshielded entries unaffected (injected `unlocked` set).
+- `_drop_locked` (layer-2 backstop): given `Match`es over a registry where one
+  qa_id is locked and one is unlocked/unshielded, the locked one is removed and
+  order is preserved — no DB needed. Covers the stale-table window and, through
+  `_semantic_ranked`/`_semantic_match`, all agent paths.
 - `retrieve_seed_memories`: locked entries skipped, `limit` still honoured over
   the survivors.
 - `available_qa_shields`: distinct + sorted across base and overlay entries;
   empty when nothing is shielded.
 - Settings roundtrip: `qa.unlocked_shields` set/get through the registry;
   default `[]`.
+
+Layer 1 (the SQL metadata filter) is exercised end-to-end against
+`rainbox_claude` if a repopulate/embedding run is available in the environment;
+otherwise its unit coverage is `_shield_filters` and the implementer verifies the
+`IS_EMPTY` + `IN` translation against the real pgvector table before merging
+(confirm an unshielded and a pre-existing keyless node both survive, and a locked
+node is absent from top-K).
 
 ## Constraint
 
