@@ -247,6 +247,23 @@ otherwise its unit coverage is `_shield_filters` and the implementer verifies th
 (confirm an unshielded and a pre-existing keyless node both survive, and a locked
 node is absent from top-K).
 
+## Future work (out of scope here)
+
+- **Incremental repopulate.** Today `rebuild_kb` fully truncates and re-embeds
+  the seed store; fine at the current scale, but it will get slow as the overlay
+  grows. Follow the pattern already proven for memory-claim embeddings in
+  `memory/embeddings.py` (`_text_hash` + `ensure_memory_embedding` skips when the
+  stored hash matches; `sync_memory_embeddings` embeds only the dirty and prunes
+  stale): store a per-entry sha256 on the node metadata and, on repopulate,
+  re-embed/update only changed or new entries and delete removed ones.
+  - **Gotcha:** hash the *whole entry* (questions + answer/handler + kind +
+    `shield`), not just the embedded question text. A shield-only edit must count
+    as dirty, or layer 1 (the pgvector metadata filter) keeps running on stale
+    metadata and correctness falls entirely to the layer-2 backstop.
+  - **Refinement:** a change to `questions` needs a fresh embedding; a change to
+    metadata only (answer / `shield`) needs a metadata *update*, not a new
+    vector. Splitting the two avoids re-embedding on a pure shield edit.
+
 ## Constraint
 
 Per the operator's request, no sensitive category names appear anywhere in the
