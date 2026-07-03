@@ -367,6 +367,33 @@ def rebuild_kb() -> dict[str, int]:
 # --- Matching -----------------------------------------------------------------
 
 
+def _unlocked_shields() -> set[str]:
+    """Shields the operator has unlocked (the qa.unlocked_shields setting).
+    Empty when unset or when called outside a Flask app context — the safe
+    default, which keeps every shielded entry hidden."""
+    try:
+        return set(db.get_setting("qa.unlocked_shields") or [])
+    except Exception:
+        return set()
+
+
+def _entry_locked(entry: dict[str, Any], unlocked: set[str]) -> bool:
+    """True if `entry` is hidden from the LLM: it carries a shield that is not
+    in `unlocked`. An entry with no shield is always visible."""
+    shield = entry.get("shield")
+    return bool(shield) and shield not in unlocked
+
+
+def _drop_locked(matches: list[Match], unlocked: set[str]) -> list[Match]:
+    """Layer-2 backstop: drop matches whose current in-memory entry is locked,
+    order preserved. Pure over `_entries_by_id`, so unit-testable with no DB —
+    and correct even when the pgvector metadata is stale (pre-repopulate)."""
+    return [
+        m for m in matches
+        if not _entry_locked(_entries_by_id.get(m.qa_id) or {}, unlocked)
+    ]
+
+
 def _exact_match(query: str) -> Match | None:
     norm = _normalize_query(query)
     qa_id = _alias_table.get(norm)

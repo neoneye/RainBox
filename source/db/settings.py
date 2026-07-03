@@ -99,6 +99,13 @@ SETTINGS: dict[str, Setting] = {
                     "overlay. After changing it (or editing the files), "
                     "press 'Repopulate Q&A memory'.",
     ),
+    "qa.unlocked_shields": Setting(
+        "qa.unlocked_shields", None, "json", [],
+        description="Names of Q&A shields the operator has unlocked. A Q&A entry "
+                    "carrying a shield reaches the LLM only when that shield is "
+                    "in this list; an entry with no shield is always visible. "
+                    "Empty (the default) keeps every shielded entry hidden.",
+    ),
 }
 
 
