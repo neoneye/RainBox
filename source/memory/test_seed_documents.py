@@ -40,3 +40,20 @@ def test_answer_is_excluded_from_embedded_text():
     assert embedded.strip() == "what is it?"
     # The answer is still available as metadata for retrieval/_resolve_match.
     assert doc.metadata["answer"] == "the secret answer"
+
+
+def test_shield_present_is_metadata_and_excluded_from_embed():
+    entries = [{"id": "s", "kind": "static", "questions": ["what is it?"],
+                "answer": "a", "shield": "alice.travel"}]
+    doc = seed_memory._build_documents(entries)[0]
+    assert doc.metadata["shield"] == "alice.travel"
+    # Excluded from the embedded/LLM text, like the other metadata keys.
+    assert "shield" in doc.excluded_embed_metadata_keys
+    assert "shield" in doc.excluded_llm_metadata_keys
+
+
+def test_no_shield_means_no_shield_metadata_key():
+    entries = [{"id": "s", "kind": "static", "questions": ["what is it?"],
+                "answer": "a"}]
+    doc = seed_memory._build_documents(entries)[0]
+    assert "shield" not in doc.metadata

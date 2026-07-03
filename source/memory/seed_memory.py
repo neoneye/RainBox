@@ -253,6 +253,9 @@ def _build_documents(entries: list[dict[str, Any]]) -> list[Document]:
                 md["answer"] = e.get("answer", "")
             elif kind == "dynamic":
                 md["handler"] = e.get("handler", "")
+            shield = e.get("shield")
+            if shield:
+                md["shield"] = shield
             # Embed the QUESTION alone. LlamaIndex otherwise folds every metadata
             # value into the embedded text (MetadataMode.EMBED) and, before
             # embedding, guards the metadata length against the chunk size — a
