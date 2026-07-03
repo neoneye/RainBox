@@ -180,3 +180,21 @@ def test_repopulate_surfaces_jsonl_file_and_line(client, monkeypatch, caplog):
     assert "question_answer.jsonl:17" in body["error"]   # UI carries file:line
     assert any("question_answer.jsonl:17" in r.getMessage() for r in caplog.records), \
         "log should carry the file:line"
+
+
+def test_page_injects_available_shields(client, monkeypatch):
+    import memory.seed_memory as kb
+    monkeypatch.setattr(kb, "available_qa_shields",
+                        lambda: ["alice.travel", "bob.notes"])
+    body = client.get("/settings").get_data(as_text=True)
+    assert "const QA_SHIELDS =" in body
+    assert "alice.travel" in body and "bob.notes" in body
+    # The special-case checklist container is rendered for the shields key.
+    assert "qa-shields" in body
+
+
+def test_unlocked_shields_roundtrips_through_api(client):
+    r = client.post("/settings/api/set", json={
+        "key": "qa.unlocked_shields", "value": ["alice.travel"]})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert db_settings.get_setting("qa.unlocked_shields") == ["alice.travel"]

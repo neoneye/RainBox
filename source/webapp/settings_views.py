@@ -71,6 +71,10 @@ SETTINGS_TEMPLATE = """
   .s-legend{font-size:0.82rem;color:#6b7280;line-height:1.9;margin:0 0 1.2em;
     border:1px solid #e5e7eb;border-radius:8px;padding:9px 12px;background:#fbfbfb}
   .s-legend .badge{margin:0 2px}
+  .qa-shields{margin:6px 0 10px}
+  .qa-shield-group{margin:0 0 8px}
+  .qa-shield-head{font-family:ui-monospace,monospace;font-weight:700;font-size:0.82rem;color:#374151;margin:0 0 3px}
+  .qa-shield-item{display:flex;align-items:center;gap:7px;font-size:0.9rem;margin:2px 0 2px 10px}
 </style>
 {% include "_nav.html" %}
 <div class="pp-content">
@@ -107,6 +111,7 @@ environment-managed and never stored here.</p>
 
 <script>
 const SETTINGS = {{ settings_json|safe }};
+const QA_SHIELDS = {{ qa_shields_json|safe }};
 
 const SOURCE_HELP = {
   db: 'Stored in the database — overrides the environment variable and the default.',
@@ -127,6 +132,42 @@ function displayValue(s){
   return '<span class="s-val">' + escapeHtml(String(s.value)) + '</span>';
 }
 
+// Cluster the discovered shields by their dotted-path prefix and render a
+// checkbox per full shield string. Checked = unlocked (shown to the LLM),
+// unchecked = locked (hidden, the default). Saving posts the checked names.
+function shieldGroups(shields){
+  const groups = {};
+  shields.forEach(name => {
+    const head = name.includes('.') ? name.slice(0, name.indexOf('.')) : name;
+    (groups[head] = groups[head] || []).push(name);
+  });
+  return groups;
+}
+function renderShieldChecklist(s){
+  const unlocked = new Set(Array.isArray(s.value) ? s.value : []);
+  if (!QA_SHIELDS.length){
+    return '<div class="s-env">No shields defined. Add a "shield" field to an '
+      + 'entry in your Q&A overlay, then press "Repopulate Q&A memory".</div>';
+  }
+  const groups = shieldGroups(QA_SHIELDS);
+  let html = '<div id="qa-shields" class="qa-shields">';
+  Object.keys(groups).sort().forEach(head => {
+    html += '<div class="qa-shield-group"><div class="qa-shield-head">'
+      + escapeHtml(head) + '</div>';
+    groups[head].sort().forEach(name => {
+      const id = 'sh-' + name.replace(/[^a-zA-Z0-9]/g, '-');
+      html += '<label class="qa-shield-item"><input type="checkbox" data-shield="'
+        + escapeHtml(name) + '" id="' + id + '"'
+        + (unlocked.has(name) ? ' checked' : '') + '> ' + escapeHtml(name)
+        + '</label>';
+    });
+    html += '</div>';
+  });
+  html += '</div><div class="s-row"><button data-save-shields>Save shields</button> '
+    + badge(s.source) + ' <span class="s-env" data-shields-result></span></div>';
+  return html;
+}
+
 // ---- card list -------------------------------------------------------------
 function render(){
   const list = document.getElementById('s-list');
@@ -138,6 +179,8 @@ function render(){
     if (s.secret){
       body = '<div class="s-row"><span class="s-secret">&#128274; environment-managed (read-only)</span> '
         + badge(s.source) + '</div><div class="s-env">value: ' + escapeHtml(s.value) + '</div>';
+    } else if (s.key === 'qa.unlocked_shields'){
+      body = renderShieldChecklist(s);
     } else {
       body = '<div class="s-row">' + displayValue(s) + ' ' + badge(s.source)
         + ' <button data-edit="' + escapeHtml(s.key) + '">Edit</button>'
@@ -157,6 +200,26 @@ function render(){
   });
   list.querySelectorAll('[data-edit]').forEach(btn =>
     btn.addEventListener('click', () => openEdit(btn.getAttribute('data-edit'))));
+  list.querySelectorAll('[data-save-shields]').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      const out = btn.parentElement.querySelector('[data-shields-result]');
+      const names = Array.from(document.querySelectorAll('#qa-shields [data-shield]'))
+        .filter(cb => cb.checked).map(cb => cb.getAttribute('data-shield'));
+      btn.disabled = true; if (out) out.textContent = 'saving…';
+      try {
+        const r = await fetch('/settings/api/set', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({key: 'qa.unlocked_shields', value: names}),
+        });
+        const d = await r.json();
+        if (d.ok){
+          const i = SETTINGS.findIndex(x => x.key === 'qa.unlocked_shields');
+          if (i >= 0) SETTINGS[i] = d.setting;
+          render();
+        } else if (out){ out.textContent = 'failed: ' + (d.error || 'save failed'); }
+      } catch (e) { if (out) out.textContent = 'network error'; }
+      finally { btn.disabled = false; }
+    }));
   list.querySelectorAll('[data-repopulate]').forEach(btn =>
     btn.addEventListener('click', async () => {
       const out = btn.parentElement.querySelector('[data-repopulate-result]');
@@ -276,12 +339,20 @@ render();
 def settings_page() -> str:
     import json
 
+    import memory.seed_memory as seed_memory
+
     # ensure_ascii=False so redaction bullets / unicode render literally (the
     # page is served UTF-8). Escape <>& to \uXXXX so a value containing
     # "</script>" can't break out of the inline <script> block.
-    payload = json.dumps(db.all_settings(), ensure_ascii=False)
-    payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    return render_template_string(SETTINGS_TEMPLATE, settings_json=payload)
+    def _js(obj: object) -> str:
+        s = json.dumps(obj, ensure_ascii=False)
+        return s.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+    return render_template_string(
+        SETTINGS_TEMPLATE,
+        settings_json=_js(db.all_settings()),
+        qa_shields_json=_js(seed_memory.available_qa_shields()),
+    )
 
 
 @app.route("/settings/api/set", methods=["POST"])
