@@ -372,9 +372,10 @@ def _unlocked_shields() -> set[str]:
     Empty when unset or when called outside a Flask app context — the safe
     default, which keeps every shielded entry hidden."""
     try:
-        return set(db.get_setting("qa.unlocked_shields") or [])
+        val = db.get_setting("qa.unlocked_shields")
     except Exception:
         return set()
+    return set(val) if isinstance(val, list) else set()
 
 
 def _entry_locked(entry: dict[str, Any], unlocked: set[str]) -> bool:
