@@ -24,6 +24,10 @@ entries.
   base entries are unchanged.
 - **Reveal rule.** An entry with a shield reaches the LLM only when that shield
   is currently unlocked. Otherwise it is hidden.
+- **Independent switches.** Each shield is its own on/off switch, and the
+  operator can unlock any number of them at once — the setting holds a *list* of
+  unlocked names. Unlocking one shield has no effect on the others; unlocking
+  several simultaneously reveals every entry behind any of them.
 - **Default.** No shields unlocked ⇒ every shielded entry is hidden. This is the
   safe default the operator asked for.
 
