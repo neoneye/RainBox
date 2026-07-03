@@ -249,6 +249,18 @@ def get_entry(qa_id: str) -> dict[str, Any] | None:
     return _entries_by_id.get(qa_id)
 
 
+def available_qa_shields() -> list[str]:
+    """Sorted, distinct shield names present in the loaded registry (base +
+    overlay). Drives the Settings checklist. Loads the KB first so it is
+    correct before any retrieval has run."""
+    _load_kb()
+    shields = {
+        s for e in _entries_by_id.values()
+        if (s := e.get("shield"))
+    }
+    return sorted(shields)
+
+
 def _build_documents(entries: list[dict[str, Any]]) -> list[Document]:
     docs: list[Document] = []
     for e in entries:

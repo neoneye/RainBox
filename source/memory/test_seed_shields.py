@@ -108,3 +108,21 @@ def test_retrieve_seed_memories_skips_locked(monkeypatch):
         out2 = kb.retrieve_seed_memories("x", _ranker=lambda q: ranked,
                                          unlocked_shields={"alice.travel"})
         assert [m.uuid for m in out2] == ["u1", "u2"]   # unlocked -> both
+
+
+def test_available_qa_shields_sorted_distinct(monkeypatch):
+    monkeypatch.setattr(kb, "_load_kb", lambda: None)   # registry pre-seeded below
+    monkeypatch.setattr(kb, "_entries_by_id", {
+        "a": {"id": "a", "shield": "bob.notes"},
+        "b": {"id": "b", "shield": "alice.travel"},
+        "c": {"id": "c", "shield": "alice.travel"},     # duplicate
+        "d": {"id": "d"},                               # unshielded -> ignored
+        "e": {"id": "e", "shield": ""},                 # empty -> ignored
+    })
+    assert kb.available_qa_shields() == ["alice.travel", "bob.notes"]
+
+
+def test_available_qa_shields_empty_when_none(monkeypatch):
+    monkeypatch.setattr(kb, "_load_kb", lambda: None)
+    monkeypatch.setattr(kb, "_entries_by_id", {"a": {"id": "a"}})
+    assert kb.available_qa_shields() == []
