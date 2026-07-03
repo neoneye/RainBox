@@ -19,11 +19,18 @@ page. Shield names are free-form strings the operator chooses — the code
 hardcodes none of them and discovers whatever names appear in the loaded
 entries.
 
-- **Entry field.** An entry gains an optional single `"shield": "human"` string.
-  An entry with no `shield` (absent or empty) is always visible — so all existing
-  base entries are unchanged.
-- **Reveal rule.** An entry with a shield reaches the LLM only when that shield
-  is currently unlocked. Otherwise it is hidden.
+- **Entry field.** An entry gains an optional single `"shield"` string. Like the
+  existing `path` field it is conventionally a **dotted path** — e.g.
+  `"alice.travel"`, `"alice.projects"`, `"bob.notes"` — so related shields
+  cluster together in the Settings UI. An entry with no `shield` (absent or
+  empty) is always visible, so all existing base entries are unchanged.
+- **Reveal rule.** An entry with a shield reaches the LLM only when that exact
+  shield string is currently unlocked. Otherwise it is hidden.
+- **Exact match, not prefix inheritance.** The dots are purely a naming
+  convention for clustering the UI; the filter compares the *whole* string.
+  Unlocking `alice` does **not** unlock `alice.travel` — no accidental broad
+  reveal. (The UI may offer a per-cluster "unlock all" convenience, but it
+  expands to the explicit leaf names it stores; see the UI section.)
 - **Independent switches.** Each shield is its own on/off switch, and the
   operator can unlock any number of them at once — the setting holds a *list* of
   unlocked names. Unlocking one shield has no effect on the others; unlocking
@@ -31,11 +38,12 @@ entries.
 - **Default.** No shields unlocked ⇒ every shielded entry is hidden. This is the
   safe default the operator asked for.
 
-Names are the operator's to choose, so they can distinguish kinds of subject
-(`human` vs `bot` vs a persona name) or sensitivity, or a future family member's
-name — whatever grouping they want. A single entry sits behind exactly one
-shield; an entry that is sensitive on two axes is placed behind the more
-restrictive of them (or a shield named for that combination).
+Names are the operator's to choose. The dotted path lets them organise shields by
+owner then topic (`owner.topic`, or deeper like `owner.topic.year.label`) —
+distinguishing kinds of subject, sensitivity, or a future family member — however
+they want. A single entry sits behind exactly one shield; an entry that is
+sensitive on two axes is placed behind the more restrictive one (or a shield path
+named for that combination).
 
 ### Stored setting
 
@@ -173,14 +181,20 @@ one indexed lookup and retrieval already touches the DB.
 ## Discovery + Settings UI
 
 - New helper `available_qa_shields() -> list[str]`: load the KB, return the
-  sorted distinct shield names across all loaded entries. Drives the checklist.
+  sorted distinct shield strings across all loaded entries. Drives the checklist.
 - The Settings page keeps `qa.unlocked_shields` as an ordinary registry setting
-  (so its source badge and JSON persistence work), but renders a **checklist**
-  for this one key — a small special-case mirroring the existing `customize.dir`
-  "Repopulate Q&A memory" button. One checkbox per discovered shield, labelled so
+  (so its source badge and JSON persistence work), but renders a **clustered
+  checklist** for this one key — a small special-case mirroring the existing
+  `customize.dir` "Repopulate Q&A memory" button. The discovered shield strings
+  are grouped by their dotted-path prefix (split on `.`), so all of one owner's
+  shields sit under one heading. One checkbox per full shield string, labelled so
   checked = *unlocked* (revealed to the LLM), unchecked = *locked* (hidden, the
-  default). Saving posts the JSON array of unlocked names through the existing
-  `settings_set_api`.
+  default). Saving posts the JSON array of the checked full shield strings through
+  the existing `settings_set_api`.
+- Clustering is presentation only: a group heading may carry an "unlock all in
+  this group" convenience checkbox, but it simply toggles the descendant leaf
+  boxes — what gets stored is always the explicit list of full shield strings, so
+  there is no implicit prefix unlock.
 - The available-shields list is injected into the page payload (server side,
   after loading the KB) alongside the settings JSON, so no new endpoint is
   strictly required; a tiny read-only endpoint is acceptable if it keeps the
