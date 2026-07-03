@@ -256,7 +256,7 @@ def available_qa_shields() -> list[str]:
     _load_kb()
     shields = {
         s for e in _entries_by_id.values()
-        if (s := e.get("shield"))
+        if (s := e.get("shield")) and isinstance(s, str)
     }
     return sorted(shields)
 
@@ -401,15 +401,23 @@ def _unlocked_shields() -> set[str]:
 
 def _entry_locked(entry: dict[str, Any], unlocked: set[str]) -> bool:
     """True if `entry` is hidden from the LLM: it carries a shield that is not
-    in `unlocked`. An entry with no shield is always visible."""
+    in `unlocked`. An entry with no shield is always visible. A malformed
+    (non-string) shield is treated as locked — fail closed, never revealed."""
     shield = entry.get("shield")
-    return bool(shield) and shield not in unlocked
+    if not shield:
+        return False
+    if not isinstance(shield, str):
+        return True
+    return shield not in unlocked
 
 
 def _drop_locked(matches: list[Match], unlocked: set[str]) -> list[Match]:
     """Layer-2 backstop: drop matches whose current in-memory entry is locked,
-    order preserved. Pure over `_entries_by_id`, so unit-testable with no DB —
-    and correct even when the pgvector metadata is stale (pre-repopulate)."""
+    order preserved. Pure over `_entries_by_id`, so unit-testable with no DB.
+    Its real value is cross-process staleness (another process's `_entries_by_id`
+    still carries an old shield after this process's pgvector table has been
+    repopulated, or vice versa) and that a lock toggle in Settings takes effect
+    on the next query with no repopulate needed."""
     return [
         m for m in matches
         if not _entry_locked(_entries_by_id.get(m.qa_id) or {}, unlocked)

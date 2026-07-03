@@ -107,10 +107,11 @@ actually shields something (so the new metadata lands in the table).
 
 **Layer 2 — in-memory backstop.** After retrieval, `_semantic_ranked` still
 drops any candidate whose *current* in-memory entry is locked, via
-`_entry_locked(_entries_by_id[qa_id], unlocked)`. This enforces a lock correctly
-even in the window where the operator has just edited the overlay to add a shield
-but has not yet pressed "Repopulate Q&A memory" (stale table metadata would
-otherwise let it through). Same `unlocked` set drives both layers.
+`_entry_locked(_entries_by_id[qa_id], unlocked)`. Its real value: cross-process
+registry staleness (one worker's cached `_entries_by_id` still carries a shield
+that another process has already repopulated out of pgvector, or vice versa),
+and that a lock *toggle* in Settings takes effect on the very next query with no
+repopulate needed. Same `unlocked` set drives both layers.
 
 **Exact + seed paths.**
 

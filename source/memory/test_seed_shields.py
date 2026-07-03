@@ -19,6 +19,14 @@ def test_entry_unlocked_when_shield_present_in_set():
     assert kb._entry_locked({"id": "a", "shield": "alice.travel"}, {"alice.travel"}) is False
 
 
+def test_entry_locked_fails_closed_on_non_string_shield():
+    # Malformed shield (operator hand-edit typo, e.g. a list) must be treated
+    # as locked -- never revealed -- and must not raise.
+    entry = {"id": "a", "shield": ["alice.travel", "bob.notes"]}
+    assert kb._entry_locked(entry, set()) is True
+    assert kb._entry_locked(entry, {"alice.travel", "bob.notes"}) is True
+
+
 def test_drop_locked_removes_locked_and_preserves_order(monkeypatch):
     entries = {
         "u1": {"id": "u1", "shield": "alice.travel"},
@@ -126,3 +134,13 @@ def test_available_qa_shields_empty_when_none(monkeypatch):
     monkeypatch.setattr(kb, "_load_kb", lambda: None)
     monkeypatch.setattr(kb, "_entries_by_id", {"a": {"id": "a"}})
     assert kb.available_qa_shields() == []
+
+
+def test_available_qa_shields_skips_non_string_shield(monkeypatch):
+    monkeypatch.setattr(kb, "_load_kb", lambda: None)
+    monkeypatch.setattr(kb, "_entries_by_id", {
+        "a": {"id": "a", "shield": "alice.travel"},
+        "b": {"id": "b", "shield": ["alice.travel", "bob.notes"]},  # malformed
+        "c": {"id": "c", "shield": "bob.notes"},
+    })
+    assert kb.available_qa_shields() == ["alice.travel", "bob.notes"]
