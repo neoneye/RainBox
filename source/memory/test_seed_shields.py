@@ -48,3 +48,63 @@ def test_unlocked_shields_helper_reads_setting():
 def test_unlocked_shields_helper_empty_outside_app_context():
     # No app context -> get_setting raises -> safe empty default (all hidden).
     assert kb._unlocked_shields() == set()
+
+
+from llama_index.core.vector_stores import FilterCondition, FilterOperator, MetadataFilter
+
+
+def test_shield_filters_is_empty_only_when_nothing_unlocked():
+    f = kb._shield_filters(set())
+    assert len(f.filters) == 1
+    flt = f.filters[0]
+    assert isinstance(flt, MetadataFilter)
+    assert flt.key == "shield"
+    assert flt.operator == FilterOperator.IS_EMPTY
+
+
+def test_shield_filters_adds_sorted_in_clause_when_unlocked():
+    f = kb._shield_filters({"bob.notes", "alice.travel"})
+    assert f.condition == FilterCondition.OR
+    flts = [flt for flt in f.filters if isinstance(flt, MetadataFilter)]
+    assert len(flts) == len(f.filters)
+    ops = {flt.operator for flt in flts}
+    assert FilterOperator.IS_EMPTY in ops and FilterOperator.IN in ops
+    in_flt = next(flt for flt in flts if flt.operator == FilterOperator.IN)
+    assert in_flt.key == "shield"
+    assert in_flt.value == ["alice.travel", "bob.notes"]   # sorted
+
+
+def test_exact_match_hidden_when_locked_and_shown_when_unlocked(monkeypatch):
+    monkeypatch.setattr(kb, "_alias_table", {"who is alice": "u1"})
+    monkeypatch.setattr(kb, "_entries_by_id",
+                        {"u1": {"id": "u1", "shield": "alice.travel"}})
+    assert kb._exact_match("Who is alice?", unlocked_shields=set()) is None
+    m = kb._exact_match("Who is alice?", unlocked_shields={"alice.travel"})
+    assert m is not None and m.qa_id == "u1"
+
+
+def test_exact_match_unshielded_entry_unaffected(monkeypatch):
+    monkeypatch.setattr(kb, "_alias_table", {"hello": "u2"})
+    monkeypatch.setattr(kb, "_entries_by_id", {"u2": {"id": "u2"}})
+    m = kb._exact_match("Hello?", unlocked_shields=set())
+    assert m is not None and m.qa_id == "u2"
+
+
+def test_retrieve_seed_memories_skips_locked(monkeypatch):
+    app = db.make_app()
+    with app.app_context():
+        entries = {
+            "u1": {"id": "u1", "path": "p.a", "kind": "static", "answer": "A",
+                   "shield": "alice.travel", "_source": "upstream"},
+            "u2": {"id": "u2", "path": "p.b", "kind": "static", "answer": "B",
+                   "_source": "upstream"},
+        }
+        monkeypatch.setattr(kb, "_entries_by_id", entries)
+        ranked = [Match(qa_id="u1", method="semantic", score=0.9),
+                  Match(qa_id="u2", method="semantic", score=0.8)]
+        out = kb.retrieve_seed_memories("x", _ranker=lambda q: ranked,
+                                        unlocked_shields=set())
+        assert [m.uuid for m in out] == ["u2"]          # u1 locked out
+        out2 = kb.retrieve_seed_memories("x", _ranker=lambda q: ranked,
+                                         unlocked_shields={"alice.travel"})
+        assert [m.uuid for m in out2] == ["u1", "u2"]   # unlocked -> both

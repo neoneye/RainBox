@@ -22,6 +22,12 @@ import psycopg
 import sqlalchemy as sa
 from llama_index.core import Document, VectorStoreIndex
 from llama_index.core.storage.storage_context import StorageContext
+from llama_index.core.vector_stores import (
+    FilterCondition,
+    FilterOperator,
+    MetadataFilter,
+    MetadataFilters,
+)
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.vector_stores.postgres import PGVectorStore
 from psycopg import sql
@@ -398,21 +404,42 @@ def _drop_locked(matches: list[Match], unlocked: set[str]) -> list[Match]:
     ]
 
 
-def _exact_match(query: str) -> Match | None:
+def _shield_filters(unlocked: set[str]) -> MetadataFilters:
+    """pgvector metadata filter that keeps only retrievable nodes: unshielded
+    ones (no `shield` metadata key -> IS_EMPTY) plus any whose shield is
+    unlocked. Locked shields are excluded in SQL, so they never occupy a top-K
+    slot."""
+    keep: list[MetadataFilter | MetadataFilters] = [
+        MetadataFilter(key="shield", value=None, operator=FilterOperator.IS_EMPTY),
+    ]
+    if unlocked:
+        keep.append(MetadataFilter(
+            key="shield", value=sorted(unlocked), operator=FilterOperator.IN))
+    return MetadataFilters(filters=keep, condition=FilterCondition.OR)
+
+
+def _exact_match(query: str, *, unlocked_shields: set[str] | None = None) -> Match | None:
     norm = _normalize_query(query)
     qa_id = _alias_table.get(norm)
     if qa_id is None:
         return None
+    unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
+    if _entry_locked(_entries_by_id.get(qa_id) or {}, unlocked):
+        return None
     return Match(qa_id=qa_id, method="exact", score=1.0, matched_question=norm)
 
 
-def _semantic_ranked(query: str, vs: PGVectorStore) -> list[Match]:
+def _semantic_ranked(query: str, vs: PGVectorStore, *,
+                     unlocked_shields: set[str] | None = None) -> list[Match]:
     """Top-K retrieve, aggregate by qa_id (max score per qa_id), return them
-    ranked descending by score. **No** MIN_SCORE/MIN_MARGIN gating — for the
-    caller to apply (QueryAgent gates, QueryRouterAgent uses raw top-1 as a
-    hint for the LLM)."""
+    ranked descending by score. Locked shields are excluded at the vector query
+    (so they never occupy a top-K slot) and again as an in-memory backstop.
+    **No** MIN_SCORE/MIN_MARGIN gating — for the caller to apply."""
+    unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
     index = VectorStoreIndex.from_vector_store(vs, embed_model=_embed_model())
-    nodes = index.as_retriever(similarity_top_k=TOP_K).retrieve(query)
+    nodes = index.as_retriever(
+        similarity_top_k=TOP_K, filters=_shield_filters(unlocked),
+    ).retrieve(query)
     if not nodes:
         return []
     by_qa: dict[str, tuple[float, str]] = {}   # qa_id -> (best_score, matched_question)
@@ -426,10 +453,11 @@ def _semantic_ranked(query: str, vs: PGVectorStore) -> list[Match]:
         if cur is None or score > cur[0]:
             by_qa[qa_id] = (score, md.get("question") or "")
     ranked = sorted(by_qa.items(), key=lambda kv: kv[1][0], reverse=True)
-    return [
+    matches = [
         Match(qa_id=qa, method="semantic", score=s, matched_question=q)
         for qa, (s, q) in ranked
     ]
+    return _drop_locked(matches, unlocked)
 
 
 def _semantic_match(query: str, vs: PGVectorStore) -> Match | None:
@@ -522,19 +550,24 @@ class SeedMemory:
 def retrieve_seed_memories(
     query: str, *, limit: int = 5,
     _ranker: Callable[[str], list[Match]] | None = None,
+    unlocked_shields: set[str] | None = None,
 ) -> list[SeedMemory]:
     """Curated static Q&A entries relevant to `query`, as memories. Ranked by the
-    seed store's question-embedding similarity (>= MIN_SCORE), deduped by uuid
-    (the ranker aggregates per qa_id), capped at `limit`. Dynamic/handler entries
-    are excluded — they are computed answers, not facts. `_ranker` is injected by
-    tests; in production it runs the LlamaIndex semantic ranker."""
-    rank = _ranker or (lambda q: _semantic_ranked(q, _vector_store()))
+    seed store's question-embedding similarity (>= MIN_SCORE), deduped by uuid,
+    capped at `limit`. Dynamic/handler entries and locked-shield entries are
+    excluded. `_ranker` is injected by tests; in production it runs the
+    semantic ranker (which itself applies the shield filter)."""
+    unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
+    rank = _ranker or (lambda q: _semantic_ranked(q, _vector_store(),
+                                                   unlocked_shields=unlocked))
     out: list[SeedMemory] = []
     for m in rank(query):
         if m.score < MIN_SCORE:
             continue
         entry = _entries_by_id.get(m.qa_id)
         if entry is None or entry.get("kind") != "static":
+            continue
+        if _entry_locked(entry, unlocked):
             continue
         out.append(SeedMemory(
             uuid=m.qa_id,
