@@ -91,14 +91,16 @@ def test_build_body_audio_part_has_format():
     }
 
 
-def test_image_png_and_jpeg_pass_through_unchanged():
+def test_image_png_passes_through_unchanged():
     raw = b"\x89PNGdata"
     assert _image_to_model_format("image/png", raw) == ("image/png", raw)
-    assert _image_to_model_format("image/jpeg", raw) == ("image/jpeg", raw)
 
 
-@pytest.mark.parametrize("fmt,mime", [("WEBP", "image/webp"), ("AVIF", "image/avif")])
-def test_image_webp_avif_transcoded_to_png(fmt, mime):
+@pytest.mark.parametrize(
+    "fmt,mime",
+    [("JPEG", "image/jpeg"), ("WEBP", "image/webp"), ("AVIF", "image/avif")],
+)
+def test_image_non_png_transcoded_to_png(fmt, mime):
     from PIL import Image
 
     out_mime, out_raw = _image_to_model_format(mime, _encode_image(fmt))
@@ -111,6 +113,19 @@ def test_image_webp_avif_transcoded_to_png(fmt, mime):
 def test_image_undecodable_raises_conversion_error():
     with pytest.raises(ImageConversionError):
         _image_to_model_format("image/webp", b"not really a webp")
+
+
+def test_jpeg_exif_orientation_is_applied():
+    from PIL import Image
+
+    # A 40x20 jpeg tagged orientation=6 (rotate 90°): transposing swaps W/H.
+    img = Image.new("RGB", (40, 20), (200, 30, 30))
+    exif = img.getexif()
+    exif[0x0112] = 6
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", exif=exif)
+    _, out_raw = _image_to_model_format("image/jpeg", buf.getvalue())
+    assert Image.open(io.BytesIO(out_raw)).size == (20, 40)
 
 
 def test_build_body_webp_becomes_png_data_url():

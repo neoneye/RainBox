@@ -56,9 +56,11 @@ def _audio_format(mime: str) -> str:
     return mime.split("/", 1)[-1] or "wav"
 
 
-# Image MIME types the target models accept directly. Anything else (webp,
-# avif, gif, …) is transcoded to PNG before it's sent.
-_MODEL_IMAGE_MIMES = {"image/png", "image/jpeg"}
+# The one image MIME type we send to the model untouched. Every other type
+# (jpeg, webp, avif, gif, …) is transcoded to PNG first: this normalizes the
+# encoding/color/orientation quirks (CMYK jpegs, progressive jpegs, EXIF
+# rotation) that make some otherwise-valid images fail at the model.
+_MODEL_IMAGE_MIMES = {"image/png"}
 
 
 class ImageConversionError(Exception):
@@ -67,21 +69,23 @@ class ImageConversionError(Exception):
 
 
 def _image_to_model_format(mime: str, raw: bytes) -> tuple[str, bytes]:
-    """Return (mime, bytes) for an image the model accepts. png/jpeg pass
-    through untouched; every other image type (webp, avif, gif, …) is decoded
-    and re-encoded as PNG. Raises ImageConversionError if the bytes cannot be
-    decoded as an image."""
+    """Return (mime, bytes) for an image the model accepts. PNG passes through
+    untouched; every other image type (jpeg, webp, avif, gif, …) is decoded and
+    re-encoded as PNG, applying EXIF orientation. Raises ImageConversionError if
+    the bytes cannot be decoded as an image."""
     if mime in _MODEL_IMAGE_MIMES:
         return mime, raw
     import io
 
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     try:
         img = Image.open(io.BytesIO(raw))
         img.load()
     except Exception as e:
         raise ImageConversionError(f"could not decode {mime or 'image'}: {e}") from e
+    # Bake in EXIF rotation (common on phone jpegs) so the model sees it upright.
+    img = ImageOps.exif_transpose(img)
     # PNG can't store CMYK / exotic modes; normalize to one it can.
     if img.mode not in ("RGB", "RGBA", "L", "LA", "P"):
         img = img.convert("RGBA")
@@ -95,8 +99,8 @@ def _build_completion_body(
 ) -> dict:
     """OpenAI-compatible /chat/completions body. The user message is a
     content-parts array: a text part plus, if a file is attached, an image_url
-    (image/*) or input_audio (audio/*) part. Image types the model doesn't
-    accept (webp, avif, …) are transcoded to PNG first."""
+    (image/*) or input_audio (audio/*) part. Every image except PNG (jpeg, webp,
+    avif, …) is transcoded to PNG first."""
     parts: list[dict] = [{"type": "text", "text": user}]
     if file is not None and file.filename:
         raw = file.read()
