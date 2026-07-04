@@ -559,12 +559,15 @@ def command_from_payload(room_uuid: UUID, payload: dict[str, Any]) -> str | None
 
 @dataclass
 class SeedMemory:
-    """A curated Q&A entry surfaced as a memory. `uuid` is the jsonl `id`."""
+    """A curated Q&A entry surfaced as a memory. `uuid` is the jsonl `id`.
+    `answer` holds the static answer text, or a dynamic handler's resolved
+    output. `kind` is "static" or "dynamic"."""
     uuid: str
     path: str
     source: str   # "user-overlay" | "upstream"
     answer: str
     score: float
+    kind: str = "static"
 
 
 def retrieve_seed_memories(
@@ -595,6 +598,48 @@ def retrieve_seed_memories(
             source=str(entry.get("_source", "upstream")),
             answer=str(entry.get("answer", "")),
             score=m.score,
+        ))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def retrieve_seed_answers(
+    query: str, *, qctx: QueryContext, limit: int = 5,
+    _ranker: Callable[[str], list[Match]] | None = None,
+    unlocked_shields: set[str] | None = None,
+) -> list[SeedMemory]:
+    """Top-N curated Q&A entries (static AND dynamic) relevant to `query`, as
+    SeedMemory. Static entries carry their answer text; dynamic entries carry
+    their handler's resolved output (handlers are read-only, resolved via
+    `_resolve_match`). Ranked by question-embedding similarity (>= MIN_SCORE, no
+    margin gate), deduped by uuid, capped at `limit`. Locked-shield entries are
+    excluded. `_ranker` is injected by tests; in production it runs the semantic
+    ranker (which itself applies the shield filter).
+
+    Unlike `retrieve_seed_memories` (static-only, for the always-on chat block),
+    this resolves dynamic handlers on demand for the assistant's `query_memory`
+    action."""
+    unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
+    rank = _ranker or (lambda q: _semantic_ranked(q, _vector_store(),
+                                                   unlocked_shields=unlocked))
+    out: list[SeedMemory] = []
+    for m in rank(query):
+        if m.score < MIN_SCORE:
+            continue
+        entry = _entries_by_id.get(m.qa_id)
+        if entry is None or _entry_locked(entry, unlocked):
+            continue
+        kind = str(entry.get("kind", "static"))
+        answer = (str(entry.get("answer", "")) if kind == "static"
+                  else _resolve_match(m, qctx))
+        out.append(SeedMemory(
+            uuid=m.qa_id,
+            path=str(entry.get("path", "")),
+            source=str(entry.get("_source", "upstream")),
+            answer=answer,
+            score=m.score,
+            kind=kind,
         ))
         if len(out) >= limit:
             break

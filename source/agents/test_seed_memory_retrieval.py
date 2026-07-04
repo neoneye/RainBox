@@ -45,3 +45,37 @@ def test_retrieve_seed_memories_drops_below_min_score_and_caps(registry):
     many = [Match(qa_id="up-name", method="semantic", score=0.9 - i*0.01) for i in range(10)]
     out = kb.retrieve_seed_memories("x", limit=2, _ranker=lambda q: many)
     assert len(out) == 2
+
+
+def _qctx():
+    from uuid import uuid4
+    from agents.query_handlers import QueryContext
+    return QueryContext(room_uuid=uuid4(), query="git", payload={}, agent_uuid=uuid4())
+
+
+def test_retrieve_seed_answers_resolves_dynamic_and_static(registry, monkeypatch):
+    monkeypatch.setattr(kb, "HANDLERS", {"git_status": lambda ctx: "Working tree clean."})
+    ranked = [Match(qa_id="dyn-git", method="semantic", score=0.81),   # dynamic → resolved
+              Match(qa_id="up-name", method="semantic", score=0.70)]   # static
+    out = kb.retrieve_seed_answers("git", qctx=_qctx(), _ranker=lambda q: ranked)
+    assert [m.uuid for m in out] == ["dyn-git", "up-name"]             # both kept, score order
+    assert out[0].kind == "dynamic" and out[0].answer == "Working tree clean."
+    assert out[1].kind == "static" and out[1].answer == "EgonBot."
+
+
+def test_retrieve_seed_answers_gates_min_score_and_caps(registry, monkeypatch):
+    monkeypatch.setattr(kb, "HANDLERS", {"git_status": lambda ctx: "x"})
+    ranked = [Match(qa_id="up-name", method="semantic", score=0.50)]   # below MIN_SCORE
+    assert kb.retrieve_seed_answers("x", qctx=_qctx(), _ranker=lambda q: ranked) == []
+    many = [Match(qa_id="up-name", method="semantic", score=0.9 - i * 0.01) for i in range(10)]
+    out = kb.retrieve_seed_answers("x", qctx=_qctx(), limit=2, _ranker=lambda q: many)
+    assert len(out) == 2
+
+
+def test_retrieve_seed_answers_excludes_locked(registry, monkeypatch):
+    monkeypatch.setattr(kb, "HANDLERS", {"git_status": lambda ctx: "secret status"})
+    registry["dyn-git"]["shield"] = "ops"                              # locked (not unlocked)
+    ranked = [Match(qa_id="dyn-git", method="semantic", score=0.9)]
+    out = kb.retrieve_seed_answers("git", qctx=_qctx(), _ranker=lambda q: ranked,
+                                   unlocked_shields=set())
+    assert out == []
