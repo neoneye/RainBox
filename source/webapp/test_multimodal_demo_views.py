@@ -11,6 +11,7 @@ import json
 from unittest.mock import patch
 
 import pytest
+import requests
 from werkzeug.datastructures import FileStorage
 
 from db import ModelConfig, db, init_db, make_app
@@ -125,6 +126,9 @@ class FakeStreamResponse:
     def iter_content(self, chunk_size=None):
         yield from self._chunks
 
+    def close(self):
+        pass
+
 
 def test_complete_forwards_body_and_relays_stream(seeded_model):
     client = app.test_client()
@@ -174,6 +178,96 @@ def test_complete_400_when_nothing_to_send(seeded_model):
         content_type="multipart/form-data",
     )
     assert resp.status_code == 400
+
+
+@pytest.fixture
+def seeded_model_no_api_base():
+    """Seed a model row with no api_base configured; clean up after."""
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        m = ModelConfig(
+            provider="jan",
+            model_name="gemma-multimodal-no-base",
+            display_name="Gemma (no api_base)",
+            arguments={},
+        )
+        db.session.add(m)
+        db.session.commit()
+        uid = str(m.uuid)
+        try:
+            yield uid
+        finally:
+            db.session.delete(m)
+            db.session.commit()
+
+
+def test_complete_400_when_api_base_missing(seeded_model_no_api_base):
+    client = app.test_client()
+    resp = client.post(
+        f"/demo/multimodal/complete?id={seeded_model_no_api_base}",
+        data={"user": "hi"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+
+
+def test_complete_502_when_backend_unreachable(seeded_model):
+    client = app.test_client()
+    with patch(
+        "webapp.multimodal_demo_views.requests.post",
+        side_effect=requests.exceptions.ConnectionError("boom"),
+    ):
+        resp = client.post(
+            f"/demo/multimodal/complete?id={seeded_model}",
+            data={"user": "hi"},
+            content_type="multipart/form-data",
+        )
+    assert resp.status_code == 502
+    body = resp.get_data(as_text=True)
+    assert "http://127.0.0.1:1337/v1" in body
+    assert "boom" in body
+
+
+@pytest.fixture
+def seeded_model_no_api_key():
+    """Seed a model row with an api_base but no api_key; clean up after."""
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        m = ModelConfig(
+            provider="jan",
+            model_name="gemma-multimodal-no-key",
+            display_name="Gemma (no api_key)",
+            arguments={"api_base": "http://127.0.0.1:1337/v1"},
+        )
+        db.session.add(m)
+        db.session.commit()
+        uid = str(m.uuid)
+        try:
+            yield uid
+        finally:
+            db.session.delete(m)
+            db.session.commit()
+
+
+def test_complete_omits_authorization_header_without_api_key(seeded_model_no_api_key):
+    client = app.test_client()
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        captured["headers"] = headers
+        return FakeStreamResponse(chunks=[b"data: [DONE]\n\n"])
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post):
+        resp = client.post(
+            f"/demo/multimodal/complete?id={seeded_model_no_api_key}",
+            data={"user": "hi"},
+            content_type="multipart/form-data",
+        )
+        resp.get_data()
+
+    assert "Authorization" not in captured["headers"]
 
 
 def test_complete_forwards_backend_error_body(seeded_model):

@@ -287,16 +287,21 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     # Non-2xx: forward the raw error body verbatim — seeing the backend's own
     # complaint ("this model can't do audio") is the point of the demo.
     if upstream.status_code != 200:
+        content_type = upstream.headers.get("Content-Type", "text/plain")
+        mimetype = content_type.split(";")[0].strip() or "text/plain"
         return Response(
             upstream.content,
             status=upstream.status_code,
-            mimetype=upstream.headers.get("Content-Type", "text/plain"),
+            mimetype=mimetype,
         )
 
     def relay():
-        for chunk in upstream.iter_content(chunk_size=None):
-            if chunk:
-                yield chunk
+        try:
+            for chunk in upstream.iter_content(chunk_size=None):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
 
     return Response(
         relay(),
