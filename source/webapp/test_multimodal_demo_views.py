@@ -419,7 +419,11 @@ def test_selecting_override_renders_it_as_target(seeded_config_with_override):
     resp = client.get(f"/demo/multimodal?id={ov_uid}")
     body = resp.get_data(as_text=True)
     assert resp.status_code == 200
-    assert "Picker override" in body
+    # This fragment is only emitted inside the `{% if target %}` block, and
+    # only equals "Picker override" when target.display_name resolves to the
+    # override — unlike a bare substring check, it can't pass if resolution
+    # fell through to the "not found" branch.
+    assert "Talking to <b>Picker override</b>" in body
 
 
 @pytest.fixture
