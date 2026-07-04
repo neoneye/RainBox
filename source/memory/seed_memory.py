@@ -613,9 +613,10 @@ def retrieve_seed_answers(
     SeedMemory. Static entries carry their answer text; dynamic entries carry
     their handler's resolved output (handlers are read-only, resolved via
     `_resolve_match`). Ranked by question-embedding similarity (>= MIN_SCORE, no
-    margin gate), deduped by uuid, capped at `limit`. Locked-shield entries are
-    excluded. `_ranker` is injected by tests; in production it runs the semantic
-    ranker (which itself applies the shield filter).
+    margin gate), capped at `limit`; the ranker aggregates by qa_id, so entries
+    are unique per qa_id. Locked-shield entries are excluded. `_ranker` is
+    injected by tests; in production it runs the semantic ranker (which itself
+    applies the shield filter).
 
     Unlike `retrieve_seed_memories` (static-only, for the always-on chat block),
     this resolves dynamic handlers on demand for the assistant's `query_memory`
