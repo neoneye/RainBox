@@ -95,14 +95,16 @@ def _image_to_model_format(mime: str, raw: bytes) -> tuple[str, bytes]:
 
 
 def _build_completion_body(
-    model_name: str, system: str, user: str, file: FileStorage | None
+    model_name: str, system: str, user: str, files: list[FileStorage]
 ) -> dict:
     """OpenAI-compatible /chat/completions body. The user message is a
-    content-parts array: a text part plus, if a file is attached, an image_url
-    (image/*) or input_audio (audio/*) part. Every image except PNG (jpeg, webp,
-    avif, …) is transcoded to PNG first."""
+    content-parts array: a text part followed by one part per attached file —
+    an image_url (image/*) or input_audio (audio/*) — in the order given. Every
+    image except PNG (jpeg, webp, avif, …) is transcoded to PNG first."""
     parts: list[dict] = [{"type": "text", "text": user}]
-    if file is not None and file.filename:
+    for file in files:
+        if file is None or not file.filename:
+            continue
         raw = file.read()
         mime = file.mimetype or ""
         if mime.startswith("image/"):
@@ -178,7 +180,13 @@ MULTIMODAL_TEMPLATE = """
   button:disabled{background:#9ca3af;cursor:default}
   .muted{color:#6b7280;font-size:0.85rem}
   .err{color:#991b1b;white-space:pre-wrap}
-  #preview img{max-width:280px;max-height:280px;border:1px solid #e5e7eb;border-radius:8px}
+  #preview{display:flex;flex-wrap:wrap;gap:10px}
+  .pp-file{position:relative;border:1px solid #e5e7eb;border-radius:8px;padding:6px;max-width:210px}
+  .pp-file img{max-width:190px;max-height:190px;border-radius:6px;display:block}
+  .pp-file audio{max-width:190px;display:block}
+  .pp-file .pp-cap{margin-top:4px;word-break:break-all}
+  .pp-file .pp-rm{position:absolute;top:4px;right:4px;width:22px;height:22px;padding:0;border:none;
+    border-radius:50%;background:#dc2626;color:#fff;font-size:14px;line-height:1;cursor:pointer}
   #status{font-weight:600}
   #response{width:100%;max-width:760px;min-height:8em;border:1px solid #e5e7eb;border-radius:8px;
             padding:12px;white-space:pre-wrap;font-size:1rem;background:#fbfbfb}
@@ -200,7 +208,7 @@ MULTIMODAL_TEMPLATE = """
     border-radius:0.4em;margin-right:0.3em;background:#dbeafe;color:#1e40af;
     vertical-align:0.05em}
 </style>
-<div id="dropzone">Drop an image or audio file anywhere</div>
+<div id="dropzone">Drop image or audio files anywhere</div>
 {% include "_nav.html" %}
 <div class="pp-content">
 <h1>Multimodal demo</h1>
@@ -230,8 +238,8 @@ MULTIMODAL_TEMPLATE = """
 
 {% if target %}
 <p class="muted">Talking to <b>{{ target.display_name }}</b> (<code>{{ model_id }}</code>).
-Attach one image or audio file, add prompts, and watch the streamed response.
-Nothing is saved.</p>
+Attach one or more images or audio files, add prompts, and watch the streamed
+response. Nothing is saved.</p>
 
 <div class="row">
   <label for="system">System prompt</label>
@@ -242,9 +250,9 @@ Nothing is saved.</p>
   <textarea id="user" rows="3" placeholder="Describe the image / transcribe the audio&hellip;"></textarea>
 </div>
 <div class="row">
-  <label for="file">Image or audio file</label>
-  <input type="file" id="file" accept="image/*,.avif,.webp,audio/*" onchange="ppPreview()">
-  <button type="button" onclick="ppClearFile()" style="background:#6b7280">Clear</button>
+  <label for="file">Image or audio files</label>
+  <input type="file" id="file" accept="image/*,.avif,.webp,audio/*" multiple onchange="ppPick(this)">
+  <button type="button" onclick="ppClearFiles()" style="background:#6b7280">Clear all</button>
   <div id="preview" style="margin-top:0.6em"></div>
 </div>
 <div class="row">
@@ -266,45 +274,54 @@ Nothing is saved.</p>
 <script>
 const MODEL_ID = {{ model_id | tojson }};
 
-function ppPreview() {
-  const f = document.getElementById('file').files[0];
+// The selected files, accumulated across picks and drops (the file input alone
+// can't append, so this array is the single source of truth ppSend reads).
+let ppFiles = [];
+
+// File input onchange: append the picked files, then reset the input so the
+// same file can be re-added and the input holds no stale selection.
+function ppPick(input) {
+  ppAddFiles(input.files);
+  input.value = '';
+}
+
+function ppAddFiles(list) {
+  const ignored = [];
+  for (const f of list) {
+    if (f.type.startsWith('image/') || f.type.startsWith('audio/')) ppFiles.push(f);
+    else ignored.push(f.name || '(unnamed)');
+  }
+  document.getElementById('status').textContent =
+    ignored.length ? ('ignored (not image/audio): ' + ignored.join(', ')) : '';
+  ppRenderFiles();
+}
+
+function ppRemoveFile(i) { ppFiles.splice(i, 1); ppRenderFiles(); }
+function ppClearFiles() { ppFiles = []; ppRenderFiles(); }
+
+function ppRenderFiles() {
   const box = document.getElementById('preview');
   box.innerHTML = '';
-  if (!f) return;
-  const url = URL.createObjectURL(f);
-  if (f.type.startsWith('image/')) {
-    const img = document.createElement('img');
-    img.src = url;
-    box.appendChild(img);
-  } else if (f.type.startsWith('audio/')) {
-    const a = document.createElement('audio');
-    a.controls = true; a.src = url;
-    box.appendChild(a);
-  }
-  const cap = document.createElement('div');
-  cap.className = 'muted';
-  cap.textContent = f.name + ' (' + (f.type || 'unknown type') + ')';
-  box.appendChild(cap);
-}
-
-function ppClearFile() {
-  document.getElementById('file').value = '';
-  document.getElementById('preview').innerHTML = '';
-}
-
-// Full-viewport drag-and-drop: a dropped file is placed into the file input
-// (the single source of truth ppSend reads), then previewed.
-function ppSetFile(f) {
-  if (!(f.type.startsWith('image/') || f.type.startsWith('audio/'))) {
-    document.getElementById('status').textContent =
-      'ignored: not an image or audio file (' + (f.type || 'unknown type') + ')';
-    return;
-  }
-  const dt = new DataTransfer();
-  dt.items.add(f);
-  document.getElementById('file').files = dt.files;
-  document.getElementById('status').textContent = '';
-  ppPreview();
+  ppFiles.forEach(function(f, i) {
+    const card = document.createElement('div');
+    card.className = 'pp-file';
+    const url = URL.createObjectURL(f);
+    if (f.type.startsWith('image/')) {
+      const img = document.createElement('img'); img.src = url; card.appendChild(img);
+    } else {
+      const a = document.createElement('audio'); a.controls = true; a.src = url; card.appendChild(a);
+    }
+    const cap = document.createElement('div');
+    cap.className = 'muted pp-cap';
+    cap.textContent = f.name + ' (' + (f.type || 'unknown type') + ')';
+    card.appendChild(cap);
+    const rm = document.createElement('button');
+    rm.type = 'button'; rm.className = 'pp-rm'; rm.title = 'Remove';
+    rm.textContent = '\\u00d7';
+    rm.onclick = function() { ppRemoveFile(i); };
+    card.appendChild(rm);
+    box.appendChild(card);
+  });
 }
 
 function ppDragHasFiles(e) {
@@ -330,8 +347,9 @@ window.addEventListener('drop', function(e) {
   e.preventDefault();
   ppDragDepth = 0;
   document.body.classList.remove('pp-dragging');
-  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (f) ppSetFile(f);
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+    ppAddFiles(e.dataTransfer.files);
+  }
 });
 
 // Holds the in-flight request's AbortController so the Stop button can cancel
@@ -363,8 +381,7 @@ async function ppSend() {
   const fd = new FormData();
   fd.append('system', document.getElementById('system').value);
   fd.append('user', document.getElementById('user').value);
-  const f = document.getElementById('file').files[0];
-  if (f) fd.append('file', f, f.name);
+  for (const f of ppFiles) fd.append('file', f, f.name);
 
   try {
     let resp;
@@ -454,9 +471,8 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
 
     system = request.form.get("system", "")
     user = request.form.get("user", "")
-    file = request.files.get("file")
-    has_file = file is not None and bool(file.filename)
-    if not user.strip() and not has_file:
+    files = [f for f in request.files.getlist("file") if f and f.filename]
+    if not user.strip() and not files:
         return jsonify({"error": "nothing to send: provide a prompt or a file"}), 400
 
     base = _backend_base(target.provider, target.arguments)
@@ -464,7 +480,7 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
         return jsonify({"error": "could not resolve a backend URL for this model"}), 400
 
     try:
-        body = _build_completion_body(target.model_name, system, user, file if has_file else None)
+        body = _build_completion_body(target.model_name, system, user, files)
     except ImageConversionError as e:
         return jsonify({"error": str(e)}), 400
     headers = {"Content-Type": "application/json"}

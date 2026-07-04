@@ -54,7 +54,7 @@ def test_audio_format_known_and_fallback():
 
 
 def test_build_body_text_only():
-    body = _build_completion_body("gemma", "be terse", "hello", None)
+    body = _build_completion_body("gemma", "be terse", "hello", [])
     assert body["model"] == "gemma"
     assert body["stream"] is True
     assert body["messages"][0] == {"role": "system", "content": "be terse"}
@@ -64,13 +64,13 @@ def test_build_body_text_only():
 
 
 def test_build_body_omits_empty_system():
-    body = _build_completion_body("gemma", "", "hi", None)
+    body = _build_completion_body("gemma", "", "hi", [])
     assert all(m["role"] != "system" for m in body["messages"])
 
 
 def test_build_body_image_part_is_data_url():
     raw = b"\x89PNGfake"
-    body = _build_completion_body("gemma", "", "what is this", _file(raw, "x.png", "image/png"))
+    body = _build_completion_body("gemma", "", "what is this", [_file(raw, "x.png", "image/png")])
     parts = body["messages"][-1]["content"]
     assert parts[0] == {"type": "text", "text": "what is this"}
     b64 = base64.b64encode(raw).decode("ascii")
@@ -82,13 +82,25 @@ def test_build_body_image_part_is_data_url():
 
 def test_build_body_audio_part_has_format():
     raw = b"RIFFfake"
-    body = _build_completion_body("gemma", "", "transcribe", _file(raw, "c.wav", "audio/wav"))
+    body = _build_completion_body("gemma", "", "transcribe", [_file(raw, "c.wav", "audio/wav")])
     parts = body["messages"][-1]["content"]
     b64 = base64.b64encode(raw).decode("ascii")
     assert parts[1] == {
         "type": "input_audio",
         "input_audio": {"data": b64, "format": "wav"},
     }
+
+
+def test_build_body_multiple_files_one_part_each_in_order():
+    files = [
+        _file(b"\x89PNGa", "a.png", "image/png"),
+        _file(b"RIFFb", "b.wav", "audio/wav"),
+        _file(b"\x89PNGc", "c.png", "image/png"),
+    ]
+    parts = _build_completion_body("gemma", "", "look+listen", files)["messages"][-1]["content"]
+    assert [p["type"] for p in parts] == ["text", "image_url", "input_audio", "image_url"]
+    assert parts[1]["image_url"]["url"] == "data:image/png;base64," + base64.b64encode(b"\x89PNGa").decode()
+    assert parts[3]["image_url"]["url"] == "data:image/png;base64," + base64.b64encode(b"\x89PNGc").decode()
 
 
 def test_image_png_passes_through_unchanged():
@@ -131,7 +143,7 @@ def test_jpeg_exif_orientation_is_applied():
 def test_build_body_webp_becomes_png_data_url():
     from PIL import Image
 
-    body = _build_completion_body("gemma", "", "what is this", _file(_encode_image("WEBP"), "x.webp", "image/webp"))
+    body = _build_completion_body("gemma", "", "what is this", [_file(_encode_image("WEBP"), "x.webp", "image/webp")])
     part = body["messages"][-1]["content"][1]
     assert part["type"] == "image_url"
     url = part["image_url"]["url"]
@@ -170,6 +182,7 @@ def test_page_renders_with_model_name(seeded_model):
     assert "pp-nav" in body                       # shared nav included
     assert "Gemma (multimodal test)" in body      # resolved display name shown
     assert 'type="file"' in body                  # file input present
+    assert "multiple" in body and "ppAddFiles" in body  # multi-file selection wired
     assert 'id="system"' in body and 'id="user"' in body
     # Reasoning pane + its delta handling are wired into the streaming UI.
     assert 'id="reasoning"' in body
@@ -232,6 +245,31 @@ def test_complete_forwards_body_and_relays_stream(seeded_model):
     assert captured["json"]["model"] == "gemma-multimodal-test"
     assert captured["json"]["stream"] is True
     assert "Hel" in streamed and "lo" in streamed
+
+
+def test_complete_forwards_all_uploaded_files(seeded_model):
+    client = app.test_client()
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        captured["json"] = json
+        return FakeStreamResponse(chunks=[b"data: [DONE]\n\n"])
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post):
+        client.post(
+            f"/demo/multimodal/complete?id={seeded_model}",
+            data={
+                "user": "look and listen",
+                "file": [
+                    (io.BytesIO(b"\x89PNGa"), "a.png", "image/png"),
+                    (io.BytesIO(b"RIFFb"), "b.wav", "audio/wav"),
+                ],
+            },
+            content_type="multipart/form-data",
+        ).get_data()
+
+    parts = captured["json"]["messages"][-1]["content"]
+    assert [p["type"] for p in parts] == ["text", "image_url", "input_audio"]
 
 
 def test_complete_400_on_undecodable_image_without_calling_backend(seeded_model):
