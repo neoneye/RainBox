@@ -39,11 +39,11 @@ def test_run_endpoint_returns_run_and_steps(client):
         )
         db.append_assistant_step(
             run_uuid=run.uuid, step_index=0, phase="running",
-            action="query_qa", reason="look it up", args={"query": "git status"},
+            action="query_memory", reason="look it up", args={"query": "git status"},
         )
         db.append_assistant_step(
             run_uuid=run.uuid, step_index=0, phase="observed",
-            action="query_qa", observation_preview="Working tree clean.",
+            action="query_memory", observation_preview="Working tree clean.",
         )
         run_id = run.uuid
     try:
@@ -55,7 +55,7 @@ def test_run_endpoint_returns_run_and_steps(client):
         phases = [s["phase"] for s in body["steps"]]
         assert phases == ["running", "observed"]
         observed = body["steps"][1]
-        assert observed["action"] == "query_qa"
+        assert observed["action"] == "query_memory"
         assert observed["observation_preview"] == "Working tree clean."
         # The first step carries the structured args verbatim.
         assert body["steps"][0]["args"] == {"query": "git status"}

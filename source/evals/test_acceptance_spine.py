@@ -9,8 +9,8 @@ docs/proposals/2026-06-19-improvements-v2.md:
   retrieval scenario, distinct from the granular unit tests in
   memory/test_retrieval.py): a query returns the relevant *public* fact and
   never the *secret* one — the "Filter before rank" contract.
-- query project status: the read-only QueryAgent handler path that PR 4's
-  `query_qa` action reuses still returns text.
+- query project status: the read-only QueryAgent handler path that
+  `query_memory` reuses still returns text.
 
 No LM Studio dependency. The memory cases use the deterministic token-overlap
 retriever; the project-status case calls a read-only handler directly.
@@ -88,8 +88,8 @@ def test_memory_answer_returns_public_fact_and_never_the_secret(
 
 def test_project_status_handler_returns_text(app_ctx):
     """Acceptance: the read-only QueryAgent project-status handler path that
-    PR 4's query_qa action reuses still returns a non-empty string and does not
-    raise. Reflects whatever the working tree happens to be — we assert it is a
+    query_memory reuses still returns a non-empty string and does not raise.
+    Reflects whatever the working tree happens to be — we assert it is a
     usable answer, not a specific repo state."""
     ctx = QueryContext(
         room_uuid=uuid4(),

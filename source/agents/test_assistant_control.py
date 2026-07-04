@@ -130,6 +130,6 @@ def test_redirect_consumed_before_next_step(room):
 
 def test_heartbeat_reports_progress_activity(app_ctx):
     agent = _agent()
-    agent._activity = "running query_qa"
+    agent._activity = "running query_memory"
     extra = agent._heartbeat_extra()
-    assert extra["activity"] == "running query_qa"
+    assert extra["activity"] == "running query_memory"

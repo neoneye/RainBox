@@ -56,7 +56,7 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
     try:
         db.append_assistant_step(
             run_uuid=run.uuid, step_index=0, phase="running",
-            action="query_qa", reason="look it up", args={"query": "git status"},
+            action="query_memory", reason="look it up", args={"query": "git status"},
         )
         # Simulate another reader (fresh state) mid-action: the running row is
         # already durable, before any "observed" row exists.
@@ -67,7 +67,7 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
             .all()
         )
         assert len(running) == 1
-        assert running[0].action == "query_qa"
+        assert running[0].action == "query_memory"
         assert running[0].args == {"query": "git status"}
     finally:
         _cleanup_run(run.uuid)
@@ -84,7 +84,7 @@ def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
     try:
         db.append_assistant_step(
             run_uuid=run.uuid, step_index=0, phase="failed",
-            action="query_qa", error="boom: kaboom",
+            action="query_memory", error="boom: kaboom",
         )
         # Queryable by phase/action without scanning chat history.
         failed = (
@@ -212,14 +212,14 @@ def test_unsettled_open_step_remains_a_durable_running_row(app_ctx):
     )
     try:
         db.open_assistant_step(
-            run_uuid=run.uuid, step_index=0, action="query_qa",
+            run_uuid=run.uuid, step_index=0, action="query_memory",
             reason="look it up", args={"query": "git status"},
         )
         db.db.session.expire_all()  # simulate a fresh reader after a crash
         rows = db.list_assistant_steps(run.uuid)
         assert len(rows) == 1
         assert rows[0].phase == "running"
-        assert rows[0].action == "query_qa"
+        assert rows[0].action == "query_memory"
         assert rows[0].args == {"query": "git status"}
     finally:
         _cleanup_run(run.uuid)

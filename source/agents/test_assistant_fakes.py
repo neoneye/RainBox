@@ -64,9 +64,9 @@ def test_decision_parses_action_from_string_value():
     """Structured output arrives as JSON, so the action comes in as its string
     value and must coerce to the enum member."""
     decision = AssistantStepDecision.model_validate(
-        {"reason": "look it up", "action": "query_qa", "args": {"query": "git status"}}
+        {"reason": "look it up", "action": "query_memory", "args": {"query": "git status"}}
     )
-    assert decision.action is AssistantActionName.QUERY_QA
+    assert decision.action is AssistantActionName.QUERY_MEMORY
 
 
 def test_decision_rejects_unknown_action():

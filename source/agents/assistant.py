@@ -106,8 +106,8 @@ request is ambiguous or missing information, use `ask_clarifying_question`. Only
 use actions from the list below; any other action is rejected.
 
 Match the read action to the data you need: `kanban_read` for boards/tasks,
-`query_memory` for remembered facts, `query_qa` only for general questions
-(project/git status). Do not use `query_qa` to inspect kanban, memory, or files.
+`query_memory` for remembered facts and general questions (project/git status).
+Do not use `query_memory` to inspect kanban or files.
 When a step fails, fix the specific problem it reports — never resubmit the same
 args, and never invent placeholder values like `<COLUMN_UUID>`; if you lack an
 id, read for it or omit the optional argument.
