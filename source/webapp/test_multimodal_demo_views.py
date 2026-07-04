@@ -111,6 +111,9 @@ def test_page_renders_with_model_name(seeded_model):
     assert "Gemma (multimodal test)" in body      # resolved display name shown
     assert 'type="file"' in body                  # file input present
     assert 'id="system"' in body and 'id="user"' in body
+    # Reasoning pane + its delta handling are wired into the streaming UI.
+    assert 'id="reasoning"' in body
+    assert "delta.reasoning" in body and "delta.reasoning_content" in body
 
 
 def test_page_renders_not_found_for_unknown_id():

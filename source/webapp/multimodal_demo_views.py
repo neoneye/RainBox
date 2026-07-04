@@ -141,6 +141,9 @@ MULTIMODAL_TEMPLATE = """
   #status{font-weight:600}
   #response{width:100%;max-width:760px;min-height:8em;border:1px solid #e5e7eb;border-radius:8px;
             padding:12px;white-space:pre-wrap;font-size:1rem;background:#fbfbfb}
+  #reasoning-box summary{cursor:pointer}
+  #reasoning{max-width:760px;white-space:pre-wrap;color:#6b7280;font-size:0.9rem;
+             border-left:3px solid #e5e7eb;padding:6px 12px;margin-top:6px;background:#fbfbfb}
   code{background:#eee;padding:1px 4px;border-radius:3px}
   #dropzone{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;
             background:rgba(37,99,235,0.10);border:3px dashed #2563eb;pointer-events:none;
@@ -206,6 +209,12 @@ Nothing is saved.</p>
 <div class="row">
   <button id="send" onclick="ppSend()">Send</button>
   <span id="status" class="muted"></span>
+</div>
+<div class="row" id="reasoning-row" style="display:none">
+  <details id="reasoning-box" open>
+    <summary class="muted">Reasoning</summary>
+    <div id="reasoning"></div>
+  </details>
 </div>
 <div class="row">
   <label>Response</label>
@@ -287,8 +296,12 @@ async function ppSend() {
   const btn = document.getElementById('send');
   const status = document.getElementById('status');
   const out = document.getElementById('response');
+  const rzRow = document.getElementById('reasoning-row');
+  const rz = document.getElementById('reasoning');
   out.className = '';
   out.textContent = '';
+  rz.textContent = '';
+  rzRow.style.display = 'none';
   btn.disabled = true;
   status.textContent = 'sending\\u2026';
 
@@ -338,6 +351,10 @@ async function ppSend() {
       try {
         const obj = JSON.parse(payload);
         const delta = obj.choices && obj.choices[0] && obj.choices[0].delta;
+        // Reasoning tokens arrive separately from the answer; backends name the
+        // field 'reasoning' (Ollama) or 'reasoning_content' (DeepSeek/vLLM).
+        const rtext = delta && (delta.reasoning || delta.reasoning_content);
+        if (rtext) { rzRow.style.display = ''; rz.textContent += rtext; }
         if (delta && delta.content) out.textContent += delta.content;
       } catch (e) { /* ignore keep-alives / non-JSON frames */ }
     }
