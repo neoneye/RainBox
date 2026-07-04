@@ -25,13 +25,24 @@ from db import (
 )
 from webapp.core import app
 from webapp.multimodal_demo_views import (
+    ImageConversionError,
     _audio_format,
     _build_completion_body,
+    _image_to_model_format,
 )
 
 
 def _file(data: bytes, filename: str, mimetype: str) -> FileStorage:
     return FileStorage(stream=io.BytesIO(data), filename=filename, content_type=mimetype)
+
+
+def _encode_image(fmt: str, size=(24, 16), color=(10, 120, 200)) -> bytes:
+    """A real single-color image encoded in `fmt` (e.g. 'WEBP', 'AVIF', 'PNG')."""
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format=fmt)
+    return buf.getvalue()
 
 
 def test_audio_format_known_and_fallback():
@@ -78,6 +89,40 @@ def test_build_body_audio_part_has_format():
         "type": "input_audio",
         "input_audio": {"data": b64, "format": "wav"},
     }
+
+
+def test_image_png_and_jpeg_pass_through_unchanged():
+    raw = b"\x89PNGdata"
+    assert _image_to_model_format("image/png", raw) == ("image/png", raw)
+    assert _image_to_model_format("image/jpeg", raw) == ("image/jpeg", raw)
+
+
+@pytest.mark.parametrize("fmt,mime", [("WEBP", "image/webp"), ("AVIF", "image/avif")])
+def test_image_webp_avif_transcoded_to_png(fmt, mime):
+    from PIL import Image
+
+    out_mime, out_raw = _image_to_model_format(mime, _encode_image(fmt))
+    assert out_mime == "image/png"
+    assert out_raw[:8] == b"\x89PNG\r\n\x1a\n"          # real PNG signature
+    reopened = Image.open(io.BytesIO(out_raw))
+    assert reopened.format == "PNG" and reopened.size == (24, 16)
+
+
+def test_image_undecodable_raises_conversion_error():
+    with pytest.raises(ImageConversionError):
+        _image_to_model_format("image/webp", b"not really a webp")
+
+
+def test_build_body_webp_becomes_png_data_url():
+    from PIL import Image
+
+    body = _build_completion_body("gemma", "", "what is this", _file(_encode_image("WEBP"), "x.webp", "image/webp"))
+    part = body["messages"][-1]["content"][1]
+    assert part["type"] == "image_url"
+    url = part["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,")
+    decoded = base64.b64decode(url.split(",", 1)[1])
+    assert Image.open(io.BytesIO(decoded)).format == "PNG"
 
 
 @pytest.fixture
@@ -169,6 +214,19 @@ def test_complete_forwards_body_and_relays_stream(seeded_model):
     assert captured["json"]["model"] == "gemma-multimodal-test"
     assert captured["json"]["stream"] is True
     assert "Hel" in streamed and "lo" in streamed
+
+
+def test_complete_400_on_undecodable_image_without_calling_backend(seeded_model):
+    client = app.test_client()
+    with patch("webapp.multimodal_demo_views.requests.post") as post:
+        resp = client.post(
+            f"/demo/multimodal/complete?id={seeded_model}",
+            data={"user": "what is this", "file": (io.BytesIO(b"garbage"), "x.webp", "image/webp")},
+            content_type="multipart/form-data",
+        )
+    assert resp.status_code == 400
+    assert "could not decode" in resp.get_data(as_text=True)
+    post.assert_not_called()  # transcode fails before any backend request
 
 
 def test_complete_404_for_unknown_model():

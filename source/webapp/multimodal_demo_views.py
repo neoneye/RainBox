@@ -56,22 +56,59 @@ def _audio_format(mime: str) -> str:
     return mime.split("/", 1)[-1] or "wav"
 
 
+# Image MIME types the target models accept directly. Anything else (webp,
+# avif, gif, …) is transcoded to PNG before it's sent.
+_MODEL_IMAGE_MIMES = {"image/png", "image/jpeg"}
+
+
+class ImageConversionError(Exception):
+    """A selected image could not be decoded/transcoded to a model-accepted
+    format (unsupported or corrupt image)."""
+
+
+def _image_to_model_format(mime: str, raw: bytes) -> tuple[str, bytes]:
+    """Return (mime, bytes) for an image the model accepts. png/jpeg pass
+    through untouched; every other image type (webp, avif, gif, …) is decoded
+    and re-encoded as PNG. Raises ImageConversionError if the bytes cannot be
+    decoded as an image."""
+    if mime in _MODEL_IMAGE_MIMES:
+        return mime, raw
+    import io
+
+    from PIL import Image
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except Exception as e:
+        raise ImageConversionError(f"could not decode {mime or 'image'}: {e}") from e
+    # PNG can't store CMYK / exotic modes; normalize to one it can.
+    if img.mode not in ("RGB", "RGBA", "L", "LA", "P"):
+        img = img.convert("RGBA")
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return "image/png", out.getvalue()
+
+
 def _build_completion_body(
     model_name: str, system: str, user: str, file: FileStorage | None
 ) -> dict:
     """OpenAI-compatible /chat/completions body. The user message is a
     content-parts array: a text part plus, if a file is attached, an image_url
-    (image/*) or input_audio (audio/*) part."""
+    (image/*) or input_audio (audio/*) part. Image types the model doesn't
+    accept (webp, avif, …) are transcoded to PNG first."""
     parts: list[dict] = [{"type": "text", "text": user}]
     if file is not None and file.filename:
         raw = file.read()
-        b64 = base64.b64encode(raw).decode("ascii")
         mime = file.mimetype or ""
         if mime.startswith("image/"):
+            out_mime, out_raw = _image_to_model_format(mime, raw)
+            b64 = base64.b64encode(out_raw).decode("ascii")
             parts.append(
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+                {"type": "image_url", "image_url": {"url": f"data:{out_mime};base64,{b64}"}}
             )
         elif mime.startswith("audio/"):
+            b64 = base64.b64encode(raw).decode("ascii")
             parts.append(
                 {
                     "type": "input_audio",
@@ -202,7 +239,7 @@ Nothing is saved.</p>
 </div>
 <div class="row">
   <label for="file">Image or audio file</label>
-  <input type="file" id="file" accept="image/*,audio/*" onchange="ppPreview()">
+  <input type="file" id="file" accept="image/*,.avif,.webp,audio/*" onchange="ppPreview()">
   <button type="button" onclick="ppClearFile()" style="background:#6b7280">Clear</button>
   <div id="preview" style="margin-top:0.6em"></div>
 </div>
@@ -399,7 +436,10 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     if base is None:
         return jsonify({"error": "could not resolve a backend URL for this model"}), 400
 
-    body = _build_completion_body(target.model_name, system, user, file if has_file else None)
+    try:
+        body = _build_completion_body(target.model_name, system, user, file if has_file else None)
+    except ImageConversionError as e:
+        return jsonify({"error": str(e)}), 400
     headers = {"Content-Type": "application/json"}
     api_key = target.arguments.get("api_key")
     if api_key:
