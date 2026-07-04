@@ -30,6 +30,11 @@ INDEX_TEMPLATE: str = """
 </form>
 {% if demo %}<p class="ok">demo started &mdash; 5 dreamer tasks seeded; the supervisor will wake the agents.</p>{% endif %}
 
+<h2>Try it</h2>
+<ul>
+  <li><a href="{{ url_for('demo_multimodal') }}"><b>Multimodal</b></a> &mdash; poke a local vision+audio model with an image or audio file (streamed, nothing saved)</li>
+</ul>
+
 <h2>Agents</h2>
 <ul>
 {% for name, params in agents.items() %}
