@@ -247,3 +247,59 @@ def demo_multimodal() -> str:
         model_name=(model.effective_display_name if model else None),
         model_id=(request.args.get("id") or DEFAULT_MODEL_UUID),
     )
+
+
+@app.route("/demo/multimodal/complete", methods=["POST"])
+def demo_multimodal_complete() -> Response | tuple[Response, int]:
+    model = _resolve_model(request.args.get("id"))
+    if model is None:
+        return jsonify({"error": "model not found"}), 404
+
+    system = request.form.get("system", "")
+    user = request.form.get("user", "")
+    file = request.files.get("file")
+    has_file = file is not None and bool(file.filename)
+    if not user.strip() and not has_file:
+        return jsonify({"error": "nothing to send: provide a prompt or a file"}), 400
+
+    args = model.arguments or {}
+    api_base = (args.get("api_base") or "").rstrip("/")
+    if not api_base:
+        return jsonify({"error": "model has no api_base configured"}), 400
+
+    body = _build_completion_body(model.model_name, system, user, file if has_file else None)
+    headers = {"Content-Type": "application/json"}
+    api_key = args.get("api_key")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        upstream = requests.post(
+            f"{api_base}/chat/completions",
+            json=body,
+            headers=headers,
+            stream=True,
+            timeout=PROXY_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return jsonify({"error": f"backend unreachable at {api_base}: {e}"}), 502
+
+    # Non-2xx: forward the raw error body verbatim — seeing the backend's own
+    # complaint ("this model can't do audio") is the point of the demo.
+    if upstream.status_code != 200:
+        return Response(
+            upstream.content,
+            status=upstream.status_code,
+            mimetype=upstream.headers.get("Content-Type", "text/plain"),
+        )
+
+    def relay():
+        for chunk in upstream.iter_content(chunk_size=None):
+            if chunk:
+                yield chunk
+
+    return Response(
+        relay(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

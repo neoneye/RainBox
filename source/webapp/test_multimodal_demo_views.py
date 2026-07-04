@@ -111,3 +111,105 @@ def test_page_renders_not_found_for_unknown_id():
     body = resp.get_data(as_text=True)
     assert resp.status_code == 200
     assert "not found" in body.lower()
+
+
+class FakeStreamResponse:
+    """Stand-in for a streaming requests.Response."""
+
+    def __init__(self, *, status_code=200, chunks=(), content=b"", content_type="text/event-stream"):
+        self.status_code = status_code
+        self._chunks = list(chunks)
+        self.content = content
+        self.headers = {"Content-Type": content_type}
+
+    def iter_content(self, chunk_size=None):
+        yield from self._chunks
+
+
+def test_complete_forwards_body_and_relays_stream(seeded_model):
+    client = app.test_client()
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        captured["headers"] = headers
+        return FakeStreamResponse(chunks=[
+            b'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+            b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+            b"data: [DONE]\n\n",
+        ])
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post):
+        resp = client.post(
+            f"/demo/multimodal/complete?id={seeded_model}",
+            data={"system": "be terse", "user": "hi"},
+            content_type="multipart/form-data",
+        )
+        streamed = resp.get_data(as_text=True)
+
+    assert resp.status_code == 200
+    assert captured["url"] == "http://127.0.0.1:1337/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer k"
+    assert captured["json"]["model"] == "gemma-multimodal-test"
+    assert captured["json"]["stream"] is True
+    assert "Hel" in streamed and "lo" in streamed
+
+
+def test_complete_404_for_unknown_model():
+    client = app.test_client()
+    resp = client.post(
+        "/demo/multimodal/complete?id=00000000-0000-0000-0000-000000000000",
+        data={"user": "hi"},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 404
+
+
+def test_complete_400_when_nothing_to_send(seeded_model):
+    client = app.test_client()
+    resp = client.post(
+        f"/demo/multimodal/complete?id={seeded_model}",
+        data={"system": "", "user": "   "},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+
+
+def test_complete_forwards_backend_error_body(seeded_model):
+    client = app.test_client()
+
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        return FakeStreamResponse(status_code=400, content=b'{"error":"no audio support"}',
+                                  content_type="application/json")
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post):
+        resp = client.post(
+            f"/demo/multimodal/complete?id={seeded_model}",
+            data={"user": "hi"},
+            content_type="multipart/form-data",
+        )
+    assert resp.status_code == 400
+    assert "no audio support" in resp.get_data(as_text=True)
+
+
+def test_complete_does_not_write_to_db(seeded_model):
+    client = app.test_client()
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        before = db.session.query(ModelConfig).count()
+
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        return FakeStreamResponse(chunks=[b"data: [DONE]\n\n"])
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post):
+        client.post(
+            f"/demo/multimodal/complete?id={seeded_model}",
+            data={"user": "hi"},
+            content_type="multipart/form-data",
+        ).get_data()
+
+    with a.app_context():
+        after = db.session.query(ModelConfig).count()
+    assert after == before
