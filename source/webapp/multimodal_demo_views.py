@@ -223,7 +223,7 @@ MULTIMODAL_TEMPLATE = """
          onclick="return ppSelectModel(event, this)"
          class="{% if target and target.kind == 'config' and target.uuid == cfg.uuid %}selected{% endif %}">
         <span class="pp-provider-badge">{% if cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'ollama' %}Ollama{% else %}{{ cfg.provider }}{% endif %}</span>
-        {{ cfg.model_name }}{% if not cfg.available %} <span class="muted">(unavailable)</span>{% endif %}
+        {{ cfg.model_name }}
       </a>
       {% if overrides %}
       <ul>
@@ -501,11 +501,14 @@ async function ppSend() {
 def demo_multimodal() -> str:
     target = _resolve_target(request.args.get("id"))
     model_id = str(target.uuid) if target else (request.args.get("id") or DEFAULT_MODEL_UUID)
+    # Only offer models the provider currently exposes; unavailable configs
+    # (and their overrides) are hidden from the picker.
+    tree = [(cfg, ovs) for cfg, ovs in list_model_configs_with_overrides() if cfg.available]
     return render_template_string(
         MULTIMODAL_TEMPLATE,
         target=target,
         model_id=model_id,
-        tree=list_model_configs_with_overrides(),
+        tree=tree,
     )
 
 

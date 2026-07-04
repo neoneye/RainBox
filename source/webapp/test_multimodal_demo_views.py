@@ -548,6 +548,35 @@ def test_selecting_override_renders_it_as_target(seeded_config_with_override):
     assert '<b id="pp-model-name">Picker override</b>' in body
 
 
+def test_picker_hides_unavailable_config_and_its_override():
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        cfg = ModelConfig(
+            provider="jan",
+            model_name="gone-model-picker-test",
+            arguments={"api_base": "http://127.0.0.1:1337/v1"},
+            available=False,
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        ov = create_model_config_override(
+            model_config_uuid=cfg.uuid,
+            overrides={"temperature": 0.1},
+            display_name="Gone override picker test",
+        )
+        cfg_uid, ov_uid = str(cfg.uuid), str(ov.uuid)
+        try:
+            body = app.test_client().get("/demo/multimodal").get_data(as_text=True)
+            assert "gone-model-picker-test" not in body       # config hidden
+            assert "Gone override picker test" not in body     # its override hidden too
+            assert f"id={cfg_uid}" not in body and f"id={ov_uid}" not in body
+        finally:
+            db.session.delete(get_model_config_override(ov.uuid))
+            db.session.delete(get_model_config(cfg.uuid))
+            db.session.commit()
+
+
 @pytest.fixture
 def seeded_config_and_override_for_proxy():
     """Seed a base config (provider jan, api_base/api_key set) and an
