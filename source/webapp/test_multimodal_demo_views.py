@@ -181,15 +181,16 @@ def test_complete_400_when_nothing_to_send(seeded_model):
 
 
 @pytest.fixture
-def seeded_model_no_api_base():
-    """Seed a model row with no api_base configured; clean up after."""
+def seeded_model_unresolvable_provider():
+    """Seed a model row with no api_base and an unregistered provider id, so
+    no backend base URL can be resolved at all; clean up after."""
     a = make_app()
     init_db(a)
     with a.app_context():
         m = ModelConfig(
-            provider="jan",
-            model_name="gemma-multimodal-no-base",
-            display_name="Gemma (no api_base)",
+            provider="nonesuch",
+            model_name="gemma-multimodal-unresolvable",
+            display_name="Gemma (unresolvable provider)",
             arguments={},
         )
         db.session.add(m)
@@ -202,14 +203,68 @@ def seeded_model_no_api_base():
             db.session.commit()
 
 
-def test_complete_400_when_api_base_missing(seeded_model_no_api_base):
+def test_complete_400_when_backend_unresolvable(seeded_model_unresolvable_provider):
     client = app.test_client()
     resp = client.post(
-        f"/demo/multimodal/complete?id={seeded_model_no_api_base}",
+        f"/demo/multimodal/complete?id={seeded_model_unresolvable_provider}",
         data={"user": "hi"},
         content_type="multipart/form-data",
     )
     assert resp.status_code == 400
+
+
+@pytest.fixture
+def seeded_model_ollama():
+    """Seed an Ollama model row with no api_base — Ollama models rely on the
+    provider's default base URL rather than a per-model override; clean up
+    after."""
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        m = ModelConfig(
+            provider="ollama",
+            model_name="gemma4:e4b-multimodal-test",
+            display_name="Gemma4 (ollama test)",
+            arguments={},
+        )
+        db.session.add(m)
+        db.session.commit()
+        uid = str(m.uuid)
+        try:
+            yield uid
+        finally:
+            db.session.delete(m)
+            db.session.commit()
+
+
+class _StubOllamaProvider:
+    """Minimal Provider stand-in exposing only what _backend_base needs."""
+
+    def base_url(self) -> str:
+        return "http://127.0.0.1:11434"
+
+
+def test_complete_resolves_ollama_base_from_provider_registry(seeded_model_ollama):
+    client = app.test_client()
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        captured["url"] = url
+        return FakeStreamResponse(chunks=[b"data: [DONE]\n\n"])
+
+    with patch(
+        "webapp.multimodal_demo_views.providers.get",
+        return_value=_StubOllamaProvider(),
+    ), patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post):
+        resp = client.post(
+            f"/demo/multimodal/complete?id={seeded_model_ollama}",
+            data={"user": "hi"},
+            content_type="multipart/form-data",
+        )
+        resp.get_data()
+
+    assert resp.status_code == 200
+    assert captured["url"] == "http://127.0.0.1:11434/v1/chat/completions"
 
 
 def test_complete_502_when_backend_unreachable(seeded_model):

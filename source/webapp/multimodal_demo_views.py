@@ -3,9 +3,9 @@
 A throwaway page to build intuition about how the model handles image/audio
 input. The browser posts a system prompt, a user prompt, and one optional file
 (image OR audio) to a same-origin proxy, which reads the target ModelConfig
-(read-only) for its backend api_base/model_name, builds an OpenAI-compatible
-multimodal /chat/completions request, and streams the backend's SSE response
-straight back. Nothing is persisted.
+(read-only) for its backend base URL/model_name (see `_backend_base`), builds
+an OpenAI-compatible multimodal /chat/completions request, and streams the
+backend's SSE response straight back. Nothing is persisted.
 
 Direct OpenAI-compatible passthrough (not llama_index) is deliberate: the point
 is to see the raw multimodal request/response behavior, including backend errors
@@ -19,6 +19,7 @@ import requests
 from flask import Response, jsonify, render_template_string, request
 from werkzeug.datastructures import FileStorage
 
+import providers
 from db import ModelConfig, db
 
 from .core import app
@@ -76,6 +77,24 @@ def _build_completion_body(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": parts})
     return {"model": model_name, "messages": messages, "stream": True}
+
+
+def _backend_base(model: ModelConfig) -> str | None:
+    """The OpenAI-compatible base URL (no trailing slash) to send this
+    model's requests to. Jan/LM Studio models store the full base
+    (including `/v1`) in `arguments["api_base"]`. Ollama models store none —
+    they use the provider's default base URL, discovered via the provider
+    registry, with `/v1` appended. Returns None if neither source yields a
+    base (e.g. an unregistered provider id)."""
+    args = model.arguments or {}
+    api_base = (args.get("api_base") or "").rstrip("/")
+    if api_base:
+        return api_base
+    try:
+        provider = providers.get(model.provider)
+    except KeyError:
+        return None
+    return provider.base_url().rstrip("/") + "/v1"
 
 
 def _resolve_model(id_param: str | None) -> ModelConfig | None:
@@ -262,27 +281,26 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     if not user.strip() and not has_file:
         return jsonify({"error": "nothing to send: provide a prompt or a file"}), 400
 
-    args = model.arguments or {}
-    api_base = (args.get("api_base") or "").rstrip("/")
-    if not api_base:
-        return jsonify({"error": "model has no api_base configured"}), 400
+    base = _backend_base(model)
+    if base is None:
+        return jsonify({"error": "could not resolve a backend URL for this model"}), 400
 
     body = _build_completion_body(model.model_name, system, user, file if has_file else None)
     headers = {"Content-Type": "application/json"}
-    api_key = args.get("api_key")
+    api_key = (model.arguments or {}).get("api_key")
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
     try:
         upstream = requests.post(
-            f"{api_base}/chat/completions",
+            f"{base}/chat/completions",
             json=body,
             headers=headers,
             stream=True,
             timeout=PROXY_TIMEOUT,
         )
     except requests.RequestException as e:
-        return jsonify({"error": f"backend unreachable at {api_base}: {e}"}), 502
+        return jsonify({"error": f"backend unreachable at {base}: {e}"}), 502
 
     # Non-2xx: forward the raw error body verbatim — seeing the backend's own
     # complaint ("this model can't do audio") is the point of the demo.
