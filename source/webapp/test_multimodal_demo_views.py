@@ -69,3 +69,45 @@ def test_build_body_audio_part_has_format():
         "type": "input_audio",
         "input_audio": {"data": b64, "format": "wav"},
     }
+
+
+@pytest.fixture
+def seeded_model():
+    """Seed one vision/audio model row in the sandbox DB; clean up after."""
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        m = ModelConfig(
+            provider="jan",
+            model_name="gemma-multimodal-test",
+            display_name="Gemma (multimodal test)",
+            arguments={"api_base": "http://127.0.0.1:1337/v1", "api_key": "k"},
+        )
+        db.session.add(m)
+        db.session.commit()
+        uid = str(m.uuid)
+        try:
+            yield uid
+        finally:
+            db.session.delete(m)
+            db.session.commit()
+
+
+def test_page_renders_with_model_name(seeded_model):
+    client = app.test_client()
+    resp = client.get(f"/demo/multimodal?id={seeded_model}")
+    body = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert "pp-nav" in body                       # shared nav included
+    assert "Gemma (multimodal test)" in body      # resolved display name shown
+    assert 'type="file"' in body                  # file input present
+    assert 'id="system"' in body and 'id="user"' in body
+
+
+def test_page_renders_not_found_for_unknown_id():
+    client = app.test_client()
+    # A well-formed but absent UUID.
+    resp = client.get("/demo/multimodal?id=00000000-0000-0000-0000-000000000000")
+    body = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert "not found" in body.lower()

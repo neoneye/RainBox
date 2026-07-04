@@ -149,6 +149,7 @@ NAV_TEMPLATE = """
       </div>
     </details>
     <a href="{{ url_for('doctor_page') }}" class="{{ 'pp-active' if request.endpoint == 'doctor_page' }}">Doctor</a>
+    <a href="{{ url_for('demo_multimodal') }}" class="{{ 'pp-active' if request.endpoint == 'demo_multimodal' }}">Multimodal</a>
     <span class="pp-spacer"></span>
     <a href="{{ url_for('admin.index') }}" class="pp-admin">Admin Panel</a>
   </div>
