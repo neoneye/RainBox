@@ -13,6 +13,7 @@ like "this model can't do audio", verbatim.
 """
 
 import base64
+from collections import namedtuple
 from uuid import UUID
 
 import requests
@@ -20,7 +21,12 @@ from flask import Response, jsonify, render_template_string, request
 from werkzeug.datastructures import FileStorage
 
 import providers
-from db import ModelConfig, db
+from db import (
+    get_model_config,
+    get_model_config_override,
+    list_model_configs_with_overrides,
+    resolved_model_kwargs,
+)
 
 from .core import app
 
@@ -79,33 +85,43 @@ def _build_completion_body(
     return {"model": model_name, "messages": messages, "stream": True}
 
 
-def _backend_base(model: ModelConfig) -> str | None:
+def _backend_base(provider: str, arguments: dict) -> str | None:
     """The OpenAI-compatible base URL (no trailing slash) to send this
     model's requests to. Jan/LM Studio models store the full base
     (including `/v1`) in `arguments["api_base"]`. Ollama models store none —
     they use the provider's default base URL, discovered via the provider
     registry, with `/v1` appended. Returns None if neither source yields a
     base (e.g. an unregistered provider id)."""
-    args = model.arguments or {}
-    api_base = (args.get("api_base") or "").rstrip("/")
+    api_base = (arguments.get("api_base") or "").strip()
     if api_base:
-        return api_base
+        return api_base.rstrip("/")
     try:
-        provider = providers.get(model.provider)
+        return providers.get(provider).base_url().rstrip("/") + "/v1"
     except KeyError:
         return None
-    return provider.base_url().rstrip("/") + "/v1"
 
 
-def _resolve_model(id_param: str | None) -> ModelConfig | None:
-    """Look up the target model by UUID (defaulting to DEFAULT_MODEL_UUID).
-    Returns None for an unparseable id or a missing row."""
+_Target = namedtuple("_Target", "uuid kind display_name provider model_name arguments")
+
+
+def _resolve_target(id_param: str | None) -> "_Target | None":
+    """Resolve ?id (a ModelConfig OR ModelConfigOverride uuid; default
+    DEFAULT_MODEL_UUID) into a _Target, or None if unparseable/absent."""
     raw = id_param or DEFAULT_MODEL_UUID
     try:
         uid = UUID(str(raw))
     except (ValueError, TypeError, AttributeError):
         return None
-    return db.session.query(ModelConfig).filter_by(uuid=uid).first()
+    try:
+        provider, model_name, kwargs = resolved_model_kwargs(uid)
+    except LookupError:
+        return None
+    cfg = get_model_config(uid)
+    if cfg is not None:
+        return _Target(uid, "config", cfg.effective_display_name, provider, model_name, kwargs)
+    ov = get_model_config_override(uid)
+    display = ov.effective_display_name if ov is not None else model_name
+    return _Target(uid, "override", display, provider, model_name, kwargs)
 
 
 MULTIMODAL_TEMPLATE = """
@@ -130,13 +146,46 @@ MULTIMODAL_TEMPLATE = """
             background:rgba(37,99,235,0.10);border:3px dashed #2563eb;pointer-events:none;
             font-size:1.4rem;font-weight:600;color:#1d4ed8}
   body.pp-dragging #dropzone{display:flex}
+  ul.tree{list-style:none;margin:0;padding:0}
+  ul.tree ul{list-style:none;margin:0;padding:0 0 0 1.2em}
+  ul.tree li{margin:0.15em 0;line-height:1.3}
+  ul.tree a{display:block;padding:0.2em 0.4em;border-radius:3px;text-decoration:none;color:inherit}
+  ul.tree a:hover{background:#eef}
+  ul.tree a.selected{background:#dde7ff;font-weight:600}
+  .pp-provider-badge{display:inline-block;font-size:75%;padding:0 0.4em;
+    border-radius:0.4em;margin-right:0.3em;background:#dbeafe;color:#1e40af;
+    vertical-align:0.05em}
 </style>
 <div id="dropzone">Drop an image or audio file anywhere</div>
 {% include "_nav.html" %}
 <div class="pp-content">
 <h1>Multimodal demo</h1>
-{% if model_name %}
-<p class="muted">Talking to <b>{{ model_name }}</b> (<code>{{ model_id }}</code>).
+
+<details class="row" {% if not target %}open{% endif %}>
+  <summary>Model: <b>{% if target %}{{ target.display_name }}{% else %}(none selected){% endif %}</b> &mdash; choose</summary>
+  <ul class="tree">
+    {% for cfg, overrides in tree %}
+    <li>
+      <a href="{{ url_for('demo_multimodal', id=cfg.uuid) }}"
+         class="{% if target and target.kind == 'config' and target.uuid == cfg.uuid %}selected{% endif %}">
+        <span class="pp-provider-badge">{% if cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'ollama' %}Ollama{% else %}{{ cfg.provider }}{% endif %}</span>
+        {{ cfg.model_name }}{% if not cfg.available %} <span class="muted">(unavailable)</span>{% endif %}
+      </a>
+      {% if overrides %}
+      <ul>
+        {% for ov in overrides %}
+        <li><a href="{{ url_for('demo_multimodal', id=ov.uuid) }}"
+               class="{% if target and target.kind == 'override' and target.uuid == ov.uuid %}selected{% endif %}">{{ ov.effective_display_name }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+
+{% if target %}
+<p class="muted">Talking to <b>{{ target.display_name }}</b> (<code>{{ model_id }}</code>).
 Attach one image or audio file, add prompts, and watch the streamed response.
 Nothing is saved.</p>
 
@@ -298,8 +347,7 @@ async function ppSend() {
 }
 </script>
 {% else %}
-<p class="err">Model <code>{{ model_id }}</code> not found in model_config.
-Pass a valid <code>?id=&lt;uuid&gt;</code> for a registered vision/audio model.</p>
+<p class="err">Model <code>{{ model_id }}</code> not found &mdash; pick one below.</p>
 {% endif %}
 </div>
 """
@@ -307,18 +355,20 @@ Pass a valid <code>?id=&lt;uuid&gt;</code> for a registered vision/audio model.<
 
 @app.route("/demo/multimodal")
 def demo_multimodal() -> str:
-    model = _resolve_model(request.args.get("id"))
+    target = _resolve_target(request.args.get("id"))
+    model_id = str(target.uuid) if target else (request.args.get("id") or DEFAULT_MODEL_UUID)
     return render_template_string(
         MULTIMODAL_TEMPLATE,
-        model_name=(model.effective_display_name if model else None),
-        model_id=(request.args.get("id") or DEFAULT_MODEL_UUID),
+        target=target,
+        model_id=model_id,
+        tree=list_model_configs_with_overrides(),
     )
 
 
 @app.route("/demo/multimodal/complete", methods=["POST"])
 def demo_multimodal_complete() -> Response | tuple[Response, int]:
-    model = _resolve_model(request.args.get("id"))
-    if model is None:
+    target = _resolve_target(request.args.get("id"))
+    if target is None:
         return jsonify({"error": "model not found"}), 404
 
     system = request.form.get("system", "")
@@ -328,13 +378,13 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     if not user.strip() and not has_file:
         return jsonify({"error": "nothing to send: provide a prompt or a file"}), 400
 
-    base = _backend_base(model)
+    base = _backend_base(target.provider, target.arguments)
     if base is None:
         return jsonify({"error": "could not resolve a backend URL for this model"}), 400
 
-    body = _build_completion_body(model.model_name, system, user, file if has_file else None)
+    body = _build_completion_body(target.model_name, system, user, file if has_file else None)
     headers = {"Content-Type": "application/json"}
-    api_key = (model.arguments or {}).get("api_key")
+    api_key = target.arguments.get("api_key")
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 

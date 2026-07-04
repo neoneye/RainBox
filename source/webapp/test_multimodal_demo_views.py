@@ -14,7 +14,15 @@ import pytest
 import requests
 from werkzeug.datastructures import FileStorage
 
-from db import ModelConfig, db, init_db, make_app
+from db import (
+    ModelConfig,
+    create_model_config_override,
+    db,
+    get_model_config,
+    get_model_config_override,
+    init_db,
+    make_app,
+)
 from webapp.core import app
 from webapp.multimodal_demo_views import (
     _audio_format,
@@ -362,3 +370,111 @@ def test_complete_does_not_write_to_db(seeded_model):
     with a.app_context():
         after = db.session.query(ModelConfig).count()
     assert after == before
+
+
+@pytest.fixture
+def seeded_config_with_override():
+    """Seed a ModelConfig plus one ModelConfigOverride under it; clean up
+    both after."""
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        cfg = ModelConfig(
+            provider="jan",
+            model_name="gemma-picker-test",
+            display_name="Gemma (picker test)",
+            arguments={"api_base": "http://127.0.0.1:1337/v1", "api_key": "k"},
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        ov = create_model_config_override(
+            model_config_uuid=cfg.uuid,
+            overrides={"temperature": 0.2},
+            display_name="Picker override",
+        )
+        cfg_uid, ov_uid = str(cfg.uuid), str(ov.uuid)
+        try:
+            yield cfg_uid, ov_uid
+        finally:
+            db.session.delete(get_model_config_override(ov.uuid))
+            db.session.delete(get_model_config(cfg.uuid))
+            db.session.commit()
+
+
+def test_picker_tree_renders_configs_and_overrides(seeded_config_with_override):
+    cfg_uid, ov_uid = seeded_config_with_override
+    client = app.test_client()
+    resp = client.get(f"/demo/multimodal?id={cfg_uid}")
+    body = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert "gemma-picker-test" in body
+    assert "Picker override" in body
+    assert f"id={cfg_uid}" in body
+    assert f"id={ov_uid}" in body
+
+
+def test_selecting_override_renders_it_as_target(seeded_config_with_override):
+    _cfg_uid, ov_uid = seeded_config_with_override
+    client = app.test_client()
+    resp = client.get(f"/demo/multimodal?id={ov_uid}")
+    body = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert "Picker override" in body
+
+
+@pytest.fixture
+def seeded_config_and_override_for_proxy():
+    """Seed a base config (provider jan, api_base/api_key set) and an
+    override that changes only api_base, so the proxy test can prove
+    override resolution: base model_name + api_key win, override's
+    api_base wins. Clean up both after."""
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        cfg = ModelConfig(
+            provider="jan",
+            model_name="m-base",
+            display_name="Base model",
+            arguments={"api_base": "http://base-a/v1", "api_key": "k1"},
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        ov = create_model_config_override(
+            model_config_uuid=cfg.uuid,
+            overrides={"api_base": "http://base-b/v1"},
+            display_name="Override b",
+        )
+        ov_uid = str(ov.uuid)
+        try:
+            yield ov_uid
+        finally:
+            db.session.delete(get_model_config_override(ov.uuid))
+            db.session.delete(get_model_config(cfg.uuid))
+            db.session.commit()
+
+
+def test_complete_resolves_override_to_base_model_name_and_merged_args(
+    seeded_config_and_override_for_proxy,
+):
+    ov_uid = seeded_config_and_override_for_proxy
+    client = app.test_client()
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        captured["headers"] = headers
+        return FakeStreamResponse(chunks=[b"data: [DONE]\n\n"])
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post):
+        resp = client.post(
+            f"/demo/multimodal/complete?id={ov_uid}",
+            data={"user": "hi"},
+            content_type="multipart/form-data",
+        )
+        resp.get_data()
+
+    assert resp.status_code == 200
+    assert captured["url"] == "http://base-b/v1/chat/completions"
+    assert captured["json"]["model"] == "m-base"
+    assert captured["headers"]["Authorization"] == "Bearer k1"
