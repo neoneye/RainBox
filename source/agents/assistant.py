@@ -4,7 +4,7 @@ The contract is `AssistantActionName` + `AssistantStepDecision`: the model emits
 one structured decision per step, the loop validates it, dispatches the action,
 records a durable per-step trace (assistant_run / assistant_step tables), feeds
 the observation back, and repeats until a terminal `reply`/`ask_clarifying_question`
-or the step cap. Actions are read-only (query_memory, query_qa,
+or the step cap. Actions are read-only (query_memory,
 workspace_read_command, kanban_read) and write families (memory, skills, kanban,
 reminders, files) — each risk-tiered (log-and-undo / confirm) and traced.
 
@@ -49,7 +49,6 @@ class AssistantActionName(str, Enum):
     # Read-only actions: each performs one bounded read and returns an
     # observation the loop feeds back to the model.
     QUERY_MEMORY = "query_memory"
-    QUERY_QA = "query_qa"
     WORKSPACE_READ_COMMAND = "workspace_read_command"
     KANBAN_READ = "kanban_read"
 
@@ -106,8 +105,8 @@ request is ambiguous or missing information, use `ask_clarifying_question`. Only
 use actions from the list below; any other action is rejected.
 
 Match the read action to the data you need: `kanban_read` for boards/tasks,
-`query_memory` for remembered facts and general questions (project/git status).
-Do not use `query_memory` to inspect kanban or files.
+`query_memory` for remembered facts and general questions (project/git status,
+capabilities). Do not use `query_memory` to inspect kanban or files.
 When a step fails, fix the specific problem it reports — never resubmit the same
 args, and never invent placeholder values like `<COLUMN_UUID>`; if you lack an
 id, read for it or omit the optional argument.
@@ -200,36 +199,6 @@ def _action_query_memory(
         ok=True, text=text,
         data={"seed_count": len(seeds), "dynamic_count": len(memories),
               "memory_uuids": [s.uuid for s in seeds] + [str(m.uuid) for m in memories]},
-    )
-
-
-def _action_query_qa(
-    ctx: AssistantActionContext, args: dict[str, Any]
-) -> AssistantObservation:
-    """Reuse the QueryAgent exact/semantic Q&A pipeline and its read-only dynamic
-    handlers (project status, git status, ...). Module-qualified calls so tests
-    can stub the embedding-dependent internals."""
-    from memory import seed_memory as qkb
-    from agents.query_handlers import QueryContext
-
-    query = str(args.get("query", "")).strip()
-    qkb._load_kb()
-    vs = qkb._vector_store()
-    qkb._ensure_populated(vs)
-    match = qkb._exact_match(query) or qkb._semantic_match(query, vs)
-    if match is None:
-        return AssistantObservation(
-            ok=True, text="No confident Q&A match.", data={"matched": False}
-        )
-    qctx = QueryContext(
-        room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
-    )
-    answer = qkb._resolve_match(match, qctx)
-    return AssistantObservation(
-        ok=True,
-        text=answer,
-        data={"matched": True, "qa_id": match.qa_id, "method": match.method,
-              "score": match.score},
     )
 
 
@@ -1025,19 +994,12 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.QUERY_MEMORY: Capability(
         name=AssistantActionName.QUERY_MEMORY, family="memory",
-        description='search remembered facts. args: {"query": "..."}',
-        summary="search remembered facts",
+        description=('recall stored facts AND answer general questions (project '
+                     'status, git status, capabilities, model info) from the '
+                     'knowledge base. NOT for kanban or files — use kanban_read / '
+                     'workspace_read_command. args: {"query": "..."}'),
+        summary="recall facts and answer general questions",
         required_args=("query",), action=_action_query_memory, output_cap_chars=6000,
-    ),
-    AssistantActionName.QUERY_QA: Capability(
-        name=AssistantActionName.QUERY_QA, family="query",
-        description=('answer a general question from the Q&A knowledge base and '
-                     'read-only handlers (e.g. project status, git status). NOT for '
-                     'kanban, remembered facts, or files — use the matching read '
-                     'action (kanban_read / query_memory / workspace_read_command). '
-                     'args: {"query": "..."}'),
-        summary="answer a general question from the knowledge base",
-        required_args=("query",), action=_action_query_qa, output_cap_chars=6000,
     ),
     AssistantActionName.WORKSPACE_READ_COMMAND: Capability(
         name=AssistantActionName.WORKSPACE_READ_COMMAND, family="workspace",

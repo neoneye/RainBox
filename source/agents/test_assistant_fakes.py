@@ -84,7 +84,6 @@ def test_action_enum_covers_the_known_action_surface():
         "reply",
         "ask_clarifying_question",
         "query_memory",
-        "query_qa",
         "workspace_read_command",
         "kanban_read",
         "remember",
