@@ -157,17 +157,22 @@ AssistantAction = Callable[[AssistantActionContext, dict[str, Any]], AssistantOb
 def _action_query_memory(
     ctx: AssistantActionContext, args: dict[str, Any], *, _seed_retriever=None
 ) -> AssistantObservation:
-    """Hybrid memory retrieval over dynamic claims PLUS curated seed memories.
-    Results are tiered: user-overlay seed, then upstream seed, then dynamic
-    claims. Secrets are never returned (include_secret stays False)."""
+    """Hybrid retrieval over dynamic claims, curated static seed answers, AND
+    live dynamic seed handlers (project status, git status, capabilities, model
+    info). Results are tiered: user-overlay seed, then upstream seed, then
+    dynamic claims. Secrets are never returned (include_secret stays False)."""
     from memory.retrieval import fence_recalled_memory, format_memory_context, retrieve_memories_hybrid
-    from memory.seed_memory import retrieve_seed_memories
+    from memory.seed_memory import retrieve_seed_answers
+    from agents.query_handlers import QueryContext
 
     query = str(args.get("query", "")).strip()
-    seed_fn = _seed_retriever or retrieve_seed_memories
+    qctx = QueryContext(
+        room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
+    )
+    seed_fn = _seed_retriever or retrieve_seed_answers
     seeds = []
     try:
-        seeds = seed_fn(query)
+        seeds = seed_fn(query, qctx=qctx)
     except Exception:
         logger.warning("assistant: seed memory retrieval failed", exc_info=True)
     # Tier seeds: user-overlay first, then upstream; preserve score order within tier.
@@ -1022,7 +1027,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         name=AssistantActionName.QUERY_MEMORY, family="memory",
         description='search remembered facts. args: {"query": "..."}',
         summary="search remembered facts",
-        required_args=("query",), action=_action_query_memory,
+        required_args=("query",), action=_action_query_memory, output_cap_chars=6000,
     ),
     AssistantActionName.QUERY_QA: Capability(
         name=AssistantActionName.QUERY_QA, family="query",

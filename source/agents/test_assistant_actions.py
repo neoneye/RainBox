@@ -142,6 +142,20 @@ def test_query_memory_includes_seed_memories_tiered(app_ctx):
     assert "user-overlay" in obs.text
 
 
+def test_query_memory_surfaces_dynamic_handler_answer(app_ctx):
+    """query_memory now resolves dynamic seed handlers (formerly query_qa's job):
+    a git-status handler answer must appear in the fenced block."""
+    from memory.seed_memory import SeedMemory
+    def fake_seed(query, *, qctx, **_):
+        return [SeedMemory(uuid="dyn-git", path="dev.git", source="upstream",
+                           answer="Working tree clean.", score=0.82, kind="dynamic")]
+    obs = _action_query_memory(_ctx(), {"query": "what is the git status"},
+                               _seed_retriever=fake_seed)
+    assert obs.ok
+    assert "Working tree clean." in obs.text
+    assert "<recalled_memory" in obs.text
+
+
 def test_query_memory_merges_seed_and_dynamic_without_duplicate_legend(app_ctx, fresh_subject):
     """Seed + dynamic together: seed lines first, then dynamic facts, and the
     '{memory_uuid}, ...' legend appears exactly once (the dynamic block's own
