@@ -43,10 +43,16 @@ DEFAULT_MODEL_UUID = "00ea3152-ff12-40e1-a63b-8f572de49edf"
 Both routes accept `?id=<uuid>` to override it. Resolution reads the
 `ModelConfig` row by `uuid` (read-only). From it we take:
 
-- `arguments["api_base"]` — the backend's OpenAI-compatible base URL
-  (e.g. `http://127.0.0.1:1337/v1`).
+- The backend's OpenAI-compatible base URL. Jan/LM Studio models store this
+  in `arguments["api_base"]` (e.g. `http://127.0.0.1:1337/v1`). Ollama models
+  carry no `api_base`, so the base is resolved from the provider registry:
+  `providers.get(model.provider).base_url()` (e.g. `http://127.0.0.1:11434`)
+  with `/v1` appended. Explicit `arguments["api_base"]` wins when set; the
+  registry default is the fallback. An unknown provider id yields no base and
+  the proxy returns HTTP 400.
 - `arguments.get("api_key")` — sent as `Authorization: Bearer …` if present.
-- `model_name` — the id the backend expects in the request body.
+- `model_name` — the id the backend expects in the request body (e.g.
+  `gemma4:e4b` for the default Ollama model).
 
 If no row matches, the page renders a clear "model not found" message and the
 proxy returns HTTP 404 with a JSON error (no traceback).
