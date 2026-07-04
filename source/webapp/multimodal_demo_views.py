@@ -249,6 +249,7 @@ Nothing is saved.</p>
 </div>
 <div class="row">
   <button id="send" onclick="ppSend()">Send</button>
+  <button id="stop" onclick="ppStop()" style="background:#dc2626;display:none">Stop</button>
   <span id="status" class="muted"></span>
 </div>
 <div class="row" id="reasoning-row" style="display:none">
@@ -333,8 +334,18 @@ window.addEventListener('drop', function(e) {
   if (f) ppSetFile(f);
 });
 
+// Holds the in-flight request's AbortController so the Stop button can cancel
+// it. Aborting closes the response stream, which the proxy relays as a client
+// disconnect — halting the backend's generation too.
+let ppController = null;
+
+function ppStop() {
+  if (ppController) ppController.abort();
+}
+
 async function ppSend() {
   const btn = document.getElementById('send');
+  const stop = document.getElementById('stop');
   const status = document.getElementById('status');
   const out = document.getElementById('response');
   const rzRow = document.getElementById('reasoning-row');
@@ -344,64 +355,76 @@ async function ppSend() {
   rz.textContent = '';
   rzRow.style.display = 'none';
   btn.disabled = true;
+  stop.style.display = '';
   status.textContent = 'sending\\u2026';
 
+  ppController = new AbortController();
+  const signal = ppController.signal;
   const fd = new FormData();
   fd.append('system', document.getElementById('system').value);
   fd.append('user', document.getElementById('user').value);
   const f = document.getElementById('file').files[0];
   if (f) fd.append('file', f, f.name);
 
-  let resp;
   try {
-    resp = await fetch('/demo/multimodal/complete?id=' + encodeURIComponent(MODEL_ID),
-                       {method: 'POST', body: fd});
-  } catch (e) {
-    status.textContent = 'error';
-    out.className = 'err';
-    out.textContent = 'network error: ' + e;
-    btn.disabled = false;
-    return;
-  }
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    status.textContent = 'error (' + resp.status + ')';
-    out.className = 'err';
-    out.textContent = text;
-    btn.disabled = false;
-    return;
-  }
-
-  status.textContent = 'streaming\\u2026';
-  const reader = resp.body.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
-  while (true) {
-    const {value, done} = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, {stream: true});
-    // SSE frames are separated by blank lines; each line may be "data: {...}".
-    const lines = buf.split('\\n');
-    buf = lines.pop();  // keep the (possibly partial) last line
-    for (const line of lines) {
-      const t = line.trim();
-      if (!t.startsWith('data:')) continue;
-      const payload = t.slice(5).trim();
-      if (payload === '[DONE]' || payload === '') continue;
-      try {
-        const obj = JSON.parse(payload);
-        const delta = obj.choices && obj.choices[0] && obj.choices[0].delta;
-        // Reasoning tokens arrive separately from the answer; backends name the
-        // field 'reasoning' (Ollama) or 'reasoning_content' (DeepSeek/vLLM).
-        const rtext = delta && (delta.reasoning || delta.reasoning_content);
-        if (rtext) { rzRow.style.display = ''; rz.textContent += rtext; }
-        if (delta && delta.content) out.textContent += delta.content;
-      } catch (e) { /* ignore keep-alives / non-JSON frames */ }
+    let resp;
+    try {
+      resp = await fetch('/demo/multimodal/complete?id=' + encodeURIComponent(MODEL_ID),
+                         {method: 'POST', body: fd, signal: signal});
+    } catch (e) {
+      if (signal.aborted) { status.textContent = 'stopped'; return; }
+      status.textContent = 'error';
+      out.className = 'err';
+      out.textContent = 'network error: ' + e;
+      return;
     }
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      status.textContent = 'error (' + resp.status + ')';
+      out.className = 'err';
+      out.textContent = text;
+      return;
+    }
+
+    status.textContent = 'streaming\\u2026';
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    try {
+      while (true) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream: true});
+        // SSE frames are separated by blank lines; each line may be "data: {...}".
+        const lines = buf.split('\\n');
+        buf = lines.pop();  // keep the (possibly partial) last line
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith('data:')) continue;
+          const payload = t.slice(5).trim();
+          if (payload === '[DONE]' || payload === '') continue;
+          try {
+            const obj = JSON.parse(payload);
+            const delta = obj.choices && obj.choices[0] && obj.choices[0].delta;
+            // Reasoning tokens arrive separately from the answer; backends name
+            // the field 'reasoning' (Ollama) or 'reasoning_content' (DeepSeek/vLLM).
+            const rtext = delta && (delta.reasoning || delta.reasoning_content);
+            if (rtext) { rzRow.style.display = ''; rz.textContent += rtext; }
+            if (delta && delta.content) out.textContent += delta.content;
+          } catch (e) { /* ignore keep-alives / non-JSON frames */ }
+        }
+      }
+      status.textContent = 'done';
+    } catch (e) {
+      if (signal.aborted) { status.textContent = 'stopped'; }
+      else { status.textContent = 'error'; out.className = 'err'; out.textContent += '\\n[stream error: ' + e + ']'; }
+    }
+  } finally {
+    btn.disabled = false;
+    stop.style.display = 'none';
+    ppController = null;
   }
-  status.textContent = 'done';
-  btn.disabled = false;
 }
 </script>
 {% else %}

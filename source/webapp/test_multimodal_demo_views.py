@@ -174,6 +174,9 @@ def test_page_renders_with_model_name(seeded_model):
     # Reasoning pane + its delta handling are wired into the streaming UI.
     assert 'id="reasoning"' in body
     assert "delta.reasoning" in body and "delta.reasoning_content" in body
+    # Stop button aborts the in-flight stream.
+    assert 'id="stop"' in body and "function ppStop" in body
+    assert "new AbortController" in body
 
 
 def test_page_renders_not_found_for_unknown_id():
