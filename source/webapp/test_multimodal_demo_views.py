@@ -190,6 +190,8 @@ def test_page_renders_with_model_name(seeded_model):
     # Stop button aborts the in-flight stream.
     assert 'id="stop"' in body and "function ppStop" in body
     assert "new AbortController" in body
+    # Prompts persist across reloads via localStorage.
+    assert "localStorage" in body and "pp-mm-system" in body and "pp-mm-user" in body
 
 
 def test_page_renders_not_found_for_unknown_id():

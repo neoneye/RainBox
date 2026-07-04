@@ -274,6 +274,22 @@ response. Nothing is saved.</p>
 <script>
 const MODEL_ID = {{ model_id | tojson }};
 
+// Persist the prompts across reloads so a page refresh doesn't lose typed text.
+// (Attached files aren't stored — they can't survive a reload.)
+(function ppRestorePrompts() {
+  const fields = [['system', 'pp-mm-system'], ['user', 'pp-mm-user']];
+  try {
+    for (const [id, key] of fields) {
+      const el = document.getElementById(id);
+      const saved = localStorage.getItem(key);
+      if (saved !== null) el.value = saved;
+      el.addEventListener('input', function() {
+        try { localStorage.setItem(key, el.value); } catch (e) { /* quota/full */ }
+      });
+    }
+  } catch (e) { /* localStorage unavailable (e.g. private mode) — skip */ }
+})();
+
 // The selected files, accumulated across picks and drops (the file input alone
 // can't append, so this array is the single source of truth ppSend reads).
 let ppFiles = [];
