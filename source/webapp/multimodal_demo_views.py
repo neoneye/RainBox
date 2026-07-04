@@ -126,7 +126,12 @@ MULTIMODAL_TEMPLATE = """
   #response{width:100%;max-width:760px;min-height:8em;border:1px solid #e5e7eb;border-radius:8px;
             padding:12px;white-space:pre-wrap;font-size:1rem;background:#fbfbfb}
   code{background:#eee;padding:1px 4px;border-radius:3px}
+  #dropzone{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;
+            background:rgba(37,99,235,0.10);border:3px dashed #2563eb;pointer-events:none;
+            font-size:1.4rem;font-weight:600;color:#1d4ed8}
+  body.pp-dragging #dropzone{display:flex}
 </style>
+<div id="dropzone">Drop an image or audio file anywhere</div>
 {% include "_nav.html" %}
 <div class="pp-content">
 <h1>Multimodal demo</h1>
@@ -186,6 +191,48 @@ function ppClearFile() {
   document.getElementById('file').value = '';
   document.getElementById('preview').innerHTML = '';
 }
+
+// Full-viewport drag-and-drop: a dropped file is placed into the file input
+// (the single source of truth ppSend reads), then previewed.
+function ppSetFile(f) {
+  if (!(f.type.startsWith('image/') || f.type.startsWith('audio/'))) {
+    document.getElementById('status').textContent =
+      'ignored: not an image or audio file (' + (f.type || 'unknown type') + ')';
+    return;
+  }
+  const dt = new DataTransfer();
+  dt.items.add(f);
+  document.getElementById('file').files = dt.files;
+  document.getElementById('status').textContent = '';
+  ppPreview();
+}
+
+function ppDragHasFiles(e) {
+  return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') !== -1;
+}
+
+let ppDragDepth = 0;
+window.addEventListener('dragenter', function(e) {
+  if (!ppDragHasFiles(e)) return;
+  e.preventDefault();
+  ppDragDepth++;
+  document.body.classList.add('pp-dragging');
+});
+window.addEventListener('dragover', function(e) {
+  if (ppDragHasFiles(e)) e.preventDefault();
+});
+window.addEventListener('dragleave', function(e) {
+  if (!ppDragHasFiles(e)) return;
+  ppDragDepth = Math.max(0, ppDragDepth - 1);
+  if (ppDragDepth === 0) document.body.classList.remove('pp-dragging');
+});
+window.addEventListener('drop', function(e) {
+  e.preventDefault();
+  ppDragDepth = 0;
+  document.body.classList.remove('pp-dragging');
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) ppSetFile(f);
+});
 
 async function ppSend() {
   const btn = document.getElementById('send');
