@@ -213,12 +213,14 @@ MULTIMODAL_TEMPLATE = """
 <div class="pp-content">
 <h1>Multimodal demo</h1>
 
-<details class="row" {% if not target %}open{% endif %}>
-  <summary>Model: <b>{% if target %}{{ target.display_name }}{% else %}(none selected){% endif %}</b> &mdash; choose</summary>
+<details class="row" id="pp-picker" {% if not target %}open{% endif %}>
+  <summary>Model: <b id="pp-model-summary">{% if target %}{{ target.display_name }}{% else %}(none selected){% endif %}</b> &mdash; choose</summary>
   <ul class="tree">
     {% for cfg, overrides in tree %}
     <li>
       <a href="{{ url_for('demo_multimodal', id=cfg.uuid) }}"
+         data-uuid="{{ cfg.uuid }}" data-name="{{ cfg.effective_display_name }}"
+         onclick="return ppSelectModel(event, this)"
          class="{% if target and target.kind == 'config' and target.uuid == cfg.uuid %}selected{% endif %}">
         <span class="pp-provider-badge">{% if cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'ollama' %}Ollama{% else %}{{ cfg.provider }}{% endif %}</span>
         {{ cfg.model_name }}{% if not cfg.available %} <span class="muted">(unavailable)</span>{% endif %}
@@ -227,6 +229,8 @@ MULTIMODAL_TEMPLATE = """
       <ul>
         {% for ov in overrides %}
         <li><a href="{{ url_for('demo_multimodal', id=ov.uuid) }}"
+               data-uuid="{{ ov.uuid }}" data-name="{{ ov.effective_display_name }}"
+               onclick="return ppSelectModel(event, this)"
                class="{% if target and target.kind == 'override' and target.uuid == ov.uuid %}selected{% endif %}">{{ ov.effective_display_name }}</a></li>
         {% endfor %}
       </ul>
@@ -237,7 +241,8 @@ MULTIMODAL_TEMPLATE = """
 </details>
 
 {% if target %}
-<p class="muted">Talking to <b>{{ target.display_name }}</b> (<code>{{ model_id }}</code>).
+<p class="muted">Talking to <b id="pp-model-name">{{ target.display_name }}</b>
+(<code id="pp-model-id">{{ model_id }}</code>).
 Attach one or more images or audio files, add prompts, and watch the streamed
 response. Nothing is saved.</p>
 
@@ -272,7 +277,32 @@ response. Nothing is saved.</p>
 </div>
 
 <script>
-const MODEL_ID = {{ model_id | tojson }};
+// The currently-selected model id. Mutable: picking a model in the tree
+// switches this in place (no page reload) so attached files survive, letting
+// you run the same files against several models to compare.
+let ppModelId = {{ model_id | tojson }};
+
+function ppSelectModel(event, el) {
+  // Without the form on the page (model didn't resolve server-side) there's
+  // nothing to preserve — let the link navigate normally to a working page.
+  if (!document.getElementById('user')) return true;
+  event.preventDefault();
+  ppModelId = el.getAttribute('data-uuid');
+  const name = el.getAttribute('data-name') || el.textContent.trim();
+  for (const id of ['pp-model-name', 'pp-model-summary']) {
+    const e = document.getElementById(id);
+    if (e) e.textContent = name;
+  }
+  const idc = document.getElementById('pp-model-id');
+  if (idc) idc.textContent = ppModelId;
+  document.querySelectorAll('#pp-picker a.selected').forEach(function(a) {
+    a.classList.remove('selected');
+  });
+  el.classList.add('selected');
+  // Keep the URL in sync so a manual reload/bookmark restores this model.
+  try { history.replaceState(null, '', '?id=' + encodeURIComponent(ppModelId)); } catch (e) {}
+  return false;
+}
 
 // Persist the prompts across reloads so a page refresh doesn't lose typed text.
 // (Attached files aren't stored — they can't survive a reload.)
@@ -402,7 +432,7 @@ async function ppSend() {
   try {
     let resp;
     try {
-      resp = await fetch('/demo/multimodal/complete?id=' + encodeURIComponent(MODEL_ID),
+      resp = await fetch('/demo/multimodal/complete?id=' + encodeURIComponent(ppModelId),
                          {method: 'POST', body: fd, signal: signal});
     } catch (e) {
       if (signal.aborted) { status.textContent = 'stopped'; return; }

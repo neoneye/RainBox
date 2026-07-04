@@ -192,6 +192,9 @@ def test_page_renders_with_model_name(seeded_model):
     assert "new AbortController" in body
     # Prompts persist across reloads via localStorage.
     assert "localStorage" in body and "pp-mm-system" in body and "pp-mm-user" in body
+    # Picking a model switches client-side (no reload) so attached files survive.
+    assert "function ppSelectModel" in body and "let ppModelId" in body
+    assert "ppSelectModel(event, this)" in body
 
 
 def test_page_renders_not_found_for_unknown_id():
@@ -542,7 +545,7 @@ def test_selecting_override_renders_it_as_target(seeded_config_with_override):
     # only equals "Picker override" when target.display_name resolves to the
     # override — unlike a bare substring check, it can't pass if resolution
     # fell through to the "not found" branch.
-    assert "Talking to <b>Picker override</b>" in body
+    assert '<b id="pp-model-name">Picker override</b>' in body
 
 
 @pytest.fixture
