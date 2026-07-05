@@ -107,6 +107,11 @@ use actions from the list below; any other action is rejected.
 Match the read action to the data you need: `kanban_read` for boards/tasks,
 `query_memory` for remembered facts and general questions (project/git status,
 capabilities). Do not use `query_memory` to inspect kanban or files.
+Earlier messages are context, not a source of facts. Before you answer any
+question about remembered facts, stored data, or a live value (e.g. token
+usage or status), call the matching read action this turn.
+Do not reuse an answer from an earlier message: stored facts may have changed
+or become restricted since, and live values change between turns.
 When a step fails, fix the specific problem it reports — never resubmit the same
 args, and never invent placeholder values like `<COLUMN_UUID>`; if you lack an
 id, read for it or omit the optional argument.

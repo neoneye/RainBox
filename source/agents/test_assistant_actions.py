@@ -65,6 +65,16 @@ def test_system_prompt_forbids_claiming_unperformed_writes():
     assert "reading a task is not moving it" in p
 
 
+def test_system_prompt_requires_fresh_read_not_chat_history():
+    """The model replied from an earlier answer in the transcript instead of
+    re-querying: it reused a stored fact that had since become restricted, and
+    it repeated a stale live value. The prompt must forbid answering factual or
+    live-value questions from earlier messages and require a fresh read action."""
+    p = ASSISTANT_SYSTEM_PROMPT.lower()
+    assert "do not reuse an answer from an earlier message" in p
+    assert "call the matching read action" in p
+
+
 @pytest.fixture
 def app_ctx():
     app = db.make_app()
