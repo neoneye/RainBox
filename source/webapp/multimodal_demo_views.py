@@ -173,7 +173,7 @@ MULTIMODAL_TEMPLATE = """
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0}
   .row{margin:1em 0}
-  textarea{width:100%;max-width:760px;font-family:ui-monospace,monospace;font-size:0.95rem;padding:8px;box-sizing:border-box}
+  textarea{width:100%;font-family:ui-monospace,monospace;font-size:0.95rem;padding:8px;box-sizing:border-box}
   label{font-weight:600;display:block;margin-bottom:0.3em}
   button{padding:8px 18px;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;font-size:0.95rem}
   button:hover{background:#1d4ed8}
@@ -188,10 +188,10 @@ MULTIMODAL_TEMPLATE = """
   .pp-file .pp-rm{position:absolute;top:4px;right:4px;width:22px;height:22px;padding:0;border:none;
     border-radius:50%;background:#dc2626;color:#fff;font-size:14px;line-height:1;cursor:pointer}
   #status{font-weight:600}
-  #response{width:100%;max-width:760px;min-height:8em;border:1px solid #e5e7eb;border-radius:8px;
+  #response{width:100%;min-height:8em;border:1px solid #e5e7eb;border-radius:8px;box-sizing:border-box;
             padding:12px;white-space:pre-wrap;font-size:1rem;background:#fbfbfb}
   #reasoning-box summary{cursor:pointer}
-  #reasoning{max-width:760px;white-space:pre-wrap;color:#6b7280;font-size:0.9rem;
+  #reasoning{white-space:pre-wrap;color:#6b7280;font-size:0.9rem;
              border-left:3px solid #e5e7eb;padding:6px 12px;margin-top:6px;background:#fbfbfb}
   code{background:#eee;padding:1px 4px;border-radius:3px}
   #dropzone{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;
