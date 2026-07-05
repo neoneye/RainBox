@@ -178,6 +178,11 @@ MULTIMODAL_TEMPLATE = """
   button{padding:8px 18px;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;font-size:0.95rem}
   button:hover{background:#1d4ed8}
   button:disabled{background:#9ca3af;cursor:default}
+  .pp-lbl{display:flex;align-items:center;gap:10px;margin-bottom:0.3em}
+  .pp-lbl label{margin-bottom:0}
+  .pp-copy{padding:2px 10px;font-size:0.8rem;background:#e5e7eb;color:#374151;border-radius:6px}
+  .pp-copy:hover{background:#d1d5db}
+  .pp-copy:disabled{background:#d1d5db;cursor:default}
   .muted{color:#6b7280;font-size:0.85rem}
   .err{color:#991b1b;white-space:pre-wrap}
   #preview{display:flex;flex-wrap:wrap;gap:10px}
@@ -247,11 +252,17 @@ Attach one or more images or audio files, add prompts, and watch the streamed
 response. Nothing is saved.</p>
 
 <div class="row">
-  <label for="system">System prompt</label>
+  <div class="pp-lbl">
+    <label for="system">System prompt</label>
+    <button type="button" class="pp-copy" onclick="ppCopy(this,'system')">Copy</button>
+  </div>
   <textarea id="system" rows="3" placeholder="(optional)"></textarea>
 </div>
 <div class="row">
-  <label for="user">User prompt</label>
+  <div class="pp-lbl">
+    <label for="user">User prompt</label>
+    <button type="button" class="pp-copy" onclick="ppCopy(this,'user')">Copy</button>
+  </div>
   <textarea id="user" rows="3" placeholder="Describe the image / transcribe the audio&hellip;"></textarea>
 </div>
 <div class="row">
@@ -267,12 +278,18 @@ response. Nothing is saved.</p>
 </div>
 <div class="row" id="reasoning-row" style="display:none">
   <details id="reasoning-box" open>
-    <summary class="muted">Reasoning</summary>
+    <summary class="muted">Reasoning
+      <button type="button" class="pp-copy"
+              onclick="event.preventDefault();event.stopPropagation();ppCopy(this,'reasoning')">Copy</button>
+    </summary>
     <div id="reasoning"></div>
   </details>
 </div>
 <div class="row">
-  <label>Response</label>
+  <div class="pp-lbl">
+    <label>Response</label>
+    <button type="button" class="pp-copy" onclick="ppCopy(this,'response')">Copy</button>
+  </div>
   <div id="response"></div>
 </div>
 
@@ -281,6 +298,20 @@ response. Nothing is saved.</p>
 // switches this in place (no page reload) so attached files survive, letting
 // you run the same files against several models to compare.
 let ppModelId = {{ model_id | tojson }};
+
+// Copy the text of a textarea (.value) or a display div (.textContent) to the
+// clipboard, flashing "Copied!" on the button that triggered it.
+function ppCopy(btn, targetId) {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  const text = el.tagName === 'TEXTAREA' ? el.value : el.textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    const old = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.disabled = true;
+    setTimeout(function() { btn.textContent = old; btn.disabled = false; }, 1200);
+  });
+}
 
 function ppSelectModel(event, el) {
   // Without the form on the page (model didn't resolve server-side) there's
