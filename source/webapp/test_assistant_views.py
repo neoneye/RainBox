@@ -101,7 +101,7 @@ def test_step_is_anchored_and_has_permalink(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="query_qa", reason="look")
+        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look")
     db.settle_assistant_step(step, phase="observed", observation_preview="ok")
     db.finish_run(run, "finished")
     try:

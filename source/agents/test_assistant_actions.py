@@ -20,7 +20,6 @@ from agents.assistant import (
     AssistantStepDecision,
     _action_kanban_read,
     _action_query_memory,
-    _action_query_qa,
     _action_workspace_read_command,
 )
 from agents.assistant import ASSISTANT_SYSTEM_PROMPT, CAPABILITIES
@@ -28,12 +27,13 @@ from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
 
 
-def test_read_action_descriptions_disambiguate_query_qa_from_kanban():
-    """Run 12: the model used query_qa to 'query the kanban boards'. The catalog
-    must steer inspecting a board to kanban_read, and mark query_qa as not-for-kanban."""
-    qa = CAPABILITIES[AssistantActionName.QUERY_QA].description.lower()
+def test_read_action_descriptions_disambiguate_query_memory_from_kanban():
+    """The model once used the general Q&A action to 'query the kanban boards'.
+    The catalog must steer inspecting a board to kanban_read, and mark
+    query_memory as not-for-kanban."""
+    qm = CAPABILITIES[AssistantActionName.QUERY_MEMORY].description.lower()
     kb = CAPABILITIES[AssistantActionName.KANBAN_READ].description.lower()
-    assert "kanban" in qa and "not for" in qa          # query_qa says: not for kanban
+    assert "kanban" in qm and "not for" in qm          # query_memory says: not for kanban
     assert "column" in kb                              # kanban_read: look up a board's columns
     assert "kanban_read" in ASSISTANT_SYSTEM_PROMPT.lower()
 
@@ -142,6 +142,36 @@ def test_query_memory_includes_seed_memories_tiered(app_ctx):
     assert "user-overlay" in obs.text
 
 
+def test_query_memory_surfaces_dynamic_handler_answer(app_ctx):
+    """query_memory resolves dynamic seed handlers (project status, git status):
+    a git-status handler answer must appear in the fenced block."""
+    from memory.seed_memory import SeedMemory
+    def fake_seed(query, *, qctx, **_):
+        return [SeedMemory(uuid="dyn-git", path="dev.git", source="upstream",
+                           answer="Working tree clean.", score=0.82, kind="dynamic")]
+    obs = _action_query_memory(_ctx(), {"query": "what is the git status"},
+                               _seed_retriever=fake_seed)
+    assert obs.ok
+    assert "Working tree clean." in obs.text
+    assert "<recalled_memory" in obs.text
+
+
+def test_query_memory_loads_seed_kb_before_retrieval(app_ctx, monkeypatch):
+    """Regression: the assistant loop never loads the seed KB the way the chat
+    route does, so `_entries_by_id` stayed empty and seed Q&A (e.g. family facts)
+    silently returned nothing. The action must trigger `_load_kb()` +
+    `_ensure_populated()` before seed retrieval, as the old query_qa action did."""
+    from memory import seed_memory as qkb
+    calls = []
+    monkeypatch.setattr(qkb, "_load_kb", lambda: calls.append("load_kb"))
+    monkeypatch.setattr(qkb, "_vector_store", lambda: "VS")
+    monkeypatch.setattr(qkb, "_ensure_populated", lambda vs: calls.append(("ensure", vs)))
+    monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [])
+    _action_query_memory(_ctx(), {"query": "who is Gitte"})
+    assert "load_kb" in calls              # KB registry loaded
+    assert ("ensure", "VS") in calls       # pgvector table ensured populated
+
+
 def test_query_memory_merges_seed_and_dynamic_without_duplicate_legend(app_ctx, fresh_subject):
     """Seed + dynamic together: seed lines first, then dynamic facts, and the
     '{memory_uuid}, ...' legend appears exactly once (the dynamic block's own
@@ -176,46 +206,6 @@ def test_query_memory_observation_is_fenced_when_memories_present(app_ctx, fresh
         assert obs.text.rstrip().endswith("</recalled_memory>")
     finally:
         _cleanup_subject(fresh_subject)
-
-
-# --- query_qa (reuses the QueryAgent pipeline) --------------------------------
-
-
-def test_query_qa_reuses_query_pipeline_and_resolves_match(app_ctx, monkeypatch):
-    """query_qa must run the QueryAgent exact/semantic match + resolve path, not
-    reimplement Q&A. Stub the embedding-dependent internals (as the existing
-    query tests do) and a resolved match, then assert the action returns it."""
-    from memory import seed_memory as qkb
-
-    sentinel = qkb.Match(
-        qa_id="git_status", method="exact", score=1.0,
-        matched_question="git status",
-    )
-    monkeypatch.setattr(qkb, "_load_kb", lambda: None)
-    monkeypatch.setattr(qkb, "_vector_store", lambda: None)
-    monkeypatch.setattr(qkb, "_ensure_populated", lambda vs: None)
-    monkeypatch.setattr(qkb, "_exact_match", lambda q: sentinel)
-    monkeypatch.setattr(qkb, "_semantic_match", lambda q, vs: None)
-    monkeypatch.setattr(qkb, "_resolve_match", lambda m, ctx: "Working tree clean.")
-
-    obs = _action_query_qa(_ctx(), {"query": "git status"})
-    assert obs.ok
-    assert obs.text == "Working tree clean."
-    assert obs.data.get("qa_id") == "git_status"
-
-
-def test_query_qa_reports_no_confident_match(app_ctx, monkeypatch):
-    from memory import seed_memory as qkb
-
-    monkeypatch.setattr(qkb, "_load_kb", lambda: None)
-    monkeypatch.setattr(qkb, "_vector_store", lambda: None)
-    monkeypatch.setattr(qkb, "_ensure_populated", lambda vs: None)
-    monkeypatch.setattr(qkb, "_exact_match", lambda q: None)
-    monkeypatch.setattr(qkb, "_semantic_match", lambda q, vs: None)
-
-    obs = _action_query_qa(_ctx(), {"query": "something obscure"})
-    assert obs.ok
-    assert obs.data.get("matched") is False
 
 
 # --- workspace_read_command ---------------------------------------------------
@@ -320,16 +310,6 @@ def test_validate_rejects_unsupported_kanban_args(app_ctx):
         ok = AssistantStepDecision(
             reason="x", action=AssistantActionName.KANBAN_READ, args=ok_args)
         assert agent._validate_decision(ok) is None
-
-
-def test_validate_rejects_unknown_arg_on_query(app_ctx):
-    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
-    bad = AssistantStepDecision(
-        reason="x", action=AssistantActionName.QUERY_QA,
-        args={"query": "hi", "extra": "nope"},
-    )
-    err = agent._validate_decision(bad)
-    assert err and "extra" in err
 
 
 # --- dispatch through the loop ------------------------------------------------

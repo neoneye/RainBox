@@ -77,7 +77,7 @@ def test_catalog_lists_enabled_prompt_exposed_capabilities():
 
 
 def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
-    db.set_setting("assistant.disabled_capabilities", ["query_qa"])
+    db.set_setting("assistant.disabled_capabilities", ["query_memory"])
     db.db.session.commit()
 
     human = db.get_human_user()
@@ -87,7 +87,7 @@ def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
 
     agent = _agent()
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="look it up", action=AssistantActionName.QUERY_QA,
+        AssistantStepDecision(reason="look it up", action=AssistantActionName.QUERY_MEMORY,
                               args={"query": "git status"}),
         AssistantStepDecision(reason="answer", action=AssistantActionName.REPLY,
                               args={"message": "done"}),
@@ -96,8 +96,8 @@ def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
         result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
 
         # Removed from the prompt catalog.
-        assert "query_qa" not in agent._action_catalog()
-        # Removed from dispatch: the query_qa step is a validation failure
+        assert "- query_memory:" not in agent._action_catalog()
+        # Removed from dispatch: the query_memory step is a validation failure
         # (planned -> failed), never a running/observed dispatch.
         steps = (
             db.db.session.query(AssistantStep)
@@ -106,9 +106,9 @@ def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
             .all()
         )
         phases = [(s.action, s.phase) for s in steps]
-        assert ("query_qa", "running") not in phases
-        assert ("query_qa", "observed") not in phases
-        assert ("query_qa", "failed") in phases
+        assert ("query_memory", "running") not in phases
+        assert ("query_memory", "observed") not in phases
+        assert ("query_memory", "failed") in phases
         assert ("reply", "final") in phases
         assert result["status"] == "finished"
     finally:
@@ -134,5 +134,5 @@ def test_capability_report_reflects_disable(app_ctx):
     assert report["workspace_read_command"]["enabled"] is False
     assert report["query_memory"]["enabled"] is True
     # report carries the inspectable metadata the operator needs.
-    assert report["query_qa"]["family"] == "query"
+    assert report["query_memory"]["family"] == "memory"
     assert report["reply"]["terminal"] is True

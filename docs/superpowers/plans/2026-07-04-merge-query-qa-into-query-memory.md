@@ -416,6 +416,8 @@ Match the read action to the data you need: `kanban_read` for boards/tasks,
 capabilities). Do not use `query_memory` to inspect kanban or files.
 ```
 
+(g) `source/agents/test_assistant_fakes.py` — in `test_action_enum_covers_the_known_action_surface`, DELETE the `"query_qa",` entry from the expected enum-value set (currently line 87). The enum no longer defines it, and `"query_memory"` is already present in that set (line 86), so this is a deletion, not a rename. (Task 3 correctly deferred this line here — renaming it while `query_qa` was still a live enum member would have failed the surface-lock assertion.)
+
 - [ ] **Step 5: Run the assistant action tests to verify they pass**
 
 Run: `python -m pytest source/agents/test_assistant_actions.py -q`

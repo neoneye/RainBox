@@ -86,7 +86,7 @@ SETTINGS: dict[str, Setting] = {
     "assistant.disabled_capabilities": Setting(
         "assistant.disabled_capabilities", None, "json", [],
         description="Assistant capability names the operator has turned off "
-                    '(JSON list, e.g. ["query_qa","workspace_read_command"]). A '
+                    '(JSON list, e.g. ["query_memory","workspace_read_command"]). A '
                     "disabled capability is removed from both the assistant's "
                     "prompt catalog and its dispatch path.",
     ),
