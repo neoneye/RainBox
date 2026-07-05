@@ -156,6 +156,22 @@ def test_query_memory_surfaces_dynamic_handler_answer(app_ctx):
     assert "<recalled_memory" in obs.text
 
 
+def test_query_memory_loads_seed_kb_before_retrieval(app_ctx, monkeypatch):
+    """Regression: the assistant loop never loads the seed KB the way the chat
+    route does, so `_entries_by_id` stayed empty and seed Q&A (e.g. family facts)
+    silently returned nothing. The action must trigger `_load_kb()` +
+    `_ensure_populated()` before seed retrieval, as the old query_qa action did."""
+    from memory import seed_memory as qkb
+    calls = []
+    monkeypatch.setattr(qkb, "_load_kb", lambda: calls.append("load_kb"))
+    monkeypatch.setattr(qkb, "_vector_store", lambda: "VS")
+    monkeypatch.setattr(qkb, "_ensure_populated", lambda vs: calls.append(("ensure", vs)))
+    monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [])
+    _action_query_memory(_ctx(), {"query": "who is Gitte"})
+    assert "load_kb" in calls              # KB registry loaded
+    assert ("ensure", "VS") in calls       # pgvector table ensured populated
+
+
 def test_query_memory_merges_seed_and_dynamic_without_duplicate_legend(app_ctx, fresh_subject):
     """Seed + dynamic together: seed lines first, then dynamic facts, and the
     '{memory_uuid}, ...' legend appears exactly once (the dynamic block's own

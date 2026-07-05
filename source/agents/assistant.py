@@ -161,16 +161,23 @@ def _action_query_memory(
     info). Results are tiered: user-overlay seed, then upstream seed, then
     dynamic claims. Secrets are never returned (include_secret stays False)."""
     from memory.retrieval import fence_recalled_memory, format_memory_context, retrieve_memories_hybrid
-    from memory.seed_memory import retrieve_seed_answers
+    from memory import seed_memory as qkb
     from agents.query_handlers import QueryContext
 
     query = str(args.get("query", "")).strip()
     qctx = QueryContext(
         room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
     )
-    seed_fn = _seed_retriever or retrieve_seed_answers
+    seed_fn = _seed_retriever or qkb.retrieve_seed_answers
     seeds = []
     try:
+        # The assistant loop, unlike the chat route's query_filter_router.handle(),
+        # never loads the seed KB — so load the registry (_entries_by_id) and ensure
+        # the pgvector table is populated before retrieving, or every seed match is
+        # dropped. Skip when a retriever is injected (tests stay hermetic).
+        if _seed_retriever is None:
+            qkb._load_kb()
+            qkb._ensure_populated(qkb._vector_store())
         seeds = seed_fn(query, qctx=qctx)
     except Exception:
         logger.warning("assistant: seed memory retrieval failed", exc_info=True)
