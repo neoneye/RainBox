@@ -1,4 +1,4 @@
-# Q&A overlay: person / household / relation schema
+# Q&A overlay: person data as cards and stories
 
 An authoring convention for the operator's private Q&A overlay
 (`<customize.dir>/question_answer.jsonl`, which overlays the base registry).
@@ -8,222 +8,222 @@ the households they belong to.
 All names in this document are fictional placeholders (`ada`, `ben`, `cleo`, …).
 Substitute your own; never commit real personal data.
 
+## What this data is — and is not
+
+The overlay is not a database; it is a bag of **retrieval units**. An entry
+reaches the LLM when one of its `questions` embeds close to the operator's
+question, or when its `path` is looked up exactly. Four consequences drive
+everything below:
+
+- **The question list is the real schema.** The path is a label for the human
+  maintainer; the questions decide what the entry can ever answer. An entry
+  with no questions is unreachable by similarity, however good its answer.
+- **An entry is a chunk.** Its size is a retrieval decision: retrieved whole,
+  it should answer the matched question without burying the answer in
+  unrelated topics, and without being so atomic that the LLM must assemble
+  five entries to say one sentence.
+- **Recall beats normalization.** Stating a fact twice is cheap; failing to
+  retrieve it is expensive. Duplication is only a problem for facts that
+  *change* — those need a single maintained home.
+- **The maintenance budget is the constraint.** The operator edits this file
+  by hand, occasionally. Only facts that must stay current deserve a
+  maintained home. Everything else should be allowed to be what it naturally
+  is: a dated account, written once.
+
+Full normalization — one fact, one home, everywhere — optimizes for a database
+client that follows joins. Nothing here follows joins. It would also force
+long-form narratives to be decomposed into atoms, which costs hours of
+authoring, loses the writer's voice, and turns every old account into a
+standing maintenance liability. The schema below spends normalization only
+where it pays.
+
+## Two kinds of entries
+
+| | **Card** | **Story** |
+|---|---|---|
+| holds | current truth about one subject | a dated account: an anecdote, a friendship, a CV, a year's trips |
+| size | a few lines | as long as it wants to be |
+| tense | present | past, anchored to its date |
+| updated | edited in place when reality changes | append-only; never rewritten for consistency |
+| duplication | one fact, one card | free to restate anything — it is testimony, not truth |
+
+Cards are the maintained index of the world; stories are the archive. A fact
+inside a story is implicitly *as of the story's date*; when a story and a card
+disagree, the card wins — the story hasn't become wrong, it has become
+historical. This is what makes the corpus sustainable: when reality changes,
+the operator touches one card, and no story ever needs a rewrite.
+
+Long narrative entries — a friendship's history, gratitude for one's parents,
+a reflection written during a strange year — are not a smell to be normalized
+away. They are the most valuable entries in the file: they carry context,
+causality, and voice that no fact atom can. The schema's job is to surround
+them with a thin layer of cards, not to replace them.
+
 ## Entry schema
 
-Every entry is one JSON line with the same fields as the base registry:
+Both kinds use the same JSON line format as the base registry:
 
 ```json
 {"id": "<uuid>", "path": "human.ada.identity", "kind": "static",
  "questions": ["Who is Ada?"], "answer": "…", "shield": "ada"}
 ```
 
-- `id` — stable uuid; an overlay entry overrides a base entry with the same id.
-- `path` — dotted label and clustering key; conventions below.
-- `kind` — `"static"` for all person entries.
-- `questions` — the retrieval surface (question-embedding match). Every
-  retrievable entry needs at least one; `questions: []` is reserved for
-  meta/header entries that must never match.
-- `answer` — free prose, any length, any language. Questions are typically
-  English (what gets embedded and asked); answers can be in the operator's
-  native language.
-- `shield` — optional; see below.
+No new fields are needed. A story's date lives in its path (year suffix) and
+in its answer text; a card carries no date because it is always current.
 
-Retrieval is question-embedding plus exact-path lookup, so the path does not
-*need* to carry structure. The family graph belongs in the answers, where it is
-readable, and in per-person paths, where it clusters.
+## Person
 
-## Why
+### Cards — the maintained set
 
-The overlay grows organically, and person data accumulates in shapes that all
-describe the same individual in several places at once:
-
-- **Compound-couple namespaces** — `human.family.<a>.<b>.*` holding a couple's
-  shared life (travel, events, clubs, anniversaries). Family is a graph
-  (parent, child, sibling, partner — many-to-many), but a path is a tree:
-  nesting one partner's id before the other is arbitrary, and generations
-  (grandparent → parent → child) cannot be expressed by nesting at all.
-- **Single-person blobs** — `human.family.<person>` entries describing one
-  relative inside a "family" namespace, sometimes *alongside* that person's own
-  `human.<person>.*` records, restating the same attributes in both places.
-- **People trapped in prose** — partners, children, and grandchildren who exist
-  only inside another person's answer text, with no record of their own to
-  anchor a question about them.
-- **Roles with no anchor** — the same person is "youngest child" in one blob
-  and "parent" in another; no single statement of who they are.
-
-One real-world change then means editing several entries, which drift out of
-sync. The fix is one home per fact, anchored on the person it belongs to.
-
-## Model: three entity types
-
-| Entity | Namespace | Holds | Rule |
-|---|---|---|---|
-| **Person** | `human.<personid>.*` | one individual's own attributes, as a topical subtree | one subtree per person; no attribute restated elsewhere |
-| **Household** | `household.<id>.*` | who lives together, and shared life | references people by id; never re-describes them |
-| **Relation edges** | `human.<personid>.relations` and `human.<personid>.<reltype>.<otherid>` | that person's links | anchored on the subject |
-
-`human.` sits alongside the overlay's other top-level namespaces: `identity.*`
-(the bot's own persona), `location.*` (physical places), `project.*`,
-`social.*`, `_meta.*`.
-
-**Person id** = lowercase concatenated full name (`adaquist`), so ids are
-unambiguous when two people share a first name. Placeholder examples below use
-short forms for readability.
-
-## Person subtree
-
-Two anchor leaves per person, plus any number of topical leaves. Everyone
-referenced anywhere gets at least a stub `identity` — including people who
-would otherwise exist only inside someone else's answer.
+Every person named *anywhere* in the file gets an **identity card**, even if
+they only appear inside someone else's story. Two lines is enough:
 
 ```json
 {"path": "human.ada.identity",
- "questions": ["Who is Ada?", "Ada's age and occupation"],
- "answer": "Ada Q. (b. 1950-02-14), retired nurse."}
-
-{"path": "human.ada.relations",
- "questions": ["Ada's family", "Who are Ada's children and partner?"],
- "answer": "Partner: Ben. Children: Cleo (1979), Dov (1990). Mother: Edith (deceased). Household: maplest."}
+ "questions": ["Who is Ada?", "Ada", "Ada Quist"],
+ "answer": "Ada Quist (b. 1950), retired nurse. Partner of Ben, mother of Cleo and Dov. Household: maplest."}
 ```
 
-Topical leaves hold everything else, one topic per leaf, nested as deep as the
-topic warrants:
-
-```
-human.cleo.health.allergy.grass
-human.cleo.food.pizza
-human.cleo.job.overview
-human.cleo.job.cv.2019
-human.cleo.project.birdhouse
-human.cleo.unit.datetime
-human.cleo.values
-human.cleo.education.elementaryschool
-```
-
-This is the shape person data naturally takes — dozens of leaves per
-well-documented person is normal and good: each leaf is a separate retrieval
-target with its own questions.
-
-### Relationship leaves
-
-Beyond the compact `relations` edge list, a relationship with its own story
-gets its own leaf, named by relation type then the *other* person's id:
+People central to the operator's life additionally get a **relations card**,
+one edge list anchored on the subject:
 
 ```json
-{"path": "human.cleo.friend.ines",
- "questions": ["Cleo's friend Ines", "Cleo and Ines as coworkers"],
- "answer": "Met at Acme in 2005; co-authored the birdhouse project. Ines lives in Aarhus, two kids."}
+{"path": "human.cleo.relations",
+ "questions": ["Cleo's family", "Who are Cleo's parents and siblings?"],
+ "answer": "Oldest child of Ada & Ben. Sibling: Dov. Partner: Faye. Children: Gil (2018), Hana (2022). Household: oakave."}
 ```
 
-`friend.<otherid>`, `exfriend.<otherid>`, `expartner.<otherid>` — the narrative
-is anchored on the subject, and the other person's own attributes still live in
-*their* subtree. Past relationships are shield-by-default (see below).
+Edges are stated from both ends (Ada lists Cleo; Cleo lists Ada). That is
+deliberate: a question about either person retrieves the link. Roles are
+relative statements anchored per person ("oldest child of Ada & Ben"), so a
+role never contradicts itself across records. Deceased people get a lifespan
+on the identity card: `(b. 1914 d. 1991)`.
 
-## Household entity
+**Write card facts so they don't age.** Birth year, not current age; "since
+2019", not "for six years"; "as of 2026-07" on anything that will drift (a
+living situation, a plan, being single). A card that can silently go stale is
+a card written wrong.
 
-A household is the social unit; `location.<placeid>.*` remains the physical
-place (the building, garden structures, rooms). When the unit is defined by an
-address, the household may reuse the place id; the two namespaces still hold
-different facts.
+### Stories — everything else
 
-Membership by reference plus the facts that belong to the unit rather than to
-any one member — gatherings, trips, clubs, shared routines:
+Stories hang under the person as topical leaves, topic first, year last when
+the account is anchored to a time:
+
+```
+human.cleo.friend.ines          — the history of one friendship
+human.cleo.job.cv.2019          — a CV as written that year
+human.cleo.health.knee.2021     — one incident
+human.cleo.reflection.2020      — a mood, a plan, a snapshot of a mind
+human.cleo.food.pizza           — a standing preference, told as prose
+```
+
+A relationship with its own history gets its own story leaf named
+`<reltype>.<otherid>` (`friend.ines`, `expartner.mira`): the narrative is
+anchored on the subject, while the other person's own facts live on *their*
+identity card. Never year-first paths (`2019.jobchange`) — that scatters one
+person's timeline instead of clustering it under its topic.
+
+The **split test** for an oversized story: if a question you want answered
+targets only one paragraph of it, that paragraph wants to be its own entry.
+Otherwise, leave the story whole.
+
+## Household
+
+A household is a social unit; `location.<placeid>.*` remains the physical
+place and its structures. When the unit is defined by an address the two may
+share an id; they still hold different facts.
+
+One **roster card**, membership by reference:
 
 ```json
 {"path": "household.maplest.roster",
- "questions": ["Who lives at the Maple St household?"],
- "answer": "Members: Ada (mother), Ben (father), Cleo (eldest child). Place: location.maplest."}
-
-{"path": "household.maplest.events",
- "questions": ["Gatherings at the Maple St household"],
- "answer": "Hosts the summer gathering; grandchildren visit weekly."}
-
-{"path": "household.maplest.travel.abroad",
- "questions": ["Trips Ada and Ben take abroad"],
- "answer": "Frequent travellers: several countries a year, plus folk-high-school stays."}
+ "questions": ["Who lives at the Maple St household?", "the maplest family"],
+ "answer": "Members: Ada, Ben, and their eldest child Cleo. Place: location.maplest."}
 ```
 
-This is where couple-level and home-level facts live, instead of a compound
-`human.family.<a>.<b>.*` path that forces one partner's id before the other and
-detaches the facts from both people's subtrees.
+Everything else about the unit's shared life — trips, gatherings, clubs,
+routines — is stories under `household.<id>.*`:
 
-## Conventions
+```
+household.maplest.travel.2026.farmstay
+household.maplest.events
+household.maplest.community.tennisclub
+```
 
-1. **One fact, one home.** A birth date lives on `human.<person>.identity`,
-   never inside a household or another person's entry. If a fact keeps getting
-   restated (an address, a shared hobby), that is the signal it belongs on a
-   household leaf, referenced from elsewhere by id.
-2. **Roles are relative statements anchored per person** ("oldest child of Ada
-   & Ben"), so a person's role never contradicts itself across records.
-3. **Lifespan on identity**: `(b. 1914 d. 1991)` for deceased people.
-4. **Dated snapshots get a year suffix, topic first.** A CV, a reflection, a
-   one-off event: `job.cv.2019`, `future.reflection.2020`,
-   `health.toe.2019` — never year-first (`2019.jobchange`), which scatters the
-   person's timeline instead of clustering it under the topic. Facts that are
-   currently true but age (living situation, being single, a plan) carry an
-   explicit `as of <date>` in the answer, so staleness is visible.
-5. **Every entry needs a question or it is unreachable.** Similarity retrieval
-   only sees `questions`; an entry with an empty list exists solely for humans
-   reading the file.
-6. **One shield alias per subject, used consistently.** See below.
+This is where couple-level facts live, instead of a compound
+`human.family.<a>.<b>.*` path that forces one partner's id before the other
+and belongs to neither person's subtree. The couple's shared life is the
+household's; each partner's own attributes stay on their own cards.
+
+## Writing questions — the highest-leverage skill
+
+Since questions are the schema, most retrieval quality is decided here:
+
+1. **Write the questions you would actually ask, verbatim**, in the language
+   you would ask them in. Answers may be in any language; the questions are
+   what gets embedded.
+2. **Include the subject's name variants** — full name, first name, nickname,
+   handle — as bare questions on the identity card. A name dropped mid-
+   conversation should resolve to its person.
+3. **One question per distinct angle** the answer covers. A story about a
+   farm trip that also contains a funny mishap gets a question for the trip
+   *and* a question for the mishap.
+4. **Cards get who/what questions; stories get event questions with the year
+   in them** ("Cleo's CV from 2019"), which makes the dated nature visible at
+   retrieval time.
+5. `questions: []` means *never retrieved by similarity* — reserved for
+   meta/header entries addressed only by exact path.
 
 ## Shields and privacy
 
 The `shield` field (see the Q&A shields design) hides an entry from the LLM
-until the operator unlocks that exact shield name on the Settings page. It
-composes with this schema:
+until that exact shield name is unlocked on the Settings page:
 
-- **One short alias per subject, forever.** Shield names are dotted
+- **One short alias per subject, chosen once.** Shield names are dotted
   `alias.topic` strings (`ada.health`, `cleo.expartner`, `maplest.cellar`).
-  The alias may be shorter than the path's person id — the Settings checklist
-  clusters shields by dotted prefix, so what matters is that each subject has
-  exactly one alias, applied to every shielded entry about them, never varied.
-  Renaming a shield later means editing entries *and* re-unlocking, so pick the
-  alias once.
+  The alias may be shorter than the path's person id; what matters is that
+  each subject has exactly one alias applied consistently, so the Settings
+  checklist shows one cluster per subject. Renaming a shield later means
+  editing entries *and* re-unlocking, so pick it once.
 - **Shield records about others by default.** Every `human.<other-person>.*`
-  and `household.*` entry describes people who have not opted in; a per-subject
-  shield keeps each person's set locked unless deliberately unlocked — the
-  mechanism for letting several people share one instance while keeping
+  and `household.*` entry describes someone who has not opted in; a
+  per-subject shield keeps each person's set locked unless deliberately
+  unlocked — the mechanism for letting several people share one instance with
   separate private sets.
-- **Apply one sensitivity policy uniformly.** The shield-by-default categories:
-  health, religion, finances, past relationships, intimate topics, private
-  spots at a place, and any data about minors. Decide the policy once and apply
-  it to every matching entry rather than ad hoc.
-- **Unlocking is exact-match.** Unlocking `ada` does not unlock `ada.health`;
-  the dots only cluster the checklist. A more sensitive topic therefore gets a
-  deeper shield name, unlockable on its own.
+- **One sensitivity policy, applied uniformly**: health, religion, finances,
+  past relationships, intimate topics, and anything about minors are
+  shield-by-default, whoever the subject is.
+- **Unlocking is exact-match** — unlocking `ada` does not unlock
+  `ada.health`; the dots only cluster the checklist. A more sensitive topic
+  gets a deeper shield name, unlockable on its own.
 - **A shield is a retrieval filter, not encryption.** A shielded entry still
   exists in Postgres and in backups; it is only kept out of the LLM's prompt.
-  "How much to store about other people" is a separate decision that a shield
-  does not resolve.
 
-## Moving existing data to this shape
+## Adopting the shape
 
-1. **Inventory every person**, including those who exist only in prose (a
-   sibling's partner, the grandchildren). Create one `human.<person>.identity`
-   per person — a stub with name, birth year, and one questions line is enough.
-2. **Normalize the identity leaf name.** Some subtrees use `name`, others
-   `identity`; converge on `identity`.
-3. **Merge duplicates.** Where a person has both `human.<person>.*` leaves and
-   a `human.family.<person>` blob, fold the blob's facts into the person's own
-   subtree, deduplicating restated attributes.
-4. **Add `relations` leaves**, moving each relationship statement onto the
-   subject's side; long relationship narratives become `friend.<otherid>`-style
-   leaves.
-5. **Hoist couple- and home-level facts** from `human.family.<a>.<b>.*` into
-   `household.<id>.*`, referencing members by id. Year-stamped shared events
-   keep their year suffix (`household.<id>.travel.2026.farmstay`).
-6. **Retire the compound paths** once their facts have homes.
-7. **Add shields per the sensitivity policy**, then press **Repopulate Q&A
-   memory** — editing `shield` fields in the file requires a repopulate;
-   toggling a lock in Settings does not.
+Deliberately cheap — the existing narratives are already valid stories:
 
-## One trade-off
+1. **Add identity cards** for every person mentioned anywhere in the file,
+   including those who today exist only inside someone else's story. This is
+   the single highest-value step and is one short line per person.
+2. **Add relations cards** for the core family.
+3. **Leave the narratives alone.** Rename paths opportunistically toward
+   topic-first-year and `household.<id>.*` — renames are cosmetic for
+   similarity retrieval, so no big-bang migration is needed; do them when
+   touching an entry anyway. Retire `human.family.<a>.<b>.*` compound paths
+   as their stories move under the household.
+4. **When a story's facts go stale, don't edit the story** — the card carries
+   the current truth.
+5. **Apply the shield policy**, then press **Repopulate Q&A memory** (editing
+   `shield` fields or any entry text requires a repopulate; toggling a lock in
+   Settings does not).
 
-Per-person `relations` states each edge from both ends (Ada lists Cleo; Cleo
-lists Ada). That is mild duplication, but each edge is small, and it makes
-retrieval robust: a question about *either* person returns the link. The
-alternative — a single `household.<id>` tree as the one source of truth —
-removes the duplication but surfaces a relationship only when that one document
-is retrieved. For a question-answering system, the small per-person duplication
-is the better trade: recall matters more than strict normalization here.
+## The trade-off
+
+Two layers mean the LLM can retrieve a story whose facts have since changed.
+Three things keep that safe: the card's name-variant questions make it likely
+the card is retrieved alongside the story; stories carry their date in path
+and text, so the LLM can see which account is older; and the convention is
+explicit that cards state current truth. The alternative — keeping every
+entry perpetually current — is a maintenance contract no hand-edited file
+survives; stale-but-dated beats silently-wrong.
