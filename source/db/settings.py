@@ -21,6 +21,7 @@ import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from db.models import AppSetting, db
 
@@ -105,6 +106,13 @@ SETTINGS: dict[str, Setting] = {
                     "carrying a shield reaches the LLM only when that shield is "
                     "in this list; an entry with no shield is always visible. "
                     "Empty (the default) keeps every shielded entry hidden.",
+    ),
+    "qa.facts_invalidated_at": Setting(
+        "qa.facts_invalidated_at", None, "string", None,
+        description="ISO timestamp of the last change that can stale prior "
+                    "facts (a shield toggle or a Q&A repopulate). The assistant "
+                    "posts a one-time 're-check facts' notice into a room the "
+                    "next time it runs there after this changes.",
     ),
 }
 
@@ -199,6 +207,18 @@ def set_setting(key: str, value: object) -> None:
     row.secret = spec.secret
     row.description = spec.description
     db.session.commit()
+
+
+def mark_facts_invalidated() -> str:
+    """Stamp `qa.facts_invalidated_at` with the current time and return it.
+
+    Called when a change can stale prior facts (a shield toggle or a Q&A
+    repopulate). The assistant compares this against the markers already in a
+    room to post a one-time re-check-facts notice. App context required; the
+    value is persisted immediately via set_setting."""
+    stamp = datetime.now(UTC).isoformat()
+    set_setting("qa.facts_invalidated_at", stamp)
+    return stamp
 
 
 def _source(spec: Setting) -> str:

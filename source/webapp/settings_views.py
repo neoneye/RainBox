@@ -361,6 +361,9 @@ def settings_set_api() -> tuple[Response, int] | Response:
     if not isinstance(data, dict) or "key" not in data:
         return jsonify({"ok": False, "error": "body must be a JSON object with a 'key'"}), 400
     key = data["key"]
+    # A shield change can stale facts already answered in a conversation, so
+    # capture the prior value to detect a real change after the write.
+    old_shields = db.get_setting(key) if key == "qa.unlocked_shields" else None
     try:
         db.set_setting(key, data.get("value"))
     except db.UnknownSetting:
@@ -369,6 +372,8 @@ def settings_set_api() -> tuple[Response, int] | Response:
         # Validation failure, env-only secret, or bad coercion.
         db.db.session.rollback()
         return jsonify({"ok": False, "error": str(exc)}), 400
+    if key == "qa.unlocked_shields" and db.get_setting(key) != old_shields:
+        db.mark_facts_invalidated()
     return jsonify({"ok": True, "setting": _setting_row(key)})
 
 
@@ -390,4 +395,7 @@ def settings_repopulate_memory() -> tuple[Response, int] | Response:
         # troubleshoot from the log, not only the UI result.
         logger.warning("repopulate_memory failed: %s", exc)
         return jsonify({"ok": False, "error": str(exc)}), 502
+    # Re-embedding can change what facts the Q&A knowledge base returns, so mark
+    # prior conversation answers as due for a re-check.
+    db.mark_facts_invalidated()
     return jsonify({"ok": True, **counts})

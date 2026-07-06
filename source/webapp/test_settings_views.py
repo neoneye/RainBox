@@ -198,3 +198,61 @@ def test_unlocked_shields_roundtrips_through_api(client):
         "key": "qa.unlocked_shields", "value": ["alice.travel"]})
     assert r.status_code == 200 and r.get_json()["ok"] is True
     assert db_settings.get_setting("qa.unlocked_shields") == ["alice.travel"]
+
+
+def test_set_shields_stamps_facts_invalidated_when_changed(client):
+    """Changing qa.unlocked_shields stamps qa.facts_invalidated_at; re-saving the
+    same value does not re-stamp (so the assistant posts no redundant notice)."""
+    import db
+    try:
+        db.set_setting("qa.unlocked_shields", [])
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.commit()
+        r = client.post("/settings/api/set",
+                        json={"key": "qa.unlocked_shields", "value": ["alice.travel"]})
+        assert r.status_code == 200
+        first = db.get_setting("qa.facts_invalidated_at")
+        assert first, "changing shields must stamp facts_invalidated_at"
+        # Re-save the same value -> no new stamp.
+        r = client.post("/settings/api/set",
+                        json={"key": "qa.unlocked_shields", "value": ["alice.travel"]})
+        assert r.status_code == 200
+        assert db.get_setting("qa.facts_invalidated_at") == first
+        # Change again -> new stamp.
+        r = client.post("/settings/api/set",
+                        json={"key": "qa.unlocked_shields", "value": []})
+        assert r.status_code == 200
+        assert db.get_setting("qa.facts_invalidated_at") != first
+    finally:
+        db.set_setting("qa.unlocked_shields", [])
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.commit()
+
+
+def test_set_non_shield_setting_does_not_stamp(client):
+    import db
+    try:
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.commit()
+        r = client.post("/settings/api/set", json={"key": "cron.paused", "value": True})
+        assert r.status_code == 200
+        assert db.get_setting("qa.facts_invalidated_at") in (None, "")
+    finally:
+        db.set_setting("cron.paused", False)
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.commit()
+
+
+def test_repopulate_stamps_facts_invalidated(client, monkeypatch):
+    import db
+    import memory.seed_memory as seed_memory
+    monkeypatch.setattr(seed_memory, "rebuild_kb", lambda: {"entries": 1, "documents": 1})
+    try:
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.commit()
+        r = client.post("/settings/api/repopulate_memory")
+        assert r.status_code == 200
+        assert db.get_setting("qa.facts_invalidated_at"), "repopulate must stamp"
+    finally:
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.commit()
