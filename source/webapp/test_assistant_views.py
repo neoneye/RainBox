@@ -415,3 +415,29 @@ def test_markdown_export_serializes_the_run(app_ctx, client):
 def test_markdown_export_unknown_run_is_404(app_ctx, client):
     assert client.get("/assistant/not-a-uuid/markdown").status_code == 404
     assert client.get(f"/assistant/{uuid4()}/markdown").status_code == 404
+
+
+def test_query_memory_data_renders_as_table_with_tooltips():
+    """The query_memory step's structured data renders as a compact counts table
+    (short headers + explanatory tooltips), not a raw JSON blob."""
+    from webapp.assistant_views import ASSISTANT_TEMPLATE, _step_md
+    # Table markup + tooltips + short headers in the HTML template.
+    for tip in ["number of QA static items", "number of QA dynamic items",
+                "number of memory items"]:
+        assert f'title="{tip}"' in ASSISTANT_TEMPLATE
+    # truncated / omitted carry an explanatory tooltip (what + how to recover).
+    assert "per-fact cap (tagged truncate1200)" in ASSISTANT_TEMPLATE
+    assert "exceeded the 11000-char budget" in ASSISTANT_TEMPLATE
+    assert "io-data" in ASSISTANT_TEMPLATE
+    for hdr in ["QA static", "QA dynamic"]:
+        assert hdr in ASSISTANT_TEMPLATE
+    # Markdown mirror (_step_md) renders the same counts as a table row.
+    class _Step:  # all fields default to None except the two we set
+        action = "query_memory"
+        observation = {"ok": True, "data": {"qa_static": 3, "qa_dynamic": 0,
+                        "memory": 6, "truncated": 0, "omitted": 0}}
+        def __getattr__(self, name):
+            return None
+    md = "\n".join(_step_md(_Step(), {}, {}))
+    assert "| QA static | QA dynamic | memory | truncated | omitted |" in md
+    assert "| 3 | 0 | 6 | 0 | 0 |" in md

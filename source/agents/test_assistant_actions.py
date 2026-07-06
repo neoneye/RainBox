@@ -415,7 +415,25 @@ def test_query_memory_truncates_large_facts_and_tags_them(app_ctx):
     obs = _action_query_memory(_ctx(), {"query": "q"}, _seed_retriever=fake_seed)
     assert "u-big, seed/user-overlay, truncate1200:" in obs.text
     assert ("x" * 1200) in obs.text and ("x" * 1201) not in obs.text  # capped at 1200
-    assert obs.data["truncated"] is True
+    assert obs.data["truncated"] == 1  # count of shortened facts
+
+
+def test_query_memory_data_splits_counts_and_tags_dynamic(app_ctx):
+    """The trace data separates QA static / QA dynamic / memory counts, and a
+    dynamic seed entry (a live handler) carries a `dynamic` tag in its line."""
+    from memory.seed_memory import SeedMemory
+    def fake_seed(query, *, qctx, **_):
+        return [SeedMemory(uuid="u-stat", path="p", source="upstream",
+                           answer="a static fact", score=0.9, kind="static"),
+                SeedMemory(uuid="u-dyn", path="p", source="upstream",
+                           answer="14 cron jobs", score=0.9, kind="dynamic")]
+    obs = _action_query_memory(_ctx(), {"query": "q"}, _seed_retriever=fake_seed)
+    assert obs.data["qa_static"] == 1
+    assert obs.data["qa_dynamic"] == 1
+    assert "memory" in obs.data and "memory_uuids" not in obs.data
+    # the dynamic seed carries the `dynamic` tag; the static one does not
+    assert "u-dyn, seed/upstream, dynamic: 14 cron jobs" in obs.text
+    assert "u-stat, seed/upstream: a static fact" in obs.text
 
 
 def test_query_memory_omits_tail_and_notes_it(app_ctx):

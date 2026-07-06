@@ -288,13 +288,15 @@ def _action_query_memory(
     if not (overlay or upstream or memories):
         return AssistantObservation(ok=True, text="No relevant remembered facts.")
 
-    # (B) Per-fact cap: build one line per fact, shortening long ones.
+    # (B) Per-fact cap: build one line per fact, shortening long ones. Dynamic
+    # seed entries (live handlers) carry a `dynamic` tag; static ones do not.
     fact_lines: list[str] = []
-    any_truncated = False
+    truncated_count = 0
     for s in overlay + upstream:
-        line, tr = _fact_line(s.uuid, f"seed/{s.source}", s.answer)
+        tags = f"seed/{s.source}" + (", dynamic" if s.kind == "dynamic" else "")
+        line, tr = _fact_line(s.uuid, tags, s.answer)
         fact_lines.append(line)
-        any_truncated = any_truncated or tr
+        truncated_count += tr
     if dynamic_block:
         # format_memory_context(include_uuid=True) emits TWO header lines (title +
         # legend); its fact lines are "- {uuid}, {tags}: {text}". Drop the leading
@@ -305,7 +307,7 @@ def _action_query_memory(
             if sep and len(body) > QUERY_MEMORY_PER_FACT_CHARS:
                 raw = (f"{head}, truncate{QUERY_MEMORY_PER_FACT_CHARS}: "
                        f"{body[:QUERY_MEMORY_PER_FACT_CHARS]}")
-                any_truncated = True
+                truncated_count += 1
             fact_lines.append(raw)
 
     # (C) Overall budget: keep top-ranked facts up to TOTAL chars; drop the tail
@@ -324,11 +326,11 @@ def _action_query_memory(
     # recalled data); the fence holds only the bare fact lines.
     fenced, _ = fence_recalled_memory("\n".join(kept))
     text = f"Recalled memory format\n{RECALLED_MEMORY_LEGEND}\n\n{fenced}"
-    if any_truncated or omitted:
+    if truncated_count or omitted:
         # A note outside the fence. The retrieval mechanism is also in
         # ASSISTANT_SYSTEM_PROMPT.
         segs = []
-        if any_truncated:
+        if truncated_count:
             segs.append(f"Long facts shortened to {QUERY_MEMORY_PER_FACT_CHARS} chars "
                         f"(tagged truncate{QUERY_MEMORY_PER_FACT_CHARS}).")
         if omitted:
@@ -338,9 +340,9 @@ def _action_query_memory(
         text += "\n\n" + " ".join(segs)
     return AssistantObservation(
         ok=True, text=text,
-        data={"seed_count": len(seeds), "dynamic_count": len(memories),
-              "truncated": any_truncated, "omitted": omitted,
-              "memory_uuids": [s.uuid for s in seeds] + [str(m.uuid) for m in memories]},
+        data={"qa_static": sum(1 for s in seeds if s.kind == "static"),
+              "qa_dynamic": sum(1 for s in seeds if s.kind == "dynamic"),
+              "memory": len(memories), "truncated": truncated_count, "omitted": omitted},
     )
 
 

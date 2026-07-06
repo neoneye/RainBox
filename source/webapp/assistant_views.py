@@ -194,6 +194,11 @@ ASSISTANT_TEMPLATE = """
                              display:flex; align-items:center; }
   .as-main .step .io > pre { margin:0; }
   .as-main .step .io-req pre { max-height:20rem; overflow:auto; }
+  /* Compact counts table for structured action data (e.g. query_memory). */
+  .as-main .step .io-data { border-collapse:collapse; font-size:0.8rem; margin:0.6rem 0 0; }
+  .as-main .step .io-data th, .as-main .step .io-data td {
+     border:1px solid #d1d5db; padding:2px 8px; text-align:right; }
+  .as-main .step .io-data th { background:#f3f4f6; font-weight:600; cursor:help; }
   /* The chosen action's human description, shown after the action in the header band. */
   .as-main .step .hd .action-desc { color:inherit; font-size:inherit; font-weight:400; }
   /* The observation's ok flag, derived from the step phase (observed=ok). */
@@ -368,7 +373,23 @@ ASSISTANT_TEMPLATE = """
           <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at %}<span class="io-meta">{% if step.created_at %}<span class="io-dur" title="Duration: how long the action took to complete">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}<span class="io-time" title="When this action result was recorded: {{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
           {% if obs is not none %}
             {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
-            {% if obs.data %}<pre>{{ obs.data | tojson }}</pre>{% endif %}
+            {% if obs.data %}
+              {% if 'qa_static' in obs.data %}
+              <table class="io-data"><thead><tr>
+                <th title="number of QA static items">QA static</th>
+                <th title="number of QA dynamic items">QA dynamic</th>
+                <th title="number of memory items">memory</th>
+                <th title="number of facts shortened because they exceeded the 1200-char per-fact cap (tagged truncate1200); read one in full via query_memory with its uuid">truncated</th>
+                <th title="number of lower-ranked facts dropped because the whole block exceeded the 11000-char budget; narrow the query or fetch a fact by its uuid">omitted</th>
+              </tr></thead><tbody><tr>
+                <td>{{ obs.data.qa_static }}</td>
+                <td>{{ obs.data.qa_dynamic }}</td>
+                <td>{{ obs.data.memory }}</td>
+                <td>{{ obs.data.truncated }}</td>
+                <td>{{ obs.data.omitted }}</td>
+              </tr></tbody></table>
+              {% else %}<pre>{{ obs.data | tojson }}</pre>{% endif %}
+            {% endif %}
           {% elif step.observation_preview %}
             <pre>{{ step.observation_preview }}</pre>
           {% endif %}
@@ -671,7 +692,14 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -
                 lines.append(_fence(obs["text"]))
                 lines.append("")
             if obs.get("data"):
-                lines.append(_fence(json.dumps(obs["data"], ensure_ascii=False, indent=2), "json"))
+                data = obs["data"]
+                if "qa_static" in data:
+                    lines.append("| QA static | QA dynamic | memory | truncated | omitted |")
+                    lines.append("|---|---|---|---|---|")
+                    lines.append(f"| {data['qa_static']} | {data['qa_dynamic']} | "
+                                 f"{data['memory']} | {data['truncated']} | {data['omitted']} |")
+                else:
+                    lines.append(_fence(json.dumps(data, ensure_ascii=False, indent=2), "json"))
                 lines.append("")
         elif step.observation_preview:
             lines.append(_fence(step.observation_preview))
