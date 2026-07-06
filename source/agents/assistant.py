@@ -1337,12 +1337,10 @@ class AssistantAgent(ModelGroupAgent):
         # row: the notice is a kind="message" whose side effect clears progress
         # rows, which would otherwise reap the row we post next.
         self._maybe_post_facts_marker(room_uuid)
-        # Post an in-flight signal immediately — before the (possibly slow) first
-        # model call — so the operator can see the assistant picked up the message.
-        # `kind="progress"` rows are reaped automatically when the real reply lands.
-        db.post_chat_message(
-            room_uuid, self.agent_uuid, "💭 Working on it…", kind="progress"
-        )
+        # The "working on it" progress bubble is posted at enqueue time
+        # (webapp._maybe_trigger_chat_agents), not here — by the time this
+        # freshly spawned process reaches handle() the operator has already
+        # waited on the spawn+import, so the signal must precede it.
         # The logical step the loop is on, so a crash records its failed row
         # against the right step (not a row count).
         current_step = 0

@@ -16,6 +16,7 @@ import db
 from agents.config import (
     ASSISTANT_RUN_SUMMARIZER_UUID,
     ASSISTANT_UUID,
+    ASSISTANT_WORKING_NOTICE,
     CHAT_STRUCTURED_UUID,
     CHAT_UNSTRUCTURED_UUID,
     MCP_UUID,
@@ -78,6 +79,15 @@ def _maybe_trigger_chat_agents(
                 agent_uuid,
                 {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)},
             )
+            # Post the assistant's progress bubble now, at enqueue time — the
+            # agent process still has to spawn and import its stack before its
+            # handle() runs, so posting here is what the operator sees
+            # immediately. kind="progress" is reaped when the real reply lands.
+            if agent_uuid == ASSISTANT_UUID:
+                db.post_chat_message(
+                    room_uuid, ASSISTANT_UUID, ASSISTANT_WORKING_NOTICE,
+                    kind="progress",
+                )
 
 
 @app.route("/chat/api/rooms", methods=["GET", "POST"])

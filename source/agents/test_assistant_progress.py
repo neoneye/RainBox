@@ -1,6 +1,7 @@
-"""The assistant posts an early `progress` row so the operator can see it picked
-up the message before the (slow) first model call returns; the progress bubble is
-reaped when the real reply lands."""
+"""The 'working on it' progress row is posted at enqueue time (see
+webapp._maybe_trigger_chat_agents) so the operator sees it before the agent
+process spawns. The assistant's terminal reply must reap it when the real reply
+lands."""
 
 from uuid import uuid4
 
@@ -9,7 +10,7 @@ import pytest
 import db
 from db import AssistantRun, ChatMessage
 from agents.assistant import AssistantActionName, AssistantAgent, AssistantStepDecision
-from agents.config import ASSISTANT_UUID
+from agents.config import ASSISTANT_UUID, ASSISTANT_WORKING_NOTICE
 
 
 @pytest.fixture
@@ -30,10 +31,15 @@ def _progress_count(room_uuid):
         room_uuid=room_uuid, kind="progress").count()
 
 
-def test_early_progress_appears_before_first_model_call_and_is_reaped(app_ctx):
+def test_enqueue_time_progress_survives_the_run_and_is_reaped(app_ctx):
     human = db.get_human_user()
     chatroom = db.create_chatroom(f"prog-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
     db.post_chat_message(chatroom.uuid, human.uuid, "what kanban boards do you see")
+    # The enqueue-time progress bubble (posted by the webapp before the agent
+    # spawns); handle() must leave it visible through the run, then the reply
+    # reaps it.
+    db.set_setting("qa.facts_invalidated_at", None)  # no invalidation marker this turn
+    db.post_chat_message(chatroom.uuid, ASSISTANT_UUID, ASSISTANT_WORKING_NOTICE, kind="progress")
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     seen = {}
 

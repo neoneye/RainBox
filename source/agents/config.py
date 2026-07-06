@@ -60,6 +60,12 @@ EDIT_DOCUMENT_V6_UUID: UUID = UUID("4bf3271f-a58f-4dd0-a07f-b85dac906cd0")
 MCP_UUID: UUID = UUID("828ae65d-a902-4b4e-bcd3-f761afe23d29")
 ASSISTANT_UUID: UUID = UUID("cad11db6-a8e6-4cdd-a37e-a98bbc53e74d")
 ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25")
+
+# The assistant's in-flight progress bubble. Posted at enqueue time (the moment a
+# human message triggers the assistant) so it appears immediately — before the
+# agent process has spawned and imported its stack. kind="progress", so it is
+# reaped when the real reply lands and never enters the model transcript.
+ASSISTANT_WORKING_NOTICE: str = "💭 Working on it…"
 # Persona conversation feature (see docs/proposals/2026-06-08-persona-prompts-...).
 # Persona runnable UUIDs MUST match agent_profiles/personas.jsonl. These roles
 # are deliberately NOT in webapp.chat_api.CHAT_RESPONDER_UUIDS, so a human post
