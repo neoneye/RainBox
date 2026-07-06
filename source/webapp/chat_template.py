@@ -491,7 +491,11 @@ async function ppPostFeedback(rowEl, rating){
 // plain escaped text if the CDN libs failed to load.
 function renderMarkdown(src){
   if (window.marked && window.DOMPurify){
-    return DOMPurify.sanitize(marked.parse(src));
+    // breaks:true — a single newline is a hard line break (chat/GFM style), so a
+    // typed message renders with the same line breaks the operator entered.
+    // Without it marked collapses a single newline to a space (only a blank
+    // line would break), so multi-line input looked joined together.
+    return DOMPurify.sanitize(marked.parse(src, { breaks: true, gfm: true }));
   }
   const tmp = document.createElement('div');
   tmp.textContent = src;

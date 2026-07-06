@@ -29,3 +29,11 @@ def test_room_and_folder_kebabs_have_copy_id():
     assert "copyIdToast(folderId, 'Folder')" in body
     assert "function chatToast" in body
     assert 'id="chat-toast"' in body
+
+
+def test_typed_newlines_render_as_line_breaks():
+    """A single newline in a typed message must render as a line break (chat
+    style), not collapse to a space — marked is configured with breaks:true."""
+    body = _body()
+    assert "breaks: true" in body
+    assert "marked.parse(src, { breaks: true, gfm: true })" in body
