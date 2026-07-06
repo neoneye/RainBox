@@ -27,11 +27,17 @@ The module is `memory/seed_memory.py`; dynamic handlers live in
 Entries are loaded from two JSONL files, merged by `id` (`_load_jsonl`):
 
 - **Base** — `data/question_answer.jsonl` (`QA_JSONL_PATH`), tagged
-  `_source="upstream"`.
+  `_source="upstream"`. Stays publishable — no PII.
 - **Operator overlay** — `<customize.dir>/question_answer.jsonl`, tagged
   `_source="user-overlay"`. `customize.dir` is a setting pointing at the
   operator's private customizations (PII / persona). An overlay entry replaces a
-  base entry with the same `id`.
+  base entry with the same `id` wholesale.
+
+Within one file, a duplicate `id` or a duplicate `path` is an operator mistake
+and is rejected — repopulate fails hard with a `file:line` message naming the
+first occurrence. Reuse *across* files is the override mechanism and is fine.
+(The overlay schema is under active design — see the
+`docs/proposals/2026-07-*-qa-overlay-*` proposals.)
 
 ### Entry schema
 
@@ -53,7 +59,10 @@ One JSON object per line:
 
 - **pgvector table** `data_seed_memory` (`QA_FULL_TABLE`) — one embedded node per
   question alternate, for semantic retrieval. Populated by `_ensure_populated`
-  / `rebuild_kb`.
+  / `rebuild_kb`. Only the **question text** is embedded: answer/handler/shield
+  ride along as metadata excluded from the vector (`_build_documents`), so a
+  long answer neither pollutes the question vector nor trips the chunk-size
+  guard.
 - **In-memory registry** (`_entries_by_id`, `_alias_table`) — built by
   `_load_kb`: `qa_id → entry` and normalized-question → `qa_id`. Required to
   resolve a match back to its answer/handler; a caller that retrieves without
@@ -79,12 +88,16 @@ the handler.
 ### Dynamic handlers
 
 Dynamic entries name a read-only function in `HANDLERS` (`agents/query_handlers.py`),
-called with a `QueryContext` (room, query, agent). Handlers cover identity
-(`get_capabilities`, `get_model_info`), system (`get_system_health`,
-`get_system_resources`, `get_host_info`), dev (`get_git_status`,
-`get_last_git_commit`, `get_test_status`, `get_cron_overview`,
-`get_kanban_overview`), and project (`get_current_chatroom`, …) facts. Because
-they compute a live value, their answers change between calls.
+called with a `QueryContext` (room, query, agent). Handlers (~40) cover identity
+(`get_capabilities`, `get_version`, `get_model_info`), system health and host
+facts (`get_system_health`, `get_system_resources`, `get_host_info`,
+`get_gpu_info`, `get_connectivity`, `get_local_ip`, uptimes, datetime), dev/git
+(`get_git_status`, `get_git_overview`, `get_last_git_commit`, `get_test_status`,
+`get_outdated_dependencies`), subsystem overviews (`get_cron_overview`,
+`get_kanban_overview`, `get_todo_list`), chat (`get_current_chatroom`,
+`list_chatrooms`), and memory introspection (`get_memory_stats`,
+`get_last_match_explanation`). Because they compute a live value, their answers
+change between calls.
 
 ### Shields
 
@@ -107,6 +120,13 @@ A shield hides sensitive entries from the LLM until the operator unlocks them.
 - `available_qa_shields()` lists the shield names for the /settings UI. The
   unlocked set comes from `_unlocked_shields()` (the `qa.unlocked_shields`
   setting; empty outside an app context — the safe default).
+
+> **Control-plane caveat.** `qa.unlocked_shields` is an ordinary setting, and
+> the settings API has no authentication — any local HTTP caller can unlock
+> every shield with one `POST /settings/api/set`. Shields gate what reaches
+> the *LLM*, not what a local attacker can read. This is Finding 8a of
+> `docs/proposals/2026-06-25-security-review-mitigations.md` (open); the plan
+> is auth plus treating shield changes as high-sensitivity, audited actions.
 
 ## Consumers
 
@@ -225,3 +245,6 @@ via `db.record_retrieval_event`; see `relevance-telemetry.md`.
 | pgvector table | `data_seed_memory` |
 | Settings | `qa.unlocked_shields`, `customize.dir`, `qa.facts_invalidated_at` |
 | Constants | `TOP_K=5`, `MIN_SCORE=0.60`, `MIN_MARGIN=0.05`, `TOP_K_FILTER=5` |
+| Tests | `memory/test_seed_memory_errors.py`, `memory/test_seed_shields.py`, `memory/test_seed_documents.py` |
+| Overlay schema proposals | `docs/proposals/2026-07-04-qa-overlay-person-schema.md`, `docs/proposals/2026-07-07-qa-overlay-first-person-voice.md` |
+| Security review | `docs/proposals/2026-06-25-security-review-mitigations.md` (Finding 8a: shields) |
