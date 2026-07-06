@@ -199,6 +199,17 @@ def _load_jsonl() -> list[dict[str, Any]]:
                     f"{path}:{lineno}: invalid JSON — {exc.msg} "
                     f"(column {exc.colno})"
                 ) from exc
+            # A shield is a name matched against the qa.unlocked_shields string
+            # list; a non-string value can never be unlocked and is a data error.
+            # Reject it here so repopulate fails hard with a file:line, rather
+            # than silently embedding an entry the operator can never reveal.
+            shield = entry.get("shield")
+            if shield is not None and not isinstance(shield, str):
+                raise ValueError(
+                    f"{path}:{lineno}: 'shield' must be a string "
+                    f"(a name matched against qa.unlocked_shields), got "
+                    f"{type(shield).__name__}"
+                )
             entry_id = entry.get("id")
             if entry_id:
                 first = seen_ids.get(entry_id)

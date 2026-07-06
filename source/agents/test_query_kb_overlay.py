@@ -182,3 +182,17 @@ def test_load_jsonl_tags_source(customize_dir, monkeypatch):
     assert by_id["o1"]["_source"] == "user-overlay"
     assert by_id["shared"]["_source"] == "user-overlay"   # overlay overrides → its source wins
     assert by_id["shared"]["answer"] == "overlay-shared"
+
+
+def test_load_jsonl_rejects_non_string_shield(customize_dir, monkeypatch):
+    """A `shield` value must be a string (a name matched against
+    qa.unlocked_shields). A non-string shield is an operator data error and must
+    fail the load/repopulate with a file:line message, not pass silently."""
+    monkeypatch.setattr(kb, "QA_JSONL_PATH", customize_dir / "base.jsonl")
+    (customize_dir / "base.jsonl").write_text("")
+    _write_overlay(customize_dir, [
+        {"id": "e1", "path": "p.one", "kind": "static", "answer": "a",
+         "shield": ["not", "a", "string"]},
+    ])
+    with pytest.raises(ValueError, match="shield"):
+        kb._load_jsonl()
