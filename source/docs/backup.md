@@ -4,7 +4,6 @@
 
 Back up the rainbox Postgres database to a compressed, **public-key-encrypted**,
 timestamped file — on demand from the CLI or on a schedule via the cron system.
-This is the "System → Backup" use case (`docs/usecases.md`).
 
 A backup is a `pg_dump` plain-SQL dump, compressed with **zstd**, then encrypted
 to a recipient's **public key** with [`age`](https://age-encryption.org):
@@ -27,8 +26,33 @@ configured, a backup refuses to run rather than write plaintext, and if
 encryption errors it fails loudly — a backup is never silently written
 unencrypted.
 
-Code: `backup/dump.py` (the dump + encryption) and `db/cron.py` (the `backup` cron
-action + the seeded daily job).
+A backup contains the **entire database** — chat history, memory claims, and
+the model API keys stored in `model_config` — so the recipient keys guard all
+of it. This is also why secret-flagged settings are **env-only** and can never
+be stored in `app_setting` (`db/settings.py:set_setting` enforces it): a secret
+in the DB would land in cleartext inside every dump.
+
+### Limits of the threat model — the control plane
+
+The encrypt-only design holds only as long as the *recipient configuration* is
+trustworthy, and today it is not protected: the web app has no authentication,
+so any process that can reach the localhost HTTP port can change
+`backup.age_recipient` and `backup.repo` via `POST /settings/api/set` (the DB
+value **overrides** the env var), then fire the backup job via the cron API —
+producing a dump of the whole database encrypted to a key *they* control,
+optionally pushed off-machine if `backup.git_push` is on. The destination has
+no approved-roots check. This is Finding 3 of
+`docs/proposals/2026-06-25-security-review-mitigations.md` (status: open); the
+planned fixes are an operator-auth boundary, elevated confirmation + audit for
+backup-setting changes, and approved destination roots.
+
+Until that lands: keep the app bound to `127.0.0.1` and treat any
+local-machine compromise as full control-plane compromise. The "Verify a
+backup" check below doubles as tamper detection — a backup that no longer
+decrypts with **your** identity means the recipient was changed under you.
+
+Code: `backup/dump.py` (the dump + encryption), `backup/remote.py` (git
+upload), and `db/cron.py` (the `backup` cron action + the seeded daily job).
 
 ## One-time key setup (do this offline)
 
@@ -131,6 +155,10 @@ Example — a backup taken 2026-01-01 22:39:06 UTC:
 export RAINBOX_BACKUP_AGE_RECIPIENT=age1ql3z7h9...
 ```
 
+The `backup.age_recipient` DB setting validates that every token starts with
+`age1…`. SSH recipients (`ssh-ed25519 AAAA…`) contain a space and can't be
+expressed inline — use the env-only recipients file for those.
+
 ### Operator settings (app_setting)
 
 For the **scheduled** backup you can set these in Postgres instead of the
@@ -199,7 +227,9 @@ which goes through the workspace-shell agent whose allowlist can't run
 
 A disabled **"Database backup"** job is seeded under a **System** folder
 (`seed_cron_defaults()` in `db/cron.py`), scheduled daily at **03:30 local
-time** (`30 3 * * *`). To turn it on:
+time** (`30 3 * * *`). (The same folder also seeds a "Memory embedding sync"
+job at 03:15 — an unrelated in-process maintenance sibling.) To turn the
+backup on:
 
 1. Configure the recipient: set the `backup.age_recipient` app setting (your
    `age1…` public key) or the `RAINBOX_BACKUP_AGE_RECIPIENT` env var.
@@ -208,11 +238,15 @@ time** (`30 3 * * *`). To turn it on:
 3. Open `/cron` → **System** → **Database backup**.
 4. Set the destination: put a directory path in the job's **command** field, or
    set the `backup.repo` setting / `RAINBOX_BACKUP_REPO`.
-5. Toggle the job **Active**, and optionally click **Run now** to confirm it
-   works.
+5. Click **Run debug** first if you like — a dry-run that resolves and reports
+   the destination and recipient count without dumping anything, so you can
+   check the wiring risk-free.
+6. Toggle the job **Active**, and optionally click **Run now** to confirm it
+   works end-to-end.
 
-Every fire — scheduled or "Run now" — records a `cron_run` row and posts a line
-to the **`cron`** chatroom:
+Every fire — scheduled, "Run now", or "Run debug" — records a `cron_run` row
+(status `ok`/`error`, shown in the `/cron` health column) and posts a line to
+the **`cron`** chatroom:
 
 ```text
 ▶ backed up "Database backup" (scheduled) → /path/.../2026-01-01T03-30-00Z.zstd.age (822382 bytes)
@@ -254,8 +288,9 @@ alone), commits it as `backup <relpath>`, and pushes the current branch to
   `git@github.com:` remote that means an SSH key/agent reachable by the app (and
   by the cron supervisor, if you schedule backups).
 - A push failure does **not** discard the local backup: the file is already
-  written, and the failure is logged / posted to the `cron` room as a separate
-  `✖ upload failed:` line.
+  written. A cron fire posts the push result to the `cron` room as its own line
+  (`↑ pushed …` on success, `✖ upload failed: …` on failure) without failing
+  the fire; the CLI logs the error and exits non-zero so a caller notices.
 - Restoring is unchanged — pull/clone the backup repo, then decrypt as below.
 
 > Caveat: git keeps every pushed backup forever, so the repo grows without
@@ -358,8 +393,12 @@ key — the backups are, by design, unrecoverable without it.)
   supervisor loop, not a separate daemon.
 - The job and **every ancestor folder** must be Active (folder-disable
   cascades). Check the System folder too.
-- "Run now" on `/cron` fires immediately and surfaces any error in the `cron`
-  chatroom — use it to isolate scheduling vs. backup problems.
+- Check the global pause: while the `cron.paused` setting is on, nothing fires
+  at all (the job's "next run" column shows `paused`).
+- "Run debug" on `/cron` dry-runs the job — it resolves and reports the
+  destination and recipients without dumping, isolating configuration problems.
+- "Run now" fires immediately and surfaces any error in the `cron` chatroom —
+  use it to isolate scheduling vs. backup problems.
 
 ### Backup is slow / blocks other cron jobs
 
@@ -370,6 +409,10 @@ worker; see the note in `fire_cron_job` (`db/cron.py`).
 
 ## Limitations
 
+- **No control-plane authentication.** The settings and cron HTTP APIs that
+  configure and fire backups are unauthenticated, so the recipient and
+  destination can be redirected by any local caller — see "Limits of the
+  threat model" above and the security-review mitigation plan.
 - **Remote upload is git-only.** Off-machine upload is done by committing into a
   git repo and pushing (see Remote upload). There's no direct rsync/S3/rclone
   target; point git at whatever remote you like, or add another uploader.
@@ -385,9 +428,13 @@ worker; see the note in `fire_cron_job` (`db/cron.py`).
 
 ## See also
 
-- `docs/usecases.md` — the "System → Backup" use case.
 - `docs/cron-design.md` — the cron scheduler/firing this hooks into.
 - `docs/operator-guide.md` — running the app, general troubleshooting.
+- `docs/proposals/2026-06-25-security-review-mitigations.md` — the open
+  control-plane findings and the plan to close them (auth, audited backup
+  settings, approved destination roots).
+- `docs/proposals/2026-06-07-user-configuration-in-postgres.md` — the
+  `app_setting` design the backup settings live in.
 - [age-encryption.org](https://age-encryption.org) — the encryption tool/format.
-- Tests: `backup/test_dump.py` (the dump + encryption), `db/test_cron_backup.py` (the
-  cron action).
+- Tests: `backup/test_dump.py` (the dump + encryption), `backup/test_remote.py`
+  (the git upload), `db/test_cron_backup.py` (the cron action).

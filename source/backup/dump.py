@@ -1,7 +1,7 @@
 """Back up the rainbox Postgres database to a zstd-compressed, public-key-encrypted dump.
 
-Implements the "System -> Backup" use case (docs/usecases.md): dump postgres to
-zstd, encrypted to a recipient's *public* key with `age`. The pipeline is:
+Dumps postgres to zstd, encrypted to a recipient's *public* key with `age`
+(see docs/backup.md for the full operator guide). The pipeline is:
 
     pg_dump <dsn> | zstd | age -r <recipient>   ->   FILE.zstd.age
 
