@@ -84,13 +84,17 @@ they only appear inside someone else's story. Two lines is enough:
  "answer": "Ada Quist (b. 1950), retired nurse. Partner of Ben, mother of Cleo and Dov. Household: maplest."}
 ```
 
+The identity card is deliberately third person: it is the anchor that binds
+the person id to a display name. Every *other* entry about the person speaks
+in first person — see question rule 5 and the first-person-voice proposal.
+
 People central to the operator's life additionally get a **relations card**,
 one edge list anchored on the subject:
 
 ```json
 {"path": "human.cleo.relations",
  "questions": ["Cleo's family", "Who are Cleo's parents and siblings?"],
- "answer": "Oldest child of Ada & Ben. Sibling: Dov. Partner: Faye. Children: Gil (2018), Hana (2022). Household: oakave."}
+ "answer": "I am the oldest child of Ada & Ben. Sibling: Dov. Partner: Faye. Children: Gil (2018), Hana (2022). Household: oakave."}
 ```
 
 Edges are stated from both ends (Ada lists Cleo; Cleo lists Ada). That is
@@ -119,8 +123,8 @@ human.cleo.food.pizza           — a standing preference, told as prose
 
 A relationship with its own history gets its own story leaf named
 `<reltype>.<otherid>` (`friend.ines`, `expartner.mira`): the narrative is
-anchored on the subject, while the other person's own facts live on *their*
-identity card. Never year-first paths (`2019.jobchange`) — that scatters one
+anchored on the subject — "Ines and I met at Acme in 2005…" — while the other
+person's own facts live on *their* identity card. Never year-first paths (`2019.jobchange`) — that scatters one
 person's timeline instead of clustering it under its topic.
 
 The **split test** for an oversized story: if a question you want answered
@@ -138,7 +142,7 @@ One **roster card**, membership by reference:
 ```json
 {"path": "household.maplest.roster",
  "questions": ["Who lives at the Maple St household?", "the maplest family"],
- "answer": "Members: Ada, Ben, and their eldest child Cleo. Place: location.maplest."}
+ "answer": "Members: Ada, Ben, and their adult child Dov. Place: location.maplest."}
 ```
 
 Everything else about the unit's shared life — trips, gatherings, clubs,
@@ -171,7 +175,14 @@ Since questions are the schema, most retrieval quality is decided here:
 4. **Cards get who/what questions; stories get event questions with the year
    in them** ("Cleo's CV from 2019"), which makes the dated nature visible at
    retrieval time.
-5. `questions: []` means *never retrieved by similarity* — reserved for
+5. **Questions name the subject; answers speak as the subject.** Answers
+   under `human.<pid>.*` are written in first person — "I"/"my" is the
+   path's person — but questions keep the name, because they are matched
+   against anyone's ask and "what is my job?" is identical across subjects.
+   See the first-person-voice proposal
+   (`2026-07-07-qa-overlay-first-person-voice.md`), including the byline
+   render change that must land before adopting this voice.
+6. `questions: []` means *never retrieved by similarity* — reserved for
    meta/header entries addressed only by exact path.
 
 ## Shields and privacy
