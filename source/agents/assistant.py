@@ -192,13 +192,17 @@ QUERY_MEMORY_PER_FACT_CHARS: int = 1200
 QUERY_MEMORY_TOTAL_CHARS: int = 11000
 
 
+RECALLED_MEMORY_LEGEND: str = "{memory_uuid}, {memory_tags}: {memory_text}"
+
+
 def _fact_line(uuid: str, tags: str, text: str) -> tuple[str, bool]:
-    """Render one recalled-fact line, shortening text over the per-fact cap and
-    marking it with a `truncate{cap}` tag. Returns (line, was_truncated)."""
+    """Render one recalled-fact line (see RECALLED_MEMORY_LEGEND), shortening text
+    over the per-fact cap and marking it with a `truncate{cap}` tag. Returns
+    (line, was_truncated)."""
     if len(text) > QUERY_MEMORY_PER_FACT_CHARS:
-        return (f"- {uuid}, {tags}, truncate{QUERY_MEMORY_PER_FACT_CHARS}: "
+        return (f"{uuid}, {tags}, truncate{QUERY_MEMORY_PER_FACT_CHARS}: "
                 f"{text[:QUERY_MEMORY_PER_FACT_CHARS]}", True)
-    return f"- {uuid}, {tags}: {text}", False
+    return f"{uuid}, {tags}: {text}", False
 
 
 def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantObservation:
@@ -221,7 +225,7 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
         answer = qkb._resolve_match(
             qkb.Match(qa_id=uuid_str, method="exact", score=1.0), qctx)
         text, _ = fence_recalled_memory(
-            f"- {uuid_str}, seed/{entry.get('_source', 'upstream')}: {answer}")
+            f"{uuid_str}, seed/{entry.get('_source', 'upstream')}: {answer}")
         return AssistantObservation(
             ok=True, text=text, data={"matched": True, "uuid": uuid_str, "source": "seed"})
     try:
@@ -230,7 +234,7 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
         claim = None
     if claim is not None and claim.status == "active" and claim.sensitivity != "secret":
         text, _ = fence_recalled_memory(
-            f"- {uuid_str}, {claim.kind}, {claim.sensitivity}: {claim.text}")
+            f"{uuid_str}, {claim.kind}, {claim.sensitivity}: {claim.text}")
         return AssistantObservation(
             ok=True, text=text, data={"matched": True, "uuid": uuid_str, "source": "claim"})
     return none
@@ -293,8 +297,10 @@ def _action_query_memory(
         any_truncated = any_truncated or tr
     if dynamic_block:
         # format_memory_context(include_uuid=True) emits TWO header lines (title +
-        # legend); its fact lines are "- {uuid}, {tags}: {text}". Cap each text.
+        # legend); its fact lines are "- {uuid}, {tags}: {text}". Drop the leading
+        # "- " (the fence holds bare fact lines) and cap each text.
         for raw in dynamic_block.split("\n")[2:]:
+            raw = raw[2:] if raw.startswith("- ") else raw
             head, sep, body = raw.partition(": ")
             if sep and len(body) > QUERY_MEMORY_PER_FACT_CHARS:
                 raw = (f"{head}, truncate{QUERY_MEMORY_PER_FACT_CHARS}: "
@@ -304,8 +310,7 @@ def _action_query_memory(
 
     # (C) Overall budget: keep top-ranked facts up to TOTAL chars; drop the tail
     # at a fact boundary (never mid-word) and count what was omitted.
-    header = ["Relevant remembered facts", "- {memory_uuid}, {memory_tags}: {memory_text}"]
-    used = len("\n".join(header)) + 1
+    used = len(RECALLED_MEMORY_LEGEND) + 1
     kept: list[str] = []
     omitted = 0
     for i, line in enumerate(fact_lines):
@@ -315,18 +320,22 @@ def _action_query_memory(
         used += len(line) + 1
         kept.append(line)
 
-    text, _ = fence_recalled_memory("\n".join(header + kept))
+    # The format legend lives OUTSIDE the fence (it is our own instruction, not
+    # recalled data); the fence holds only the bare fact lines.
+    fenced, _ = fence_recalled_memory("\n".join(kept))
+    text = f"Recalled memory format\n{RECALLED_MEMORY_LEGEND}\n\n{fenced}"
     if any_truncated or omitted:
-        # Outside the fence (a note, not recalled data). The retrieval mechanism
-        # for the full text is spelled out in ASSISTANT_SYSTEM_PROMPT.
-        parts = []
+        # A note outside the fence. The retrieval mechanism is also in
+        # ASSISTANT_SYSTEM_PROMPT.
+        segs = []
         if any_truncated:
-            parts.append(f"long facts shortened to {QUERY_MEMORY_PER_FACT_CHARS} chars "
-                         f"(tagged truncate{QUERY_MEMORY_PER_FACT_CHARS})")
+            segs.append(f"Long facts shortened to {QUERY_MEMORY_PER_FACT_CHARS} chars "
+                        f"(tagged truncate{QUERY_MEMORY_PER_FACT_CHARS}).")
         if omitted:
-            parts.append(f"{omitted} lower-ranked fact(s) omitted")
-        text += (f"\n[{'; '.join(parts)}. To read a fact in full, call query_memory "
-                 f'with {{"uuid": "<the fact\'s uuid>"}}.]')
+            segs.append(f"{omitted} lower-ranked fact(s) omitted.")
+        segs.append('To read a fact in full, call query_memory with '
+                    '{"uuid": "<the fact\'s uuid>"}.')
+        text += "\n\n" + " ".join(segs)
     return AssistantObservation(
         ok=True, text=text,
         data={"seed_count": len(seeds), "dynamic_count": len(memories),

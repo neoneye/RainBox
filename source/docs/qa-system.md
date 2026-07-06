@@ -122,7 +122,9 @@ action for facts. It:
 3. Retrieves dynamic memory claims (`retrieve_memories_hybrid`).
 4. Tiers the result — user-overlay seed, then upstream seed, then dynamic
    claims — and wraps it in a `<recalled_memory>` fence (untrusted-data
-   framing; angle brackets sanitized).
+   framing; angle brackets sanitized). The fence holds only bare fact lines
+   (`{uuid}, {tags}: {text}`); the format legend and the truncation note live
+   *outside* it (they are the assistant's own instructions, not recalled data).
 
 Each fact is capped to `QUERY_MEMORY_PER_FACT_CHARS` (1200) — longer facts are
 shortened and tagged `truncate1200` — and the whole block to
