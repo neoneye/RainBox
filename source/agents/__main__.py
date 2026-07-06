@@ -29,6 +29,45 @@ from agents.base import Agent, ModelGroupAgent
 logger = logging.getLogger(__name__)
 
 
+# Role/kind → "module:ClassName". Values are strings so this table imports
+# nothing at module load; _resolve_agent_class imports only the one it needs.
+_AGENT_CLASS_PATHS: dict[str, str] = {
+    "assistant": "agents.assistant:AssistantAgent",
+    "assistant_run_summarizer": "agents.assistant_run_summarizer:AssistantRunSummarizerAgent",
+    "chat_structured": "agents.chat_structured:StructuredChatAgent",
+    "chat_unstructured": "agents.chat_unstructured:UnstructuredChatAgent",
+    "edit_document_v1": "agents.edit_document_v1:EditDocumentAgentV1",
+    "edit_document_v2": "agents.edit_document_v2:EditDocumentAgentV2",
+    "edit_document_v3": "agents.edit_document_v3:EditDocumentAgentV3",
+    "edit_document_v4": "agents.edit_document_v4:EditDocumentAgentV4",
+    "edit_document_v5": "agents.edit_document_v5:EditDocumentAgentV5",
+    "edit_document_v6": "agents.edit_document_v6:EditDocumentAgentV6",
+    "followup": "agents.followup:FollowUpClassifierAgent",
+    "kanban_worker": "agents.kanban_worker:KanbanWorkerAgent",
+    "tool_demo": "agents.tool_demo:ToolDemoAgent",
+    "workspace_shell": "tools.workspace_shell_chat:WorkspaceShellChatAgent",
+    "router": "agents.router:RouterAgent",
+    "query": "agents.query:QueryAgent",
+    "query_router": "agents.query_router:QueryRouterAgent",
+    "query_filter_router": "agents.query_filter_router:QueryFilterRouterAgent",
+    "mcp": "agents.mcp:MCPAgent",
+    "conversation": "agents.conversation:ConversationManagerAgent",
+}
+
+
+def _resolve_agent_class(kind: str) -> type[Agent]:
+    """Import and return the agent class for `kind` (a plain ModelGroupAgent as
+    the default). Imports ONLY the selected module, so a spawned agent process
+    loads its own dependencies (llama_index etc.) — not all 20 agents'."""
+    import importlib
+
+    path = _AGENT_CLASS_PATHS.get(kind)
+    if path is None:
+        return ModelGroupAgent
+    module_name, class_name = path.split(":")
+    return getattr(importlib.import_module(module_name), class_name)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -58,57 +97,13 @@ def main() -> None:
     def send(msg: dict[str, Any]) -> None:
         sock.sendall((json.dumps(msg) + "\n").encode("utf-8"))
 
-    # Pick the agent subclass for this role: specialized agents run as their own
-    # class, everything else as a plain ModelGroupAgent. Imported here (not at
-    # module top) so those modules can import the base classes from this one.
-    from agents.assistant import AssistantAgent
-    from agents.assistant_run_summarizer import AssistantRunSummarizerAgent
-    from agents.chat_structured import StructuredChatAgent
-    from agents.chat_unstructured import UnstructuredChatAgent
-    from agents.edit_document_v1 import EditDocumentAgentV1
-    from agents.edit_document_v2 import EditDocumentAgentV2
-    from agents.edit_document_v3 import EditDocumentAgentV3
-    from agents.edit_document_v4 import EditDocumentAgentV4
-    from agents.edit_document_v5 import EditDocumentAgentV5
-    from agents.edit_document_v6 import EditDocumentAgentV6
-    from agents.conversation import ConversationManagerAgent
-    from agents.followup import FollowUpClassifierAgent
-    from agents.kanban_worker import KanbanWorkerAgent
-    from agents.mcp import MCPAgent
-    from agents.tool_demo import ToolDemoAgent
-    from agents.query import QueryAgent
-    from agents.query_filter_router import QueryFilterRouterAgent
-    from agents.query_router import QueryRouterAgent
-    from agents.router import RouterAgent
-    from tools.workspace_shell_chat import WorkspaceShellChatAgent
-
-    agent_classes: dict[str, type[Agent]] = {
-        "assistant": AssistantAgent,
-        "assistant_run_summarizer": AssistantRunSummarizerAgent,
-        "chat_structured": StructuredChatAgent,
-        "chat_unstructured": UnstructuredChatAgent,
-        "edit_document_v1": EditDocumentAgentV1,
-        "edit_document_v2": EditDocumentAgentV2,
-        "edit_document_v3": EditDocumentAgentV3,
-        "edit_document_v4": EditDocumentAgentV4,
-        "edit_document_v5": EditDocumentAgentV5,
-        "edit_document_v6": EditDocumentAgentV6,
-        "followup": FollowUpClassifierAgent,
-        "kanban_worker": KanbanWorkerAgent,
-        "tool_demo": ToolDemoAgent,
-        "workspace_shell": WorkspaceShellChatAgent,
-        "router": RouterAgent,
-        "query": QueryAgent,
-        "query_router": QueryRouterAgent,
-        "query_filter_router": QueryFilterRouterAgent,
-        "mcp": MCPAgent,
-        "conversation": ConversationManagerAgent,
-    }
     # Dispatch on agent_kind when present, else the role name. This lets many
     # roles (e.g. persona_egon / persona_benny) share one implementation class
     # while existing roles (whose name == implementation key) are unaffected.
+    # _resolve_agent_class imports ONLY the selected agent, so this spawned
+    # process doesn't pay every agent's import cost (llama_index etc.).
     kind = config.get("agent_kind", config["name"])
-    agent_cls = agent_classes.get(kind, ModelGroupAgent)
+    agent_cls = _resolve_agent_class(kind)
     agent = agent_cls(agent_uuid=agent_uuid, name=config["name"], send=send)
     agent.run()
 

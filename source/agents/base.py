@@ -28,12 +28,16 @@ import time
 from typing import Any, Callable, cast
 from uuid import UUID
 
-from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
-from llama_index.core.llms import ChatMessage, MessageRole
+# NOTE: llama_index is imported lazily inside `_structured_completion` (~0.6s to
+# load). Keeping it out of module scope lets a freshly spawned agent process post
+# its "working on it" progress row before paying that cost — the import happens on
+# the first actual LLM call, which is after the progress row.
 from pydantic import BaseModel
 
 import db
-from llm import prepare_llm
+# NOTE: `prepare_llm` (and the llm package it lives in) pulls in llama_index
+# (~0.6s). Imported lazily inside `_structured_completion` so a freshly spawned
+# agent process can post progress before paying that cost.
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +255,10 @@ class ModelGroupAgent(Agent):
         An optional `validator` callable is invoked on each successful response
         before returning it; if it raises, the model is treated as failed and
         the loop falls back to the next candidate."""
+        from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+        from llama_index.core.llms import ChatMessage, MessageRole
+        from llm import prepare_llm
+
         if not self.candidate_model_uuids:
             raise RuntimeError(
                 f"agent {self.name} has no model group / candidate models bound"

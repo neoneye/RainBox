@@ -174,16 +174,12 @@ def test_worker_rejects_non_kanban_payload():
 
 
 def test_worker_registered_in_agent_classes():
-    """agents/__main__.py's dispatch map must know the kanban_worker kind (the
-    map is built inside main(); import the module and check the source wiring by
-    constructing the class the same way main() does)."""
+    """agents/__main__.py's dispatch must resolve the kanban_worker kind to its
+    class (the registry imports each agent lazily; resolve it the way main()
+    does)."""
     from agents.kanban_worker import KanbanWorkerAgent
     from agents.base import Agent
+    from agents.__main__ import _resolve_agent_class
 
     assert issubclass(KanbanWorkerAgent, Agent)
-    import inspect
-
-    import agents.__main__ as agent_module
-
-    src = inspect.getsource(agent_module.main)
-    assert '"kanban_worker": KanbanWorkerAgent' in src
+    assert _resolve_agent_class("kanban_worker") is KanbanWorkerAgent
