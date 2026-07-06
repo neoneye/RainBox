@@ -124,6 +124,19 @@ action for facts. It:
    claims — and wraps it in a `<recalled_memory>` fence (untrusted-data
    framing; angle brackets sanitized).
 
+Each fact is capped to `QUERY_MEMORY_PER_FACT_CHARS` (1200) — longer facts are
+shortened and tagged `truncate1200` — and the whole block to
+`QUERY_MEMORY_TOTAL_CHARS` (11000); lower-ranked facts past the budget are
+dropped at a fact boundary (never mid-word) and counted in a note appended
+outside the fence. This keeps one large overlay entry (some are >5000 chars)
+from crowding out every other fact.
+
+To read a shortened or omitted fact in full, the model calls `query_memory`
+again with `{"uuid": "<the fact's uuid>"}` instead of `{"query": ...}`
+(`_query_memory_full`): the uuid mode returns that single entry untruncated —
+seed entries still respect shields, claims never return secrets. The system
+prompt tells the model about the `truncate` tags and this uuid escape hatch.
+
 It also posts a one-time re-check notice when facts were invalidated — see
 [Facts-invalidation notice](#facts-invalidation-notice).
 

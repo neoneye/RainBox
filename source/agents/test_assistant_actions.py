@@ -399,3 +399,63 @@ def test_loop_records_failed_action_and_continues(room):
     failed = steps[0]
     assert failed.action == "workspace_read_command"
     assert failed.error and "blocked" in failed.error.lower()
+
+
+# --- query_memory truncation (per-fact cap + overall budget + uuid full-fetch) ---
+
+
+def test_query_memory_truncates_large_facts_and_tags_them(app_ctx):
+    """A fact longer than the per-fact cap is shortened and tagged truncate1200
+    so the model knows it is partial and can fetch the full text by uuid."""
+    from memory.seed_memory import SeedMemory
+    big = "x" * 3000
+    def fake_seed(query, *, qctx, **_):
+        return [SeedMemory(uuid="u-big", path="p", source="user-overlay",
+                           answer=big, score=0.9, kind="static")]
+    obs = _action_query_memory(_ctx(), {"query": "q"}, _seed_retriever=fake_seed)
+    assert "u-big, seed/user-overlay, truncate1200:" in obs.text
+    assert ("x" * 1200) in obs.text and ("x" * 1201) not in obs.text  # capped at 1200
+    assert obs.data["truncated"] is True
+
+
+def test_query_memory_omits_tail_and_notes_it(app_ctx):
+    """When more capped facts than fit the budget are retrieved, the tail is
+    dropped at a fact boundary (never mid-word) and the omission is noted."""
+    from memory.seed_memory import SeedMemory
+    def fake_seed(query, *, qctx, **_):
+        return [SeedMemory(uuid=f"u{i}", path="p", source="user-overlay",
+                           answer="y" * 1200, score=0.9, kind="static") for i in range(15)]
+    obs = _action_query_memory(_ctx(), {"query": "q"}, _seed_retriever=fake_seed)
+    assert obs.data["omitted"] > 0
+    assert "omitted" in obs.text.lower()
+
+
+def test_query_memory_uuid_returns_full_seed_entry(app_ctx, monkeypatch):
+    """query_memory with a uuid returns that one entry in full, untruncated —
+    the escape hatch for a fact query_memory shortened."""
+    from memory import seed_memory as qkb
+    big = "z" * 3000
+    monkeypatch.setattr(qkb, "_load_kb", lambda: None)
+    monkeypatch.setattr(qkb, "_entries_by_id",
+                        {"u1": {"kind": "static", "answer": big, "_source": "user-overlay"}})
+    monkeypatch.setattr(qkb, "_unlocked_shields", lambda: set())
+    obs = _action_query_memory(_ctx(), {"uuid": "u1"})
+    assert obs.data.get("matched") is True
+    assert big in obs.text  # full text, not shortened
+
+
+def test_query_memory_uuid_respects_shield(app_ctx, monkeypatch):
+    from memory import seed_memory as qkb
+    monkeypatch.setattr(qkb, "_load_kb", lambda: None)
+    monkeypatch.setattr(qkb, "_entries_by_id",
+                        {"u1": {"kind": "static", "answer": "secret", "shield": "locked", "_source": "user-overlay"}})
+    monkeypatch.setattr(qkb, "_unlocked_shields", lambda: set())
+    obs = _action_query_memory(_ctx(), {"uuid": "u1"})
+    assert obs.data.get("matched") is False
+    assert "secret" not in obs.text
+
+
+def test_system_prompt_explains_truncate_and_uuid_fetch():
+    p = ASSISTANT_SYSTEM_PROMPT.lower()
+    assert "truncate" in p
+    assert '"uuid"' in p or "uuid" in p

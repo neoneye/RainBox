@@ -112,6 +112,10 @@ question about remembered facts, stored data, or a live value (e.g. token
 usage or status), call the matching read action this turn.
 Do not reuse an answer from an earlier message: stored facts may have changed
 or become restricted since, and live values change between turns.
+A recalled fact tagged `truncateN` (e.g. `truncate1200`) is shortened to N
+characters, and an "omitted" note means lower-ranked facts were dropped to fit.
+When you need the full text of such a fact, call `query_memory` again with that
+fact's uuid — `{"uuid": "<the fact's uuid>"}` — instead of a query.
 When a step fails, fix the specific problem it reports — never resubmit the same
 args, and never invent placeholder values like `<COLUMN_UUID>`; if you lack an
 id, read for it or omit the optional argument.
@@ -179,18 +183,79 @@ class AssistantObservation:
 AssistantAction = Callable[[AssistantActionContext, dict[str, Any]], AssistantObservation]
 
 
+# query_memory keeps its observation readable and bounded: each fact is capped
+# to PER_FACT chars (long ones tagged `truncateN`), and the whole block to TOTAL
+# chars (lower-ranked facts past the budget are dropped at a fact boundary, never
+# mid-word). A shortened or omitted fact can be read in full via the uuid mode
+# (`{"uuid": ...}`) — see ASSISTANT_SYSTEM_PROMPT.
+QUERY_MEMORY_PER_FACT_CHARS: int = 1200
+QUERY_MEMORY_TOTAL_CHARS: int = 11000
+
+
+def _fact_line(uuid: str, tags: str, text: str) -> tuple[str, bool]:
+    """Render one recalled-fact line, shortening text over the per-fact cap and
+    marking it with a `truncate{cap}` tag. Returns (line, was_truncated)."""
+    if len(text) > QUERY_MEMORY_PER_FACT_CHARS:
+        return (f"- {uuid}, {tags}, truncate{QUERY_MEMORY_PER_FACT_CHARS}: "
+                f"{text[:QUERY_MEMORY_PER_FACT_CHARS]}", True)
+    return f"- {uuid}, {tags}: {text}", False
+
+
+def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantObservation:
+    """Return one memory in full (untruncated) by uuid — the escape hatch for a
+    fact query_memory shortened. Seed entries respect shields; claims never
+    return secrets. `matched: False` when the uuid resolves to nothing visible."""
+    from memory import seed_memory as qkb
+    from memory.retrieval import fence_recalled_memory
+    from agents.query_handlers import QueryContext
+
+    none = AssistantObservation(ok=True, text="No memory with that uuid.",
+                                data={"matched": False})
+    qkb._load_kb()
+    entry = qkb._entries_by_id.get(uuid_str)
+    if entry is not None:
+        if qkb._entry_locked(entry, qkb._unlocked_shields()):
+            return none
+        qctx = QueryContext(room_uuid=ctx.room_uuid, query="", payload={},
+                            agent_uuid=ctx.agent_uuid)
+        answer = qkb._resolve_match(
+            qkb.Match(qa_id=uuid_str, method="exact", score=1.0), qctx)
+        text, _ = fence_recalled_memory(
+            f"- {uuid_str}, seed/{entry.get('_source', 'upstream')}: {answer}")
+        return AssistantObservation(
+            ok=True, text=text, data={"matched": True, "uuid": uuid_str, "source": "seed"})
+    try:
+        claim = db.get_memory_claim(UUID(uuid_str))
+    except Exception:
+        claim = None
+    if claim is not None and claim.status == "active" and claim.sensitivity != "secret":
+        text, _ = fence_recalled_memory(
+            f"- {uuid_str}, {claim.kind}, {claim.sensitivity}: {claim.text}")
+        return AssistantObservation(
+            ok=True, text=text, data={"matched": True, "uuid": uuid_str, "source": "claim"})
+    return none
+
+
 def _action_query_memory(
     ctx: AssistantActionContext, args: dict[str, Any], *, _seed_retriever=None
 ) -> AssistantObservation:
     """Hybrid retrieval over dynamic claims, curated static seed answers, AND
     live dynamic seed handlers (project status, git status, capabilities, model
     info). Results are tiered: user-overlay seed, then upstream seed, then
-    dynamic claims. Secrets are never returned (include_secret stays False)."""
+    dynamic claims. Secrets are never returned (include_secret stays False).
+
+    Long facts are shortened (tagged `truncateN`) and the block is bounded; pass
+    `{"uuid": ...}` instead of `{"query": ...}` to read one fact in full."""
     from memory.retrieval import fence_recalled_memory, format_memory_context, retrieve_memories_hybrid
     from memory import seed_memory as qkb
     from agents.query_handlers import QueryContext
 
+    uuid_arg = str(args.get("uuid", "")).strip()
+    if uuid_arg:
+        return _query_memory_full(ctx, uuid_arg)
     query = str(args.get("query", "")).strip()
+    if not query:
+        return AssistantObservation(ok=False, text="query_memory needs a 'query' or a 'uuid'.")
     qctx = QueryContext(
         room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
     )
@@ -218,19 +283,54 @@ def _action_query_memory(
 
     if not (overlay or upstream or memories):
         return AssistantObservation(ok=True, text="No relevant remembered facts.")
-    lines = ["Relevant remembered facts",
-             "- {memory_uuid}, {memory_tags}: {memory_text}"]
+
+    # (B) Per-fact cap: build one line per fact, shortening long ones.
+    fact_lines: list[str] = []
+    any_truncated = False
     for s in overlay + upstream:
-        lines.append(f"- {s.uuid}, seed/{s.source}: {s.answer}")
-    text = "\n".join(lines)
+        line, tr = _fact_line(s.uuid, f"seed/{s.source}", s.answer)
+        fact_lines.append(line)
+        any_truncated = any_truncated or tr
     if dynamic_block:
         # format_memory_context(include_uuid=True) emits TWO header lines (title +
-        # the "{memory_uuid}, ..." legend); skip both and append only its fact lines.
-        text += "\n" + "\n".join(dynamic_block.split("\n")[2:])
-    text, _ = fence_recalled_memory(text)
+        # legend); its fact lines are "- {uuid}, {tags}: {text}". Cap each text.
+        for raw in dynamic_block.split("\n")[2:]:
+            head, sep, body = raw.partition(": ")
+            if sep and len(body) > QUERY_MEMORY_PER_FACT_CHARS:
+                raw = (f"{head}, truncate{QUERY_MEMORY_PER_FACT_CHARS}: "
+                       f"{body[:QUERY_MEMORY_PER_FACT_CHARS]}")
+                any_truncated = True
+            fact_lines.append(raw)
+
+    # (C) Overall budget: keep top-ranked facts up to TOTAL chars; drop the tail
+    # at a fact boundary (never mid-word) and count what was omitted.
+    header = ["Relevant remembered facts", "- {memory_uuid}, {memory_tags}: {memory_text}"]
+    used = len("\n".join(header)) + 1
+    kept: list[str] = []
+    omitted = 0
+    for i, line in enumerate(fact_lines):
+        if kept and used + len(line) + 1 > QUERY_MEMORY_TOTAL_CHARS:
+            omitted = len(fact_lines) - i
+            break
+        used += len(line) + 1
+        kept.append(line)
+
+    text, _ = fence_recalled_memory("\n".join(header + kept))
+    if any_truncated or omitted:
+        # Outside the fence (a note, not recalled data). The retrieval mechanism
+        # for the full text is spelled out in ASSISTANT_SYSTEM_PROMPT.
+        parts = []
+        if any_truncated:
+            parts.append(f"long facts shortened to {QUERY_MEMORY_PER_FACT_CHARS} chars "
+                         f"(tagged truncate{QUERY_MEMORY_PER_FACT_CHARS})")
+        if omitted:
+            parts.append(f"{omitted} lower-ranked fact(s) omitted")
+        text += (f"\n[{'; '.join(parts)}. To read a fact in full, call query_memory "
+                 f'with {{"uuid": "<the fact\'s uuid>"}}.]')
     return AssistantObservation(
         ok=True, text=text,
         data={"seed_count": len(seeds), "dynamic_count": len(memories),
+              "truncated": any_truncated, "omitted": omitted,
               "memory_uuids": [s.uuid for s in seeds] + [str(m.uuid) for m in memories]},
     )
 
@@ -1030,9 +1130,11 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         description=('recall stored facts AND answer general questions (project '
                      'status, git status, capabilities, model info) from the '
                      'knowledge base. NOT for kanban or files — use kanban_read / '
-                     'workspace_read_command. args: {"query": "..."}'),
+                     'workspace_read_command. args: {"query": "..."} to search, '
+                     'or {"uuid": "..."} to read one shortened/omitted fact in full.'),
         summary="recall facts and answer general questions",
-        required_args=("query",), action=_action_query_memory, output_cap_chars=6000,
+        required_args=(), optional_args=frozenset({"query", "uuid"}),
+        action=_action_query_memory, output_cap_chars=12000,
     ),
     AssistantActionName.WORKSPACE_READ_COMMAND: Capability(
         name=AssistantActionName.WORKSPACE_READ_COMMAND, family="workspace",
