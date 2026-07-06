@@ -176,3 +176,17 @@ def test_customize_dir_in_registry():
     assert spec.default is None
     assert spec.secret is False
     assert "question_answer.jsonl" in spec.description
+
+
+def test_mark_facts_invalidated_sets_iso_timestamp(app_ctx):
+    """mark_facts_invalidated() stamps qa.facts_invalidated_at with a non-empty
+    ISO string and returns it (the assistant posts a re-check-facts notice when
+    this changes)."""
+    try:
+        assert db.get_setting("qa.facts_invalidated_at") in (None, "")
+        ts = db.mark_facts_invalidated()
+        assert isinstance(ts, str) and ts
+        assert db.get_setting("qa.facts_invalidated_at") == ts
+    finally:
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.commit()

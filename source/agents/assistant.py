@@ -122,6 +122,27 @@ returned ok. Reading a task is not moving it. If you have not performed the acti
 yet, perform it now — do not `reply` claiming a result you have not produced."""
 
 
+# Posted into a room once after a shield/Q&A change so the model re-checks facts
+# instead of reusing an earlier answer from the transcript.
+FACTS_INVALIDATION_NOTICE: str = (
+    "Notice: a setting changed since earlier in this conversation, so stored "
+    "facts and the Q&A knowledge base may now differ. Re-check any fact with "
+    "query_memory before relying on it — earlier answers in this conversation "
+    "may be out of date."
+)
+
+
+def _demote_trailing_facts_marker(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the operator's message as the transcript's Current message. A facts
+    marker is posted after the operator's triggering message, so it is the newest
+    row; move it back into history so `format_history` treats the operator's
+    message (not the notice) as the current one."""
+    if len(messages) >= 2 and (messages[-1].get("meta") or {}).get("facts_invalidation"):
+        messages = list(messages)
+        messages[-2], messages[-1] = messages[-1], messages[-2]
+    return messages
+
+
 @dataclass(frozen=True)
 class AssistantActionContext:
     """What a read action is told about the request it serves. No payload: the
@@ -1311,6 +1332,11 @@ class AssistantAgent(ModelGroupAgent):
             step_limit=self.step_limit,
         )
         run = self._run
+        # If facts were invalidated (a shield toggle or Q&A repopulate) since the
+        # last marker here, drop a one-time re-check notice. Before the progress
+        # row: the notice is a kind="message" whose side effect clears progress
+        # rows, which would otherwise reap the row we post next.
+        self._maybe_post_facts_marker(room_uuid)
         # Post an in-flight signal immediately — before the (possibly slow) first
         # model call — so the operator can see the assistant picked up the message.
         # `kind="progress"` rows are reaped automatically when the real reply lands.
@@ -1327,6 +1353,9 @@ class AssistantAgent(ModelGroupAgent):
                 m for m in db.list_room_messages(room_uuid)
                 if m.get("kind") == "message"
             ]
+            # A facts marker just posted is the newest row; keep the operator's
+            # message as the Current message by demoting it into history.
+            messages = _demote_trailing_facts_marker(messages)
             transcript = format_history(messages, context_limit=self.MAX_RECENT_MESSAGES)
             # Retrieve active procedural skills for this turn (candidates are
             # inert and never injected). Best-effort: a retrieval failure must
@@ -1603,6 +1632,26 @@ class AssistantAgent(ModelGroupAgent):
         except Exception:
             logger.warning("assistant: profile retrieval failed", exc_info=True)
             return ""
+
+    def _maybe_post_facts_marker(self, room_uuid: UUID) -> None:
+        """Post a one-time re-check-facts notice when facts were invalidated
+        (a shield toggle or Q&A repopulate) since the last marker in this room.
+        Dedup is by the exact invalidation timestamp carried in the marker's
+        meta, so at most one marker per invalidation per room. Best-effort: a
+        failure here must never break the turn."""
+        try:
+            stamp = db.get_setting("qa.facts_invalidated_at")
+            if not stamp:
+                return
+            msgs = db.list_room_messages(room_uuid)
+            if any((m.get("meta") or {}).get("facts_invalidation") == stamp for m in msgs):
+                return
+            db.post_chat_message(
+                room_uuid, self.agent_uuid, FACTS_INVALIDATION_NOTICE,
+                kind="message", meta={"facts_invalidation": stamp},
+            )
+        except Exception:
+            logger.warning("assistant: facts-invalidation marker failed", exc_info=True)
 
     def _build_user_prompt(
         self,
