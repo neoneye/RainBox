@@ -190,3 +190,17 @@ def test_mark_facts_invalidated_sets_iso_timestamp(app_ctx):
     finally:
         db.set_setting("qa.facts_invalidated_at", None)
         db.db.session.commit()
+
+
+def test_set_setting_commits_so_value_survives_rollback(app_ctx):
+    """set_setting must commit immediately: a later rollback (Flask-SQLAlchemy's
+    per-request teardown rolls back uncommitted work) must not discard the saved
+    value. Regression guard — a displaced commit once left /settings saves
+    uncommitted, so they were silently forgotten on reload."""
+    try:
+        db.set_setting("cron.paused", True)
+        db.db.session.rollback()  # would undo an uncommitted write
+        assert db.get_setting("cron.paused") is True
+    finally:
+        db.set_setting("cron.paused", False)
+        db.db.session.commit()

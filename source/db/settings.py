@@ -206,6 +206,7 @@ def set_setting(key: str, value: object) -> None:
     row.value_type = spec.type
     row.secret = spec.secret
     row.description = spec.description
+    db.session.commit()
 
 
 def mark_facts_invalidated() -> str:
@@ -214,11 +215,10 @@ def mark_facts_invalidated() -> str:
     Called when a change can stale prior facts (a shield toggle or a Q&A
     repopulate). The assistant compares this against the markers already in a
     room to post a one-time re-check-facts notice. App context required; the
-    caller commits."""
+    value is persisted immediately via set_setting."""
     stamp = datetime.now(UTC).isoformat()
     set_setting("qa.facts_invalidated_at", stamp)
     return stamp
-    db.session.commit()
 
 
 def _source(spec: Setting) -> str:
