@@ -1,6 +1,8 @@
 # Incremental Q&A repopulate
 
-**Status: proposal.** Make "Repopulate Q&A memory" a cheap reconcile instead
+**Status: implemented** — see `docs/qa-system.md` ("Sync (incremental
+reconcile)") for the current mechanics; the rest of this file is the design
+rationale. Make "Repopulate Q&A memory" a cheap reconcile instead
 of a wipe-and-re-embed, by stamping each embedded row with a SHA-256 of its
 source JSONL line and re-embedding only what changed — and then, because a
 clean reconcile costs almost nothing, stop requiring the operator to press

@@ -58,11 +58,15 @@ One JSON object per line:
 ### Storage
 
 - **pgvector table** `data_seed_memory` (`QA_FULL_TABLE`) — one embedded node per
-  question alternate, for semantic retrieval. Populated by `_ensure_populated`
-  / `rebuild_kb`. Only the **question text** is embedded: answer/handler/shield
-  ride along as metadata excluded from the vector (`_build_documents`), so a
-  long answer neither pollutes the question vector nor trips the chunk-size
-  guard.
+  question alternate, for semantic retrieval. Kept in sync by `sync_kb` /
+  `_ensure_populated` (with `rebuild_kb` as the full-wipe path). Only the
+  **question text** is embedded: answer/handler/shield ride along as metadata
+  excluded from the vector (`_build_documents`), so a long answer neither
+  pollutes the question vector nor trips the chunk-size guard. Every node also
+  carries the row's sync stamp — `row_sha256` (SHA-256 of the entry's raw JSONL
+  line) and `kb_epoch` (`EMBED_MODEL_NAME|KB_SCHEMA_VERSION`) — which is what
+  makes incremental reconciling possible (see
+  [Sync (incremental reconcile)](#sync-incremental-reconcile)).
 - **In-memory registry** (`_entries_by_id`, `_alias_table`) — built by
   `_load_kb`: `qa_id → entry` and normalized-question → `qa_id`. Required to
   resolve a match back to its answer/handler; a caller that retrieves without
@@ -188,16 +192,69 @@ in `agents/__main__.py`):
 All share the seed-memory matching functions; they differ in how much LLM
 judgment sits between retrieval and reply.
 
+## Sync (incremental reconcile)
+
+`sync_kb()` reconciles the pgvector table with the merged JSONL instead of
+wiping it. Each entry's raw line is hashed at load time (`_row_sha256` on the
+entry — for an id in both base and overlay, the winning file's line is the one
+hashed), and each stored node carries that hash plus the current `KB_EPOCH`.
+One `SELECT DISTINCT` reads the table's stamps; `_diff_rows` classifies every
+file row:
+
+- **new** (id not in the table) → embed its questions, insert.
+- **dirty** (stamp differs) → re-sync the row (fast paths below).
+- **deleted** (id in the table, not in the file) → delete its nodes.
+- **unchanged** → skip. The common case; costs nothing.
+
+Because the vector derives from the question text alone, a dirty row whose
+question set is unchanged — an answer, shield, path, or handler edit — gets a
+metadata-only UPDATE in place: **zero embedding calls** (`_sync_row` /
+`_update_node_metadata`, which rewrites both the top-level metadata the shield
+SQL filter reads and the copy nested in `_node_content` that retrieval
+deserializes). When questions did change, only the new/changed strings embed;
+unchanged strings keep their stored vectors, and new nodes are inserted
+*before* the old ones are deleted, so retrieval sees old-or-new per row, never
+an absent row or an empty table.
+
+`KB_EPOCH` folds the embedding model and `KB_SCHEMA_VERSION` into the stamp: a
+model swap or a metadata-shape change dirties every row automatically (stored
+vectors are then treated as unusable — no metadata-only shortcut, no vector
+reuse). Tables written before stamps existed look all-dirty and re-embed once.
+
+Failures are isolated per row: a row that fails to embed keeps its old nodes,
+stays dirty, and retries on the next sync; the other rows land. Loader
+validation errors (duplicate id/path, bad JSON, non-string shield) raise with
+`file:line` *before* any write — the table is left untouched, not emptied.
+
+`sync_kb` runs from two places:
+
+- **Automatically** — `_ensure_populated` (called by the assistant's
+  `query_memory` and the chat query agents) syncs on the first call of each
+  process and re-checks an `(mtime_ns, size)` snapshot of the source files on
+  later calls, so an unchanged corpus costs one `stat()` per file. Agents run
+  in freshly spawned processes, so a JSONL edit is picked up on the next
+  message with no button press. A sync failure here (e.g. Ollama down) is
+  fatal only when the table is empty; with existing rows it is logged and
+  retrieval keeps serving them.
+- **On demand** — the /settings button (below).
+
 ## Operator operations
 
 - **Add/edit facts** — edit the overlay `question_answer.jsonl` under
-  `customize.dir` (or the base file), then repopulate.
+  `customize.dir` (or the base file). The edit is picked up on the next
+  message (see [Sync](#sync-incremental-reconcile)); the /settings button
+  forces it immediately.
 - **Repopulate** — the /settings "Repopulate Q&A memory" button
-  (`POST /settings/api/repopulate_memory` → `rebuild_kb`) re-reads the merged
-  JSONL and re-embeds it without a restart. Equivalent to setting
-  `QUERY_AGENT_REBUILD_KB=1` (`REBUILD_ENV`) and restarting. A failure (e.g. the
-  embedding backend down, or a JSONL parse error carrying `file:line:column`)
-  leaves the table empty/partial; the next successful run heals it.
+  (`POST /settings/api/repopulate_memory` → `sync_kb`) reconciles without a
+  restart and reports `{unchanged, updated, embedded, deleted}` row counts. A
+  failure (embedding backend down, or a JSONL parse error carrying
+  `file:line:column`) leaves synced rows intact; pressing again retries the
+  stale ones.
+- **Rebuild (full)** — the escape hatch next to it
+  (`POST /settings/api/rebuild_memory` → `rebuild_kb`) keeps the TRUNCATE +
+  re-embed-everything semantics for genuine table corruption. Equivalent to
+  setting `QUERY_AGENT_REBUILD_KB=1` (`REBUILD_ENV`) and restarting. A failure
+  here can leave the table empty/partial; the next successful run heals it.
 - **Unlock a shield** — check it on /settings and Save; this writes
   `qa.unlocked_shields`. Shielded entries become visible to the LLM immediately
   (the in-memory backstop applies on the next query; no repopulate needed).
@@ -211,8 +268,10 @@ answered earlier in a conversation. `query_memory` filters correctly, but a prio
 answer still sits in the chat transcript, so the model can reuse it. To counter
 this:
 
-- A shield change (`qa.unlocked_shields`, when the value actually changes) or a
-  repopulate stamps `qa.facts_invalidated_at` (`db.mark_facts_invalidated`).
+- A shield change (`qa.unlocked_shields`, when the value actually changes)
+  stamps `qa.facts_invalidated_at` (`db.mark_facts_invalidated`). A sync stamps
+  it only when it actually changed rows (a clean reconcile stays silent, so a
+  no-op button press posts no notice); a full rebuild always stamps.
 - The next time the assistant runs in a room, it posts a one-time visible notice
   telling the model that earlier answers may be out of date and to re-check via
   `query_memory` (`_maybe_post_facts_marker`). It is deduped per invalidation via
@@ -245,6 +304,6 @@ via `db.record_retrieval_event`; see `relevance-telemetry.md`.
 | pgvector table | `data_seed_memory` |
 | Settings | `qa.unlocked_shields`, `customize.dir`, `qa.facts_invalidated_at` |
 | Constants | `TOP_K=5`, `MIN_SCORE=0.60`, `MIN_MARGIN=0.05`, `TOP_K_FILTER=5` |
-| Tests | `memory/test_seed_memory_errors.py`, `memory/test_seed_shields.py`, `memory/test_seed_documents.py` |
+| Tests | `memory/test_seed_memory_errors.py`, `memory/test_seed_shields.py`, `memory/test_seed_documents.py`, `memory/test_seed_sync.py` |
 | Overlay schema proposals | `docs/proposals/2026-07-04-qa-overlay-person-schema.md`, `docs/proposals/2026-07-07-qa-overlay-first-person-voice.md` |
 | Security review | `docs/proposals/2026-06-25-security-review-mitigations.md` (Finding 8a: shields) |
