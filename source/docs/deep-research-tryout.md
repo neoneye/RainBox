@@ -1,0 +1,124 @@
+# Deep research — try it out
+
+Operator walkthrough for the research pipeline (`python -m research`): turn a
+query into a cited markdown report using web search + your local models. How
+it works internally: [deep-research.md](deep-research.md).
+
+## Prerequisites
+
+1. **The branch.** The code lives on the `deep-research` branch until merged:
+
+   ```bash
+   cd ~/git/rainbox && git checkout deep-research
+   ```
+
+2. **New dependencies.** Two packages were added (`trafilatura`, `ddgs`):
+
+   ```bash
+   cd source && venv/bin/pip install -r requirements.txt
+   ```
+
+3. **Postgres + a model provider running.** The CLI reads model groups from
+   your normal RainBox database (`rainbox_production`), and the models run on
+   whichever provider backs them — start LM Studio / Ollama / Jan as usual
+   (see [operator-guide.md](operator-guide.md)).
+
+4. **A model group named `research`.** Start the app (`python3 main.py`),
+   open `/modelgroups`, and create a group named `research` with at least one
+   member. Pick a model that handles **structured output** well — the
+   splitter, query-gen, and URL-selection stages use it. Add a fallback
+   member or two if you have them; the pipeline falls through the group in
+   priority order on any failure, same as agent bindings. A different group
+   works too via `--model-group <name>`.
+
+5. **A search provider — optional.** DuckDuckGo works out of the box with no
+   key (that's the zero-config default). For better results, export one of:
+
+   ```bash
+   export BRAVE_API_KEY=...        # api.search.brave.com — free tier ~2k queries/mo
+   export SEARXNG_BASE_URL=http://localhost:8888   # your own SearXNG instance
+   export FIRECRAWL_API_KEY=...    # firecrawl.dev — also unlocks --fetcher firecrawl
+   ```
+
+   `--search auto` (the default) picks the first configured of
+   brave → searxng → firecrawl → ddg.
+
+## Run it
+
+```bash
+cd ~/git/rainbox/source
+venv/bin/python -m research "history of the diesel engine" --out /tmp/report.md
+```
+
+Progress streams to stderr while it works:
+
+```
+[setup] search=ddg fetcher=plain model_group=research
+[plan] generating research plan
+[split] splitting plan into subtasks
+[split] 5 subtasks
+[research] S1 Early development and patents
+[fetch] skipped https://example.org/paywalled
+...
+[synthesize] writing executive summary
+report written to /tmp/report.md
+```
+
+The report has an executive summary, one findings section per subtask with
+`[n]` citations, an Open questions section (including anything that failed),
+and a References list resolving every cited number to a URL.
+
+Useful variations:
+
+```bash
+# quicker, smaller run
+venv/bin/python -m research "compare pgvector index types" --max-subtasks 3
+
+# force a specific search provider
+venv/bin/python -m research "..." --search brave
+
+# JS-heavy sites (needs FIRECRAWL_API_KEY)
+venv/bin/python -m research "..." --fetcher firecrawl
+
+# a different model group
+venv/bin/python -m research "..." --model-group my-big-models
+
+# report to stdout instead of a file
+venv/bin/python -m research "why do cats purr"
+```
+
+## What to expect
+
+- **Call volume:** with the default 5 subtasks, a run makes roughly 30–40
+  LLM calls (plan, split, then per subtask: queries → selection → notes per
+  source → findings, then two synthesis calls). Subtasks run sequentially —
+  one local GPU — so a run takes minutes, not seconds. `--max-subtasks 3`
+  is a good first try.
+- **First call is slow** if the model isn't loaded yet — `prepare_llm` loads
+  it into the provider on demand.
+- **Failures degrade, they don't abort:** a rate-limited search, an
+  unreachable page, or an irrelevant source is skipped and noted; only "every
+  model in the group failed" stops the run.
+
+## Troubleshooting
+
+| symptom | fix |
+|---------|-----|
+| `error: model group 'research' not found; available groups: [...]` | Create it on `/modelgroups`, or pass `--model-group` with one from the list. |
+| `error: model group 'research' has no members` | Add at least one model to the group on `/modelgroups`. |
+| `error: search provider 'brave' is not configured` | Export the env var from step 5, or drop `--search brave`. |
+| `error: all models in the research model group failed` | Provider not running, model missing, or context too small — test the member on `/models` first. |
+| Empty or thin findings sections | DDG snippets can be weak; try `--search brave`, or a stronger model for the group. |
+| Run feels stuck | Watch stderr — a `[research]`/`[fetch]` line tells you which subtask/URL it's on. Reasoning models spend a while per notes call. |
+
+## Sanity checks without a model
+
+No model group or key needed for these:
+
+```bash
+# the test suite (fakes throughout, no network, no LLM)
+venv/bin/python -m pytest research/ -q
+
+# clean startup error, proves wiring without any LLM/network work
+venv/bin/python -m research "q" --search brave   # exits 1: not configured
+```
