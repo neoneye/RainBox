@@ -27,6 +27,9 @@ USER_AGENT = (
 )
 MAX_RESPONSE_BYTES = 2_000_000
 FETCH_TIMEOUT_S = 20
+# Firecrawl renders JS server-side before returning markdown; that regularly
+# takes longer than a plain GET, so it gets its own budget.
+FIRECRAWL_TIMEOUT_S = 60
 FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v2/scrape"
 
 
@@ -110,7 +113,7 @@ def fetch_extract_firecrawl(url: str, char_cap: int) -> str | None:
             headers={
                 "Authorization": f"Bearer {os.environ['FIRECRAWL_API_KEY']}"
             },
-            timeout=60,
+            timeout=FIRECRAWL_TIMEOUT_S,
         )
         response.raise_for_status()
         payload = response.json()

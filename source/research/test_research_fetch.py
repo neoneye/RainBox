@@ -93,3 +93,54 @@ def test_fetch_extract_returns_none_on_request_error(monkeypatch):
 
     monkeypatch.setattr(fetch.requests, "get", boom)
     assert fetch.fetch_extract("https://example.org/x", char_cap=100) is None
+
+
+class FakeJsonResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def test_fetch_extract_firecrawl_happy_path_and_char_cap(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "k")
+    payload = {"data": {"markdown": "word " * 500}}
+    monkeypatch.setattr(fetch.requests, "post", lambda *a, **k: FakeJsonResponse(payload))
+    text = fetch.fetch_extract_firecrawl("https://example.org/x", char_cap=50)
+    assert text is not None
+    assert len(text) <= 50
+
+
+def test_fetch_extract_firecrawl_refuses_private_without_network(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("10.0.0.5"))
+
+    def no_network(*a, **k):
+        raise AssertionError("must not issue a request for a refused url")
+
+    monkeypatch.setattr(fetch.requests, "post", no_network)
+    assert fetch.fetch_extract_firecrawl("http://internal.example/x", char_cap=100) is None
+
+
+def test_fetch_extract_firecrawl_returns_none_on_request_error(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "k")
+
+    def boom(*a, **k):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr(fetch.requests, "post", boom)
+    assert fetch.fetch_extract_firecrawl("https://example.org/x", char_cap=100) is None
+
+
+def test_fetch_extract_firecrawl_empty_markdown_returns_none(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "k")
+    monkeypatch.setattr(
+        fetch.requests, "post", lambda *a, **k: FakeJsonResponse({"data": {}})
+    )
+    assert fetch.fetch_extract_firecrawl("https://example.org/x", char_cap=100) is None
