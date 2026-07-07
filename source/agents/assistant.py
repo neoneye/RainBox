@@ -28,7 +28,7 @@ import db
 import skills
 import user_profile
 from agents.base import ModelGroupAgent, StatusSender
-from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID
+from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID, ASSISTANT_WORKING_NOTICE
 from chat.transcript import format_history
 
 logger = logging.getLogger(__name__)
@@ -1446,14 +1446,15 @@ class AssistantAgent(ModelGroupAgent):
         )
         run = self._run
         # If facts were invalidated (a shield toggle or Q&A repopulate) since the
-        # last marker here, drop a one-time re-check notice. Before the progress
-        # row: the notice is a kind="message" whose side effect clears progress
-        # rows, which would otherwise reap the row we post next.
-        self._maybe_post_facts_marker(room_uuid)
-        # The "working on it" progress bubble is posted at enqueue time
-        # (webapp._maybe_trigger_chat_agents), not here — by the time this
-        # freshly spawned process reaches handle() the operator has already
-        # waited on the spawn+import, so the signal must precede it.
+        # last marker here, drop a one-time re-check notice. The notice is a
+        # kind="message" — a terminal kind whose side effect reaps the sender's
+        # progress rows, INCLUDING the enqueue-time "working on it" bubble
+        # (posted in webapp._maybe_trigger_chat_agents so it appears before
+        # this process finished spawning). So when the marker posts, re-post
+        # the bubble right after it: the model calls ahead can take tens of
+        # seconds and the operator must not sit without a signal.
+        if self._maybe_post_facts_marker(room_uuid):
+            db.post_progress(room_uuid, self.agent_uuid, ASSISTANT_WORKING_NOTICE)
         # The logical step the loop is on, so a crash records its failed row
         # against the right step (not a row count).
         current_step = 0
@@ -1744,25 +1745,29 @@ class AssistantAgent(ModelGroupAgent):
             logger.warning("assistant: profile retrieval failed", exc_info=True)
             return ""
 
-    def _maybe_post_facts_marker(self, room_uuid: UUID) -> None:
+    def _maybe_post_facts_marker(self, room_uuid: UUID) -> bool:
         """Post a one-time re-check-facts notice when facts were invalidated
         (a shield toggle or Q&A repopulate) since the last marker in this room.
         Dedup is by the exact invalidation timestamp carried in the marker's
-        meta, so at most one marker per invalidation per room. Best-effort: a
-        failure here must never break the turn."""
+        meta, so at most one marker per invalidation per room. Returns True
+        when a marker was posted (the caller must then restore the progress
+        bubble the terminal-kind post just reaped). Best-effort: a failure
+        here must never break the turn."""
         try:
             stamp = db.get_setting("qa.facts_invalidated_at")
             if not stamp:
-                return
+                return False
             msgs = db.list_room_messages(room_uuid)
             if any((m.get("meta") or {}).get("facts_invalidation") == stamp for m in msgs):
-                return
+                return False
             db.post_chat_message(
                 room_uuid, self.agent_uuid, FACTS_INVALIDATION_NOTICE,
                 kind="message", meta={"facts_invalidation": stamp},
             )
+            return True
         except Exception:
             logger.warning("assistant: facts-invalidation marker failed", exc_info=True)
+            return False
 
     def _build_user_prompt(
         self,

@@ -59,3 +59,45 @@ def test_enqueue_time_progress_survives_the_run_and_is_reaped(app_ctx):
             AssistantRun.room_uuid == chatroom.uuid).delete()
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
         db.db.session.commit()
+
+
+def test_facts_marker_does_not_leave_the_operator_without_a_progress_signal(app_ctx):
+    """The facts-invalidation notice is kind='message' — a terminal kind whose
+    side effect reaps the sender's progress rows, including the enqueue-time
+    'working on it' bubble. handle() must re-post the bubble right after the
+    marker, so the operator keeps a signal through the (long) model calls."""
+    from datetime import UTC, datetime
+
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"prog-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "what games have I played")
+    db.post_chat_message(chatroom.uuid, ASSISTANT_UUID, ASSISTANT_WORKING_NOTICE, kind="progress")
+    # Fresh invalidation stamp -> the marker WILL post this turn.
+    db.set_setting("qa.facts_invalidated_at", datetime.now(UTC).isoformat())
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    seen = {}
+
+    def fake_decide(**_kwargs):
+        seen["progress_during_first_call"] = _progress_count(chatroom.uuid)
+        return AssistantStepDecision(
+            reason="answer", action=AssistantActionName.REPLY, args={"message": "ok"})
+
+    agent._decide_next_step = fake_decide
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        marker_posted = any(
+            (m.get("meta") or {}).get("facts_invalidation")
+            for m in db.list_room_messages(chatroom.uuid)
+        )
+        assert marker_posted, "precondition: the facts marker posted this turn"
+        assert seen["progress_during_first_call"] >= 1, (
+            "the marker reaped the working bubble and nothing re-posted it — "
+            "no progress signal during the model call"
+        )
+        assert _progress_count(chatroom.uuid) == 0  # final reply reaps as usual
+    finally:
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
