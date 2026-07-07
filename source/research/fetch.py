@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -26,6 +26,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 )
 MAX_RESPONSE_BYTES = 2_000_000
+MAX_REDIRECTS = 5
 FETCH_TIMEOUT_S = 20
 # Firecrawl renders JS server-side before returning markdown; that regularly
 # takes longer than a plain GET, so it gets its own budget.
@@ -34,6 +35,9 @@ FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v2/scrape"
 
 
 def url_allowed(url: str) -> bool:
+    """Return True only when every resolved address for the host is globally
+    routable. Redirect hops are re-checked by `_get_html`; DNS rebinding
+    between check and connect is a known, accepted limitation."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return False
@@ -59,32 +63,54 @@ def url_allowed(url: str) -> bool:
 def fetch_extract(url: str, char_cap: int) -> str | None:
     """GET the page and return extracted main text, truncated to char_cap.
     None when the url is refused, the request fails, or nothing extracts."""
-    if not url_allowed(url):
-        logger.info("fetch refused (non-public url): %s", url)
-        return None
-    try:
-        response = requests.get(
-            url,
-            headers={"User-Agent": USER_AGENT},
-            timeout=FETCH_TIMEOUT_S,
-            stream=True,
-        )
-        response.raise_for_status()
-        chunks: list[bytes] = []
-        total = 0
-        for chunk in response.iter_content(chunk_size=65536):
-            chunks.append(chunk)
-            total += len(chunk)
-            if total >= MAX_RESPONSE_BYTES:
-                break
-        html = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
-    except requests.RequestException as exc:
-        logger.info("fetch failed for %s: %s", url, exc)
+    html = _get_html(url)
+    if html is None:
         return None
     text = extract_text(html)
     if not text:
         return None
     return text[:char_cap]
+
+
+def _get_html(url: str) -> str | None:
+    """GET with redirects followed manually so the SSRF guard is re-applied
+    on every hop — requests' automatic redirect handling would happily follow
+    a public page's 302 to a private address."""
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        if not url_allowed(current):
+            logger.info("fetch refused (non-public url): %s", current)
+            return None
+        try:
+            with requests.get(
+                current,
+                headers={"User-Agent": USER_AGENT},
+                timeout=FETCH_TIMEOUT_S,
+                stream=True,
+                allow_redirects=False,
+            ) as response:
+                if response.is_redirect or response.is_permanent_redirect:
+                    location = response.headers.get("Location")
+                    if not location:
+                        return None
+                    current = urljoin(current, location)
+                    continue
+                response.raise_for_status()
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_content(chunk_size=65536):
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total >= MAX_RESPONSE_BYTES:
+                        break
+                return b"".join(chunks).decode(
+                    response.encoding or "utf-8", errors="replace"
+                )
+        except requests.RequestException as exc:
+            logger.info("fetch failed for %s: %s", current, exc)
+            return None
+    logger.info("fetch refused (too many redirects): %s", url)
+    return None
 
 
 def extract_text(html: str) -> str:

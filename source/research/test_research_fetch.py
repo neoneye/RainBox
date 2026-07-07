@@ -55,6 +55,15 @@ class FakeResponse:
     def __init__(self, body: bytes):
         self._body = body
         self.encoding = "utf-8"
+        self.headers: dict = {}
+        self.is_redirect = False
+        self.is_permanent_redirect = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
 
     def raise_for_status(self):
         pass
@@ -144,3 +153,84 @@ def test_fetch_extract_firecrawl_empty_markdown_returns_none(monkeypatch):
         fetch.requests, "post", lambda *a, **k: FakeJsonResponse({"data": {}})
     )
     assert fetch.fetch_extract_firecrawl("https://example.org/x", char_cap=100) is None
+
+
+def _fake_getaddrinfo_map(mapping):
+    def fake(host, port, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (mapping[host], 0))]
+
+    return fake
+
+
+class FakeRedirectResponse:
+    def __init__(self, location: str):
+        self.headers = {"Location": location}
+        self.is_redirect = True
+        self.is_permanent_redirect = False
+        self.encoding = "utf-8"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size):
+        return iter(())
+
+
+def test_fetch_extract_refuses_redirect_to_private(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        _fake_getaddrinfo_map(
+            {"example.org": "93.184.216.34", "internal.example": "10.0.0.5"}
+        ),
+    )
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        assert kwargs["allow_redirects"] is False
+        if url == "https://example.org/x":
+            return FakeRedirectResponse("http://internal.example/admin")
+        raise AssertionError(f"must not fetch {url}")
+
+    monkeypatch.setattr(fetch.requests, "get", fake_get)
+    assert fetch.fetch_extract("https://example.org/x", char_cap=100) is None
+    assert calls == ["https://example.org/x"]
+
+
+def test_fetch_extract_follows_public_redirect(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        _fake_getaddrinfo_map(
+            {"example.org": "93.184.216.34", "mirror.example": "93.184.216.35"}
+        ),
+    )
+    html = "<html><body><p>redirected content here</p></body></html>"
+
+    def fake_get(url, **kwargs):
+        if url == "https://example.org/x":
+            return FakeRedirectResponse("https://mirror.example/y")
+        assert url == "https://mirror.example/y"
+        return FakeResponse(html.encode())
+
+    monkeypatch.setattr(fetch.requests, "get", fake_get)
+    text = fetch.fetch_extract("https://example.org/x", char_cap=200)
+    assert text is not None
+    assert "redirected content" in text
+
+
+def test_fetch_extract_gives_up_after_max_redirects(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
+    monkeypatch.setattr(
+        fetch.requests,
+        "get",
+        lambda url, **k: FakeRedirectResponse("https://example.org/loop"),
+    )
+    assert fetch.fetch_extract("https://example.org/loop", char_cap=100) is None

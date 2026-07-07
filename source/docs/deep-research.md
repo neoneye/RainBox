@@ -44,8 +44,9 @@ questions.
 `--search auto` (default) picks the first configured in that order (ddg
 last: keyless but rate-limity). Fetching (`fetch.py`) is `requests` +
 `trafilatura` with a 2 MB / 20 s / 8000-char cap chain and an SSRF guard
-(non-public IPs refused); `--fetcher firecrawl` scrapes via Firecrawl's API
-for JS-heavy pages.
+(non-public IPs refused, re-checked on every redirect hop; DNS rebinding
+between check and connect remains a known limitation); `--fetcher firecrawl`
+scrapes via Firecrawl's API for JS-heavy pages.
 
 ## Models
 
