@@ -47,3 +47,43 @@ def test_build_documents_stamps_row_hash_and_epoch():
     assert doc.metadata["kb_epoch"] == seed_memory.KB_EPOCH
     assert "row_sha256" in doc.excluded_embed_metadata_keys
     assert "kb_epoch" in doc.excluded_embed_metadata_keys
+
+
+# --- the differ ------------------------------------------------------------
+
+
+def _e(qa_id, sha="s1"):
+    return {"id": qa_id, "questions": ["q?"], "answer": "a", "_row_sha256": sha}
+
+
+def test_diff_rows_classifies_new_dirty_deleted_unchanged():
+    ep = seed_memory.KB_EPOCH
+    entries = [_e("new1"), _e("dirty1", sha="changed"), _e("same1")]
+    stamps = {"dirty1": f"old|{ep}", "same1": f"s1|{ep}", "gone1": f"x|{ep}"}
+    new, dirty, deleted, unchanged = seed_memory._diff_rows(entries, stamps)
+    assert [e["id"] for e in new] == ["new1"]
+    assert [e["id"] for e in dirty] == ["dirty1"]
+    assert deleted == ["gone1"]
+    assert unchanged == 1
+
+
+def test_diff_rows_epoch_bump_dirties_everything(monkeypatch):
+    entries = [_e("a"), _e("b")]
+    stamps = {"a": f"s1|{seed_memory.KB_EPOCH}", "b": f"s1|{seed_memory.KB_EPOCH}"}
+    monkeypatch.setattr(seed_memory, "KB_EPOCH", "other-model|9")
+    new, dirty, deleted, unchanged = seed_memory._diff_rows(entries, stamps)
+    assert [e["id"] for e in dirty] == ["a", "b"] and not new and unchanged == 0
+
+
+def test_diff_rows_conflicting_stamp_is_dirty():
+    # A qa_id whose nodes disagree (past partial write) maps to None -> dirty.
+    entries = [_e("a")]
+    new, dirty, deleted, unchanged = seed_memory._diff_rows(entries, {"a": None})
+    assert [e["id"] for e in dirty] == ["a"]
+
+
+def test_diff_rows_legacy_unstamped_row_is_dirty():
+    # Pre-stamp tables yield "None|None" stamps -> everything dirty once.
+    entries = [_e("a")]
+    new, dirty, deleted, unchanged = seed_memory._diff_rows(entries, {"a": "None|None"})
+    assert [e["id"] for e in dirty] == ["a"]

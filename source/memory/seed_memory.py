@@ -414,6 +414,39 @@ def rebuild_kb() -> dict[str, int]:
     return {"entries": len(entries), "documents": len(docs)}
 
 
+# --- Incremental sync ----------------------------------------------------------
+
+
+def _entry_stamp(e: dict[str, Any]) -> str:
+    """The stamp an entry's nodes must carry to count as up to date."""
+    return f"{e.get('_row_sha256', '')}|{KB_EPOCH}"
+
+
+def _diff_rows(
+    entries: list[dict[str, Any]], stamps: dict[str, str | None],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], int]:
+    """Classify merged JSONL entries against the table's stamps: (new entries,
+    dirty entries, deleted qa_ids, unchanged count). A `None` stamp means the
+    row's nodes disagree (partial write) — always dirty."""
+    new: list[dict[str, Any]] = []
+    dirty: list[dict[str, Any]] = []
+    unchanged = 0
+    ids: set[str] = set()
+    for e in entries:
+        qa_id = e.get("id")
+        if not qa_id:
+            continue
+        ids.add(qa_id)
+        if qa_id not in stamps:
+            new.append(e)
+        elif stamps[qa_id] != _entry_stamp(e):
+            dirty.append(e)
+        else:
+            unchanged += 1
+    deleted = [qa_id for qa_id in stamps if qa_id not in ids]
+    return new, dirty, deleted, unchanged
+
+
 # --- Matching -----------------------------------------------------------------
 
 
