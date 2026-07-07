@@ -34,8 +34,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=None, help="write the report to this file")
     args = parser.parse_args(argv)
 
+    import db
+
     from research import pipeline
     from research.config import ResearchConfig
+
+    # ModelCaller reads model groups through Flask-SQLAlchemy, which needs an
+    # app context; push one for the process (the agents/__main__.py pattern).
+    db.make_app().app_context().push()
 
     config = ResearchConfig(
         model_group=args.model_group,
