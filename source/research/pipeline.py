@@ -48,7 +48,7 @@ def run_deep_research(
 
     provider = websearch.resolve(cfg.search_provider)
     fetcher = _resolve_fetcher(cfg.fetcher)
-    caller = ModelCaller(cfg.model_group)
+    caller = ModelCaller(cfg.model_group, timeout_s=cfg.llm_timeout_s)
     progress(
         "setup",
         f"search={provider.id} fetcher={cfg.fetcher} model_group={cfg.model_group}",

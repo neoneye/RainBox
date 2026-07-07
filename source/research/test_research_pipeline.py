@@ -89,7 +89,9 @@ def test_run_deep_research_end_to_end(monkeypatch):
             "hist q": [_result("https://example.org/h", "H")],
         }
     )
-    monkeypatch.setattr(pipeline, "ModelCaller", lambda group: caller)
+    monkeypatch.setattr(
+        pipeline, "ModelCaller", lambda group, timeout_s=120.0: caller
+    )
     monkeypatch.setattr(pipeline.websearch, "resolve", lambda selector: provider)
     monkeypatch.setattr(
         pipeline, "_resolve_fetcher", lambda fetcher_id: (lambda url, cap: "text")

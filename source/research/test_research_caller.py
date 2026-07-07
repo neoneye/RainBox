@@ -121,3 +121,65 @@ def test_group_resolvable_by_uuid(monkeypatch):
         llm, "prepare_llm", lambda p, m, a: FakeLLM(reply="via uuid")
     )
     assert ModelCaller(str(GROUP_UUID)).plain("sys", "user") == "via uuid"
+
+
+def test_timeout_floor_applied_when_unset(monkeypatch):
+    _patch_group(monkeypatch, [MODEL_A])
+    captured = {}
+
+    def fake_prepare(provider_id, model, args):
+        captured.update(args)
+        return FakeLLM(reply="ok")
+
+    monkeypatch.setattr(llm, "prepare_llm", fake_prepare)
+    ModelCaller("research").plain("sys", "user")
+    assert captured["request_timeout"] == 120.0  # _patch_group resolves ollama
+
+
+def test_timeout_floor_raises_low_configured_value(monkeypatch):
+    _patch_group(monkeypatch, [MODEL_A])
+    monkeypatch.setattr(
+        db,
+        "resolved_model_kwargs",
+        lambda model_uuid: ("lm_studio", "m", {"timeout": 60.0}),
+    )
+    captured = {}
+
+    def fake_prepare(provider_id, model, args):
+        captured.update(args)
+        return FakeLLM(reply="ok")
+
+    monkeypatch.setattr(llm, "prepare_llm", fake_prepare)
+    ModelCaller("research").plain("sys", "user")
+    assert captured["timeout"] == 120.0
+
+
+def test_timeout_floor_keeps_higher_configured_value(monkeypatch):
+    _patch_group(monkeypatch, [MODEL_A])
+    monkeypatch.setattr(
+        db,
+        "resolved_model_kwargs",
+        lambda model_uuid: ("lm_studio", "m", {"timeout": 300.0}),
+    )
+    captured = {}
+
+    def fake_prepare(provider_id, model, args):
+        captured.update(args)
+        return FakeLLM(reply="ok")
+
+    monkeypatch.setattr(llm, "prepare_llm", fake_prepare)
+    ModelCaller("research").plain("sys", "user")
+    assert captured["timeout"] == 300.0
+
+
+def test_timeout_floor_custom_value(monkeypatch):
+    _patch_group(monkeypatch, [MODEL_A])
+    captured = {}
+
+    def fake_prepare(provider_id, model, args):
+        captured.update(args)
+        return FakeLLM(reply="ok")
+
+    monkeypatch.setattr(llm, "prepare_llm", fake_prepare)
+    ModelCaller("research", timeout_s=30.0).plain("sys", "user")
+    assert captured["request_timeout"] == 30.0

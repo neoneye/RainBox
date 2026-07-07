@@ -16,3 +16,6 @@ class ResearchConfig:
     results_per_query: int = 5
     fetch_per_subtask: int = 4
     per_source_char_cap: int = 8000
+    # Per-model timeout floor in seconds: a member's configured timeout below
+    # this is raised to it (research calls run longer than chat calls).
+    llm_timeout_s: float = 120.0

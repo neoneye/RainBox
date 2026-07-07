@@ -54,7 +54,10 @@ scrapes via Firecrawl's API for JS-heavy pages.
 `research`; create it on the /models page) and falls through its members in
 priority order on any failure — the same contract as agent model bindings.
 Machine-readable stages use structured outputs; prose stages use plain
-chat.
+chat. Research calls run longer than chat calls, so every member's resolved
+timeout gets a **floor** (default 120 s, CLI `--llm-timeout`,
+`ResearchConfig.llm_timeout_s`): a chat-tuned 60 s config is raised to the
+floor, a configured value above it is kept.
 
 ## Prompt-injection posture
 

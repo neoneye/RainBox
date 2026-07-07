@@ -35,6 +35,7 @@ def test_config_defaults():
     assert config.results_per_query == 5
     assert config.fetch_per_subtask == 4
     assert config.per_source_char_cap == 8000
+    assert config.llm_timeout_s == 120.0
 
 
 def test_generate_plan_passes_query_as_user_message():

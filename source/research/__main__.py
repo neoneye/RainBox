@@ -31,6 +31,13 @@ def main(argv: list[str] | None = None) -> int:
         help="model group (name or uuid) from the /models page",
     )
     parser.add_argument("--max-subtasks", type=int, default=5)
+    parser.add_argument(
+        "--llm-timeout",
+        type=float,
+        default=120.0,
+        help="per-model timeout floor in seconds; configured model timeouts "
+        "below this are raised to it",
+    )
     parser.add_argument("--out", default=None, help="write the report to this file")
     args = parser.parse_args(argv)
 
@@ -48,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         search_provider=args.search,
         fetcher=args.fetcher,
         max_subtasks=args.max_subtasks,
+        llm_timeout_s=args.llm_timeout,
     )
     try:
         report = pipeline.run_deep_research(args.query, config)

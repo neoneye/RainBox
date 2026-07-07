@@ -20,6 +20,11 @@ import db
 
 logger = logging.getLogger(__name__)
 
+# Research calls read whole sources and run reasoning models, so a chat-tuned
+# per-model timeout (often 60s) times out routinely. This floor is applied to
+# every member's resolved timeout; a configured value ABOVE it is kept.
+DEFAULT_TIMEOUT_S = 120.0
+
 
 class Caller(Protocol):
     def structured(
@@ -30,7 +35,8 @@ class Caller(Protocol):
 
 
 class ModelCaller:
-    def __init__(self, model_group: str) -> None:
+    def __init__(self, model_group: str, timeout_s: float = DEFAULT_TIMEOUT_S) -> None:
+        self.timeout_s = float(timeout_s)
         self.group_uuid = _resolve_group_uuid(model_group)
         self.candidate_model_uuids: list[UUID] = db.get_model_group_member_uuids(
             self.group_uuid
@@ -47,7 +53,7 @@ class ModelCaller:
         def call(the_llm, args) -> BaseModel:
             sllm = the_llm.as_structured_llm(response_model)
             timeout_s = float(
-                args.get("request_timeout") or args.get("timeout") or 60.0
+                args.get("request_timeout") or args.get("timeout") or self.timeout_s
             )
             deadline = time.monotonic() + timeout_s
             last = None
@@ -88,6 +94,7 @@ class ModelCaller:
         for model_uuid in self.candidate_model_uuids:
             try:
                 provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+                args = _apply_timeout_floor(provider_id, dict(args), self.timeout_s)
                 the_llm = llm.prepare_llm(provider_id, model_name, args)
                 return call(the_llm, args)
             except Exception as exc:
@@ -96,6 +103,18 @@ class ModelCaller:
         raise RuntimeError(
             "all models in the research model group failed"
         ) from last_error
+
+
+def _apply_timeout_floor(provider_id: str, args: dict, floor_s: float) -> dict:
+    """Raise the model's configured timeout to at least `floor_s`; never
+    lower a higher value. Ollama's native wrapper names the knob
+    `request_timeout`; every other provider is OpenAI-compat with `timeout`
+    (see llm.prepare_llm)."""
+    key = "request_timeout" if provider_id == "ollama" else "timeout"
+    current = args.get(key)
+    if current is None or float(current) < floor_s:
+        args[key] = floor_s
+    return args
 
 
 def _resolve_group_uuid(model_group: str) -> UUID:
