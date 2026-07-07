@@ -348,38 +348,60 @@ def _truncate_table() -> None:
         cur.execute(sql.SQL("TRUNCATE {}").format(sql.Identifier(QA_FULL_TABLE)))
 
 
+def _source_snapshot() -> dict[str, tuple[int, int]]:
+    """(mtime_ns, size) per source file — the cheap has-anything-moved guard
+    for _ensure_populated. A missing file maps to (0, 0), so the overlay
+    appearing or disappearing changes the snapshot too."""
+    paths = [QA_JSONL_PATH]
+    overlay = _overlay_path()
+    if overlay is not None:
+        paths.append(overlay)
+    snap: dict[str, tuple[int, int]] = {}
+    for p in paths:
+        try:
+            st = p.stat()
+            snap[str(p)] = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            snap[str(p)] = (0, 0)
+    return snap
+
+
 def _ensure_populated(vs: PGVectorStore) -> None:
-    """Embed and insert the JSONL knowledge base into the pgvector table if it's
-    empty. Skipped per process after the first successful run. Setting
-    QUERY_AGENT_REBUILD_KB=1 forces a TRUNCATE + repopulate on the first call,
-    so an operator can pick up JSONL edits without writing SQL."""
-    global _populated
+    """Reconcile the pgvector table with the JSONL (sync_kb semantics) on the
+    first call of the process, and again whenever a source file's mtime/size
+    changes — every agent runs in a freshly spawned process, so JSONL edits
+    become visible on the next message with no button press. When nothing
+    moved, a call costs one stat() per source file. QUERY_AGENT_REBUILD_KB=1
+    still forces a TRUNCATE + full re-embed on the first call. A sync failure
+    (e.g. Ollama down) is fatal only when it leaves the table empty; with
+    existing rows it is logged and retried on the next call, and retrieval
+    keeps serving the intact rows."""
+    global _populated, _sync_snapshot
     with _lock:
-        if _populated:
-            return
-        if os.environ.get(REBUILD_ENV) == "1":
+        if not _populated and os.environ.get(REBUILD_ENV) == "1":
             logger.info("%s=1 set; truncating %s and repopulating", REBUILD_ENV, QA_FULL_TABLE)
             try:
                 _truncate_table()
             except Exception as e:
-                logger.warning("truncate %s failed (%s); falling through to populate", QA_FULL_TABLE, e)
-        count = _table_row_count()
-        if count > 0:
-            logger.info("seed memory kb already populated (%d rows); skipping", count)
-            _populated = True
+                logger.warning("truncate %s failed (%s); falling through to sync", QA_FULL_TABLE, e)
+        snapshot = _source_snapshot()
+        if _populated and snapshot == _sync_snapshot:
             return
-        entries = _load_jsonl()
-        docs = _build_documents(entries)
-        storage = StorageContext.from_defaults(vector_store=vs)
-        VectorStoreIndex.from_documents(
-            docs, storage_context=storage, embed_model=_embed_model()
-        )
-        logger.info(
-            "seed memory kb populated with %d question alternates from %s",
-            len(docs),
-            QA_JSONL_PATH,
-        )
-        _populated = True
+        try:
+            counts, had_rows = _sync_locked(vs)
+        except Exception:
+            if _table_row_count() > 0:
+                logger.warning(
+                    "_ensure_populated: sync failed; serving existing rows "
+                    "and retrying on the next call", exc_info=True,
+                )
+                return
+            raise
+        _sync_snapshot = snapshot
+    _load_kb()
+    if had_rows:
+        # The initial populate of an empty table has no prior facts to re-check.
+        _stamp_facts_if_changed(counts)
 
 
 def rebuild_kb() -> dict[str, int]:

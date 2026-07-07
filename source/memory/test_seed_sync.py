@@ -143,13 +143,17 @@ def sync_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(seed_memory, "_embed_texts", fake_embed)
     env = SimpleNamespace(path=path, table=f"data_{table}", vs=vs, calls=calls)
+    # sync_kb stamps qa.facts_invalidated_at on change; restore it so tests in
+    # other modules (the assistant's re-check-facts notice) don't see our stamp.
+    prior_stamp = db.get_setting("qa.facts_invalidated_at")
     try:
         yield env
     finally:
+        db.db.session.rollback()
+        db.set_setting("qa.facts_invalidated_at", prior_stamp)
         with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
             cur.execute(psql.SQL("DROP TABLE IF EXISTS {}").format(
                 psql.Identifier(f"data_{table}")))
-        db.db.session.rollback()
         ctx.pop()
 
 
@@ -335,3 +339,64 @@ def test_sync_refreshes_in_memory_registry(sync_env):
     _write(sync_env.path, [_entry_line("a", ["q1?"], "new")])
     seed_memory.sync_kb()
     assert seed_memory.get_entry("a")["answer"] == "new"
+
+
+# --- _ensure_populated: automatic reconcile behind a stat snapshot -----------
+
+
+def test_ensure_populated_syncs_cold_and_skips_when_nothing_moved(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x")])
+    seed_memory._ensure_populated(sync_env.vs)
+    assert len(_meta_rows(sync_env, "a")) == 1
+    sync_env.calls.clear()
+    seed_memory._ensure_populated(sync_env.vs)      # nothing moved -> stat() only
+    assert sync_env.calls == []
+
+
+def test_ensure_populated_picks_up_file_edit(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x")])
+    seed_memory._ensure_populated(sync_env.vs)
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x"),
+                           _entry_line("b", ["q2?"], "y")])
+    seed_memory._ensure_populated(sync_env.vs)      # size changed -> syncs
+    assert len(_meta_rows(sync_env, "b")) == 1
+
+
+def test_ensure_populated_sync_failure_with_data_is_nonfatal(sync_env, monkeypatch):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x")])
+    seed_memory._ensure_populated(sync_env.vs)
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x"),
+                           _entry_line("b", ["q2?"], "y")])
+
+    def boom(_texts):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setattr(seed_memory, "_embed_texts", boom)
+    seed_memory._ensure_populated(sync_env.vs)      # logged, not raised
+    assert len(_meta_rows(sync_env, "a")) == 1      # existing rows intact
+    monkeypatch.setattr(seed_memory, "_embed_texts",
+                        lambda ts: [_fake_vector(t) for t in ts])
+    seed_memory._ensure_populated(sync_env.vs)      # snapshot unsaved -> retries
+    assert len(_meta_rows(sync_env, "b")) == 1
+
+
+def test_ensure_populated_cold_failure_raises(sync_env, monkeypatch):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x")])
+
+    def boom(_texts):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setattr(seed_memory, "_embed_texts", boom)
+    with pytest.raises(RuntimeError):
+        seed_memory._ensure_populated(sync_env.vs)  # empty table -> fatal
+
+
+def test_ensure_populated_rebuild_env_forces_full_reembed(sync_env, monkeypatch):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x")])
+    seed_memory._ensure_populated(sync_env.vs)
+    sync_env.calls.clear()
+    monkeypatch.setattr(seed_memory, "_populated", False)   # fresh process
+    monkeypatch.setattr(seed_memory, "_sync_snapshot", None)
+    monkeypatch.setenv(seed_memory.REBUILD_ENV, "1")
+    seed_memory._ensure_populated(sync_env.vs)
+    assert sum(len(c) for c in sync_env.calls) == 1         # re-embedded
