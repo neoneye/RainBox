@@ -549,7 +549,40 @@ function cronRenderJobDetail(){
     originSec.hidden = true;
   }
   document.getElementById('cjd-run-status').textContent = '';  // clear stale fire status
+  // "Check health" runs the script with --health — script jobs only, and any
+  // previous job's verdict is stale for this one.
+  document.getElementById('cjd-check-health').hidden = (r.type !== 'script');
+  const hcOut = document.getElementById('cjd-health-check-out');
+  hcOut.hidden = true;
+  hcOut.textContent = '';
   cronLoadHealth(r.uuid);
+}
+// "Check health": POST to the check_health endpoint (which runs the script's
+// argv + --health synchronously) and render the output + verdict inline.
+// Selection changes drop a stale response via the uuid guard.
+async function cronCheckHealth(){
+  if (!cronEditUuid) return;
+  const uuid = cronEditUuid;
+  const status = document.getElementById('cjd-run-status');
+  const out = document.getElementById('cjd-health-check-out');
+  status.textContent = 'checking health…';
+  out.hidden = true;
+  let d = null;
+  try {
+    const r = await fetch('/cron/api/jobs/' + encodeURIComponent(uuid) + '/check_health',
+                          {method: 'POST'});
+    d = await r.json();
+  } catch (e) {
+    if (cronEditUuid === uuid) status.textContent = 'network error';
+    return;
+  }
+  if (cronEditUuid !== uuid) return;
+  status.textContent = d.ok ? '✔ healthy' : '✖ unhealthy' + (d.error ? ' — ' + d.error : '');
+  if (d.output || d.error){
+    out.textContent = d.output || d.error;
+    out.className = d.ok ? 'hc-ok' : 'hc-fail';
+    out.hidden = false;
+  }
 }
 // Health panel: run counts/last outcomes/next runs + a recent-runs mini table,
 // fetched per selection (a stale response for a previously-selected job is

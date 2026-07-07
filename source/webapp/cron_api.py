@@ -72,6 +72,25 @@ def cron_run_now(job_uuid: str) -> tuple[Response, int] | Response:
     return jsonify({"ok": True, "debug": debug})
 
 
+@app.route("/cron/api/jobs/<job_uuid>/check_health", methods=["POST"])
+def cron_check_health(job_uuid: str) -> tuple[Response, int] | Response:
+    """Run a script job's own health probe (its argv + `--health`) and return
+    the verdict inline — the Job-details "Check health" button. Script jobs
+    only: the flag contract belongs to the operator's script. Synchronous
+    (health checks are cheap probes); no cron_run row is recorded."""
+    try:
+        ju = UUID(job_uuid)
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    job = db.db.session.query(db.CronJob).filter_by(uuid=ju).one_or_none()
+    if job is None:
+        return jsonify({"ok": False, "error": "job not found"}), 404
+    if job.action_type != "script":
+        return jsonify({"ok": False,
+                        "error": "health check applies to script jobs only"}), 400
+    return jsonify(db.cron_script_health_check(job))
+
+
 @app.route("/cron/api/jobs/<job_uuid>/health")
 def cron_job_health(job_uuid: str) -> tuple[Response, int] | Response:
     """Health snapshot for the Job-details panel: run counts by outcome, last

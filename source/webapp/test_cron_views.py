@@ -278,3 +278,14 @@ def test_cron_page_offers_script_action_type():
     # command input is shared between the command and script types.
     assert body.count('value="script"') == 2
     assert "t === 'script'" in body
+
+
+def test_cron_page_has_check_health_button():
+    body = _body()
+    # Script jobs get a "Check health" button in the details Run section; it
+    # POSTs to the check_health endpoint and renders the output inline.
+    assert 'id="cjd-check-health"' in body
+    assert ">Check health<" in body
+    assert "function cronCheckHealth" in body
+    assert "/check_health" in body
+    assert 'id="cjd-health-check-out"' in body

@@ -478,3 +478,67 @@ def test_cron_save_and_load_script_job(app_ctx, cron_tree_snapshot):
          "type": "script", "command": "/x/daily.py"}])
     job = db.cron_load_tree()["jobs"][0]
     assert job["type"] == "script" and job["command"] == "/x/daily.py"
+
+
+# ---- script health check ----------------------------------------------------
+
+
+def _script_job(tmp_path, body: str):
+    import os
+    p = tmp_path / "hc.sh"
+    p.write_text("#!/bin/sh\n" + body + "\n")
+    os.chmod(p, 0o755)
+    ju = str(uuid4())
+    db.cron_save_tree([], [
+        {"uuid": ju, "name": "HC", "folderId": None, "cron": "0 * * * *",
+         "type": "script", "command": str(p)}])
+    return ju
+
+
+def test_check_health_passes_flag_and_reports_ok(app_ctx, cron_tree_snapshot, tmp_path):
+    ju = _script_job(tmp_path, 'echo "args=$@"; echo "all good"')
+    from webapp.core import app as flask_app
+    client = flask_app.test_client()
+    resp = client.post(f"/cron/api/jobs/{ju}/check_health")
+    assert resp.status_code == 200
+    d = resp.get_json()
+    assert d["ok"] is True and d["exit_code"] == 0
+    assert "args=--health" in d["output"]     # the flag reached the script
+    assert "all good" in d["output"]
+
+
+def test_check_health_nonzero_exit_reports_unhealthy(app_ctx, cron_tree_snapshot, tmp_path):
+    ju = _script_job(tmp_path, 'echo "FAIL disk"; exit 1')
+    from webapp.core import app as flask_app
+    client = flask_app.test_client()
+    d = client.post(f"/cron/api/jobs/{ju}/check_health").get_json()
+    assert d["ok"] is False and d["exit_code"] == 1
+    assert "FAIL disk" in d["output"]
+
+
+def test_check_health_invalid_script_reports_error(app_ctx, cron_tree_snapshot):
+    ju = str(uuid4())
+    db.cron_save_tree([], [
+        {"uuid": ju, "name": "Gone", "folderId": None, "cron": "0 * * * *",
+         "type": "script", "command": "/nonexistent/daily.py"}])
+    from webapp.core import app as flask_app
+    d = flask_app.test_client().post(f"/cron/api/jobs/{ju}/check_health").get_json()
+    assert d["ok"] is False and "not found" in d["error"]
+
+
+def test_check_health_rejects_non_script_jobs(app_ctx, cron_tree_snapshot):
+    ju = str(uuid4())
+    db.cron_save_tree([], [
+        {"uuid": ju, "name": "Msg", "folderId": None, "cron": "0 * * * *",
+         "type": "message", "message": "hi"}])
+    from webapp.core import app as flask_app
+    resp = flask_app.test_client().post(f"/cron/api/jobs/{ju}/check_health")
+    assert resp.status_code == 400
+    assert "script" in resp.get_json()["error"]
+
+
+def test_check_health_unknown_and_bad_uuid(app_ctx, cron_tree_snapshot):
+    from webapp.core import app as flask_app
+    client = flask_app.test_client()
+    assert client.post(f"/cron/api/jobs/{uuid4()}/check_health").status_code == 404
+    assert client.post("/cron/api/jobs/nope/check_health").status_code == 400

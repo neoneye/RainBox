@@ -476,6 +476,46 @@ def _clip_script_output(output: str) -> str:
         + text[-CRON_SCRIPT_OUTPUT_CLIP:]
 
 
+# Wall-clock cap for one on-demand health check (the /cron "Check health"
+# button). Runs synchronously in the request; health checks are cheap probes,
+# so a much shorter leash than CRON_SCRIPT_TIMEOUT.
+CRON_HEALTH_CHECK_TIMEOUT: float = 60.0
+
+
+def cron_script_health_check(job: "CronJob") -> dict[str, Any]:
+    """Run a script job's own health probe: the job's argv plus `--health`,
+    synchronously, capturing output. The script owns the semantics (print one
+    line per check, exit 0 = healthy). Returns {ok, exit_code, output, error};
+    validation problems (missing/non-executable script) come back as
+    ok=False + error rather than raising, so the button can render them.
+    Nothing is recorded in cron_run — this is a diagnostic probe, not a fire."""
+    import subprocess
+
+    cmd = (job.command or "").strip()
+    try:
+        if not cmd:
+            raise CronFireError("no script to run")
+        argv = _validate_script_argv(cmd) + ["--health"]
+    except CronFireError as exc:
+        return {"ok": False, "exit_code": None, "output": "", "error": str(exc)}
+    try:
+        proc = subprocess.run(
+            argv, cwd=str(Path(argv[0]).parent), capture_output=True,
+            text=True, timeout=CRON_HEALTH_CHECK_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = str(exc.stdout or "") + str(exc.stderr or "")
+        return {"ok": False, "exit_code": None,
+                "output": _clip_script_output(output),
+                "error": f"timed out after {CRON_HEALTH_CHECK_TIMEOUT:g}s"}
+    except Exception as exc:  # noqa: BLE001 — any spawn failure is the verdict
+        return {"ok": False, "exit_code": None, "output": "", "error": str(exc)}
+    output = _clip_script_output((proc.stdout or "") + (proc.stderr or ""))
+    healthy = proc.returncode == 0
+    return {"ok": healthy, "exit_code": proc.returncode, "output": output,
+            "error": "" if healthy else f"exit code {proc.returncode}"}
+
+
 def _spawn_script_thread(run_uuid: UUID, argv: list[str]) -> None:
     """Run a validated script argv on a daemon thread: a fetch/render/push can
     take minutes, and the supervisor loop must keep ticking. The thread posts

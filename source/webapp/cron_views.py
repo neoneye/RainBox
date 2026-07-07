@@ -63,6 +63,9 @@ CRON_TEMPLATE = """
   .cjd-label{font-weight:700;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.03em;color:#6b7280;margin-bottom:5px}
   .cjd-value{font-size:0.95rem}
   .cjd-section button{margin-top:9px}
+  #cjd-health-check-out{margin:9px 0 0;padding:8px 10px;font-size:0.8rem;line-height:1.45;background:#111827;color:#e5e7eb;border-radius:6px;white-space:pre-wrap;word-break:break-word;max-height:16em;overflow:auto}
+  #cjd-health-check-out.hc-ok{border-left:4px solid #16a34a}
+  #cjd-health-check-out.hc-fail{border-left:4px solid #dc2626}
   .cjd-section textarea{font-family:inherit;font-size:0.9rem;font-weight:400;padding:5px 7px;width:360px;max-width:100%;min-height:3.4em;resize:vertical;box-sizing:border-box;display:block}
   .builder .brow{margin:0.6em 0;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
   #cron-name-row[hidden]{display:none}
@@ -214,7 +217,10 @@ CRON_TEMPLATE = """
     <button onclick="cronRunNow(false)">Run now</button>
     <button onclick="cronRunNow(true)" style="background:#6b7280"
       title="Dry-run: report what the fire would do (message + destination, backup destination, validated command) without doing it">Run debug</button>
+    <button id="cjd-check-health" hidden onclick="cronCheckHealth()"
+      title="Run the script with --health and show its verdict here (script jobs only; nothing is recorded in the run log)">Check health</button>
     <span class="muted" id="cjd-run-status"></span>
+    <pre id="cjd-health-check-out" hidden></pre>
   </div>
   <div class="cjd-section">
     <div class="cjd-label">Schedule</div>
