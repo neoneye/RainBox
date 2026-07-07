@@ -22,6 +22,7 @@ from uuid import UUID
 import psycopg
 import sqlalchemy as sa
 from llama_index.core import Document, VectorStoreIndex
+from llama_index.core.schema import TextNode
 from llama_index.core.storage.storage_context import StorageContext
 from llama_index.core.vector_stores import (
     FilterCondition,
@@ -74,6 +75,9 @@ _lock = threading.Lock()
 _vs: PGVectorStore | None = None
 _embed: OpenAIEmbedding | None = None
 _populated: bool = False
+# (mtime_ns, size) per source file at the last successful sync — the cheap
+# has-anything-moved guard in _ensure_populated.
+_sync_snapshot: dict[str, tuple[int, int]] | None = None
 # In-memory registry built from the JSONL: qa_id -> entry, and normalized
 # question -> qa_id (the exact-alias table).
 _entries_by_id: dict[str, dict[str, Any]] = {}
@@ -415,6 +419,104 @@ def rebuild_kb() -> dict[str, int]:
 
 
 # --- Incremental sync ----------------------------------------------------------
+
+# Metadata keys PGVectorStore's node serialization owns; the metadata-only
+# update preserves them verbatim and replaces every other key with the row's
+# fresh metadata.
+_NODE_BOOKKEEPING_KEYS: tuple[str, ...] = (
+    "_node_content", "_node_type", "document_id", "doc_id", "ref_doc_id",
+)
+
+
+def _embed_texts(texts: list[str]) -> list[list[float]]:
+    """Batch-embed question strings. Module-level so tests can monkeypatch a
+    fake embedder under both sync_kb() and _ensure_populated()."""
+    return _embed_model().get_text_embedding_batch(texts)
+
+
+def _table_exists(cur: Any) -> bool:
+    cur.execute("SELECT to_regclass(%s)", (QA_FULL_TABLE,))
+    row = cur.fetchone()
+    return row is not None and row[0] is not None
+
+
+def _table_stamps() -> dict[str, str | None]:
+    """qa_id -> "row_sha256|kb_epoch" for every row in the vector table. A
+    qa_id whose nodes disagree (a past partial write) maps to None so the
+    differ treats it as dirty. {} when the table doesn't exist yet."""
+    out: dict[str, str | None] = {}
+    with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
+        if not _table_exists(cur):
+            return out
+        cur.execute(sql.SQL(
+            "SELECT DISTINCT metadata_->>'qa_id', metadata_->>'row_sha256', "
+            "metadata_->>'kb_epoch' FROM {}"
+        ).format(sql.Identifier(QA_FULL_TABLE)))
+        for qa_id, row_sha, epoch in cur.fetchall():
+            if not qa_id:
+                continue
+            stamp = f"{row_sha}|{epoch}"
+            out[qa_id] = None if (qa_id in out and out[qa_id] != stamp) else stamp
+    return out
+
+
+def _row_nodes(qa_id: str) -> list[tuple[str, str, dict[str, Any], list[float] | None]]:
+    """(node_id, question text, metadata dict, embedding vector) for every node
+    of one row. The vector comes back in pgvector's text form ('[0.1,...]'),
+    which is valid JSON."""
+    with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
+        if not _table_exists(cur):
+            return []
+        cur.execute(sql.SQL(
+            "SELECT node_id, text, metadata_, embedding::text FROM {} "
+            "WHERE metadata_->>'qa_id' = %s"
+        ).format(sql.Identifier(QA_FULL_TABLE)), (qa_id,))
+        return [
+            (node_id, text, meta if isinstance(meta, dict) else json.loads(meta),
+             json.loads(emb) if emb else None)
+            for node_id, text, meta, emb in cur.fetchall()
+        ]
+
+
+def _delete_nodes(node_ids: list[str]) -> None:
+    if not node_ids:
+        return
+    with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
+        cur.execute(sql.SQL("DELETE FROM {} WHERE node_id = ANY(%s)")
+                    .format(sql.Identifier(QA_FULL_TABLE)), (node_ids,))
+
+
+def _delete_qa_rows(qa_ids: list[str]) -> None:
+    if not qa_ids:
+        return
+    with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
+        if not _table_exists(cur):
+            return
+        cur.execute(sql.SQL("DELETE FROM {} WHERE metadata_->>'qa_id' = ANY(%s)")
+                    .format(sql.Identifier(QA_FULL_TABLE)), (qa_ids,))
+
+
+def _update_node_metadata(node_id: str, old_meta: dict[str, Any], md: dict[str, Any]) -> None:
+    """Rewrite one node's stored metadata in place, keeping its vector: the
+    top-level keys (what the shield SQL filter reads) and the copies nested in
+    _node_content (what retrieval deserializes into the returned node)."""
+    new_meta: dict[str, Any] = {
+        k: old_meta[k] for k in _NODE_BOOKKEEPING_KEYS if k in old_meta
+    }
+    new_meta.update(md)
+    content = json.loads(old_meta["_node_content"])
+    keys = list(md.keys())
+    content["metadata"] = md
+    content["excluded_embed_metadata_keys"] = keys
+    content["excluded_llm_metadata_keys"] = keys
+    for rel in content.get("relationships", {}).values():
+        if isinstance(rel, dict) and "metadata" in rel:
+            rel["metadata"] = md
+    new_meta["_node_content"] = json.dumps(content)
+    with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
+        cur.execute(sql.SQL("UPDATE {} SET metadata_ = %s WHERE node_id = %s")
+                    .format(sql.Identifier(QA_FULL_TABLE)),
+                    (json.dumps(new_meta), node_id))
 
 
 def _entry_stamp(e: dict[str, Any]) -> str:
