@@ -234,3 +234,100 @@ def test_scope_block_reaches_querygen_notes_and_findings():
     )
     for system_prompt, user_prompt in caller.calls:
         assert "SCOPE: ocean tides only" in user_prompt
+
+
+def test_registry_stores_raw_extracts():
+    caller = _caller(
+        ["q"],
+        {
+            prompts.NOTES_SYSTEM: ["note"],
+            prompts.FINDINGS_SYSTEM: ["f [1]."],
+        },
+    )
+    provider = FakeSearchProvider({"q": [_result("https://example.org/a")]})
+    registry = SourceRegistry()
+    research_subtask(
+        caller, provider, lambda u, c: "the raw page text", registry, SUBTASK,
+        ResearchConfig(), _noop_progress,
+    )
+    assert registry.extracts == {1: "the raw page text"}
+
+
+def test_notes_retried_once_for_large_extract():
+    big_text = "x" * 5000
+    caller = _caller(
+        ["q"],
+        {
+            prompts.NOTES_SYSTEM: [prompts.NO_RELEVANT_CONTENT, "real note"],
+            prompts.FINDINGS_SYSTEM: ["f [1]."],
+        },
+    )
+    provider = FakeSearchProvider({"q": [_result("https://example.org/a")]})
+    registry = SourceRegistry()
+    result = research_subtask(
+        caller, provider, lambda u, c: big_text, registry, SUBTASK,
+        ResearchConfig(), _noop_progress,
+    )
+    assert not result.failed
+    assert registry.notes == {1: "real note"}
+
+
+def test_notes_not_retried_for_small_extract():
+    caller = _caller(
+        ["q"],
+        {prompts.NOTES_SYSTEM: [prompts.NO_RELEVANT_CONTENT]},
+    )
+    provider = FakeSearchProvider({"q": [_result("https://example.org/a")]})
+    result = research_subtask(
+        caller, provider, lambda u, c: "tiny", SourceRegistry(), SUBTASK,
+        ResearchConfig(), _noop_progress,
+    )
+    assert result.failed  # single sentinel reply, no retry queue consumed
+
+
+def test_recover_subtask_from_corpus():
+    from research.researcher import recover_subtask_from_corpus
+
+    registry = SourceRegistry()
+    source = registry.add("https://example.org/wiki", "Wiki page")
+    registry.extracts[source.id] = "Founded on 1948-10-01. Also architecture."
+    registry.notes[source.id] = "architecture-only notes from another subtask"
+    caller = FakeCaller(
+        plain={
+            prompts.NOTES_SYSTEM: ["founded 1948-10-01"],
+            prompts.FINDINGS_SYSTEM: ["The school was founded in 1948 [1]."],
+        }
+    )
+    result = recover_subtask_from_corpus(
+        caller, registry, SUBTASK, ResearchConfig(), _noop_progress
+    )
+    assert result is not None and not result.failed
+    assert result.findings_markdown == "The school was founded in 1948 [1]."
+    # subtask-specific recovery notes must not clobber existing notes
+    assert registry.notes[source.id] == "architecture-only notes from another subtask"
+
+
+def test_recover_returns_none_on_empty_corpus():
+    from research.researcher import recover_subtask_from_corpus
+
+    caller = FakeCaller()
+    result = recover_subtask_from_corpus(
+        caller, SourceRegistry(), SUBTASK, ResearchConfig(), _noop_progress
+    )
+    assert result is None
+    assert caller.calls == []
+
+
+def test_recover_returns_none_when_corpus_irrelevant():
+    from research.researcher import recover_subtask_from_corpus
+
+    registry = SourceRegistry()
+    source = registry.add("https://example.org/x", "X")
+    registry.extracts[source.id] = "nothing useful"
+    caller = FakeCaller(
+        plain={prompts.NOTES_SYSTEM: [prompts.NO_RELEVANT_CONTENT]}
+    )
+    result = recover_subtask_from_corpus(
+        caller, registry, SUBTASK, ResearchConfig(), _noop_progress
+    )
+    assert result is None

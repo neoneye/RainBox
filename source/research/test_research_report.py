@@ -74,3 +74,32 @@ def test_scope_section_rendered_when_present():
 
 def test_no_scope_section_by_default():
     assert "## Scope" not in _report().render_markdown()
+
+
+def test_sweep_questions_moves_interrogative_lines():
+    from research.report import sweep_questions
+
+    text = (
+        "The school opened in 1948 [1].\n"
+        "How many students are enrolled in 2025? [10]\n"
+        "- Which subjects were taught? [3][4]\n"
+        "Enrollment was 688 in 2024/25 [2]."
+    )
+    cleaned, questions = sweep_questions(text)
+    assert "How many" not in cleaned
+    assert "Which subjects" not in cleaned
+    assert "opened in 1948 [1]" in cleaned
+    assert "688 in 2024/25 [2]" in cleaned
+    assert questions == [
+        "How many students are enrolled in 2025?",
+        "Which subjects were taught?",
+    ]
+
+
+def test_sweep_questions_no_questions_is_identity():
+    from research.report import sweep_questions
+
+    text = "All prose [1].\nMore prose [2]."
+    cleaned, questions = sweep_questions(text)
+    assert cleaned == text
+    assert questions == []

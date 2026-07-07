@@ -21,8 +21,13 @@ from research import fetch, websearch
 from research.caller import ModelCaller
 from research.config import ResearchConfig
 from research.planner import generate_plan
-from research.report import Report
-from research.researcher import Fetcher, SourceRegistry, research_subtask
+from research.report import Report, sweep_questions
+from research.researcher import (
+    Fetcher,
+    SourceRegistry,
+    recover_subtask_from_corpus,
+    research_subtask,
+)
 from research.scope import resolve_scope, scope_block, scope_markdown
 from research.splitter import split_plan
 from research.synthesizer import synthesize
@@ -100,23 +105,56 @@ def run_deep_research(
         registry = SourceRegistry()
         results = []
         for subtask in subtasks:
-            result = research_subtask(
-                caller, provider, fetcher, registry, subtask, cfg, progress,
+            results.append(
+                research_subtask(
+                    caller, provider, fetcher, registry, subtask, cfg, progress,
+                    scope_block=block,
+                )
+            )
+
+        # Failed subtasks get a second chance against the run's own corpus:
+        # their answer may sit in a page another subtask fetched.
+        recovered_ids: set[str] = set()
+        for index, result in enumerate(results):
+            if not result.failed:
+                continue
+            retry = recover_subtask_from_corpus(
+                caller, registry, subtasks[index], cfg, progress,
                 scope_block=block,
             )
+            if retry is not None:
+                results[index] = retry
+                recovered_ids.add(retry.subtask_id)
+        for subtask, result in zip(subtasks, results):
             tel.record(
                 {
                     "event": "subtask",
                     "id": subtask.id,
                     "title": subtask.title,
                     "failed": result.failed,
+                    "recovered": subtask.id in recovered_ids,
                 }
             )
-            results.append(result)
 
         summary, open_questions = synthesize(
             caller, query, results, progress, scope_block=block
         )
+
+        # A question is never a finding — move stray interrogative lines
+        # (a small model echoing its instructions as prose) to Open questions.
+        swept: list[str] = []
+        for result in results:
+            if result.failed:
+                continue
+            cleaned, questions = sweep_questions(result.findings_markdown)
+            result.findings_markdown = cleaned
+            swept += questions
+        summary, questions = sweep_questions(summary)
+        swept += questions
+        if swept:
+            progress("sweep", f"moved {len(swept)} stray question(s) to Open questions")
+            bullets = "\n".join(f"- {q}" for q in swept)
+            open_questions = f"{open_questions}\n{bullets}".strip()
         report = Report(
             query=query,
             summary_markdown=summary,

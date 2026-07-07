@@ -89,7 +89,10 @@ def _e2e_env(monkeypatch):
         plain={
             prompts.PLANNER_SYSTEM: ["the plan"],
             prompts.NOTES_SYSTEM: ["mech note", "hist note"],
-            prompts.FINDINGS_SYSTEM: ["mech findings [1]", "hist findings [2]"],
+            prompts.FINDINGS_SYSTEM: [
+                "mech findings [1]",
+                "hist findings [2]\nWhat teaching methods were used? [2]",
+            ],
             prompts.SYNTH_SUMMARY_SYSTEM: ["summary [1][2]"],
             prompts.SYNTH_OPENQ_SYSTEM: ["- what else?"],
         },
@@ -125,6 +128,11 @@ def test_run_deep_research_end_to_end(monkeypatch):
     assert "hist findings [2]" in markdown
     assert "[1] M — https://example.org/m" in markdown
     assert "[2] H — https://example.org/h" in markdown
+    # stray question lines are swept out of findings into Open questions
+    open_questions_part = markdown.split("## Open questions")[1]
+    findings_part = markdown.split("## Open questions")[0]
+    assert "What teaching methods were used?" not in findings_part
+    assert "- What teaching methods were used?" in open_questions_part
     assert "plan" in events and "research" in events and "synthesize" in events
 
 

@@ -152,3 +152,31 @@ run's chosen scope, recorded per source in the ledger; the rewrite stage
 excludes keyword-noise and wrong-scope material from findings sections and
 demotes it to a side note at most. Verdict vocabulary gains
 `true_but_low_relevance` alongside supported/unsupported/contradicted.
+
+## Addendum 2: evidence handling (third review round)
+
+A fourth reviewed run (a Copenhagen folkeskole's history) validated the
+scope stage and exposed the evidence layer: a founding date present in a
+fetched page was lost because notes are subtask-scoped (fetched under
+"architecture", discarded there, invisible to the failed "founding"
+subtask); a guiding question leaked into prose as a finding; a text-rich
+PDF was declared unreadable; a "falling enrollment" source became "growth"
+in the report.
+
+Shipped in response (ahead of the ledger):
+
+- **Corpus recovery**: the registry keeps raw extracts; failed subtasks
+  re-select and re-extract notes from the run's own corpus before staying
+  failed.
+- **Question sweeper**: deterministic post-pass moves interrogative lines
+  out of findings/summary into Open questions.
+- **Notes retry**: an empty/near-empty notes reply from a 4000+-char
+  extract contradicts the fetch metadata and is retried once.
+- **Language chaining**: plan in the query's language, subtasks in the
+  plan's, findings in the subtask's.
+
+Still the ledger's job — and now demonstrated in the wild, not
+hypothetical: the trend inversion ("Faldende elevtal" → "growth") is
+exactly the entailment check's target, and the generic education-finance
+leakage is the relevance gate's. Raw extracts are now stored, which was
+rollout step 1; the ledger can start at step 2.

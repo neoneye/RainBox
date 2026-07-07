@@ -11,6 +11,24 @@ import re
 from dataclasses import dataclass, field
 
 _CITATION_RE = re.compile(r"\[(\d+)\]")
+_TRAILING_CITES_RE = re.compile(r"(\s*\[\d+\])+\s*$")
+
+
+def sweep_questions(markdown: str) -> tuple[str, list[str]]:
+    """Remove lines that are questions — small models sometimes emit a
+    subtask's guiding question as prose ("How many students are enrolled?
+    [10]"). A question is never a finding; the pipeline moves swept lines to
+    Open questions, where they are honest. Returns (cleaned, questions)."""
+    kept: list[str] = []
+    questions: list[str] = []
+    for line in markdown.splitlines():
+        core = line.strip().lstrip("-*").lstrip("#").strip()
+        core = _TRAILING_CITES_RE.sub("", core).strip()
+        if core.endswith("?"):
+            questions.append(core)
+        else:
+            kept.append(line)
+    return "\n".join(kept).strip(), questions
 
 
 @dataclass

@@ -27,14 +27,26 @@ points, each call small enough for a modest local context window:
    generate 2–4 search queries (structured) → search → select which results
    to read by index (structured) → fetch + extract → per-source notes
    (plain, one source per call) → findings section citing `[n]` (plain).
-4. **Synthesizer** (`synthesizer.py`) — findings → executive summary + open
+4. **Corpus recovery** (`researcher.recover_subtask_from_corpus`) — a
+   failed subtask gets a second chance against the run's own corpus: the
+   registry keeps every source's raw extract, and a fact fetched for one
+   subtask often answers another (notes are subtask-scoped and discard the
+   rest). Selection + fresh notes run against the stored extracts; only if
+   that also fails does the subtask stay failed.
+5. **Synthesizer** (`synthesizer.py`) — findings → executive summary + open
    questions (two plain calls). Findings sections land in the report
-   verbatim; synthesis can't lose detail.
+   verbatim; synthesis can't lose detail. A deterministic sweep then moves
+   any stray interrogative lines (a model echoing its instructions as
+   prose) from findings/summary into Open questions.
 
-Sources get run-wide citation ids via `SourceRegistry`; a URL fetched for an
-earlier subtask is not refetched — its notes are reused. Failed searches,
-fetches, and subtasks never abort the run; they surface under Open
-questions.
+Sources get run-wide citation ids via `SourceRegistry`, which keeps notes
+AND raw extracts; a URL fetched for an earlier subtask is not refetched —
+its notes are reused, and its extract feeds corpus recovery. A notes call
+that returns nothing from a 4000+-char extract is retried once (the empty
+reply contradicts the fetch itself). Failed searches, fetches, and subtasks
+never abort the run; they surface under Open questions. Language is chained
+explicitly: plan in the query's language, subtasks in the plan's, findings
+in the subtask's — mixed-language reports were a real failure mode.
 
 ## Search providers
 
