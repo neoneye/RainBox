@@ -77,3 +77,12 @@ floor, a configured value above it is kept.
 `venv/bin/python -m pytest research/ -q` — fake callers and fake search
 providers throughout; provider parsing runs against recorded JSON fixtures
 in `research/fixtures/`; no live network or LLM.
+
+## Dependencies
+
+Research-only packages (`trafilatura`, `ddgs` + transitives) are pinned in
+`research/requirements.txt`, separate from the main `requirements.txt`, and
+installed into the app venv: `venv/bin/pip install -r
+research/requirements.txt`. They are imported lazily inside `research/`
+only, so the main app never loads them; deleting the package and its pin
+file removes the feature cleanly.

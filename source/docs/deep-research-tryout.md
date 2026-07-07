@@ -12,10 +12,12 @@ it works internally: [deep-research.md](deep-research.md).
    cd ~/git/rainbox && git checkout deep-research
    ```
 
-2. **New dependencies.** Two packages were added (`trafilatura`, `ddgs`):
+2. **Research dependencies.** They live in their own pin file
+   (`research/requirements.txt`) so they can't entangle the main app's
+   dependency resolution, but they install into the same venv:
 
    ```bash
-   cd source && venv/bin/pip install -r requirements.txt
+   cd source && venv/bin/pip install -r research/requirements.txt
    ```
 
 3. **Postgres + a model provider running.** The CLI reads model groups from
