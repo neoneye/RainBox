@@ -469,3 +469,12 @@ def test_cron_load_tree_exposes_origin_step_link(app_ctx, cron_tree_snapshot):
     out2 = db.cron_load_tree()
     prow = next(j for j in out2["jobs"] if j["uuid"] == str(plain.uuid))
     assert prow["origin_step_link"] is None
+
+
+def test_cron_save_and_load_script_job(app_ctx, cron_tree_snapshot):
+    ju = str(uuid4())
+    db.cron_save_tree([], [
+        {"uuid": ju, "name": "Pollen", "folderId": None, "cron": "0 * * * *",
+         "type": "script", "command": "/x/daily.py"}])
+    job = db.cron_load_tree()["jobs"][0]
+    assert job["type"] == "script" and job["command"] == "/x/daily.py"

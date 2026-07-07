@@ -272,6 +272,9 @@ CRON_TEMPLATE = """
       <input type="radio" name="atype" value="message" checked> Message</label>
     <label style="flex-direction:row;align-items:center;gap:5px;font-weight:400">
       <input type="radio" name="atype" value="command"> Command</label>
+    <label style="flex-direction:row;align-items:center;gap:5px;font-weight:400"
+           title="Run an external program: absolute path to an executable, plus arguments. No shell.">
+      <input type="radio" name="atype" value="script"> Script</label>
   </div>
   <div class="brow" id="msg-fields">
     <label>Target <select id="f-target"></select></label>
@@ -336,6 +339,9 @@ CRON_TEMPLATE = """
       <input type="radio" name="ea-atype" value="message" checked> Message</label>
     <label style="flex-direction:row;align-items:center;gap:5px;font-weight:400">
       <input type="radio" name="ea-atype" value="command"> Command</label>
+    <label style="flex-direction:row;align-items:center;gap:5px;font-weight:400"
+           title="Run an external program: absolute path to an executable, plus arguments. No shell.">
+      <input type="radio" name="ea-atype" value="script"> Script</label>
   </div>
   <div class="brow" id="ea-msg-fields">
     <label>Target <select id="ea-target"></select></label>

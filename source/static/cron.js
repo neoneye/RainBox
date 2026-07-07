@@ -123,7 +123,11 @@ function cronActiveType(){
 function cronToggleType(){
   const t = cronActiveType();
   document.getElementById('msg-fields').style.display = (t === 'message') ? '' : 'none';
-  document.getElementById('cmd-fields').style.display = (t === 'command') ? '' : 'none';
+  // Script shares the command input (both persist to the job's `command`).
+  document.getElementById('cmd-fields').style.display =
+    (t === 'command' || t === 'script') ? '' : 'none';
+  document.getElementById('f-command').placeholder =
+    (t === 'script') ? '/absolute/path/to/script --args' : 'git pull';
 }
 document.querySelectorAll('input[name="atype"]').forEach(r =>
   r.addEventListener('change', cronToggleType));
@@ -134,7 +138,10 @@ function cronEditActiveType(){
 function cronToggleEditActionType(){
   const t = cronEditActiveType();
   document.getElementById('ea-msg-fields').style.display = (t === 'message') ? '' : 'none';
-  document.getElementById('ea-cmd-fields').style.display = (t === 'command') ? '' : 'none';
+  document.getElementById('ea-cmd-fields').style.display =
+    (t === 'command' || t === 'script') ? '' : 'none';
+  document.getElementById('ea-command').placeholder =
+    (t === 'script') ? '/absolute/path/to/script --args' : 'git pull';
 }
 document.querySelectorAll('input[name="ea-atype"]').forEach(r =>
   r.addEventListener('change', () => {
@@ -228,6 +235,7 @@ function cronHealthCell(r){
 function cronActionText(r){
   if (r.type === 'message') return 'msg → ' + cronRoomName(r.target) + ': ' + r.message;
   if (r.type === 'backup') return 'backup → ' + (r.command || 'RAINBOX_BACKUP_REPO');
+  if (r.type === 'script') return 'script: ' + r.command;
   return 'cmd: ' + r.command;
 }
 function cronFlattenTree(parentId){
@@ -388,6 +396,9 @@ function cronAddOrUpdate(){
   if (t === 'command' && !row.command){
     err.textContent = 'Command needs a command.'; return;
   }
+  if (t === 'script' && !row.command){
+    err.textContent = 'Script needs an absolute path to an executable.'; return;
+  }
   // The builder is create-only now (editing happens on the Job-details page via
   // the Edit schedule / Edit action overlays), so this always creates a job.
   row.uuid = crypto.randomUUID();
@@ -497,6 +508,9 @@ function cronSaveAction(){
   if (t === 'command' && !command){
     err.textContent = 'Command needs a command.'; return;
   }
+  if (t === 'script' && !command){
+    err.textContent = 'Script needs an absolute path to an executable.'; return;
+  }
   r.type = t; r.target = target; r.message = message; r.command = command;
   r.maxRetries = parseInt(document.getElementById('ea-retries').value, 10) || 0;
   cronTouch(r);
@@ -508,7 +522,7 @@ function cronSaveAction(){
 // Mirrors db_cron.cron_job_is_draft: an empty action = a draft the scheduler
 // skips (backups have no required field, so they are never drafts).
 function cronJobIsDraft(j){
-  if (j.type === 'command') return !(j.command || '').trim();
+  if (j.type === 'command' || j.type === 'script') return !(j.command || '').trim();
   if (j.type === 'message') return !(j.message || '').trim();
   return false;
 }

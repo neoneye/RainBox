@@ -270,3 +270,11 @@ def test_tree_kebab_has_copy_id_items():
     assert "Copy job id" in body
     assert "function cronCopyId" in body
     assert "navigator.clipboard.writeText(uuid)" in body
+
+
+def test_cron_page_offers_script_action_type():
+    body = _body()
+    # Both the New-job builder and the Edit-action overlay offer Script; the
+    # command input is shared between the command and script types.
+    assert body.count('value="script"') == 2
+    assert "t === 'script'" in body
