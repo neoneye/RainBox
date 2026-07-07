@@ -22,7 +22,7 @@ from uuid import UUID
 import psycopg
 import sqlalchemy as sa
 from llama_index.core import Document, VectorStoreIndex
-from llama_index.core.schema import TextNode
+from llama_index.core.schema import BaseNode, TextNode
 from llama_index.core.storage.storage_context import StorageContext
 from llama_index.core.vector_stores import (
     FilterCondition,
@@ -547,6 +547,124 @@ def _diff_rows(
             unchanged += 1
     deleted = [qa_id for qa_id in stamps if qa_id not in ids]
     return new, dirty, deleted, unchanged
+
+
+def _sync_row(vs: PGVectorStore, entry: dict[str, Any]) -> tuple[int, bool]:
+    """Reconcile one new/dirty row. Returns (embedded question count,
+    metadata_only). The vector derives from the question text alone, so when
+    the question multiset is unchanged the nodes' metadata is rewritten in
+    place — zero embed calls. Otherwise new nodes are inserted BEFORE the old
+    ones are deleted, so retrieval sees old-or-new, never an absent row;
+    unchanged question strings keep their stored vectors."""
+    docs = _build_documents([entry])
+    old = _row_nodes(entry["id"])
+    old_questions = sorted(q for _, q, _, _ in old)
+    new_questions = sorted(d.text for d in docs)
+    # Stored vectors are only reusable when they were produced under the
+    # current epoch — an embed-model swap or schema bump invalidates them even
+    # though the question text is identical.
+    epoch_ok = all(meta.get("kb_epoch") == KB_EPOCH for _, _, meta, _ in old)
+    if (old and epoch_ok and old_questions == new_questions
+            and all(e is not None for *_, e in old)):
+        by_q: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        for node_id, q, meta, _ in old:
+            by_q.setdefault(q, []).append((node_id, meta))
+        for d in docs:
+            node_id, meta = by_q[d.text].pop()
+            _update_node_metadata(node_id, meta, dict(d.metadata))
+        return 0, True
+    vectors = {
+        q: emb for _, q, meta, emb in old
+        if emb is not None and meta.get("kb_epoch") == KB_EPOCH
+    }
+    need = sorted({d.text for d in docs} - set(vectors))
+    if need:
+        for q, vec in zip(need, _embed_texts(need), strict=True):
+            vectors[q] = vec
+    nodes: list[BaseNode] = [
+        TextNode(
+            text=d.text,
+            metadata=dict(d.metadata),
+            excluded_embed_metadata_keys=list(d.metadata.keys()),
+            excluded_llm_metadata_keys=list(d.metadata.keys()),
+            embedding=vectors[d.text],
+        )
+        for d in docs
+    ]
+    if nodes:
+        vs.add(nodes)
+    _delete_nodes([node_id for node_id, *_ in old])
+    return len(need), False
+
+
+def _sync_locked(vs: PGVectorStore) -> tuple[dict[str, int], bool]:
+    """The reconcile body; assumes _lock is held. Returns (counts, whether the
+    table already had stamped rows). Loader validation errors raise before any
+    write — the table is left untouched, not emptied. A row that fails to
+    embed is skipped (its old nodes stay; it remains dirty and retries next
+    sync); after all rows are attempted, any failures raise one RuntimeError."""
+    global _populated, _entries_by_id, _alias_table
+    entries = _load_jsonl()
+    stamps = _table_stamps()
+    new, dirty, deleted, unchanged = _diff_rows(entries, stamps)
+    counts = {"unchanged": unchanged, "updated": 0, "embedded": 0,
+              "deleted": len(deleted)}
+    _delete_qa_rows(deleted)
+    errors: list[str] = []
+    embedded_questions = 0
+    for e in new + dirty:
+        try:
+            n_embedded, metadata_only = _sync_row(vs, e)
+        except Exception as exc:  # noqa: BLE001 — isolate per row; report below
+            errors.append(f"{e['id']}: {exc}")
+            continue
+        embedded_questions += n_embedded
+        counts["updated" if metadata_only else "embedded"] += 1
+    if counts["updated"] or counts["embedded"] or counts["deleted"]:
+        # Invalidate the registry caches even on partial failure — whatever
+        # succeeded is live and _load_kb() rebuilds from the same file.
+        _entries_by_id = {}
+        _alias_table = {}
+        logger.info("sync_kb: %s (%d question embeds)", counts, embedded_questions)
+    if errors:
+        raise RuntimeError(
+            f"sync_kb: {len(errors)} row(s) failed to embed "
+            f"(they stay stale and retry next sync) — first: {errors[0]}"
+        )
+    _populated = True
+    return counts, bool(stamps)
+
+
+def _stamp_facts_if_changed(counts: dict[str, int]) -> None:
+    """Post the one-time re-check-facts signal, but only when the sync actually
+    changed something — a clean reconcile stays silent."""
+    if not (counts["updated"] or counts["embedded"] or counts["deleted"]):
+        return
+    try:
+        db.mark_facts_invalidated()
+    except Exception:  # pragma: no cover — no app context; the sync succeeded
+        logger.warning("sync_kb: could not stamp qa.facts_invalidated_at", exc_info=True)
+
+
+def sync_kb() -> dict[str, int]:
+    """Reconcile data_seed_memory with the merged JSONL instead of wiping it:
+    unchanged rows are skipped, metadata-only edits (answer/shield/path/handler)
+    update nodes in place with zero embed calls, question edits embed only the
+    changed strings, and vanished ids are deleted. Returns row counts
+    {"unchanged", "updated", "embedded", "deleted"}. Stamps
+    qa.facts_invalidated_at only when something changed. Raises on loader
+    validation errors (table untouched) and on embed failures (other rows
+    intact; failed rows stay stale and retry on the next sync).
+
+    Lock order matters: _vector_store() and _load_kb() both take _lock, which
+    is non-reentrant — the store is resolved BEFORE the locked section and the
+    registry is rebuilt AFTER it (same pattern as rebuild_kb)."""
+    vs = _vector_store()
+    with _lock:
+        counts, _ = _sync_locked(vs)
+    _load_kb()
+    _stamp_facts_if_changed(counts)
+    return counts
 
 
 # --- Matching -----------------------------------------------------------------

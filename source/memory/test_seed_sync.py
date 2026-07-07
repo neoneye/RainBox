@@ -161,3 +161,177 @@ def _sql(env, query, params=()):
 
 def test_table_stamps_empty_when_table_missing(sync_env):
     assert seed_memory._table_stamps() == {}
+
+
+# --- sync_kb ---------------------------------------------------------------
+
+
+def _entry_line(qa_id, questions, answer, shield=None, kind="static", handler=None):
+    d = {"id": qa_id, "kind": kind, "questions": questions}
+    if kind == "static":
+        d["answer"] = answer
+    else:
+        d["handler"] = handler
+    if shield:
+        d["shield"] = shield
+    return json.dumps(d)
+
+
+def _meta_rows(env, qa_id):
+    rows = _sql(env,
+                "SELECT metadata_, embedding::text FROM {} WHERE metadata_->>'qa_id' = %s",
+                (qa_id,))
+    return [(m if isinstance(m, dict) else json.loads(m), e) for m, e in rows]
+
+
+def test_sync_cold_start_populates_everything(sync_env):
+    _write(sync_env.path, [
+        _entry_line("a", ["what is a?", "tell me about a"], "answer a"),
+        _entry_line("b", ["what is b?"], "answer b"),
+    ])
+    counts = seed_memory.sync_kb()
+    assert counts == {"unchanged": 0, "updated": 0, "embedded": 2, "deleted": 0}
+    assert sum(len(c) for c in sync_env.calls) == 3
+    assert len(_meta_rows(sync_env, "a")) == 2 and len(_meta_rows(sync_env, "b")) == 1
+
+
+def test_sync_noop_second_run_embeds_nothing(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "ans")])
+    seed_memory.sync_kb()
+    sync_env.calls.clear()
+    counts = seed_memory.sync_kb()
+    assert counts == {"unchanged": 1, "updated": 0, "embedded": 0, "deleted": 0}
+    assert sync_env.calls == []
+
+
+def test_answer_edit_is_metadata_only(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "old answer")])
+    seed_memory.sync_kb()
+    ((_, emb_before),) = _meta_rows(sync_env, "a")
+    sync_env.calls.clear()
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "new answer")])
+    counts = seed_memory.sync_kb()
+    assert counts == {"unchanged": 0, "updated": 1, "embedded": 0, "deleted": 0}
+    assert sync_env.calls == []                      # zero embed calls
+    ((meta, emb_after),) = _meta_rows(sync_env, "a")
+    assert emb_after == emb_before                   # vector untouched
+    assert meta["answer"] == "new answer"            # SQL-visible metadata
+    inner = json.loads(meta["_node_content"])
+    assert inner["metadata"]["answer"] == "new answer"   # node-visible metadata
+
+
+def test_shield_edit_is_metadata_only_and_sql_enforceable(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "ans")])
+    seed_memory.sync_kb()
+    sync_env.calls.clear()
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "ans", shield="alice.travel")])
+    counts = seed_memory.sync_kb()
+    assert counts["updated"] == 1 and sync_env.calls == []
+    rows = _sql(sync_env,
+                "SELECT metadata_->>'shield' FROM {} WHERE metadata_->>'qa_id' = %s",
+                ("a",))
+    assert rows == [("alice.travel",)]
+    # removing the shield removes the SQL-visible key again
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "ans")])
+    seed_memory.sync_kb()
+    rows = _sql(sync_env,
+                "SELECT metadata_->>'shield' FROM {} WHERE metadata_->>'qa_id' = %s",
+                ("a",))
+    assert rows == [(None,)]
+
+
+def test_question_added_embeds_only_the_new_string(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?", "q2?"], "ans")])
+    seed_memory.sync_kb()
+    before = {m["question"]: e for m, e in _meta_rows(sync_env, "a")}
+    sync_env.calls.clear()
+    _write(sync_env.path, [_entry_line("a", ["q1?", "q2?", "q3?"], "ans")])
+    counts = seed_memory.sync_kb()
+    assert counts["embedded"] == 1
+    assert sync_env.calls == [["q3?"]]               # only the new question
+    after = {m["question"]: e for m, e in _meta_rows(sync_env, "a")}
+    assert len(after) == 3
+    assert after["q1?"] == before["q1?"] and after["q2?"] == before["q2?"]
+
+
+def test_deleted_entry_removes_its_nodes(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x"), _entry_line("b", ["q2?"], "y")])
+    seed_memory.sync_kb()
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x")])
+    counts = seed_memory.sync_kb()
+    assert counts["deleted"] == 1
+    assert _meta_rows(sync_env, "b") == []
+
+
+def test_epoch_bump_reembeds_everything(sync_env, monkeypatch):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x"), _entry_line("b", ["q2?"], "y")])
+    seed_memory.sync_kb()
+    sync_env.calls.clear()
+    monkeypatch.setattr(seed_memory, "KB_EPOCH", "newmodel|2")
+    counts = seed_memory.sync_kb()
+    assert counts["embedded"] == 2
+    assert sum(len(c) for c in sync_env.calls) == 2
+
+
+def test_failing_row_leaves_others_intact_and_retries(sync_env, monkeypatch):
+    _write(sync_env.path, [_entry_line("ok", ["fine?"], "x"),
+                           _entry_line("bad", ["boom?"], "y")])
+
+    def flaky(texts):
+        if any("boom" in t for t in texts):
+            raise RuntimeError("ollama down")
+        return [_fake_vector(t) for t in texts]
+
+    monkeypatch.setattr(seed_memory, "_embed_texts", flaky)
+    with pytest.raises(RuntimeError, match="1 row"):
+        seed_memory.sync_kb()
+    assert len(_meta_rows(sync_env, "ok")) == 1     # good row landed
+    assert _meta_rows(sync_env, "bad") == []        # bad row still absent
+    monkeypatch.setattr(seed_memory, "_embed_texts",
+                        lambda ts: [_fake_vector(t) for t in ts])
+    counts = seed_memory.sync_kb()                  # heals
+    assert counts["embedded"] == 1 and counts["unchanged"] == 1
+    assert len(_meta_rows(sync_env, "bad")) == 1
+
+
+def test_legacy_unstamped_rows_get_one_full_reembed(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x")])
+    seed_memory.sync_kb()
+    _sql(sync_env,
+         "UPDATE {} SET metadata_ = ((metadata_::jsonb - 'row_sha256' - 'kb_epoch')::json)")
+    sync_env.calls.clear()
+    counts = seed_memory.sync_kb()
+    assert counts["embedded"] == 1                  # dirty -> re-synced
+    counts = seed_memory.sync_kb()
+    assert counts["unchanged"] == 1                 # then increments apply
+
+
+def test_loader_validation_failure_leaves_table_untouched(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x")])
+    seed_memory.sync_kb()
+    _write(sync_env.path, ['{"id": "a", "questions": ["q1?"], "answer": }'])
+    with pytest.raises(ValueError):
+        seed_memory.sync_kb()
+    assert len(_meta_rows(sync_env, "a")) == 1
+
+
+def test_dynamic_entry_handler_rename_is_metadata_only(sync_env):
+    _write(sync_env.path,
+           [_entry_line("d", ["when?"], None, kind="dynamic", handler="old_h")])
+    seed_memory.sync_kb()
+    sync_env.calls.clear()
+    _write(sync_env.path,
+           [_entry_line("d", ["when?"], None, kind="dynamic", handler="new_h")])
+    counts = seed_memory.sync_kb()
+    assert counts["updated"] == 1 and sync_env.calls == []
+    ((meta, _),) = _meta_rows(sync_env, "d")
+    assert meta["handler"] == "new_h"
+
+
+def test_sync_refreshes_in_memory_registry(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "old")])
+    seed_memory.sync_kb()
+    assert seed_memory.get_entry("a")["answer"] == "old"
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "new")])
+    seed_memory.sync_kb()
+    assert seed_memory.get_entry("a")["answer"] == "new"
