@@ -103,8 +103,10 @@ ms), search query, and fetch; last row = the summary. Quick looks:
 # which model actually served calls, and who kept failing
 jq -r 'select(.event=="summary") | .llm.models' report.events.jsonl
 
-# every fallback: the model that failed, why, and after how long
-jq -r 'select(.event=="llm_call") | .attempts[] | select(.error) | "\(.model)\t\(.ms)ms\t\(.error)"' report.events.jsonl
+# every fallback: the member that failed, why, and after how long
+# (member = group-member uuid — stable even when the same model name is in
+#  the group twice with different settings; join it against the first row)
+jq -r 'select(.event=="llm_call") | .attempts[] | select(.error) | "\(.member)\t\(.model)\t\(.ms)ms\t\(.error)"' report.events.jsonl
 
 # is the search API the flaky part?
 jq -r 'select(.event=="summary") | .search' report.events.jsonl

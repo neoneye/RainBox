@@ -87,16 +87,20 @@ trade-offs. The CLI writes it next to `--out` (`report.md` →
 
 - `run` (first): query, full config, and every group member's **resolved
   settings** (provider, model, arguments incl. context window and timeout
-  overrides) in fallback order.
+  overrides) in fallback order, each with its `member` uuid.
 - `llm_call`: stage label (plan/split/queries/select/notes/findings/
-  summary/open_questions), which member served it, total ms, and an
-  `attempts` list — one entry per member tried, with per-attempt ms and
-  error — so fallbacks and timeouts are attributable to a specific model.
+  summary/open_questions), `served_by` (the group-**member** uuid — the
+  stable identity, since one model name can sit in a group several times
+  with different overrides; `served_by_model` carries the name for
+  eyeballing), total ms, and an `attempts` list — one entry per member
+  tried (`member`, `model`, ms, error) — so fallbacks and timeouts are
+  attributable to a specific member config, joinable against the run row.
 - `search`: provider id, query, ms, result count or error — per-API
   flakiness is visible directly.
 - `fetch`: url, ms, ok, extracted chars. `subtask`: id, title, failed.
-- `summary` (last): wall ms plus aggregates — per-model
-  attempts/served/errors/total_ms/last_error, per-label call counts,
+- `summary` (last): wall ms plus aggregates — per-member (keyed by member
+  uuid, model name in the row) attempts/served/errors/total_ms/last_error,
+  per-label call counts,
   per-provider search stats, fetch and subtask totals. Written in a
   `finally`, so an aborted run still ends with `"completed": false`.
 

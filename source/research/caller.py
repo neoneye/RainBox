@@ -65,7 +65,10 @@ class ModelCaller:
             provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
             described.append(
                 {
-                    "uuid": str(model_uuid),
+                    # The member uuid is the join key for llm_call attempts:
+                    # the same model name can appear in a group several times
+                    # with different overrides (temperature, context, ...).
+                    "member": str(model_uuid),
                     "provider": provider_id,
                     "model": model_name,
                     "arguments": args,
@@ -121,18 +124,28 @@ class ModelCaller:
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
             t0 = time.monotonic()
-            model_name = str(model_uuid)
+            member = str(model_uuid)
+            model_name = member
             try:
                 provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
                 args = _apply_timeout_floor(provider_id, dict(args), self.timeout_s)
                 the_llm = llm.prepare_llm(provider_id, model_name, args)
                 result = call(the_llm, args)
-                attempts.append({"model": model_name, "ms": _ms(t0), "error": None})
-                self._record_call(kind, system_prompt, model_name, t_start, attempts)
+                attempts.append(
+                    {"member": member, "model": model_name, "ms": _ms(t0), "error": None}
+                )
+                self._record_call(kind, system_prompt, attempts[-1], t_start, attempts)
                 return result
             except Exception as exc:
                 logger.warning("research model %s failed: %s", model_uuid, exc)
-                attempts.append({"model": model_name, "ms": _ms(t0), "error": str(exc)})
+                attempts.append(
+                    {
+                        "member": member,
+                        "model": model_name,
+                        "ms": _ms(t0),
+                        "error": str(exc),
+                    }
+                )
                 last_error = exc
         self._record_call(kind, system_prompt, None, t_start, attempts)
         raise RuntimeError(
@@ -143,7 +156,7 @@ class ModelCaller:
         self,
         kind: str,
         system_prompt: str,
-        served_by: str | None,
+        served: dict | None,
         t_start: float,
         attempts: list[dict],
     ) -> None:
@@ -156,7 +169,11 @@ class ModelCaller:
                 "event": "llm_call",
                 "label": label_for(system_prompt),
                 "kind": kind,
-                "served_by": served_by,
+                # served_by is the group-member uuid — join it against the
+                # run row's models list for the exact settings; the model
+                # name rides along for eyeballing only.
+                "served_by": served["member"] if served else None,
+                "served_by_model": served["model"] if served else None,
                 "ms": _ms(t_start),
                 "attempts": attempts,
             }

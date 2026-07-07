@@ -55,7 +55,9 @@ def test_caller_records_fallback_attempts(monkeypatch):
     assert event["event"] == "llm_call"
     assert event["label"] == "plan"
     assert event["kind"] == "plain"
-    assert event["served_by"] == f"model-{MODEL_B}"
+    assert event["served_by"] == str(MODEL_B)
+    assert event["served_by_model"] == f"model-{MODEL_B}"
+    assert [a["member"] for a in event["attempts"]] == [str(MODEL_A), str(MODEL_B)]
     assert [a["model"] for a in event["attempts"]] == [
         f"model-{MODEL_A}",
         f"model-{MODEL_B}",
@@ -73,6 +75,8 @@ def test_caller_records_total_failure(monkeypatch):
         caller.plain(prompts.PLANNER_SYSTEM, "user")
     (event,) = telemetry.events
     assert event["served_by"] is None
+    assert event["served_by_model"] is None
+    assert event["attempts"][0]["member"] == str(MODEL_A)
     assert event["attempts"][0]["error"] == "model down"
 
 
@@ -139,8 +143,8 @@ def test_summary_aggregates_per_model_label_provider():
             "served_by": "fast",
             "ms": 500,
             "attempts": [
-                {"model": "slow", "ms": 400, "error": "timed out"},
-                {"model": "fast", "ms": 100, "error": None},
+                {"member": "m-slow", "model": "slow", "ms": 400, "error": "timed out"},
+                {"member": "m-fast", "model": "fast", "ms": 100, "error": None},
             ],
         }
     )
@@ -151,7 +155,9 @@ def test_summary_aggregates_per_model_label_provider():
             "kind": "plain",
             "served_by": "fast",
             "ms": 90,
-            "attempts": [{"model": "fast", "ms": 90, "error": None}],
+            "attempts": [
+                {"member": "m-fast", "model": "fast", "ms": 90, "error": None}
+            ],
         }
     )
     telemetry.record(
@@ -180,14 +186,16 @@ def test_summary_aggregates_per_model_label_provider():
     summary = telemetry.events[-1]
     assert summary["llm"]["calls"] == 2
     assert summary["llm"]["failed_calls"] == 0
-    assert summary["llm"]["models"]["slow"] == {
+    assert summary["llm"]["models"]["m-slow"] == {
+        "model": "slow",
         "attempts": 1,
         "served": 0,
         "errors": 1,
         "total_ms": 400,
         "last_error": "timed out",
     }
-    assert summary["llm"]["models"]["fast"]["served"] == 2
+    assert summary["llm"]["models"]["m-fast"]["served"] == 2
+    assert summary["llm"]["models"]["m-fast"]["model"] == "fast"
     assert summary["llm"]["labels"]["notes"] == {"calls": 2, "total_ms": 590}
     assert summary["search"]["ddg"] == {
         "queries": 2,

@@ -92,9 +92,13 @@ class Telemetry:
                 label_row["calls"] += 1
                 label_row["total_ms"] += event["ms"]
                 for attempt in event["attempts"]:
+                    # Keyed by group-member uuid, not model name — the same
+                    # model can be in the group twice with different
+                    # overrides. Join against the run row for the settings.
                     model_row = models.setdefault(
-                        attempt["model"],
+                        attempt["member"],
                         {
+                            "model": attempt["model"],
                             "attempts": 0,
                             "served": 0,
                             "errors": 0,
