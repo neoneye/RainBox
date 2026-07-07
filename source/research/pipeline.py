@@ -1,0 +1,76 @@
+"""The deep-research pipeline. `run_deep_research` is the public seam —
+the CLI calls it today; chat/kanban/cron integrations call it later with a
+custom progress_cb.
+
+Setup failures (no search provider, unknown model group, missing fetcher
+key) raise before any LLM or network work, so a misconfigured run dies in
+milliseconds with an actionable message."""
+
+from __future__ import annotations
+
+import os
+import sys
+from typing import Callable
+
+from research import fetch, websearch
+from research.caller import ModelCaller
+from research.config import ResearchConfig
+from research.planner import generate_plan
+from research.report import Report
+from research.researcher import Fetcher, SourceRegistry, research_subtask
+from research.splitter import split_plan
+from research.synthesizer import synthesize
+
+ProgressCb = Callable[[str, str], None]
+
+
+def _default_progress(stage: str, detail: str) -> None:
+    print(f"[{stage}] {detail}", file=sys.stderr)
+
+
+def _resolve_fetcher(fetcher_id: str) -> Fetcher:
+    if fetcher_id == "plain":
+        return fetch.fetch_extract
+    if fetcher_id == "firecrawl":
+        if not os.environ.get("FIRECRAWL_API_KEY"):
+            raise RuntimeError("fetcher 'firecrawl' needs FIRECRAWL_API_KEY")
+        return fetch.fetch_extract_firecrawl
+    raise RuntimeError(f"unknown fetcher {fetcher_id!r}; known: plain, firecrawl")
+
+
+def run_deep_research(
+    query: str,
+    config: ResearchConfig | None = None,
+    progress_cb: ProgressCb | None = None,
+) -> Report:
+    cfg = config or ResearchConfig()
+    progress = progress_cb or _default_progress
+
+    provider = websearch.resolve(cfg.search_provider)
+    fetcher = _resolve_fetcher(cfg.fetcher)
+    caller = ModelCaller(cfg.model_group)
+    progress(
+        "setup",
+        f"search={provider.id} fetcher={cfg.fetcher} model_group={cfg.model_group}",
+    )
+
+    progress("plan", "generating research plan")
+    plan = generate_plan(caller, query)
+    progress("split", "splitting plan into subtasks")
+    subtasks = split_plan(caller, plan, cfg.max_subtasks)
+    progress("split", f"{len(subtasks)} subtasks")
+
+    registry = SourceRegistry()
+    results = [
+        research_subtask(caller, provider, fetcher, registry, subtask, cfg, progress)
+        for subtask in subtasks
+    ]
+
+    summary, open_questions = synthesize(caller, query, results, progress)
+    return Report(
+        query=query,
+        summary_markdown=summary,
+        subtask_results=results,
+        open_questions_markdown=open_questions,
+        sources=registry.all(),
+    )

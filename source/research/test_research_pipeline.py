@@ -1,0 +1,110 @@
+import pytest
+
+from research import pipeline, prompts
+from research.config import ResearchConfig
+from research.report import SubtaskResult
+from research.researcher import SearchQueryList
+from research.splitter import SubtaskListModel, SubtaskModel
+from research.synthesizer import SYNTH_INPUT_CHAR_CAP, synthesize
+from research.test_research_researcher import FakeSearchProvider, _result
+from research.test_research_stages import FakeCaller
+
+
+def _noop_progress(stage, detail):
+    pass
+
+
+def _ok(subtask_id, title, findings):
+    return SubtaskResult(subtask_id=subtask_id, title=title, findings_markdown=findings)
+
+
+def test_synthesize_returns_summary_and_open_questions():
+    caller = FakeCaller(
+        plain={
+            prompts.SYNTH_SUMMARY_SYSTEM: ["the summary [1]"],
+            prompts.SYNTH_OPENQ_SYSTEM: ["- open q"],
+        }
+    )
+    summary, open_questions = synthesize(
+        caller, "query", [_ok("S1", "T", "findings [1]")], _noop_progress
+    )
+    assert summary == "the summary [1]"
+    assert open_questions == "- open q"
+    user_prompt = caller.calls[0][1]
+    assert "RESEARCH QUERY:\nquery" in user_prompt
+    assert "findings [1]" in user_prompt
+
+
+def test_synthesize_truncates_oversized_findings():
+    huge = "first paragraph.\n\n" + ("x" * SYNTH_INPUT_CHAR_CAP)
+    caller = FakeCaller(
+        plain={
+            prompts.SYNTH_SUMMARY_SYSTEM: ["s"],
+            prompts.SYNTH_OPENQ_SYSTEM: ["o"],
+        }
+    )
+    synthesize(caller, "q", [_ok("S1", "T", huge)], _noop_progress)
+    user_prompt = caller.calls[0][1]
+    assert len(user_prompt) < SYNTH_INPUT_CHAR_CAP + 1000
+    assert "first paragraph." in user_prompt
+
+
+def test_resolve_fetcher_unknown_raises():
+    with pytest.raises(RuntimeError, match="unknown fetcher"):
+        pipeline._resolve_fetcher("teleport")
+
+
+def test_resolve_fetcher_firecrawl_needs_key(monkeypatch):
+    monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="FIRECRAWL_API_KEY"):
+        pipeline._resolve_fetcher("firecrawl")
+
+
+def test_run_deep_research_end_to_end(monkeypatch):
+    subtasks = SubtaskListModel(
+        subtasks=[
+            SubtaskModel(title="Mechanism", description="how"),
+            SubtaskModel(title="History", description="when"),
+        ]
+    )
+    caller = FakeCaller(
+        structured={
+            prompts.SPLITTER_SYSTEM: [subtasks],
+            prompts.QUERYGEN_SYSTEM: [
+                SearchQueryList(queries=["mech q"]),
+                SearchQueryList(queries=["hist q"]),
+            ],
+        },
+        plain={
+            prompts.PLANNER_SYSTEM: ["the plan"],
+            prompts.NOTES_SYSTEM: ["mech note", "hist note"],
+            prompts.FINDINGS_SYSTEM: ["mech findings [1]", "hist findings [2]"],
+            prompts.SYNTH_SUMMARY_SYSTEM: ["summary [1][2]"],
+            prompts.SYNTH_OPENQ_SYSTEM: ["- what else?"],
+        },
+    )
+    provider = FakeSearchProvider(
+        {
+            "mech q": [_result("https://example.org/m", "M")],
+            "hist q": [_result("https://example.org/h", "H")],
+        }
+    )
+    monkeypatch.setattr(pipeline, "ModelCaller", lambda group: caller)
+    monkeypatch.setattr(pipeline.websearch, "resolve", lambda selector: provider)
+    monkeypatch.setattr(
+        pipeline, "_resolve_fetcher", lambda fetcher_id: (lambda url, cap: "text")
+    )
+    events = []
+    report = pipeline.run_deep_research(
+        "how do tides work?",
+        ResearchConfig(),
+        progress_cb=lambda stage, detail: events.append(stage),
+    )
+    markdown = report.render_markdown()
+    assert "# how do tides work?" in markdown
+    assert "summary [1][2]" in markdown
+    assert "mech findings [1]" in markdown
+    assert "hist findings [2]" in markdown
+    assert "[1] M — https://example.org/m" in markdown
+    assert "[2] H — https://example.org/h" in markdown
+    assert "plan" in events and "research" in events and "synthesize" in events
