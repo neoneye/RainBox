@@ -14,9 +14,10 @@ Feedback creates `FeedbackEvent` rows. Downvotes can also create
 
 ## 2. Promote Feedback Into Eval Cases
 
-Promote meaningful feedback into `EvalCase` rows.
-
-Recommended defaults:
+Promote meaningful feedback into `EvalCase` rows with
+`db.promote_feedback_to_eval_case(feedback_uuid)` (from a REPL or script). It
+builds the case from the feedback's metadata snapshot and applies the
+defaults:
 
 - downvote -> `split="regression"`
 - upvote -> `split="train"`
@@ -66,13 +67,16 @@ venv/bin/python -m evals.compare \
   --candidate <candidate-run-uuid>
 ```
 
-The gate should fail on:
+Optional flags: `--max-mean-drop <float>` adjusts the tolerance; `--json`
+emits the full gate decision as JSON.
+
+The gate fails on:
 
 - excessive mean drop
 - regression split pass -> fail
 - missing baseline cases
-
-The next hardening target is to also fail on candidate-only cases.
+- candidate-only cases (a candidate cannot pass by adding easy unmatched
+  cases)
 
 ## 6. Run Optimizer Candidates
 
@@ -114,7 +118,8 @@ Use `train` for examples used while tuning.
 
 ## Avoid These Mistakes
 
-- Do not compare runs with different case sets unless explicitly intended.
+- Do not compare runs with different case sets — the gate refuses them by
+  default (missing or extra cases both fail).
 - Do not trust mean score alone.
 - Do not promote every casual downvote into an active regression case.
 - Do not tune from telemetry counters without representative eval cases.

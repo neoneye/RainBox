@@ -85,7 +85,10 @@ Important fields:
 Supported current case types:
 
 - `chat_reply`: scores known output snapshots from `case.input["actual_output"]`.
-- `memory_retrieval`: calls `memory.retrieval.retrieve_memories`.
+- `memory_retrieval`: calls `memory.retrieval.retrieve_memories` (the
+  deterministic lexical path, kept for reproducibility).
+
+`query_answer` and `tool_output` exist in the schema but have no scorer yet.
 
 Supported candidate config keys:
 
@@ -97,18 +100,22 @@ of silently pretending they were evaluated.
 
 ## Comparison And Gate
 
-`evals/compare.py` compares a candidate run against a baseline run.
+`evals/compare.py` compares a candidate run against a baseline run
+(CLI: `--baseline`, `--candidate`, `--max-mean-drop`, `--json`).
 
 Current gate rules:
 
 - fail if mean score drops beyond tolerance.
 - fail if regression split cases go pass -> fail.
 - fail if candidate omitted baseline cases.
+- fail if candidate ran cases not present in the baseline (so a candidate
+  cannot add easy unmatched cases to inflate its mean).
 - warn if train improves while holdout drops.
 
-The remaining hardening direction is to also reject candidate-only cases by
-default, so candidate runs cannot add easy unmatched cases to inflate summary
-means.
+The gate refuses to compare unequal case sets by default; an intentional
+partial-comparison mode would be a future named option. The two case-set
+rejection reasons share one formatter with the optimizer, so their wording
+cannot drift between the two sites.
 
 ## Optimizer
 
@@ -121,11 +128,13 @@ Current candidate matrix:
 
 Optimizer safety rules are stricter than the basic gate:
 
-- candidate mean must not drop.
+- candidate mean must not drop (the gate allows a small tolerated drop; the
+  optimizer requires >= 0).
 - regression pins must not break.
 - holdout drop must stay within tolerance.
-- forbidden-memory failures reject the candidate.
-- missing baseline cases reject the candidate.
+- forbidden-memory failures reject the candidate (even if the baseline leaked
+  too).
+- missing baseline cases and candidate-only cases both reject the candidate.
 
 ## Production Monitor
 
@@ -143,7 +152,6 @@ It ignores:
 - Chat-reply evals score snapshots, not live LLM calls.
 - No LLM-as-judge scoring yet.
 - Optimizer tests bounded configs; it does not autonomously edit code or prompts.
-- Candidate-only case-set mismatch still needs to be rejected.
 - Eval quality depends on promoted/hand-authored case quality.
 
 ## Design Principle

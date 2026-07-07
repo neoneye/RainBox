@@ -174,7 +174,10 @@ HTTP operation endpoints (`/kanban/api/claim-next`, `…/claim`, `…/release`,
 `agentUuid`/`actor` from the request body, and call `db.kanban_*` directly —
 no authority check, `complete` defaults `review=False`. Until they are routed
 through `kanban_dispatch` (or formally declared operator-only), treat them as
-a trusted/operator surface, not an agent surface.
+a trusted/operator surface, not an agent surface. The whole kanban API is
+also unauthenticated HTTP like the rest of the control plane — Finding 8d of
+`docs/proposals/2026-06-25-security-review-mitigations.md` folds it into the
+planned Phase 1 auth boundary.
 
 ## Execution (enqueue-on-command)
 

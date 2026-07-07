@@ -609,8 +609,6 @@ The system is still conservative and incomplete in several areas:
   attribution.
 - The eval loop is deterministic and useful, but not yet a full behavioral
   benchmark for live LLM answers.
-- Eval comparison safety still needs strict case-set invariants: baseline and
-  candidate runs should compare the same eval cases by default.
 - The optimizer currently tests bounded retrieval settings; it is not an
   autonomous prompt/source optimizer.
 
@@ -619,24 +617,11 @@ while the semantics settle.
 
 ## Directions To Go
 
-### 1. Tighten Eval Comparison Invariants
+(Case-set comparison invariants — refusing candidates that omit baseline cases
+or add unmatched ones — are done: both the gate and the optimizer enforce
+equivalent case sets by default. See `docs/eval-loop.md`.)
 
-The eval loop is now important enough that comparison semantics matter.
-
-Baseline and candidate runs should compare equivalent case sets by default. A
-candidate should not pass by:
-
-- omitting hard baseline cases
-- adding easy candidate-only cases that inflate its mean score
-
-Missing baseline cases are already handled. Candidate-only cases should also be
-treated as a gate/optimizer failure unless an explicit partial-comparison mode
-is introduced later.
-
-This is not glamorous, but it protects the trustworthiness of every later memory
-optimization.
-
-### 2. Add Candidate Extraction, But Keep Human Confirmation
+### 1. Add Candidate Extraction, But Keep Human Confirmation
 
 The safest next step is automatic candidate extraction from chat and journal
 events:
@@ -652,7 +637,7 @@ user confirms them.
 
 This keeps automation useful without letting the model pollute long-term memory.
 
-### 3. Expand Hybrid Retrieval Carefully
+### 2. Expand Hybrid Retrieval Carefully
 
 The secondary pgvector retrieval channel exists, but it should keep the same
 guardrails as it spreads beyond the assistant:
@@ -667,7 +652,7 @@ of memories, each with an explanation of why it was retrieved. Remaining work is
 mostly adoption: decide which chat/agent paths should use hybrid retrieval and
 ensure embeddings are current when memories become active or change.
 
-### 4. Improve Attribution
+### 3. Improve Attribution
 
 Current telemetry can say:
 
@@ -691,7 +676,7 @@ Possible next steps:
 The system should treat attribution as evidence, not certainty. Poor attribution
 signals can be more damaging than no attribution signal.
 
-### 5. Use Memory Across More Agents
+### 4. Use Memory Across More Agents
 
 The chat agents (via `build_chat_memory_block`) and the assistant (via
 `query_memory` plus the always-on user-profile block) are the current
@@ -705,7 +690,7 @@ consumers. Other useful consumers:
 
 This should be opt-in per agent. Not every agent should receive every memory.
 
-### 6. Promote Journal Rows Into Episodic Memory
+### 5. Promote Journal Rows Into Episodic Memory
 
 The journal already records durable work. A summarizer could periodically create
 `episode_summary` claims from completed tasks:
@@ -719,7 +704,7 @@ The journal already records durable work. A summarizer could periodically create
 This would make repeated engineering work more effective without stuffing raw
 journal JSON into prompts.
 
-### 7. Tighten Sensitivity Policy
+### 6. Tighten Sensitivity Policy
 
 The current sensitivity model is a useful start, but it is still manual and
 coarse. Future work should define rules such as:
@@ -732,7 +717,7 @@ coarse. Future work should define rules such as:
 This is especially important because the project already contains personal
 profile and contact facts in the older Q&A registry.
 
-### 8. Add Source Navigation
+### 7. Add Source Navigation
 
 Evidence currently records source type, source id, and excerpt. That is enough
 for audit, but not ideal for investigation.
@@ -751,13 +736,11 @@ not just a short excerpt.
 
 The best next sequence is:
 
-1. Finish eval comparison hardening so baseline and candidate runs use the same
-   case set by default.
-2. Add candidate extraction from chat, but keep it inactive until confirmed.
-3. Expand hybrid retrieval to more consumers.
-4. Improve attribution signals cautiously.
-5. Add journal-to-episode summaries.
-6. Gradually opt more agents into memory retrieval.
+1. Add candidate extraction from chat, but keep it inactive until confirmed.
+2. Expand hybrid retrieval to more consumers.
+3. Improve attribution signals cautiously.
+4. Add journal-to-episode summaries.
+5. Gradually opt more agents into memory retrieval.
 
 This order protects trust. It improves the user's ability to inspect and correct
 memory before increasing automatic memory creation or semantic recall.
