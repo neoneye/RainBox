@@ -53,7 +53,7 @@ class AssistantActionName(str, Enum):
     KANBAN_READ = "kanban_read"
 
     # Write actions, each risk-tiered:
-    REMEMBER = "remember"              # log-and-undo: create an active memory
+    REMEMBER = "remember"              # log-and-undo: create a candidate memory
     ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
     FORGET_MEMORY = "forget_memory"      # log-and-undo: reject a memory (stop recalling it)
     KANBAN_MOVE_TASK = "kanban_move_task"  # log-and-undo: move a task between columns

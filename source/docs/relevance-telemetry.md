@@ -12,6 +12,7 @@ for questions like:
 - Which memories are injected into chat prompts?
 - Which Q&A entries are rejected by the relevance filter?
 - Which procedural skills were considered or injected into an assistant prompt?
+- Which profile facts does the assistant's always-on user-profile block carry?
 - Which retrieved targets appear in downvoted answers?
 - Where should we create eval cases before tuning retrieval?
 
@@ -22,9 +23,11 @@ from events.
 
 ### Chat Memory Retrieval
 
-`ChatAgent` retrieves first-class memory claims through
+The chat agents retrieve first-class memory claims through the shared
 `build_chat_memory_block`, which calls `retrieve_memories_hybrid` (vector +
-Postgres full-text + entity boost, hard-filtered by status/sensitivity/scope).
+Postgres full-text + entity boost, hard-filtered by status/sensitivity/scope)
+and owns the telemetry for this path (the hybrid retriever's own `retrieved`
+write is suppressed to avoid double-recording).
 
 For each memory returned, it writes:
 
@@ -78,6 +81,22 @@ Its `used` rows include:
 
 That metadata is important. It says the candidate was accepted into the final
 answer context, not that final wording causally relied on it.
+
+### User Profile Block
+
+The assistant's always-on user-profile block (`user_profile/retrieval.py`)
+selects stable operator facts (preferences, project decisions, facts) with a
+non-vector ranking — confidence + recency + kind priority — over
+hard-filtered claims, and builds the block under explicit budgets.
+
+It writes:
+
+- `target_type="memory_claim"`
+- `stage="considered"` for each selected profile fact
+- `stage="injected"` for each fact that fits the block budget
+- `source="user_profile.retrieval"`
+- `retrieval_score=<claim confidence>` (there is no `query` — the block is
+  query-independent)
 
 ### Skill Retrieval
 
@@ -208,6 +227,8 @@ eval cases and verify the change.
 - Query-filter `used` is marked as an accepted-candidate approximation.
 - Skill `injected` means the skill entered the assistant prompt, not that the
   final answer followed it correctly.
+- Profile-fact `injected` likewise means the fact entered the assistant's
+  profile digest, not that the answer relied on it.
 - Downvotes do not prove the target caused the bad answer.
 - There is no full answer attribution yet.
 - There is no rollup stats table yet; reports should query event rows.

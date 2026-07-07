@@ -5,9 +5,10 @@
 Memory commands let the user directly create, inspect, correct, and remove
 first-class memories.
 
-Commands are parsed by `memory/ops.py` and handled through `QueryAgent` before
-the Q&A/vector path is initialized. That means explicit memory operations do not
-depend on LM Studio embeddings or the Q&A registry being available.
+Commands are parsed by `memory/ops.py` and short-circuited by the query agents
+(`QueryAgent` and `QueryFilterRouterAgent`) before the Q&A/vector path is
+initialized. That means explicit memory operations do not depend on the
+embedder or the Q&A registry being available.
 
 These commands are separate from prompt-time memory retrieval. Both normal chat
 (via `build_chat_memory_block`) and the assistant's `query_memory` action use
@@ -54,6 +55,19 @@ why do you remember <topic>?
 ```
 
 Shows evidence/provenance for matching memories.
+
+### Confirm
+
+```text
+confirm that <fact>
+```
+
+Confirms a matching claim: a candidate (e.g. one the assistant remembered) is
+promoted to active, and either way the claim gains `confirmed_by_user` evidence
+and `confidence=1.0`. With no matching memory at all, confirm degenerates to
+`remember that`. A **conflict candidate** is refused — resolve it on the
+`/memory` page (supersede / reject / not a conflict / scoped exception) instead
+of confirming it blind.
 
 ### Correct
 
@@ -148,7 +162,8 @@ with an evidence timeline, supersession lineage, embedding freshness, and
 provenance-safe lifecycle actions (activate / reject / reactivate / correct /
 sensitivity / expiry). It also surfaces conflict candidates with resolution
 actions (supersede / reject / not_conflict / scoped_exception) and tombstones
-that have suppressed a model re-assertion. See `docs/memory-architecture.md` §8.
+that have suppressed a model re-assertion. See "Memory Review UI" in
+`docs/memory-architecture.md`.
 
 The raw tables are also browsable in Flask-Admin (`MemoryClaim`,
 `MemoryEvidence`, `MemoryEmbedding`, `MemoryRejectedValue`).
