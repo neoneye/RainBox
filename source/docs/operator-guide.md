@@ -16,12 +16,30 @@ http://127.0.0.1:5000
 
 Postgres must be available as `rainbox_production` unless `DATABASE_URL` is set.
 Tests run against a separate `rainbox_claude` database (forced by
-`rainbox/conftest.py`), so `pytest` never touches production data — create it
-once with `createdb rainbox_claude`.
+`conftest.py` at the `source/` root), so `pytest` never touches production
+data — create it once with `createdb rainbox_claude`.
 Run whichever local model provider backs your agent model groups: LM Studio
 (`127.0.0.1:1234`), Jan (`127.0.0.1:1337`), and/or Ollama
-(`127.0.0.1:11434`). Ollama must also have `nomic-embed-text` available for
+(`127.0.0.1:11434`). Ollama must also have `embeddinggemma:300m` available for
 Q&A and memory embeddings.
+
+## Pages
+
+Each subsystem has its own page; Flask-Admin (`/admin`) is the raw table-level
+fallback.
+
+- `/chat` — rooms, agents, SSE-streamed replies.
+- `/memory` — claim review: lifecycle actions, conflicts, tombstones.
+- `/cron` — the scheduler tree (System folder holds the seeded backup and
+  memory-sync jobs).
+- `/kanban` — boards, folder tree, task execution.
+- `/git` — registered local repositories.
+- `/assistant` — assistant run inspector (traces, steps, write intents).
+- `/conversations` — persona-to-persona conversation runs.
+- `/models`, `/modelgroups`, `/agent_models` — model configs, fallback
+  groups, agent bindings.
+- `/settings` — typed operator settings (DB → env → default) with provenance.
+- `/doctor` — environment health checks.
 
 ## Basic Chat Workflow
 
@@ -43,12 +61,19 @@ Useful responder agents:
 - `query_router`: Q&A hint plus router LLM.
 - `query_filter_router`: Q&A retrieval, LLM relevance filter, router reply.
 - `workspace_shell`: deterministic workspace-confined command runner.
+- `kanban_worker`: LLM worker that executes assigned kanban cards.
+- `conversation`: manager for bounded persona-to-persona conversations.
+- `edit_document_v1`…`v6`: the document-patching agent family.
 - `tool_demo`: FunctionAgent demo with a multiply tool.
 - `mcp`: FunctionAgent backed by MCP tools.
 
+(`followup` and `assistant_run_summarizer` also exist but run as internal
+helpers, not room responders.)
+
 ## Memory Operations
 
-Memory commands are sent as normal chat messages to a room with `query`.
+Memory commands are sent as normal chat messages to a room with `query` (or
+`query_filter_router` — both short-circuit them before any Q&A retrieval).
 
 Examples:
 
@@ -159,14 +184,14 @@ Use Flask-Admin or direct SQL against `retrieval_event`.
 
 Useful filters:
 
-- `target_type="memory_claim"`
-- `target_type="qa_entry"`
-- `stage="retrieved"`
-- `stage="used"`
-- `stage="downvoted"`
-- `source="chat_memory_retrieval"`
-- `source="query_filter_router"`
-- `source="chat_feedback"`
+- `target_type="memory_claim"`, `"qa_entry"`, or `"skill"`
+- `stage="retrieved"`, `"used"`, `"downvoted"`, `"considered"`, `"injected"`
+- `source="chat_memory_retrieval"` (chat memory block)
+- `source="memory.hybrid"` (assistant `query_memory`)
+- `source="query_filter_router"` (Q&A filter/route decisions)
+- `source="user_profile.retrieval"` (the assistant's always-on profile block)
+- `source="skills.retrieval"` (skill injection)
+- `source="chat_feedback"` (downvote linkage)
 
 Interpret telemetry as evidence for inspection. Do not automatically delete or
 demote memories from counters alone.
@@ -189,7 +214,7 @@ The curated Q&A pairs live in the `data_seed_memory` pgvector table, embedded fr
 `question_answer.jsonl`. If retrieval is empty or errors:
 
 - pgvector extension is installed.
-- Ollama is running and has `nomic-embed-text` available.
+- Ollama is running and has `embeddinggemma:300m` available.
 - Click **Repopulate Q&A memory** on `/settings` to re-embed after editing the
   JSONL (or set `QUERY_AGENT_REBUILD_KB=1`). This (re)creates `data_seed_memory`.
 

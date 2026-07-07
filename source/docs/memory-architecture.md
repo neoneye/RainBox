@@ -271,9 +271,10 @@ functions, but the chat path now uses the hybrid one:
   `evals/runner.py` for memory-retrieval eval cases where reproducibility
   matters more than semantic recall quality.
 
-The hybrid path goes through `hard_filtered_claims`, the single source of truth
-for the filter-before-rank contract (the legacy eval path applies its own
-equivalent active/expiry/sensitivity filter):
+Both paths — hybrid and the legacy lexical one — go through
+`hard_filtered_claims`, the single source of truth for the filter-before-rank
+contract (scope is *filtered*, not merely a sort key, so a claim from another
+room/agent never enters the candidate set):
 
 1. Status `== "active"` — candidates are embedded but **not** retrieved into
    prompts, so an unconfirmed model belief can never enter the answer context.

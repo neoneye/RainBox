@@ -49,6 +49,8 @@ venv/bin/python -m pytest \
   db/test_record_belief_conflict.py \
   db/test_conflict_resolution.py \
   db/test_tombstones.py \
+  db/test_belief_keys.py \
+  db/test_memory_trust_schema.py \
   db/test_memory_regression_corpus.py \
   memory/test_fence.py \
   memory/test_embeddings.py \
