@@ -4,12 +4,17 @@ custom progress_cb.
 
 Setup failures (no search provider, unknown model group, missing fetcher
 key) raise before any LLM or network work, so a misconfigured run dies in
-milliseconds with an actionable message."""
+milliseconds with an actionable message.
+
+Pass a `telemetry` sink to get a JSONL KPI stream of the run — resolved
+model configs, every LLM/search/fetch event, and a final summary row
+(written even when the run aborts). See research/telemetry.py."""
 
 from __future__ import annotations
 
 import os
 import sys
+from dataclasses import asdict
 from typing import Callable
 
 from research import fetch, websearch
@@ -20,6 +25,7 @@ from research.report import Report
 from research.researcher import Fetcher, SourceRegistry, research_subtask
 from research.splitter import split_plan
 from research.synthesizer import synthesize
+from research.telemetry import Telemetry, TelemetrySearchProvider, telemetry_fetcher
 
 ProgressCb = Callable[[str, str], None]
 
@@ -42,35 +48,66 @@ def run_deep_research(
     query: str,
     config: ResearchConfig | None = None,
     progress_cb: ProgressCb | None = None,
+    telemetry: Telemetry | None = None,
 ) -> Report:
     cfg = config or ResearchConfig()
     progress = progress_cb or _default_progress
+    tel = telemetry or Telemetry()
 
-    provider = websearch.resolve(cfg.search_provider)
-    fetcher = _resolve_fetcher(cfg.fetcher)
-    caller = ModelCaller(cfg.model_group, timeout_s=cfg.llm_timeout_s)
-    progress(
-        "setup",
-        f"search={provider.id} fetcher={cfg.fetcher} model_group={cfg.model_group}",
-    )
+    completed = False
+    try:
+        provider = websearch.resolve(cfg.search_provider)
+        fetcher = _resolve_fetcher(cfg.fetcher)
+        caller = ModelCaller(
+            cfg.model_group, timeout_s=cfg.llm_timeout_s, telemetry=tel
+        )
+        tel.record(
+            {
+                "event": "run",
+                "query": query,
+                "config": asdict(cfg),
+                "search_provider": provider.id,
+                "models": caller.describe_models(),
+            }
+        )
+        provider = TelemetrySearchProvider(provider, tel)
+        fetcher = telemetry_fetcher(fetcher, tel)
+        progress(
+            "setup",
+            f"search={provider.id} fetcher={cfg.fetcher} model_group={cfg.model_group}",
+        )
 
-    progress("plan", "generating research plan")
-    plan = generate_plan(caller, query)
-    progress("split", "splitting plan into subtasks")
-    subtasks = split_plan(caller, plan, cfg.max_subtasks)
-    progress("split", f"{len(subtasks)} subtasks")
+        progress("plan", "generating research plan")
+        plan = generate_plan(caller, query)
+        progress("split", "splitting plan into subtasks")
+        subtasks = split_plan(caller, plan, cfg.max_subtasks)
+        progress("split", f"{len(subtasks)} subtasks")
 
-    registry = SourceRegistry()
-    results = [
-        research_subtask(caller, provider, fetcher, registry, subtask, cfg, progress)
-        for subtask in subtasks
-    ]
+        registry = SourceRegistry()
+        results = []
+        for subtask in subtasks:
+            result = research_subtask(
+                caller, provider, fetcher, registry, subtask, cfg, progress
+            )
+            tel.record(
+                {
+                    "event": "subtask",
+                    "id": subtask.id,
+                    "title": subtask.title,
+                    "failed": result.failed,
+                }
+            )
+            results.append(result)
 
-    summary, open_questions = synthesize(caller, query, results, progress)
-    return Report(
-        query=query,
-        summary_markdown=summary,
-        subtask_results=results,
-        open_questions_markdown=open_questions,
-        sources=registry.all(),
-    )
+        summary, open_questions = synthesize(caller, query, results, progress)
+        report = Report(
+            query=query,
+            summary_markdown=summary,
+            subtask_results=results,
+            open_questions_markdown=open_questions,
+            sources=registry.all(),
+        )
+        completed = True
+        return report
+    finally:
+        tel.finish(completed=completed)

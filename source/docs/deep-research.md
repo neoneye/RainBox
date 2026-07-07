@@ -78,6 +78,34 @@ floor, a configured value above it is kept.
 providers throughout; provider parsing runs against recorded JSON fixtures
 in `research/fixtures/`; no live network or LLM.
 
+## Telemetry (KPIs)
+
+`telemetry.py` — a JSONL event stream for assessing model/provider
+trade-offs. The CLI writes it next to `--out` (`report.md` →
+`report.events.jsonl`; override with `--events`); library callers pass a
+`Telemetry` sink to `run_deep_research`. Rows, in order:
+
+- `run` (first): query, full config, and every group member's **resolved
+  settings** (provider, model, arguments incl. context window and timeout
+  overrides) in fallback order.
+- `llm_call`: stage label (plan/split/queries/select/notes/findings/
+  summary/open_questions), which member served it, total ms, and an
+  `attempts` list — one entry per member tried, with per-attempt ms and
+  error — so fallbacks and timeouts are attributable to a specific model.
+- `search`: provider id, query, ms, result count or error — per-API
+  flakiness is visible directly.
+- `fetch`: url, ms, ok, extracted chars. `subtask`: id, title, failed.
+- `summary` (last): wall ms plus aggregates — per-model
+  attempts/served/errors/total_ms/last_error, per-label call counts,
+  per-provider search stats, fetch and subtask totals. Written in a
+  `finally`, so an aborted run still ends with `"completed": false`.
+
+Events flush line-by-line, so a crashed run keeps everything up to the
+crash. Model attribution lives in `ModelCaller` (the only place fallback
+attempts are visible); search/fetch events come from wrappers
+(`TelemetrySearchProvider`, `telemetry_fetcher`) so the researcher stage is
+untouched.
+
 ## Dependencies
 
 Research-only packages (`trafilatura`, `ddgs` + transitives) are pinned in

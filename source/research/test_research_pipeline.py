@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from research import pipeline, prompts
@@ -6,6 +8,7 @@ from research.report import SubtaskResult
 from research.researcher import SearchQueryList
 from research.splitter import SubtaskListModel, SubtaskModel
 from research.synthesizer import SYNTH_INPUT_CHAR_CAP, synthesize
+from research.telemetry import Telemetry
 from research.test_research_researcher import FakeSearchProvider, _result
 from research.test_research_stages import FakeCaller
 
@@ -60,7 +63,7 @@ def test_resolve_fetcher_firecrawl_needs_key(monkeypatch):
         pipeline._resolve_fetcher("firecrawl")
 
 
-def test_run_deep_research_end_to_end(monkeypatch):
+def _e2e_env(monkeypatch):
     subtasks = SubtaskListModel(
         subtasks=[
             SubtaskModel(title="Mechanism", description="how"),
@@ -89,13 +92,15 @@ def test_run_deep_research_end_to_end(monkeypatch):
             "hist q": [_result("https://example.org/h", "H")],
         }
     )
-    monkeypatch.setattr(
-        pipeline, "ModelCaller", lambda group, timeout_s=120.0: caller
-    )
+    monkeypatch.setattr(pipeline, "ModelCaller", lambda group, **kwargs: caller)
     monkeypatch.setattr(pipeline.websearch, "resolve", lambda selector: provider)
     monkeypatch.setattr(
         pipeline, "_resolve_fetcher", lambda fetcher_id: (lambda url, cap: "text")
     )
+
+
+def test_run_deep_research_end_to_end(monkeypatch):
+    _e2e_env(monkeypatch)
     events = []
     report = pipeline.run_deep_research(
         "how do tides work?",
@@ -110,3 +115,44 @@ def test_run_deep_research_end_to_end(monkeypatch):
     assert "[1] M — https://example.org/m" in markdown
     assert "[2] H — https://example.org/h" in markdown
     assert "plan" in events and "research" in events and "synthesize" in events
+
+
+def test_run_deep_research_writes_telemetry(monkeypatch, tmp_path):
+    _e2e_env(monkeypatch)
+    path = tmp_path / "run.events.jsonl"
+    pipeline.run_deep_research(
+        "how do tides work?",
+        ResearchConfig(),
+        progress_cb=lambda stage, detail: None,
+        telemetry=Telemetry(str(path)),
+    )
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert rows[0]["event"] == "run"
+    assert rows[0]["query"] == "how do tides work?"
+    assert rows[0]["config"]["max_subtasks"] == 5
+    assert rows[0]["models"] == []  # FakeCaller describes no members
+    assert rows[-1]["event"] == "summary"
+    assert rows[-1]["completed"] is True
+    kinds = [row["event"] for row in rows]
+    assert kinds.count("search") == 2
+    assert kinds.count("fetch") == 2
+    assert kinds.count("subtask") == 2
+    assert rows[-1]["subtasks"] == {"total": 2, "failed": 0}
+    assert rows[-1]["search"]["fake"]["queries"] == 2
+
+
+def test_telemetry_summary_written_even_on_abort(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        pipeline.websearch,
+        "resolve",
+        lambda selector: (_ for _ in ()).throw(RuntimeError("no provider")),
+    )
+    path = tmp_path / "run.events.jsonl"
+    with pytest.raises(RuntimeError, match="no provider"):
+        pipeline.run_deep_research(
+            "q", ResearchConfig(), progress_cb=lambda s, d: None,
+            telemetry=Telemetry(str(path)),
+        )
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert rows[-1]["event"] == "summary"
+    assert rows[-1]["completed"] is False

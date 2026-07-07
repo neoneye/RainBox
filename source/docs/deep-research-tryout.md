@@ -92,6 +92,31 @@ venv/bin/python -m research "..." --llm-timeout 300
 venv/bin/python -m research "why do cats purr"
 ```
 
+## Reading the KPI log
+
+With `--out report.md` a `report.events.jsonl` lands next to it (any run can
+get one via `--events FILE`). First row = your model group's resolved
+configs; middle rows = every LLM call (with per-model fallback attempts and
+ms), search query, and fetch; last row = the summary. Quick looks:
+
+```bash
+# which model actually served calls, and who kept failing
+jq -r 'select(.event=="summary") | .llm.models' report.events.jsonl
+
+# every fallback: the model that failed, why, and after how long
+jq -r 'select(.event=="llm_call") | .attempts[] | select(.error) | "\(.model)\t\(.ms)ms\t\(.error)"' report.events.jsonl
+
+# is the search API the flaky part?
+jq -r 'select(.event=="summary") | .search' report.events.jsonl
+
+# time per pipeline stage
+jq -r 'select(.event=="summary") | .llm.labels' report.events.jsonl
+```
+
+To compare models, run the same query twice with different `--model-group`
+(or member order) and compare the two summary rows — served/error counts
+and total ms per model tell you whether the fast model is doing the job.
+
 ## What to expect
 
 - **Call volume:** with the default 5 subtasks, a run makes roughly 30–40

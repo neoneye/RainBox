@@ -24,6 +24,9 @@ class FakeCaller:
         self.calls.append((system_prompt, user_prompt))
         return self.plain_queues[system_prompt].pop(0)
 
+    def describe_models(self):
+        return []
+
 
 def test_config_defaults():
     config = ResearchConfig()

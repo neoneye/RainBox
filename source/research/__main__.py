@@ -1,10 +1,12 @@
 """CLI: python -m research "query" -> cited markdown report on stdout
-(progress on stderr), or --out FILE."""
+(progress on stderr), or --out FILE. With --out, a JSONL KPI/event log is
+written next to it (override with --events)."""
 
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,12 +41,19 @@ def main(argv: list[str] | None = None) -> int:
         "below this are raised to it",
     )
     parser.add_argument("--out", default=None, help="write the report to this file")
+    parser.add_argument(
+        "--events",
+        default=None,
+        help="write a JSONL KPI/event log to this file (default with --out: "
+        "the report path with a .events.jsonl suffix)",
+    )
     args = parser.parse_args(argv)
 
     import db
 
     from research import pipeline
     from research.config import ResearchConfig
+    from research.telemetry import Telemetry
 
     # ModelCaller reads model groups through Flask-SQLAlchemy, which needs an
     # app context; push one for the process (the agents/__main__.py pattern).
@@ -57,10 +66,17 @@ def main(argv: list[str] | None = None) -> int:
         max_subtasks=args.max_subtasks,
         llm_timeout_s=args.llm_timeout,
     )
+    events_path = args.events
+    if events_path is None and args.out:
+        events_path = str(Path(args.out).with_suffix(".events.jsonl"))
+    telemetry = Telemetry(events_path) if events_path else None
+
     try:
-        report = pipeline.run_deep_research(args.query, config)
+        report = pipeline.run_deep_research(args.query, config, telemetry=telemetry)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if events_path:
+            print(f"events written to {events_path}", file=sys.stderr)
         return 1
 
     markdown = report.render_markdown()
@@ -70,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"report written to {args.out}", file=sys.stderr)
     else:
         print(markdown)
+    if events_path:
+        print(f"events written to {events_path}", file=sys.stderr)
     return 0
 
 
