@@ -126,17 +126,17 @@ def test_secret_rendered_readonly_on_page(client, monkeypatch):
 
 
 def test_repopulate_memory_endpoint_success(client, monkeypatch):
-    """POST /settings/api/repopulate_memory → rebuild_kb() counts. The
+    """POST /settings/api/repopulate_memory → sync_kb() counts. The
     monkeypatch targets seed_memory (the endpoint resolves the function
     at call time)."""
     import memory.seed_memory as seed_memory
 
-    monkeypatch.setattr(seed_memory, "rebuild_kb",
-                        lambda: {"entries": 7, "documents": 21})
+    monkeypatch.setattr(seed_memory, "sync_kb",
+                        lambda: {"unchanged": 5, "updated": 1, "embedded": 2, "deleted": 0})
     resp = client.post("/settings/api/repopulate_memory")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data == {"ok": True, "entries": 7, "documents": 21}
+    assert data == {"ok": True, "unchanged": 5, "updated": 1, "embedded": 2, "deleted": 0}
 
 
 def test_repopulate_memory_endpoint_failure_is_502(client, monkeypatch):
@@ -145,18 +145,47 @@ def test_repopulate_memory_endpoint_failure_is_502(client, monkeypatch):
     def boom():
         raise RuntimeError("Connection refused (Ollama down?)")
 
-    monkeypatch.setattr(seed_memory, "rebuild_kb", boom)
+    monkeypatch.setattr(seed_memory, "sync_kb", boom)
     resp = client.post("/settings/api/repopulate_memory")
     assert resp.status_code == 502
     data = resp.get_json()
     assert data["ok"] is False and "Ollama" in data["error"]
 
 
+def test_rebuild_memory_endpoint_success(client, monkeypatch):
+    """POST /settings/api/rebuild_memory → rebuild_kb() counts (the full
+    TRUNCATE + re-embed escape hatch)."""
+    import memory.seed_memory as seed_memory
+
+    monkeypatch.setattr(seed_memory, "rebuild_kb",
+                        lambda: {"entries": 7, "documents": 21})
+    resp = client.post("/settings/api/rebuild_memory")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data == {"ok": True, "entries": 7, "documents": 21}
+
+
+def test_rebuild_memory_endpoint_failure_is_502(client, monkeypatch):
+    import memory.seed_memory as seed_memory
+
+    def boom():
+        raise RuntimeError("Connection refused (Ollama down?)")
+
+    monkeypatch.setattr(seed_memory, "rebuild_kb", boom)
+    resp = client.post("/settings/api/rebuild_memory")
+    assert resp.status_code == 502
+    data = resp.get_json()
+    assert data["ok"] is False and "Ollama" in data["error"]
+
+
 def test_repopulate_button_rendered_for_customize_dir(client):
-    """The page's JS renders the button only on the customize.dir card."""
+    """The page's JS renders both memory buttons only on the customize.dir card."""
     body = client.get("/settings").get_data(as_text=True)
     assert "repopulate_memory" in body
     assert "Repopulate Q&A memory" in body
+    assert "rebuild_memory" in body
+    assert "data-rebuild-full" in body
+    assert "Rebuild (full)" in body
     assert "customize.dir" in body
 
 
@@ -170,7 +199,7 @@ def test_repopulate_surfaces_jsonl_file_and_line(client, monkeypatch, caplog):
     def boom():
         raise ValueError(msg)
 
-    monkeypatch.setattr(seed_memory, "rebuild_kb", boom)
+    monkeypatch.setattr(seed_memory, "sync_kb", boom)
     with caplog.at_level(logging.WARNING, logger="webapp.settings_views"):
         resp = client.post("/settings/api/repopulate_memory")
 
@@ -243,16 +272,36 @@ def test_set_non_shield_setting_does_not_stamp(client):
         db.db.session.commit()
 
 
-def test_repopulate_stamps_facts_invalidated(client, monkeypatch):
+def test_repopulate_does_not_stamp_at_endpoint_level(client, monkeypatch):
+    """Fact-invalidation for the sync path lives INSIDE sync_kb (stamped only
+    when something actually changed) — the endpoint itself must not re-stamp,
+    or a no-op press would post a redundant re-check-facts notice."""
+    import db
+    import memory.seed_memory as seed_memory
+    monkeypatch.setattr(seed_memory, "sync_kb",
+                        lambda: {"unchanged": 3, "updated": 0, "embedded": 0, "deleted": 0})
+    try:
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.commit()
+        r = client.post("/settings/api/repopulate_memory")
+        assert r.status_code == 200
+        assert db.get_setting("qa.facts_invalidated_at") in (None, "")
+    finally:
+        db.set_setting("qa.facts_invalidated_at", None)
+        db.db.session.commit()
+
+
+def test_rebuild_stamps_facts_invalidated(client, monkeypatch):
+    """The full rebuild always re-embeds, so the endpoint always stamps."""
     import db
     import memory.seed_memory as seed_memory
     monkeypatch.setattr(seed_memory, "rebuild_kb", lambda: {"entries": 1, "documents": 1})
     try:
         db.set_setting("qa.facts_invalidated_at", None)
         db.db.session.commit()
-        r = client.post("/settings/api/repopulate_memory")
+        r = client.post("/settings/api/rebuild_memory")
         assert r.status_code == 200
-        assert db.get_setting("qa.facts_invalidated_at"), "repopulate must stamp"
+        assert db.get_setting("qa.facts_invalidated_at"), "rebuild must stamp"
     finally:
         db.set_setting("qa.facts_invalidated_at", None)
         db.db.session.commit()

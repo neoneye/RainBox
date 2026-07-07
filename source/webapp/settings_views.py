@@ -186,6 +186,7 @@ function render(){
         + ' <button data-edit="' + escapeHtml(s.key) + '">Edit</button>'
         + (s.key === 'customize.dir'
             ? ' <button data-repopulate>Repopulate Q&A memory</button>'
+              + ' <button data-rebuild-full>Rebuild (full)</button>'
               + ' <span class="s-env" data-repopulate-result></span>'
             : '')
         + '</div>'
@@ -225,9 +226,28 @@ function render(){
       const out = btn.parentElement.querySelector('[data-repopulate-result]');
       if (!out) return;
       btn.disabled = true;
-      out.textContent = 'embedding…';
+      out.textContent = 'syncing…';
       try {
         const r = await fetch('/settings/api/repopulate_memory', {method: 'POST'});
+        const d = await r.json();
+        out.textContent = d.ok
+          ? 'synced: ' + d.unchanged + ' unchanged, ' + d.updated + ' updated, '
+            + d.embedded + ' embedded, ' + d.deleted + ' deleted'
+          : 'failed: ' + d.error;
+      } catch (e) {
+        out.textContent = 'failed: ' + e;
+      } finally {
+        btn.disabled = false;
+      }
+    }));
+  list.querySelectorAll('[data-rebuild-full]').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      const out = btn.parentElement.querySelector('[data-repopulate-result]');
+      if (!out) return;
+      btn.disabled = true;
+      out.textContent = 'embedding…';
+      try {
+        const r = await fetch('/settings/api/rebuild_memory', {method: 'POST'});
         const d = await r.json();
         out.textContent = d.ok
           ? 're-embedded ' + d.entries + ' entries / ' + d.documents + ' questions'
@@ -379,23 +399,41 @@ def settings_set_api() -> tuple[Response, int] | Response:
 
 @app.route("/settings/api/repopulate_memory", methods=["POST"])
 def settings_repopulate_memory() -> tuple[Response, int] | Response:
-    """Re-embed the Q&A registry (base + customize.dir overlay) without a
-    restart — the 'Repopulate Q&A memory' button. 502 carries the embedding
-    error (typically Ollama being down); the table is left empty then, and
-    clicking again after starting Ollama heals it."""
+    """Reconcile the Q&A vector table with the merged JSONL (base +
+    customize.dir overlay) — the 'Repopulate Q&A memory' button. Only changed
+    rows re-embed (sync_kb), and the facts-invalidated stamp happens inside
+    sync_kb, only when something actually changed. 502 carries the error;
+    already-synced rows stay intact and the stale ones retry on the next
+    press."""
     import memory.seed_memory as seed_memory
 
     try:
-        counts = seed_memory.rebuild_kb()
+        counts = seed_memory.sync_kb()
     except Exception as exc:  # noqa: BLE001 — any backend failure → 502 + message
-        # Not dead code: rebuild_kb reads the customize.dir setting via db.session (get_setting); a failure there leaves the session in a failed state that must be rolled back before responding.
+        # Not dead code: sync_kb reads the customize.dir setting via db.session (get_setting); a failure there leaves the session in a failed state that must be rolled back before responding.
         db.db.session.rollback()
         # Log it too (a JSONL parse error carries the file:line:column; an
         # embedding failure carries the Ollama error) so the operator can
         # troubleshoot from the log, not only the UI result.
         logger.warning("repopulate_memory failed: %s", exc)
         return jsonify({"ok": False, "error": str(exc)}), 502
-    # Re-embedding can change what facts the Q&A knowledge base returns, so mark
-    # prior conversation answers as due for a re-check.
+    return jsonify({"ok": True, **counts})
+
+
+@app.route("/settings/api/rebuild_memory", methods=["POST"])
+def settings_rebuild_memory() -> tuple[Response, int] | Response:
+    """TRUNCATE + re-embed everything — the 'Rebuild (full)' escape hatch for
+    genuine table corruption. 502 carries the error; the table may then be
+    empty or partial, and pressing again after fixing the cause heals it."""
+    import memory.seed_memory as seed_memory
+
+    try:
+        counts = seed_memory.rebuild_kb()
+    except Exception as exc:  # noqa: BLE001 — any backend failure → 502 + message
+        db.db.session.rollback()
+        logger.warning("rebuild_memory failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    # A full rebuild always re-embeds, so prior conversation facts are always
+    # due for a re-check.
     db.mark_facts_invalidated()
     return jsonify({"ok": True, **counts})
