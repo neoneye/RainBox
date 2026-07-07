@@ -261,15 +261,23 @@ A failed subtask never aborts the run; the report says what's missing.
 
 No live network or live LLM in pytest (consistent with repo conventions).
 
-- `test_websearch.py` — registry + auto-detection (env monkeypatched); each
-  provider's response parsing against recorded JSON fixtures under
-  `research/fixtures/`; ddg via a stubbed `ddgs` client.
-- `test_fetch.py` — extraction from an HTML fixture, size cap, SSRF refusal
-  (loopback/private hosts), delimiter escaping.
-- `test_prompts.py` — the no-format-fields assertion; source-block wrapper
-  escapes embedded delimiters.
-- `test_pipeline.py` — `FakeModelCaller` + `FakeSearchProvider` end-to-end:
-  report assembly, global citation numbering, URL dedupe across subtasks,
+Test modules are named `test_research_*.py` (unique basenames repo-wide, the
+whisper/kokoro collision lesson):
+
+- `test_research_websearch.py` — registry + auto-detection (fake providers);
+  `test_research_search_providers.py` — each provider's response parsing
+  against recorded JSON fixtures under `research/fixtures/`, ddg via a
+  stubbed `ddgs` client, env-based `is_configured`.
+- `test_research_fetch.py` — extraction from HTML, size cap, SSRF refusal
+  (loopback/private hosts), no-network-on-refusal.
+- `test_research_prompts.py` — the no-format-fields assertion; source-block
+  wrapper escapes embedded delimiters.
+- `test_research_caller.py` — model-group resolution and fallback with fake
+  LLMs (db + `llm.prepare_llm` monkeypatched).
+- `test_research_stages.py`, `test_research_researcher.py`,
+  `test_research_pipeline.py`, `test_research_cli.py` — `FakeCaller` +
+  `FakeSearchProvider` through the stages and end-to-end: report assembly,
+  global citation numbering, URL dedupe/note reuse across subtasks,
   failed-subtask reporting, `max_subtasks` truncation.
 
 ## Dependencies (requirements.txt)
