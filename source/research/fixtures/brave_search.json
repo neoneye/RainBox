@@ -1,0 +1,16 @@
+{
+  "web": {
+    "results": [
+      {
+        "title": "Alpha result",
+        "url": "https://example.org/alpha",
+        "description": "Alpha description."
+      },
+      {
+        "title": "Beta result",
+        "url": "https://example.org/beta",
+        "description": "Beta description."
+      }
+    ]
+  }
+}

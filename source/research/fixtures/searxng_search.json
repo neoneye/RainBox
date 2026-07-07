@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "url": "https://example.org/gamma",
+      "title": "Gamma",
+      "content": "Gamma content."
+    },
+    {
+      "url": "https://example.org/delta",
+      "title": "Delta",
+      "content": "Delta content."
+    }
+  ]
+}

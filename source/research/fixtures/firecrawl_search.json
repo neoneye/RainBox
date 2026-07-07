@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "data": {
+    "web": [
+      {
+        "url": "https://example.org/epsilon",
+        "title": "Epsilon",
+        "description": "Epsilon description."
+      }
+    ]
+  }
+}
