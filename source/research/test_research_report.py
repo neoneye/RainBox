@@ -61,3 +61,16 @@ def test_citation_regex_ignores_unknown_ids():
     report.summary_markdown = "See [1] and the bogus [99]."
     refs = report.render_markdown().split("## References")[1]
     assert "[99]" not in refs
+
+
+def test_scope_section_rendered_when_present():
+    report = _report()
+    report.scope_markdown = "The display standard.\n\nOut of scope: the connector."
+    markdown = report.render_markdown()
+    assert "## Scope" in markdown
+    assert "Out of scope: the connector." in markdown
+    assert markdown.index("## Scope") < markdown.index("## Summary")
+
+
+def test_no_scope_section_by_default():
+    assert "## Scope" not in _report().render_markdown()

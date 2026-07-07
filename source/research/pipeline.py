@@ -23,6 +23,7 @@ from research.config import ResearchConfig
 from research.planner import generate_plan
 from research.report import Report
 from research.researcher import Fetcher, SourceRegistry, research_subtask
+from research.scope import resolve_scope, scope_block, scope_markdown
 from research.splitter import split_plan
 from research.synthesizer import synthesize
 from research.telemetry import Telemetry, TelemetrySearchProvider, telemetry_fetcher
@@ -77,8 +78,21 @@ def run_deep_research(
             f"search={provider.id} fetcher={cfg.fetcher} model_group={cfg.model_group}",
         )
 
+        progress("scope", "disambiguating the query")
+        scope = resolve_scope(caller, query)
+        block = scope_block(scope)
+        progress("scope", scope.chosen_scope)
+        tel.record(
+            {
+                "event": "scope",
+                "chosen": scope.chosen_scope,
+                "meanings": scope.meanings,
+                "excluded": scope.excluded,
+            }
+        )
+
         progress("plan", "generating research plan")
-        plan = generate_plan(caller, query)
+        plan = generate_plan(caller, query, block)
         progress("split", "splitting plan into subtasks")
         subtasks = split_plan(caller, plan, cfg.max_subtasks)
         progress("split", f"{len(subtasks)} subtasks")
@@ -87,7 +101,8 @@ def run_deep_research(
         results = []
         for subtask in subtasks:
             result = research_subtask(
-                caller, provider, fetcher, registry, subtask, cfg, progress
+                caller, provider, fetcher, registry, subtask, cfg, progress,
+                scope_block=block,
             )
             tel.record(
                 {
@@ -99,13 +114,16 @@ def run_deep_research(
             )
             results.append(result)
 
-        summary, open_questions = synthesize(caller, query, results, progress)
+        summary, open_questions = synthesize(
+            caller, query, results, progress, scope_block=block
+        )
         report = Report(
             query=query,
             summary_markdown=summary,
             subtask_results=results,
             open_questions_markdown=open_questions,
             sources=registry.all(),
+            scope_markdown=scope_markdown(scope),
         )
         completed = True
         return report

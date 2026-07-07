@@ -84,3 +84,44 @@ def test_split_plan_drops_blank_rows_and_raises_when_none_left():
     caller = FakeCaller(structured={prompts.SPLITTER_SYSTEM: [blank]})
     with pytest.raises(RuntimeError, match="no subtasks"):
         split_plan(caller, "the plan", max_subtasks=5)
+
+
+def _scope():
+    from research.scope import ScopeModel
+
+    return ScopeModel(
+        meanings=["a display standard", "a physical connector"],
+        chosen_scope="The display standard.",
+        excluded=["the connector", "  "],
+    )
+
+
+def test_resolve_scope_and_block_rendering():
+    from research.scope import resolve_scope, scope_block, scope_markdown
+
+    caller = FakeCaller(structured={prompts.SCOPE_SYSTEM: [_scope()]})
+    scope = resolve_scope(caller, "history of the svga port")
+    assert caller.calls[0] == (prompts.SCOPE_SYSTEM, "history of the svga port")
+    block = scope_block(scope)
+    assert block == (
+        "SCOPE: The display standard.\nOUT OF SCOPE: the connector"
+    )
+    assert scope_markdown(scope) == (
+        "The display standard.\n\nOut of scope: the connector."
+    )
+
+
+def test_scope_block_with_no_exclusions():
+    from research.scope import ScopeModel, scope_block, scope_markdown
+
+    scope = ScopeModel(meanings=["m"], chosen_scope="Everything.", excluded=[])
+    assert "OUT OF SCOPE: nothing noted" in scope_block(scope)
+    assert scope_markdown(scope) == "Everything."
+
+
+def test_generate_plan_includes_scope_block():
+    caller = FakeCaller(plain={prompts.PLANNER_SYSTEM: ["plan"]})
+    generate_plan(caller, "the query", "SCOPE: X\nOUT OF SCOPE: Y")
+    user_prompt = caller.calls[0][1]
+    assert user_prompt.startswith("the query")
+    assert "SCOPE: X" in user_prompt

@@ -36,10 +36,16 @@ class Report:
     subtask_results: list[SubtaskResult]
     open_questions_markdown: str
     sources: list[Source] = field(default_factory=list)
+    # What the query was taken to mean (and what was excluded) — shown to the
+    # reader so an ambiguous term can't silently pick its interpretation.
+    scope_markdown: str = ""
 
     def render_markdown(self) -> str:
         title = " ".join(self.query.split())
-        parts: list[str] = [f"# {title}", "", "## Summary", "", self.summary_markdown.strip(), ""]
+        parts: list[str] = [f"# {title}", ""]
+        if self.scope_markdown.strip():
+            parts += ["## Scope", "", self.scope_markdown.strip(), ""]
+        parts += ["## Summary", "", self.summary_markdown.strip(), ""]
         for result in self.subtask_results:
             if result.failed:
                 continue

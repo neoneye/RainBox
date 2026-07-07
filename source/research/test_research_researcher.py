@@ -211,3 +211,26 @@ def test_empty_generated_queries_fall_back_to_title():
     )
     assert provider.queries == ["Tidal mechanism"]
     assert not result.failed
+
+
+def test_scope_block_reaches_querygen_notes_and_findings():
+    caller = _caller(
+        ["moon tides"],
+        {
+            prompts.NOTES_SYSTEM: ["note"],
+            prompts.FINDINGS_SYSTEM: ["findings [1]."],
+        },
+    )
+    provider = FakeSearchProvider({"moon tides": [_result("https://example.org/a")]})
+    research_subtask(
+        caller,
+        provider,
+        lambda url, cap: "text",
+        SourceRegistry(),
+        SUBTASK,
+        ResearchConfig(),
+        _noop_progress,
+        scope_block="SCOPE: ocean tides only\nOUT OF SCOPE: metaphors",
+    )
+    for system_prompt, user_prompt in caller.calls:
+        assert "SCOPE: ocean tides only" in user_prompt

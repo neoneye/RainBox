@@ -20,13 +20,15 @@ def synthesize(
     query: str,
     subtask_results: list[SubtaskResult],
     progress: Callable[[str, str], None],
+    scope_block: str = "",
 ) -> tuple[str, str]:
     body = _findings_body(subtask_results)
     if len(body) > SYNTH_INPUT_CHAR_CAP:
         progress("synthesize", "findings exceed budget; using first paragraphs only")
         body = _findings_body(subtask_results, first_paragraph_only=True)
         body = body[:SYNTH_INPUT_CHAR_CAP]
-    user_prompt = f"RESEARCH QUERY:\n{query}\n\nFINDINGS:\n{body}"
+    scope_part = f"{scope_block}\n\n" if scope_block else ""
+    user_prompt = f"RESEARCH QUERY:\n{query}\n\n{scope_part}FINDINGS:\n{body}"
     progress("synthesize", "writing executive summary")
     summary = caller.plain(prompts.SYNTH_SUMMARY_SYSTEM, user_prompt).strip()
     progress("synthesize", "listing open questions")

@@ -6,6 +6,7 @@ from research import pipeline, prompts
 from research.config import ResearchConfig
 from research.report import SubtaskResult
 from research.researcher import SearchQueryList
+from research.scope import ScopeModel
 from research.splitter import SubtaskListModel, SubtaskModel
 from research.synthesizer import SYNTH_INPUT_CHAR_CAP, synthesize
 from research.telemetry import Telemetry
@@ -72,6 +73,13 @@ def _e2e_env(monkeypatch):
     )
     caller = FakeCaller(
         structured={
+            prompts.SCOPE_SYSTEM: [
+                ScopeModel(
+                    meanings=["ocean tides"],
+                    chosen_scope="Ocean tides on Earth.",
+                    excluded=["metaphorical tides"],
+                )
+            ],
             prompts.SPLITTER_SYSTEM: [subtasks],
             prompts.QUERYGEN_SYSTEM: [
                 SearchQueryList(queries=["mech q"]),
@@ -109,6 +117,9 @@ def test_run_deep_research_end_to_end(monkeypatch):
     )
     markdown = report.render_markdown()
     assert "# how do tides work?" in markdown
+    assert "## Scope" in markdown
+    assert "Ocean tides on Earth." in markdown
+    assert "Out of scope: metaphorical tides." in markdown
     assert "summary [1][2]" in markdown
     assert "mech findings [1]" in markdown
     assert "hist findings [2]" in markdown
@@ -134,6 +145,9 @@ def test_run_deep_research_writes_telemetry(monkeypatch, tmp_path):
     assert rows[-1]["event"] == "summary"
     assert rows[-1]["completed"] is True
     kinds = [row["event"] for row in rows]
+    assert kinds.count("scope") == 1
+    scope_row = next(row for row in rows if row["event"] == "scope")
+    assert scope_row["chosen"] == "Ocean tides on Earth."
     assert kinds.count("search") == 2
     assert kinds.count("fetch") == 2
     assert kinds.count("subtask") == 2

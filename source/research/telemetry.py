@@ -25,6 +25,7 @@ from research.websearch import SearchProvider, SearchResult
 # llm_call events are labeled by which system prompt drove the call, so the
 # Caller protocol needs no label plumbing through the stages.
 PROMPT_LABELS = {
+    prompts.SCOPE_SYSTEM: "scope",
     prompts.PLANNER_SYSTEM: "plan",
     prompts.SPLITTER_SYSTEM: "split",
     prompts.QUERYGEN_SYSTEM: "queries",

@@ -80,9 +80,11 @@ def research_subtask(
     subtask: Subtask,
     config: ResearchConfig,
     progress: Progress,
+    scope_block: str = "",
 ) -> SubtaskResult:
     progress("research", f"{subtask.id} {subtask.title}")
-    queries = _generate_queries(caller, subtask, config)
+    block_text = _subtask_block(subtask, scope_block)
+    queries = _generate_queries(caller, subtask, config, block_text)
     results = _run_searches(provider, queries, config, progress)
     if not results:
         return SubtaskResult(
@@ -103,7 +105,7 @@ def research_subtask(
             fresh.append(result)
 
     fetched_ids: list[int] = []
-    for result in _select_results(caller, subtask, fresh, config):
+    for result in _select_results(caller, subtask, fresh, config, block_text):
         text = fetcher(result.url, config.per_source_char_cap)
         if text is None:
             progress("fetch", f"skipped {result.url}")
@@ -111,7 +113,7 @@ def research_subtask(
         source = registry.add(result.url, result.title)
         block = prompts.wrap_source_block(source.id, source.url, text)
         notes = caller.plain(
-            prompts.NOTES_SYSTEM, f"{_subtask_block(subtask)}\n\n{block}"
+            prompts.NOTES_SYSTEM, f"{block_text}\n\n{block}"
         ).strip()
         if not notes or notes == prompts.NO_RELEVANT_CONTENT:
             progress("notes", f"no relevant content in {result.url}")
@@ -134,23 +136,24 @@ def research_subtask(
         for source_id in note_ids
     )
     findings = caller.plain(
-        prompts.FINDINGS_SYSTEM, f"{_subtask_block(subtask)}\n\n{notes_blocks}"
+        prompts.FINDINGS_SYSTEM, f"{block_text}\n\n{notes_blocks}"
     ).strip()
     return SubtaskResult(
         subtask_id=subtask.id, title=subtask.title, findings_markdown=findings
     )
 
 
-def _subtask_block(subtask: Subtask) -> str:
-    return f"SUBTASK: {subtask.title}\nINSTRUCTIONS: {subtask.description}"
+def _subtask_block(subtask: Subtask, scope_block: str = "") -> str:
+    block = f"SUBTASK: {subtask.title}\nINSTRUCTIONS: {subtask.description}"
+    if scope_block:
+        block = f"{block}\n{scope_block}"
+    return block
 
 
 def _generate_queries(
-    caller: Caller, subtask: Subtask, config: ResearchConfig
+    caller: Caller, subtask: Subtask, config: ResearchConfig, block_text: str
 ) -> list[str]:
-    result = caller.structured(
-        prompts.QUERYGEN_SYSTEM, _subtask_block(subtask), SearchQueryList
-    )
+    result = caller.structured(prompts.QUERYGEN_SYSTEM, block_text, SearchQueryList)
     assert isinstance(result, SearchQueryList)
     queries = [query.strip() for query in result.queries if query.strip()]
     return (queries or [subtask.title])[: config.queries_per_subtask]
@@ -184,6 +187,7 @@ def _select_results(
     subtask: Subtask,
     fresh: list[SearchResult],
     config: ResearchConfig,
+    block_text: str = "",
 ) -> list[SearchResult]:
     if len(fresh) <= config.fetch_per_subtask:
         return list(fresh)
@@ -193,7 +197,7 @@ def _select_results(
     )
     selection = caller.structured(
         prompts.SELECT_SYSTEM,
-        f"{_subtask_block(subtask)}\n\nSEARCH RESULTS:\n{listing}",
+        f"{block_text}\n\nSEARCH RESULTS:\n{listing}",
         UrlSelection,
     )
     assert isinstance(selection, UrlSelection)

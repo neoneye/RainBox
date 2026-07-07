@@ -125,3 +125,30 @@ Already shipped ahead of this proposal: prompt hardening against
 parametric leakage (planner/splitter/query-gen may not assert memory as
 fact) and against hedge-stripping (notes preserve exact wording; findings
 and summary forbid unsupported absolutes and fabricated specifics).
+
+## Addendum: relevance discipline (second review round)
+
+A third reviewed run (SVGA-port history) shifted the dominant failure from
+"claim is false" to "claim is true but answers the wrong question": the
+query term named four distinct things (display standard, DE-15 connector,
+VMware's virtual GPU, embedded modules with SVGA-class resolution) and the
+report blended them; component datasheets surfaced by keyword match were
+treated as historical milestones.
+
+Shipped in response (ahead of the ledger):
+
+- **Scope stage** (`scope.py`): one structured call before planning picks
+  an explicit interpretation and exclusions; the scope block travels in
+  every downstream user message, the report opens with a Scope section,
+  and the events file records a `scope` row.
+- **Relevance prompt hardening**: selection and notes now define relevance
+  as "informs the subtask as scoped" and explicitly treat datasheets,
+  product listings, and same-name-different-thing pages as keyword noise.
+
+Remaining for the ledger design (extends the source-class-lite gate): the
+per-source classification gains a second axis — **relevance class** (core /
+supporting / background / keyword-noise / wrong-scope) judged against the
+run's chosen scope, recorded per source in the ledger; the rewrite stage
+excludes keyword-noise and wrong-scope material from findings sections and
+demotes it to a side note at most. Verdict vocabulary gains
+`true_but_low_relevance` alongside supported/unsupported/contradicted.

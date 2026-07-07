@@ -13,7 +13,14 @@ Full design rationale: `docs/superpowers/specs/2026-07-07-deep-research-design.m
 Deterministic Python control flow; the LLM is called only at judgment
 points, each call small enough for a modest local context window:
 
-1. **Planner** (`planner.py`) — query → research plan (plain text).
+0. **Scope** (`scope.py`) — one structured call disambiguates the query
+   (many terms name a standard, a connector, a product line, and a software
+   component at once): plausible meanings, a chosen scope, exclusions. The
+   rendered scope block travels in the user message of every later stage so
+   selection and notes can reject keyword-only matches, and the report
+   opens with a Scope section so the reader sees which interpretation they
+   got.
+1. **Planner** (`planner.py`) — query + scope → research plan (plain text).
 2. **Splitter** (`splitter.py`) — plan → 3–8 subtasks (structured); ids and
    the `max_subtasks` cap are assigned in Python.
 3. **Researcher** (`researcher.py`, per subtask, sequential — one GPU):
@@ -88,13 +95,14 @@ trade-offs. The CLI writes it next to `--out` (`report.md` →
 - `run` (first): query, full config, and every group member's **resolved
   settings** (provider, model, arguments incl. context window and timeout
   overrides) in fallback order, each with its `member` uuid.
-- `llm_call`: stage label (plan/split/queries/select/notes/findings/
-  summary/open_questions), `served_by` (the group-**member** uuid — the
+- `llm_call`: stage label (scope/plan/split/queries/select/notes/
+  findings/summary/open_questions), `served_by` (the group-**member** uuid — the
   stable identity, since one model name can sit in a group several times
   with different overrides; `served_by_model` carries the name for
   eyeballing), total ms, and an `attempts` list — one entry per member
   tried (`member`, `model`, ms, error) — so fallbacks and timeouts are
   attributable to a specific member config, joinable against the run row.
+- `scope`: the chosen interpretation, candidate meanings, exclusions.
 - `search`: provider id, query, ms, result count or error — per-API
   flakiness is visible directly.
 - `fetch`: url, ms, ok, extracted chars. `subtask`: id, title, failed.
