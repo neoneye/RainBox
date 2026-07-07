@@ -1,6 +1,6 @@
 # Cron — design (frontend + backend)
 
-**Status:** **Built and running.** The `/cron` page persists a folder tree of jobs to Postgres, the supervisor loop fires due jobs on their schedule, four action types exist (`message`, `command`, `backup`, `memory_sync`), run outcomes/health/retries/global-pause are all live, and the assistant creates **one-shot reminder jobs** through the same tables. Requires running via `python main.py` (the scheduler and web app share one process). Page at `GET /cron`.
+**Status:** **Built and running.** The `/cron` page persists a folder tree of jobs to Postgres, the supervisor loop fires due jobs on their schedule, five action types exist (`message`, `command`, `backup`, `memory_sync`, `script`), run outcomes/health/retries/global-pause are all live, and the assistant creates **one-shot reminder jobs** through the same tables. Requires running via `python main.py` (the scheduler and web app share one process). Page at `GET /cron`.
 **Date:** 2026-07-07
 **Source brief:** `plan.md` → "## Cronjob"
 **UI scope:** **Desktop-first** (tablet acceptable). Small-phone layouts are a **non-goal** — the fixed-width tree + split view is tuned for wide viewports.
@@ -37,7 +37,7 @@ cron_job
   folder_uuid (nullable)          -- null = unfiled / root-level job
   cron_expr (text; '' = one-shot, see below),
   timezone ('localtime' | 'UTC', default 'localtime'),
-  action_type ('message'|'command'|'backup'|'memory_sync', CHECK-constrained),
+  action_type ('message'|'command'|'backup'|'memory_sync'|'script', CHECK-constrained),
   target, message, command        -- only the relevant ones are used
   description,
   max_retries (int, 0 = off, capped at 10),
@@ -69,12 +69,13 @@ The left panel of `/cron` is a forest: folders nest to any depth, each job lives
 
 ## Action types
 
-Four, dispatched by `fire_cron_job`. The New-job builder and Edit-action overlay offer **Message** and **Command**; `backup` and `memory_sync` are system types (seeded jobs) that the validator and firing path treat as first-class.
+Five, dispatched by `fire_cron_job`. The New-job builder and Edit-action overlay offer **Message**, **Command**, and **Script**; `backup` and `memory_sync` are system types (seeded jobs) that the validator and firing path treat as first-class.
 
 1. **`message`** — post to a chatroom. `target` is a **chatroom uuid** (rename-proof; the UI's Target control is a `<select>` of rooms fed by the tree payload's `chatrooms` list). A blank or unknown target falls back to the **cron room**. The message is authored by the fixed `cron` system user (`CRON_SYSTEM_UUID`) so the chat page + SSE render it like any other message.
 2. **`command`** — enqueue to the **workspace-shell agent** (non-shell argv, no bash, workspace-confined — never a raw shell). The payload carries `room_uuid` (the cron room, where output/blocks post), `command_text`, `cron_run_uuid`, and `debug`. The fire returns with the run `pending`; the agent writes the real outcome back (see *Run outcomes*).
 3. **`backup`** — in-process database dump (`backup.dump`), because the workspace-shell allowlist can't run `pg_dump`/`zstd` or write files. Destination resolution: the job's `command` field → the `backup.repo` setting → the `RAINBOX_BACKUP_REPO` env var. Age recipients come from the `backup.age_recipient` setting (falling back to env, fail-closed). With `backup.git_push` set, the encrypted file is committed+pushed to the backup repo — an upload failure is reported (`✖ upload failed`) but does **not** fail the fire, since the local backup already succeeded. Runs synchronously on the supervisor thread — fine for a local single-user DB.
 4. **`memory_sync`** — in-process memory maintenance (`memory.embeddings.sync_memory_embeddings`): backfill embeddings for active claims and prune stale ones, keeping hybrid retrieval fresh between writes. Best-effort by construction — a missing embedder degrades to lexical-only and pruning still runs.
+5. **`script`** — run an **operator's external program** (e.g. a personal repo's cron entry point). `command` is shlex-split argv with **no shell**; `argv[0]` must be an **absolute path to an existing executable file** (shebang + `chmod +x` — interpreter lookup via PATH is deliberately unsupported, so what runs is always explicit). Runs on a **daemon thread** with `cwd` = the script's directory and a `CRON_SCRIPT_TIMEOUT` (10 min) wall-clock cap, so a slow fetch/render never blocks the supervisor loop; env/venv concerns live inside the script. Captured stdout+stderr is posted to the cron room (clipped to the last `CRON_SCRIPT_OUTPUT_CLIP` chars) and the outcome lands via the same pending→`cron_record_run_outcome` contract as `command` fires, so the pending sweep still backstops a killed process. This is operator tooling created on the /cron page: the workspace-shell policy that chat-issued commands go through is untouched, and per the repo's local-security stance it is a guardrail, not a sandbox.
 
 ### One-shot jobs (reminders)
 
