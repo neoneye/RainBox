@@ -2,13 +2,16 @@
 
 Several pages have a left panel that shows a **tree of folders** (which nest
 arbitrarily deep) containing **leaf items**. `/chat` (folders → chatrooms),
-`/cron` (folders → jobs), and `/kanban` (folders → boards) all implement it;
-this doc describes the shared pattern and the reference implementations.
+`/cron` (folders → jobs), `/kanban` (folders → boards), and `/git`
+(folders → repos) all implement it; this doc describes the shared pattern and
+the reference implementations.
 `/kanban` is the placement-only variant whose tree layer (folders + board
 placement) is kept separate from board contents: `webapp/kanban_views.py`
 (markup + CSS), `static/kanban.js` (tree JS), `webapp/kanban_api.py` +
 `db/kanban.py` (`kanban_load_tree`/`kanban_save_tree`/`kanban_tree_version`/
-`validate_kanban_tree`, folder create + reparenting delete).
+`validate_kanban_tree`, folder create + reparenting delete). `/git` follows
+the same split (`webapp/git_views.py`, `static/git.js`, `webapp/git_api.py`,
+`db/git.py`) — its build produced the CSS/layout gotchas in §8.
 
 Folder create/rename/delete dialogs use the app-wide modal pattern — see
 [`ui-modals.md`](ui-modals.md).
@@ -24,7 +27,9 @@ Folder create/rename/delete dialogs use the app-wide modal pattern — see
 
 `/chat` is the simpler one; `/cron` is the fuller one (folder enable/disable +
 description, a static "All jobs" root node, URL deep-linking, a delete guard).
-Read both; pick the feature set the new page needs.
+Read both; pick the feature set the new page needs. `/kanban` and `/git` are
+ports of the pattern rather than references — consult them for how a port
+goes (and, for `/git`, how it goes wrong: §8).
 
 ## 1. Data model — flat arrays, parent pointers
 
@@ -41,8 +46,8 @@ const itemsInFolder  = (id)       => items.filter(i => (i.folderId || null) === 
 const folderById     = (id)       => folders.find(f => f.id === id) || null;
 ```
 
-- `/chat`: `folders {id,name,parentId}`, `rooms {uuid,name,folderId,member_count,last_message_id}` — `chat_template.py:296-311`.
-- `/cron`: `cronFolders {id,name,description,parentId,enabled,...}`, `cronRowsState` (jobs, with `folderId`,`enabled`,`cron`,…) — `static/cron.js:170-177`.
+- `/chat`: `folders {id,name,parentId}`, `rooms {uuid,name,folderId,member_count,last_message_id}` — `chat_template.py`.
+- `/cron`: `cronFolders {id,name,description,parentId,enabled,...}`, `cronRowsState` (jobs, with `folderId`,`enabled`,`cron`,…) — `static/cron.js`.
 
 DB side: folders and items each carry `parent_uuid`/`folder_uuid` (null = root)
 plus a `position` integer for ordering within a parent. There are **no FK
@@ -63,8 +68,8 @@ order becomes each row's `position`.
   scheduler tick never invalidates an open page. The client sends the version it
   hydrated with; if it's stale the server returns **409** and the client
   re-hydrates (and, on `/cron`, shows a "tree changed elsewhere — reloaded"
-  toast). `chat_api.py:104-127` / `db/chat.py:320-376`; `cron_api.py:22-53` /
-  `db/cron.py:319-412`.
+  toast). `chat_api.py` / `db/chat.py`; `cron_api.py` /
+  `db/cron.py`.
 - **Debounce + serialize.** Edits coalesce (chat 300ms `saveTree`→`saveTreePush`;
   cron 250ms `cronSave`) and only one PUT is in flight at a time; a save
   requested mid-flight is queued and re-sent after.
@@ -105,8 +110,8 @@ function folderLi(f){
 }
 ```
 
-`/chat`: `renderRooms`/`folderLi`/`roomNode` (`chat_template.py:640-855`).
-`/cron`: `cronRenderTree`/`cronFolderLi`/`cronJobNode` (`static/cron.js:983-1030`).
+`/chat`: `renderRooms`/`folderLi`/`roomNode` (`chat_template.py`).
+`/cron`: `cronRenderTree`/`cronFolderLi`/`cronJobNode` (`static/cron.js`).
 
 **Indentation + guide line are pure CSS** — nesting comes from the nested `<ul>`,
 and the vertical guide is a left border on *nested* lists only (the
@@ -125,7 +130,7 @@ lists). The folder icon swaps open/closed based on `isExpanded && hasChildren`.
 (emoji + a caret were used, then reworked):
 - **Use the shared inline Lucide folder SVGs**, not emoji. `/chat` defines
   `CHAT_ICON_FOLDER` (closed) and `CHAT_ICON_FOLDER_OPEN` (open) verbatim from
-  lucide.dev (`chat_template.py:293-294`); copy those two constants. They're
+  lucide.dev (`chat_template.py`); copy those two constants. They're
   `stroke="currentColor"` and sized by the wrapper span
   (`.chat-ficon{width:1.05em;height:1.05em}` + `.chat-ficon svg{width:100%}`),
   so they inherit row colour/size.
@@ -146,16 +151,16 @@ const isExpanded = (id) => expanded[id] !== false;
 ```
 
 `/chat` persists this to `localStorage` (`FOLDER_EXPAND_KEY = 'chat.expandedFolders'`,
-`chat_template.py:300-312`) so it survives reload; `/cron` keeps it in memory
-only (`cronExpanded`, `static/cron.js:174,706`) — it resets on refresh. Persisting
+`chat_template.py`) so it survives reload; `/cron` keeps it in memory
+only (`cronExpanded`, `static/cron.js`) — it resets on refresh. Persisting
 is the nicer UX; do that on new pages.
 
 ## 5. Selection model
 
 - **Click = select-first, then toggle-expand.** First click on a folder
   *selects* it (shows its contents in the right pane); clicking the
-  already-selected folder toggles its expand/collapse. `chat_template.py:801-814`
-  / `cronFolderClick` `static/cron.js:857-871`.
+  already-selected folder toggles its expand/collapse. `chat_template.py`
+  / `cronFolderClick` `static/cron.js`.
 - **Selected highlight** is a tint **and bold** — `background:#dbeafe;
   font-weight:600` — on the `.sel` folder node. **Apply the same to the selected
   leaf row, not just folders.** `/chat` and `/cron` first bolded only folders
@@ -174,9 +179,9 @@ is the nicer UX; do that on new pages.
   such node (nothing selected → no table). Add one if "show everything" is useful.
   **It is a static element in the markup, NOT the first row of the rendered
   tree** — render only toggles its `.sel` class and a one-time listener wires
-  its click (`cron.js:1019,1449`). `/kanban` first rendered it as the top tree
+  its click (`cron.js`). `/kanban` first rendered it as the top tree
   `<li>`, then had to move it out to match the sidebar layout below.
-- **Sidebar layout — copy `/cron`'s chrome order exactly** (`cron_views.py:186-200`):
+- **Sidebar layout — copy `/cron`'s chrome order exactly** (`cron_views.py`):
   the static "All X" node, an `<hr class="*-tree-sep">`, the action buttons
   (`+ Folder` / `+ Item`), another `<hr>`, then the tree `<ul>`, then the
   drag-only root-drop strip. Separator rule:
@@ -187,7 +192,7 @@ is the nicer UX; do that on new pages.
   mirrors the selection to a single `?id=<uuid>` that addresses **either** a
   folder or an item (uuids are globally unique across kinds — see the validator
   collision check in §1/§9), restoring it on load by trying folder-by-id then
-  item-by-id (`cronSyncUrl`/init `static/cron.js:893-899,1625-1633`). The root
+  item-by-id (`cronSyncUrl`/init `static/cron.js`). The root
   "All X" node has no uuid, so it maps to **no `?id=`** (the default view) —
   don't invent an `?id=all`. All three pages now use this single-`?id=` form;
   both `/kanban` (which first shipped `?board=`/`?folder=`/`?folder=all`) and
@@ -203,15 +208,15 @@ cleared on `dragend`. Drop targets:
 - **Folder node → three zones** by pointer Y: top third = drop **before**
   (reorder as sibling), bottom third = **after**, middle third = **into** (nest
   as child). A dragged *item* always means "into". `makeFolderDrop`
-  (`chat_template.py:951-997`) / `cronMakeFolderDrop` (`static/cron.js:1343-1391`).
+  (`chat_template.py`) / `cronMakeFolderDrop` (`static/cron.js`).
 - **Leaf node → two zones** (before / after) for reordering within its folder.
 - **Root drop zone:** a "Move to top level" strip (`#chat-root-drop` /
   `#cron-root-drop`) revealed only while dragging (`.dragging-on` toggled on the
   panel), dropping to `parentId = null`.
 - **Cycle prevention is mandatory:** before nesting a folder, walk the target's
   ancestor chain and refuse if the dragged folder is an ancestor —
-  `folderInSubtree(candidateId, rootId)` (`chat_template.py:858-865`) /
-  `cronFolderInSubtree` (`static/cron.js:1244-1251`). The DB validator enforces
+  `folderInSubtree(candidateId, rootId)` (`chat_template.py`) /
+  `cronFolderInSubtree` (`static/cron.js`). The DB validator enforces
   it again server-side (belt and suspenders).
 - On drop: update the moved node's `parentId`/`folderId` + reorder the array,
   **auto-expand the destination folder**, re-render, then debounced-save.
@@ -223,9 +228,9 @@ Selecting a folder shows a table of its **recursive subtree** in the right pane
 depth counter, then render depth-indented rows:
 
 - `/cron`: `cronFlattenTree(parentId)` → `[{kind, node, depth}]`
-  (`static/cron.js:233-245`); rows indented `depth*20px`.
+  (`static/cron.js`); rows indented `depth*20px`.
 - `/chat`: a pre-order `walk(folderId, depth)` in `renderFolderDetailRows`
-  (`chat_template.py:691-717`); indent via non-breaking spaces.
+  (`chat_template.py`); indent via non-breaking spaces.
 
 Each row has a **Details** link: on a **subfolder** row it drills in (re-selects
 that folder); on a **leaf** row it opens the item (the normal item view). Columns

@@ -3,13 +3,13 @@
 Rainbox uses a small, dependency-free modal system: one shared backdrop, any
 number of centered "card" overlays, and a handful of helper functions for
 opening, closing, and guarding dismissal. The same UX is meant to apply on
-**every** page that needs a dialog — `/chat`, `/cron`, `/kanban`, and anything
-added later.
+**every** page that needs a dialog — `/chat`, `/cron`, `/kanban`, `/git`,
+`/memory`, and anything added later.
 
 This document is the **canonical spec** for that pattern. It is page-agnostic:
-no single page "owns" it — `/chat`, `/cron`, and `/kanban` all use the
-`ui-modal` naming and the behavior described here. Where each page's markup and
-JS live is in [Per-page notes](#per-page-notes) at the bottom.
+no single page "owns" it — all five pages use the `ui-modal` naming and the
+behavior described here. Where each page's markup and JS live is in
+[Per-page notes](#per-page-notes) at the bottom.
 
 There are no third-party libraries and no `<dialog>` element — it's plain DOM,
 which keeps the idle-tab guarantees in
@@ -186,7 +186,7 @@ every dialog on the page.
 
 ## Per-page notes
 
-All three pages implement the pattern above: shared `static/ui-modal.css`,
+All five pages implement the pattern above: shared `static/ui-modal.css`,
 `<h3>` titles, and right-aligned `.modal-actions` with `.btn-cancel` /
 `.btn-primary` / `.btn-danger`. They differ only in where the page-specific code
 lives:
@@ -196,8 +196,10 @@ lives:
 | `/chat`   | `webapp/chat_template.py` | inline (same file) |
 | `/cron`   | `webapp/cron_views.py`    | `static/cron.js`   |
 | `/kanban` | `webapp/kanban_views.py`  | `static/kanban.js` |
+| `/git`    | `webapp/git_views.py`     | `static/git.js`    |
+| `/memory` | `webapp/memory_views.py`  | `static/memory.js` |
 
-So on `/chat` a new modal is a one-file change, while on `/cron` and `/kanban`
+So on `/chat` a new modal is a one-file change, while on the other pages
 it is two files — markup + page CSS in the view, behavior in the static JS.
 `/cron` also has assertions in `webapp/test_cron_views.py` that reference modal
 markup; keep them in sync.

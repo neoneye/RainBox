@@ -299,9 +299,10 @@ probe paths pick the new provider up automatically.
 
 - **Embeddings use Ollama.** `memory/seed_memory.py` uses Ollama's
   OpenAI-compatible endpoint (default `http://127.0.0.1:11434/v1`) with
-  `nomic-embed-text` for Q&A and memory embeddings. Switching embedding model
-  or provider would invalidate stored vectors, so embeddings remain a separate
-  fixed path rather than following the chat-model provider registry.
+  `embeddinggemma:300m` (768-d) for Q&A and memory embeddings. Switching
+  embedding model or provider would invalidate stored vectors, so embeddings
+  remain a separate fixed path rather than following the chat-model provider
+  registry.
 - **`size_bytes` is `NULL` for Jan rows.** Jan exposes no equivalent of
   `lms ls`. The column is observational, so this is harmless.
 - **Jan capability detection is coarser than LM Studio's.** Jan's

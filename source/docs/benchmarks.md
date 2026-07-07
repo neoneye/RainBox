@@ -50,7 +50,7 @@ model can't be aborted — it pegs CPU/GPU until the provider's timeout, and
 probes (see [LLM Providers → /models test probes](llm-providers.md)) and the
 agent supervisor in `main.py`.
 
-- **`benchmark_subprocess.py`** — `stream_target_subprocess(worker, request,
+- **`benchmarks/subproc.py`** — `stream_target_subprocess(worker, request,
   on_event, stop_event)` spawns the worker, sends `request` as one JSON line on
   stdin, and relays the NDJSON events the worker writes to stdout, calling
   `on_event` for each. It watches `stop_event` through a `selectors` timeout
