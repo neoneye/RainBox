@@ -8,6 +8,7 @@ because the existing call sites already use them with that convention. Both
 caller modules import them explicitly — that's the public API of this module.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -49,6 +50,13 @@ QA_FULL_TABLE: str = f"data_{QA_TABLE_NAME}"
 # localhost.
 EMBED_MODEL_NAME: str = "embeddinggemma:300m"
 EMBED_DIM: int = 768
+# Bump when the node-metadata shape written by _build_documents changes
+# (new/renamed keys). Folded into KB_EPOCH, so every stored row goes stale and
+# re-embeds on the next sync — no manual full rebuild after an upgrade.
+KB_SCHEMA_VERSION: int = 1
+# Stored verbatim in every node's metadata next to row_sha256. A mismatch
+# (embed-model swap or schema bump) marks the row dirty for sync_kb().
+KB_EPOCH: str = f"{EMBED_MODEL_NAME}|{KB_SCHEMA_VERSION}"
 OLLAMA_BASE: str = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/") + "/v1"
 OLLAMA_KEY: str = "ollama"  # Ollama ignores the key but the OpenAI client requires one
 
@@ -231,6 +239,12 @@ def _load_jsonl() -> list[dict[str, Any]]:
                         )
                     seen_paths[entry_path] = lineno
                 entry["_source"] = source
+                # Dirty detector for sync_kb(): the whole raw line (stripped),
+                # so ANY edit — answer, questions, shield, path, kind — changes
+                # the hash, with zero schema knowledge here. Overlay overrides
+                # replace the base entry wholesale, so the winning file's line
+                # is the one hashed.
+                entry["_row_sha256"] = hashlib.sha256(line.encode("utf-8")).hexdigest()
                 merged[entry_id] = entry
     return list(merged.values())
 
@@ -285,6 +299,10 @@ def _build_documents(entries: list[dict[str, Any]]) -> list[Document]:
             shield = e.get("shield")
             if shield:
                 md["shield"] = shield
+            # The sync stamp: a node whose (row_sha256, kb_epoch) doesn't match
+            # the current source line + epoch is stale — see sync_kb().
+            md["row_sha256"] = e.get("_row_sha256", "")
+            md["kb_epoch"] = KB_EPOCH
             # Embed the QUESTION alone. LlamaIndex otherwise folds every metadata
             # value into the embedded text (MetadataMode.EMBED) and, before
             # embedding, guards the metadata length against the chunk size — a
