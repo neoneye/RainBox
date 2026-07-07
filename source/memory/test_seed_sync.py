@@ -341,6 +341,40 @@ def test_sync_refreshes_in_memory_registry(sync_env):
     assert seed_memory.get_entry("a")["answer"] == "new"
 
 
+def test_entry_without_questions_does_not_loop_dirty(sync_env):
+    """A question-less entry (e.g. a _meta marker in the overlay) yields no
+    embeddable documents, so it can never place a stamp in the vector table.
+    It must count as in-sync — not as perpetually 'new', which would mark
+    every sync as changed and re-stamp qa.facts_invalidated_at on every
+    assistant message."""
+    db.set_setting("qa.facts_invalidated_at", None)
+    db.db.session.commit()
+    _write(sync_env.path, [_entry_line("real", ["q1?"], "x"),
+                           _entry_line("marker", [], "meta")])
+    counts = seed_memory.sync_kb()
+    assert counts["embedded"] == 1                  # only the real entry
+    stamp_after_first = db.get_setting("qa.facts_invalidated_at")
+    sync_env.calls.clear()
+    counts = seed_memory.sync_kb()
+    assert counts == {"unchanged": 2, "updated": 0, "embedded": 0, "deleted": 0}
+    assert sync_env.calls == []
+    # a clean reconcile must NOT re-stamp (that is what posts the notice)
+    assert db.get_setting("qa.facts_invalidated_at") == stamp_after_first
+    # the entry is still served from the in-memory registry
+    assert seed_memory.get_entry("marker") is not None
+
+
+def test_questions_emptied_deletes_nodes_then_converges(sync_env):
+    _write(sync_env.path, [_entry_line("a", ["q1?"], "x")])
+    seed_memory.sync_kb()
+    _write(sync_env.path, [_entry_line("a", [], "x")])
+    counts = seed_memory.sync_kb()                  # nodes removed once
+    assert _meta_rows(sync_env, "a") == []
+    assert counts["unchanged"] == 0                 # this run did change things
+    counts = seed_memory.sync_kb()                  # then it is in sync
+    assert counts == {"unchanged": 1, "updated": 0, "embedded": 0, "deleted": 0}
+
+
 # --- _ensure_populated: automatic reconcile behind a stat snapshot -----------
 
 

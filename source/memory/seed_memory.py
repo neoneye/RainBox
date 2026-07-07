@@ -562,7 +562,16 @@ def _diff_rows(
             continue
         ids.add(qa_id)
         if qa_id not in stamps:
-            new.append(e)
+            # A question-less entry (e.g. a _meta marker) yields no embeddable
+            # documents, so it can never place a stamp in the table: with no
+            # nodes present it is vacuously in sync, NOT perpetually new —
+            # otherwise every sync would count it as a change and re-stamp
+            # qa.facts_invalidated_at on every message. It still lives in the
+            # in-memory registry (uuid lookups work without embeddings).
+            if e.get("questions"):
+                new.append(e)
+            else:
+                unchanged += 1
         elif stamps[qa_id] != _entry_stamp(e):
             dirty.append(e)
         else:
