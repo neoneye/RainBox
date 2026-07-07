@@ -536,3 +536,113 @@ def test_run_now_endpoint(firing):
     # Unknown job → 404; bad uuid → 400.
     assert client.post(f"/cron/api/jobs/{uuid4()}/run").status_code == 404
     assert client.post("/cron/api/jobs/not-a-uuid/run").status_code == 400
+
+
+# ---- script action ----------------------------------------------------------
+
+
+def _make_script(tmp_path, body: str, name: str = "job.sh"):
+    import os
+    p = tmp_path / name
+    p.write_text("#!/bin/sh\n" + body + "\n")
+    os.chmod(p, 0o755)
+    return p
+
+
+def _wait_run(job_uuid, timeout: float = 10.0):
+    """Poll until the job's run leaves 'pending' (the script thread commits
+    from its own session, so expire before each re-read)."""
+    import time
+    s = db.db.session
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        s.expire_all()
+        run = s.query(CronRun).filter_by(cron_uuid=job_uuid).one()
+        if run.status != "pending":
+            return run
+        time.sleep(0.05)
+    raise AssertionError("script run never left 'pending'")
+
+
+def test_fire_script_job_ok_posts_output_and_verdict(firing, tmp_path):
+    script = _make_script(tmp_path, 'echo "pollen ok"')
+    job = firing(action_type="script", command=str(script), name="Pollen")
+    run = db.fire_cron_job(job, trigger="manual")
+    assert run.status == "pending"        # resolves async, like 'command'
+    run = _wait_run(job.uuid)
+    assert run.status == "ok" and run.error == ""
+    texts = [m.text for m in db.db.session.query(ChatMessage)
+             .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
+    assert any('▶ started "Pollen"' in t for t in texts)
+    assert any("pollen ok" in t for t in texts)          # captured output
+    assert any('✔ "Pollen" completed' in t for t in texts)
+
+
+def test_fire_script_job_nonzero_exit_is_error(firing, tmp_path):
+    script = _make_script(tmp_path, "echo boom; exit 3")
+    job = firing(action_type="script", command=str(script), name="Boom")
+    db.fire_cron_job(job, trigger="manual")
+    run = _wait_run(job.uuid)
+    assert run.status == "error" and "exit code 3" in run.error
+
+
+def test_fire_script_job_rejects_non_absolute_or_missing(firing, tmp_path):
+    # argv[0] must be an absolute path to an existing executable file.
+    for cmd in ("python3 daily.py", str(tmp_path / "nope.sh")):
+        job = firing(action_type="script", command=cmd, name="Bad")
+        run = db.fire_cron_job(job, trigger="manual")
+        assert run.status == "error", cmd
+        assert run.error
+
+
+def test_fire_script_job_rejects_non_executable(firing, tmp_path):
+    p = tmp_path / "noexec.sh"
+    p.write_text("#!/bin/sh\necho hi\n")   # no chmod +x
+    job = firing(action_type="script", command=str(p), name="NoExec")
+    run = db.fire_cron_job(job, trigger="manual")
+    assert run.status == "error" and "executable" in run.error
+
+
+def test_fire_script_job_debug_is_dry_run(firing, tmp_path):
+    sentinel = tmp_path / "ran"
+    script = _make_script(tmp_path, f"touch {sentinel}")
+    job = firing(action_type="script", command=str(script), name="Dry")
+    run = db.fire_cron_job(job, trigger="manual", debug=True)
+    assert run.status == "ok" and run.debug is True
+    assert not sentinel.exists()          # nothing executed
+    texts = [m.text for m in db.db.session.query(ChatMessage)
+             .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
+    assert any("would run" in t for t in texts)
+
+
+def test_fire_script_job_timeout_is_error(firing, tmp_path, monkeypatch):
+    import db.cron as db_cron
+    monkeypatch.setattr(db_cron, "CRON_SCRIPT_TIMEOUT", 0.5)
+    script = _make_script(tmp_path, "sleep 5")
+    job = firing(action_type="script", command=str(script), name="Slow")
+    db.fire_cron_job(job, trigger="manual")
+    run = _wait_run(job.uuid)
+    assert run.status == "error" and "timed out" in run.error
+
+
+def test_script_job_with_args_passes_argv(firing, tmp_path):
+    script = _make_script(tmp_path, 'echo "arg1=$1"')
+    job = firing(action_type="script", command=f"{script} --verbose", name="Args")
+    db.fire_cron_job(job, trigger="manual")
+    run = _wait_run(job.uuid)
+    assert run.status == "ok"
+    texts = [m.text for m in db.db.session.query(ChatMessage)
+             .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
+    assert any("arg1=--verbose" in t for t in texts)
+
+
+def test_script_job_empty_command_is_draft(firing):
+    job = firing(action_type="script", command="", name="DraftScript")
+    assert db.cron_job_is_draft(job) is True
+
+
+def test_validate_cron_tree_accepts_script_type(app_ctx):
+    db.validate_cron_tree([], [{
+        "uuid": str(uuid4()), "name": "S", "type": "script",
+        "cron": "0 * * * *", "command": "/tmp/x.sh",
+    }])

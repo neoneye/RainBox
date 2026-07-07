@@ -299,7 +299,7 @@ class CronJob(db.Model):
         onupdate=lambda: datetime.now(UTC),
     )
     __table_args__ = (
-        CheckConstraint("action_type IN ('message','command','backup','memory_sync')", name="cron_job_action_type_check"),
+        CheckConstraint("action_type IN ('message','command','backup','memory_sync','script')", name="cron_job_action_type_check"),
         Index("cron_job_in_folder", "folder_uuid", "position"),
     )
 

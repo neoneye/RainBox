@@ -7,8 +7,12 @@ Re-exported from db for import compatibility.
 """
 import hashlib
 import json
+import os
 import re
+import shlex
+import threading
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -32,10 +36,19 @@ BACKUP_CRON_JOB_UUID = UUID("ea97c5b9-a4cd-4553-97d6-d60c5a4f0e81")
 MEMORY_SYNC_CRON_JOB_UUID = UUID("b7e84415-2d1a-4c9f-8f3e-6a0d9c1e2b34")
 
 # Cron action types. 'message' posts to chat, 'command' runs via the
-# workspace-shell agent, 'backup' dumps the database in-process, and
-# 'memory_sync' reconciles memory embeddings in-process (all see fire_cron_job).
+# workspace-shell agent, 'backup' dumps the database in-process, 'memory_sync'
+# reconciles memory embeddings in-process, and 'script' runs an operator's
+# external program on a background thread (all see fire_cron_job).
 # Shared by the tree validator and the upsert.
-CRON_ACTION_TYPES = ("message", "command", "backup", "memory_sync")
+CRON_ACTION_TYPES = ("message", "command", "backup", "memory_sync", "script")
+
+# Wall-clock limit for one 'script' fire. Must stay below
+# CRON_RUN_PENDING_TIMEOUT so the runner resolves its own outcome before the
+# pending sweep declares the run dead.
+CRON_SCRIPT_TIMEOUT: float = 600.0
+# A script's captured output is posted to the cron room; clip so one chatty
+# run can't flood the room (the full output still went to the process's log).
+CRON_SCRIPT_OUTPUT_CLIP: int = 4000
 from db.queue import enqueue
 from db.chat import post_chat_message, post_cron_event
 from db.assistant import assistant_step_path
@@ -433,6 +446,73 @@ class CronFireError(Exception):
     """A cron job could not be fired (e.g. an empty command)."""
 
 
+def _validate_script_argv(command: str) -> list[str]:
+    """argv for a 'script' job: shlex-split, no shell. argv[0] must be an
+    absolute path to an existing executable file — the operator marks their
+    script executable (shebang + chmod +x); interpreter lookup via PATH is
+    deliberately not supported, so what runs is always explicit. Env/venv
+    concerns live inside the script itself."""
+    try:
+        argv = shlex.split(command, posix=True)
+    except ValueError as e:
+        raise CronFireError(f"could not parse script command: {e}") from e
+    if not argv:
+        raise CronFireError("no script to run")
+    program = Path(argv[0])
+    if not program.is_absolute():
+        raise CronFireError(f"script path must be absolute: {argv[0]!r}")
+    if not program.is_file():
+        raise CronFireError(f"script not found: {argv[0]!r}")
+    if not os.access(program, os.X_OK):
+        raise CronFireError(f"script is not executable (chmod +x it): {argv[0]!r}")
+    return argv
+
+
+def _clip_script_output(output: str) -> str:
+    text = output.strip()
+    if len(text) <= CRON_SCRIPT_OUTPUT_CLIP:
+        return text
+    return f"… (clipped to last {CRON_SCRIPT_OUTPUT_CLIP} chars)\n" \
+        + text[-CRON_SCRIPT_OUTPUT_CLIP:]
+
+
+def _spawn_script_thread(run_uuid: UUID, argv: list[str]) -> None:
+    """Run a validated script argv on a daemon thread: a fetch/render/push can
+    take minutes, and the supervisor loop must keep ticking. The thread posts
+    the captured output to the cron room and records the outcome via
+    cron_record_run_outcome (which posts the ✔/✖ verdict line) — same
+    pending→outcome contract as 'command' fires, so the pending sweep still
+    backstops a killed process."""
+    import subprocess
+
+    from flask import current_app
+    app = current_app._get_current_object()
+
+    def _work() -> None:
+        status, error, output = "ok", "", ""
+        try:
+            proc = subprocess.run(
+                argv, cwd=str(Path(argv[0]).parent), capture_output=True,
+                text=True, timeout=CRON_SCRIPT_TIMEOUT,
+            )
+            output = (proc.stdout or "") + (proc.stderr or "")
+            if proc.returncode != 0:
+                status, error = "error", f"exit code {proc.returncode}"
+        except subprocess.TimeoutExpired as exc:
+            output = str(exc.stdout or "") + str(exc.stderr or "")
+            status, error = "error", f"timed out after {CRON_SCRIPT_TIMEOUT:g}s"
+        except Exception as exc:  # noqa: BLE001 — any spawn failure is the outcome
+            status, error = "error", str(exc)
+        with app.app_context():
+            if output.strip():
+                post_cron_event(_clip_script_output(output))
+            cron_record_run_outcome(run_uuid, status=status, error=error)
+
+    threading.Thread(
+        target=_work, name=f"cron-script-{run_uuid}", daemon=True
+    ).start()
+
+
 def cron_compute_next_run(
     cron_expr: str, tz_choice: str = "localtime", after: datetime | None = None
 ) -> datetime | None:
@@ -582,6 +662,29 @@ def fire_cron_job(job: "CronJob", trigger: str = "scheduled", debug: bool = Fals
                     post_cron_event(f"  ✖ upload failed: {exc}")
             # The local backup succeeded (an upload failure doesn't fail the fire).
             outcome = "ok"
+        elif job.action_type == "script":
+            # Operator-registered external program: argv with no shell, run on
+            # a background thread with cwd = the script's directory. This is
+            # operator tooling created on the /cron page — the workspace-shell
+            # policy (which chat-issued commands go through) is untouched, and
+            # per the repo's local-security stance it is a guardrail, not a
+            # sandbox: argv[0] names exactly what runs, nothing comes from PATH.
+            cmd = (job.command or "").strip()
+            if not cmd:
+                raise CronFireError("no script to run")
+            argv = _validate_script_argv(cmd)
+            if debug:
+                # Dry-run: validation happened (a bad path raised above);
+                # report the exact argv + cwd, execute nothing.
+                post_cron_event(
+                    f'▶ dry-run "{label}" (script, {trigger}): would run '
+                    f"`{shlex.join(argv)}` in {Path(argv[0]).parent}"
+                )
+                outcome = "ok"
+            else:
+                post_cron_event(f'▶ started "{label}" (script, {trigger}): `{cmd}`')
+                _spawn_script_thread(run.uuid, argv)
+                # stays 'pending'; the runner thread records the real outcome
         elif job.action_type == "memory_sync":
             # In-process maintenance: backfill embeddings for active claims and
             # prune stale ones (the workspace-shell allowlist can't reach the
@@ -741,7 +844,7 @@ def cron_job_is_draft(job: "CronJob") -> bool:
     (see validate_cron_tree); the scheduler skips drafts instead of failing on
     every slot. Backups have no required field (the destination falls back to
     the backup.repo setting / env var), so they are never drafts."""
-    if job.action_type == "command":
+    if job.action_type in ("command", "script"):
         return not (job.command or "").strip()
     if job.action_type == "message":
         return not (job.message or "").strip()
