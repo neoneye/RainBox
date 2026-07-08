@@ -54,7 +54,7 @@ def test_supported_claim_keeps_section_untouched():
             ],
         }
     )
-    verified, stats = verify_findings(
+    verified, stats, _tiers = verify_findings(
         caller, registry, [result], _noop_progress, Telemetry()
     )
     assert stats == {"claims": 1, "keep": 1, "correct": 0, "hedge": 0, "drop": 0}
@@ -91,7 +91,7 @@ def test_contradicted_claim_triggers_rewrite_with_correction():
         plain={prompts.REWRITE_SYSTEM: ["Enrollment fell from 2016 to 2024 [1]."]},
     )
     ledger = Telemetry()
-    verified, stats = verify_findings(caller, registry, [result], _noop_progress, ledger)
+    verified, stats, _tiers = verify_findings(caller, registry, [result], _noop_progress, ledger)
     assert stats["correct"] == 1
     assert verified == ["Enrollment fell from 2016 to 2024."]
     assert result.findings_markdown == "Enrollment fell from 2016 to 2024 [1]."
@@ -123,7 +123,7 @@ def test_unsupported_low_tier_claim_is_dropped():
         },
         plain={prompts.REWRITE_SYSTEM: ["NOTHING VERIFIED"]},
     )
-    verified, stats = verify_findings(
+    verified, stats, _tiers = verify_findings(
         caller, registry, [result], _noop_progress, Telemetry()
     )
     assert stats["drop"] == 1
@@ -159,7 +159,7 @@ def test_unsupported_decent_tier_claim_is_hedged():
             ]
         },
     )
-    verified, stats = verify_findings(
+    verified, stats, _tiers = verify_findings(
         caller, registry, [result], _noop_progress, Telemetry()
     )
     assert stats["hedge"] == 1
@@ -186,7 +186,7 @@ def test_claim_with_no_stored_extract_is_unsupported_without_llm_call():
         },
         plain={prompts.REWRITE_SYSTEM: ["hedged [1]."]},
     )
-    verified, stats = verify_findings(
+    verified, stats, _tiers = verify_findings(
         caller, registry, [result], _noop_progress, Telemetry()
     )
     assert stats["hedge"] == 1
@@ -244,7 +244,7 @@ def test_consistency_conflict_demotes_both_claims_to_hedge():
         },
     )
     ledger = Telemetry()
-    verified, stats = verify_findings(
+    verified, stats, _tiers = verify_findings(
         caller, registry, [first, second], _noop_progress, ledger
     )
     assert stats["hedge"] == 2
@@ -298,3 +298,153 @@ def test_validate_open_questions_no_bullets_is_identity():
         validate_open_questions(caller, [], text, Telemetry(), _noop_progress) == text
     )
     assert caller.calls == []
+
+
+def test_verify_scope_corrects_contradicted_framing():
+    from research.verifier import verify_scope
+
+    registry = _registry_with_source(
+        url="https://example.org/film",
+        extract="Obsession is a 2025 supernatural horror film by Curry Barker.",
+    )
+    caller = FakeCaller(
+        structured={
+            prompts.ENTAIL_SYSTEM: [
+                EntailmentModel(
+                    verdict="contradicted",
+                    evidence="a 2025 supernatural horror film",
+                    corrected_claim="Obsession (2025) - the Curry Barker film.",
+                )
+            ]
+        }
+    )
+    ledger = Telemetry()
+    result = verify_scope(
+        caller,
+        registry,
+        "Obsession (2017) - the film\n\nOut of scope: overfitting.",
+        ledger,
+        _noop_progress,
+    )
+    assert result == (
+        "Obsession (2025) - the Curry Barker film.\n\nOut of scope: overfitting."
+    )
+    row = next(e for e in ledger.events if e["event"] == "scope_check")
+    assert row["verdict"] == "contradicted"
+
+
+def test_verify_scope_unsupported_leaves_scope_alone():
+    from research.verifier import verify_scope
+
+    registry = _registry_with_source(extract="text about something else")
+    caller = FakeCaller(
+        structured={
+            prompts.ENTAIL_SYSTEM: [
+                EntailmentModel(verdict="unsupported", evidence="not addressed")
+            ]
+        }
+    )
+    scope = "The display standard."
+    assert (
+        verify_scope(caller, registry, scope, Telemetry(), _noop_progress) == scope
+    )
+
+
+def test_verify_scope_no_corpus_is_identity():
+    from research.verifier import verify_scope
+
+    caller = FakeCaller()
+    scope = "Anything."
+    assert (
+        verify_scope(caller, SourceRegistry(), scope, Telemetry(), _noop_progress)
+        == scope
+    )
+    assert caller.calls == []
+
+
+def test_verify_text_rewrites_summary_with_dropped_claim():
+    from research.verifier import verify_text
+
+    registry = _registry_with_source(extract="the film premiered at TIFF in 2025")
+    caller = FakeCaller(
+        structured={
+            prompts.CLAIMS_SYSTEM: [
+                ClaimListModel(
+                    claims=[
+                        ClaimModel(
+                            text="The film was released in 2017.",
+                            type="date",
+                            source_ids=[1],
+                        )
+                    ]
+                )
+            ],
+            prompts.ENTAIL_SYSTEM: [
+                EntailmentModel(
+                    verdict="contradicted",
+                    evidence="premiered at TIFF in 2025",
+                    corrected_claim="The film premiered in 2025.",
+                )
+            ],
+        },
+        plain={prompts.REWRITE_SYSTEM: ["The film premiered in 2025 [1]."]},
+    )
+    ledger = Telemetry()
+    result = verify_text(
+        caller,
+        registry,
+        {1: "encyclopedia"},
+        "The film was released in 2017 [1].",
+        ledger,
+        "summary",
+        _noop_progress,
+    )
+    assert result == "The film premiered in 2025 [1]."
+    row = next(e for e in ledger.events if e["event"] == "claim")
+    assert row["subtask"] == "summary"
+    assert row["action"] == "correct"
+
+
+def test_verify_text_all_supported_is_identity_without_rewrite():
+    from research.verifier import verify_text
+
+    registry = _registry_with_source(extract="opened 1948")
+    caller = FakeCaller(
+        structured={
+            prompts.CLAIMS_SYSTEM: [
+                ClaimListModel(
+                    claims=[
+                        ClaimModel(text="Opened 1948.", type="date", source_ids=[1])
+                    ]
+                )
+            ],
+            prompts.ENTAIL_SYSTEM: [
+                EntailmentModel(verdict="supported", evidence="opened 1948")
+            ],
+        }
+    )
+    text = "Opened 1948 [1]."
+    assert (
+        verify_text(
+            caller, registry, {1: "reference"}, text, Telemetry(), "summary",
+            _noop_progress,
+        )
+        == text
+    )
+    assert all(c[0] != prompts.REWRITE_SYSTEM for c in caller.calls)
+
+
+def test_verify_text_no_claims_is_identity():
+    from research.verifier import verify_text
+
+    caller = FakeCaller(
+        structured={prompts.CLAIMS_SYSTEM: [ClaimListModel(claims=[])]}
+    )
+    text = "Purely interpretive prose."
+    assert (
+        verify_text(
+            caller, SourceRegistry(), {}, text, Telemetry(), "summary",
+            _noop_progress,
+        )
+        == text
+    )

@@ -195,3 +195,37 @@ review, with the ledger at `report.claims.jsonl` (`--claims`) and
 (from the fifth review round) extends the original design: questions a
 verified claim answers, or that manufacture doubt, are removed or narrowed.
 Remaining from the rollout: step 4, the known-answer benchmark query set.
+
+## Addendum 3: the framing layer (sixth review round)
+
+A sixth reviewed run (the 2025 film "Obsession") showed the ledger doing
+real work in the body — 14 of 34 claims dropped, including the wrong
+release year — while the FRAMING layer stayed unverified: the scope stage
+had fabricated a nonexistent 2017 film from parametric memory (overriding
+the query's explicit "2025"), and the Scope header, summary, and open
+questions kept asserting it after the body verifier dropped the same
+claim. Also observed: the consistency pass flagging apparent narrative
+tensions as contradictions, rewrite prose leaking "Claim 2 says…", and an
+actor's process quote abstracted into a story-content claim.
+
+Shipped on the `research-quality` branch:
+
+- **Scope prompt**: the query's explicit attributes (year, place, version,
+  person) are binding; unknown things are scoped "as the query describes
+  it, to be established from sources" instead of substituted from memory.
+- **Scope verification** (`verify_scope`): the chosen scope statement is
+  entailment-checked against the largest fetched extracts and corrected
+  when contradicted; `scope_check` row in the ledger.
+- **Summary verification** (`verify_text`): the executive summary goes
+  through the same extract/entail/rewrite gate as findings sections
+  (origin "summary" in the ledger).
+- **Consistency calibration**: apparent tensions (different moments,
+  phases, framings) are explicitly not contradictions; only pairs that
+  cannot both be true under any reasonable reading are flagged.
+- **No verifier machinery in prose**: the rewrite prompt forbids
+  mentioning claims, claim numbers, verdicts, or verification.
+- **Abstraction-leap guard**: entailment treats process/circumstance
+  statements as not supporting broader abstractions about the subject.
+- **Source-quality caveat**: when at least half the classified sources are
+  blog/marketing/tabloid, the report carries a deterministic note that it
+  synthesizes commentary, not literature.

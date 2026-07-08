@@ -44,9 +44,16 @@ points, each call small enough for a modest local context window:
    both directions), then rewrites each section from the verdicts:
    keep / correct / hedge / drop. Unsupported claims backed only by
    blog/marketing/tabloid sources are dropped; a section with nothing left
-   is marked failed. Every decision lands in the claims ledger
-   (`report.claims.jsonl`, `--claims`) — the prose is the view, the ledger
-   is the audit trail.
+   is marked failed. The framing layer is claims too: the executive
+   summary goes through the same extract/entail/rewrite gate (synthesis
+   must not reintroduce dropped facts), and the chosen scope statement is
+   checked against the fetched corpus and corrected when the sources
+   contradict it — a run once kept asserting a wrong film year in the
+   Scope header after the body verifier had dropped that same claim. When
+   at least half the classified sources are blog/marketing/tabloid, the
+   report carries a deterministic source-quality caveat under Scope. Every
+   decision lands in the claims ledger (`report.claims.jsonl`, `--claims`)
+   — the prose is the view, the ledger is the audit trail.
 6. **Synthesizer** (`synthesizer.py`) — findings → executive summary + open
    questions (two plain calls). Findings sections land in the report
    verbatim; synthesis can't lose detail. A deterministic sweep then moves

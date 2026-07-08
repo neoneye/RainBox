@@ -205,6 +205,7 @@ def test_run_deep_research_with_verification(monkeypatch, tmp_path):
         ClaimListModel(
             claims=[ClaimModel(text="Hist claim.", type="date", source_ids=[2])]
         ),
+        ClaimListModel(claims=[]),  # summary check: nothing checkable
     ]
     caller.structured_queues[prompts.ENTAIL_SYSTEM] = [
         EntailmentModel(verdict="supported", evidence="mech text"),
@@ -212,6 +213,12 @@ def test_run_deep_research_with_verification(monkeypatch, tmp_path):
             verdict="contradicted",
             evidence="hist text says otherwise",
             corrected_claim="Hist corrected claim.",
+        ),
+        # scope check: sources contradict the chosen scope
+        EntailmentModel(
+            verdict="contradicted",
+            evidence="the sources describe lunar tides",
+            corrected_claim="Lunar tides on Earth.",
         ),
     ]
     caller.structured_queues[prompts.CONSISTENCY_SYSTEM] = [
@@ -247,5 +254,11 @@ def test_run_deep_research_with_verification(monkeypatch, tmp_path):
     assert kinds.count("source_tier") == 2
     assert kinds.count("claim") == 2
     assert kinds.count("open_question") == 1
+    assert kinds.count("scope_check") == 1
+    # the framing layer got corrected against the sources
+    assert "Lunar tides on Earth." in markdown
+    assert "Ocean tides on Earth." not in markdown
+    # half the sources are low-tier -> deterministic quality caveat
+    assert "*Most sources in this run are blogs" in markdown
     actions = {row["text"]: row["action"] for row in rows if row["event"] == "claim"}
     assert actions == {"Mech claim.": "keep", "Hist claim.": "correct"}

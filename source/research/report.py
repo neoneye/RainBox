@@ -58,12 +58,17 @@ class Report:
     # What the query was taken to mean (and what was excluded) — shown to the
     # reader so an ambiguous term can't silently pick its interpretation.
     scope_markdown: str = ""
+    # Deterministic caveat when the run's sources skew low-tier — the reader
+    # should know they are getting commentary synthesis, not literature.
+    quality_note: str = ""
 
     def render_markdown(self) -> str:
         title = " ".join(self.query.split())
         parts: list[str] = [f"# {title}", ""]
         if self.scope_markdown.strip():
             parts += ["## Scope", "", self.scope_markdown.strip(), ""]
+        if self.quality_note.strip():
+            parts += [f"*{self.quality_note.strip()}*", ""]
         parts += ["## Summary", "", self.summary_markdown.strip(), ""]
         for result in self.subtask_results:
             if result.failed:

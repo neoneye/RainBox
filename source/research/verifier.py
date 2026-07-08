@@ -147,9 +147,9 @@ def verify_findings(
     results: list[SubtaskResult],
     progress: Progress,
     ledger: Telemetry,
-) -> tuple[list[str], dict[str, int]]:
+) -> tuple[list[str], dict[str, int], dict[int, str]]:
     """Run the claim gate over every successful findings section, rewriting
-    the sections in place. Returns (verified claim texts, stats)."""
+    the sections in place. Returns (verified claim texts, stats, tiers)."""
     tiers = classify_sources(caller, registry, ledger, progress)
 
     checked: list[_VerifiedClaim] = []
@@ -199,7 +199,7 @@ def verify_findings(
         f"{stats['claims']} claims: {stats['keep']} kept, {stats['correct']} "
         f"corrected, {stats['hedge']} hedged, {stats['drop']} dropped",
     )
-    return verified_texts, stats
+    return verified_texts, stats, tiers
 
 
 def _entail(
@@ -317,6 +317,125 @@ def _rewrite_sections(
             result.failure_note = "no claims survived verification"
         else:
             result.findings_markdown = rewritten
+
+
+SCOPE_SOURCES = 3
+SCOPE_EXTRACT_CHAR_CAP = 2500
+
+
+def verify_scope(
+    caller: Caller,
+    registry: SourceRegistry,
+    scope_text: str,
+    ledger: Telemetry,
+    progress: Progress,
+) -> str:
+    """The framing layer is claims too: check the chosen scope statement
+    against the fetched corpus and correct it when the sources contradict
+    it. (A real run dropped 'released in 2017' from the body while the
+    Scope header kept asserting a 2017 film the query never asked about.)"""
+    lines = scope_text.splitlines()
+    if not lines or not lines[0].strip():
+        return scope_text
+    chosen = lines[0].strip()
+    sources = sorted(
+        (s for s in registry.all() if s.id in registry.extracts),
+        key=lambda s: len(registry.extracts[s.id]),
+        reverse=True,
+    )[:SCOPE_SOURCES]
+    if not sources:
+        return scope_text
+    blocks = [
+        prompts.wrap_source_block(
+            source.id,
+            source.url,
+            registry.extracts[source.id][:SCOPE_EXTRACT_CHAR_CAP],
+        )
+        for source in sources
+    ]
+    result = caller.structured(
+        prompts.ENTAIL_SYSTEM,
+        f"CLAIM: {chosen}\n\n" + "\n\n".join(blocks),
+        EntailmentModel,
+    )
+    assert isinstance(result, EntailmentModel)
+    corrected = result.corrected_claim.strip()
+    ledger.record(
+        {
+            "event": "scope_check",
+            "scope": chosen,
+            "verdict": result.verdict,
+            "evidence": result.evidence,
+            "corrected": corrected,
+        }
+    )
+    if result.verdict == "contradicted" and corrected:
+        progress("verify", "scope corrected against sources")
+        return "\n".join([corrected] + lines[1:])
+    return scope_text
+
+
+def verify_text(
+    caller: Caller,
+    registry: SourceRegistry,
+    tiers: dict[int, str],
+    text: str,
+    ledger: Telemetry,
+    origin: str,
+    progress: Progress,
+) -> str:
+    """Run the claim gate over a framing text (e.g. the executive summary):
+    the body verifier is useless if synthesis can reintroduce dropped
+    claims one stage later. Same extract/entail/rewrite machinery as the
+    findings sections, without the consistency pass."""
+    if not text.strip():
+        return text
+    claim_list = caller.structured(prompts.CLAIMS_SYSTEM, text, ClaimListModel)
+    assert isinstance(claim_list, ClaimListModel)
+    claims = [c for c in claim_list.claims if c.text.strip()]
+    if not claims:
+        return text
+    progress("verify", f"checking {len(claims)} {origin} claims")
+    lines = []
+    all_keep = True
+    for claim in claims:
+        entail = _entail(caller, registry, claim)
+        action = _claim_action(claim, entail, tiers)
+        ledger.record(
+            {
+                "event": "claim",
+                "subtask": origin,
+                "text": claim.text,
+                "type": claim.type,
+                "source_ids": claim.source_ids,
+                "verdict": entail.verdict,
+                "evidence": entail.evidence,
+                "corrected_claim": entail.corrected_claim,
+                "conflict": "",
+                "action": action,
+            }
+        )
+        if action == "keep":
+            lines.append(f"- KEEP: {claim.text}")
+        elif action == "correct":
+            all_keep = False
+            lines.append(
+                f"- CORRECT: {claim.text} -> {entail.corrected_claim.strip()}"
+            )
+        elif action == "hedge":
+            all_keep = False
+            lines.append(f"- HEDGE (weak support): {claim.text}")
+        else:
+            all_keep = False
+            lines.append(f"- DROP: {claim.text}")
+    if all_keep:
+        return text
+    rewritten = caller.plain(
+        prompts.REWRITE_SYSTEM, f"{text}\n\nCLAIM ACTIONS:\n" + "\n".join(lines)
+    ).strip()
+    if not rewritten or rewritten == NOTHING_VERIFIED:
+        return ""
+    return rewritten
 
 
 _BULLET_RE = re.compile(r"^\s*[-*]\s+")

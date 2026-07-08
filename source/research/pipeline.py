@@ -32,7 +32,13 @@ from research.scope import resolve_scope, scope_block, scope_markdown
 from research.splitter import split_plan
 from research.synthesizer import synthesize
 from research.telemetry import Telemetry, TelemetrySearchProvider, telemetry_fetcher
-from research.verifier import validate_open_questions, verify_findings
+from research.verifier import (
+    LOW_TIERS,
+    validate_open_questions,
+    verify_findings,
+    verify_scope,
+    verify_text,
+)
 
 ProgressCb = Callable[[str, str], None]
 
@@ -134,8 +140,9 @@ def run_deep_research(
         # failure can mark a section failed, so it runs before the subtask
         # events are recorded.
         verified_texts: list[str] = []
+        tiers: dict[int, str] = {}
         if cfg.verify:
-            verified_texts, verify_stats = verify_findings(
+            verified_texts, verify_stats, tiers = verify_findings(
                 caller, registry, results, progress, ledger
             )
             tel.record({"event": "verify", **verify_stats})
@@ -167,6 +174,16 @@ def run_deep_research(
         summary, questions = sweep_questions(summary)
         swept += questions
         if cfg.verify:
+            # The framing layer is claims too — a verified body is worthless
+            # if the summary or the Scope header can reassert dropped facts.
+            summary = verify_text(
+                caller, registry, tiers, summary, ledger, "summary", progress
+            )
+            if not summary.strip():
+                summary = (
+                    "No summary claims survived verification; "
+                    "see the findings sections."
+                )
             open_questions = validate_open_questions(
                 caller, verified_texts, open_questions, ledger, progress
             )
@@ -174,13 +191,25 @@ def run_deep_research(
             progress("sweep", f"moved {len(swept)} stray question(s) to Open questions")
             bullets = "\n".join(f"- {q}" for q in swept)
             open_questions = f"{open_questions}\n{bullets}".strip()
+        scope_md = scope_markdown(scope)
+        quality_note = ""
+        if cfg.verify:
+            scope_md = verify_scope(caller, registry, scope_md, ledger, progress)
+            low = sum(1 for tier in tiers.values() if tier in LOW_TIERS)
+            if tiers and low * 2 >= len(tiers):
+                quality_note = (
+                    "Most sources in this run are blogs, marketing, or social "
+                    "commentary; read this report as a synthesis of commentary, "
+                    "not established literature."
+                )
         report = Report(
             query=query,
             summary_markdown=summary,
             subtask_results=results,
             open_questions_markdown=open_questions,
             sources=registry.all(),
-            scope_markdown=scope_markdown(scope),
+            scope_markdown=scope_md,
+            quality_note=quality_note,
         )
         completed = True
         return report
