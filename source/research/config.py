@@ -19,3 +19,7 @@ class ResearchConfig:
     # Per-model timeout floor in seconds: a member's configured timeout below
     # this is raised to it (research calls run longer than chat calls).
     llm_timeout_s: float = 120.0
+    # Claim verification (tier classification, entailment, consistency,
+    # findings rewrite, open-question review). Roughly doubles LLM calls;
+    # fact discipline is the point of the tool, so it defaults on.
+    verify: bool = True

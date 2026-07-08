@@ -108,6 +108,7 @@ def _e2e_env(monkeypatch):
     monkeypatch.setattr(
         pipeline, "_resolve_fetcher", lambda fetcher_id: (lambda url, cap: "text")
     )
+    return caller
 
 
 def test_run_deep_research_end_to_end(monkeypatch):
@@ -115,7 +116,7 @@ def test_run_deep_research_end_to_end(monkeypatch):
     events = []
     report = pipeline.run_deep_research(
         "how do tides work?",
-        ResearchConfig(),
+        ResearchConfig(verify=False),
         progress_cb=lambda stage, detail: events.append(stage),
     )
     markdown = report.render_markdown()
@@ -141,7 +142,7 @@ def test_run_deep_research_writes_telemetry(monkeypatch, tmp_path):
     path = tmp_path / "run.events.jsonl"
     pipeline.run_deep_research(
         "how do tides work?",
-        ResearchConfig(),
+        ResearchConfig(verify=False),
         progress_cb=lambda stage, detail: None,
         telemetry=Telemetry(str(path)),
     )
@@ -149,6 +150,7 @@ def test_run_deep_research_writes_telemetry(monkeypatch, tmp_path):
     assert rows[0]["event"] == "run"
     assert rows[0]["query"] == "how do tides work?"
     assert rows[0]["config"]["max_subtasks"] == 5
+    assert rows[0]["config"]["verify"] is False
     assert rows[0]["models"] == []  # FakeCaller describes no members
     assert rows[-1]["event"] == "summary"
     assert rows[-1]["completed"] is True
@@ -178,3 +180,72 @@ def test_telemetry_summary_written_even_on_abort(monkeypatch, tmp_path):
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     assert rows[-1]["event"] == "summary"
     assert rows[-1]["completed"] is False
+
+
+def test_run_deep_research_with_verification(monkeypatch, tmp_path):
+    from research.verifier import (
+        ClaimListModel,
+        ClaimModel,
+        ConsistencyModel,
+        EntailmentModel,
+        OpenQuestionDecision,
+        OpenQuestionReview,
+        TierModel,
+    )
+
+    caller = _e2e_env(monkeypatch)
+    caller.structured_queues[prompts.TIER_SYSTEM] = [
+        TierModel(tier="encyclopedia", reason="wiki"),
+        TierModel(tier="tabloid", reason="rumor site"),
+    ]
+    caller.structured_queues[prompts.CLAIMS_SYSTEM] = [
+        ClaimListModel(
+            claims=[ClaimModel(text="Mech claim.", type="other", source_ids=[1])]
+        ),
+        ClaimListModel(
+            claims=[ClaimModel(text="Hist claim.", type="date", source_ids=[2])]
+        ),
+    ]
+    caller.structured_queues[prompts.ENTAIL_SYSTEM] = [
+        EntailmentModel(verdict="supported", evidence="mech text"),
+        EntailmentModel(
+            verdict="contradicted",
+            evidence="hist text says otherwise",
+            corrected_claim="Hist corrected claim.",
+        ),
+    ]
+    caller.structured_queues[prompts.CONSISTENCY_SYSTEM] = [
+        ConsistencyModel(conflicts=[])
+    ]
+    caller.plain_queues[prompts.REWRITE_SYSTEM] = ["hist corrected findings [2]"]
+    caller.structured_queues[prompts.OPENQ_REVIEW_SYSTEM] = [
+        OpenQuestionReview(
+            decisions=[
+                OpenQuestionDecision(
+                    index=0, action="remove", reason="answered by verified claim"
+                )
+            ]
+        )
+    ]
+    claims_path = tmp_path / "run.claims.jsonl"
+    report = pipeline.run_deep_research(
+        "how do tides work?",
+        ResearchConfig(),
+        progress_cb=lambda stage, detail: None,
+        claims_ledger=Telemetry(str(claims_path)),
+    )
+    markdown = report.render_markdown()
+    assert "hist corrected findings [2]" in markdown
+    assert "hist findings [2]\n" not in markdown  # rewritten away
+    assert "(encyclopedia)" in markdown and "(tabloid)" in markdown
+    assert "- what else?" not in markdown  # removed open question
+    # the stray question line lived in the pre-rewrite findings; the
+    # verification rewrite replaced that section, so nothing was swept
+    assert "What teaching methods were used?" not in markdown
+    rows = [json.loads(line) for line in claims_path.read_text().splitlines()]
+    kinds = [row["event"] for row in rows]
+    assert kinds.count("source_tier") == 2
+    assert kinds.count("claim") == 2
+    assert kinds.count("open_question") == 1
+    actions = {row["text"]: row["action"] for row in rows if row["event"] == "claim"}
+    assert actions == {"Mech claim.": "keep", "Hist claim.": "correct"}

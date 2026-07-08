@@ -36,6 +36,7 @@ class Source:
     id: int  # global, run-wide citation id (1-based)
     url: str
     title: str
+    tier: str = ""  # quality tier from the verifier ("" until classified)
 
 
 @dataclass
@@ -82,5 +83,6 @@ class Report:
         )
         for source_id in cited:
             source = known[source_id]
-            parts.append(f"[{source_id}] {source.title} — {source.url}")
+            suffix = f" ({source.tier})" if source.tier else ""
+            parts.append(f"[{source_id}] {source.title} — {source.url}{suffix}")
         return "\n".join(parts) + "\n"

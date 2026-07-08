@@ -32,6 +32,7 @@ from research.scope import resolve_scope, scope_block, scope_markdown
 from research.splitter import split_plan
 from research.synthesizer import synthesize
 from research.telemetry import Telemetry, TelemetrySearchProvider, telemetry_fetcher
+from research.verifier import validate_open_questions, verify_findings
 
 ProgressCb = Callable[[str, str], None]
 
@@ -55,10 +56,12 @@ def run_deep_research(
     config: ResearchConfig | None = None,
     progress_cb: ProgressCb | None = None,
     telemetry: Telemetry | None = None,
+    claims_ledger: Telemetry | None = None,
 ) -> Report:
     cfg = config or ResearchConfig()
     progress = progress_cb or _default_progress
     tel = telemetry or Telemetry()
+    ledger = claims_ledger or Telemetry()
 
     completed = False
     try:
@@ -125,6 +128,18 @@ def run_deep_research(
             if retry is not None:
                 results[index] = retry
                 recovered_ids.add(retry.subtask_id)
+
+        # The claim gate: entailment against raw extracts, source tiers,
+        # a consistency pass, and verdict-driven rewrites — a verification
+        # failure can mark a section failed, so it runs before the subtask
+        # events are recorded.
+        verified_texts: list[str] = []
+        if cfg.verify:
+            verified_texts, verify_stats = verify_findings(
+                caller, registry, results, progress, ledger
+            )
+            tel.record({"event": "verify", **verify_stats})
+
         for subtask, result in zip(subtasks, results):
             tel.record(
                 {
@@ -151,6 +166,10 @@ def run_deep_research(
             swept += questions
         summary, questions = sweep_questions(summary)
         swept += questions
+        if cfg.verify:
+            open_questions = validate_open_questions(
+                caller, verified_texts, open_questions, ledger, progress
+            )
         if swept:
             progress("sweep", f"moved {len(swept)} stray question(s) to Open questions")
             bullets = "\n".join(f"- {q}" for q in swept)
@@ -166,4 +185,5 @@ def run_deep_research(
         completed = True
         return report
     finally:
+        ledger.close()
         tel.finish(completed=completed)

@@ -180,3 +180,18 @@ hypothetical: the trend inversion ("Faldende elevtal" → "growth") is
 exactly the entailment check's target, and the generic education-finance
 leakage is the relevance gate's. Raw extracts are now stored, which was
 rollout step 1; the ledger can start at step 2.
+
+## Status: implemented
+
+A fifth reviewed run (Tycho Brahe) showed the remaining failures — invented
+uncertainty ("exact dates unknown" with the dates in hand), tabloid leakage
+("married Queen Mary of Denmark"), an internal contradiction (telescopic
+observation in 1572 in a report that elsewhere says pre-telescopic) — were
+all this proposal's territory, so it was built: `research/verifier.py`
+implements tier classification, claim extraction, entailment against raw
+extracts, the consistency pass, verdict-driven rewrites, and open-question
+review, with the ledger at `report.claims.jsonl` (`--claims`) and
+`verify: bool = True` / `--no-verify` as designed. The open-question review
+(from the fifth review round) extends the original design: questions a
+verified claim answers, or that manufacture doubt, are removed or narrowed.
+Remaining from the rollout: step 4, the known-answer benchmark query set.

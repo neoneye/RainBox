@@ -16,7 +16,7 @@ def _report():
 def test_cli_prints_report_to_stdout(monkeypatch, capsys):
     captured = {}
 
-    def fake_run(query, config, progress_cb=None, telemetry=None):
+    def fake_run(query, config, progress_cb=None, telemetry=None, claims_ledger=None):
         captured["query"] = query
         captured["config"] = config
         return _report()
@@ -31,7 +31,7 @@ def test_cli_prints_report_to_stdout(monkeypatch, capsys):
 
 def test_cli_writes_out_file(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
-        pipeline, "run_deep_research", lambda q, c, progress_cb=None, telemetry=None: _report()
+        pipeline, "run_deep_research", lambda q, c, **kwargs: _report()
     )
     out = tmp_path / "report.md"
     assert main(["q", "--out", str(out)]) == 0
@@ -40,7 +40,7 @@ def test_cli_writes_out_file(monkeypatch, tmp_path, capsys):
 
 
 def test_cli_runtime_error_exits_1(monkeypatch, capsys):
-    def boom(q, c, progress_cb=None, telemetry=None):
+    def boom(q, c, progress_cb=None, telemetry=None, claims_ledger=None):
         raise RuntimeError("no search provider configured")
 
     monkeypatch.setattr(pipeline, "run_deep_research", boom)
@@ -51,7 +51,7 @@ def test_cli_runtime_error_exits_1(monkeypatch, capsys):
 def test_cli_derives_events_path_from_out(monkeypatch, tmp_path, capsys):
     captured = {}
 
-    def fake_run(query, config, progress_cb=None, telemetry=None):
+    def fake_run(query, config, progress_cb=None, telemetry=None, claims_ledger=None):
         captured["telemetry"] = telemetry
         return _report()
 
@@ -66,7 +66,7 @@ def test_cli_derives_events_path_from_out(monkeypatch, tmp_path, capsys):
 def test_cli_explicit_events_path_without_out(monkeypatch, tmp_path, capsys):
     captured = {}
 
-    def fake_run(query, config, progress_cb=None, telemetry=None):
+    def fake_run(query, config, progress_cb=None, telemetry=None, claims_ledger=None):
         captured["telemetry"] = telemetry
         return _report()
 
@@ -79,7 +79,7 @@ def test_cli_explicit_events_path_without_out(monkeypatch, tmp_path, capsys):
 def test_cli_no_out_no_events_means_no_telemetry(monkeypatch):
     captured = {}
 
-    def fake_run(query, config, progress_cb=None, telemetry=None):
+    def fake_run(query, config, progress_cb=None, telemetry=None, claims_ledger=None):
         captured["telemetry"] = telemetry
         return _report()
 

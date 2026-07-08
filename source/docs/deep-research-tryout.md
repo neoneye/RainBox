@@ -92,6 +92,23 @@ venv/bin/python -m research "..." --llm-timeout 300
 venv/bin/python -m research "why do cats purr"
 ```
 
+## Reading the claims ledger
+
+With verification on (the default), `report.claims.jsonl` lands next to the
+report: one row per source (quality tier), per claim (verdict, evidence,
+action), per consistency conflict, and per open-question decision. This is
+the audit trail — when a sentence in the report looks wrong, find its claim
+row and see what the source actually said. `--no-verify` skips the whole
+gate for a fast draft (roughly halves the LLM calls).
+
+```bash
+# claims that were corrected or dropped, with the source evidence
+jq -r 'select(.event=="claim" and .action!="keep") | "\(.action)\t\(.text)\n  evidence: \(.evidence)"' report.claims.jsonl
+
+# source quality tiers
+jq -r 'select(.event=="source_tier") | "\(.tier)\t\(.url)"' report.claims.jsonl
+```
+
 ## Reading the KPI log
 
 With `--out report.md` a `report.events.jsonl` lands next to it (any run can
@@ -121,11 +138,13 @@ and total ms per model tell you whether the fast model is doing the job.
 
 ## What to expect
 
-- **Call volume:** with the default 5 subtasks, a run makes roughly 30–40
-  LLM calls (plan, split, then per subtask: queries → selection → notes per
-  source → findings, then two synthesis calls). Subtasks run sequentially —
-  one local GPU — so a run takes minutes, not seconds. `--max-subtasks 3`
-  is a good first try.
+- **Call volume:** with the default 5 subtasks and verification on, a run
+  makes roughly 60–90 LLM calls (plan, split, per subtask: queries →
+  selection → notes per source → findings; then per source: tier, per
+  claim: entailment, plus consistency, rewrites, synthesis, and the
+  open-question review). Subtasks run sequentially — one local GPU — so a
+  run takes minutes, not seconds. `--max-subtasks 3` is a good first try;
+  `--no-verify` halves the calls for a draft.
 - **First call is slow** if the model isn't loaded yet — `prepare_llm` loads
   it into the provider on demand.
 - **Failures degrade, they don't abort:** a rate-limited search, an

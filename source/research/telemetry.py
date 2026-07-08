@@ -34,6 +34,12 @@ PROMPT_LABELS = {
     prompts.FINDINGS_SYSTEM: "findings",
     prompts.SYNTH_SUMMARY_SYSTEM: "summary",
     prompts.SYNTH_OPENQ_SYSTEM: "open_questions",
+    prompts.TIER_SYSTEM: "tier",
+    prompts.CLAIMS_SYSTEM: "claims",
+    prompts.ENTAIL_SYSTEM: "entail",
+    prompts.CONSISTENCY_SYSTEM: "consistency",
+    prompts.REWRITE_SYSTEM: "rewrite",
+    prompts.OPENQ_REVIEW_SYSTEM: "openq_review",
 }
 
 
@@ -69,6 +75,9 @@ class Telemetry:
         in the sense that a second call appends a second summary — the
         pipeline calls it exactly once, in its finally block."""
         self.record({"event": "summary", "completed": completed, **self._summary()})
+        self.close()
+
+    def close(self) -> None:
         if self._handle is not None:
             self._handle.close()
             self._handle = None

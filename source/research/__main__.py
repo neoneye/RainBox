@@ -42,6 +42,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--out", default=None, help="write the report to this file")
     parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="skip claim verification (faster, draft quality)",
+    )
+    parser.add_argument(
+        "--claims",
+        default=None,
+        help="write the claim-verification ledger (JSONL) to this file "
+        "(default with --out: the report path with a .claims.jsonl suffix)",
+    )
+    parser.add_argument(
         "--events",
         default=None,
         help="write a JSONL KPI/event log to this file (default with --out: "
@@ -65,14 +76,21 @@ def main(argv: list[str] | None = None) -> int:
         fetcher=args.fetcher,
         max_subtasks=args.max_subtasks,
         llm_timeout_s=args.llm_timeout,
+        verify=not args.no_verify,
     )
     events_path = args.events
     if events_path is None and args.out:
         events_path = str(Path(args.out).with_suffix(".events.jsonl"))
     telemetry = Telemetry(events_path) if events_path else None
+    claims_path = args.claims
+    if claims_path is None and args.out and config.verify:
+        claims_path = str(Path(args.out).with_suffix(".claims.jsonl"))
+    claims_ledger = Telemetry(claims_path) if claims_path and config.verify else None
 
     try:
-        report = pipeline.run_deep_research(args.query, config, telemetry=telemetry)
+        report = pipeline.run_deep_research(
+            args.query, config, telemetry=telemetry, claims_ledger=claims_ledger
+        )
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         if events_path:
@@ -88,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         print(markdown)
     if events_path:
         print(f"events written to {events_path}", file=sys.stderr)
+    if claims_ledger is not None:
+        print(f"claims ledger written to {claims_path}", file=sys.stderr)
     return 0
 
 

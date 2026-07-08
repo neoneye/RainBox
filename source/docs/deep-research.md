@@ -33,11 +33,28 @@ points, each call small enough for a modest local context window:
    subtask often answers another (notes are subtask-scoped and discard the
    rest). Selection + fresh notes run against the stored extracts; only if
    that also fails does the subtask stay failed.
-5. **Synthesizer** (`synthesizer.py`) — findings → executive summary + open
+5. **Verifier** (`verifier.py`, on by default; `--no-verify` skips) — the
+   gate between "cited" and "checked". Classifies each source's quality
+   tier (official/reference/encyclopedia/news/blog/marketing/tabloid, shown
+   in References), extracts the checkable claims per findings section,
+   checks every claim against the RAW extracts of the sources it cites
+   (never the notes — a compression checked against a compression lets
+   amplified errors through), runs one consistency pass across all
+   surviving claims (an entity acting before it existed, a trend stated in
+   both directions), then rewrites each section from the verdicts:
+   keep / correct / hedge / drop. Unsupported claims backed only by
+   blog/marketing/tabloid sources are dropped; a section with nothing left
+   is marked failed. Every decision lands in the claims ledger
+   (`report.claims.jsonl`, `--claims`) — the prose is the view, the ledger
+   is the audit trail.
+6. **Synthesizer** (`synthesizer.py`) — findings → executive summary + open
    questions (two plain calls). Findings sections land in the report
    verbatim; synthesis can't lose detail. A deterministic sweep then moves
    any stray interrogative lines (a model echoing its instructions as
-   prose) from findings/summary into Open questions.
+   prose) from findings/summary into Open questions, and the verifier
+   reviews each open question against the verified claims — a question a
+   verified claim already answers, or that manufactures doubt about
+   something the sources state plainly, is removed or narrowed.
 
 Sources get run-wide citation ids via `SourceRegistry`, which keeps notes
 AND raw extracts; a URL fetched for an earlier subtask is not refetched —
