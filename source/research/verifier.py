@@ -348,6 +348,16 @@ SCOPE_SOURCES = 3
 SCOPE_EXTRACT_CHAR_CAP = 2500
 
 
+class ScopeCheckModel(BaseModel):
+    verdict: Literal["supported", "unsupported", "contradicted"]
+    evidence: str = Field(description="The decisive source text, quoted.")
+    grounded_scope: str = Field(
+        default="",
+        description="Unless supported: the scope restated in one sentence "
+        "strictly from the sources.",
+    )
+
+
 def verify_scope(
     caller: Caller,
     registry: SourceRegistry,
@@ -356,9 +366,10 @@ def verify_scope(
     progress: Progress,
 ) -> str:
     """The framing layer is claims too: check the chosen scope statement
-    against the fetched corpus and correct it when the sources contradict
-    it. (A real run dropped 'released in 2017' from the body while the
-    Scope header kept asserting a 2017 film the query never asked about.)"""
+    against the fetched corpus and REPLACE it with a source-grounded
+    restatement whenever the sources don't support it. Acting only on
+    contradicted was a real bug: an 'unsupported' scope calling a real
+    film hypothetical sailed straight into the report header."""
     lines = scope_text.splitlines()
     if not lines or not lines[0].strip():
         return scope_text
@@ -379,24 +390,24 @@ def verify_scope(
         for source in sources
     ]
     result = caller.structured(
-        prompts.ENTAIL_SYSTEM,
-        f"CLAIM: {chosen}\n\n" + "\n\n".join(blocks),
-        EntailmentModel,
+        prompts.SCOPE_CHECK_SYSTEM,
+        f"SCOPE STATEMENT: {chosen}\n\n" + "\n\n".join(blocks),
+        ScopeCheckModel,
     )
-    assert isinstance(result, EntailmentModel)
-    corrected = result.corrected_claim.strip()
+    assert isinstance(result, ScopeCheckModel)
+    grounded = result.grounded_scope.strip()
     ledger.record(
         {
             "event": "scope_check",
             "scope": chosen,
             "verdict": result.verdict,
             "evidence": result.evidence,
-            "corrected": corrected,
+            "grounded": grounded,
         }
     )
-    if result.verdict == "contradicted" and corrected:
-        progress("verify", "scope corrected against sources")
-        return "\n".join([corrected] + lines[1:])
+    if result.verdict != "supported" and grounded:
+        progress("verify", "scope regrounded against sources")
+        return "\n".join([grounded] + lines[1:])
     return scope_text
 
 

@@ -51,15 +51,23 @@ points, each call small enough for a modest local context window:
    machinery never reaches the reader. The framing layer is claims too:
    the executive summary goes through the same extract/entail/rewrite gate
    (synthesis must not reintroduce dropped facts), and the chosen scope
-   statement is checked against the fetched corpus and corrected when the
-   sources contradict it — before the open-question review runs, which
-   consumes the corrected scope — a run once kept asserting a wrong film year in the
+   statement is checked against the fetched corpus and REPLACED with a
+   source-grounded restatement whenever the sources don't support it
+   (acting only on contradiction let an "unsupported" scope calling a real
+   film hypothetical reach the header) — before the open-question review
+   runs, which consumes the corrected scope — a run once kept asserting a wrong film year in the
    Scope header after the body verifier had dropped that same claim. When
    at least half the classified sources are blog/marketing/tabloid, the
    report carries a deterministic source-quality caveat under Scope. Every
    decision lands in the claims ledger (`report.claims.jsonl`, `--claims`)
    — the prose is the view, the ledger is the audit trail.
-6. **Synthesizer** (`synthesizer.py`) — findings → executive summary + open
+6. **Interpretation** — when the scope stage detects that the query asks
+   an analytical question (how does X relate to Y?), a dedicated stage
+   answers it from the verified material as an explicitly-labeled
+   "## Interpretation" section: analysis without overclaiming — never
+   presented as creators' intent or established fact. Fact retrieval alone
+   would answer such a query with "not found", which is safe but useless.
+7. **Synthesizer** (`synthesizer.py`) — findings → executive summary + open
    questions (two plain calls). Findings sections land in the report
    verbatim; synthesis can't lose detail. A deterministic sweep then moves
    any stray interrogative lines (a model echoing its instructions as

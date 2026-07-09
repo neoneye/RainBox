@@ -41,6 +41,8 @@ PROMPT_LABELS = {
     prompts.REWRITE_SYSTEM: "rewrite",
     prompts.OPENQ_REVIEW_SYSTEM: "openq_review",
     prompts.OPENQ_RESOLVE_SYSTEM: "openq_resolve",
+    prompts.SCOPE_CHECK_SYSTEM: "scope_check",
+    prompts.INTERPRET_SYSTEM: "interpret",
 }
 
 

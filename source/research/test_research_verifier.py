@@ -307,8 +307,8 @@ def test_validate_open_questions_no_bullets_is_identity():
     assert caller.calls == []
 
 
-def test_verify_scope_corrects_contradicted_framing():
-    from research.verifier import verify_scope
+def test_verify_scope_regrounds_contradicted_framing():
+    from research.verifier import ScopeCheckModel, verify_scope
 
     registry = _registry_with_source(
         url="https://example.org/film",
@@ -316,11 +316,11 @@ def test_verify_scope_corrects_contradicted_framing():
     )
     caller = FakeCaller(
         structured={
-            prompts.ENTAIL_SYSTEM: [
-                EntailmentModel(
+            prompts.SCOPE_CHECK_SYSTEM: [
+                ScopeCheckModel(
                     verdict="contradicted",
                     evidence="a 2025 supernatural horror film",
-                    corrected_claim="Obsession (2025) - the Curry Barker film.",
+                    grounded_scope="Obsession (2025) - the Curry Barker film.",
                 )
             ]
         }
@@ -340,14 +340,41 @@ def test_verify_scope_corrects_contradicted_framing():
     assert row["verdict"] == "contradicted"
 
 
-def test_verify_scope_unsupported_leaves_scope_alone():
-    from research.verifier import verify_scope
+def test_verify_scope_regrounds_unsupported_framing():
+    from research.verifier import ScopeCheckModel, verify_scope
 
-    registry = _registry_with_source(extract="text about something else")
+    registry = _registry_with_source(
+        extract="Obsession premiered at TIFF in 2025."
+    )
     caller = FakeCaller(
         structured={
-            prompts.ENTAIL_SYSTEM: [
-                EntailmentModel(verdict="unsupported", evidence="not addressed")
+            prompts.SCOPE_CHECK_SYSTEM: [
+                ScopeCheckModel(
+                    verdict="unsupported",
+                    evidence="sources describe a real 2025 film",
+                    grounded_scope="The 2025 film Obsession, which premiered at TIFF.",
+                )
+            ]
+        }
+    )
+    result = verify_scope(
+        caller,
+        registry,
+        "The (hypothetical) film Obsession scheduled for 2025.",
+        Telemetry(),
+        _noop_progress,
+    )
+    assert result == "The 2025 film Obsession, which premiered at TIFF."
+
+
+def test_verify_scope_supported_leaves_scope_alone():
+    from research.verifier import ScopeCheckModel, verify_scope
+
+    registry = _registry_with_source(extract="matching text")
+    caller = FakeCaller(
+        structured={
+            prompts.SCOPE_CHECK_SYSTEM: [
+                ScopeCheckModel(verdict="supported", evidence="matches")
             ]
         }
     )

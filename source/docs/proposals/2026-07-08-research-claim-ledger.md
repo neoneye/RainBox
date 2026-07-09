@@ -257,3 +257,34 @@ Shipped on `research-quality`:
   when the cited source doesn't contain it, even if another source does.
 - **Metaphor calibration**: literal statements and interpretive readings
   of the same thing are not contradictions.
+
+## Addendum 5: mode-aware synthesis (eighth round)
+
+The eighth reviewed run judged the verifier-hardened report "safer but
+dumber": overclaiming was down, but the scope called a real film
+"(hypothetical)" (the scope check returned `unsupported` and the old code
+acted only on `contradicted`); failed-subtask debug text sat in the final
+report; a generic background source was flagged as contradicting a
+film source; and — the central point — the query asked for interpretive
+analysis and got only "not found in sources".
+
+Shipped on `research-quality`:
+
+- **Grounded scope replacement**: any non-supported scope verdict now
+  replaces the scope with a one-sentence restatement written strictly from
+  the sources (`SCOPE_CHECK_SYSTEM`, `grounded_scope`); the scope prompt
+  additionally bans "hypothetical" framing — absence from model memory is
+  not evidence about the world.
+- **Interpretation stage**: the scope stage extracts the query's
+  `analysis_request`; when present, a dedicated stage answers it from the
+  verified material as an explicitly-labeled "## Interpretation" section
+  (never creators' intent, never fact). The planner is told not to spawn
+  subtasks that presuppose the analytical connection exists in sources.
+- **Reader-facing failure wording**: failed subtasks render as "The
+  fetched sources could not answer X; related claims remain unestablished"
+  instead of subtask debug text.
+- **Different-scope calibration**: a topic source silent on a theme does
+  not contradict a background source discussing that theme.
+- **Source-kind precision**: the summary must name sources as what they
+  are (an interview, a review) — never attribute to a script what an
+  interview said.

@@ -42,8 +42,8 @@ def test_failed_subtask_has_no_section_but_is_noted():
     markdown = _report().render_markdown()
     assert "## Regional variation" not in markdown
     assert (
-        '- Subtask "Regional variation" could not be researched: '
-        "no search results" in markdown
+        '- The fetched sources could not answer "Regional variation" '
+        "(no search results); related claims remain unestablished." in markdown
     )
 
 
@@ -103,3 +103,17 @@ def test_sweep_questions_no_questions_is_identity():
     cleaned, questions = sweep_questions(text)
     assert cleaned == text
     assert questions == []
+
+
+def test_interpretation_section_rendered_with_disclaimer():
+    report = _report()
+    report.interpretation_markdown = "The wish works like a bad prompt [1]."
+    markdown = report.render_markdown()
+    assert "## Interpretation" in markdown
+    assert "report's own reading" in markdown
+    assert "The wish works like a bad prompt [1]." in markdown
+    assert markdown.index("## Interpretation") < markdown.index("## Open questions")
+
+
+def test_no_interpretation_section_by_default():
+    assert "## Interpretation" not in _report().render_markdown()

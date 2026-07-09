@@ -17,7 +17,7 @@ import sys
 from dataclasses import asdict
 from typing import Callable
 
-from research import fetch, websearch
+from research import fetch, prompts, websearch
 from research.caller import ModelCaller
 from research.config import ResearchConfig
 from research.planner import generate_plan
@@ -30,7 +30,7 @@ from research.researcher import (
 )
 from research.scope import resolve_scope, scope_block, scope_markdown
 from research.splitter import split_plan
-from research.synthesizer import synthesize
+from research.synthesizer import _findings_body, synthesize
 from research.telemetry import Telemetry, TelemetrySearchProvider, telemetry_fetcher
 from research.verifier import (
     LOW_TIERS,
@@ -201,6 +201,22 @@ def run_deep_research(
             progress("sweep", f"moved {len(swept)} stray question(s) to Open questions")
             bullets = "\n".join(f"- {q}" for q in swept)
             open_questions = f"{open_questions}\n{bullets}".strip()
+        # Mode-aware synthesis: when the query asked an analytical question
+        # (how does X relate to Y?), fact retrieval alone doesn't answer it.
+        # The interpretation stage writes an explicitly-labeled reading from
+        # the verified material — analysis without overclaiming.
+        interpretation = ""
+        if scope.analysis_request.strip():
+            progress("interpret", "writing the interpretive analysis")
+            basis = _findings_body(results)[:16000]
+            scope_line = scope_md.splitlines()[0] if scope_md else ""
+            interpretation = caller.plain(
+                prompts.INTERPRET_SYSTEM,
+                f"QUERY:\n{query}\n\nSCOPE:\n{scope_line}\n\n"
+                f"ANALYTICAL ANGLE:\n{scope.analysis_request}\n\n"
+                f"VERIFIED MATERIAL:\n{basis}",
+            ).strip()
+
         quality_note = ""
         if cfg.verify:
             low = sum(1 for tier in tiers.values() if tier in LOW_TIERS)
@@ -218,6 +234,7 @@ def run_deep_research(
             sources=registry.all(),
             scope_markdown=scope_md,
             quality_note=quality_note,
+            interpretation_markdown=interpretation,
         )
         completed = True
         return report

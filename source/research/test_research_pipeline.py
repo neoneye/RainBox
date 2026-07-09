@@ -214,12 +214,15 @@ def test_run_deep_research_with_verification(monkeypatch, tmp_path):
             evidence="hist text says otherwise",
             corrected_claim="Hist corrected claim.",
         ),
-        # scope check: sources contradict the chosen scope
-        EntailmentModel(
+    ]
+    from research.verifier import ScopeCheckModel
+
+    caller.structured_queues[prompts.SCOPE_CHECK_SYSTEM] = [
+        ScopeCheckModel(
             verdict="contradicted",
             evidence="the sources describe lunar tides",
-            corrected_claim="Lunar tides on Earth.",
-        ),
+            grounded_scope="Lunar tides on Earth.",
+        )
     ]
     caller.structured_queues[prompts.CONSISTENCY_SYSTEM] = [
         ConsistencyModel(conflicts=[])
@@ -267,3 +270,44 @@ def test_run_deep_research_with_verification(monkeypatch, tmp_path):
         c for c in caller.calls if c[0] == prompts.OPENQ_REVIEW_SYSTEM
     )
     assert "SCOPE: Lunar tides on Earth." in review_call[1]
+
+
+def test_interpretation_stage_answers_analysis_request(monkeypatch):
+    caller = _e2e_env(monkeypatch)
+    caller.structured_queues[prompts.SCOPE_SYSTEM] = [
+        ScopeModel(
+            meanings=["ocean tides"],
+            chosen_scope="Ocean tides on Earth.",
+            excluded=[],
+            analysis_request="How do tides relate to surfing conditions?",
+        )
+    ]
+    caller.plain_queues[prompts.INTERPRET_SYSTEM] = [
+        "Read as an analogy, tides set the rhythm surf forecasts follow [1]."
+    ]
+    report = pipeline.run_deep_research(
+        "how do tides work and how do they relate to surfing?",
+        ResearchConfig(verify=False),
+        progress_cb=lambda stage, detail: None,
+    )
+    markdown = report.render_markdown()
+    assert "## Interpretation" in markdown
+    assert "tides set the rhythm surf forecasts follow [1]" in markdown
+    interpret_call = next(
+        c for c in caller.calls if c[0] == prompts.INTERPRET_SYSTEM
+    )
+    assert "ANALYTICAL ANGLE:\nHow do tides relate to surfing conditions?" in (
+        interpret_call[1]
+    )
+    assert "mech findings [1]" in interpret_call[1]  # verified material basis
+
+
+def test_no_interpretation_stage_without_analysis_request(monkeypatch):
+    caller = _e2e_env(monkeypatch)
+    report = pipeline.run_deep_research(
+        "how do tides work?",
+        ResearchConfig(verify=False),
+        progress_cb=lambda stage, detail: None,
+    )
+    assert "## Interpretation" not in report.render_markdown()
+    assert all(c[0] != prompts.INTERPRET_SYSTEM for c in caller.calls)

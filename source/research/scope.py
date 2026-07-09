@@ -26,6 +26,11 @@ class ScopeModel(BaseModel):
     excluded: list[str] = Field(
         description="Related meanings that are out of scope (at most a side note)."
     )
+    analysis_request: str = Field(
+        default="",
+        description="The analytical question the query asks beyond facts "
+        "(empty when the query only asks for facts).",
+    )
 
 
 def resolve_scope(caller: Caller, query: str) -> ScopeModel:

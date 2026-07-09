@@ -61,6 +61,9 @@ class Report:
     # Deterministic caveat when the run's sources skew low-tier — the reader
     # should know they are getting commentary synthesis, not literature.
     quality_note: str = ""
+    # Explicitly-labeled interpretive analysis answering the query's
+    # analytical angle; "" when the query asked only for facts.
+    interpretation_markdown: str = ""
 
     def render_markdown(self) -> str:
         title = " ".join(self.query.split())
@@ -74,11 +77,23 @@ class Report:
             if result.failed:
                 continue
             parts += [f"## {result.title}", "", result.findings_markdown.strip(), ""]
+        if self.interpretation_markdown.strip():
+            parts += [
+                "## Interpretation",
+                "",
+                "*This section is the report's own reading, grounded in the "
+                "sourced findings above; it is interpretation, not "
+                "established fact.*",
+                "",
+                self.interpretation_markdown.strip(),
+                "",
+            ]
         parts += ["## Open questions", "", self.open_questions_markdown.strip()]
         failures = [r for r in self.subtask_results if r.failed]
         for result in failures:
             parts.append(
-                f'- Subtask "{result.title}" could not be researched: {result.failure_note}'
+                f'- The fetched sources could not answer "{result.title}" '
+                f"({result.failure_note}); related claims remain unestablished."
             )
         parts += ["", "## References", ""]
         prose = "\n".join(parts)
