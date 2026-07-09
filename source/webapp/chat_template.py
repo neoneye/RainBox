@@ -891,8 +891,10 @@ function makeMessage(m){
   }
   // Feedback row: only on agent user-facing replies. Never on human
   // messages or diagnostic rows (debug-memory / debug-query / progress /
-  // thinking) — those aren't conversation outputs.
-  if (!isDebug && m.sender_type === 'agent' && m.kind === 'message' && !m.streaming){
+  // thinking) — those aren't conversation outputs. Not in direct rooms
+  // either: feedback rates the responder agents, and a direct chat has none
+  // (the operator steers by editing/deleting messages instead).
+  if (!currentRoomIsDirect() && !isDebug && m.sender_type === 'agent' && m.kind === 'message' && !m.streaming){
     const fb = document.createElement('div');
     fb.className = 'fb-row';
     fb.dataset.messageUuid = m.uuid;

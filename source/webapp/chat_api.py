@@ -535,6 +535,7 @@ def post_feedback(message_uuid: str) -> Response | tuple[Response, int]:
 
     Validations:
     - message must exist (404 otherwise)
+    - message must not be in a direct room (400)
     - message kind must be "message" (400)
     - sender must be an agent (400)
     - rating must be "upvote" or "downvote" (400)
@@ -543,6 +544,12 @@ def post_feedback(message_uuid: str) -> Response | tuple[Response, int]:
     msg = db.db.session.query(db.ChatMessage).filter_by(uuid=msg_uuid).first()
     if msg is None:
         abort(404, "message not found")
+    room = db.get_chatroom(msg.room_uuid)
+    # Feedback rates the responder agents; a direct room has none (the
+    # operator steers by editing/deleting messages instead). The UI hides the
+    # buttons there — reject hand-crafted requests too.
+    if room is not None and room.room_type == "direct":
+        abort(400, "feedback is not available in direct rooms")
     if msg.kind != "message":
         abort(400, "feedback can only be posted on a user-facing message row")
     sender = db.get_chat_user(msg.sender_uuid)

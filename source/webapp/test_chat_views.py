@@ -68,3 +68,10 @@ def test_direct_room_message_delete():
     body = _body()
     assert "function deleteMessage" in body
     assert "msg-delete-btn" in body
+
+
+def test_direct_room_has_no_feedback_buttons():
+    """The upvote/downvote row is gated on not being in a direct room —
+    feedback rates responder agents, and a direct chat has none."""
+    body = _body()
+    assert "!currentRoomIsDirect() && !isDebug && m.sender_type === 'agent'" in body

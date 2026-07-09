@@ -212,6 +212,20 @@ def test_edit_message_missing_message_404(client, direct_room):
     assert resp.status_code == 404
 
 
+def test_feedback_rejected_in_direct_room(client, direct_room):
+    """Feedback rates responder agents; a direct room has none, so even a
+    hand-crafted request against the model's reply is refused."""
+    test_client, app = client
+    room_uuid, _human = direct_room
+    with app.app_context():
+        msg = db.post_chat_message(room_uuid, DIRECT_CHAT_UUID, "model reply")
+        msg_uuid = msg.uuid
+    resp = test_client.post(
+        f"/chat/api/messages/{msg_uuid}/feedback", json={"rating": "upvote"}
+    )
+    assert resp.status_code == 400
+
+
 def test_settings_get_and_put(client, direct_room):
     test_client, app = client
     room_uuid, _human = direct_room
