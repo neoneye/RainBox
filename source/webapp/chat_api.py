@@ -324,11 +324,13 @@ def chat_room_message(room_uuid: str, message_id: int) -> Response:
     return jsonify(msg)
 
 
-@app.route("/chat/api/rooms/<room_uuid>/messages/<int:message_id>", methods=["PUT"])
+@app.route("/chat/api/rooms/<room_uuid>/messages/<int:message_id>",
+           methods=["PUT", "DELETE"])
 def edit_chat_room_message(room_uuid: str, message_id: int) -> Response:
-    """Edit a message's text — a direct-room-only affordance (the operator can
-    rewrite their own and the model's earlier turns to steer the conversation).
-    Refused in agent rooms; editing never triggers a model turn."""
+    """Edit (PUT) or delete (DELETE) a message — direct-room-only affordances
+    (the operator can rewrite or remove their own and the model's earlier
+    turns to steer the conversation). Refused in agent rooms; neither triggers
+    a model turn."""
     ruuid = _parse_uuid(room_uuid)
     room = db.get_chatroom(ruuid)
     if room is None:
@@ -337,6 +339,12 @@ def edit_chat_room_message(room_uuid: str, message_id: int) -> Response:
         abort(403, "messages can only be edited in direct rooms")
     if db.get_room_message(ruuid, message_id) is None:
         abort(404, "message not found")
+    if request.method == "DELETE":
+        try:
+            db.delete_chat_message(message_id)
+        except ValueError as exc:
+            abort(409, str(exc))
+        return jsonify({"id": message_id, "deleted": True})
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     if not text:

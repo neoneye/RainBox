@@ -229,6 +229,31 @@ def edit_chat_message(message_id: int, text: str) -> ChatMessage:
     return msg
 
 
+def delete_chat_message(message_id: int) -> None:
+    """Delete a message row (direct-room message deletion) and NOTIFY so open
+    tabs drop the bubble live. Reuses the deleted_progress_ids mechanism — the
+    client removes DOM nodes by id regardless of kind — with message_id=0
+    marking a pure deletion (no new message), so background rooms don't count
+    it as unread. Raises LookupError if the row is gone, ValueError on a
+    non-"message" kind or a row still streaming."""
+    msg = db.session.get(ChatMessage, message_id)
+    if msg is None:
+        raise LookupError(f"chat message {message_id} not found")
+    if msg.kind != "message":
+        raise ValueError("only kind='message' rows are deletable")
+    if msg.streaming:
+        raise ValueError("cannot delete a message that is still streaming")
+    room_uuid = msg.room_uuid
+    db.session.delete(msg)
+    db.session.flush()
+    _chat_notify(
+        room_uuid=room_uuid,
+        message_id=0,
+        deleted_progress_ids=[message_id],
+    )
+    db.session.commit()
+
+
 class ChatTreeError(ValueError):
     """A chat folder/room tree payload failed structural validation (bad uuid,
     dangling/cyclic folder ref, unknown room folderId, missing/unknown room).

@@ -168,6 +168,40 @@ def test_edit_message_rejected_in_agents_room(client, agents_room):
     assert resp.status_code == 403
 
 
+def test_delete_message_in_direct_room(client, direct_room):
+    test_client, app = client
+    room_uuid, human_uuid = direct_room
+    with app.app_context():
+        msg = db.post_chat_message(room_uuid, human_uuid, "delete me")
+        msg_id = msg.id
+    resp = test_client.delete(f"/chat/api/rooms/{room_uuid}/messages/{msg_id}")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"id": msg_id, "deleted": True}
+    with app.app_context():
+        assert db.get_room_message(room_uuid, msg_id) is None
+
+
+def test_delete_message_rejected_in_agents_room(client, agents_room):
+    test_client, app = client
+    room_uuid, human_uuid = agents_room
+    with app.app_context():
+        msg = db.post_chat_message(room_uuid, human_uuid, "not deletable")
+        msg_id = msg.id
+    resp = test_client.delete(f"/chat/api/rooms/{room_uuid}/messages/{msg_id}")
+    assert resp.status_code == 403
+    with app.app_context():
+        assert db.get_room_message(room_uuid, msg_id) is not None
+
+
+def test_delete_message_missing_message_404(client, direct_room):
+    test_client, _app = client
+    room_uuid, _human = direct_room
+    resp = test_client.delete(
+        f"/chat/api/rooms/{room_uuid}/messages/999999999"
+    )
+    assert resp.status_code == 404
+
+
 def test_edit_message_missing_message_404(client, direct_room):
     test_client, _app = client
     room_uuid, _human = direct_room

@@ -352,6 +352,7 @@ const LUCIDE_THUMBS_UP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em
 const LUCIDE_THUMBS_DOWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/></svg>';
 const LUCIDE_MORE_HORIZONTAL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>';
 const LUCIDE_PENCIL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>';
+const LUCIDE_TRASH_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
 const CHAT_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
 const CHAT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>';
 
@@ -869,8 +870,9 @@ function makeMessage(m){
   // Copy = the message's stored text, uniformly for every row (debug-assistant
   // text is now the full trace, so no per-kind special-casing).
   addCopyButton(actions, m.text);
-  // Edit (pencil): direct rooms only — the operator can rewrite their own and
-  // the model's earlier turns. Agent rooms never show it (server refuses too).
+  // Edit (pencil) + delete (trash): direct rooms only — the operator can
+  // rewrite or remove their own and the model's earlier turns. Agent rooms
+  // never show them (the server refuses too).
   if (currentRoomIsDirect() && !isDebug && m.kind === 'message' && !m.streaming){
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
@@ -879,6 +881,13 @@ function makeMessage(m){
     editBtn.innerHTML = LUCIDE_PENCIL_SVG;
     editBtn.addEventListener('click', () => startEditMessage(m, msg, body, actions));
     actions.appendChild(editBtn);
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'copy-btn msg-delete-btn';
+    delBtn.title = 'Delete message';
+    delBtn.innerHTML = LUCIDE_TRASH_SVG;
+    delBtn.addEventListener('click', () => deleteMessage(m, delBtn));
+    actions.appendChild(delBtn);
   }
   // Feedback row: only on agent user-facing replies. Never on human
   // messages or diagnostic rows (debug-memory / debug-query / progress /
@@ -974,6 +983,24 @@ function startEditMessage(m, msgEl, bodyEl, actionsEl){
       alert('Edit failed: ' + e.message);
     }
   });
+}
+
+// Delete a message from a direct room. The row is gone from the next turn's
+// history, so the model won't see it again. The DELETE's own NOTIFY also
+// reaches other open tabs (message_id 0 + the id in deleted_progress_ids),
+// so removal here is just the immediate local echo.
+async function deleteMessage(m, btn){
+  if (!window.confirm('Delete this message? This cannot be undone.')) return;
+  const room = currentRoom;
+  btn.disabled = true;
+  try {
+    const r = await fetch('/chat/api/rooms/' + room + '/messages/' + m.id, {method: 'DELETE'});
+    if (!r.ok) throw new Error('DELETE -> ' + r.status);
+    if (room === currentRoom) removeDeletedMessages([m.id]);
+  } catch (e) {
+    btn.disabled = false;
+    alert('Delete failed: ' + e.message);
+  }
 }
 
 function renderRooms(){
@@ -2149,7 +2176,11 @@ function startStream(){
         fetchNew(currentRoom);
       }
     } else {
-      unread[d.room_uuid] = (unread[d.room_uuid] || 0) + 1;
+      // message_id 0 marks a pure deletion (a direct-room message was removed,
+      // no new message) — that must not count as unread.
+      if (d.message_id){
+        unread[d.room_uuid] = (unread[d.room_uuid] || 0) + 1;
+      }
       if (document.hidden){
         deferredUnreadRender = true;
         return;

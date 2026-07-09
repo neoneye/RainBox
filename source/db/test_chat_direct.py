@@ -116,6 +116,28 @@ def test_edit_chat_message_updates_text_and_content_type(direct_room):
     assert row["content_type"] == "json"
 
 
+def test_delete_chat_message_removes_row(direct_room):
+    room_uuid, human_uuid = direct_room
+    msg = db.post_chat_message(room_uuid, human_uuid, "delete me")
+    keep = db.post_chat_message(room_uuid, human_uuid, "keep me")
+    db.delete_chat_message(msg.id)
+    ids = [r["id"] for r in db.list_room_messages(room_uuid)]
+    assert msg.id not in ids
+    assert keep.id in ids
+
+
+def test_delete_chat_message_guards(direct_room):
+    room_uuid, human_uuid = direct_room
+    with pytest.raises(LookupError):
+        db.delete_chat_message(-1)
+    thinking = db.post_chat_message(room_uuid, human_uuid, "hmm", kind="thinking")
+    with pytest.raises(ValueError):
+        db.delete_chat_message(thinking.id)
+    streaming = db.post_chat_message(room_uuid, human_uuid, "part", streaming=True)
+    with pytest.raises(ValueError):
+        db.delete_chat_message(streaming.id)
+
+
 def test_edit_chat_message_guards(direct_room):
     room_uuid, human_uuid = direct_room
     with pytest.raises(LookupError):

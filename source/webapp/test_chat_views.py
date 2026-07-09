@@ -62,3 +62,9 @@ def test_direct_room_message_edit():
     assert "msg-edit-btn" in body
     assert "function currentRoomIsDirect" in body
     assert "function putJSON" in body
+
+
+def test_direct_room_message_delete():
+    body = _body()
+    assert "function deleteMessage" in body
+    assert "msg-delete-btn" in body

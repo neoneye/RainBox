@@ -11,16 +11,16 @@ and streams its reply into the room.
 
 What it enables that agent rooms don't:
 
-- **Editable messages.** The operator can edit any earlier message — their
-  own *and* the model's — to steer the conversation. Editing is exclusive to
-  direct rooms: the server rejects edits in agent rooms.
+- **Editable and deletable messages.** The operator can edit or delete any
+  earlier message — their own *and* the model's — to steer the conversation.
+  Both are exclusive to direct rooms: the server rejects them in agent rooms.
 - **Editable system prompt, mid-conversation.** Stored per room, applied on
   the next turn.
 - **Model switching, mid-conversation.** The room stores which model it
   talks to; switching applies on the next turn.
 
 Out of scope for now (future work, listed for orientation only): forking a
-chat, deleting earlier messages, regenerate-from-edit.
+chat, regenerate-from-edit.
 
 ## Data model
 
@@ -91,6 +91,10 @@ user.
   the row's kind + `streaming:false` + text so open tabs update the bubble
   in place via the existing `applyStreamingUpdate` path — no new SSE
   machinery. Editing never triggers a model turn.
+- `DELETE /chat/api/rooms/<uuid>/messages/<int:message_id>` — delete a
+  message (same guards as edit). The NOTIFY reuses `deleted_progress_ids`
+  (the client drops DOM nodes by id regardless of kind) with `message_id: 0`
+  marking a pure deletion, so background rooms don't count it as unread.
 - `GET /chat/api/models` — the selectable models for the settings dropdown:
   every `ModelConfig` (label `provider · display_name`) and every
   `ModelConfigOverride` (label `provider · model — override`), with
@@ -112,11 +116,12 @@ docs/chat-frontend-rules.md)
   direct room that has **no model yet** auto-switches the sidebar to
   Settings for that visit (not persisted) so a fresh room is immediately
   configurable.
-- **Edit button**: in the message actions row, a pencil button — only in
-  direct rooms, only on `kind == "message"` rows that aren't streaming.
-  Clicking swaps the rendered body for a textarea with Save/Cancel; Save
-  PUTs the edit and re-renders the bubble from the returned row. Agent
-  rooms never show the button (and the server would refuse anyway).
+- **Edit + delete buttons**: in the message actions row, a pencil and a
+  trash button — only in direct rooms, only on `kind == "message"` rows that
+  aren't streaming. Edit swaps the rendered body for a textarea with
+  Save/Cancel; Save PUTs the edit and re-renders the bubble from the
+  returned row. Delete confirms, DELETEs, and drops the bubble. Agent rooms
+  never show either button (and the server would refuse anyway).
 
 All updates keep riding the single SSE stream; no new timers, no polling.
 
