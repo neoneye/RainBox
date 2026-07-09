@@ -288,3 +288,24 @@ Shipped on `research-quality`:
 - **Source-kind precision**: the summary must name sources as what they
   are (an interview, a review) — never attribute to a script what an
   interview said.
+
+## Addendum 6: degrade, don't die (ninth round, operator crash report)
+
+A live run died at synthesis: the findings body (within the 24k char cap)
+overflowed the models' context windows — one empty reply, two timeouts —
+and the fallback loop correctly declared the whole group failed, taking
+the run down after all research and verification had succeeded. The same
+run also showed the scope stage emitting "(hypothetical or upcoming)"
+despite the prompt ban.
+
+Shipped on `research-quality`:
+
+- **Synthesis degradation ladder**: full body at 24k, then
+  first-paragraphs at 12k, then 6k — only when every rung fails does the
+  model-group error propagate. The interpretation stage shrinks the same
+  way (16k/8k/4k) and, being optional content, is skipped with a progress
+  note instead of aborting.
+- **Hypothetical scrub in code**: `resolve_scope` strips hypothetical
+  framing from the chosen scope deterministically — third instance of a
+  hygiene rule migrating from prompt to Python after a small model ignored
+  it.

@@ -10,6 +10,8 @@ interpretation they got."""
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 from research import prompts
@@ -33,9 +35,25 @@ class ScopeModel(BaseModel):
     )
 
 
+# The prompt bans hypothetical framing, but small models keep emitting it
+# ("a (hypothetical or upcoming) film ..."), and a hypothetical scope poisons
+# every downstream stage. Enforced in code, like the other hygiene rules.
+_HYPOTHETICAL_PAREN_RE = re.compile(r"\(\s*hypothetical[^)]*\)\s*", re.IGNORECASE)
+_HYPOTHETICAL_WORD_RE = re.compile(
+    r"\b(?:hypothetical(?:ly)?|possibly\s+nonexistent)\s*", re.IGNORECASE
+)
+
+
+def _scrub_hypothetical(text: str) -> str:
+    cleaned = _HYPOTHETICAL_PAREN_RE.sub("", text)
+    cleaned = _HYPOTHETICAL_WORD_RE.sub("", cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
 def resolve_scope(caller: Caller, query: str) -> ScopeModel:
     result = caller.structured(prompts.SCOPE_SYSTEM, query, ScopeModel)
     assert isinstance(result, ScopeModel)
+    result.chosen_scope = _scrub_hypothetical(result.chosen_scope)
     return result
 
 

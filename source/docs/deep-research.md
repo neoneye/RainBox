@@ -13,7 +13,10 @@ Full design rationale: `docs/superpowers/specs/2026-07-07-deep-research-design.m
 Deterministic Python control flow; the LLM is called only at judgment
 points, each call small enough for a modest local context window:
 
-0. **Scope** (`scope.py`) — one structured call disambiguates the query
+0. **Scope** (`scope.py`) — one structured call disambiguates the query.
+   Hypothetical framing ("a (hypothetical or upcoming) film") is scrubbed
+   from the chosen scope in code — the prompt ban alone was ignored, and a
+   hypothetical scope poisons every downstream stage
    (many terms name a standard, a connector, a product line, and a software
    component at once): plausible meanings, a chosen scope, exclusions. The
    rendered scope block travels in the user message of every later stage so
@@ -68,7 +71,13 @@ points, each call small enough for a modest local context window:
    presented as creators' intent or established fact. Fact retrieval alone
    would answer such a query with "not found", which is safe but useless.
 7. **Synthesizer** (`synthesizer.py`) — findings → executive summary + open
-   questions (two plain calls). Findings sections land in the report
+   questions (two plain calls). Synthesis input degrades instead of
+   aborting: a body within the char cap can still overflow a small model's
+   context window (empty replies, timeouts), so failed calls retry with
+   first-paragraphs-only bodies at decreasing caps before the model-group
+   error propagates; the interpretation stage shrinks the same way and is
+   skipped entirely — with a progress note — rather than killing a
+   finished run. Findings sections land in the report
    verbatim; synthesis can't lose detail. A deterministic sweep then moves
    any stray interrogative lines (a model echoing its instructions as
    prose) from findings/summary into Open questions, and the verifier

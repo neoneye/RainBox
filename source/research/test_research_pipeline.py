@@ -311,3 +311,73 @@ def test_no_interpretation_stage_without_analysis_request(monkeypatch):
     )
     assert "## Interpretation" not in report.render_markdown()
     assert all(c[0] != prompts.INTERPRET_SYSTEM for c in caller.calls)
+
+
+class FlakyCaller(FakeCaller):
+    """Plain calls fail `failures` times before delegating to the queues —
+    simulates a model group choking on oversized prompts."""
+
+    def __init__(self, failures, structured=None, plain=None):
+        super().__init__(structured=structured, plain=plain)
+        self._failures = failures
+        self.user_prompt_sizes = []
+
+    def plain(self, system_prompt, user_prompt):
+        self.user_prompt_sizes.append(len(user_prompt))
+        if self._failures > 0:
+            self._failures -= 1
+            raise RuntimeError("all models in the research model group failed")
+        return super().plain(system_prompt, user_prompt)
+
+
+def test_synthesize_degrades_input_instead_of_aborting():
+    huge = ("word " * 40) + "\n\n" + ("x" * 30000)
+    results = [
+        SubtaskResult(subtask_id="S1", title="T", findings_markdown=huge)
+    ]
+    caller = FlakyCaller(
+        failures=1,
+        plain={
+            prompts.SYNTH_SUMMARY_SYSTEM: ["s"],
+            prompts.SYNTH_OPENQ_SYSTEM: ["o"],
+        },
+    )
+    summary, open_questions = synthesize(caller, "q", results, lambda s, d: None)
+    assert (summary, open_questions) == ("s", "o")
+    # first attempt carried the big body; the retry was materially smaller
+    assert caller.user_prompt_sizes[0] > 20000
+    assert caller.user_prompt_sizes[1] < 13000
+
+
+def test_synthesize_raises_when_all_steps_fail():
+    results = [SubtaskResult(subtask_id="S1", title="T", findings_markdown="f")]
+    caller = FlakyCaller(failures=99)
+    with pytest.raises(RuntimeError, match="all models"):
+        synthesize(caller, "q", results, lambda s, d: None)
+
+
+def test_interpretation_failure_skips_instead_of_aborting(monkeypatch):
+    caller = _e2e_env(monkeypatch)
+    caller.structured_queues[prompts.SCOPE_SYSTEM] = [
+        ScopeModel(
+            meanings=["m"],
+            chosen_scope="Ocean tides on Earth.",
+            excluded=[],
+            analysis_request="How do tides relate to surfing?",
+        )
+    ]
+    original_plain = caller.plain
+
+    def flaky_plain(system_prompt, user_prompt):
+        if system_prompt == prompts.INTERPRET_SYSTEM:
+            raise RuntimeError("all models in the research model group failed")
+        return original_plain(system_prompt, user_prompt)
+
+    monkeypatch.setattr(caller, "plain", flaky_plain)
+    report = pipeline.run_deep_research(
+        "how do tides work?",
+        ResearchConfig(verify=False),
+        progress_cb=lambda stage, detail: None,
+    )
+    assert "## Interpretation" not in report.render_markdown()
+    assert "summary [1][2]" in report.render_markdown()

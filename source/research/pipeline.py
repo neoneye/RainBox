@@ -208,14 +208,25 @@ def run_deep_research(
         interpretation = ""
         if scope.analysis_request.strip():
             progress("interpret", "writing the interpretive analysis")
-            basis = _findings_body(results)[:16000]
             scope_line = scope_md.splitlines()[0] if scope_md else ""
-            interpretation = caller.plain(
-                prompts.INTERPRET_SYSTEM,
-                f"QUERY:\n{query}\n\nSCOPE:\n{scope_line}\n\n"
-                f"ANALYTICAL ANGLE:\n{scope.analysis_request}\n\n"
-                f"VERIFIED MATERIAL:\n{basis}",
-            ).strip()
+            for cap in (16000, 8000, 4000):
+                basis = _findings_body(results)[:cap]
+                try:
+                    interpretation = caller.plain(
+                        prompts.INTERPRET_SYSTEM,
+                        f"QUERY:\n{query}\n\nSCOPE:\n{scope_line}\n\n"
+                        f"ANALYTICAL ANGLE:\n{scope.analysis_request}\n\n"
+                        f"VERIFIED MATERIAL:\n{basis}",
+                    ).strip()
+                    break
+                except RuntimeError:
+                    progress(
+                        "interpret", f"retrying with smaller material ({cap} chars)"
+                    )
+            else:
+                # Interpretation is optional content — a model that cannot
+                # produce it must not kill an otherwise finished run.
+                progress("interpret", "skipped: model could not produce it")
 
         quality_note = ""
         if cfg.verify:

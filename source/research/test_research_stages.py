@@ -125,3 +125,38 @@ def test_generate_plan_includes_scope_block():
     user_prompt = caller.calls[0][1]
     assert user_prompt.startswith("the query")
     assert "SCOPE: X" in user_prompt
+
+
+def test_resolve_scope_scrubs_hypothetical_framing():
+    from research.scope import ScopeModel, resolve_scope
+
+    caller = FakeCaller(
+        structured={
+            prompts.SCOPE_SYSTEM: [
+                ScopeModel(
+                    meanings=["a film"],
+                    chosen_scope=(
+                        "Obsession 2025 – a (hypothetical or upcoming) film "
+                        "titled *Obsession 2025*"
+                    ),
+                    excluded=[],
+                )
+            ]
+        }
+    )
+    scope = resolve_scope(caller, "analyze the Obsession 2025 movie")
+    assert scope.chosen_scope == (
+        "Obsession 2025 – a film titled *Obsession 2025*"
+    )
+
+
+def test_resolve_scope_scrubs_bare_hypothetical_word():
+    from research.scope import _scrub_hypothetical
+
+    assert _scrub_hypothetical("A hypothetical device from 1990.") == (
+        "A device from 1990."
+    )
+    assert _scrub_hypothetical("A possibly nonexistent standard.") == (
+        "A standard."
+    )
+    assert _scrub_hypothetical("No framing here.") == "No framing here."
