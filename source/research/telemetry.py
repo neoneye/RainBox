@@ -40,6 +40,7 @@ PROMPT_LABELS = {
     prompts.CONSISTENCY_SYSTEM: "consistency",
     prompts.REWRITE_SYSTEM: "rewrite",
     prompts.OPENQ_REVIEW_SYSTEM: "openq_review",
+    prompts.OPENQ_RESOLVE_SYSTEM: "openq_resolve",
 }
 
 

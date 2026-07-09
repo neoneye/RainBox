@@ -229,3 +229,31 @@ Shipped on the `research-quality` branch:
 - **Source-quality caveat**: when at least half the classified sources are
   blog/marketing/tabloid, the report carries a deterministic note that it
   synthesizes commentary, not literature.
+
+## Addendum 4: modes, resolution, and machinery hygiene (seventh round)
+
+The seventh reviewed run (Obsession again, on the framing-layer fixes)
+confirmed the scope correction works and exposed the next layer: the
+corrected scope never reached the open-question review (ordering bug — it
+ran last); actor names present in source [1] were declared unavailable;
+a critic's rogue-LLM reading was stated as plot fact; a citation decorated
+a sentence its source doesn't contain; and `[HEDGE (weak support): ...]`
+lines leaked into prose despite the prompt.
+
+Shipped on `research-quality`:
+
+- **Ordering**: scope verification runs right after the body gate; the
+  open-question review consumes the corrected scope.
+- **Claim modes** (fact / interpretation / commentary): a supported
+  interpretation gets action `attribute` — it may appear only as "one
+  commentary reads X as ...", never as fact.
+- **Open-question resolution**: surviving questions are checked against
+  the run's own corpus; answerable ones become "Resolved: ..." bullets
+  (`open_question_resolution` ledger rows).
+- **Deterministic leak stripper**: echoed action lines and inline
+  [HEDGE/KEEP/...] markers are removed in code after every rewrite —
+  asking nicely demonstrably wasn't enough.
+- **Citation routing**: entailment explicitly rules a claim unsupported
+  when the cited source doesn't contain it, even if another source does.
+- **Metaphor calibration**: literal statements and interpretive readings
+  of the same thing are not contradictions.

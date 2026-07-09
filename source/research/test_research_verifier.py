@@ -57,7 +57,14 @@ def test_supported_claim_keeps_section_untouched():
     verified, stats, _tiers = verify_findings(
         caller, registry, [result], _noop_progress, Telemetry()
     )
-    assert stats == {"claims": 1, "keep": 1, "correct": 0, "hedge": 0, "drop": 0}
+    assert stats == {
+        "claims": 1,
+        "keep": 1,
+        "correct": 0,
+        "attribute": 0,
+        "hedge": 0,
+        "drop": 0,
+    }
     assert verified == ["The school opened in 1948."]
     assert result.findings_markdown == "The school opened in 1948 [1]."  # no rewrite
     assert registry.all()[0].tier == "encyclopedia"
@@ -448,3 +455,115 @@ def test_verify_text_no_claims_is_identity():
         )
         == text
     )
+
+
+def test_strip_action_leakage():
+    from research.verifier import _strip_action_leakage
+
+    text = (
+        "Real prose stays [1].\n"
+        "- HEDGE (weak support): Nikki telegraphs interest.\n"
+        "[KEEP: Bear wishes for love.]\n"
+        "CLAIM ACTIONS:\n"
+        "Prose with inline [HEDGE (weak support): marker] survives cleaned [2]."
+    )
+    cleaned = _strip_action_leakage(text)
+    assert "HEDGE" not in cleaned
+    assert "KEEP" not in cleaned
+    assert "CLAIM ACTIONS" not in cleaned
+    assert "Real prose stays [1]." in cleaned
+    assert "Prose with inline survives cleaned [2]." in cleaned
+
+
+def test_supported_interpretation_gets_attributed():
+    registry = _registry_with_source(
+        extract="A critic reads Wish Nikki as a rogue LLM."
+    )
+    result = _ok_result("Wish Nikki is a rogue LLM [1].")
+    caller = FakeCaller(
+        structured={
+            prompts.TIER_SYSTEM: [TierModel(tier="blog", reason="commentary")],
+            prompts.CLAIMS_SYSTEM: [
+                ClaimListModel(
+                    claims=[
+                        ClaimModel(
+                            text="Wish Nikki is a rogue LLM.",
+                            type="other",
+                            source_ids=[1],
+                            mode="interpretation",
+                        )
+                    ]
+                )
+            ],
+            prompts.ENTAIL_SYSTEM: [
+                EntailmentModel(
+                    verdict="supported",
+                    evidence="A critic reads Wish Nikki as a rogue LLM.",
+                )
+            ],
+        },
+        plain={
+            prompts.REWRITE_SYSTEM: [
+                "One commentary reads Wish Nikki as analogous to a rogue LLM [1]."
+            ]
+        },
+    )
+    ledger = Telemetry()
+    verified, stats, _tiers = verify_findings(
+        caller, registry, [result], _noop_progress, ledger
+    )
+    assert stats["attribute"] == 1
+    assert result.findings_markdown == (
+        "One commentary reads Wish Nikki as analogous to a rogue LLM [1]."
+    )
+    assert verified == ["One source interprets: Wish Nikki is a rogue LLM."]
+    row = next(e for e in ledger.events if e["event"] == "claim")
+    assert row["action"] == "attribute"
+
+
+def test_resolve_open_questions_answers_from_corpus():
+    from research.verifier import OpenQuestionAnswer, resolve_open_questions
+
+    registry = _registry_with_source(
+        url="https://example.org/wiki",
+        extract="Michael Johnston plays Bear and Inde Navarrette plays Nikki.",
+    )
+    caller = FakeCaller(
+        structured={
+            prompts.OPENQ_RESOLVE_SYSTEM: [
+                OpenQuestionAnswer(
+                    answered=True,
+                    answer="Michael Johnston plays Bear; Inde Navarrette plays Nikki [1].",
+                ),
+                OpenQuestionAnswer(answered=False),
+            ]
+        }
+    )
+    ledger = Telemetry()
+    result = resolve_open_questions(
+        caller,
+        registry,
+        "- Who plays Bear and Nikki?\n- What was the production budget?",
+        ledger,
+        _noop_progress,
+    )
+    assert result == (
+        "- Resolved: Michael Johnston plays Bear; Inde Navarrette plays Nikki [1].\n"
+        "- What was the production budget?"
+    )
+    rows = [e for e in ledger.events if e["event"] == "open_question_resolution"]
+    assert [r["answered"] for r in rows] == [True, False]
+
+
+def test_resolve_open_questions_no_corpus_is_identity():
+    from research.verifier import resolve_open_questions
+
+    caller = FakeCaller()
+    text = "- Who plays Bear?"
+    assert (
+        resolve_open_questions(
+            caller, SourceRegistry(), text, Telemetry(), _noop_progress
+        )
+        == text
+    )
+    assert caller.calls == []

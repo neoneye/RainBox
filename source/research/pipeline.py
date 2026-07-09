@@ -34,6 +34,7 @@ from research.synthesizer import synthesize
 from research.telemetry import Telemetry, TelemetrySearchProvider, telemetry_fetcher
 from research.verifier import (
     LOW_TIERS,
+    resolve_open_questions,
     validate_open_questions,
     verify_findings,
     verify_scope,
@@ -141,11 +142,16 @@ def run_deep_research(
         # events are recorded.
         verified_texts: list[str] = []
         tiers: dict[int, str] = {}
+        scope_md = scope_markdown(scope)
         if cfg.verify:
             verified_texts, verify_stats, tiers = verify_findings(
                 caller, registry, results, progress, ledger
             )
             tel.record({"event": "verify", **verify_stats})
+            # Correct the framing BEFORE anything downstream consumes it —
+            # a corrected scope that the open-question review never sees is
+            # a corrected scope in name only.
+            scope_md = verify_scope(caller, registry, scope_md, ledger, progress)
 
         for subtask, result in zip(subtasks, results):
             tel.record(
@@ -184,17 +190,19 @@ def run_deep_research(
                     "No summary claims survived verification; "
                     "see the findings sections."
                 )
+            framing = [f"SCOPE: {scope_md.splitlines()[0]}"] if scope_md else []
             open_questions = validate_open_questions(
-                caller, verified_texts, open_questions, ledger, progress
+                caller, framing + verified_texts, open_questions, ledger, progress
+            )
+            open_questions = resolve_open_questions(
+                caller, registry, open_questions, ledger, progress
             )
         if swept:
             progress("sweep", f"moved {len(swept)} stray question(s) to Open questions")
             bullets = "\n".join(f"- {q}" for q in swept)
             open_questions = f"{open_questions}\n{bullets}".strip()
-        scope_md = scope_markdown(scope)
         quality_note = ""
         if cfg.verify:
-            scope_md = verify_scope(caller, registry, scope_md, ledger, progress)
             low = sum(1 for tier in tiers.values() if tier in LOW_TIERS)
             if tiers and low * 2 >= len(tiers):
                 quality_note = (

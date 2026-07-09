@@ -44,11 +44,16 @@ points, each call small enough for a modest local context window:
    both directions), then rewrites each section from the verdicts:
    keep / correct / hedge / drop. Unsupported claims backed only by
    blog/marketing/tabloid sources are dropped; a section with nothing left
-   is marked failed. The framing layer is claims too: the executive
-   summary goes through the same extract/entail/rewrite gate (synthesis
-   must not reintroduce dropped facts), and the chosen scope statement is
-   checked against the fetched corpus and corrected when the sources
-   contradict it — a run once kept asserting a wrong film year in the
+   is marked failed. Claims carry a **mode**: a supported interpretation
+   (a critic's reading, an analogy) may appear only in attributed form
+   ("one commentary reads X as ..."), never stated as fact. Echoed
+   claim-action lines are stripped from rewrites in code — verifier
+   machinery never reaches the reader. The framing layer is claims too:
+   the executive summary goes through the same extract/entail/rewrite gate
+   (synthesis must not reintroduce dropped facts), and the chosen scope
+   statement is checked against the fetched corpus and corrected when the
+   sources contradict it — before the open-question review runs, which
+   consumes the corrected scope — a run once kept asserting a wrong film year in the
    Scope header after the body verifier had dropped that same claim. When
    at least half the classified sources are blog/marketing/tabloid, the
    report carries a deterministic source-quality caveat under Scope. Every
@@ -59,9 +64,12 @@ points, each call small enough for a modest local context window:
    verbatim; synthesis can't lose detail. A deterministic sweep then moves
    any stray interrogative lines (a model echoing its instructions as
    prose) from findings/summary into Open questions, and the verifier
-   reviews each open question against the verified claims — a question a
-   verified claim already answers, or that manufactures doubt about
-   something the sources state plainly, is removed or narrowed.
+   reviews each open question against the corrected scope and verified
+   claims — a question a verified claim already answers, or that
+   manufactures doubt about something the sources state plainly, is
+   removed or narrowed — and then tries to ANSWER the survivors from the
+   run's own corpus: a question whose answer sits in an already-fetched
+   page becomes a "Resolved: ..." bullet instead of a false gap.
 
 Sources get run-wide citation ids via `SourceRegistry`, which keeps notes
 AND raw extracts; a URL fetched for an earlier subtask is not refetched —

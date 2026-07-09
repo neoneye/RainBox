@@ -262,3 +262,8 @@ def test_run_deep_research_with_verification(monkeypatch, tmp_path):
     assert "*Most sources in this run are blogs" in markdown
     actions = {row["text"]: row["action"] for row in rows if row["event"] == "claim"}
     assert actions == {"Mech claim.": "keep", "Hist claim.": "correct"}
+    # the open-question review consumed the CORRECTED scope, not the original
+    review_call = next(
+        c for c in caller.calls if c[0] == prompts.OPENQ_REVIEW_SYSTEM
+    )
+    assert "SCOPE: Lunar tides on Earth." in review_call[1]

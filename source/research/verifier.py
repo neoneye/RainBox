@@ -58,6 +58,11 @@ class ClaimModel(BaseModel):
     text: str = Field(description="The claim as one self-contained sentence.")
     type: str = Field(description="date | number | name | event | causal | other")
     source_ids: list[int] = Field(description="The bracketed source numbers it cites.")
+    mode: Literal["fact", "interpretation", "commentary"] = Field(
+        default="fact",
+        description="fact: stated as true of the subject; interpretation: a "
+        "source's reading/analogy/opinion; commentary: about reception.",
+    )
 
 
 class ClaimListModel(BaseModel):
@@ -171,7 +176,14 @@ def verify_findings(
 
     _apply_consistency(caller, checked, ledger, progress)
 
-    stats = {"claims": len(checked), "keep": 0, "correct": 0, "hedge": 0, "drop": 0}
+    stats = {
+        "claims": len(checked),
+        "keep": 0,
+        "correct": 0,
+        "attribute": 0,
+        "hedge": 0,
+        "drop": 0,
+    }
     for verified in checked:
         stats[verified.action] += 1
         ledger.record(
@@ -193,6 +205,10 @@ def verify_findings(
 
     verified_texts = [
         v.final_text() for v in checked if v.action in ("keep", "correct")
+    ] + [
+        f"One source interprets: {v.final_text()}"
+        for v in checked
+        if v.action == "attribute"
     ]
     progress(
         "verify",
@@ -234,6 +250,11 @@ def _claim_action(
     claim: ClaimModel, entail: EntailmentModel, tiers: dict[int, str]
 ) -> str:
     if entail.verdict == "supported":
+        # A supported interpretation is a source's reading, not a fact --
+        # it may appear only in attributed form ("one commentary reads X
+        # as ..."), never stated flatly.
+        if claim.mode == "interpretation":
+            return "attribute"
         return "keep"
     if entail.verdict == "contradicted":
         return "correct" if entail.corrected_claim.strip() else "drop"
@@ -253,7 +274,7 @@ def _apply_consistency(
     """Cross-claim contradiction pass over the survivors; conflicting pairs
     are demoted to hedge so the rewrite presents them as a conflict instead
     of stating both as fact."""
-    survivors = [v for v in checked if v.action in ("keep", "correct")]
+    survivors = [v for v in checked if v.action in ("keep", "correct", "attribute")]
     if len(survivors) < 2:
         return
     progress("verify", f"consistency pass over {len(survivors)} claims")
@@ -302,6 +323,8 @@ def _rewrite_sections(
                     f"- CORRECT: {verified.claim.text} -> "
                     f"{verified.entail.corrected_claim.strip()}"
                 )
+            elif verified.action == "attribute":
+                lines.append(f"- ATTRIBUTE: {verified.claim.text}")
             elif verified.action == "hedge":
                 reason = verified.conflict_reason or "weak support"
                 lines.append(f"- HEDGE ({reason}): {verified.claim.text}")
@@ -310,7 +333,9 @@ def _rewrite_sections(
         user_prompt = (
             f"{result.findings_markdown}\n\nCLAIM ACTIONS:\n" + "\n".join(lines)
         )
-        rewritten = caller.plain(prompts.REWRITE_SYSTEM, user_prompt).strip()
+        rewritten = _strip_action_leakage(
+            caller.plain(prompts.REWRITE_SYSTEM, user_prompt).strip()
+        )
         if not rewritten or rewritten == NOTHING_VERIFIED:
             result.findings_markdown = ""
             result.failed = True
@@ -422,6 +447,9 @@ def verify_text(
             lines.append(
                 f"- CORRECT: {claim.text} -> {entail.corrected_claim.strip()}"
             )
+        elif action == "attribute":
+            all_keep = False
+            lines.append(f"- ATTRIBUTE: {claim.text}")
         elif action == "hedge":
             all_keep = False
             lines.append(f"- HEDGE (weak support): {claim.text}")
@@ -430,9 +458,11 @@ def verify_text(
             lines.append(f"- DROP: {claim.text}")
     if all_keep:
         return text
-    rewritten = caller.plain(
-        prompts.REWRITE_SYSTEM, f"{text}\n\nCLAIM ACTIONS:\n" + "\n".join(lines)
-    ).strip()
+    rewritten = _strip_action_leakage(
+        caller.plain(
+            prompts.REWRITE_SYSTEM, f"{text}\n\nCLAIM ACTIONS:\n" + "\n".join(lines)
+        ).strip()
+    )
     if not rewritten or rewritten == NOTHING_VERIFIED:
         return ""
     return rewritten
@@ -487,4 +517,96 @@ def validate_open_questions(
                 "reason": decision.reason if decision else "",
             }
         )
+    return "\n".join(f"- {q}" for q in kept)
+
+
+_ACTION_LINE_RE = re.compile(r"^\[?(KEEP|HEDGE|CORRECT|DROP|ATTRIBUTE)\s*[:(]")
+_ACTION_INLINE_RE = re.compile(r"\s*\[(KEEP|HEDGE|CORRECT|DROP|ATTRIBUTE)[^\]]*\]")
+
+
+def _strip_action_leakage(text: str) -> str:
+    """Deterministic guard: rewrite models sometimes echo the claim-action
+    lines into their output despite the prompt. Verifier machinery must not
+    reach the reader, so echoed action lines and inline [HEDGE ...] markers
+    are stripped in code, not by asking nicely."""
+    kept: list[str] = []
+    for line in text.splitlines():
+        core = line.strip().lstrip("-*").strip()
+        if _ACTION_LINE_RE.match(core) or core.startswith("CLAIM ACTIONS"):
+            continue
+        kept.append(_ACTION_INLINE_RE.sub("", line))
+    return "\n".join(kept).strip()
+
+
+class OpenQuestionAnswer(BaseModel):
+    answered: bool
+    answer: str = ""
+
+
+RESOLVE_SOURCES = 3
+RESOLVE_EXTRACT_CHAR_CAP = 2500
+RESOLVE_MAX_QUESTIONS = 8
+
+
+def resolve_open_questions(
+    caller: Caller,
+    registry: SourceRegistry,
+    open_questions_markdown: str,
+    ledger: Telemetry,
+    progress: Progress,
+) -> str:
+    """Try to answer surviving open questions from the run's own corpus —
+    a real run declared actor names unavailable while its first source
+    listed them. An answered question becomes a Resolved bullet instead of
+    a false gap."""
+    questions = [
+        _BULLET_RE.sub("", line).strip()
+        for line in open_questions_markdown.splitlines()
+        if _BULLET_RE.match(line)
+    ]
+    if not questions:
+        return open_questions_markdown
+    sources = sorted(
+        (s for s in registry.all() if s.id in registry.extracts),
+        key=lambda s: len(registry.extracts[s.id]),
+        reverse=True,
+    )[:RESOLVE_SOURCES]
+    if not sources:
+        return open_questions_markdown
+    blocks = "\n\n".join(
+        prompts.wrap_source_block(
+            source.id,
+            source.url,
+            registry.extracts[source.id][:RESOLVE_EXTRACT_CHAR_CAP],
+        )
+        for source in sources
+    )
+    kept: list[str] = []
+    resolved = 0
+    for i, question in enumerate(questions):
+        if i >= RESOLVE_MAX_QUESTIONS:
+            kept.append(question)
+            continue
+        result = caller.structured(
+            prompts.OPENQ_RESOLVE_SYSTEM,
+            f"QUESTION: {question}\n\n{blocks}",
+            OpenQuestionAnswer,
+        )
+        assert isinstance(result, OpenQuestionAnswer)
+        answered = result.answered and bool(result.answer.strip())
+        ledger.record(
+            {
+                "event": "open_question_resolution",
+                "question": question,
+                "answered": answered,
+                "answer": result.answer.strip(),
+            }
+        )
+        if answered:
+            resolved += 1
+            kept.append(f"Resolved: {result.answer.strip()}")
+        else:
+            kept.append(question)
+    if resolved:
+        progress("verify", f"resolved {resolved} open question(s) from the corpus")
     return "\n".join(f"- {q}" for q in kept)
