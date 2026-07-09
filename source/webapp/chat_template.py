@@ -94,6 +94,9 @@ CHAT_TEMPLATE: str = """
   .ui-modal input[type=text]{width:100%;box-sizing:border-box;padding:0.5em;border:1px solid #ccc;
                                border-radius:6px;font:inherit}
   .ui-modal .agents{display:flex;flex-direction:column;gap:0.25em;margin:0.6em 0;max-height:30vh;overflow:auto}
+  /* class-level display:flex beats the UA [hidden] rule; make hidden win (the
+     agent picker is hidden while "Direct LLM chat" is the chosen room type) */
+  .ui-modal .agents[hidden]{display:none}
   .ui-modal .agents .lbl{color:#888;font-size:0.75rem;margin-bottom:0.1em}
   .ui-modal .agents label{font-size:0.85rem;color:#333;display:flex;align-items:center;gap:0.4em}
 
@@ -115,6 +118,26 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .stat{display:flex;justify-content:space-between;padding:0.35em 0;font-size:0.9rem;border-bottom:1px solid #eee}
   .rename-room{font-size:0.78rem;font-weight:500;color:#6c757d;background:none;border:1px solid #ccc;border-radius:6px;padding:0.2em 0.7em;cursor:pointer}
   .rename-room:hover{color:#1a1a2e;border-color:#1a1a2e}
+
+  /* Direct-room Settings sidebar (model picker + system prompt). */
+  .room-sidebar .ds-label{display:block;margin:0.8em 0 0.25em;font-size:0.78rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em}
+  .room-sidebar select.ds-model{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;padding:0.3em;border:1px solid #ccc;border-radius:6px;background:#fff}
+  .room-sidebar textarea.ds-prompt{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;line-height:1.4;padding:0.4em;border:1px solid #ccc;border-radius:6px;resize:vertical;min-height:12em}
+  .room-sidebar .ds-save{margin-top:0.8em;padding:0.4em 1em;font:inherit;font-size:0.85rem;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
+  .room-sidebar .ds-save:hover{background:#1d4ed8}
+  .room-sidebar .ds-save:disabled{background:#9db4e8;cursor:default}
+  .room-sidebar .ds-note{color:#888;font-size:0.85rem}
+
+  /* In-place message editing (direct rooms only). */
+  .msg-edit-area{width:100%;box-sizing:border-box;font:inherit;font-size:0.95rem;line-height:1.4;padding:0.4em;border:1px solid #2563eb;border-radius:6px;resize:vertical;min-height:6em}
+  .msg-edit-actions{display:flex;gap:0.4em;margin-top:0.4em}
+  .msg-edit-actions .btn-save-edit{padding:0.3em 0.9em;font:inherit;font-size:0.85rem;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
+  .msg-edit-actions .btn-save-edit:disabled{background:#9db4e8;cursor:default}
+  .msg-edit-actions .btn-cancel-edit{padding:0.3em 0.9em;font:inherit;font-size:0.85rem;border:1px solid #ccc;border-radius:6px;background:#fff;color:#374151;cursor:pointer}
+
+  /* Room-type choice in the new-room modal. */
+  .ui-modal .room-type-choices{display:flex;gap:1.2em;margin:0.6em 0 0.2em}
+  .ui-modal .room-type-choices label{font-size:0.85rem;color:#333;display:flex;align-items:center;gap:0.4em}
 
   .chat-log{flex:1 1 auto;overflow:auto;padding:1em;display:flex;flex-direction:column;gap:1.1em}
   /* Deep-link target flash (e.g. /assistant "open in chat"). */
@@ -241,6 +264,7 @@ CHAT_TEMPLATE: str = """
         <option value="hidden">Sidebar: off</option>
         <option value="members">Members</option>
         <option value="stats">Stats</option>
+        <option value="settings">Settings</option>
       </select>
     </div>
     <div class="chat-log" id="chat-log"></div>
@@ -283,7 +307,11 @@ CHAT_TEMPLATE: str = """
   <div class="ui-modal" id="chat-room-modal" hidden>
     <h3>New chatroom</h3>
     <input type="text" id="chat-room-input" placeholder="Room name" autocomplete="off">
-    <div class="agents">
+    <div class="room-type-choices">
+      <label><input type="radio" name="chat-room-type" value="agents" checked> Agents room</label>
+      <label><input type="radio" name="chat-room-type" value="direct"> Direct LLM chat</label>
+    </div>
+    <div class="agents" id="chat-room-agents">
       <span class="lbl">Add agents</span>
       <div id="agent-list"></div>
     </div>
@@ -323,10 +351,11 @@ const LUCIDE_COPY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" hei
 const LUCIDE_THUMBS_UP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/><path d="M7 10v12"/></svg>';
 const LUCIDE_THUMBS_DOWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/></svg>';
 const LUCIDE_MORE_HORIZONTAL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>';
+const LUCIDE_PENCIL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>';
 const CHAT_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
 const CHAT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>';
 
-let rooms = [];                 // [{uuid, name, member_count, last_message_id}]
+let rooms = [];                 // [{uuid, name, member_count, last_message_id, room_type, model_uuid}]
 let folders = [];               // [{id, name, parentId}]
 let treeVersion = null;         // optimistic-concurrency token from /chat/api/tree
 let dragNode = null;            // {type:'folder'|'room', id} during a drag
@@ -367,10 +396,10 @@ let deferredUnreadRender = false;
 let deferredDeletedMessageIds = new Set();
 let agentsLoaded = false;
 const SIDEBAR_MODE_KEY = 'chat.sidebarMode';
-let sidebarMode = 'hidden';     // 'hidden' | 'members' | 'stats'
+let sidebarMode = 'hidden';     // 'hidden' | 'members' | 'stats' | 'settings'
 try {
   const saved = localStorage.getItem(SIDEBAR_MODE_KEY);
-  if (saved === 'hidden' || saved === 'members' || saved === 'stats') sidebarMode = saved;
+  if (saved === 'hidden' || saved === 'members' || saved === 'stats' || saved === 'settings') sidebarMode = saved;
 } catch (e) {}
 sidebarModeSel.value = sidebarMode;
 
@@ -455,6 +484,23 @@ async function postJSON(url, body){
   });
   if (!r.ok) throw new Error(url + ' -> ' + r.status);
   return r.json();
+}
+async function putJSON(url, body){
+  const r = await fetch(url, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(url + ' -> ' + r.status);
+  return r.json();
+}
+// The open room's row from the tree payload (carries room_type + model_uuid).
+function currentRoomObj(){
+  return rooms.find(r => r.uuid === currentRoom) || null;
+}
+function currentRoomIsDirect(){
+  const r = currentRoomObj();
+  return !!(r && r.room_type === 'direct');
 }
 
 // Send an up/down rating on a single agent message. The button row's data
@@ -823,6 +869,17 @@ function makeMessage(m){
   // Copy = the message's stored text, uniformly for every row (debug-assistant
   // text is now the full trace, so no per-kind special-casing).
   addCopyButton(actions, m.text);
+  // Edit (pencil): direct rooms only — the operator can rewrite their own and
+  // the model's earlier turns. Agent rooms never show it (server refuses too).
+  if (currentRoomIsDirect() && !isDebug && m.kind === 'message' && !m.streaming){
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'copy-btn msg-edit-btn';
+    editBtn.title = 'Edit message';
+    editBtn.innerHTML = LUCIDE_PENCIL_SVG;
+    editBtn.addEventListener('click', () => startEditMessage(m, msg, body, actions));
+    actions.appendChild(editBtn);
+  }
   // Feedback row: only on agent user-facing replies. Never on human
   // messages or diagnostic rows (debug-memory / debug-query / progress /
   // thinking) — those aren't conversation outputs.
@@ -873,6 +930,50 @@ function makeMessage(m){
     toggleBottom.addEventListener('click', toggle);
   }
   return msg;
+}
+
+// Swap a message bubble's rendered body for an edit textarea with Save/Cancel.
+// Save PUTs the new text (direct rooms only, enforced server-side) and
+// re-renders the bubble from the server's updated row; Cancel re-renders the
+// original. Both paths rebuild the node via upsertMessage, so no partial DOM
+// state can linger.
+function startEditMessage(m, msgEl, bodyEl, actionsEl){
+  const room = currentRoom;
+  bodyEl.style.display = 'none';
+  actionsEl.style.display = 'none';
+  const ta = document.createElement('textarea');
+  ta.className = 'msg-edit-area';
+  ta.value = m.text;
+  const row = document.createElement('div');
+  row.className = 'msg-edit-actions';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn-save-edit';
+  save.textContent = 'Save';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn-cancel-edit';
+  cancel.textContent = 'Cancel';
+  row.appendChild(save);
+  row.appendChild(cancel);
+  msgEl.insertBefore(ta, bodyEl);
+  msgEl.insertBefore(row, bodyEl);
+  ta.focus();
+  cancel.addEventListener('click', () => {
+    if (room === currentRoom) upsertMessage(m);
+  });
+  save.addEventListener('click', async () => {
+    const text = ta.value.trim();
+    if (!text){ ta.focus(); return; }
+    save.disabled = true;
+    try {
+      const updated = await putJSON('/chat/api/rooms/' + room + '/messages/' + m.id, { text });
+      if (room === currentRoom) upsertMessage(updated);
+    } catch (e) {
+      save.disabled = false;
+      alert('Edit failed: ' + e.message);
+    }
+  });
 }
 
 function renderRooms(){
@@ -1588,6 +1689,13 @@ async function selectRoom(uuid, scrollMsgId){
   renderRooms();
   const room = rooms.find(r => r.uuid === uuid);
   titleNameEl.value = room ? room.name : '';
+  // A direct room with no model can't reply — surface its Settings panel for
+  // this visit (not persisted to localStorage) so a fresh room is immediately
+  // configurable.
+  if (room && room.room_type === 'direct' && !room.model_uuid && sidebarMode === 'hidden'){
+    sidebarMode = 'settings';
+    sidebarModeSel.value = 'settings';
+  }
   log.innerHTML = '';
   input.focus();
   const msgs = await getJSON('/chat/api/rooms/' + uuid + '/messages?after=0');
@@ -1689,7 +1797,7 @@ titleNameEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter'){ e.preventDefault(); doRenameRoom(); }
 });
 
-// Right sidebar: hidden / members / stats.
+// Right sidebar: hidden / members / stats / settings.
 async function renderSidebar(){
   if (sidebarMode === 'hidden' || !currentRoom){
     splitEl.classList.remove('sidebar-open');
@@ -1699,6 +1807,82 @@ async function renderSidebar(){
   splitEl.classList.add('sidebar-open');
   if (sidebarMode === 'members') await renderMembers();
   else if (sidebarMode === 'stats') renderStats();
+  else if (sidebarMode === 'settings') await renderDirectSettings();
+}
+
+// Settings panel for a direct room: which model it talks to + its system
+// prompt. Both apply from the next turn on. Fetched on open (user activity,
+// not polling). For agents rooms it just explains itself.
+async function renderDirectSettings(){
+  const room = currentRoom;
+  sidebarEl.innerHTML = '';
+  const h = document.createElement('h3');
+  h.className = 'sidebar-title';
+  h.textContent = 'Settings';
+  sidebarEl.appendChild(h);
+  if (!currentRoomIsDirect()){
+    const note = document.createElement('p');
+    note.className = 'ds-note';
+    note.textContent = 'Settings are only available in direct LLM chats.';
+    sidebarEl.appendChild(note);
+    return;
+  }
+  let settings, models;
+  try {
+    [settings, models] = await Promise.all([
+      getJSON('/chat/api/rooms/' + room + '/settings'),
+      getJSON('/chat/api/models'),
+    ]);
+  } catch (_) { return; }
+  if (room !== currentRoom || sidebarMode !== 'settings') return;  // changed while loading
+  const modelLabel = document.createElement('span');
+  modelLabel.className = 'ds-label';
+  modelLabel.textContent = 'Model';
+  sidebarEl.appendChild(modelLabel);
+  const sel = document.createElement('select');
+  sel.className = 'ds-model';
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = '(no model)';
+  sel.appendChild(none);
+  models.forEach(mm => {
+    const opt = document.createElement('option');
+    opt.value = mm.uuid;
+    opt.textContent = mm.label + (mm.available ? '' : ' (unavailable)');
+    sel.appendChild(opt);
+  });
+  sel.value = settings.model_uuid || '';
+  sidebarEl.appendChild(sel);
+  const promptLabel = document.createElement('span');
+  promptLabel.className = 'ds-label';
+  promptLabel.textContent = 'System prompt';
+  sidebarEl.appendChild(promptLabel);
+  const ta = document.createElement('textarea');
+  ta.className = 'ds-prompt';
+  ta.placeholder = 'Empty = no system message';
+  ta.value = settings.system_prompt || '';
+  sidebarEl.appendChild(ta);
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'ds-save';
+  save.textContent = 'Save';
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      await putJSON('/chat/api/rooms/' + room + '/settings', {
+        system_prompt: ta.value,
+        model_uuid: sel.value || null,
+      });
+      const r = rooms.find(x => x.uuid === room);
+      if (r) r.model_uuid = sel.value || null;
+      chatToast('Settings saved — applies from the next reply.');
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+    } finally {
+      save.disabled = false;
+    }
+  });
+  sidebarEl.appendChild(save);
 }
 
 async function renderMembers(){
@@ -1845,11 +2029,25 @@ async function loadAgents(){
 }
 
 // ---- new chatroom modal ----
+function selectedRoomType(){
+  const checked = document.querySelector('input[name="chat-room-type"]:checked');
+  return checked ? checked.value : 'agents';
+}
+// A direct room's members are fixed (operator + the model responder), so the
+// agent picker only applies to agents rooms.
+function syncRoomTypeUI(){
+  document.getElementById('chat-room-agents').hidden = (selectedRoomType() === 'direct');
+}
+document.querySelectorAll('input[name="chat-room-type"]').forEach(radio => {
+  radio.addEventListener('change', syncRoomTypeUI);
+});
 async function openRoomModal(){
   const input = document.getElementById('chat-room-input');
   input.value = '';
   if (!agentsLoaded) await loadAgents();
   agentListEl.querySelectorAll('input:checked').forEach(cb => { cb.checked = false; });
+  document.querySelector('input[name="chat-room-type"][value="agents"]').checked = true;
+  syncRoomTypeUI();
   document.getElementById('chat-room-create').disabled = true;
   document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('chat-room-modal').hidden = false;
@@ -1863,9 +2061,11 @@ async function confirmRoomModal(){
   const input = document.getElementById('chat-room-input');
   const name = input.value.trim();
   if (!name){ input.focus(); return; }
-  const member_uuids = Array.from(agentListEl.querySelectorAll('input:checked')).map(cb => cb.value);
+  const room_type = selectedRoomType();
+  const member_uuids = room_type === 'direct' ? []
+    : Array.from(agentListEl.querySelectorAll('input:checked')).map(cb => cb.value);
   try {
-    const res = await postJSON('/chat/api/rooms', { name, member_uuids });
+    const res = await postJSON('/chat/api/rooms', { name, member_uuids, room_type });
     closeRoomModal();
     await loadRooms(res.uuid);
   } catch (err) {

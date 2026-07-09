@@ -58,6 +58,7 @@ EDIT_DOCUMENT_V4_UUID: UUID = UUID("3c1e5a9b-2d4f-4e6a-8b7c-9d0e1f2a3b5c")
 EDIT_DOCUMENT_V5_UUID: UUID = UUID("a20fff6b-afbc-48cb-b35a-b090f7088b39")
 EDIT_DOCUMENT_V6_UUID: UUID = UUID("4bf3271f-a58f-4dd0-a07f-b85dac906cd0")
 MCP_UUID: UUID = UUID("828ae65d-a902-4b4e-bcd3-f761afe23d29")
+DIRECT_CHAT_UUID: UUID = UUID("7c2f0d5e-8b4a-4c3d-9e6f-1a2b3c4d5e6f")
 ASSISTANT_UUID: UUID = UUID("cad11db6-a8e6-4cdd-a37e-a98bbc53e74d")
 ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25")
 
@@ -173,6 +174,11 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": EDIT_DOCUMENT_V6_UUID,
         "requires_structured_output": True,
         "description": "sixth sibling of edit_document: same two-op schema as v5 plus a leading `reasoning` field that asks the model to think out loud (10-20 words) before emitting patches",
+        "next": None,
+    },
+    "direct_chat": {
+        "uuid": DIRECT_CHAT_UUID,
+        "description": "one-to-one operator<->model chat for room_type='direct' rooms: full history as chat messages, one plain-text completion, model + system prompt from the room's own settings (no model group)",
         "next": None,
     },
     "mcp": {
