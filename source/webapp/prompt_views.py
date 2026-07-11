@@ -31,6 +31,8 @@ PROMPT_TEMPLATE = """
 <!doctype html>
 <title>Prompt &mdash; rainbox</title>
 <link rel="stylesheet" href="/static/ui-modal.css">
+<!-- CodeMirror 5: markdown-highlighted editor with line numbers + soft wrap. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
   .muted{color:#6b7280;font-size:0.85rem}
@@ -88,10 +90,15 @@ PROMPT_TEMPLATE = """
   #prompt-save-state{margin-left:auto}
   #prompt-editor{flex:1;display:flex;flex-direction:column;min-height:0}
   #prompt-editor[hidden]{display:none}
-  #prompt-content{flex:1;min-height:16em;width:100%;box-sizing:border-box;resize:none;
-    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.88rem;
-    line-height:1.45;padding:10px;border:1px solid #d1d5db;border-radius:6px;overflow:auto}
-  #prompt-content:focus{outline:2px solid #93c5fd;outline-offset:-1px}
+  /* The CodeMirror editor replaces the (hidden) #prompt-content textarea. */
+  #prompt-editor .CodeMirror{flex:1;height:auto;min-height:16em;border:1px solid #d1d5db;border-radius:6px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.88rem;line-height:1.45}
+  #prompt-editor .CodeMirror-focused{outline:2px solid #93c5fd;outline-offset:-1px}
+  #prompt-editor .CodeMirror-lines{padding:10px 0}
+  #prompt-editor .CodeMirror-placeholder{color:#9ca3af}
+  /* A muted return symbol marks every HARD line end; a break without it is a
+     soft word-wrap (wrapped continuation rows also carry no line number). */
+  #prompt-editor .CodeMirror pre.CodeMirror-line::after{content:"⏎";color:#c7cdd6}
   /* Diff view: unified-diff lines in a monospace scroll box. */
   #prompt-diff{flex:1;min-height:0;overflow:auto;border:1px solid #d1d5db;border-radius:6px;
     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.85rem;line-height:1.45;background:#fff}
@@ -208,6 +215,10 @@ PROMPT_TEMPLATE = """
 </div>
 
 <div class="prompt-toast" id="prompt-toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/xml/xml.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/markdown/markdown.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/display/placeholder.min.js"></script>
 <script src="/static/prompt.js?v={{ prompt_js_v }}"></script>
 """
 

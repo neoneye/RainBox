@@ -227,8 +227,34 @@ function promptSaveDescription(){
   promptSave();
 }
 
-// ---- editor pane (selected prompt: based-on line, toolbar, textarea, diff) ----
-let promptEditorUuid = null;   // uuid whose content the textarea currently holds
+// ---- editor pane (selected prompt: based-on line, toolbar, editor, diff) ----
+// The editor is CodeMirror (markdown highlighting, line numbers, soft wrap)
+// over the hidden #prompt-content textarea; these wrappers are the only place
+// the rest of the page touches it.
+let promptCM = null;
+let promptCMSetting = false;   // true while setValue runs (suppresses the change hook)
+function promptInitEditor(){
+  promptCM = CodeMirror.fromTextArea(document.getElementById('prompt-content'), {
+    mode: 'markdown',
+    lineNumbers: true,
+    lineWrapping: true,
+    placeholder: 'Write the system prompt here…',
+  });
+  promptCM.on('change', () => { if (!promptCMSetting) promptContentEdited(); });
+}
+function promptEditorValue(){ return promptCM.getValue(); }
+function promptEditorSet(value){
+  promptCMSetting = true;
+  promptCM.setValue(value);
+  promptCMSetting = false;
+}
+function promptEditorReadOnly(ro){ promptCM.setOption('readOnly', ro ? 'nocursor' : false); }
+function promptEditorVisible(show){
+  promptCM.getWrapperElement().style.display = show ? '' : 'none';
+  if (show) promptCM.refresh();  // re-measure after being hidden
+}
+
+let promptEditorUuid = null;   // uuid whose content the editor currently holds
 let promptDiffOpen = false;
 function promptRenderEditor(){
   const el = document.getElementById('prompt-editor');
@@ -240,6 +266,7 @@ function promptRenderEditor(){
     return;
   }
   el.hidden = false;
+  promptCM.refresh();  // re-measure: the pane may have been display:none until now
   // Based-on line: link to the parent version (in-page selection), or a muted
   // "(none)" / "(deleted)" when there is no navigable parent.
   const basedOn = document.getElementById('prompt-based-on');
@@ -276,16 +303,15 @@ function promptRenderDates(p){
   document.getElementById('prompt-dates').textContent = parts.join(' · ');
 }
 function promptApplyDiffVisibility(){
-  document.getElementById('prompt-content').hidden = promptDiffOpen;
+  promptEditorVisible(!promptDiffOpen);
   document.getElementById('prompt-diff').hidden = !promptDiffOpen;
   document.getElementById('prompt-diff-against').hidden = !promptDiffOpen;
   document.getElementById('prompt-diff-btn').textContent =
     promptDiffOpen ? 'Back to editor' : 'Diff against parent';
 }
 async function promptLoadContent(uuid){
-  const ta = document.getElementById('prompt-content');
-  ta.value = '';
-  ta.disabled = true;
+  promptEditorSet('');
+  promptEditorReadOnly(true);
   let d = null;
   try {
     const r = await fetch('/prompt/api/prompts/' + encodeURIComponent(uuid));
@@ -296,11 +322,11 @@ async function promptLoadContent(uuid){
     // A just-created prompt may not have hit the DB yet (the tree save is
     // in flight); its content is empty by construction, so an empty editor
     // is correct either way.
-    ta.disabled = false;
+    promptEditorReadOnly(false);
     return;
   }
-  ta.value = d.content || '';
-  ta.disabled = false;
+  promptEditorSet(d.content || '');
+  promptEditorReadOnly(false);
   document.getElementById('prompt-save-state').textContent = '';
   // Backfill server-assigned timestamps onto the local tree row (a client-side
   // created row has none until now) and refresh the dates line.
@@ -320,8 +346,7 @@ function promptSetSaveState(text){
 }
 function promptContentEdited(){
   if (!promptEditorUuid) return;
-  promptContentPending = {uuid: promptEditorUuid,
-                          content: document.getElementById('prompt-content').value};
+  promptContentPending = {uuid: promptEditorUuid, content: promptEditorValue()};
   promptSetSaveState('Saving…');
   clearTimeout(promptContentTimer);
   promptContentTimer = setTimeout(promptContentPush, 600);
@@ -1061,7 +1086,7 @@ function promptDismissIfClean(){ if (!promptOpenModalDirty()) promptCloseOpenMod
 
 // ---- wiring + initial paint ----
 promptInitTreeDnD();
-document.getElementById('prompt-content').addEventListener('input', promptContentEdited);
+promptInitEditor();
 document.getElementById('prompt-folder-input').addEventListener('input', () => {
   document.getElementById('prompt-folder-create').disabled =
     document.getElementById('prompt-folder-input').value.trim() === '';

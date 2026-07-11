@@ -44,6 +44,18 @@ def test_js_has_core_markers():
         assert marker in b, f"missing JS marker: {marker}"
 
 
+def test_editor_is_codemirror():
+    """The content editor is CodeMirror: markdown highlighting, line numbers,
+    soft wrap, and a hard-line-end symbol so soft wraps are identifiable."""
+    b = _body()
+    assert "codemirror" in b            # CDN css/js pulled in
+    assert "mode/markdown/markdown" in b
+    assert "function promptInitEditor" in b
+    assert "lineNumbers: true" in b
+    assert "lineWrapping: true" in b
+    assert 'content:"⏎"' in app.test_client().get("/prompt").get_data(as_text=True)
+
+
 def test_new_chat_button():
     """"New chat" creates a direct /chat room linked to the open prompt
     version and navigates to it."""
