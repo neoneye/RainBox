@@ -29,7 +29,7 @@ def _prompt_js_version() -> int:
 
 PROMPT_TEMPLATE = """
 <!doctype html>
-<title>Prompts &mdash; rainbox</title>
+<title>Prompt &mdash; rainbox</title>
 <link rel="stylesheet" href="/static/ui-modal.css">
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}

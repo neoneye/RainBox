@@ -119,7 +119,7 @@ NAV_TEMPLATE = """
           onclick="this.closest('.pp-nav').classList.toggle('pp-open')">&#9776;</button>
   <div class="pp-links">
     <a href="{{ url_for('chat_page') }}" class="{{ 'pp-active' if request.endpoint == 'chat_page' }}">Chat</a>
-    <a href="{{ url_for('prompt_page') }}" class="{{ 'pp-active' if request.endpoint == 'prompt_page' }}">Prompts</a>
+    <a href="{{ url_for('prompt_page') }}" class="{{ 'pp-active' if request.endpoint == 'prompt_page' }}">Prompt</a>
     <a href="{{ url_for('conversation_page') }}" class="{{ 'pp-active' if request.endpoint == 'conversation_page' }}">Conversations</a>
     <a href="{{ url_for('cron_page') }}" class="{{ 'pp-active' if request.endpoint == 'cron_page' }}">Cron</a>
     <a href="{{ url_for('kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'kanban_page' }}">Kanban</a>

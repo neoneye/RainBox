@@ -24,7 +24,7 @@ def test_prompt_page_renders_with_nav():
 
 def test_nav_has_prompts_link():
     body = app.test_client().get("/prompt").get_data(as_text=True)
-    assert ">Prompts<" in body
+    assert ">Prompt<" in body
     assert "pp-active" in body
 
 

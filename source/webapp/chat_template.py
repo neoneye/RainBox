@@ -345,7 +345,7 @@ CHAT_TEMPLATE: str = """
     <h3>Choose system prompt</h3>
     <div class="prompt-pick-tree" id="chat-prompt-tree"></div>
     <p class="prompt-pick-hint">Stored prompts are managed on the
-      <a href="/prompt" target="_blank">Prompts</a> page. Click one to link it
+      <a href="/prompt" target="_blank">Prompt</a> page. Click one to link it
       to this chat; its current content is used from the next reply on.</p>
     <div class="modal-actions">
       <button type="button" class="btn-cancel" id="chat-prompt-cancel">Cancel</button>
@@ -1950,11 +1950,11 @@ async function renderDirectSettings(){
       a.target = '_blank';
       if (linked.exists){
         a.textContent = linked.name || 'stored prompt';
-        a.title = 'Open this prompt on the Prompts page';
+        a.title = 'Open this prompt on the Prompt page';
       } else {
         a.textContent = '(deleted prompt)';
         a.className = 'gone';
-        a.title = 'The linked version was deleted on the Prompts page; no system message is sent.';
+        a.title = 'The linked version was deleted on the Prompt page; no system message is sent.';
       }
       modeRow.appendChild(a);
       const change = document.createElement('button');
@@ -2242,7 +2242,7 @@ function renderPromptPicker(folders, prompts){
   const treeEl = document.getElementById('chat-prompt-tree');
   if (!folders.length && !prompts.length){
     treeEl.innerHTML = '<div class="prompt-pick-empty">No stored prompts yet — ' +
-      'create some on the <a href="/prompt" target="_blank">Prompts</a> page.</div>';
+      'create some on the <a href="/prompt" target="_blank">Prompt</a> page.</div>';
     return;
   }
   const childFolders = pid => folders.filter(f => (f.parentId || null) === pid);
