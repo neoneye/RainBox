@@ -72,7 +72,12 @@ PROMPT_TEMPLATE = """
   .prompt-menu .item.danger{color:#b91c1c}
   .prompt-pane-title{font-weight:600;font-size:1.1rem;margin-bottom:8px}
   #prompt-node-rename{margin:8px 0;display:flex;gap:6px}
-  #prompt-node-rename input{font:inherit;padding:4px 6px;flex:0 1 26em;min-width:10em}
+  #prompt-node-rename input{font:inherit;padding:4px 6px;flex:0 1 26em;min-width:10em;
+    border:1px solid #ccc;border-radius:6px}
+  #prompt-node-rename input:focus{border-color:#2563eb;outline:none}
+  #prompt-node-rename button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:0.3em 0.8em;font:inherit;font-size:0.85rem;cursor:pointer}
+  #prompt-node-rename button:hover{border-color:#2563eb;color:#2563eb}
   #prompt-folder-desc{margin:8px 0;display:flex;gap:6px;align-items:center}
   .prompt-table{border-collapse:collapse;width:100%;font-size:0.9rem}
   .prompt-table th,.prompt-table td{text-align:left;padding:6px 10px;border-bottom:1px solid #eee;vertical-align:top}
