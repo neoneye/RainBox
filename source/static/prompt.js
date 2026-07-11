@@ -131,7 +131,7 @@ function promptRenderContents(){
   // depth-first and depth-indented, mirroring the left tree.
   const nodes = promptFlattenTree(promptSelectedFolder);
   if (!nodes.length){
-    tb.innerHTML = '<tr><td colspan="5"><i>' +
+    tb.innerHTML = '<tr><td colspan="4"><i>' +
       (promptSelectedFolder === null ? 'no prompts yet' : 'empty folder') + '</i></td></tr>';
     return;
   }
@@ -139,17 +139,20 @@ function promptRenderContents(){
     const pad = 9 + item.depth * 20;  // indent the name cell by nesting depth, like the tree
     const tr = document.createElement('tr');
     if (item.kind === 'folder'){
+      // Folder rows carry the tree's folder icon in the Name cell; that (plus
+      // the empty Based on/Updated cells) is what marks them as folders.
       const f = item.node;
       tr.innerHTML =
-        '<td class="prompt-name-cell" style="padding-left:' + pad + 'px">' + promptEscapeHtml(f.name) + '</td>' +
-        '<td>Folder</td><td></td><td></td>' +
+        '<td class="prompt-name-cell" style="padding-left:' + pad + 'px">' +
+        '<span class="prompt-ficon">' + PROMPT_ICON_FOLDER + '</span>' + promptEscapeHtml(f.name) + '</td>' +
+        '<td></td><td></td>' +
         '<td><a href="#" class="row-open">Open</a></td>';
       tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); promptSelectFolder(f.id); });
     } else {
       const p = item.node;
       tr.innerHTML =
         '<td class="prompt-name-cell" style="padding-left:' + pad + 'px">' + promptEscapeHtml(p.name) + '</td>' +
-        '<td>Prompt</td><td>' + promptEscapeHtml(promptBasedOnLabel(p)) + '</td>' +
+        '<td>' + promptEscapeHtml(promptBasedOnLabel(p)) + '</td>' +
         '<td>' + promptShortDate(p.updated_at) + '</td>' +
         '<td><a href="#" class="row-open">Open</a></td>';
       tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); promptSelectItem(p.uuid); });

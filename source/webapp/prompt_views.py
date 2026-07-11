@@ -75,6 +75,9 @@ PROMPT_TEMPLATE = """
   .prompt-table{border-collapse:collapse;width:100%;font-size:0.9rem}
   .prompt-table th,.prompt-table td{text-align:left;padding:6px 10px;border-bottom:1px solid #eee;vertical-align:top}
   .prompt-name-cell{white-space:nowrap}
+  /* Folder rows carry the tree's folder icon in the Name cell (there is no
+     Type column); align it with the text baseline. */
+  .prompt-name-cell .prompt-ficon{vertical-align:text-bottom;margin-right:4px}
   /* Editor pane: based-on line, toolbar, then the monospace textarea filling the pane. */
   .prompt-meta{margin:2px 0 8px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
   .prompt-toolbar{margin:0 0 8px;display:flex;gap:6px;align-items:center}
@@ -139,7 +142,7 @@ PROMPT_TEMPLATE = """
     <div id="prompt-folder-desc" hidden></div>
     <div class="prompt-table-wrap" id="prompt-table-wrap">
       <table class="prompt-table">
-        <thead><tr><th>Name</th><th>Type</th><th>Based on</th><th>Updated</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Based on</th><th>Updated</th><th></th></tr></thead>
         <tbody id="prompt-rows"></tbody>
       </table>
     </div>
