@@ -57,6 +57,8 @@ from db import (
     ModelConfigOverride,
     ModelGroup,
     ModelGroupMember,
+    Prompt,
+    PromptFolder,
     SeedMemoryKb,
     RetrievalEvent,
     WorkspaceShellState,
@@ -117,6 +119,7 @@ NAV_TEMPLATE = """
           onclick="this.closest('.pp-nav').classList.toggle('pp-open')">&#9776;</button>
   <div class="pp-links">
     <a href="{{ url_for('chat_page') }}" class="{{ 'pp-active' if request.endpoint == 'chat_page' }}">Chat</a>
+    <a href="{{ url_for('prompt_page') }}" class="{{ 'pp-active' if request.endpoint == 'prompt_page' }}">Prompt</a>
     <a href="{{ url_for('conversation_page') }}" class="{{ 'pp-active' if request.endpoint == 'conversation_page' }}">Conversations</a>
     <a href="{{ url_for('cron_page') }}" class="{{ 'pp-active' if request.endpoint == 'cron_page' }}">Cron</a>
     <a href="{{ url_for('kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'kanban_page' }}">Kanban</a>
@@ -878,6 +881,63 @@ class GitRepoView(ModelView):
 
 admin.add_view(GitFolderView(GitFolder, db, category="Git"))
 admin.add_view(GitRepoView(GitRepo, db, category="Git"))
+
+
+# System prompt tables backing the /prompt page (folder tree + versioned
+# prompts, where each row is one version linked to the one it was cloned from).
+def _prompt_open_link(view, context, model, name):
+    """Virtual column linking to the /prompt page deep-linked to this node, so
+    an operator can jump from the admin row straight to the folder/prompt there."""
+    return Markup(f'<a href="/prompt?id={escape(model.uuid)}">inspect ↗</a>')
+
+
+def _prompt_folder_label(view, context, model, name):
+    """Render a folder-uuid column (a prompt's `folder_uuid` or a folder's
+    `parent_uuid`) as a truncated uuid (full on hover) with the folder's name
+    below. Plain columns (no FK), so look the folder up by uuid."""
+    fid = getattr(model, name)
+    if not fid:
+        return ""
+    full = str(fid)
+    short = Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
+    folder = db.session.query(PromptFolder).filter_by(uuid=fid).first()
+    return Markup(f"{short}<br>{escape(folder.name)}") if folder else short
+
+
+class PromptFolderView(ModelView):
+    column_list = (
+        "prompt_link", "position", "uuid", "name", "description", "parent_uuid",
+        "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"prompt_link": "Prompt page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "parent_uuid": _prompt_folder_label,
+        "prompt_link": _prompt_open_link,
+    }
+
+
+class PromptView(ModelView):
+    column_list = (
+        "prompt_link", "position", "uuid", "name", "parent_uuid", "folder_uuid",
+        "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"prompt_link": "Prompt page",
+                     "parent_uuid": "Based on (version)"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "parent_uuid": _fmt_short_uuid,
+        "folder_uuid": _prompt_folder_label,
+        "prompt_link": _prompt_open_link,
+    }
+
+
+admin.add_view(PromptFolderView(PromptFolder, db, category="Prompt"))
+admin.add_view(PromptView(Prompt, db, category="Prompt"))
 
 
 # Kanban tables backing the /kanban page (boards + columns + tasks + the

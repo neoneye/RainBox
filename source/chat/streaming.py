@@ -15,11 +15,35 @@ be unit-tested with fakes and no live Postgres.
 ChatResponse, covering both the OpenAI-compat shape (reasoning_content/reasoning
 + content on raw.choices[0].delta) and the native Ollama shape (thinking_delta
 in additional_kwargs + chunk.delta). Mirrors llm.stream_test_streaming.
+
+`decode_byte_escape_runs` repairs a model-output artifact: byte-fallback
+tokenizers (Gemma family and friends) sometimes emit rare glyphs as the literal
+notation '<0xE2><0x96><0xA8>' instead of the character itself. The writer
+applies it once at finish() — a run can be split across stream deltas, so
+per-delta decoding would misfire on partial runs.
 """
 
+import re
 import time
 from collections.abc import Callable
 from typing import Any
+
+_BYTE_ESCAPE = re.compile(r"<0x([0-9A-Fa-f]{2})>")
+_BYTE_ESCAPE_RUN = re.compile(r"(?:<0x[0-9A-Fa-f]{2}>)+")
+
+
+def decode_byte_escape_runs(text: str) -> str:
+    """Collapse literal byte-fallback notation into the characters it spells:
+    '<0xE2><0x96><0xA8>' becomes '▨'. Only runs that decode to valid UTF-8 are
+    replaced; anything else stays verbatim, so prose that merely mentions a
+    malformed escape is untouched."""
+    def _decode(m: re.Match) -> str:
+        raw = bytes(int(h, 16) for h in _BYTE_ESCAPE.findall(m.group(0)))
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return m.group(0)
+    return _BYTE_ESCAPE_RUN.sub(_decode, text)
 
 # create(kind, streaming) -> new message id ; update(message_id, text, streaming)
 CreateRow = Callable[[str, bool], int]
@@ -120,6 +144,11 @@ class StreamingReplyWriter:
             if self.answer_id is None and final_answer:
                 self.answer_id = self._create("message", True)
             self._answer_text = final_answer
+        # Settle-time repair: literal byte-fallback notation the model emitted
+        # for rare glyphs becomes the real characters (may flash raw while
+        # streaming; the final flush below persists the clean text).
+        self._reasoning_text = decode_byte_escape_runs(self._reasoning_text)
+        self._answer_text = decode_byte_escape_runs(self._answer_text)
         # A streaming flag is always written on the last update so the row is
         # marked complete even if its text didn't change since the last flush.
         if self.reasoning_id is not None:

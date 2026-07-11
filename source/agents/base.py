@@ -149,6 +149,12 @@ class Agent:
             except Exception as e:
                 msg = f"{type(e).__name__}: {e}"
                 logger.exception("agent %s: handle failed for journal %s", self.name, journal_id)
+                # A DB error inside handle() leaves the session's transaction
+                # aborted; without a rollback the journal_update below would
+                # raise PendingRollbackError and kill the whole supervisor,
+                # stranding the item at 'processing' (and any streaming rows
+                # open). Clear it so the failure is always journaled.
+                db.db.session.rollback()
                 failed_result: dict[str, Any] = {"error": msg}
                 # Preserve the dynamic return address on failure too, so a
                 # conversation turn that errors still routes back to its manager.

@@ -181,6 +181,27 @@ def test_delete_message_in_direct_room(client, direct_room):
         assert db.get_room_message(room_uuid, msg_id) is None
 
 
+def test_delete_notice_message_in_direct_room(client, direct_room):
+    """Non-'message' kinds (e.g. the 'no model selected' notice) are
+    deletable too — the operator can clear the whole transcript."""
+    test_client, app = client
+    room_uuid, _human = direct_room
+    with app.app_context():
+        from agents.config import DIRECT_CHAT_UUID
+        notice = db.post_chat_message(
+            room_uuid, DIRECT_CHAT_UUID, "No model selected.", kind="notice"
+        )
+        notice_id = notice.id
+        _drain_direct_inbox()
+    resp = test_client.delete(
+        f"/chat/api/rooms/{room_uuid}/messages/{notice_id}"
+    )
+    assert resp.status_code == 200
+    assert resp.get_json() == {"id": notice_id, "deleted": True}
+    with app.app_context():
+        assert db.get_room_message(room_uuid, notice_id) is None
+
+
 def test_delete_message_rejected_in_agents_room(client, agents_room):
     test_client, app = client
     room_uuid, human_uuid = agents_room
@@ -233,6 +254,7 @@ def test_settings_get_and_put(client, direct_room):
     assert resp.status_code == 200
     assert resp.get_json() == {
         "room_type": "direct", "system_prompt": "", "model_uuid": None,
+        "prompt_uuid": None, "prompt_name": None, "prompt_exists": None,
     }
     with app.app_context():
         cfg = db.create_model_config(f"direct-test-model-{uuid4().hex[:6]}", {})
@@ -258,6 +280,60 @@ def test_settings_get_and_put(client, direct_room):
                 db.ModelConfig.uuid == cfg_uuid
             ).delete()
             db.db.session.commit()
+
+
+def test_settings_prompt_link_flow(client, direct_room):
+    test_client, app = client
+    room_uuid, _human = direct_room
+    with app.app_context():
+        from db.models import Prompt
+        row = Prompt(uuid=uuid4(), name="Pirate", content="Arr.")
+        db.db.session.add(row)
+        db.db.session.commit()
+        prompt_uuid = row.uuid
+    try:
+        # Link the stored prompt; the GET shape carries name + existence so
+        # the sidebar can label the link without a second request.
+        resp = test_client.put(
+            f"/chat/api/rooms/{room_uuid}/settings",
+            json={"prompt_uuid": str(prompt_uuid)},
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["prompt_uuid"] == str(prompt_uuid)
+        assert body["prompt_name"] == "Pirate"
+        assert body["prompt_exists"] is True
+        # Deleting the linked version: reported, not an error.
+        with app.app_context():
+            from db.models import Prompt
+            db.db.session.query(Prompt).filter(
+                Prompt.uuid == prompt_uuid).delete()
+            db.db.session.commit()
+        body = test_client.get(f"/chat/api/rooms/{room_uuid}/settings").get_json()
+        assert body["prompt_uuid"] == str(prompt_uuid)
+        assert body["prompt_exists"] is False
+        assert body["prompt_name"] is None
+        # Unlink.
+        resp = test_client.put(
+            f"/chat/api/rooms/{room_uuid}/settings", json={"prompt_uuid": None}
+        )
+        assert resp.get_json()["prompt_uuid"] is None
+    finally:
+        with app.app_context():
+            from db.models import Prompt
+            db.db.session.query(Prompt).filter(
+                Prompt.uuid == prompt_uuid).delete()
+            db.db.session.commit()
+
+
+def test_settings_put_rejects_unknown_prompt(client, direct_room):
+    test_client, _app = client
+    room_uuid, _human = direct_room
+    resp = test_client.put(
+        f"/chat/api/rooms/{room_uuid}/settings",
+        json={"prompt_uuid": str(uuid4())},
+    )
+    assert resp.status_code == 400
 
 
 def test_settings_put_rejects_agents_room(client, agents_room):

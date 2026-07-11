@@ -56,6 +56,20 @@ def test_direct_room_settings_sidebar():
     assert "ds-model" in body
 
 
+def test_direct_room_prompt_picker():
+    """The Settings sidebar links a room to a stored /prompt version via a
+    modal showing the prompt folder tree."""
+    body = _body()
+    assert 'id="chat-prompt-modal"' in body
+    assert 'id="chat-prompt-tree"' in body
+    assert "function openPromptPicker" in body
+    assert "function renderPromptPicker" in body
+    assert "/prompt/api/tree" in body
+    assert "ds-prompt-mode" in body
+    assert "Choose stored prompt" in body
+    assert "Unlink" in body
+
+
 def test_direct_room_message_edit():
     body = _body()
     assert "function startEditMessage" in body

@@ -589,6 +589,11 @@ class Chatroom(db.Model):
     # column, no FK (house style). Null = no model chosen, room can't reply.
     system_prompt: Mapped[str] = mapped_column(Text, default="")
     model_uuid: Mapped[UUID | None] = mapped_column(default=None)
+    # Optional link to a stored system prompt version (prompt.uuid, managed on
+    # the /prompt page). When set it overrides system_prompt: each turn reads
+    # that version's content fresh (deleted version = no system message).
+    # Null = the room's free-text system_prompt applies. Plain col, no FK.
+    prompt_uuid: Mapped[UUID | None] = mapped_column(default=None)
     # Left-panel folder placement (mirrors cron's folder tree). null = top level;
     # plain col, no FK (house style — app-side validation). `position` orders
     # rooms within their folder (or among top-level rooms).
@@ -1348,6 +1353,48 @@ class GitRepo(db.Model):
         onupdate=lambda: datetime.now(UTC),
     )
     __table_args__ = (Index("git_repo_in_folder", "folder_uuid", "position"),)
+
+
+class PromptFolder(db.Model):
+    __tablename__ = "prompt_folder"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")  # notes about the child nodes
+    parent_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = root; plain col, no FK
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("prompt_folder_children", "parent_uuid", "position"),)
+
+
+class Prompt(db.Model):
+    """One version of a system prompt. A prompt's history is its ancestor
+    chain: cloning is the only way to make a new version, and the clone's
+    parent_uuid points at the row it was copied from (null = a lineage root).
+    parent_uuid may dangle after a delete — the UI degrades to "(deleted)"."""
+
+    __tablename__ = "prompt"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")
+    content: Mapped[str] = mapped_column(Text, default="")  # the system prompt text
+    parent_uuid: Mapped[UUID | None] = mapped_column(default=None)  # cloned-from version; plain col, no FK
+    folder_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = unfiled at root; plain col, no FK
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("prompt_in_folder", "folder_uuid", "position"),)
 
 
 def psycopg_dsn() -> str:

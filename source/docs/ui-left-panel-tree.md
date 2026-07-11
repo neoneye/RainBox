@@ -2,16 +2,20 @@
 
 Several pages have a left panel that shows a **tree of folders** (which nest
 arbitrarily deep) containing **leaf items**. `/chat` (folders → chatrooms),
-`/cron` (folders → jobs), `/kanban` (folders → boards), and `/git`
-(folders → repos) all implement it; this doc describes the shared pattern and
-the reference implementations.
+`/cron` (folders → jobs), `/kanban` (folders → boards), `/git`
+(folders → repos), and `/prompt` (folders → system prompts) all implement it;
+this doc describes the shared pattern and the reference implementations.
 `/kanban` is the placement-only variant whose tree layer (folders + board
 placement) is kept separate from board contents: `webapp/kanban_views.py`
 (markup + CSS), `static/kanban.js` (tree JS), `webapp/kanban_api.py` +
 `db/kanban.py` (`kanban_load_tree`/`kanban_save_tree`/`kanban_tree_version`/
 `validate_kanban_tree`, folder create + reparenting delete). `/git` follows
 the same split (`webapp/git_views.py`, `static/git.js`, `webapp/git_api.py`,
-`db/git.py`) — its build produced the CSS/layout gotchas in §8.
+`db/git.py`) — its build produced the CSS/layout gotchas in §8. `/prompt`
+(`webapp/prompt_views.py`, `static/prompt.js`, `webapp/prompt_api.py`,
+`db/prompt.py`) is a rule-for-rule port of `/git` whose leaf detail pane is an
+editor: leaf content stays out of the tree payload and version hash, saved via
+a separate per-item PUT, so textarea autosaves never 409 an open tree.
 
 Folder create/rename/delete dialogs use the app-wide modal pattern — see
 [`ui-modals.md`](ui-modals.md).
