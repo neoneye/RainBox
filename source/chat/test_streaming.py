@@ -120,3 +120,33 @@ def test_extract_stream_deltas_ollama_shape():
     # No raw.choices -> native shape: content on .delta, reasoning in kwargs.
     chunk = SimpleNamespace(raw=None, delta="ans", additional_kwargs={"thinking_delta": "why"})
     assert extract_stream_deltas(chunk) == ("why", "ans")
+
+
+def test_decode_byte_escape_runs():
+    from chat.streaming import decode_byte_escape_runs
+    # A run spelling one glyph, and a run spelling several in sequence.
+    assert decode_byte_escape_runs("<0xE2><0x96><0xA8>") == "▨"
+    assert decode_byte_escape_runs(
+        "a <0xE2><0x97><0x93> b <0xE2><0x97><0x92> c") == "a ◓ b ◒ c"
+    # Multi-glyph run: two characters back to back in one run.
+    assert decode_byte_escape_runs(
+        "<0xE2><0x96><0xA8><0xE2><0x96><0xA7>") == "▨▧"
+    # Invalid UTF-8 stays verbatim (a lone continuation byte).
+    assert decode_byte_escape_runs("x <0x96> y") == "x <0x96> y"
+    # Non-matching notation is untouched.
+    assert decode_byte_escape_runs("0xE2 <0xZZ> plain") == "0xE2 <0xZZ> plain"
+    assert decode_byte_escape_runs("no escapes at all") == "no escapes at all"
+
+
+def test_finish_decodes_byte_escapes_split_across_deltas():
+    w, _created, updates = _writer()
+    # The run arrives split across deltas, as a byte-fallback stream would.
+    w.add_answer("frame: <0xE2>")
+    w.add_answer("<0x96><0xA8> done")
+    w.add_reasoning("emit <0xE2><0x97><0x93> now")
+    final = w.finish()
+    assert final == "frame: ▨ done"
+    # The last persisted write of each row carries the decoded text.
+    last_by_id = {mid: text for mid, text, _s in updates}
+    assert last_by_id[w.answer_id] == "frame: ▨ done"
+    assert last_by_id[w.reasoning_id] == "emit ◓ now"
