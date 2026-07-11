@@ -143,9 +143,9 @@ CHAT_TEMPLATE: str = """
   .prompt-pick-leaf:hover{background:#dbeafe}
   .prompt-pick-empty{color:#6b7280;padding:6px;font-size:0.85rem}
   .ui-modal .prompt-pick-hint{color:#888;font-size:0.82rem;margin:0.4em 0 0}
-  .room-sidebar .ds-save{margin-top:0.8em;padding:0.4em 1em;font:inherit;font-size:0.85rem;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
-  .room-sidebar .ds-save:hover{background:#1d4ed8}
-  .room-sidebar .ds-save:disabled{background:#9db4e8;cursor:default}
+  .room-sidebar .ds-save{margin-top:0.8em;padding:0.4em 1em;font:inherit;font-size:0.85rem;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#374151;cursor:pointer}
+  .room-sidebar .ds-save:hover{background:#f1f5f9}
+  .room-sidebar .ds-save:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
   .room-sidebar .ds-note{color:#888;font-size:0.85rem}
 
   /* In-place message editing (direct rooms only). */
