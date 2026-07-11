@@ -172,12 +172,19 @@ def test_delete_chat_message_guards(direct_room):
     room_uuid, human_uuid = direct_room
     with pytest.raises(LookupError):
         db.delete_chat_message(-1)
-    thinking = db.post_chat_message(room_uuid, human_uuid, "hmm", kind="thinking")
-    with pytest.raises(ValueError):
-        db.delete_chat_message(thinking.id)
     streaming = db.post_chat_message(room_uuid, human_uuid, "part", streaming=True)
     with pytest.raises(ValueError):
         db.delete_chat_message(streaming.id)
+
+
+def test_delete_chat_message_any_settled_kind(direct_room):
+    """Every settled row is deletable — the operator owns a direct room's
+    whole transcript, notices and thinking rows included."""
+    room_uuid, human_uuid = direct_room
+    for kind in ("thinking", "notice"):
+        row = db.post_chat_message(room_uuid, human_uuid, "x", kind=kind)
+        db.delete_chat_message(row.id)
+        assert db.get_room_message(room_uuid, row.id) is None
 
 
 def test_edit_chat_message_guards(direct_room):

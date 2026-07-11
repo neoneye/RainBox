@@ -903,15 +903,19 @@ function makeMessage(m){
   addCopyButton(actions, m.text);
   // Edit (pencil) + delete (trash): direct rooms only — the operator can
   // rewrite or remove their own and the model's earlier turns. Agent rooms
-  // never show them (the server refuses too).
-  if (currentRoomIsDirect() && !isDebug && m.kind === 'message' && !m.streaming){
-    const editBtn = document.createElement('button');
-    editBtn.type = 'button';
-    editBtn.className = 'copy-btn msg-edit-btn';
-    editBtn.title = 'Edit message';
-    editBtn.innerHTML = LUCIDE_PENCIL_SVG;
-    editBtn.addEventListener('click', () => startEditMessage(m, msg, body, actions));
-    actions.appendChild(editBtn);
+  // never show them (the server refuses too). Editing applies to real
+  // conversation turns (kind='message'); delete is on EVERY settled row —
+  // notices, thinking, and debug rows are the operator's to clear out too.
+  if (currentRoomIsDirect() && !m.streaming){
+    if (!isDebug && m.kind === 'message'){
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'copy-btn msg-edit-btn';
+      editBtn.title = 'Edit message';
+      editBtn.innerHTML = LUCIDE_PENCIL_SVG;
+      editBtn.addEventListener('click', () => startEditMessage(m, msg, body, actions));
+      actions.appendChild(editBtn);
+    }
     const delBtn = document.createElement('button');
     delBtn.type = 'button';
     delBtn.className = 'copy-btn msg-delete-btn';

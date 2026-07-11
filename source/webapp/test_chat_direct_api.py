@@ -181,6 +181,27 @@ def test_delete_message_in_direct_room(client, direct_room):
         assert db.get_room_message(room_uuid, msg_id) is None
 
 
+def test_delete_notice_message_in_direct_room(client, direct_room):
+    """Non-'message' kinds (e.g. the 'no model selected' notice) are
+    deletable too — the operator can clear the whole transcript."""
+    test_client, app = client
+    room_uuid, _human = direct_room
+    with app.app_context():
+        from agents.config import DIRECT_CHAT_UUID
+        notice = db.post_chat_message(
+            room_uuid, DIRECT_CHAT_UUID, "No model selected.", kind="notice"
+        )
+        notice_id = notice.id
+        _drain_direct_inbox()
+    resp = test_client.delete(
+        f"/chat/api/rooms/{room_uuid}/messages/{notice_id}"
+    )
+    assert resp.status_code == 200
+    assert resp.get_json() == {"id": notice_id, "deleted": True}
+    with app.app_context():
+        assert db.get_room_message(room_uuid, notice_id) is None
+
+
 def test_delete_message_rejected_in_agents_room(client, agents_room):
     test_client, app = client
     room_uuid, human_uuid = agents_room

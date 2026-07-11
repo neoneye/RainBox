@@ -255,13 +255,13 @@ def delete_chat_message(message_id: int) -> None:
     tabs drop the bubble live. Reuses the deleted_progress_ids mechanism — the
     client removes DOM nodes by id regardless of kind — with message_id=0
     marking a pure deletion (no new message), so background rooms don't count
-    it as unread. Raises LookupError if the row is gone, ValueError on a
-    non-"message" kind or a row still streaming."""
+    it as unread. Every kind is deletable (the operator owns a direct room's
+    whole transcript — notices and thinking rows included); only a row still
+    streaming is refused (its writer is still updating it by id). Raises
+    LookupError if the row is gone, ValueError while streaming."""
     msg = db.session.get(ChatMessage, message_id)
     if msg is None:
         raise LookupError(f"chat message {message_id} not found")
-    if msg.kind != "message":
-        raise ValueError("only kind='message' rows are deletable")
     if msg.streaming:
         raise ValueError("cannot delete a message that is still streaming")
     room_uuid = msg.room_uuid
