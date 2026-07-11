@@ -179,7 +179,7 @@ def test_worker_registered_in_agent_classes():
     does)."""
     from agents.kanban_worker import KanbanWorkerAgent
     from agents.base import Agent
-    from agents.__main__ import _resolve_agent_class
+    from agents.config import resolve_agent_class
 
     assert issubclass(KanbanWorkerAgent, Agent)
-    assert _resolve_agent_class("kanban_worker") is KanbanWorkerAgent
+    assert resolve_agent_class("kanban_worker") is KanbanWorkerAgent

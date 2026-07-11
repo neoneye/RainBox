@@ -31,8 +31,8 @@ def test_resolve_agent_class_loads_only_the_selected_agent():
     assistant must not import all 20 agents (and their llama_index) at startup."""
     out = subprocess.run(
         [sys.executable, "-c",
-         "from agents.__main__ import _resolve_agent_class; "
-         "cls = _resolve_agent_class('assistant'); "
+         "from agents.config import resolve_agent_class; "
+         "cls = resolve_agent_class('assistant'); "
          "import sys; print(cls.__name__); "
          "print(any(m.startswith('llama_index') for m in sys.modules)); "
          "print('agents.query_filter_router' in sys.modules)"],

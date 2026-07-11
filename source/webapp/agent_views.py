@@ -1,10 +1,11 @@
 from collections.abc import Mapping
+from functools import cache
 from typing import Any
 from uuid import UUID
 
 from flask import Response, abort, redirect, render_template_string, request, url_for
 
-from agents.config import agent_config
+from agents.config import agent_config, resolve_agent_class
 from db import (
     get_model_group,
     get_model_group_member_uuids,
@@ -91,6 +92,18 @@ without code changes. Manage the groups themselves on the
 """
 
 
+@cache
+def _kind_uses_model_group(kind: str) -> bool:
+    """Whether the agent class behind `kind` consumes an /agent_models binding
+    (Agent.uses_model_group). Resolving imports the agent's module — cached so
+    the cost is paid once per kind, on the first page view."""
+    return bool(resolve_agent_class(kind).uses_model_group)
+
+
+def _uses_model_group(name: str, entry: Mapping[str, Any]) -> bool:
+    return _kind_uses_model_group(entry.get("agent_kind", name))
+
+
 def _group_options() -> list[dict]:
     """Selectable model groups (alphabetical), labeled with their member count
     and tagged with the capability constraints they enforce."""
@@ -143,9 +156,12 @@ def agent_models_page() -> str | Response:
                 abort(400)
         # An agent may only bind to a group that enforces each capability the
         # agent requires (function calling and/or structured output).
-        entry = next(
-            (e for e in agent_config.values() if e["uuid"] == agent_uuid), None
+        name, entry = next(
+            ((n, e) for n, e in agent_config.items() if e["uuid"] == agent_uuid),
+            (None, None),
         )
+        if entry and name and not _uses_model_group(name, entry):
+            abort(400, "this agent does not use a model group")
         if group_uuid is not None and entry:
             g = get_model_group(group_uuid)
             if entry.get("requires_function_calling") and (
@@ -167,6 +183,10 @@ def agent_models_page() -> str | Response:
     groups = _group_options()
     agents = []
     for name, entry in agent_config.items():
+        # Agents whose class opted out (Agent.uses_model_group = False) never
+        # read a binding — a row here would be a dead control.
+        if not _uses_model_group(name, entry):
+            continue
         binding = bindings.get(entry["uuid"])
         ref = binding.model_group_uuid if binding else None
         group = get_model_group(ref) if ref else None

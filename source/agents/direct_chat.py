@@ -40,6 +40,10 @@ class DirectChatAgent(Agent):
     """Replies in a direct room: full history in, one streamed plain-text
     completion out. The triggering payload is {room_uuid, message_uuid}."""
 
+    # The model comes from the room's settings (or chat.default_model), never
+    # from an /agent_models binding — keep this agent off that page.
+    uses_model_group = False
+
     @staticmethod
     def _room_uuid(payload: dict[str, Any]) -> UUID:
         raw = payload.get("room_uuid")

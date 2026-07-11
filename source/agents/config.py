@@ -38,6 +38,50 @@ class AgentConfigEntry(TypedDict):
     kanban_verified: NotRequired[bool]
 
 
+# Role/kind → "module:ClassName". Values are strings so this table imports
+# nothing at module load; resolve_agent_class imports only the one it needs.
+AGENT_CLASS_PATHS: dict[str, str] = {
+    "assistant": "agents.assistant:AssistantAgent",
+    "assistant_run_summarizer": "agents.assistant_run_summarizer:AssistantRunSummarizerAgent",
+    "chat_structured": "agents.chat_structured:StructuredChatAgent",
+    "chat_unstructured": "agents.chat_unstructured:UnstructuredChatAgent",
+    "direct_chat": "agents.direct_chat:DirectChatAgent",
+    "edit_document_v1": "agents.edit_document_v1:EditDocumentAgentV1",
+    "edit_document_v2": "agents.edit_document_v2:EditDocumentAgentV2",
+    "edit_document_v3": "agents.edit_document_v3:EditDocumentAgentV3",
+    "edit_document_v4": "agents.edit_document_v4:EditDocumentAgentV4",
+    "edit_document_v5": "agents.edit_document_v5:EditDocumentAgentV5",
+    "edit_document_v6": "agents.edit_document_v6:EditDocumentAgentV6",
+    "followup": "agents.followup:FollowUpClassifierAgent",
+    "kanban_worker": "agents.kanban_worker:KanbanWorkerAgent",
+    "tool_demo": "agents.tool_demo:ToolDemoAgent",
+    "workspace_shell": "tools.workspace_shell_chat:WorkspaceShellChatAgent",
+    "router": "agents.router:RouterAgent",
+    "query": "agents.query:QueryAgent",
+    "query_router": "agents.query_router:QueryRouterAgent",
+    "query_filter_router": "agents.query_filter_router:QueryFilterRouterAgent",
+    "mcp": "agents.mcp:MCPAgent",
+    "conversation": "agents.conversation:ConversationManagerAgent",
+}
+
+
+def resolve_agent_class(kind: str):  # -> type[agents.base.Agent]
+    """Import and return the agent class for `kind` (a plain ModelGroupAgent as
+    the default). Imports ONLY the selected module, so a spawned agent process
+    loads its own dependencies (llama_index etc.) — not all 20 agents'. Used by
+    agents/__main__.py to run an agent and by /agent_models to read class-level
+    traits (e.g. uses_model_group)."""
+    import importlib
+
+    path = AGENT_CLASS_PATHS.get(kind)
+    if path is None:
+        from agents.base import ModelGroupAgent
+
+        return ModelGroupAgent
+    module_name, class_name = path.split(":")
+    return getattr(importlib.import_module(module_name), class_name)
+
+
 DREAMER_UUID: UUID = UUID("f320e597-c571-411b-994d-65c24b62f972")
 CRITIC_UUID: UUID = UUID("40c3b4b4-d883-42a9-bacf-6f77a4cd5f94")
 VERIFIER_UUID: UUID = UUID("e9999acb-324b-40c1-9ec6-9047e2fb1935")

@@ -68,6 +68,13 @@ class Agent:
     # attribute so tests can shrink it.
     HEARTBEAT_INTERVAL: float = 20.0
 
+    # Whether the agent consumes the model-group binding chosen on the
+    # /agent_models page. True by default; a subclass that sources its model
+    # elsewhere (direct_chat: the room's own settings) or runs no LLM at all
+    # (workspace_shell, conversation manager) opts out with False, which
+    # hides it from that page.
+    uses_model_group: bool = True
+
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         self.agent_uuid = agent_uuid
         self.name = name

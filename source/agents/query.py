@@ -57,6 +57,10 @@ class QueryAgent(Agent):
     entries via exact alias or pgvector similarity, and posts the resulting
     answer (or a "no confident match" fallback)."""
 
+    # Embeddings only — no completion model, so an /agent_models binding
+    # would be dead weight; keep this agent off that page.
+    uses_model_group = False
+
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
 

@@ -24,49 +24,9 @@ from typing import Any
 from uuid import UUID
 
 import db
-from agents.base import Agent, ModelGroupAgent
+from agents.config import resolve_agent_class
 
 logger = logging.getLogger(__name__)
-
-
-# Role/kind → "module:ClassName". Values are strings so this table imports
-# nothing at module load; _resolve_agent_class imports only the one it needs.
-_AGENT_CLASS_PATHS: dict[str, str] = {
-    "assistant": "agents.assistant:AssistantAgent",
-    "assistant_run_summarizer": "agents.assistant_run_summarizer:AssistantRunSummarizerAgent",
-    "chat_structured": "agents.chat_structured:StructuredChatAgent",
-    "chat_unstructured": "agents.chat_unstructured:UnstructuredChatAgent",
-    "direct_chat": "agents.direct_chat:DirectChatAgent",
-    "edit_document_v1": "agents.edit_document_v1:EditDocumentAgentV1",
-    "edit_document_v2": "agents.edit_document_v2:EditDocumentAgentV2",
-    "edit_document_v3": "agents.edit_document_v3:EditDocumentAgentV3",
-    "edit_document_v4": "agents.edit_document_v4:EditDocumentAgentV4",
-    "edit_document_v5": "agents.edit_document_v5:EditDocumentAgentV5",
-    "edit_document_v6": "agents.edit_document_v6:EditDocumentAgentV6",
-    "followup": "agents.followup:FollowUpClassifierAgent",
-    "kanban_worker": "agents.kanban_worker:KanbanWorkerAgent",
-    "tool_demo": "agents.tool_demo:ToolDemoAgent",
-    "workspace_shell": "tools.workspace_shell_chat:WorkspaceShellChatAgent",
-    "router": "agents.router:RouterAgent",
-    "query": "agents.query:QueryAgent",
-    "query_router": "agents.query_router:QueryRouterAgent",
-    "query_filter_router": "agents.query_filter_router:QueryFilterRouterAgent",
-    "mcp": "agents.mcp:MCPAgent",
-    "conversation": "agents.conversation:ConversationManagerAgent",
-}
-
-
-def _resolve_agent_class(kind: str) -> type[Agent]:
-    """Import and return the agent class for `kind` (a plain ModelGroupAgent as
-    the default). Imports ONLY the selected module, so a spawned agent process
-    loads its own dependencies (llama_index etc.) — not all 20 agents'."""
-    import importlib
-
-    path = _AGENT_CLASS_PATHS.get(kind)
-    if path is None:
-        return ModelGroupAgent
-    module_name, class_name = path.split(":")
-    return getattr(importlib.import_module(module_name), class_name)
 
 
 def main() -> None:
@@ -104,7 +64,7 @@ def main() -> None:
     # _resolve_agent_class imports ONLY the selected agent, so this spawned
     # process doesn't pay every agent's import cost (llama_index etc.).
     kind = config.get("agent_kind", config["name"])
-    agent_cls = _resolve_agent_class(kind)
+    agent_cls = resolve_agent_class(kind)
     agent = agent_cls(agent_uuid=agent_uuid, name=config["name"], send=send)
     agent.run()
 

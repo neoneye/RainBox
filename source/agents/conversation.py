@@ -136,6 +136,10 @@ class ConversationManagerAgent(Agent):
     """Drains manager-tick jobs and drives one `conversation_run` forward by one
     speaker turn per tick. Does no LLM work."""
 
+    # Pure scheduler — no LLM, so an /agent_models binding would be dead
+    # weight; keep this agent off that page.
+    uses_model_group = False
+
     @staticmethod
     def _run_uuid(payload: dict[str, Any]) -> UUID | None:
         raw = payload.get("run_uuid") or (payload.get("input") or {}).get("run_uuid")
