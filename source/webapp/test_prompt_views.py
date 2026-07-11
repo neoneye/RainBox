@@ -42,3 +42,14 @@ def test_js_has_core_markers():
                    "promptCloneUuid", "promptLoadDiff", "promptContentPush",
                    "promptSavePush", "/prompt/api/tree"]:
         assert marker in b, f"missing JS marker: {marker}"
+
+
+def test_new_chat_button():
+    """"New chat" creates a direct /chat room linked to the open prompt
+    version and navigates to it."""
+    b = _body()
+    assert 'id="prompt-newchat-btn"' in b
+    assert "function promptNewChat" in b
+    assert "/chat/api/rooms" in b
+    assert "prompt_uuid" in b
+    assert "/chat?id=" in b

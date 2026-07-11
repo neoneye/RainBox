@@ -152,6 +152,7 @@ PROMPT_TEMPLATE = """
         <span id="prompt-dates" class="muted"></span>
       </div>
       <div class="prompt-toolbar">
+        <button id="prompt-newchat-btn" onclick="promptNewChat()">New chat</button>
         <button id="prompt-clone-btn" onclick="promptCloneCurrent()">Clone</button>
         <button id="prompt-diff-btn" onclick="promptToggleDiff()">Diff against parent</button>
         <select id="prompt-diff-against" hidden onchange="promptDiffAgainstChanged()"></select>

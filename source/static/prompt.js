@@ -389,6 +389,32 @@ async function promptCloneUuid(uuid){
   promptSelectItem(d.prompt.uuid);
 }
 
+// ---- new chat (a direct /chat room linked to this prompt version) ----
+async function promptNewChat(){
+  const p = promptSelectedItem ? promptByUuid(promptSelectedItem) : null;
+  if (!p) return;
+  promptFlushContent();  // the room resolves content server-side; store the newest text first
+  const btn = document.getElementById('prompt-newchat-btn');
+  btn.disabled = true;
+  try {
+    const created = await fetch('/chat/api/rooms', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: p.name || 'direct chat', room_type: 'direct'}),
+    });
+    const room = await created.json();
+    if (!created.ok || !room.uuid) throw new Error((room && room.description) || 'room create failed');
+    const linked = await fetch('/chat/api/rooms/' + encodeURIComponent(room.uuid) + '/settings', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prompt_uuid: p.uuid}),
+    });
+    if (!linked.ok) throw new Error('room created but linking the prompt failed');
+    window.location.href = '/chat?id=' + encodeURIComponent(room.uuid);
+  } catch (e) {
+    promptToastMsg('New chat failed: ' + e.message);
+    btn.disabled = false;
+  }
+}
+
 // ---- diff view ----
 async function promptToggleDiff(){
   if (!promptSelectedItem) return;
