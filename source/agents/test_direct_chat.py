@@ -152,6 +152,45 @@ def test_handle_streams_full_history(direct_room, monkeypatch):
     assert seen["messages"][0].content == "Stay short."
 
 
+def test_stream_failure_posts_notice_in_room(direct_room, monkeypatch):
+    """A turn that dies before its first token (e.g. a ReadTimeout while a
+    cold model loads) must leave a visible kind='notice' failure message in
+    the room — the journal's `failed` status alone is invisible in the UI."""
+    import agents.direct_chat as direct_chat_mod
+
+    room_uuid, human_uuid = direct_room
+    db.post_chat_message(room_uuid, human_uuid, "hello?")
+    db.set_chatroom_settings(room_uuid, model_uuid=uuid4())
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs", lambda target: ("lm_studio", "test-model", {})
+    )
+
+    def boom(provider_id, model_name, args):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(direct_chat_mod, "prepare_llm", boom)
+    with pytest.raises(TimeoutError):
+        _agent().handle(uuid4(), {"room_uuid": str(room_uuid)})
+    notices = [r for r in db.list_room_messages(room_uuid) if r["kind"] == "notice"]
+    assert len(notices) == 1
+    assert "TimeoutError" in notices[0]["text"]
+    assert "timed out" in notices[0]["text"]
+    assert "test-model" in notices[0]["text"]
+
+
+def test_room_model_gone_posts_failure_notice(direct_room):
+    """A room whose own model_uuid no longer resolves (model deleted since)
+    fails the journal AND tells the room why."""
+    room_uuid, human_uuid = direct_room
+    db.post_chat_message(room_uuid, human_uuid, "hello?")
+    db.set_chatroom_settings(room_uuid, model_uuid=uuid4())  # resolves nowhere
+    with pytest.raises(LookupError):
+        _agent().handle(uuid4(), {"room_uuid": str(room_uuid)})
+    notices = [r for r in db.list_room_messages(room_uuid) if r["kind"] == "notice"]
+    assert len(notices) == 1
+    assert "LookupError" in notices[0]["text"]
+
+
 def test_handle_rejects_agents_room(app_ctx):
     human = db.get_human_user()
     room = db.create_chatroom(f"not-direct-{uuid4().hex[:6]}", human.uuid, [])

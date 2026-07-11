@@ -107,8 +107,12 @@ Details that live here:
   (`<0xE2><0x96><0xA8>` → `▨`) once at finish.
 - One model, no fallback list. The wall-clock deadline (the model config's
   `request_timeout`/`timeout`, default 60s) is a soft bound checked between
-  chunks. Any failure closes the streaming rows (no stuck cursor) and the
-  journal records `failed`.
+  chunks. Any failure closes the streaming rows (no stuck cursor), posts a
+  `kind="notice"` failure message into the room — exception type, model,
+  elapsed seconds — and the journal records `failed`. The notice matters for
+  errors that strike before the first token (a `ReadTimeout` while a cold
+  model loads, a room model that no longer resolves): without it the room
+  would stay silent.
 
 ## Settings sidebar
 

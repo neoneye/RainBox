@@ -102,18 +102,23 @@ class DirectChatAgent(Agent):
     ) -> str:
         """Stream one completion from the room's model into live
         thinking/answer rows. Single model — no fallback list; any failure
-        closes the streaming rows and raises (the item journals `failed`)."""
-        provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
-        logger.info(
-            "agent %s: streaming from model %s (this loads it into the "
-            "provider if it isn't already; a large cold model may take a while)",
-            self.name, model_name,
-        )
+        closes the streaming rows, posts a kind="notice" failure message into
+        the room (the journal's `failed` status is invisible in the chat UI),
+        and raises (the item still journals `failed`)."""
         t0 = time.monotonic()
-        timeout_s = float(args.get("request_timeout") or args.get("timeout") or 60.0)
         writer = self._make_writer(room_uuid)
         reasoning_text = ""
+        model_name = None
         try:
+            provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+            logger.info(
+                "agent %s: streaming from model %s (this loads it into the "
+                "provider if it isn't already; a large cold model may take a while)",
+                self.name, model_name,
+            )
+            timeout_s = float(
+                args.get("request_timeout") or args.get("timeout") or 60.0
+            )
             the_llm = prepare_llm(provider_id, model_name, args)
             stream = the_llm.stream_chat(messages)
             deadline = time.monotonic() + timeout_s
@@ -135,7 +140,7 @@ class DirectChatAgent(Agent):
                 self.name, model_name, time.monotonic() - t0, len(reply),
             )
             return reply
-        except Exception:
+        except Exception as exc:
             # Close any live rows so the UI doesn't show a stuck cursor. A DB
             # error mid-flush leaves the transaction aborted — roll it back
             # first so these closing writes can land, and keep them
@@ -148,6 +153,22 @@ class DirectChatAgent(Agent):
                     logger.exception(
                         "agent %s: could not close streaming rows", self.name
                     )
+            # Surface the failure in the room itself — without this a turn
+            # that dies before its first token (e.g. a ReadTimeout while a
+            # cold model loads) leaves the chat silent. kind="notice" is
+            # excluded from transcripts, so the model never sees it.
+            try:
+                db.post_chat_message(
+                    room_uuid, self.agent_uuid,
+                    f"⚠️ Reply failed — {type(exc).__name__}: {exc} "
+                    f"(model {model_name or model_uuid}, "
+                    f"after {time.monotonic() - t0:.0f}s)",
+                    kind="notice",
+                )
+            except Exception:
+                logger.exception(
+                    "agent %s: could not post failure notice", self.name
+                )
             raise
 
     @staticmethod
