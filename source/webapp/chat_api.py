@@ -400,6 +400,15 @@ def chat_room_settings(room_uuid: str) -> Response | tuple[Response, int]:
                 if db.prompt_get(puuid) is None:
                     abort(400, "prompt_uuid names no stored prompt")
                 kwargs["prompt_uuid"] = puuid
+        if "request_timeout" in data:
+            raw = data.get("request_timeout")
+            if raw is None:
+                kwargs["request_timeout"] = None
+            else:
+                if not isinstance(raw, int) or isinstance(raw, bool) or raw <= 0:
+                    abort(400, "request_timeout must be a positive integer "
+                               "(seconds) or null")
+                kwargs["request_timeout"] = raw
         room = db.set_chatroom_settings(ruuid, **kwargs)
     # Resolve the linked prompt's name so the sidebar can label the link
     # without a second request ("prompt_exists": false = the linked version
@@ -413,6 +422,7 @@ def chat_room_settings(room_uuid: str) -> Response | tuple[Response, int]:
         # What the room falls back to while model_uuid is null (the global
         # chat.default_model setting), so the sidebar can label that state.
         "default_model_uuid": str(default_model) if default_model else None,
+        "request_timeout": room.request_timeout,
         "prompt_uuid": str(room.prompt_uuid) if room.prompt_uuid else None,
         "prompt_name": linked["name"] if linked else None,
         "prompt_exists": (linked is not None) if room.prompt_uuid else None,

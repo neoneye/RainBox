@@ -10,9 +10,9 @@ an IRC-style transcript and decide *whether* to reply — the direct room's
 model always replies, to everything.
 
 The transcript stays in `chat_message` like any other room; the feature adds
-no tables. Everything room-specific lives in three `chatroom` columns —
-`model_uuid`, `system_prompt`, `prompt_uuid` — plus one global setting
-(`chat.default_model`).
+no tables. Everything room-specific lives in four `chatroom` columns —
+`model_uuid`, `system_prompt`, `prompt_uuid`, `request_timeout` — plus one
+global setting (`chat.default_model`).
 
 ## Room shape and creation
 
@@ -105,9 +105,13 @@ Details that live here:
   recovered into the message row at finish (`_answer_from_reasoning`).
 - `decode_byte_escape_runs` repairs byte-fallback notation
   (`<0xE2><0x96><0xA8>` → `▨`) once at finish.
-- One model, no fallback list. The wall-clock deadline (the model config's
-  `request_timeout`/`timeout`, default 60s) is a soft bound checked between
-  chunks. Any failure closes the streaming rows (no stuck cursor), posts a
+- One model, no fallback list. The wall-clock deadline is a soft bound
+  checked between chunks: the room's `request_timeout` override when set,
+  else the model config's `request_timeout`/`timeout`, else 60s. The
+  override is also handed to the HTTP client under the field each path
+  reads (`request_timeout` for native Ollama, `timeout` for the
+  OpenAI-compat clients), so the socket read timeout grows with it. Any
+  failure closes the streaming rows (no stuck cursor), posts a
   `kind="notice"` failure message into the room — exception type, model,
   elapsed seconds — and the journal records `failed`. The notice matters for
   errors that strike before the first token (a `ReadTimeout` while a cold
@@ -117,12 +121,15 @@ Details that live here:
 ## Settings sidebar
 
 The right panel's Settings mode (direct rooms only;
-`webapp/chat_template.py` `renderDirectSettings`) edits all three knobs via
+`webapp/chat_template.py` `renderDirectSettings`) edits the room's knobs via
 `GET/PUT /chat/api/rooms/<uuid>/settings`: the model picker (its empty
 option reads `(default — <model>)` when a global default exists, `(no
-model)` otherwise), the prompt source (linked version vs custom text), and
-Save. The PUT validates that `model_uuid` names a real config/override and
-`prompt_uuid` a real stored prompt. Settings apply from the next reply.
+model)` otherwise), the request-timeout field (empty = the model config's
+default; raise it for long conversations), the prompt source (linked
+version vs custom text), and Save. The PUT validates that `model_uuid`
+names a real config/override, `prompt_uuid` a real stored prompt, and
+`request_timeout` is a positive integer or null. Settings apply from the
+next reply.
 
 ## Editing the transcript
 

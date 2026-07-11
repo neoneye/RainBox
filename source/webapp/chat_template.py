@@ -122,6 +122,7 @@ CHAT_TEMPLATE: str = """
   /* Direct-room Settings sidebar (model picker + system prompt). */
   .room-sidebar .ds-label{display:block;margin:0.8em 0 0.25em;font-size:0.78rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em}
   .room-sidebar select.ds-model{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;padding:0.3em;border:1px solid #ccc;border-radius:6px;background:#fff}
+  .room-sidebar input.ds-timeout{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;padding:0.3em;border:1px solid #ccc;border-radius:6px;background:#fff}
   .room-sidebar textarea.ds-prompt{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;line-height:1.4;padding:0.4em;border:1px solid #ccc;border-radius:6px;resize:vertical;min-height:12em}
   /* Linked stored prompt: the textarea becomes a read-only preview. */
   .room-sidebar textarea.ds-prompt:disabled{background:#f8fafc;color:#6b7280}
@@ -1924,6 +1925,21 @@ async function renderDirectSettings(){
   });
   sel.value = settings.model_uuid || '';
   sidebarEl.appendChild(sel);
+  // Per-room reply timeout. Empty = the model config's request_timeout (or
+  // 60s) — raise it for long conversations where prompt processing alone can
+  // exceed the default.
+  const timeoutLabel = document.createElement('span');
+  timeoutLabel.className = 'ds-label';
+  timeoutLabel.textContent = 'Request timeout (seconds)';
+  sidebarEl.appendChild(timeoutLabel);
+  const timeoutInput = document.createElement('input');
+  timeoutInput.type = 'number';
+  timeoutInput.className = 'ds-timeout';
+  timeoutInput.min = '1';
+  timeoutInput.step = '1';
+  timeoutInput.placeholder = 'default (model config, else 60)';
+  if (settings.request_timeout) timeoutInput.value = settings.request_timeout;
+  sidebarEl.appendChild(timeoutInput);
   const promptLabel = document.createElement('span');
   promptLabel.className = 'ds-label';
   promptLabel.textContent = 'System prompt';
@@ -2009,10 +2025,12 @@ async function renderDirectSettings(){
   save.addEventListener('click', async () => {
     save.disabled = true;
     try {
+      const t = parseInt(timeoutInput.value, 10);
       await putJSON('/chat/api/rooms/' + room + '/settings', {
         system_prompt: customText,
         model_uuid: sel.value || null,
         prompt_uuid: linked ? linked.uuid : null,
+        request_timeout: Number.isFinite(t) && t > 0 ? t : null,
       });
       const r = rooms.find(x => x.uuid === room);
       if (r) r.model_uuid = sel.value || null;

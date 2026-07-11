@@ -259,6 +259,7 @@ def test_settings_get_and_put(client, direct_room):
     assert body == {
         "room_type": "direct", "system_prompt": "", "model_uuid": None,
         "prompt_uuid": None, "prompt_name": None, "prompt_exists": None,
+        "request_timeout": None,
     }
     with app.app_context():
         cfg = db.create_model_config(f"direct-test-model-{uuid4().hex[:6]}", {})
@@ -284,6 +285,27 @@ def test_settings_get_and_put(client, direct_room):
                 db.ModelConfig.uuid == cfg_uuid
             ).delete()
             db.db.session.commit()
+
+
+def test_settings_request_timeout(client, direct_room):
+    """The per-room reply-timeout override: positive int or null, anything
+    else is a 400; PUTting null clears it back to the model config default."""
+    test_client, _app = client
+    room_uuid, _human = direct_room
+    url = f"/chat/api/rooms/{room_uuid}/settings"
+
+    resp = test_client.put(url, json={"request_timeout": 300})
+    assert resp.status_code == 200
+    assert resp.get_json()["request_timeout"] == 300
+    assert test_client.get(url).get_json()["request_timeout"] == 300
+
+    for bad in (0, -5, "300", 12.5, True):
+        resp = test_client.put(url, json={"request_timeout": bad})
+        assert resp.status_code == 400, bad
+
+    resp = test_client.put(url, json={"request_timeout": None})
+    assert resp.status_code == 200
+    assert resp.get_json()["request_timeout"] is None
 
 
 def test_settings_prompt_link_flow(client, direct_room):

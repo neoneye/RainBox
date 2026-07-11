@@ -97,7 +97,7 @@ def test_handle_without_room_model_uses_global_default(direct_room, monkeypatch)
     agent = _agent()
     seen = {}
 
-    def fake_stream(room, model, messages):
+    def fake_stream(room, model, messages, request_timeout=None):
         seen["model"] = model
         return "stubbed reply"
 
@@ -128,15 +128,17 @@ def test_handle_streams_full_history(direct_room, monkeypatch):
     db.post_chat_message(room_uuid, human_uuid, "second")
     model_uuid = uuid4()
     db.set_chatroom_settings(
-        room_uuid, system_prompt="Stay short.", model_uuid=model_uuid
+        room_uuid, system_prompt="Stay short.", model_uuid=model_uuid,
+        request_timeout=300,
     )
     agent = _agent()
     seen = {}
 
-    def fake_stream(room, model, messages):
+    def fake_stream(room, model, messages, request_timeout=None):
         seen["room"] = room
         seen["model"] = model
         seen["messages"] = messages
+        seen["request_timeout"] = request_timeout
         return "stubbed reply"
 
     monkeypatch.setattr(agent, "_stream_reply", fake_stream)
@@ -144,6 +146,7 @@ def test_handle_streams_full_history(direct_room, monkeypatch):
     assert result == {"ok": True, "reply_content": "stubbed reply"}
     assert seen["room"] == room_uuid
     assert seen["model"] == model_uuid
+    assert seen["request_timeout"] == 300  # the room's Settings override
     roles = [m.role for m in seen["messages"]]
     assert roles == [
         MessageRole.SYSTEM, MessageRole.USER, MessageRole.ASSISTANT,
@@ -189,6 +192,40 @@ def test_room_model_gone_posts_failure_notice(direct_room):
     notices = [r for r in db.list_room_messages(room_uuid) if r["kind"] == "notice"]
     assert len(notices) == 1
     assert "LookupError" in notices[0]["text"]
+
+
+def test_stream_reply_timeout_override_reaches_client_args(direct_room, monkeypatch):
+    """The room's request_timeout must reach the HTTP client under the field
+    each path reads: request_timeout for native Ollama, timeout for the
+    OpenAI-compat clients (which silently ignore request_timeout)."""
+    import agents.direct_chat as direct_chat_mod
+
+    room_uuid, _human = direct_room
+    captured = {}
+
+    class _NoStream:
+        def stream_chat(self, messages):
+            return iter(())
+
+    def fake_prepare(provider_id, model_name, args):
+        captured["args"] = dict(args)
+        return _NoStream()
+
+    monkeypatch.setattr(direct_chat_mod, "prepare_llm", fake_prepare)
+    agent = _agent()
+
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs",
+        lambda target: ("ollama", "m", {"request_timeout": 60}),
+    )
+    agent._stream_reply(room_uuid, uuid4(), [], request_timeout=600)
+    assert captured["args"]["request_timeout"] == 600
+
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs", lambda target: ("lm_studio", "m", {})
+    )
+    agent._stream_reply(room_uuid, uuid4(), [], request_timeout=600)
+    assert captured["args"]["timeout"] == 600
 
 
 def test_handle_rejects_agents_room(app_ctx):

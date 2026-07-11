@@ -98,10 +98,14 @@ class DirectChatAgent(Agent):
         return reasoning[idx + len("</think>"):].strip() if idx != -1 else ""
 
     def _stream_reply(
-        self, room_uuid: UUID, model_uuid: UUID, messages: list[ChatMessage]
+        self, room_uuid: UUID, model_uuid: UUID, messages: list[ChatMessage],
+        request_timeout: int | None = None,
     ) -> str:
         """Stream one completion from the room's model into live
-        thinking/answer rows. Single model — no fallback list; any failure
+        thinking/answer rows. `request_timeout` (the room's Settings override,
+        seconds) beats the model config's request_timeout/timeout and the 60s
+        fallback; it is also handed to the HTTP client so the socket read
+        timeout grows with it. Single model — no fallback list; any failure
         closes the streaming rows, posts a kind="notice" failure message into
         the room (the journal's `failed` status is invisible in the chat UI),
         and raises (the item still journals `failed`)."""
@@ -116,8 +120,15 @@ class DirectChatAgent(Agent):
                 "provider if it isn't already; a large cold model may take a while)",
                 self.name, model_name,
             )
+            if request_timeout:
+                # The HTTP-client field differs per path: native Ollama reads
+                # request_timeout, the OpenAI-compat clients read timeout
+                # (and silently ignore request_timeout).
+                key = "request_timeout" if provider_id == "ollama" else "timeout"
+                args[key] = request_timeout
             timeout_s = float(
-                args.get("request_timeout") or args.get("timeout") or 60.0
+                request_timeout
+                or args.get("request_timeout") or args.get("timeout") or 60.0
             )
             the_llm = prepare_llm(provider_id, model_name, args)
             stream = the_llm.stream_chat(messages)
@@ -212,7 +223,10 @@ class DirectChatAgent(Agent):
         messages = self.build_messages(
             db.resolve_room_system_prompt(room), history
         )
-        reply = self._stream_reply(room_uuid, model_uuid, messages)
+        reply = self._stream_reply(
+            room_uuid, model_uuid, messages,
+            request_timeout=room.request_timeout,
+        )
         if not reply:
             logger.warning(
                 "direct chat agent produced an empty reply in room %s", room_uuid

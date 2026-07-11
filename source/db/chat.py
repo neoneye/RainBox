@@ -186,13 +186,14 @@ def set_chatroom_settings(
     system_prompt: str = _UNSET,
     model_uuid: UUID | None = _UNSET,
     prompt_uuid: UUID | None = _UNSET,
+    request_timeout: int | None = _UNSET,
 ) -> Chatroom:
     """Update a direct room's settings; only the fields passed are changed
     (model_uuid=None clears the model; prompt_uuid=None unlinks the stored
-    prompt so the free-text system_prompt applies again). Applied
-    mid-conversation: the next direct-chat turn reads the room row fresh.
-    Raises LookupError if the room is gone, ValueError if it isn't a direct
-    room."""
+    prompt so the free-text system_prompt applies again; request_timeout=None
+    falls back to the model config's timeout). Applied mid-conversation: the
+    next direct-chat turn reads the room row fresh. Raises LookupError if the
+    room is gone, ValueError if it isn't a direct room."""
     room = get_chatroom(room_uuid)
     if room is None:
         raise LookupError(f"chatroom {room_uuid} not found")
@@ -204,6 +205,8 @@ def set_chatroom_settings(
         room.model_uuid = model_uuid
     if prompt_uuid is not _UNSET:
         room.prompt_uuid = prompt_uuid
+    if request_timeout is not _UNSET:
+        room.request_timeout = request_timeout
     db.session.commit()
     return room
 

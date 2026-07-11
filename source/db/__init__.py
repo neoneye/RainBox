@@ -296,6 +296,8 @@ def init_db(app: Flask) -> None:
                                "model_uuid UUID")
         _add_column_if_missing("chatroom", "prompt_uuid",
                                "prompt_uuid UUID")
+        _add_column_if_missing("chatroom", "request_timeout",
+                               "request_timeout INTEGER")
         _add_column_if_missing("chat_message", "content_type",
                                "content_type TEXT NOT NULL DEFAULT 'markdown'")
         _add_column_if_missing("chat_message", "kind",
