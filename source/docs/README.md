@@ -27,6 +27,9 @@ history); `proposals/` holds design-time intent and reviews.
   capabilities.
 - [conversation-design.md](conversation-design.md) — bounded
   persona-to-persona conversations: manager, CAS turn guards, pause/resume.
+- [direct-chat.md](direct-chat.md) — one-to-one operator↔model rooms:
+  turn lifecycle, model resolution (room pick → global default), linked
+  system prompts, streaming rows, transcript editing.
 - [skills-design.md](skills-design.md) — procedural skills: file format,
   overlay resolution, inert candidates, retrieval + injection budgets.
 - [qa-system.md](qa-system.md) — the curated Q&A knowledge base: registry,
