@@ -589,6 +589,11 @@ class Chatroom(db.Model):
     # column, no FK (house style). Null = no model chosen, room can't reply.
     system_prompt: Mapped[str] = mapped_column(Text, default="")
     model_uuid: Mapped[UUID | None] = mapped_column(default=None)
+    # Optional link to a stored system prompt version (prompt.uuid, managed on
+    # the /prompt page). When set it overrides system_prompt: each turn reads
+    # that version's content fresh (deleted version = no system message).
+    # Null = the room's free-text system_prompt applies. Plain col, no FK.
+    prompt_uuid: Mapped[UUID | None] = mapped_column(default=None)
     # Left-panel folder placement (mirrors cron's folder tree). null = top level;
     # plain col, no FK (house style — app-side validation). `position` orders
     # rooms within their folder (or among top-level rooms).

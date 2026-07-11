@@ -96,6 +96,48 @@ def test_set_chatroom_settings_roundtrip(direct_room):
     assert db.get_chatroom(room_uuid).model_uuid is None
 
 
+@pytest.fixture
+def stored_prompt(app_ctx):
+    """One /prompt row to link rooms to."""
+    from db.models import Prompt
+    row = Prompt(uuid=uuid4(), name="Pirate", content="You are a pirate.")
+    db.db.session.add(row)
+    db.db.session.commit()
+    try:
+        yield row.uuid
+    finally:
+        db.db.session.query(Prompt).filter(Prompt.uuid == row.uuid).delete()
+        db.db.session.commit()
+
+
+def test_set_chatroom_settings_prompt_link(direct_room, stored_prompt):
+    room_uuid, _human = direct_room
+    db.set_chatroom_settings(room_uuid, prompt_uuid=stored_prompt)
+    assert db.get_chatroom(room_uuid).prompt_uuid == stored_prompt
+    # Partial update elsewhere leaves the link alone.
+    db.set_chatroom_settings(room_uuid, system_prompt="free text")
+    assert db.get_chatroom(room_uuid).prompt_uuid == stored_prompt
+    # prompt_uuid=None unlinks.
+    db.set_chatroom_settings(room_uuid, prompt_uuid=None)
+    assert db.get_chatroom(room_uuid).prompt_uuid is None
+
+
+def test_resolve_room_system_prompt(direct_room, stored_prompt):
+    room_uuid, _human = direct_room
+    # Unlinked: the room's own free text.
+    db.set_chatroom_settings(room_uuid, system_prompt="Be terse.")
+    assert db.resolve_room_system_prompt(db.get_chatroom(room_uuid)) == "Be terse."
+    # Linked: the stored version's content wins over the free text.
+    db.set_chatroom_settings(room_uuid, prompt_uuid=stored_prompt)
+    assert db.resolve_room_system_prompt(
+        db.get_chatroom(room_uuid)) == "You are a pirate."
+    # Linked version deleted: no system message (NOT the stale free text).
+    from db.models import Prompt
+    db.db.session.query(Prompt).filter(Prompt.uuid == stored_prompt).delete()
+    db.db.session.commit()
+    assert db.resolve_room_system_prompt(db.get_chatroom(room_uuid)) == ""
+
+
 def test_set_chatroom_settings_rejects_agents_room(agents_room):
     room_uuid, _human = agents_room
     with pytest.raises(ValueError):

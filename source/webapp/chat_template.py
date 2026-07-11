@@ -123,6 +123,26 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .ds-label{display:block;margin:0.8em 0 0.25em;font-size:0.78rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em}
   .room-sidebar select.ds-model{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;padding:0.3em;border:1px solid #ccc;border-radius:6px;background:#fff}
   .room-sidebar textarea.ds-prompt{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;line-height:1.4;padding:0.4em;border:1px solid #ccc;border-radius:6px;resize:vertical;min-height:12em}
+  /* Linked stored prompt: the textarea becomes a read-only preview. */
+  .room-sidebar textarea.ds-prompt:disabled{background:#f8fafc;color:#6b7280}
+  /* Prompt-source row: linked prompt name (or "Custom text") + small buttons. */
+  .room-sidebar .ds-prompt-mode{display:flex;align-items:center;gap:0.5em;margin:0 0 0.4em;font-size:0.85rem;flex-wrap:wrap}
+  .room-sidebar .ds-prompt-mode .src{color:#374151}
+  .room-sidebar .ds-prompt-mode a{color:#2563eb;text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  .room-sidebar .ds-prompt-mode a:hover{text-decoration:underline}
+  .room-sidebar .ds-prompt-mode a.gone{color:#b91c1c}
+  .room-sidebar .ds-prompt-mode button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;padding:0.15em 0.55em;font:inherit;font-size:0.78rem;cursor:pointer}
+  .room-sidebar .ds-prompt-mode button:hover{border-color:#2563eb;color:#2563eb}
+  /* Stored-prompt picker modal: a read-only render of the /prompt folder tree. */
+  .ui-modal .prompt-pick-tree{max-height:45vh;overflow:auto;border:1px solid #e5e7eb;border-radius:6px;padding:6px;margin:0.6em 0;font-size:0.9rem;background:#fbfbfb}
+  .prompt-pick-tree ul{list-style:none;margin:0;padding:0}
+  .prompt-pick-tree ul ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
+  .prompt-pick-node{display:flex;align-items:center;gap:4px;padding:6px 4px;border-radius:4px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
+  .prompt-pick-node:hover{background:#f1f5f9}
+  .prompt-pick-leaf{padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .prompt-pick-leaf:hover{background:#dbeafe}
+  .prompt-pick-empty{color:#6b7280;padding:6px;font-size:0.85rem}
+  .ui-modal .prompt-pick-hint{color:#888;font-size:0.82rem;margin:0.4em 0 0}
   .room-sidebar .ds-save{margin-top:0.8em;padding:0.4em 1em;font:inherit;font-size:0.85rem;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
   .room-sidebar .ds-save:hover{background:#1d4ed8}
   .room-sidebar .ds-save:disabled{background:#9db4e8;cursor:default}
@@ -318,6 +338,17 @@ CHAT_TEMPLATE: str = """
     <div class="modal-actions">
       <button type="button" class="btn-cancel" id="chat-room-cancel">Cancel</button>
       <button type="button" class="btn-primary" id="chat-room-create" disabled>Create</button>
+    </div>
+  </div>
+
+  <div class="ui-modal" id="chat-prompt-modal" hidden>
+    <h3>Choose system prompt</h3>
+    <div class="prompt-pick-tree" id="chat-prompt-tree"></div>
+    <p class="prompt-pick-hint">Stored prompts are managed on the
+      <a href="/prompt" target="_blank">Prompts</a> page. Click one to link it
+      to this chat; its current content is used from the next reply on.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="chat-prompt-cancel">Cancel</button>
     </div>
   </div>
 
@@ -1886,11 +1917,80 @@ async function renderDirectSettings(){
   promptLabel.className = 'ds-label';
   promptLabel.textContent = 'System prompt';
   sidebarEl.appendChild(promptLabel);
+  // The prompt is either a LINKED stored version (picked from the /prompt
+  // tree; its content is resolved fresh each turn) or the room's own free
+  // text. Linking keeps the free text around, so Unlink restores it.
+  const modeRow = document.createElement('div');
+  modeRow.className = 'ds-prompt-mode';
+  sidebarEl.appendChild(modeRow);
   const ta = document.createElement('textarea');
   ta.className = 'ds-prompt';
-  ta.placeholder = 'Empty = no system message';
-  ta.value = settings.system_prompt || '';
   sidebarEl.appendChild(ta);
+  let customText = settings.system_prompt || '';
+  let linked = settings.prompt_uuid
+    ? {uuid: settings.prompt_uuid, name: settings.prompt_name || '',
+       exists: settings.prompt_exists !== false}
+    : null;
+  ta.addEventListener('input', () => { if (!linked) customText = ta.value; });
+  // Read-only preview of the linked version's current content (what the next
+  // reply will actually send; the turn itself resolves server-side).
+  async function showLinkedPreview(uuid){
+    ta.value = '';
+    ta.placeholder = 'Loading stored prompt…';
+    let d = null;
+    try { d = await getJSON('/prompt/api/prompts/' + uuid); } catch (_) { return; }
+    if (room !== currentRoom || sidebarMode !== 'settings') return;
+    if (linked && linked.uuid === uuid) ta.value = (d && d.content) || '';
+  }
+  function renderPromptSource(){
+    modeRow.innerHTML = '';
+    if (linked){
+      const a = document.createElement('a');
+      a.href = '/prompt?id=' + encodeURIComponent(linked.uuid);
+      a.target = '_blank';
+      if (linked.exists){
+        a.textContent = linked.name || 'stored prompt';
+        a.title = 'Open this prompt on the Prompts page';
+      } else {
+        a.textContent = '(deleted prompt)';
+        a.className = 'gone';
+        a.title = 'The linked version was deleted on the Prompts page; no system message is sent.';
+      }
+      modeRow.appendChild(a);
+      const change = document.createElement('button');
+      change.type = 'button';
+      change.textContent = 'Change…';
+      change.addEventListener('click', () => openPromptPicker(applyPick));
+      modeRow.appendChild(change);
+      const unlink = document.createElement('button');
+      unlink.type = 'button';
+      unlink.textContent = 'Unlink';
+      unlink.title = "Go back to this chat's own free-text prompt";
+      unlink.addEventListener('click', () => { linked = null; renderPromptSource(); });
+      modeRow.appendChild(unlink);
+      ta.disabled = true;
+      if (linked.exists){ showLinkedPreview(linked.uuid); }
+      else { ta.value = ''; ta.placeholder = 'No system message will be sent.'; }
+    } else {
+      const src = document.createElement('span');
+      src.className = 'src';
+      src.textContent = 'Custom text';
+      modeRow.appendChild(src);
+      const choose = document.createElement('button');
+      choose.type = 'button';
+      choose.textContent = 'Choose stored prompt…';
+      choose.addEventListener('click', () => openPromptPicker(applyPick));
+      modeRow.appendChild(choose);
+      ta.disabled = false;
+      ta.placeholder = 'Empty = no system message';
+      ta.value = customText;
+    }
+  }
+  function applyPick(p){
+    linked = {uuid: p.uuid, name: p.name, exists: true};
+    renderPromptSource();
+  }
+  renderPromptSource();
   const save = document.createElement('button');
   save.type = 'button';
   save.className = 'ds-save';
@@ -1899,8 +1999,9 @@ async function renderDirectSettings(){
     save.disabled = true;
     try {
       await putJSON('/chat/api/rooms/' + room + '/settings', {
-        system_prompt: ta.value,
+        system_prompt: customText,
         model_uuid: sel.value || null,
+        prompt_uuid: linked ? linked.uuid : null,
       });
       const r = rooms.find(x => x.uuid === room);
       if (r) r.model_uuid = sel.value || null;
@@ -2111,11 +2212,93 @@ document.getElementById('chat-room-input').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); confirmRoomModal(); }
 });
 
+// ---- stored-prompt picker (Settings sidebar): the /prompt folder tree in a
+// modal. Read-only: folders expand/collapse on click (default expanded),
+// clicking a prompt hands {uuid, name} to the opener and closes. The pick is
+// pending sidebar state until the Save button persists it.
+let promptPickerOnPick = null;
+const promptPickerExpanded = {};  // folder id -> false when collapsed
+async function openPromptPicker(onPick){
+  promptPickerOnPick = onPick;
+  const treeEl = document.getElementById('chat-prompt-tree');
+  treeEl.innerHTML = '<div class="prompt-pick-empty">loading&hellip;</div>';
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('chat-prompt-modal').hidden = false;
+  let data = null;
+  try { data = await getJSON('/prompt/api/tree'); } catch (_) {}
+  if (document.getElementById('chat-prompt-modal').hidden) return;  // closed while loading
+  if (!data){
+    treeEl.innerHTML = '<div class="prompt-pick-empty">Could not load the prompt tree.</div>';
+    return;
+  }
+  renderPromptPicker(data.folders || [], data.prompts || []);
+}
+function closePromptPicker(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('chat-prompt-modal').hidden = true;
+  promptPickerOnPick = null;
+}
+function renderPromptPicker(folders, prompts){
+  const treeEl = document.getElementById('chat-prompt-tree');
+  if (!folders.length && !prompts.length){
+    treeEl.innerHTML = '<div class="prompt-pick-empty">No stored prompts yet — ' +
+      'create some on the <a href="/prompt" target="_blank">Prompts</a> page.</div>';
+    return;
+  }
+  const childFolders = pid => folders.filter(f => (f.parentId || null) === pid);
+  const promptsIn = id => prompts.filter(p => (p.folderId || null) === id);
+  const isOpen = id => promptPickerExpanded[id] !== false;
+  const leafDiv = p => {
+    const el = document.createElement('div');
+    el.className = 'prompt-pick-leaf';
+    el.textContent = p.name;
+    el.addEventListener('click', () => {
+      const cb = promptPickerOnPick;
+      closePromptPicker();
+      if (cb) cb(p);
+    });
+    return el;
+  };
+  const folderLi = f => {
+    const li = document.createElement('li');
+    const kids = childFolders(f.id);
+    const leaves = promptsIn(f.id);
+    const hasKids = (kids.length + leaves.length) > 0;
+    const node = document.createElement('div');
+    node.className = 'prompt-pick-node';
+    const ic = document.createElement('span');
+    ic.className = 'chat-ficon';
+    ic.innerHTML = (isOpen(f.id) && hasKids) ? CHAT_ICON_FOLDER_OPEN : CHAT_ICON_FOLDER;
+    const label = document.createElement('span');
+    label.textContent = f.name;
+    node.appendChild(ic);
+    node.appendChild(label);
+    node.addEventListener('click', () => {
+      promptPickerExpanded[f.id] = !isOpen(f.id);
+      renderPromptPicker(folders, prompts);
+    });
+    li.appendChild(node);
+    if (isOpen(f.id) && hasKids){
+      const ul = document.createElement('ul');
+      kids.forEach(c => ul.appendChild(folderLi(c)));
+      leaves.forEach(p => { const pli = document.createElement('li'); pli.appendChild(leafDiv(p)); ul.appendChild(pli); });
+      li.appendChild(ul);
+    }
+    return li;
+  };
+  const ul = document.createElement('ul');
+  childFolders(null).forEach(f => ul.appendChild(folderLi(f)));
+  promptsIn(null).forEach(p => { const li = document.createElement('li'); li.appendChild(leafDiv(p)); ul.appendChild(li); });
+  treeEl.replaceChildren(ul);
+}
+document.getElementById('chat-prompt-cancel').addEventListener('click', closePromptPicker);
+
 // Close whichever chat modal is open; each close fn clears its own state.
 function closeOpenModal(){
   if (!document.getElementById('chat-folder-modal').hidden) closeFolderModal();
   if (!document.getElementById('chat-delete-modal').hidden) closeDeleteModal();
   if (!document.getElementById('chat-room-modal').hidden) closeRoomModal();
+  if (!document.getElementById('chat-prompt-modal').hidden) closePromptPicker();
 }
 // Has the user typed/checked anything in the currently open modal? If so we
 // refuse the accidental dismiss paths (outside-click / Esc) so no input is lost.

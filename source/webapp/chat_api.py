@@ -358,8 +358,9 @@ def edit_chat_room_message(room_uuid: str, message_id: int) -> Response:
 
 @app.route("/chat/api/rooms/<room_uuid>/settings", methods=["GET", "PUT"])
 def chat_room_settings(room_uuid: str) -> Response | tuple[Response, int]:
-    """A direct room's settings: its system prompt and which model it talks
-    to. PUT applies mid-conversation — the next turn reads the room fresh."""
+    """A direct room's settings: its system prompt (free text OR a link to a
+    stored /prompt version) and which model it talks to. PUT applies
+    mid-conversation — the next turn reads the room fresh."""
     ruuid = _parse_uuid(room_uuid)
     room = db.get_chatroom(ruuid)
     if room is None:
@@ -385,11 +386,27 @@ def chat_room_settings(room_uuid: str) -> Response | tuple[Response, int]:
                 except LookupError:
                     abort(400, "model_uuid names no model config or override")
                 kwargs["model_uuid"] = muuid
+        if "prompt_uuid" in data:
+            raw = data.get("prompt_uuid")
+            if raw is None:
+                kwargs["prompt_uuid"] = None
+            else:
+                puuid = _parse_uuid(raw)
+                if db.prompt_get(puuid) is None:
+                    abort(400, "prompt_uuid names no stored prompt")
+                kwargs["prompt_uuid"] = puuid
         room = db.set_chatroom_settings(ruuid, **kwargs)
+    # Resolve the linked prompt's name so the sidebar can label the link
+    # without a second request ("prompt_exists": false = the linked version
+    # was deleted; the room sends no system message until relinked).
+    linked = db.prompt_get(room.prompt_uuid) if room.prompt_uuid else None
     return jsonify({
         "room_type": room.room_type,
         "system_prompt": room.system_prompt or "",
         "model_uuid": str(room.model_uuid) if room.model_uuid else None,
+        "prompt_uuid": str(room.prompt_uuid) if room.prompt_uuid else None,
+        "prompt_name": linked["name"] if linked else None,
+        "prompt_exists": (linked is not None) if room.prompt_uuid else None,
     })
 
 

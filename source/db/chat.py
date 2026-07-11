@@ -27,6 +27,7 @@ from db.models import (
     ChatroomFolder,
     ChatroomMember,
     FeedbackEvent,
+    Prompt,
     WorkspaceShellState,
     db,
 )
@@ -184,11 +185,14 @@ def set_chatroom_settings(
     *,
     system_prompt: str = _UNSET,
     model_uuid: UUID | None = _UNSET,
+    prompt_uuid: UUID | None = _UNSET,
 ) -> Chatroom:
     """Update a direct room's settings; only the fields passed are changed
-    (model_uuid=None clears the model). Applied mid-conversation: the next
-    direct-chat turn reads the room row fresh. Raises LookupError if the room
-    is gone, ValueError if it isn't a direct room."""
+    (model_uuid=None clears the model; prompt_uuid=None unlinks the stored
+    prompt so the free-text system_prompt applies again). Applied
+    mid-conversation: the next direct-chat turn reads the room row fresh.
+    Raises LookupError if the room is gone, ValueError if it isn't a direct
+    room."""
     room = get_chatroom(room_uuid)
     if room is None:
         raise LookupError(f"chatroom {room_uuid} not found")
@@ -198,8 +202,25 @@ def set_chatroom_settings(
         room.system_prompt = system_prompt
     if model_uuid is not _UNSET:
         room.model_uuid = model_uuid
+    if prompt_uuid is not _UNSET:
+        room.prompt_uuid = prompt_uuid
     db.session.commit()
     return room
+
+
+def resolve_room_system_prompt(room: Chatroom) -> str:
+    """The system prompt a direct-room turn actually sends. A linked stored
+    prompt (room.prompt_uuid → prompt.uuid, the /prompt page) wins and is read
+    fresh each turn, so editing that version applies from the next reply. If
+    the linked version was deleted the room sends no system message (empty)
+    rather than silently reviving stale free text. Unlinked rooms use their
+    own free-text system_prompt."""
+    if room.prompt_uuid is not None:
+        prompt = db.session.execute(
+            sa.select(Prompt).where(Prompt.uuid == room.prompt_uuid)
+        ).scalar_one_or_none()
+        return prompt.content if prompt is not None else ""
+    return room.system_prompt or ""
 
 
 def edit_chat_message(message_id: int, text: str) -> ChatMessage:

@@ -152,7 +152,9 @@ class DirectChatAgent(Agent):
             )
             return {"ok": True, "notice": "no_model"}
         history = db.list_room_messages(room_uuid)
-        messages = self.build_messages(room.system_prompt or "", history)
+        messages = self.build_messages(
+            db.resolve_room_system_prompt(room), history
+        )
         reply = self._stream_reply(room_uuid, room.model_uuid, messages)
         if not reply:
             logger.warning(
