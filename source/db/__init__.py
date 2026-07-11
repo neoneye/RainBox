@@ -287,6 +287,12 @@ def init_db(app: Flask) -> None:
                 "ON model_config (provider, model_name)"
             )
         )
+        _add_column_if_missing("chatroom", "room_type",
+                               "room_type TEXT NOT NULL DEFAULT 'agents'")
+        _add_column_if_missing("chatroom", "system_prompt",
+                               "system_prompt TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing("chatroom", "model_uuid",
+                               "model_uuid UUID")
         _add_column_if_missing("chat_message", "content_type",
                                "content_type TEXT NOT NULL DEFAULT 'markdown'")
         _add_column_if_missing("chat_message", "kind",

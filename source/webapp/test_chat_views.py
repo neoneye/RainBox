@@ -37,3 +37,41 @@ def test_typed_newlines_render_as_line_breaks():
     body = _body()
     assert "breaks: true" in body
     assert "marked.parse(src, { breaks: true, gfm: true })" in body
+
+
+def test_new_room_modal_has_room_type_choice():
+    body = _body()
+    assert 'name="chat-room-type"' in body
+    assert "Direct LLM chat" in body
+    assert "function syncRoomTypeUI" in body
+    assert 'id="chat-room-agents"' in body
+
+
+def test_direct_room_settings_sidebar():
+    body = _body()
+    assert '<option value="settings">Settings</option>' in body
+    assert "function renderDirectSettings" in body
+    assert "/chat/api/models" in body
+    assert "ds-prompt" in body
+    assert "ds-model" in body
+
+
+def test_direct_room_message_edit():
+    body = _body()
+    assert "function startEditMessage" in body
+    assert "msg-edit-btn" in body
+    assert "function currentRoomIsDirect" in body
+    assert "function putJSON" in body
+
+
+def test_direct_room_message_delete():
+    body = _body()
+    assert "function deleteMessage" in body
+    assert "msg-delete-btn" in body
+
+
+def test_direct_room_has_no_feedback_buttons():
+    """The upvote/downvote row is gated on not being in a direct room —
+    feedback rates responder agents, and a direct chat has none."""
+    body = _body()
+    assert "!currentRoomIsDirect() && !isDebug && m.sender_type === 'agent'" in body

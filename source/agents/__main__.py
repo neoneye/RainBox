@@ -36,6 +36,7 @@ _AGENT_CLASS_PATHS: dict[str, str] = {
     "assistant_run_summarizer": "agents.assistant_run_summarizer:AssistantRunSummarizerAgent",
     "chat_structured": "agents.chat_structured:StructuredChatAgent",
     "chat_unstructured": "agents.chat_unstructured:UnstructuredChatAgent",
+    "direct_chat": "agents.direct_chat:DirectChatAgent",
     "edit_document_v1": "agents.edit_document_v1:EditDocumentAgentV1",
     "edit_document_v2": "agents.edit_document_v2:EditDocumentAgentV2",
     "edit_document_v3": "agents.edit_document_v3:EditDocumentAgentV3",

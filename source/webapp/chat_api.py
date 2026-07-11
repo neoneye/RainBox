@@ -19,6 +19,7 @@ from agents.config import (
     ASSISTANT_WORKING_NOTICE,
     CHAT_STRUCTURED_UUID,
     CHAT_UNSTRUCTURED_UUID,
+    DIRECT_CHAT_UUID,
     MCP_UUID,
     QUERY_FILTER_ROUTER_UUID,
     QUERY_ROUTER_UUID,
@@ -97,11 +98,19 @@ def chat_rooms() -> Response | tuple[Response, int]:
         name = (data.get("name") or "").strip()
         if not name:
             abort(400, "room name required")
+        room_type = data.get("room_type") or "agents"
+        if room_type not in ("agents", "direct"):
+            abort(400, "room_type must be 'agents' or 'direct'")
         human = db.get_human_user()
         if human is None:
             abort(500, "no human user seeded")
-        member_uuids = [_parse_uuid(raw) for raw in data.get("member_uuids", [])]
-        room = db.create_chatroom(name, human.uuid, member_uuids)
+        if room_type == "direct":
+            # A direct room is always exactly operator + the direct-chat
+            # responder; any submitted member_uuids are ignored.
+            member_uuids = [DIRECT_CHAT_UUID]
+        else:
+            member_uuids = [_parse_uuid(raw) for raw in data.get("member_uuids", [])]
+        room = db.create_chatroom(name, human.uuid, member_uuids, room_type=room_type)
         return jsonify({"uuid": str(room.uuid), "name": room.name}), 201
     return jsonify(db.list_chatrooms())
 
@@ -253,10 +262,26 @@ def chat_agents() -> Response:
     )
 
 
+def _maybe_trigger_direct_chat(
+    room_uuid: UUID, sender_uuid: UUID, message_uuid: UUID
+) -> None:
+    """Direct-room sibling of _maybe_trigger_chat_agents: a human post enqueues
+    the direct-chat responder (and nothing else). Same human-only guard, so the
+    model's own reply never re-triggers a turn."""
+    sender = db.get_chat_user(sender_uuid)
+    if sender is None or sender.user_type != "human":
+        return
+    db.enqueue(
+        DIRECT_CHAT_UUID,
+        {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)},
+    )
+
+
 @app.route("/chat/api/rooms/<room_uuid>/messages", methods=["GET", "POST"])
 def chat_room_messages(room_uuid: str) -> Response | tuple[Response, int]:
     ruuid = _parse_uuid(room_uuid)
-    if db.get_chatroom(ruuid) is None:
+    room = db.get_chatroom(ruuid)
+    if room is None:
         abort(404, "room not found")
 
     if request.method == "POST":
@@ -275,7 +300,10 @@ def chat_room_messages(room_uuid: str) -> Response | tuple[Response, int]:
                 abort(500, "no human user seeded")
             sender = human.uuid
         msg = db.post_chat_message(ruuid, sender, text, db.detect_content_type(text))
-        _maybe_trigger_chat_agents(ruuid, sender, msg.uuid)
+        if room.room_type == "direct":
+            _maybe_trigger_direct_chat(ruuid, sender, msg.uuid)
+        else:
+            _maybe_trigger_chat_agents(ruuid, sender, msg.uuid)
         return jsonify({"id": msg.id, "uuid": str(msg.uuid)}), 201
 
     try:
@@ -294,6 +322,97 @@ def chat_room_message(room_uuid: str, message_id: int) -> Response:
     if msg is None:
         abort(404, "message not found")
     return jsonify(msg)
+
+
+@app.route("/chat/api/rooms/<room_uuid>/messages/<int:message_id>",
+           methods=["PUT", "DELETE"])
+def edit_chat_room_message(room_uuid: str, message_id: int) -> Response:
+    """Edit (PUT) or delete (DELETE) a message — direct-room-only affordances
+    (the operator can rewrite or remove their own and the model's earlier
+    turns to steer the conversation). Refused in agent rooms; neither triggers
+    a model turn."""
+    ruuid = _parse_uuid(room_uuid)
+    room = db.get_chatroom(ruuid)
+    if room is None:
+        abort(404, "room not found")
+    if room.room_type != "direct":
+        abort(403, "messages can only be edited in direct rooms")
+    if db.get_room_message(ruuid, message_id) is None:
+        abort(404, "message not found")
+    if request.method == "DELETE":
+        try:
+            db.delete_chat_message(message_id)
+        except ValueError as exc:
+            abort(409, str(exc))
+        return jsonify({"id": message_id, "deleted": True})
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        abort(400, "text required")
+    try:
+        db.edit_chat_message(message_id, text)
+    except ValueError as exc:
+        abort(409, str(exc))
+    return jsonify(db.get_room_message(ruuid, message_id))
+
+
+@app.route("/chat/api/rooms/<room_uuid>/settings", methods=["GET", "PUT"])
+def chat_room_settings(room_uuid: str) -> Response | tuple[Response, int]:
+    """A direct room's settings: its system prompt and which model it talks
+    to. PUT applies mid-conversation — the next turn reads the room fresh."""
+    ruuid = _parse_uuid(room_uuid)
+    room = db.get_chatroom(ruuid)
+    if room is None:
+        abort(404, "room not found")
+    if request.method == "PUT":
+        if room.room_type != "direct":
+            abort(400, "settings apply to direct rooms only")
+        data = request.get_json(silent=True) or {}
+        kwargs = {}
+        if "system_prompt" in data:
+            prompt = data.get("system_prompt")
+            if not isinstance(prompt, str):
+                abort(400, "system_prompt must be a string")
+            kwargs["system_prompt"] = prompt
+        if "model_uuid" in data:
+            raw = data.get("model_uuid")
+            if raw is None:
+                kwargs["model_uuid"] = None
+            else:
+                muuid = _parse_uuid(raw)
+                try:
+                    db.resolved_model_kwargs(muuid)
+                except LookupError:
+                    abort(400, "model_uuid names no model config or override")
+                kwargs["model_uuid"] = muuid
+        room = db.set_chatroom_settings(ruuid, **kwargs)
+    return jsonify({
+        "room_type": room.room_type,
+        "system_prompt": room.system_prompt or "",
+        "model_uuid": str(room.model_uuid) if room.model_uuid else None,
+    })
+
+
+@app.route("/chat/api/models")
+def chat_models() -> Response:
+    """Models selectable in a direct room's Settings sidebar: every model
+    config and every override, flattened to {uuid, label, available},
+    available ones first."""
+    out = []
+    for cfg, overrides in db.list_model_configs_with_overrides():
+        out.append({
+            "uuid": str(cfg.uuid),
+            "label": f"{cfg.provider} · {cfg.effective_display_name}",
+            "available": bool(cfg.available),
+        })
+        for ov in overrides:
+            out.append({
+                "uuid": str(ov.uuid),
+                "label": (f"{cfg.provider} · {cfg.effective_display_name}"
+                          f" — {ov.effective_display_name}"),
+                "available": bool(cfg.available),
+            })
+    return jsonify(out)
 
 
 @app.route("/chat/api/assistant/runs/<uuid:run_uuid>")
@@ -416,6 +535,7 @@ def post_feedback(message_uuid: str) -> Response | tuple[Response, int]:
 
     Validations:
     - message must exist (404 otherwise)
+    - message must not be in a direct room (400)
     - message kind must be "message" (400)
     - sender must be an agent (400)
     - rating must be "upvote" or "downvote" (400)
@@ -424,6 +544,12 @@ def post_feedback(message_uuid: str) -> Response | tuple[Response, int]:
     msg = db.db.session.query(db.ChatMessage).filter_by(uuid=msg_uuid).first()
     if msg is None:
         abort(404, "message not found")
+    room = db.get_chatroom(msg.room_uuid)
+    # Feedback rates the responder agents; a direct room has none (the
+    # operator steers by editing/deleting messages instead). The UI hides the
+    # buttons there — reject hand-crafted requests too.
+    if room is not None and room.room_type == "direct":
+        abort(400, "feedback is not available in direct rooms")
     if msg.kind != "message":
         abort(400, "feedback can only be posted on a user-facing message row")
     sender = db.get_chat_user(msg.sender_uuid)

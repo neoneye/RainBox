@@ -578,6 +578,17 @@ class Chatroom(db.Model):
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text)
     created_by: Mapped[UUID] = mapped_column()  # chat_user.uuid (the human)
+    # "agents" — the group chat where responder agents reply to human posts.
+    # "direct" — a one-to-one operator<->model chat: the model sees the FULL
+    # history as system/user/assistant messages, replies with one plain-text
+    # completion, and the room's own settings (below) pick the model + prompt.
+    room_type: Mapped[str] = mapped_column(Text, default="agents")
+    # Direct-room settings (ignored for "agents" rooms). Empty system_prompt =
+    # send no system message. model_uuid names a ModelConfig OR
+    # ModelConfigOverride (resolved via resolved_model_kwargs); plain uuid
+    # column, no FK (house style). Null = no model chosen, room can't reply.
+    system_prompt: Mapped[str] = mapped_column(Text, default="")
+    model_uuid: Mapped[UUID | None] = mapped_column(default=None)
     # Left-panel folder placement (mirrors cron's folder tree). null = top level;
     # plain col, no FK (house style — app-side validation). `position` orders
     # rooms within their folder (or among top-level rooms).

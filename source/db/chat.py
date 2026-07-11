@@ -152,11 +152,16 @@ def remove_room_member(room_uuid: UUID, user_uuid: UUID) -> bool:
 
 
 def create_chatroom(
-    name: str, created_by: UUID, member_uuids: list[UUID]
+    name: str, created_by: UUID, member_uuids: list[UUID],
+    room_type: str = "agents",
 ) -> Chatroom:
     """Create a room. The creator (the human) is always a member; `member_uuids`
-    are the additional participants (agents). Duplicates are ignored."""
-    room = Chatroom(name=name, created_by=created_by)
+    are the additional participants (agents). Duplicates are ignored.
+    `room_type` is "agents" (group chat with responder agents) or "direct"
+    (one-to-one operator<->model chat; see DirectChatAgent)."""
+    if room_type not in ("agents", "direct"):
+        raise ValueError(f"invalid room_type: {room_type!r}")
+    room = Chatroom(name=name, created_by=created_by, room_type=room_type)
     db.session.add(room)
     db.session.flush()  # assign room.uuid before inserting members
     seen: set[UUID] = set()
@@ -167,6 +172,86 @@ def create_chatroom(
         db.session.add(ChatroomMember(room_uuid=room.uuid, user_uuid=member))
     db.session.commit()
     return room
+
+
+# Sentinel for set_chatroom_settings: distinguishes "leave this field alone"
+# from "set it to None" (clearing the model).
+_UNSET: Any = object()
+
+
+def set_chatroom_settings(
+    room_uuid: UUID,
+    *,
+    system_prompt: str = _UNSET,
+    model_uuid: UUID | None = _UNSET,
+) -> Chatroom:
+    """Update a direct room's settings; only the fields passed are changed
+    (model_uuid=None clears the model). Applied mid-conversation: the next
+    direct-chat turn reads the room row fresh. Raises LookupError if the room
+    is gone, ValueError if it isn't a direct room."""
+    room = get_chatroom(room_uuid)
+    if room is None:
+        raise LookupError(f"chatroom {room_uuid} not found")
+    if room.room_type != "direct":
+        raise ValueError("settings apply to direct rooms only")
+    if system_prompt is not _UNSET:
+        room.system_prompt = system_prompt
+    if model_uuid is not _UNSET:
+        room.model_uuid = model_uuid
+    db.session.commit()
+    return room
+
+
+def edit_chat_message(message_id: int, text: str) -> ChatMessage:
+    """Replace a message's text (direct-room message editing). Re-detects
+    content_type and NOTIFYs with the row's kind + streaming:false + the new
+    text, so open tabs update the bubble in place via the existing streaming
+    upsert path — no new SSE machinery. Raises LookupError if the row is gone,
+    ValueError on a non-"message" kind or a row still streaming."""
+    msg = db.session.get(ChatMessage, message_id)
+    if msg is None:
+        raise LookupError(f"chat message {message_id} not found")
+    if msg.kind != "message":
+        raise ValueError("only kind='message' rows are editable")
+    if msg.streaming:
+        raise ValueError("cannot edit a message that is still streaming")
+    msg.text = text
+    msg.content_type = detect_content_type(text)
+    db.session.flush()
+    _chat_notify(
+        room_uuid=msg.room_uuid,
+        message_id=msg.id,
+        kind=msg.kind,
+        streaming=False,
+        text=text,
+    )
+    db.session.commit()
+    return msg
+
+
+def delete_chat_message(message_id: int) -> None:
+    """Delete a message row (direct-room message deletion) and NOTIFY so open
+    tabs drop the bubble live. Reuses the deleted_progress_ids mechanism — the
+    client removes DOM nodes by id regardless of kind — with message_id=0
+    marking a pure deletion (no new message), so background rooms don't count
+    it as unread. Raises LookupError if the row is gone, ValueError on a
+    non-"message" kind or a row still streaming."""
+    msg = db.session.get(ChatMessage, message_id)
+    if msg is None:
+        raise LookupError(f"chat message {message_id} not found")
+    if msg.kind != "message":
+        raise ValueError("only kind='message' rows are deletable")
+    if msg.streaming:
+        raise ValueError("cannot delete a message that is still streaming")
+    room_uuid = msg.room_uuid
+    db.session.delete(msg)
+    db.session.flush()
+    _chat_notify(
+        room_uuid=room_uuid,
+        message_id=0,
+        deleted_progress_ids=[message_id],
+    )
+    db.session.commit()
 
 
 class ChatTreeError(ValueError):
@@ -484,6 +569,10 @@ def list_chatrooms() -> list[dict[str, Any]]:
             "member_count": int(member_counts.get(r.uuid, 0)),
             "last_message_id": int(last_ids.get(r.uuid) or 0),
             "folderId": str(r.folder_uuid) if r.folder_uuid else None,
+            "room_type": r.room_type,
+            # Direct rooms only: lets the client know whether the room has a
+            # model without an extra fetch (drives the auto-open of Settings).
+            "model_uuid": str(r.model_uuid) if r.model_uuid else None,
         }
         for r in rooms
     ]
