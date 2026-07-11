@@ -751,7 +751,13 @@ def _chat_event_payload(
     browser can upsert that one bubble in place. `text` is inlined only when it
     fits under CHAT_NOTIFY_MAX_TEXT (Postgres caps NOTIFY at ~8000 bytes); past
     that it is omitted and the browser refetches the row by id (signalled by
-    `text` absent while `streaming` is present)."""
+    `text` absent while `streaming` is present).
+
+    The size check measures the JSON-ENCODED form, not the raw string:
+    json.dumps escapes each non-ASCII char to a 6-byte \\uXXXX sequence, so
+    unicode-heavy text (box-drawing art) can be 2x its UTF-8 size on the wire.
+    Checking raw bytes here once crashed the agent supervisor mid-stream with
+    'payload string too long'."""
     payload: dict[str, Any] = {
         "room_uuid": str(room_uuid),
         "message_id": message_id,
@@ -760,7 +766,7 @@ def _chat_event_payload(
     if streaming is not None:
         payload["streaming"] = streaming
         payload["kind"] = kind
-        if text is not None and len(text.encode("utf-8")) <= CHAT_NOTIFY_MAX_TEXT:
+        if text is not None and len(json.dumps(text)) <= CHAT_NOTIFY_MAX_TEXT:
             payload["text"] = text
     return payload
 

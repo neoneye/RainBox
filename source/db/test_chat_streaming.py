@@ -102,6 +102,22 @@ def test_payload_inlines_small_text_and_omits_large():
     assert "text" not in big  # omitted -> browser refetches by id
 
 
+def test_payload_measures_json_encoded_size_not_raw_bytes():
+    """Regression: unicode-heavy text (box-drawing art) doubles in size when
+    json.dumps escapes it to \\uXXXX; a raw-bytes check let such payloads
+    exceed Postgres's 8000-byte NOTIFY cap and crash the agent supervisor
+    ('payload string too long'). Each '╔' is 3 UTF-8 bytes but 6 JSON bytes."""
+    import json
+    n = (CHAT_NOTIFY_MAX_TEXT // 3) - 100          # raw bytes UNDER the cap...
+    art = "\N{BOX DRAWINGS DOUBLE DOWN AND RIGHT}" * n
+    assert len(art.encode("utf-8")) <= CHAT_NOTIFY_MAX_TEXT
+    assert len(json.dumps(art)) > CHAT_NOTIFY_MAX_TEXT  # ...but over it encoded
+    p = _chat_event_payload(
+        room_uuid=uuid4(), message_id=1, kind="thinking", streaming=True, text=art
+    )
+    assert "text" not in p  # omitted -> browser refetches by id
+
+
 def test_payload_plain_insert_has_no_streaming_keys():
     p = _chat_event_payload(
         room_uuid=uuid4(), message_id=5, deleted_progress_ids=[1, 2]

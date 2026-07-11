@@ -130,9 +130,18 @@ class DirectChatAgent(Agent):
             )
             return reply
         except Exception:
-            # Close any live rows so the UI doesn't show a stuck cursor.
+            # Close any live rows so the UI doesn't show a stuck cursor. A DB
+            # error mid-flush leaves the transaction aborted — roll it back
+            # first so these closing writes can land, and keep them
+            # best-effort so the original error is what propagates.
+            db.db.session.rollback()
             if writer.reasoning_id is not None or writer.answer_id is not None:
-                writer.finish()
+                try:
+                    writer.finish()
+                except Exception:
+                    logger.exception(
+                        "agent %s: could not close streaming rows", self.name
+                    )
             raise
 
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
