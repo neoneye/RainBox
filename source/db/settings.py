@@ -46,6 +46,10 @@ class Setting:
     secret: bool = False
     validate: Callable[[object], None] | None = None
     description: str = ""
+    # Computed fallback used instead of `default` when DB and env are unset
+    # (e.g. chat.default_model derives from the model_config table). Must be
+    # cheap and app-context safe: it runs on every unset get_setting().
+    dynamic_default: Callable[[], object] | None = None
 
 
 def _validate_age_recipient(value: object) -> None:
@@ -60,6 +64,33 @@ def _validate_age_recipient(value: object) -> None:
             raise ValueError(
                 f"not an age recipient (expected 'age1…'): {tok!r}"
             )
+
+
+def _validate_chat_default_model(value: object) -> None:
+    """Must be the uuid of an existing ModelConfig or ModelConfigOverride."""
+    from uuid import UUID
+
+    import db.model_config as model_config
+
+    try:
+        target = UUID(str(value).strip())
+    except ValueError:
+        raise ValueError(
+            f"chat.default_model: not a uuid: {value!r}"
+        ) from None
+    try:
+        model_config.resolved_model_kwargs(target)
+    except LookupError as exc:
+        raise ValueError(f"chat.default_model: {exc}") from None
+
+
+def _default_chat_model() -> object:
+    """Unset fallback for chat.default_model: the alphabetically earliest
+    model config override (or None when no overrides exist)."""
+    import db.model_config as model_config
+
+    default = model_config.default_chat_model_uuid()
+    return str(default) if default is not None else None
 
 
 # The registry. Adding a key here is all it takes; init_db reconciles the row.
@@ -90,6 +121,16 @@ SETTINGS: dict[str, Setting] = {
                     '(JSON list, e.g. ["query_memory","workspace_read_command"]). A '
                     "disabled capability is removed from both the assistant's "
                     "prompt catalog and its dispatch path.",
+    ),
+    "chat.default_model": Setting(
+        "chat.default_model", None, "string", None,
+        validate=_validate_chat_default_model,
+        dynamic_default=_default_chat_model,
+        description="Model a direct chat room talks to while the room itself "
+                    "has no model selected (a ModelConfig or "
+                    "ModelConfigOverride uuid). Picking a model inside a room "
+                    "overrides this for that room only. Unset = the "
+                    "alphabetically earliest model config override.",
     ),
     "customize.dir": Setting(
         "customize.dir", "RAINBOX_CUSTOMIZE_DIR", "string", None,
@@ -163,6 +204,8 @@ def get_setting(key: str) -> object:
         if env_val is not None and not _is_unset(spec, env_val):
             return _coerce(spec, env_val)
 
+    if spec.dynamic_default is not None:
+        return spec.dynamic_default()
     return spec.default
 
 

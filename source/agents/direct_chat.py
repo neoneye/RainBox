@@ -8,10 +8,11 @@ structured output, no tools, no memory retrieval, no persona.
 
 Unlike the other LLM agents it is NOT a ModelGroupAgent: the model comes from
 the room row itself (Chatroom.model_uuid — a ModelConfig or
-ModelConfigOverride uuid, chosen in the /chat Settings sidebar), and the
-system prompt is the room's system_prompt (empty = no system message). Both
-are read fresh each turn, so changing them mid-conversation applies from the
-next turn on.
+ModelConfigOverride uuid, chosen in the /chat Settings sidebar), falling back
+to the global chat.default_model setting when the room has none. The system
+prompt is the room's system_prompt (empty = no system message). Both are read
+fresh each turn, so changing them mid-conversation applies from the next
+turn on.
 """
 
 import logging
@@ -29,8 +30,9 @@ from llm import prepare_llm
 logger = logging.getLogger(__name__)
 
 NO_MODEL_NOTICE: str = (
-    "No model selected for this chat. Open the right panel, choose "
-    "“Settings”, and pick a model."
+    "No model selected for this chat, and no global default is available. "
+    "Open the right panel, choose “Settings”, and pick a model — or set "
+    "chat.default_model on the /settings page."
 )
 
 
@@ -144,6 +146,26 @@ class DirectChatAgent(Agent):
                     )
             raise
 
+    @staticmethod
+    def _default_model_uuid() -> UUID | None:
+        """The global default model for rooms with none selected: the
+        chat.default_model setting (an explicit value, or its dynamic default —
+        the alphabetically earliest model config override). None when it is
+        unset or no longer resolves to a model."""
+        raw = db.get_setting("chat.default_model")
+        if not raw:
+            return None
+        try:
+            target = UUID(str(raw))
+            db.resolved_model_kwargs(target)
+            return target
+        except (ValueError, LookupError):
+            logger.warning(
+                "chat.default_model %r does not resolve to a model; ignoring",
+                raw,
+            )
+            return None
+
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
         room = db.get_chatroom(room_uuid)
@@ -153,7 +175,8 @@ class DirectChatAgent(Agent):
             raise ValueError(
                 f"room {room_uuid} is type {room.room_type!r}, not 'direct'"
             )
-        if room.model_uuid is None:
+        model_uuid = room.model_uuid or self._default_model_uuid()
+        if model_uuid is None:
             # Friendly nudge instead of a failed journal. kind="notice" is
             # excluded from transcripts, so the model never sees it.
             db.post_chat_message(
@@ -164,7 +187,7 @@ class DirectChatAgent(Agent):
         messages = self.build_messages(
             db.resolve_room_system_prompt(room), history
         )
-        reply = self._stream_reply(room_uuid, room.model_uuid, messages)
+        reply = self._stream_reply(room_uuid, model_uuid, messages)
         if not reply:
             logger.warning(
                 "direct chat agent produced an empty reply in room %s", room_uuid

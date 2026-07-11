@@ -390,6 +390,7 @@ const CHAT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="
 let rooms = [];                 // [{uuid, name, member_count, last_message_id, room_type, model_uuid}]
 let folders = [];               // [{id, name, parentId}]
 let treeVersion = null;         // optimistic-concurrency token from /chat/api/tree
+let chatDefaultModel = null;    // global chat.default_model uuid (rooms without a model use it)
 let dragNode = null;            // {type:'folder'|'room', id} during a drag
 const FOLDER_EXPAND_KEY = 'chat.expandedFolders';
 let expandedFolders = {};       // folderId -> false when collapsed (default expanded)
@@ -1753,10 +1754,11 @@ async function selectRoom(uuid, scrollMsgId){
   renderRooms();
   const room = rooms.find(r => r.uuid === uuid);
   titleNameEl.value = room ? room.name : '';
-  // A direct room with no model can't reply — surface its Settings panel for
-  // this visit (not persisted to localStorage) so a fresh room is immediately
-  // configurable.
-  if (room && room.room_type === 'direct' && !room.model_uuid && sidebarMode === 'hidden'){
+  // A direct room with no model — and no global default to fall back to —
+  // can't reply, so surface its Settings panel for this visit (not persisted
+  // to localStorage) so a fresh room is immediately configurable.
+  if (room && room.room_type === 'direct' && !room.model_uuid && !chatDefaultModel
+      && sidebarMode === 'hidden'){
     sidebarMode = 'settings';
     sidebarModeSel.value = 'settings';
   }
@@ -1803,6 +1805,7 @@ async function loadRooms(selectUuid, scrollMsgId){
   folders = (tree && tree.folders) || [];
   rooms = (tree && tree.rooms) || [];
   treeVersion = (tree && tree.version) || null;
+  chatDefaultModel = (tree && tree.default_model_uuid) || null;
   renderRooms();
   // A deep-linked id may name a FOLDER (?id=<folder>) — select its contents
   // table instead of a room.
@@ -1907,7 +1910,11 @@ async function renderDirectSettings(){
   sel.className = 'ds-model';
   const none = document.createElement('option');
   none.value = '';
-  none.textContent = '(no model)';
+  // No per-room model means the global default (chat.default_model on
+  // /settings) answers; say which one so the blank state isn't alarming.
+  const dfltModel = settings.default_model_uuid
+    ? models.find(mm => mm.uuid === settings.default_model_uuid) : null;
+  none.textContent = dfltModel ? '(default — ' + dfltModel.label + ')' : '(no model)';
   sel.appendChild(none);
   models.forEach(mm => {
     const opt = document.createElement('option');

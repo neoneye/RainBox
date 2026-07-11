@@ -118,6 +118,43 @@ def list_model_configs_with_overrides(
     return [(c, by_config.get(c.uuid, [])) for c in configs]
 
 
+def chat_model_choices() -> list[dict[str, Any]]:
+    """Every ModelConfig and ModelConfigOverride flattened to
+    {uuid (str), label, available} — the option list for a direct room's
+    model picker and the chat.default_model setting. Available configs
+    sort first; an override's label is its base config's plus its own name."""
+    out: list[dict[str, Any]] = []
+    for cfg, overrides in list_model_configs_with_overrides():
+        base = f"{cfg.provider} · {cfg.effective_display_name}"
+        out.append({
+            "uuid": str(cfg.uuid),
+            "label": base,
+            "available": bool(cfg.available),
+        })
+        for ov in overrides:
+            out.append({
+                "uuid": str(ov.uuid),
+                "label": f"{base} — {ov.effective_display_name}",
+                "available": bool(cfg.available),
+            })
+    return out
+
+
+def default_chat_model_uuid() -> UUID | None:
+    """The alphabetically earliest ModelConfigOverride, by its picker label
+    ('provider · config — override', case-insensitive). This is the built-in
+    default model for direct chat rooms while the chat.default_model setting
+    is unset. None when no overrides exist."""
+    best: tuple[str, UUID] | None = None
+    for cfg, overrides in list_model_configs_with_overrides():
+        base = f"{cfg.provider} · {cfg.effective_display_name}"
+        for ov in overrides:
+            label = f"{base} — {ov.effective_display_name}".lower()
+            if best is None or label < best[0]:
+                best = (label, ov.uuid)
+    return best[1] if best else None
+
+
 def resolved_arguments(override_uuid: UUID) -> dict[str, Any]:
     """Return the effective LlamaIndex-constructor args for an override:
     base ModelConfig.arguments shallow-merged with override.overrides

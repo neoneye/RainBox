@@ -68,8 +68,10 @@ def test_build_messages_blank_prompt_sends_no_system_message():
     assert [m.role for m in messages] == [MessageRole.USER]
 
 
-def test_handle_without_model_posts_notice(direct_room):
+def test_handle_without_model_posts_notice(direct_room, monkeypatch):
+    """No room model AND no global default -> friendly notice, no reply."""
     room_uuid, human_uuid = direct_room
+    monkeypatch.setattr(db, "get_setting", lambda key: None)  # no chat.default_model
     db.post_chat_message(room_uuid, human_uuid, "anyone there?")
     result = _agent().handle(uuid4(), {"room_uuid": str(room_uuid)})
     assert result == {"ok": True, "notice": "no_model"}
@@ -77,6 +79,46 @@ def test_handle_without_model_posts_notice(direct_room):
     notice = [r for r in rows if r["kind"] == "notice"]
     assert len(notice) == 1
     assert notice[0]["text"] == NO_MODEL_NOTICE
+
+
+def test_handle_without_room_model_uses_global_default(direct_room, monkeypatch):
+    """A model-less room replies with the chat.default_model setting's model;
+    the room row itself stays untouched (the default is not copied in)."""
+    room_uuid, human_uuid = direct_room
+    db.post_chat_message(room_uuid, human_uuid, "hello")
+    default_uuid = uuid4()
+    monkeypatch.setattr(
+        db, "get_setting",
+        lambda key: str(default_uuid) if key == "chat.default_model" else None,
+    )
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs", lambda target: ("lm_studio", "m", {})
+    )
+    agent = _agent()
+    seen = {}
+
+    def fake_stream(room, model, messages):
+        seen["model"] = model
+        return "stubbed reply"
+
+    monkeypatch.setattr(agent, "_stream_reply", fake_stream)
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid)})
+    assert result == {"ok": True, "reply_content": "stubbed reply"}
+    assert seen["model"] == default_uuid
+    assert db.get_chatroom(room_uuid).model_uuid is None
+
+
+def test_handle_with_unresolvable_global_default_posts_notice(direct_room, monkeypatch):
+    """A stale chat.default_model (model deleted since) degrades to the
+    no-model notice instead of a failed journal."""
+    room_uuid, human_uuid = direct_room
+    monkeypatch.setattr(
+        db, "get_setting",
+        lambda key: str(uuid4()) if key == "chat.default_model" else None,
+    )
+    db.post_chat_message(room_uuid, human_uuid, "anyone there?")
+    result = _agent().handle(uuid4(), {"room_uuid": str(room_uuid)})
+    assert result == {"ok": True, "notice": "no_model"}
 
 
 def test_handle_streams_full_history(direct_room, monkeypatch):

@@ -112,6 +112,56 @@ def test_age_recipient_validation():
         db_settings._validate_age_recipient("ssh-ed25519 AAAA")  # space; use file
 
 
+# ---- dynamic defaults ------------------------------------------------------
+
+def test_dynamic_default_used_when_unset(temp_setting, monkeypatch):
+    """A dynamic_default computes the fallback; DB and env still beat it."""
+    temp_setting(key="test.dyn", env="TEST_DYN", type="string", default="static",
+                 dynamic_default=lambda: "computed")
+    monkeypatch.delenv("TEST_DYN", raising=False)
+    assert db.get_setting("test.dyn") == "computed"     # dynamic beats static default
+
+    monkeypatch.setenv("TEST_DYN", "from_env")
+    assert db.get_setting("test.dyn") == "from_env"     # env beats dynamic
+
+    db.set_setting("test.dyn", "from_db")
+    assert db.get_setting("test.dyn") == "from_db"      # db beats everything
+
+
+def test_chat_default_model_dynamic_default_is_earliest_override(app_ctx, monkeypatch):
+    """Unset chat.default_model resolves to the alphabetically earliest model
+    config override (as a uuid string), or None when no overrides exist."""
+    import db.model_config as model_config
+    from uuid import uuid4
+
+    row = db.db.session.query(db.AppSetting).filter_by(key="chat.default_model").one()
+    assert row.value in (None, ""), "operator has chat.default_model set; test needs it unset"
+
+    earliest = uuid4()
+    monkeypatch.setattr(model_config, "default_chat_model_uuid", lambda: earliest)
+    assert db.get_setting("chat.default_model") == str(earliest)
+
+    monkeypatch.setattr(model_config, "default_chat_model_uuid", lambda: None)
+    assert db.get_setting("chat.default_model") is None
+
+
+def test_chat_default_model_validation(app_ctx):
+    """Stored values must be uuids naming an existing config or override."""
+    with pytest.raises(ValueError):
+        db.set_setting("chat.default_model", "not-a-uuid")
+    with pytest.raises(ValueError):
+        db.set_setting("chat.default_model", "00000000-0000-0000-0000-000000000001")
+
+    cfg = db.create_model_config("pp3-test-chat-default-model", {})
+    try:
+        db.set_setting("chat.default_model", str(cfg.uuid))
+        assert db.get_setting("chat.default_model") == str(cfg.uuid)
+    finally:
+        db.set_setting("chat.default_model", None)
+        db.db.session.delete(cfg)
+        db.db.session.commit()
+
+
 # ---- secrets are env-only --------------------------------------------------
 
 def test_secret_cannot_be_persisted_to_db(temp_setting):

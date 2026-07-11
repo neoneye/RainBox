@@ -112,6 +112,7 @@ environment-managed and never stored here.</p>
 <script>
 const SETTINGS = {{ settings_json|safe }};
 const QA_SHIELDS = {{ qa_shields_json|safe }};
+const MODELS = {{ models_json|safe }};  // {uuid,label,available} for chat.default_model
 
 const SOURCE_HELP = {
   db: 'Stored in the database — overrides the environment variable and the default.',
@@ -126,10 +127,21 @@ function escapeHtml(s){
   return (s == null ? '' : String(s)).replace(/[&<>"]/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
-// Effective value for display ("(unset)" when empty/null).
+// A model uuid's human label ("provider · model — override"), or null.
+function modelLabel(uuid){
+  const m = MODELS.find(x => x.uuid === uuid);
+  return m ? m.label : null;
+}
+// Effective value for display ("(unset)" when empty/null). chat.default_model
+// holds a model uuid — show the model's label instead (uuid in the tooltip).
 function displayValue(s){
   if (s.value === null || s.value === '') return '<span class="s-val unset">(unset)</span>';
-  return '<span class="s-val">' + escapeHtml(String(s.value)) + '</span>';
+  const text = String(s.value);
+  if (s.key === 'chat.default_model'){
+    const lbl = modelLabel(text);
+    if (lbl) return '<span class="s-val" title="' + escapeHtml(text) + '">' + escapeHtml(lbl) + '</span>';
+  }
+  return '<span class="s-val">' + escapeHtml(text) + '</span>';
 }
 
 // Cluster the discovered shields by their dotted-path prefix and render a
@@ -288,7 +300,15 @@ function openEdit(key){
   origControl = dbBaseline(s);
 
   let field;
-  if (s.value_type === 'bool'){
+  const isSelect = s.value_type === 'bool' || s.key === 'chat.default_model';
+  if (s.key === 'chat.default_model'){
+    field = 'Value <select id="s-edit-input">'
+      + '<option value="">(unset &mdash; alphabetically earliest override)</option>'
+      + MODELS.map(m => '<option value="' + escapeHtml(m.uuid) + '">'
+          + escapeHtml(m.label + (m.available ? '' : ' (unavailable)'))
+          + '</option>').join('')
+      + '</select>';
+  } else if (s.value_type === 'bool'){
     field = 'Value <select id="s-edit-input">'
       + '<option value="">(unset &mdash; use env/default)</option>'
       + '<option value="true">true</option>'
@@ -300,12 +320,13 @@ function openEdit(key){
   document.getElementById('s-modal-field').innerHTML = field;
   const input = document.getElementById('s-edit-input');
   input.value = origControl;
-  input.addEventListener(s.value_type === 'bool' ? 'change' : 'input', updateSaveState);
+  input.addEventListener(isSelect ? 'change' : 'input', updateSaveState);
 
   // Show where the live value currently comes from, so an empty DB field isn't
   // mistaken for "no value".
-  let cur = 'Effective: ' + (s.value === null || s.value === '' ? '(unset)' : escapeHtml(String(s.value)))
-    + ' \\u00b7 from ' + s.source;
+  let effective = s.value === null || s.value === '' ? '(unset)' : String(s.value);
+  if (s.key === 'chat.default_model' && modelLabel(effective)) effective = modelLabel(effective);
+  let cur = 'Effective: ' + escapeHtml(effective) + ' \\u00b7 from ' + s.source;
   document.getElementById('s-modal-current').textContent = cur;
 
   document.getElementById('s-modal-err').textContent = '';
@@ -372,6 +393,7 @@ def settings_page() -> str:
         SETTINGS_TEMPLATE,
         settings_json=_js(db.all_settings()),
         qa_shields_json=_js(seed_memory.available_qa_shields()),
+        models_json=_js(db.chat_model_choices()),
     )
 
 

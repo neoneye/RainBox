@@ -146,7 +146,12 @@ def chat_tree() -> Response | tuple[Response, int]:
         except db.ChatTreeError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": True, "version": db.chat_tree_version()})
-    return jsonify(db.chat_load_tree())
+    tree = db.chat_load_tree()
+    # Read-only extra: whether a global default model exists, so the client
+    # can skip the "pick a model" nudge for model-less direct rooms.
+    default_model = db.get_setting("chat.default_model")
+    tree["default_model_uuid"] = str(default_model) if default_model else None
+    return jsonify(tree)
 
 
 @app.route("/chat/api/folders", methods=["POST"])
@@ -400,10 +405,14 @@ def chat_room_settings(room_uuid: str) -> Response | tuple[Response, int]:
     # without a second request ("prompt_exists": false = the linked version
     # was deleted; the room sends no system message until relinked).
     linked = db.prompt_get(room.prompt_uuid) if room.prompt_uuid else None
+    default_model = db.get_setting("chat.default_model")
     return jsonify({
         "room_type": room.room_type,
         "system_prompt": room.system_prompt or "",
         "model_uuid": str(room.model_uuid) if room.model_uuid else None,
+        # What the room falls back to while model_uuid is null (the global
+        # chat.default_model setting), so the sidebar can label that state.
+        "default_model_uuid": str(default_model) if default_model else None,
         "prompt_uuid": str(room.prompt_uuid) if room.prompt_uuid else None,
         "prompt_name": linked["name"] if linked else None,
         "prompt_exists": (linked is not None) if room.prompt_uuid else None,
@@ -415,21 +424,7 @@ def chat_models() -> Response:
     """Models selectable in a direct room's Settings sidebar: every model
     config and every override, flattened to {uuid, label, available},
     available ones first."""
-    out = []
-    for cfg, overrides in db.list_model_configs_with_overrides():
-        out.append({
-            "uuid": str(cfg.uuid),
-            "label": f"{cfg.provider} · {cfg.effective_display_name}",
-            "available": bool(cfg.available),
-        })
-        for ov in overrides:
-            out.append({
-                "uuid": str(ov.uuid),
-                "label": (f"{cfg.provider} · {cfg.effective_display_name}"
-                          f" — {ov.effective_display_name}"),
-                "available": bool(cfg.available),
-            })
-    return jsonify(out)
+    return jsonify(db.chat_model_choices())
 
 
 @app.route("/chat/api/assistant/runs/<uuid:run_uuid>")

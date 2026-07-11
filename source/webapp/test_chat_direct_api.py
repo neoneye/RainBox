@@ -252,7 +252,11 @@ def test_settings_get_and_put(client, direct_room):
     room_uuid, _human = direct_room
     resp = test_client.get(f"/chat/api/rooms/{room_uuid}/settings")
     assert resp.status_code == 200
-    assert resp.get_json() == {
+    body = resp.get_json()
+    # default_model_uuid mirrors the global chat.default_model setting, whose
+    # dynamic default depends on the shared DB's overrides — shape-check only.
+    assert body.pop("default_model_uuid", "missing") != "missing"
+    assert body == {
         "room_type": "direct", "system_prompt": "", "model_uuid": None,
         "prompt_uuid": None, "prompt_name": None, "prompt_exists": None,
     }
