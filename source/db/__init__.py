@@ -27,6 +27,7 @@ from db.eval import *  # noqa: F401,F403  re-export eval case/run/result + promo
 from db.cron import *  # noqa: F401,F403  re-export cron tree/scheduler/firing ops
 from db.kanban import *  # noqa: F401,F403  re-export kanban board/task/agent ops
 from db.git import *  # noqa: F401,F403  re-export git tree ops + repo inspection
+from db.prompt import *  # noqa: F401,F403  re-export system-prompt tree + version-lineage ops
 from db.settings import *  # noqa: F401,F403  re-export app_setting registry/accessors
 
 logger = logging.getLogger(__name__)

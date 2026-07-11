@@ -32,6 +32,8 @@ from . import kanban_views  # noqa: F401,E402
 from . import kanban_api  # noqa: F401,E402
 from . import git_views  # noqa: F401,E402
 from . import git_api  # noqa: F401,E402
+from . import prompt_views  # noqa: F401,E402
+from . import prompt_api  # noqa: F401,E402
 from . import settings_views  # noqa: F401,E402
 from . import memory_views  # noqa: F401,E402
 from . import memory_api  # noqa: F401,E402
