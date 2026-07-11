@@ -90,7 +90,7 @@ PROMPT_TEMPLATE = """
   #prompt-editor[hidden]{display:none}
   #prompt-content{flex:1;min-height:16em;width:100%;box-sizing:border-box;resize:none;
     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.88rem;
-    line-height:1.45;padding:10px;border:1px solid #d1d5db;border-radius:6px;white-space:pre;overflow:auto}
+    line-height:1.45;padding:10px;border:1px solid #d1d5db;border-radius:6px;overflow:auto}
   #prompt-content:focus{outline:2px solid #93c5fd;outline-offset:-1px}
   /* Diff view: unified-diff lines in a monospace scroll box. */
   #prompt-diff{flex:1;min-height:0;overflow:auto;border:1px solid #d1d5db;border-radius:6px;
