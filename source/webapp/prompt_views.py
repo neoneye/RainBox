@@ -173,7 +173,6 @@ PROMPT_TEMPLATE = """
         <button id="prompt-save-btn" onclick="promptSaveEdit()" hidden>Save</button>
         <button id="prompt-cancel-btn" onclick="promptCancelEdit()" hidden>Cancel</button>
         <button id="prompt-newchat-btn" onclick="promptNewChat()">New chat</button>
-        <button id="prompt-clone-btn" onclick="promptCloneCurrent()">Clone</button>
         <button id="prompt-diff-btn" onclick="promptToggleDiff()">Diff against parent</button>
         <select id="prompt-diff-against" hidden onchange="promptDiffAgainstChanged()"></select>
       </div>

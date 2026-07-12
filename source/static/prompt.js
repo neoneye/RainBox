@@ -379,7 +379,6 @@ function promptSyncEditButtons(){
   document.getElementById('prompt-save-btn').hidden = !promptEditMode;
   document.getElementById('prompt-cancel-btn').hidden = !promptEditMode;
   document.getElementById('prompt-newchat-btn').hidden = promptEditMode;
-  document.getElementById('prompt-clone-btn').hidden = promptEditMode;
   document.getElementById('prompt-diff-btn').hidden = promptEditMode;
   document.getElementById('prompt-editor').classList.toggle('editing', promptEditMode);
   document.getElementById('ui-modal-backdrop').hidden = !promptEditMode;
@@ -435,11 +434,7 @@ window.addEventListener('beforeunload', (e) => {
   }
 });
 
-// ---- clone (the only way to make a new version) ----
-async function promptCloneCurrent(){
-  if (!promptSelectedItem) return;
-  await promptCloneUuid(promptSelectedItem);
-}
+// ---- clone (the only way to make a new version; via the tree kebab) ----
 async function promptCloneUuid(uuid){
   // Flush any pending structural edits first: the clone bumps the server-side
   // tree version, which would 409 a queued stale PUT.
