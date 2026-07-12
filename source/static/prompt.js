@@ -95,10 +95,6 @@ function promptRender(){
   promptRenderContents();
   promptRenderEditor();
   promptSyncUrl();
-  const paneTitle = document.getElementById('prompt-pane-title');
-  if (promptSelectedItem) paneTitle.textContent = 'Prompt';
-  else if (promptSelectedFolder !== null) paneTitle.textContent = 'Folder';
-  else paneTitle.textContent = 'All prompts';
 }
 // Depth-first list of everything under parentId (null = whole tree), in the
 // same order as the left tree, each row tagged with its nesting `depth` — like
@@ -176,7 +172,7 @@ function promptRenderRename(){
   btn.type = 'button';
   btn.id = 'prompt-rename-display';
   btn.textContent = node.name;
-  btn.title = 'Rename';
+  btn.title = 'Click to rename';
   btn.addEventListener('click', () => promptOpenRenameModal(type, node, node.name));
   el.appendChild(btn);
 }

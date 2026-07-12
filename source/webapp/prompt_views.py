@@ -70,14 +70,13 @@ PROMPT_TEMPLATE = """
   .prompt-menu .item{text-align:left;border:none;background:none;cursor:pointer;font:inherit;font-size:0.85rem;color:#333;padding:0.45em 0.6em;border-radius:6px}
   .prompt-menu .item:hover{background:#eef0f6}
   .prompt-menu .item.danger{color:#b91c1c}
-  .prompt-pane-title{font-weight:600;font-size:1.1rem;margin-bottom:8px}
-  /* Click-to-rename name display: reads as the node's name, and a hover
-     border + pencil reveal it opens the rename modal. */
-  #prompt-node-rename{margin:8px 0}
-  #prompt-node-rename button{font:inherit;font-size:1rem;font-weight:600;color:#1a1a2e;background:none;
-    text-align:left;border:1px solid transparent;border-radius:6px;padding:4px 8px;cursor:pointer}
+  /* Click-to-rename name display: reads as the node's name (it doubles as
+     the pane heading); a hover border + tooltip reveal it opens the rename
+     modal. */
+  #prompt-node-rename{margin:0 0 8px}
+  #prompt-node-rename button{font:inherit;font-size:1.1rem;font-weight:600;color:#1a1a2e;background:none;
+    text-align:left;border:1px solid transparent;border-radius:6px;padding:4px 8px;margin-left:-8px;cursor:pointer}
   #prompt-node-rename button:hover{border-color:#cbd5e1;background:#f8fafc}
-  #prompt-node-rename button::after{content:"✎";margin-left:8px;color:#9ca3af;font-weight:400}
   #prompt-folder-desc{margin:8px 0;display:flex;gap:6px;align-items:center}
   .prompt-table{border-collapse:collapse;width:100%;font-size:0.9rem}
   .prompt-table th,.prompt-table td{text-align:left;padding:6px 10px;border-bottom:1px solid #eee;vertical-align:top}
@@ -149,7 +148,6 @@ PROMPT_TEMPLATE = """
     <div class="prompt-root-drop" id="prompt-root-drop">&#10515; Move to top level</div>
   </div>
   <div class="prompt-main" id="prompt-main">
-    <div class="prompt-pane-title" id="prompt-pane-title"></div>
     <div id="prompt-node-rename" hidden></div>
     <div id="prompt-folder-desc" hidden></div>
     <div class="prompt-table-wrap" id="prompt-table-wrap">
