@@ -160,12 +160,10 @@ function promptRenderContents(){
     tb.appendChild(tr);
   });
 }
-// Rename field for the selected folder or prompt (the prompt's display name
-// lives in the tree payload, so renaming goes through the tree save).
-// The rename itself always happens in a confirm modal: a name typed inline but
-// never confirmed used to be silently lost, so the first keystroke here (or
-// the button, or Enter) hands the edit off to the modal, where the only ways
-// out are an explicit Rename or Cancel.
+// The selected folder's / prompt's name, shown as a click-to-rename control.
+// All editing happens in the rename modal (Cancel / Rename are the only ways
+// out), so a half-typed name can never be silently lost — the failure mode of
+// the old inline field + Rename button.
 function promptRenderRename(){
   const el = document.getElementById('prompt-node-rename');
   el.innerHTML = '';
@@ -174,15 +172,13 @@ function promptRenderRename(){
   else if (promptSelectedFolder !== null){ node = promptFolderById(promptSelectedFolder); type = 'folder'; }
   if (!node){ el.hidden = true; return; }
   el.hidden = false;
-  const input = document.createElement('input');
-  input.type = 'text'; input.id = 'prompt-rename-field'; input.value = node.name;
   const btn = document.createElement('button');
-  btn.textContent = 'Rename…';
-  const handOff = () => promptOpenRenameModal(type, node, input.value);
-  input.addEventListener('input', handOff);
-  btn.addEventListener('click', handOff);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); handOff(); } });
-  el.appendChild(input); el.appendChild(btn);
+  btn.type = 'button';
+  btn.id = 'prompt-rename-display';
+  btn.textContent = node.name;
+  btn.title = 'Rename';
+  btn.addEventListener('click', () => promptOpenRenameModal(type, node, node.name));
+  el.appendChild(btn);
 }
 
 // ---- rename modal ----
@@ -204,7 +200,6 @@ function promptCloseRenameModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('prompt-rename-modal').hidden = true;
   promptRenameState = null;
-  promptRenderRename();   // restore the inline field to the stored name
 }
 // Rename is enabled only for a non-empty name that actually differs.
 function promptSyncRenameConfirm(){
@@ -1110,9 +1105,8 @@ function promptOpenModalDirty(){
   if (!document.getElementById('prompt-desc-modal').hidden){
     return document.getElementById('prompt-desc-input').value !== promptDescOrig;
   }
-  // Rename: dirty when the name differs from the stored one — which is the
-  // usual case, since the modal opens on the first inline edit. Only the
-  // explicit buttons close it then.
+  // Rename: dirty once the typed name differs from the stored one — only the
+  // explicit Rename/Cancel buttons close it then.
   if (!document.getElementById('prompt-rename-modal').hidden){
     return document.getElementById('prompt-rename-input').value
       !== ((promptRenameState && promptRenameState.original) || '');

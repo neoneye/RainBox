@@ -68,13 +68,13 @@ def test_new_chat_button():
 
 
 def test_rename_goes_through_confirm_modal():
-    """Renaming is modal-confirmed: the first edit in the inline name field
-    hands off to the rename modal, so a typed-but-unconfirmed name can't be
-    silently lost."""
+    """Renaming is modal-confirmed: the right pane shows the node's name as a
+    click-to-rename control, and all editing happens in the rename modal, so
+    a typed-but-unconfirmed name can't be silently lost."""
     b = _body()
     assert 'id="prompt-rename-modal"' in b
     assert 'id="prompt-rename-input"' in b
     assert 'id="prompt-rename-confirm"' in b
+    assert "prompt-rename-display" in b
     assert "function promptOpenRenameModal" in b
     assert "function promptConfirmRenameModal" in b
-    assert "input.addEventListener('input', handOff)" in b
