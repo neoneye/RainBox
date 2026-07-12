@@ -68,6 +68,8 @@ history); `proposals/` holds design-time intent and reviews.
 - [ui-left-panel-tree.md](ui-left-panel-tree.md) — the shared folder-tree
   pattern (/chat, /cron, /kanban, /git) and its porting checklist.
 - [ui-modals.md](ui-modals.md) — the app-wide modal pattern.
+- [ui-modal-rename.md](ui-modal-rename.md) — renaming is modal-confirmed
+  (click-to-rename name display, Cancel/Rename only) and why.
 
 ## Proposals & reviews
 
