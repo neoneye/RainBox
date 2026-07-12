@@ -7,6 +7,7 @@ kernel on `conn.notifies(timeout=...)`, forwarding each notification to the
 browser as a Server-Sent Event.
 """
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 import psycopg
@@ -359,6 +360,123 @@ def edit_chat_room_message(room_uuid: str, message_id: int) -> Response:
     except ValueError as exc:
         abort(409, str(exc))
     return jsonify(db.get_room_message(ruuid, message_id))
+
+
+# Parameter names whose values must not leave the server in an export
+# (ModelConfig.arguments carries credentials like api_key).
+_SECRET_PARAM_MARKERS = ("key", "token", "secret", "password")
+
+
+def _redacted_parameters(args: dict) -> dict:
+    return {
+        k: "[redacted]"
+        if any(m in k.lower() for m in _SECRET_PARAM_MARKERS) else v
+        for k, v in args.items()
+    }
+
+
+def _export_model_info(room) -> dict | None:
+    """The model a direct room currently talks to (its own setting, else the
+    chat.default_model fallback), described for an export: picker label,
+    provider, model name, and the resolved constructor parameters with
+    credential-like values redacted. None for agents rooms, rooms with no
+    model, or a model uuid that no longer resolves."""
+    if room.room_type != "direct":
+        return None
+    target = room.model_uuid
+    if target is None:
+        raw = db.get_setting("chat.default_model")
+        try:
+            target = UUID(str(raw)) if raw else None
+        except ValueError:
+            target = None
+    if target is None:
+        return None
+    try:
+        provider, model_name, args = db.resolved_model_kwargs(target)
+    except LookupError:
+        return None
+    labels = {c["uuid"]: c["label"] for c in db.chat_model_choices()}
+    return {
+        "uuid": str(target),
+        "label": labels.get(str(target)),
+        "provider": provider,
+        "model_name": model_name,
+        "parameters": _redacted_parameters(args),
+    }
+
+
+@app.route("/chat/api/rooms/<room_uuid>/export")
+def chat_room_export(room_uuid: str) -> Response:
+    """The room's history as a self-contained JSON document (the Export
+    sidebar's Download / Copy source).
+
+    Query params: `limit` keeps only the last N messages (absent = all);
+    `metadata` is `full` (room + model info, uuids, dates, sender names) or
+    `minimal` (senders collapsed to user/assistant roles, text only — rows
+    whose kind isn't a real message keep a `kind` tag so notices and thinking
+    dumps aren't mistaken for replies)."""
+    ruuid = _parse_uuid(room_uuid)
+    room = db.get_chatroom(ruuid)
+    if room is None:
+        abort(404, "room not found")
+    metadata = request.args.get("metadata", "full")
+    if metadata not in ("full", "minimal"):
+        abort(400, "metadata must be 'full' or 'minimal'")
+    raw_limit = request.args.get("limit")
+    limit = None
+    if raw_limit is not None:
+        try:
+            limit = int(raw_limit)
+        except ValueError:
+            abort(400, "limit must be a positive integer")
+        if limit <= 0:
+            abort(400, "limit must be a positive integer")
+    rows = db.list_room_messages(ruuid)
+    total = len(rows)
+    if limit is not None:
+        rows = rows[-limit:]
+
+    if metadata == "minimal":
+        messages = []
+        for r in rows:
+            m = {
+                "role": "user" if r["sender_type"] == "human" else "assistant",
+                "text": r["text"],
+            }
+            if r["kind"] != "message":
+                m["kind"] = r["kind"]
+            messages.append(m)
+        return jsonify({"messages": messages})
+
+    room_info = {
+        "uuid": str(ruuid),
+        "name": room.name,
+        "room_type": room.room_type,
+    }
+    if room.room_type == "direct":
+        room_info["system_prompt"] = db.resolve_room_system_prompt(room) or None
+        room_info["request_timeout"] = room.request_timeout
+    return jsonify({
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "room": room_info,
+        "model": _export_model_info(room),
+        "message_count": len(rows),
+        "total_message_count": total,
+        "messages": [
+            {
+                "uuid": r["uuid"],
+                "sender_uuid": r["sender_uuid"],
+                "sender_name": r["sender_name"],
+                "sender_type": r["sender_type"],
+                "kind": r["kind"],
+                "content_type": r["content_type"],
+                "timestamp": r["timestamp"],
+                "text": r["text"],
+            }
+            for r in rows
+        ],
+    })
 
 
 @app.route("/chat/api/rooms/<room_uuid>/settings", methods=["GET", "PUT"])

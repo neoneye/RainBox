@@ -89,3 +89,17 @@ def test_direct_room_has_no_feedback_buttons():
     feedback rates responder agents, and a direct chat has none."""
     body = _body()
     assert "!currentRoomIsDirect() && !isDebug && m.sender_type === 'agent'" in body
+
+
+def test_export_sidebar():
+    """The Export sidebar mode: scope + metadata controls, JSON format note,
+    and Download / Copy actions wired to the /export endpoint."""
+    body = _body()
+    assert '<option value="export">Export</option>' in body
+    assert "function renderExport" in body
+    assert "/export?metadata=" in body
+    assert "Last N messages" in body
+    assert "Minimal (user / assistant, text only)" in body
+    assert "Output format" in body
+    assert "Copy to clipboard" in body
+    assert "Download" in body

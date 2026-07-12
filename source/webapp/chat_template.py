@@ -286,6 +286,7 @@ CHAT_TEMPLATE: str = """
         <option value="members">Members</option>
         <option value="stats">Stats</option>
         <option value="settings">Settings</option>
+        <option value="export">Export</option>
       </select>
     </div>
     <div class="chat-log" id="chat-log"></div>
@@ -430,10 +431,11 @@ let deferredUnreadRender = false;
 let deferredDeletedMessageIds = new Set();
 let agentsLoaded = false;
 const SIDEBAR_MODE_KEY = 'chat.sidebarMode';
-let sidebarMode = 'hidden';     // 'hidden' | 'members' | 'stats' | 'settings'
+let sidebarMode = 'hidden';     // 'hidden' | 'members' | 'stats' | 'settings' | 'export'
 try {
   const saved = localStorage.getItem(SIDEBAR_MODE_KEY);
-  if (saved === 'hidden' || saved === 'members' || saved === 'stats' || saved === 'settings') sidebarMode = saved;
+  if (saved === 'hidden' || saved === 'members' || saved === 'stats' || saved === 'settings'
+      || saved === 'export') sidebarMode = saved;
 } catch (e) {}
 sidebarModeSel.value = sidebarMode;
 
@@ -1876,6 +1878,7 @@ async function renderSidebar(){
   if (sidebarMode === 'members') await renderMembers();
   else if (sidebarMode === 'stats') renderStats();
   else if (sidebarMode === 'settings') await renderDirectSettings();
+  else if (sidebarMode === 'export') renderExport();
 }
 
 // Settings panel for a direct room: which model it talks to + its system
@@ -2147,6 +2150,133 @@ function renderStats(){
   // live count that grows as new messages arrive.
   sidebarEl.appendChild(statRow('Messages', renderedIds.size));
   sidebarEl.appendChild(statRow('Members', room ? room.member_count : 0));
+}
+
+// Export panel: download or copy the room's history as a JSON document.
+// Scope (all / last N) and metadata level (full / minimal) map straight onto
+// the /export endpoint's query params; nothing is fetched until a button is
+// clicked, so the export always reflects the room's messages at that moment.
+function renderExport(){
+  const room = currentRoom;
+  const roomObj = currentRoomObj();
+  sidebarEl.innerHTML = '';
+  const h = document.createElement('h3');
+  h.className = 'sidebar-title';
+  h.textContent = 'Export';
+  sidebarEl.appendChild(h);
+
+  const scopeLabel = document.createElement('span');
+  scopeLabel.className = 'ds-label';
+  scopeLabel.textContent = 'Messages';
+  sidebarEl.appendChild(scopeLabel);
+  const scopeSel = document.createElement('select');
+  scopeSel.className = 'ds-model';
+  [['all', 'All messages'], ['last', 'Last N messages']].forEach(([v, label]) => {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = label;
+    scopeSel.appendChild(opt);
+  });
+  sidebarEl.appendChild(scopeSel);
+  const nInput = document.createElement('input');
+  nInput.type = 'number';
+  nInput.className = 'ds-timeout';
+  nInput.min = '1';
+  nInput.step = '1';
+  nInput.value = '20';
+  nInput.title = 'How many of the newest messages to export';
+  nInput.style.display = 'none';
+  nInput.style.marginTop = '0.4em';
+  sidebarEl.appendChild(nInput);
+  scopeSel.addEventListener('change', () => {
+    nInput.style.display = scopeSel.value === 'last' ? '' : 'none';
+  });
+
+  const metaLabel = document.createElement('span');
+  metaLabel.className = 'ds-label';
+  metaLabel.textContent = 'Metadata';
+  sidebarEl.appendChild(metaLabel);
+  const metaSel = document.createElement('select');
+  metaSel.className = 'ds-model';
+  [['full', 'Full (uuids, dates, usernames, model)'],
+   ['minimal', 'Minimal (user / assistant, text only)']].forEach(([v, label]) => {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = label;
+    metaSel.appendChild(opt);
+  });
+  sidebarEl.appendChild(metaSel);
+
+  const fmtLabel = document.createElement('span');
+  fmtLabel.className = 'ds-label';
+  fmtLabel.textContent = 'Output format';
+  sidebarEl.appendChild(fmtLabel);
+  const fmt = document.createElement('p');
+  fmt.className = 'ds-note';
+  fmt.style.margin = '0';
+  fmt.textContent = 'JSON';
+  sidebarEl.appendChild(fmt);
+
+  // null = invalid "last N" input (already alerted about).
+  function exportUrl(){
+    let url = '/chat/api/rooms/' + room + '/export?metadata=' + metaSel.value;
+    if (scopeSel.value === 'last'){
+      const n = parseInt(nInput.value, 10);
+      if (!Number.isFinite(n) || n <= 0){
+        alert('Enter how many messages to export (a positive number).');
+        nInput.focus();
+        return null;
+      }
+      url += '&limit=' + n;
+    }
+    return url;
+  }
+  function exportFilename(){
+    const slug = ((roomObj && roomObj.name) || 'room')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'room';
+    return 'chat-' + slug + '-' + new Date().toISOString().slice(0, 10) + '.json';
+  }
+
+  const actions = document.createElement('div');
+  actions.style.display = 'flex';
+  actions.style.gap = '0.5em';
+  const dl = document.createElement('button');
+  dl.type = 'button';
+  dl.className = 'ds-save';
+  dl.textContent = 'Download';
+  dl.addEventListener('click', async () => {
+    const url = exportUrl();
+    if (!url) return;
+    dl.disabled = true;
+    try {
+      const data = await getJSON(url);
+      const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = exportFilename();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      alert('Export failed: ' + e.message);
+    } finally {
+      dl.disabled = false;
+    }
+  });
+  actions.appendChild(dl);
+  const cp = document.createElement('button');
+  cp.type = 'button';
+  cp.className = 'ds-save';
+  cp.textContent = 'Copy to clipboard';
+  cp.addEventListener('click', () => {
+    const url = exportUrl();
+    if (!url) return;
+    // copyText accepts a promise-returning source; the button flashes "Copied".
+    copyText(() => getJSON(url).then(d => JSON.stringify(d, null, 2)), cp);
+  });
+  actions.appendChild(cp);
+  sidebarEl.appendChild(actions);
 }
 
 sidebarModeSel.addEventListener('change', () => {
