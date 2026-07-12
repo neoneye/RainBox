@@ -288,16 +288,6 @@ function cronRender(){
   bt.hidden = !cronCreating;
   // Builder is create-only now, so its Name row is always shown when it's open.
   document.getElementById('cron-name-row').hidden = false;
-  // Right-pane title: what the user is viewing details for. Stays visible
-  // behind the create modal (based on the selection, not the creating flag).
-  const paneTitle = document.getElementById('cron-pane-title');
-  if (editing){
-    paneTitle.hidden = false; paneTitle.textContent = 'Job details';
-  } else if (cronSelectedFolder !== null){
-    paneTitle.hidden = false; paneTitle.textContent = 'Folder details';
-  } else {
-    paneTitle.hidden = false; paneTitle.textContent = 'All jobs';
-  }
   // The job list hides only while editing a single job (its Active toggle +
   // builder are the detail). It stays visible behind the create modal.
   document.getElementById('cron-table-wrap').hidden = editing;
@@ -878,8 +868,10 @@ function cronRenderFolderDesc(){
   sec.appendChild(lbl); sec.appendChild(val); sec.appendChild(btn);
   el.appendChild(sec);
 }
-// Rename field at the top of the right pane for the selected node (folder or
-// job). Mirrors the /modelgroups rename: a text input + Rename button + Enter.
+// The selected node's (folder's or job's) name at the top of the right pane,
+// shown as a click-to-rename control that doubles as the pane heading. All
+// editing happens in the rename modal — Cancel / Rename are the only ways out
+// (docs/ui-modal-rename.md), so a half-typed name can't be silently lost.
 function cronRenderRename(){
   const el = document.getElementById('cron-node-rename');
   el.innerHTML = '';
@@ -888,25 +880,59 @@ function cronRenderRename(){
   else if (cronSelectedFolder !== null){ node = cronFolderById(cronSelectedFolder); kind = 'folder'; }
   if (!node){ el.hidden = true; return; }
   el.hidden = false;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.id = 'cron-rename-field';
-  input.value = node.name;
   const btn = document.createElement('button');
-  btn.textContent = 'Rename';
-  const doRename = () => {
-    const v = input.value.trim();
-    if (!v) return;
-    node.name = v;
-    cronTouch(node);
-    if (kind === 'job') document.getElementById('f-name').value = v;  // keep builder in sync
-    cronRenderTree();
-    cronRender();  // re-renders table, detail, and this rename field
-    cronSave();
-  };
-  btn.addEventListener('click', doRename);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); doRename(); } });
-  el.appendChild(input); el.appendChild(btn);
+  btn.type = 'button';
+  btn.id = 'cron-rename-display';
+  btn.textContent = node.name;
+  btn.title = 'Click to rename';
+  btn.addEventListener('click', () => cronOpenRenameModal(kind, node));
+  el.appendChild(btn);
+}
+
+// ---- rename modal (docs/ui-modal-rename.md) ----
+let cronRenameState = null;   // {kind: 'job'|'folder', id, original}
+function cronOpenRenameModal(kind, node){
+  cronRenameState = {kind: kind, id: kind === 'job' ? node.uuid : node.id,
+                     original: node.name};
+  document.getElementById('cron-rename-title').textContent =
+    kind === 'job' ? 'Rename job' : 'Rename folder';
+  const input = document.getElementById('cron-rename-input');
+  input.value = node.name;
+  cronSyncRenameConfirm();
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('cron-rename-modal').hidden = false;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+function cronCloseRenameModal(){
+  document.getElementById('cron-rename-modal').hidden = true;
+  if (!cronAnyEditModalOpen() && !cronCreating)
+    document.getElementById('ui-modal-backdrop').hidden = true;
+  cronRenameState = null;
+}
+// Rename is enabled only for a non-empty name that actually differs.
+function cronSyncRenameConfirm(){
+  const v = document.getElementById('cron-rename-input').value.trim();
+  document.getElementById('cron-rename-confirm').disabled =
+    v === '' || !cronRenameState || v === cronRenameState.original;
+}
+function cronConfirmRenameModal(){
+  if (!cronRenameState) return;
+  const v = document.getElementById('cron-rename-input').value.trim();
+  if (!v || v === cronRenameState.original) return;
+  const kind = cronRenameState.kind;
+  const node = kind === 'job'
+    ? cronRowsState.find(j => j.uuid === cronRenameState.id)
+    : cronFolderById(cronRenameState.id);
+  cronCloseRenameModal();
+  if (!node) return;
+  node.name = v;
+  cronTouch(node);
+  if (kind === 'job') document.getElementById('f-name').value = v;  // keep builder in sync
+  cronRenderTree();
+  cronRender();
+  cronSave();
+  cronToast('Renamed to “' + v + '”');
 }
 function cronFolderClick(id){
   // First click selects the folder and clears any job/edit selection, so the
@@ -1663,6 +1689,12 @@ function cronOpenModalDirty(){
     return cronDeleteRequireName
       ? document.getElementById('cron-delete-input').value.trim() !== '' : false;
   }
+  // Rename: dirty once the typed name differs from the stored one — only the
+  // explicit Rename/Cancel buttons close it then.
+  if (!document.getElementById('cron-rename-modal').hidden){
+    return document.getElementById('cron-rename-input').value
+      !== ((cronRenameState && cronRenameState.original) || '');
+  }
   return false;
 }
 function cronCloseOpenModal(){
@@ -1673,8 +1705,15 @@ function cronCloseOpenModal(){
   if (!document.getElementById('cron-desc-modal').hidden){ cronCloseDescModal(); return; }
   if (!document.getElementById('cron-folder-modal').hidden){ cronCloseFolderModal(); return; }
   if (!document.getElementById('cron-delete-modal').hidden){ cronCloseDeleteModal(); return; }
+  if (!document.getElementById('cron-rename-modal').hidden){ cronCloseRenameModal(); return; }
 }
 function cronDismissIfClean(){ if (!cronOpenModalDirty()) cronCloseOpenModal(); }
+document.getElementById('cron-rename-input').addEventListener('input', cronSyncRenameConfirm);
+document.getElementById('cron-rename-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('cron-rename-confirm').disabled){
+    e.preventDefault(); cronConfirmRenameModal();
+  }
+});
 document.getElementById('ui-modal-backdrop').addEventListener('click', cronDismissIfClean);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') cronDismissIfClean(); });
 

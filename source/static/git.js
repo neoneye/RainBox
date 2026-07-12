@@ -77,10 +77,6 @@ function gitRender(){
   gitRenderContents();
   gitRenderRepoDetail();
   gitSyncUrl();
-  const paneTitle = document.getElementById('git-pane-title');
-  if (gitSelectedRepo) paneTitle.textContent = 'Repository';
-  else if (gitSelectedFolder !== null) paneTitle.textContent = 'Folder';
-  else paneTitle.textContent = 'All repositories';
 }
 // The contents table: the DIRECT children (subfolders + repos) of the selected
 // folder, or of the root when nothing/`All repositories` is selected. Hidden
@@ -172,8 +168,11 @@ async function gitLoadRepoDetail(uuid){
     '<li><span class="git-ficon">' + (e.isDir ? GIT_ICON_FOLDER : '') + '</span>' +
     gitEscapeHtml(e.name) + (e.isDir ? '/' : '') + '</li>').join('') + '</ul>';
 }
-// Rename field for the selected folder or repo. Changes the display name only;
-// for a repo it never touches the directory on disk.
+// The selected folder's / repo's name, shown as a click-to-rename control that
+// doubles as the pane heading. All editing happens in the rename modal —
+// Cancel / Rename are the only ways out (docs/ui-modal-rename.md). Renaming
+// changes the display name only; for a repo it never touches the directory on
+// disk.
 function gitRenderRename(){
   const el = document.getElementById('git-node-rename');
   el.innerHTML = '';
@@ -182,23 +181,55 @@ function gitRenderRename(){
   else if (gitSelectedFolder !== null){ node = gitFolderById(gitSelectedFolder); kind = 'folder'; }
   if (!node){ el.hidden = true; return; }
   el.hidden = false;
-  const input = document.createElement('input');
-  input.type = 'text'; input.id = 'git-rename-field'; input.value = node.name;
   const btn = document.createElement('button');
-  btn.textContent = 'Rename';
-  const doRename = () => {
-    const v = input.value.trim();
-    if (!v) return;
-    node.name = v;
-    gitTouch(node);
-    gitRenderTree();
-    gitRender();
-    gitSave();
-  };
-  btn.addEventListener('click', doRename);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); doRename(); } });
-  el.appendChild(input); el.appendChild(btn);
-  void kind;  // kind is informational; behavior is identical for folder/repo
+  btn.type = 'button';
+  btn.id = 'git-rename-display';
+  btn.textContent = node.name;
+  btn.title = 'Click to rename';
+  btn.addEventListener('click', () => gitOpenRenameModal(kind, node));
+  el.appendChild(btn);
+}
+
+// ---- rename modal (docs/ui-modal-rename.md) ----
+let gitRenameState = null;   // {kind: 'repo'|'folder', id, original}
+function gitOpenRenameModal(kind, node){
+  gitRenameState = {kind: kind, id: kind === 'repo' ? node.uuid : node.id,
+                    original: node.name};
+  document.getElementById('git-rename-title').textContent =
+    kind === 'repo' ? 'Rename repository' : 'Rename folder';
+  const input = document.getElementById('git-rename-input');
+  input.value = node.name;
+  gitSyncRenameConfirm();
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('git-rename-modal').hidden = false;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+function gitCloseRenameModal(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('git-rename-modal').hidden = true;
+  gitRenameState = null;
+}
+// Rename is enabled only for a non-empty name that actually differs.
+function gitSyncRenameConfirm(){
+  const v = document.getElementById('git-rename-input').value.trim();
+  document.getElementById('git-rename-confirm').disabled =
+    v === '' || !gitRenameState || v === gitRenameState.original;
+}
+function gitConfirmRenameModal(){
+  if (!gitRenameState) return;
+  const v = document.getElementById('git-rename-input').value.trim();
+  if (!v || v === gitRenameState.original) return;
+  const node = gitRenameState.kind === 'repo'
+    ? gitRepoByUuid(gitRenameState.id) : gitFolderById(gitRenameState.id);
+  gitCloseRenameModal();
+  if (!node) return;
+  node.name = v;
+  gitTouch(node);
+  gitRenderTree();
+  gitRender();
+  gitSave();
+  gitToast('Renamed to “' + v + '”');
 }
 // Description (folder or repo): read-only value + Edit button (overlay edits).
 function gitCurrentDescNode(){
@@ -308,11 +339,11 @@ function gitRepoNode(r){
   });
   return n;
 }
-// Kebab "Rename" selects the node and focuses the right-pane rename field.
+// Kebab "Rename" selects the node and opens the rename modal on it.
 function gitKebabRename(type, id){
   gitSelectNode(type, id);
-  const field = document.getElementById('git-rename-field');
-  if (field){ field.focus(); field.select(); }
+  const node = type === 'repo' ? gitRepoByUuid(id) : gitFolderById(id);
+  if (node) gitOpenRenameModal(type, node);
 }
 // 3-dot overflow menu. opts: { onRename? }. Folders and repos both offer Rename
 // only; add repos/folders via the "+ Repo"/"+ Folder" buttons. No Delete (deferred).
@@ -828,6 +859,12 @@ function gitOpenModalDirty(){
     return gitDeleteRequireName
       ? document.getElementById('git-delete-input').value.trim() !== '' : false;
   }
+  // Rename: dirty once the typed name differs from the stored one — only the
+  // explicit Rename/Cancel buttons close it then.
+  if (!document.getElementById('git-rename-modal').hidden){
+    return document.getElementById('git-rename-input').value
+      !== ((gitRenameState && gitRenameState.original) || '');
+  }
   return false;
 }
 function gitCloseOpenModal(){
@@ -835,11 +872,18 @@ function gitCloseOpenModal(){
   if (!document.getElementById('git-repo-modal').hidden){ gitCloseRepoModal(); return; }
   if (!document.getElementById('git-desc-modal').hidden){ gitCloseDescModal(); return; }
   if (!document.getElementById('git-delete-modal').hidden){ gitCloseDeleteModal(); return; }
+  if (!document.getElementById('git-rename-modal').hidden){ gitCloseRenameModal(); return; }
 }
 function gitDismissIfClean(){ if (!gitOpenModalDirty()) gitCloseOpenModal(); }
 
 // ---- wiring + initial paint ----
 gitInitTreeDnD();
+document.getElementById('git-rename-input').addEventListener('input', gitSyncRenameConfirm);
+document.getElementById('git-rename-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('git-rename-confirm').disabled){
+    e.preventDefault(); gitConfirmRenameModal();
+  }
+});
 document.getElementById('git-folder-input').addEventListener('input', () => {
   document.getElementById('git-folder-create').disabled =
     document.getElementById('git-folder-input').value.trim() === '';

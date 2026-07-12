@@ -64,9 +64,12 @@ GIT_TEMPLATE = """
   .git-menu .item{text-align:left;border:none;background:none;cursor:pointer;font:inherit;font-size:0.85rem;color:#333;padding:0.45em 0.6em;border-radius:6px}
   .git-menu .item:hover{background:#eef0f6}
   .git-menu .item.danger{color:#b91c1c}
-  .git-pane-title{font-weight:600;font-size:1.1rem;margin-bottom:8px}
-  #git-node-rename{margin:8px 0;display:flex;gap:6px}
-  #git-node-rename input{font:inherit;padding:4px 6px}
+  /* Click-to-rename name display: doubles as the pane heading; clicking opens
+     the rename modal (docs/ui-modal-rename.md). */
+  #git-node-rename{margin:0 0 8px}
+  #git-node-rename button{font:inherit;font-size:1.1rem;font-weight:600;color:#1a1a2e;background:none;
+    text-align:left;border:1px solid transparent;border-radius:6px;padding:4px 8px;margin-left:-8px;cursor:pointer}
+  #git-node-rename button:hover{border-color:#cbd5e1;background:#f8fafc}
   #git-folder-desc{margin:8px 0;display:flex;gap:6px;align-items:center}
   .git-table{border-collapse:collapse;width:100%;font-size:0.9rem}
   .git-table th,.git-table td{text-align:left;padding:6px 10px;border-bottom:1px solid #eee;vertical-align:top}
@@ -109,7 +112,6 @@ GIT_TEMPLATE = """
     <div class="git-root-drop" id="git-root-drop">&#10515; Move to top level</div>
   </div>
   <div class="git-main" id="git-main">
-    <div class="git-pane-title" id="git-pane-title"></div>
     <div id="git-node-rename" hidden></div>
     <div id="git-folder-desc" hidden></div>
     <div class="git-table-wrap" id="git-table-wrap">
@@ -130,6 +132,15 @@ GIT_TEMPLATE = """
   <div class="modal-actions">
     <button class="btn-primary" id="git-folder-create" onclick="gitAddFolderConfirm()" disabled>Create</button>
     <button class="btn-cancel" onclick="gitCloseFolderModal()">Cancel</button>
+  </div>
+</div>
+
+<div class="ui-modal" id="git-rename-modal" hidden>
+  <h3 id="git-rename-title">Rename</h3>
+  <label>Name<input type="text" id="git-rename-input" autocomplete="off"></label>
+  <div class="modal-actions">
+    <button class="btn-primary" id="git-rename-confirm" onclick="gitConfirmRenameModal()" disabled>Rename</button>
+    <button class="btn-cancel" onclick="gitCloseRenameModal()">Cancel</button>
   </div>
 </div>
 

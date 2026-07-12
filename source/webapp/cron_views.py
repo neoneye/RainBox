@@ -119,13 +119,13 @@ CRON_TEMPLATE = """
   .cron-main{overflow:auto;min-height:0;min-width:0;padding:12px 16px}
   .cron-main .builder{margin-top:0}
   .cron-table-wrap{overflow-x:auto}
-  .pane-title{font-weight:700;font-size:1.4rem;margin:0 0 0.6em}
-  .pane-title[hidden]{display:none}
-  /* Rename field at the top of the right pane for the selected node. */
-  .node-rename{display:flex;align-items:center;gap:8px;margin:0 0 0.8em}
+  /* Click-to-rename name display at the top of the right pane: doubles as the
+     pane heading; clicking opens the rename modal (docs/ui-modal-rename.md). */
+  .node-rename{margin:0 0 0.8em}
   .node-rename[hidden]{display:none}
-  .node-rename input{font-size:1.1rem;font-weight:600;padding:0.25em 0.45em;border:1px solid #ccc;border-radius:6px;min-width:240px}
-  .node-rename input:focus{border-color:#2563eb;outline:none}
+  .node-rename button{font:inherit;font-size:1.4rem;font-weight:700;color:#1a1a2e;background:none;
+    text-align:left;border:1px solid transparent;border-radius:6px;padding:2px 8px;margin-left:-8px;cursor:pointer}
+  .node-rename button:hover{border-color:#cbd5e1;background:#f8fafc}
   /* Folder detail header (right pane) with the activate/deactivate toggle. */
   .folder-detail{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;margin:0 0 0.9em;padding:9px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#fbfbfb}
   .folder-desc{margin:0 0 0.9em}
@@ -207,7 +207,6 @@ CRON_TEMPLATE = """
 <div id="cron-paused-banner" class="cron-paused-banner" hidden>
   &#9208; All cron firing is paused — no job will run until resumed (job/folder toggles are untouched).
 </div>
-<div id="cron-pane-title" class="pane-title" hidden></div>
 <div id="cron-node-rename" class="node-rename" hidden></div>
 <div id="cron-folder-detail" class="folder-detail" hidden></div>
 <div id="cron-folder-desc" class="folder-desc" hidden></div>
@@ -405,6 +404,18 @@ CRON_TEMPLATE = """
   <div class="modal-actions">
     <button class="btn-cancel" onclick="cronCloseFolderModal()">Cancel</button>
     <button id="cron-folder-create" class="btn-primary" onclick="cronAddFolderConfirm()">Create</button>
+  </div>
+</div>
+
+<div id="cron-rename-modal" class="ui-modal" hidden>
+  <h3 id="cron-rename-title">Rename</h3>
+  <div class="brow">
+    <label style="width:100%">Name
+      <input type="text" id="cron-rename-input" autocomplete="off"></label>
+  </div>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="cronCloseRenameModal()">Cancel</button>
+    <button id="cron-rename-confirm" class="btn-primary" onclick="cronConfirmRenameModal()" disabled>Rename</button>
   </div>
 </div>
 

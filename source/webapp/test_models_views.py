@@ -112,3 +112,23 @@ def test_overrides_dict_includes_context_window():
     fd = _new_override_form_data(_base_form(context_window="16384"))
     ov = _build_overrides_dict(fd, "lm_studio")
     assert ov["context_window"] == 16384
+
+
+def test_rename_goes_through_confirm_modal(seeded_two_providers):
+    """Renaming is modal-confirmed (docs/ui-modal-rename.md): the detail pane
+    shows the display name as a click-to-rename control whose modal submits
+    the rename form, so a typed-but-unconfirmed name can't be silently lost."""
+    from db import ModelConfig, db as _db
+    client = app.test_client()
+    cfg = (
+        _db.session.query(ModelConfig)
+        .filter(ModelConfig.model_name == "pp3-uitest-lm").one()
+    )
+    body = client.get(f"/models?id={cfg.uuid}").get_data(as_text=True)
+    assert 'class="pp-rename-display"' in body
+    assert 'id="pp-rename-modal"' in body
+    assert 'id="pp-rename-input"' in body
+    assert "function ppOpenRenameModal" in body
+    assert "function ppConfirmRenameModal" in body
+    # The old always-visible rename field + submit button are gone.
+    assert '<button type="submit">Rename</button>' not in body

@@ -74,6 +74,7 @@ MODELS_TEMPLATE: str = """
 {% endmacro %}
 <!doctype html>
 <title>Models &mdash; rainbox</title>
+<link rel="stylesheet" href="/static/ui-modal.css">
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
   header{padding:0.6em 1em;border-bottom:1px solid #ddd;background:#fafafa}
@@ -109,6 +110,13 @@ MODELS_TEMPLATE: str = """
   .reload-bar{display:flex;align-items:center;gap:0.6em;margin:0 0 0.6em 0}
   .pp-sort-picker{font-size:85%;color:#555}
   .pp-sort-picker select{font-size:inherit;margin-left:0.2em}
+  /* Click-to-rename name display: doubles as the detail heading; clicking
+     opens the rename modal (docs/ui-modal-rename.md). */
+  .pp-rename-display{font:inherit;font-size:1.5em;font-weight:600;color:#1a1a2e;background:none;
+    text-align:left;border:1px solid transparent;border-radius:6px;padding:0.15em 0.3em;margin-left:-0.3em;cursor:pointer}
+  .pp-rename-display:hover{border-color:#cbd5e1;background:#f8fafc}
+  .pp-rename-display .empty{font-weight:400}
+  #pp-rename-modal input{font:inherit;width:100%;box-sizing:border-box;padding:5px 7px}
 </style>
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
@@ -163,10 +171,11 @@ MODELS_TEMPLATE: str = """
     <form method="post" action="{{ url_for('models_page') }}" style="margin:0 0 0.6em 0">
       <input type="hidden" name="action" value="rename_config">
       <input type="hidden" name="target_uuid" value="{{ detail.row.uuid }}">
-      <input type="text" name="display_name" value="{{ detail.row.display_name }}"
-             placeholder="{{ detail.row.model_name }}"
-             style="font-size:1.5em;font-weight:600;width:60%;padding:0.2em 0.3em">
-      <button type="submit">Rename</button>
+      <input type="hidden" name="display_name" value="{{ detail.row.display_name }}">
+      <button type="button" class="pp-rename-display" title="Click to rename"
+              data-rename-title="Rename model config"
+              data-rename-placeholder="{{ detail.row.model_name }}"
+              onclick="ppOpenRenameModal(this)">{{ detail.row.effective_display_name }}</button>
       {% if detail.renamed %}<span class="ok">✓ renamed</span>{% endif %}
     </form>
     <dl class="kv">
@@ -430,10 +439,11 @@ MODELS_TEMPLATE: str = """
     <form method="post" action="{{ url_for('models_page') }}" style="margin:0 0 0.6em 0">
       <input type="hidden" name="action" value="rename_override">
       <input type="hidden" name="target_uuid" value="{{ detail.row.uuid }}">
-      <input type="text" name="display_name" value="{{ detail.row.display_name }}"
-             placeholder="{{ detail.row.synthesized_label or '(no name)' }}"
-             style="font-size:1.5em;font-weight:600;width:60%;padding:0.2em 0.3em">
-      <button type="submit">Rename</button>
+      <input type="hidden" name="display_name" value="{{ detail.row.display_name }}">
+      <button type="button" class="pp-rename-display" title="Click to rename"
+              data-rename-title="Rename override"
+              data-rename-placeholder="{{ detail.row.synthesized_label or '(no name)' }}"
+              onclick="ppOpenRenameModal(this)">{% if detail.row.effective_display_name %}{{ detail.row.effective_display_name }}{% else %}<span class="empty">(no name)</span>{% endif %}</button>
       {% if detail.renamed %}<span class="ok">✓ renamed</span>{% endif %}
     </form>
     <p style="margin:0 0 0.6em 0">
@@ -699,6 +709,75 @@ MODELS_TEMPLATE: str = """
       statsDiv.innerHTML = '<span class="err">\\u26a0 stopped before any chunks arrived</span>';
     }
   }
+</script>
+
+<div class="ui-modal-backdrop" id="ui-modal-backdrop" hidden></div>
+
+<div class="ui-modal" id="pp-rename-modal" hidden>
+  <h3 id="pp-rename-title">Rename</h3>
+  <input type="text" id="pp-rename-input" autocomplete="off">
+  <div class="modal-actions">
+    <button type="button" class="btn-cancel" id="pp-rename-cancel">Cancel</button>
+    <button type="button" class="btn-primary" id="pp-rename-confirm" disabled>Rename</button>
+  </div>
+</div>
+
+<script>
+  // ---- rename modal (docs/ui-modal-rename.md) ----
+  // The display name is shown as a click-to-rename control; editing happens in
+  // this modal, so a typed-but-unconfirmed name can't be silently lost.
+  // Confirming fills the enclosing form's hidden display_name and submits it
+  // (the server-side rename_config / rename_override handlers do the rest).
+  let ppRenameForm = null, ppRenameOriginal = null;
+  function ppOpenRenameModal(btn){
+    ppRenameForm = btn.closest('form');
+    ppRenameOriginal = ppRenameForm.querySelector('input[name="display_name"]').value;
+    document.getElementById('pp-rename-title').textContent = btn.dataset.renameTitle || 'Rename';
+    const input = document.getElementById('pp-rename-input');
+    input.placeholder = btn.dataset.renamePlaceholder || '';
+    input.value = ppRenameOriginal;
+    ppSyncRenameConfirm();
+    document.getElementById('ui-modal-backdrop').hidden = false;
+    document.getElementById('pp-rename-modal').hidden = false;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+  function ppCloseRenameModal(){
+    document.getElementById('pp-rename-modal').hidden = true;
+    document.getElementById('ui-modal-backdrop').hidden = true;
+    ppRenameForm = null;
+    ppRenameOriginal = null;
+  }
+  // Unlike the tree pages, empty IS a valid name here: it clears display_name
+  // and the label falls back to the model/synthesized name (the placeholder
+  // shows which). So Rename enables on any change, including clearing.
+  function ppSyncRenameConfirm(){
+    document.getElementById('pp-rename-confirm').disabled =
+      ppRenameForm === null
+      || document.getElementById('pp-rename-input').value.trim() === (ppRenameOriginal || '');
+  }
+  function ppConfirmRenameModal(){
+    if (!ppRenameForm) return;
+    ppRenameForm.querySelector('input[name="display_name"]').value =
+      document.getElementById('pp-rename-input').value.trim();
+    ppRenameForm.submit();
+  }
+  // Backdrop / Esc dismiss only while the typed name still equals the stored
+  // one (docs/ui-modals.md dirty guard); Cancel always closes.
+  function ppDismissRenameIfClean(){
+    if (document.getElementById('pp-rename-modal').hidden) return;
+    if (document.getElementById('pp-rename-input').value === (ppRenameOriginal || '')) ppCloseRenameModal();
+  }
+  document.getElementById('pp-rename-cancel').addEventListener('click', ppCloseRenameModal);
+  document.getElementById('pp-rename-confirm').addEventListener('click', ppConfirmRenameModal);
+  document.getElementById('pp-rename-input').addEventListener('input', ppSyncRenameConfirm);
+  document.getElementById('pp-rename-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !document.getElementById('pp-rename-confirm').disabled){
+      e.preventDefault(); ppConfirmRenameModal();
+    }
+  });
+  document.getElementById('ui-modal-backdrop').addEventListener('click', ppDismissRenameIfClean);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') ppDismissRenameIfClean(); });
 </script>
 """
 

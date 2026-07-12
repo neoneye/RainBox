@@ -65,6 +65,10 @@ The modal closes that gap structurally rather than by discipline:
 
 ## Where it applies
 
-Any editable name/title in the UI. As of now the /prompt page (prompts +
-folders) implements it; the /chat room title still uses an inline field with a
-Rename button and should be migrated to this pattern when touched.
+Any editable name/title in the UI. Implemented on: /prompt (prompts +
+folders), /cron (jobs + folders), /git (repos + folders), /chat (the room
+title; chat folders rename through their create-folder modal), and /models
+(config + override display names — there the modal fills a hidden form field
+and submits, since that page is server-rendered; empty is a valid name there,
+falling back to the model/synthesized label). Any new page with a rename
+follows the same pattern.

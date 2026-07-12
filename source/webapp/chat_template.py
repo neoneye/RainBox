@@ -102,10 +102,13 @@ CHAT_TEMPLATE: str = """
 
   .room-main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
   .room-title{padding:0.6em 1em;border-bottom:1px solid #eee;font-weight:600;display:flex;align-items:center;gap:0.6em}
-  .room-title input#room-title-name{flex:1 1 auto;font:inherit;font-size:1.05em;font-weight:600;
-        border:1px solid transparent;border-radius:6px;padding:0.2em 0.4em;background:transparent;min-width:0}
-  .room-title input#room-title-name:hover{border-color:#ddd}
-  .room-title input#room-title-name:focus{border-color:#2563eb;background:#fff;outline:none}
+  /* Click-to-rename room name: doubles as the title; clicking opens the
+     rename modal (docs/ui-modal-rename.md). margin-right:auto pushes the
+     sidebar-mode select to the bar's right edge. */
+  .room-title button#room-title-name{font:inherit;font-size:1.05em;font-weight:600;color:#1a1a2e;background:none;
+        text-align:left;border:1px solid transparent;border-radius:6px;padding:0.2em 0.4em;cursor:pointer;
+        margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .room-title button#room-title-name:hover{border-color:#cbd5e1;background:#f8fafc}
   .sidebar-mode{font:inherit;font-size:0.8rem;color:#6c757d;border:1px solid #ccc;border-radius:6px;padding:0.2em 0.4em;background:#fff;cursor:pointer}
 
   .room-sidebar{display:none;overflow:auto;min-height:0;border-left:1px solid #ddd;background:#fbfbfb;padding:0.8em 1em}
@@ -116,8 +119,6 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .member-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .room-sidebar .member-list li label.member-toggle{display:flex;align-items:center;gap:0.5em;flex:1 1 auto;cursor:pointer;margin:0}
   .room-sidebar .stat{display:flex;justify-content:space-between;padding:0.35em 0;font-size:0.9rem;border-bottom:1px solid #eee}
-  .rename-room{font-size:0.78rem;font-weight:500;color:#6c757d;background:none;border:1px solid #ccc;border-radius:6px;padding:0.2em 0.7em;cursor:pointer}
-  .rename-room:hover{color:#1a1a2e;border-color:#1a1a2e}
 
   /* Direct-room Settings sidebar (model picker + system prompt). */
   .room-sidebar .ds-label{display:block;margin:0.8em 0 0.25em;font-size:0.78rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em}
@@ -279,8 +280,7 @@ CHAT_TEMPLATE: str = """
   </div>
   <div class="room-main">
     <div class="room-title" id="room-title">
-      <input type="text" id="room-title-name" autocomplete="off">
-      <button type="button" id="rename-room-btn" class="rename-room" style="display:none">Rename</button>
+      <button type="button" id="room-title-name" title="Click to rename"></button>
       <select id="sidebar-mode" class="sidebar-mode" title="Right sidebar">
         <option value="hidden">Sidebar: off</option>
         <option value="members">Members</option>
@@ -312,6 +312,15 @@ CHAT_TEMPLATE: str = """
     <div class="modal-actions">
       <button type="button" class="btn-cancel" id="chat-folder-cancel">Cancel</button>
       <button type="button" class="btn-primary" id="chat-folder-create" disabled>Create</button>
+    </div>
+  </div>
+
+  <div class="ui-modal" id="chat-rename-modal" hidden>
+    <h3>Rename room</h3>
+    <input type="text" id="chat-rename-input" autocomplete="off">
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="chat-rename-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="chat-rename-confirm" disabled>Rename</button>
     </div>
   </div>
 
@@ -368,7 +377,6 @@ const roomsEl = document.getElementById('rooms');
 const log = document.getElementById('chat-log');
 const titleEl = document.getElementById('room-title');
 const titleNameEl = document.getElementById('room-title-name');
-const renameBtn = document.getElementById('rename-room-btn');
 const sidebarEl = document.getElementById('room-sidebar');
 const sidebarModeSel = document.getElementById('sidebar-mode');
 const splitEl = document.querySelector('.chat-split');
@@ -1711,7 +1719,7 @@ async function performConfirmedDelete(){
   // If the open room is gone after re-hydration (room delete, or a folder
   // delete that contained it) and nothing got auto-selected, clear the pane.
   if (hadOpenRoom && !rooms.some(r => r.uuid === hadOpenRoom) && !currentRoom){
-    titleNameEl.value = '';
+    titleNameEl.textContent = '';
     log.innerHTML = '';
     renderSidebar();
   }
@@ -1756,7 +1764,7 @@ async function selectRoom(uuid, scrollMsgId){
   chatSyncUrl();          // mirror the open room into ?id= so a reload reopens it
   renderRooms();
   const room = rooms.find(r => r.uuid === uuid);
-  titleNameEl.value = room ? room.name : '';
+  titleNameEl.textContent = room ? room.name : '';
   // A direct room with no model — and no global default to fall back to —
   // can't reply, so surface its Settings panel for this visit (not persisted
   // to localStorage) so a fresh room is immediately configurable.
@@ -1842,29 +1850,57 @@ async function send(){
 
 form.addEventListener('submit', send);
 
-async function doRenameRoom(){
-  if (!currentRoom) return;
-  const room = rooms.find(r => r.uuid === currentRoom);
-  const name = (titleNameEl.value || '').trim();
-  if (!name){ alert('name cannot be empty'); return; }
-  if (room && name === room.name) return;
-  try {
-    await postJSON('/chat/api/rooms/' + currentRoom + '/rename', { name });
-    if (room) room.name = name;
-    renderRooms();  // reflect the new name in the left panel
-    titleNameEl.blur();
-  } catch (e) { alert(e); }
+// ---- room rename modal (docs/ui-modal-rename.md) ----
+// The title bar shows the room name as a click-to-rename control; all editing
+// happens in the modal, so a typed-but-unconfirmed name can't be silently lost.
+let chatRenameOriginal = null;   // the stored name at open (null = modal closed)
+function openChatRenameModal(){
+  const room = currentRoomObj();
+  if (!room) return;
+  chatRenameOriginal = room.name;
+  const input = document.getElementById('chat-rename-input');
+  input.value = room.name;
+  syncChatRenameConfirm();
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('chat-rename-modal').hidden = false;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
 }
-
-// The Rename button only shows while the title field is focused (less noise).
-// preventDefault on mousedown keeps the input focused so the click lands before
-// blur would hide the button.
-titleNameEl.addEventListener('focus', () => { renameBtn.style.display = ''; });
-titleNameEl.addEventListener('blur', () => { renameBtn.style.display = 'none'; });
-renameBtn.addEventListener('mousedown', (e) => { e.preventDefault(); });
-renameBtn.addEventListener('click', doRenameRoom);
-titleNameEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter'){ e.preventDefault(); doRenameRoom(); }
+function closeChatRenameModal(){
+  document.getElementById('chat-rename-modal').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  chatRenameOriginal = null;
+}
+// Rename is enabled only for a non-empty name that actually differs.
+function syncChatRenameConfirm(){
+  const v = document.getElementById('chat-rename-input').value.trim();
+  document.getElementById('chat-rename-confirm').disabled =
+    v === '' || chatRenameOriginal === null || v === chatRenameOriginal;
+}
+async function confirmChatRenameModal(){
+  const room = currentRoomObj();
+  const v = document.getElementById('chat-rename-input').value.trim();
+  if (!room || !v || v === chatRenameOriginal) return;
+  try {
+    await postJSON('/chat/api/rooms/' + room.uuid + '/rename', { name: v });
+  } catch (e) {
+    alert('Rename failed: ' + e.message);
+    return;
+  }
+  room.name = v;
+  closeChatRenameModal();
+  renderRooms();  // reflect the new name in the left panel
+  titleNameEl.textContent = v;
+  chatToast('Renamed to “' + v + '”');
+}
+titleNameEl.addEventListener('click', openChatRenameModal);
+document.getElementById('chat-rename-cancel').addEventListener('click', closeChatRenameModal);
+document.getElementById('chat-rename-confirm').addEventListener('click', confirmChatRenameModal);
+document.getElementById('chat-rename-input').addEventListener('input', syncChatRenameConfirm);
+document.getElementById('chat-rename-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !document.getElementById('chat-rename-confirm').disabled){
+    e.preventDefault(); confirmChatRenameModal();
+  }
 });
 
 // Right sidebar: hidden / members / stats / settings.
@@ -2458,6 +2494,7 @@ function closeOpenModal(){
   if (!document.getElementById('chat-delete-modal').hidden) closeDeleteModal();
   if (!document.getElementById('chat-room-modal').hidden) closeRoomModal();
   if (!document.getElementById('chat-prompt-modal').hidden) closePromptPicker();
+  if (!document.getElementById('chat-rename-modal').hidden) closeChatRenameModal();
 }
 // Has the user typed/checked anything in the currently open modal? If so we
 // refuse the accidental dismiss paths (outside-click / Esc) so no input is lost.
@@ -2471,6 +2508,11 @@ function openModalDirty(){
   if (!document.getElementById('chat-room-modal').hidden){
     return document.getElementById('chat-room-input').value !== ''
       || agentListEl.querySelectorAll('input:checked').length > 0;
+  }
+  // Rename: dirty once the typed name differs from the stored one — only the
+  // explicit Rename/Cancel buttons close it then.
+  if (!document.getElementById('chat-rename-modal').hidden){
+    return document.getElementById('chat-rename-input').value !== (chatRenameOriginal || '');
   }
   return false;
 }

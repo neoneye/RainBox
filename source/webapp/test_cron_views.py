@@ -118,10 +118,9 @@ def test_cron_page_has_folder_tree_split():
     assert 'class="btn-cancel"' in body
     assert 'class="btn-danger"' in body  # destructive delete-confirm button
     assert 'class="builder-title"' not in body
-    # Right-pane title reflects what's being viewed.
-    assert 'id="cron-pane-title"' in body
-    assert "Folder details" in body
-    assert "Job details" in body
+    # No right-pane title label — the click-to-rename name display doubles as
+    # the pane heading (docs/ui-modal-rename.md).
+    assert 'id="cron-pane-title"' not in body
     # Job creation is via the tree's "+ Job" action / folder kebab — there is no
     # separate "New job" button cluttering the All jobs / Folder details pages.
     assert 'id="cron-add-job-btn"' not in body
@@ -132,9 +131,15 @@ def test_cron_page_has_folder_tree_split():
     assert 'id="cron-folder-detail"' in body
     assert "function cronToggleFolderEnabled" in body
     assert "function cronFolderEnabled" in body
-    # Rename field at the top of the right pane for the selected node.
+    # Renaming is modal-confirmed (docs/ui-modal-rename.md): the right pane
+    # shows a click-to-rename name display; editing happens in the modal.
     assert 'id="cron-node-rename"' in body
     assert "function cronRenderRename" in body
+    assert 'id="cron-rename-modal"' in body
+    assert 'id="cron-rename-input"' in body
+    assert "cron-rename-display" in body
+    assert "function cronOpenRenameModal" in body
+    assert "function cronConfirmRenameModal" in body
     # Job details edits via dedicated overlays (NOT the New-job builder): a
     # read-only schedule/action summary panel + "Edit schedule" / "Edit action".
     assert 'id="cron-job-detail"' in body

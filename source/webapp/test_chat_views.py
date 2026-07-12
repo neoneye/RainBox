@@ -103,3 +103,16 @@ def test_export_sidebar():
     assert "Output format" in body
     assert "Copy to clipboard" in body
     assert "Download" in body
+
+
+def test_room_rename_goes_through_confirm_modal():
+    """The room title is a click-to-rename control; renaming happens in a
+    modal (docs/ui-modal-rename.md), so a typed-but-unconfirmed name can't be
+    silently lost."""
+    body = _body()
+    assert '<button type="button" id="room-title-name" title="Click to rename">' in body
+    assert 'id="chat-rename-modal"' in body
+    assert 'id="chat-rename-input"' in body
+    assert 'id="chat-rename-confirm"' in body
+    assert "function openChatRenameModal" in body
+    assert "function confirmChatRenameModal" in body
