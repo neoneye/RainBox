@@ -108,7 +108,7 @@ def test_clone_and_diff_flow():
         clone = res["prompt"]
         created.append(clone["uuid"])
         assert clone["parentUuid"] == src
-        assert clone["name"] == "CloneSrc"
+        assert clone["name"] == "CloneSrc 2"
         # The clone starts as a copy…
         got = client.get(f"/prompt/api/prompts/{clone['uuid']}").get_json()
         assert got["content"] == "line one\n"

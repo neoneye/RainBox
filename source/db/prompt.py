@@ -10,6 +10,7 @@ Re-exported from db for import compatibility.
 import difflib
 import hashlib
 import json
+import re
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -259,15 +260,35 @@ def prompt_update_content(prompt_uuid: UUID, content: str) -> bool:
     return True
 
 
+def _clone_name(src_name: str) -> str:
+    """The name for a clone of `src_name`: a trailing integer is incremented
+    ("Daily quiz 73" → "Daily quiz 74", zero-padding kept: "take 09" →
+    "take 10"); without one, " 2" is appended. Counts past any name already
+    taken by another prompt, so repeated clones of the same source don't
+    collide."""
+    m = re.search(r"^(.*?)(\d+)\s*$", src_name)
+    if m:
+        prefix, digits = m.group(1), m.group(2)
+        n, width = int(digits) + 1, len(digits)
+    else:
+        prefix = src_name + " " if src_name else ""
+        n, width = 2, 1
+    taken = {name for (name,) in db.session.query(Prompt.name).all()}
+    while f"{prefix}{str(n).zfill(width)}" in taken:
+        n += 1
+    return f"{prefix}{str(n).zfill(width)}"
+
+
 def prompt_clone(prompt_uuid: UUID) -> dict[str, Any] | None:
-    """Make a new version of a prompt: copy name + content into a new row
-    whose parent_uuid records the source, placed in the same folder right
-    after it. Returns the new row in tree-list field names (no content), or
-    None if the source uuid is unknown."""
+    """Make a new version of a prompt: copy the content into a new row whose
+    parent_uuid records the source, placed in the same folder right after it,
+    named by incrementing the source name's trailing number (see _clone_name).
+    Returns the new row in tree-list field names (no content), or None if the
+    source uuid is unknown."""
     src = _prompt_row(prompt_uuid)
     if src is None:
         return None
-    clone = Prompt(uuid=uuid4(), name=src.name, content=src.content,
+    clone = Prompt(uuid=uuid4(), name=_clone_name(src.name), content=src.content,
                    parent_uuid=src.uuid, folder_uuid=src.folder_uuid,
                    position=src.position + 1)
     # Shift later siblings so the clone's slot is unambiguous even before the

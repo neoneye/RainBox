@@ -162,30 +162,72 @@ function promptRenderContents(){
 }
 // Rename field for the selected folder or prompt (the prompt's display name
 // lives in the tree payload, so renaming goes through the tree save).
+// The rename itself always happens in a confirm modal: a name typed inline but
+// never confirmed used to be silently lost, so the first keystroke here (or
+// the button, or Enter) hands the edit off to the modal, where the only ways
+// out are an explicit Rename or Cancel.
 function promptRenderRename(){
   const el = document.getElementById('prompt-node-rename');
   el.innerHTML = '';
-  let node = null;
-  if (promptSelectedItem) node = promptByUuid(promptSelectedItem);
-  else if (promptSelectedFolder !== null) node = promptFolderById(promptSelectedFolder);
+  let node = null, type = null;
+  if (promptSelectedItem){ node = promptByUuid(promptSelectedItem); type = 'item'; }
+  else if (promptSelectedFolder !== null){ node = promptFolderById(promptSelectedFolder); type = 'folder'; }
   if (!node){ el.hidden = true; return; }
   el.hidden = false;
   const input = document.createElement('input');
   input.type = 'text'; input.id = 'prompt-rename-field'; input.value = node.name;
   const btn = document.createElement('button');
-  btn.textContent = 'Rename';
-  const doRename = () => {
-    const v = input.value.trim();
-    if (!v) return;
-    node.name = v;
-    promptTouch(node);
-    promptRenderTree();
-    promptRender();
-    promptSave();
-  };
-  btn.addEventListener('click', doRename);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); doRename(); } });
+  btn.textContent = 'Rename…';
+  const handOff = () => promptOpenRenameModal(type, node, input.value);
+  input.addEventListener('input', handOff);
+  btn.addEventListener('click', handOff);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); handOff(); } });
   el.appendChild(input); el.appendChild(btn);
+}
+
+// ---- rename modal ----
+let promptRenameState = null;   // {type: 'item'|'folder', id, original}
+function promptOpenRenameModal(type, node, seed){
+  promptRenameState = {type: type, id: type === 'item' ? node.uuid : node.id,
+                       original: node.name};
+  document.getElementById('prompt-rename-title').textContent =
+    type === 'item' ? 'Rename prompt' : 'Rename folder';
+  const input = document.getElementById('prompt-rename-input');
+  input.value = seed;
+  promptSyncRenameConfirm();
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('prompt-rename-modal').hidden = false;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+function promptCloseRenameModal(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('prompt-rename-modal').hidden = true;
+  promptRenameState = null;
+  promptRenderRename();   // restore the inline field to the stored name
+}
+// Rename is enabled only for a non-empty name that actually differs.
+function promptSyncRenameConfirm(){
+  const v = document.getElementById('prompt-rename-input').value.trim();
+  document.getElementById('prompt-rename-confirm').disabled =
+    v === '' || !promptRenameState || v === promptRenameState.original;
+}
+function promptConfirmRenameModal(){
+  if (!promptRenameState) return;
+  const v = document.getElementById('prompt-rename-input').value.trim();
+  if (!v || v === promptRenameState.original) return;
+  const node = promptRenameState.type === 'item'
+    ? promptByUuid(promptRenameState.id) : promptFolderById(promptRenameState.id);
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('prompt-rename-modal').hidden = true;
+  promptRenameState = null;
+  if (!node) return;
+  node.name = v;
+  promptTouch(node);
+  promptRenderTree();
+  promptRender();
+  promptSave();
+  promptToastMsg('Renamed to “' + v + '”');
 }
 // Description: folders only (prompts have no description field).
 function promptFillDescValue(el, text){
@@ -567,11 +609,11 @@ function promptItemNode(p){
   });
   return n;
 }
-// Kebab "Rename" selects the node and focuses the right-pane rename field.
+// Kebab "Rename" selects the node and opens the rename modal on it.
 function promptKebabRename(type, id){
   promptSelectNode(type, id);
-  const field = document.getElementById('prompt-rename-field');
-  if (field){ field.focus(); field.select(); }
+  const node = type === 'item' ? promptByUuid(id) : promptFolderById(id);
+  if (node) promptOpenRenameModal(type, node, node.name);
 }
 // 3-dot overflow menu. opts: { onRename?, onClone?, onDelete? }.
 function promptMakeKebab(node, opts){
@@ -1068,6 +1110,13 @@ function promptOpenModalDirty(){
   if (!document.getElementById('prompt-desc-modal').hidden){
     return document.getElementById('prompt-desc-input').value !== promptDescOrig;
   }
+  // Rename: dirty when the name differs from the stored one — which is the
+  // usual case, since the modal opens on the first inline edit. Only the
+  // explicit buttons close it then.
+  if (!document.getElementById('prompt-rename-modal').hidden){
+    return document.getElementById('prompt-rename-input').value
+      !== ((promptRenameState && promptRenameState.original) || '');
+  }
   // Delete: dirty only when the type-to-confirm box is in use and non-empty;
   // a plain yes/no delete is never dirty.
   if (!document.getElementById('prompt-delete-modal').hidden){
@@ -1080,6 +1129,7 @@ function promptCloseOpenModal(){
   if (!document.getElementById('prompt-folder-modal').hidden){ promptCloseFolderModal(); return; }
   if (!document.getElementById('prompt-new-modal').hidden){ promptCloseNewModal(); return; }
   if (!document.getElementById('prompt-desc-modal').hidden){ promptCloseDescModal(); return; }
+  if (!document.getElementById('prompt-rename-modal').hidden){ promptCloseRenameModal(); return; }
   if (!document.getElementById('prompt-delete-modal').hidden){ promptCloseDeleteModal(); return; }
 }
 function promptDismissIfClean(){ if (!promptOpenModalDirty()) promptCloseOpenModal(); }
@@ -1103,6 +1153,12 @@ document.getElementById('prompt-new-input').addEventListener('input', () => {
 document.getElementById('prompt-new-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !document.getElementById('prompt-new-create').disabled){
     e.preventDefault(); promptAddPromptConfirm();
+  }
+});
+document.getElementById('prompt-rename-input').addEventListener('input', promptSyncRenameConfirm);
+document.getElementById('prompt-rename-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('prompt-rename-confirm').disabled){
+    e.preventDefault(); promptConfirmRenameModal();
   }
 });
 document.getElementById('ui-modal-backdrop').addEventListener('click', promptDismissIfClean);

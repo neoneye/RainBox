@@ -197,6 +197,15 @@ PROMPT_TEMPLATE = """
   </div>
 </div>
 
+<div class="ui-modal" id="prompt-rename-modal" hidden>
+  <h3 id="prompt-rename-title">Rename</h3>
+  <label>Name<input type="text" id="prompt-rename-input" autocomplete="off"></label>
+  <div class="modal-actions">
+    <button class="btn-primary" id="prompt-rename-confirm" onclick="promptConfirmRenameModal()" disabled>Rename</button>
+    <button class="btn-cancel" onclick="promptCloseRenameModal()">Cancel</button>
+  </div>
+</div>
+
 <div class="ui-modal" id="prompt-desc-modal" hidden>
   <h3>Edit description</h3>
   <label>Description<textarea id="prompt-desc-input"></textarea></label>

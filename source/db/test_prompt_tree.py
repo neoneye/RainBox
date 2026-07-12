@@ -157,7 +157,7 @@ def test_clone_copies_content_and_links_parent(app_ctx, empty_tree):
     db.prompt_update_content(UUID(src), "v1 text")
     clone = db.prompt_clone(UUID(src))
     assert clone["parentUuid"] == src
-    assert clone["name"] == "Persona"
+    assert clone["name"] == "Persona 2"
     assert clone["folderId"] == f
     got = db.prompt_get(UUID(clone["uuid"]))
     assert got["content"] == "v1 text"
@@ -170,6 +170,28 @@ def test_clone_copies_content_and_links_parent(app_ctx, empty_tree):
 
 def test_clone_unknown_uuid(app_ctx, prompt_tree_snapshot):
     assert db.prompt_clone(uuid4()) is None
+
+
+def test_clone_name_increments_trailing_number(app_ctx, empty_tree):
+    a, b, c = str(uuid4()), str(uuid4()), str(uuid4())
+    db.prompt_save_tree([], [
+        {"uuid": a, "name": "Daily quiz 73", "folderId": None},
+        {"uuid": b, "name": "take 09", "folderId": None},
+        {"uuid": c, "name": "Notes", "folderId": None},
+    ])
+    assert db.prompt_clone(UUID(a))["name"] == "Daily quiz 74"
+    assert db.prompt_clone(UUID(b))["name"] == "take 10"  # zero-padding kept
+    assert db.prompt_clone(UUID(c))["name"] == "Notes 2"  # no number -> " 2"
+
+
+def test_clone_name_skips_taken_names(app_ctx, empty_tree):
+    """Cloning "… 73" while "… 74" already exists counts on to "… 75"."""
+    src, taken = str(uuid4()), str(uuid4())
+    db.prompt_save_tree([], [
+        {"uuid": src, "name": "Daily quiz 73", "folderId": None},
+        {"uuid": taken, "name": "Daily quiz 74", "folderId": None},
+    ])
+    assert db.prompt_clone(UUID(src))["name"] == "Daily quiz 75"
 
 
 def test_get_reports_deleted_parent(app_ctx, empty_tree):
