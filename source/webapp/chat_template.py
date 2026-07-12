@@ -281,7 +281,7 @@ CHAT_TEMPLATE: str = """
   <div class="room-main">
     <div class="room-title" id="room-title">
       <button type="button" id="room-title-name" title="Click to rename"></button>
-      <select id="sidebar-mode" class="sidebar-mode" title="Right sidebar — Cmd/Ctrl+B toggles">
+      <select id="sidebar-mode" class="sidebar-mode" title="Right sidebar — Ctrl+1 toggles">
         <option value="hidden">Sidebar: off</option>
         <option value="members">Members</option>
         <option value="stats">Stats</option>
@@ -2470,12 +2470,12 @@ sidebarModeSel.addEventListener('change', () => {
   renderSidebar();
 });
 
-// Cmd/Ctrl+B toggles the sidebar. Only visibility flips — the panel choice is
-// kept, so showing again returns to the last-used panel. A modifier combo, so
-// it also works while typing in the composer.
+// Ctrl+1 toggles the sidebar (Cmd+B/Cmd+1 belong to the browser). Only
+// visibility flips — the panel choice is kept, so showing again returns to
+// the last-used panel. A modifier combo, so it also works while typing in
+// the composer.
 document.addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
-      && e.key.toLowerCase() === 'b'){
+  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === '1'){
     e.preventDefault();
     sidebarVisible = !sidebarVisible;
     persistSidebarPrefs();

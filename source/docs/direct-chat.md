@@ -122,7 +122,7 @@ Details that live here:
 
 The right panel remembers which panel is selected and whether it is shown as
 two separate localStorage keys (`chat.sidebarMode`, `chat.sidebarVisible`),
-so hiding the sidebar — or Cmd/Ctrl+B, which toggles visibility — never
+so hiding the sidebar — or Ctrl+1, which toggles visibility — never
 loses the panel choice. The two room-type-specific panels map to each other
 when navigating (a direct room shows Settings where an agents room shows
 Members, and the inapplicable option is hidden from the select); Stats and

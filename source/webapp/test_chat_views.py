@@ -71,13 +71,13 @@ def test_sidebar_modes_match_room_type():
 
 def test_sidebar_visibility_is_separate_from_mode():
     """The panel choice and the shown/hidden state persist under separate
-    localStorage keys, and Cmd/Ctrl+B toggles visibility without touching
+    localStorage keys, and Ctrl+1 toggles visibility without touching
     the panel choice."""
     body = _body()
     assert "chat.sidebarVisible" in body
     assert "function persistSidebarPrefs" in body
     assert "sidebarVisible = !sidebarVisible" in body
-    assert "e.key.toLowerCase() === 'b'" in body
+    assert "e.key === '1'" in body
 
 
 def test_direct_room_prompt_picker():
