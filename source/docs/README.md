@@ -20,6 +20,8 @@ history); `proposals/` holds design-time intent and reviews.
 - [assistant-design.md](assistant-design.md) — the ReAct loop: capability
   registry, write tiers (log-and-undo / confirm), undo ledger, controls,
   trace, inspector.
+- [prompt-design.md](prompt-design.md) — versioned system prompts: folder
+  tree, clone lineage + diff, explicit Edit → Save, direct-chat linking.
 - [cron-design.md](cron-design.md) — the scheduler: folder tree, action
   types, firing, outcomes, retries, reminders.
 - [kanban-design.md](kanban-design.md) — boards as a coordination ledger:
