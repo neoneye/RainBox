@@ -281,7 +281,7 @@ CHAT_TEMPLATE: str = """
   <div class="room-main">
     <div class="room-title" id="room-title">
       <button type="button" id="room-title-name" title="Click to rename"></button>
-      <select id="sidebar-mode" class="sidebar-mode" title="Right sidebar">
+      <select id="sidebar-mode" class="sidebar-mode" title="Right sidebar — Cmd/Ctrl+B toggles">
         <option value="hidden">Sidebar: off</option>
         <option value="members">Members</option>
         <option value="stats">Stats</option>
@@ -438,14 +438,25 @@ const unread = {};              // room uuid -> unread count (rooms not open)
 let deferredUnreadRender = false;
 let deferredDeletedMessageIds = new Set();
 let agentsLoaded = false;
+// The sidebar remembers two things separately: WHICH panel was last used
+// (sidebarMode — never 'hidden') and WHETHER it is shown (sidebarVisible).
+// Splitting them means hiding the sidebar — or visiting a room where the
+// panel doesn't apply — never loses the panel choice.
 const SIDEBAR_MODE_KEY = 'chat.sidebarMode';
-let sidebarMode = 'hidden';     // 'hidden' | 'members' | 'stats' | 'settings' | 'export'
+const SIDEBAR_VISIBLE_KEY = 'chat.sidebarVisible';
+let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'export'
+let sidebarVisible = false;
 try {
   const saved = localStorage.getItem(SIDEBAR_MODE_KEY);
-  if (saved === 'hidden' || saved === 'members' || saved === 'stats' || saved === 'settings'
-      || saved === 'export') sidebarMode = saved;
+  if (saved === 'members' || saved === 'stats' || saved === 'settings'
+      || saved === 'export'){
+    sidebarMode = saved;
+    sidebarVisible = true;  // single-key era stored 'hidden' for off; a panel meant shown
+  }
+  const vis = localStorage.getItem(SIDEBAR_VISIBLE_KEY);
+  if (vis === '1' || vis === '0') sidebarVisible = vis === '1';
 } catch (e) {}
-sidebarModeSel.value = sidebarMode;
+syncSidebarModeOptions();
 
 // Append a message unless it's already rendered. A message can arrive via two
 // racing paths (the post's own fetchNew and the SSE push), so dedup by id
@@ -1836,15 +1847,15 @@ async function selectRoom(uuid, scrollMsgId){
   renderRooms();
   const room = rooms.find(r => r.uuid === uuid);
   titleNameEl.textContent = room ? room.name : '';
-  syncSidebarModeOptions();
   // A direct room with no model — and no global default to fall back to —
   // can't reply, so surface its Settings panel for this visit (not persisted
   // to localStorage) so a fresh room is immediately configurable.
   if (room && room.room_type === 'direct' && !room.model_uuid && !chatDefaultModel
-      && sidebarMode === 'hidden'){
+      && !sidebarVisible){
+    sidebarVisible = true;
     sidebarMode = 'settings';
-    sidebarModeSel.value = 'settings';
   }
+  syncSidebarModeOptions();
   log.innerHTML = '';
   input.focus();
   const msgs = await getJSON('/chat/api/rooms/' + uuid + '/messages?after=0');
@@ -1880,7 +1891,7 @@ async function fetchNew(uuid){
   if (uuid !== currentRoom || !msgs.length) return;  // re-check after await
   msgs.forEach(appendMessage);
   scrollLogToBottom();
-  if (sidebarMode === 'stats') renderStats();  // keep the live message count fresh
+  if (activeSidebarMode() === 'stats') renderStats();  // keep the live message count fresh
 }
 
 async function loadRooms(selectUuid, scrollMsgId){
@@ -1976,35 +1987,51 @@ document.getElementById('chat-rename-input').addEventListener('keydown', (e) => 
 });
 
 // Members lists agents, so it's meaningless in a direct LLM room; Settings
-// (model picker + system prompt) only exists for direct rooms. Hide whichever
-// mode doesn't apply to the open room, and if the sidebar is currently on
-// that mode, fall back to hidden (the localStorage preference is left alone,
-// so a reload restores it in rooms where it is valid).
+// (model picker + system prompt) only exists for direct rooms. Rather than
+// forgetting the remembered mode in a room where it doesn't apply, map it to
+// its counterpart (Members↔Settings); Stats/Export are shared and carry over
+// as-is. So navigating between room types never hides the sidebar.
+function effectiveSidebarMode(){
+  const direct = currentRoomIsDirect();
+  if (direct && sidebarMode === 'members') return 'settings';
+  if (!direct && sidebarMode === 'settings') return 'members';
+  return sidebarMode;
+}
+// What the right pane is actually showing: the mapped mode, or 'hidden' when
+// the sidebar is toggled off or no room is open.
+function activeSidebarMode(){
+  return (sidebarVisible && currentRoom) ? effectiveSidebarMode() : 'hidden';
+}
+function persistSidebarPrefs(){
+  try {
+    localStorage.setItem(SIDEBAR_MODE_KEY, sidebarMode);
+    localStorage.setItem(SIDEBAR_VISIBLE_KEY, sidebarVisible ? '1' : '0');
+  } catch (e) {}
+}
+// Keep the select honest for the open room: hide the option that doesn't
+// apply to its type, and point the value at what is actually displayed.
 function syncSidebarModeOptions(){
   const direct = currentRoomIsDirect();
   const membersOpt = sidebarModeSel.querySelector('option[value="members"]');
   const settingsOpt = sidebarModeSel.querySelector('option[value="settings"]');
   membersOpt.hidden = membersOpt.disabled = direct;
   settingsOpt.hidden = settingsOpt.disabled = !direct;
-  const invalid = direct ? 'members' : 'settings';
-  if (sidebarMode === invalid){
-    sidebarMode = 'hidden';
-    sidebarModeSel.value = 'hidden';
-  }
+  sidebarModeSel.value = activeSidebarMode();
 }
 
-// Right sidebar: hidden / members / stats / settings.
+// Right sidebar: hidden / members / stats / settings / export.
 async function renderSidebar(){
-  if (sidebarMode === 'hidden' || !currentRoom){
+  const mode = activeSidebarMode();
+  if (mode === 'hidden'){
     splitEl.classList.remove('sidebar-open');
     sidebarEl.innerHTML = '';
     return;
   }
   splitEl.classList.add('sidebar-open');
-  if (sidebarMode === 'members') await renderMembers();
-  else if (sidebarMode === 'stats') renderStats();
-  else if (sidebarMode === 'settings') await renderDirectSettings();
-  else if (sidebarMode === 'export') renderExport();
+  if (mode === 'members') await renderMembers();
+  else if (mode === 'stats') renderStats();
+  else if (mode === 'settings') await renderDirectSettings();
+  else if (mode === 'export') renderExport();
 }
 
 // Settings panel for a direct room: which model it talks to + its system
@@ -2031,7 +2058,7 @@ async function renderDirectSettings(){
       getJSON('/chat/api/models'),
     ]);
   } catch (_) { return; }
-  if (room !== currentRoom || sidebarMode !== 'settings') return;  // changed while loading
+  if (room !== currentRoom || activeSidebarMode() !== 'settings') return;  // changed while loading
   const modelLabel = document.createElement('span');
   modelLabel.className = 'ds-label';
   modelLabel.textContent = 'Model';
@@ -2095,7 +2122,7 @@ async function renderDirectSettings(){
     ta.placeholder = 'Loading stored prompt…';
     let d = null;
     try { d = await getJSON('/prompt/api/prompts/' + uuid); } catch (_) { return; }
-    if (room !== currentRoom || sidebarMode !== 'settings') return;
+    if (room !== currentRoom || activeSidebarMode() !== 'settings') return;
     if (linked && linked.uuid === uuid) ta.value = (d && d.content) || '';
   }
   function renderPromptSource(){
@@ -2182,7 +2209,7 @@ async function renderMembers(){
       getJSON('/chat/api/agents'),
     ]);
   } catch (_) { return; }
-  if (room !== currentRoom || sidebarMode !== 'members') return;  // changed while loading
+  if (room !== currentRoom || activeSidebarMode() !== 'members') return;  // changed while loading
   const memberUuids = new Set(members.map(m => m.uuid));
   const humans = members.filter(m => m.user_type === 'human');
   sidebarEl.innerHTML = '';
@@ -2249,7 +2276,7 @@ async function toggleMember(room, agentUuid, cb){
     const r = rooms.find(x => x.uuid === room);
     if (r){ r.member_count += wantMember ? 1 : -1; renderRooms(); }
     // Rebuild the panel so the heading count stays accurate (also re-enables).
-    if (room === currentRoom && sidebarMode === 'members') renderMembers();
+    if (room === currentRoom && activeSidebarMode() === 'members') renderMembers();
   } catch (e) {
     cb.checked = !wantMember;  // revert on failure
     cb.disabled = false;
@@ -2436,9 +2463,25 @@ function renderExport(){
 }
 
 sidebarModeSel.addEventListener('change', () => {
-  sidebarMode = sidebarModeSel.value;
-  try { localStorage.setItem(SIDEBAR_MODE_KEY, sidebarMode); } catch (e) {}
+  const v = sidebarModeSel.value;
+  if (v === 'hidden') sidebarVisible = false;
+  else { sidebarVisible = true; sidebarMode = v; }
+  persistSidebarPrefs();
   renderSidebar();
+});
+
+// Cmd/Ctrl+B toggles the sidebar. Only visibility flips — the panel choice is
+// kept, so showing again returns to the last-used panel. A modifier combo, so
+// it also works while typing in the composer.
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
+      && e.key.toLowerCase() === 'b'){
+    e.preventDefault();
+    sidebarVisible = !sidebarVisible;
+    persistSidebarPrefs();
+    syncSidebarModeOptions();
+    renderSidebar();
+  }
 });
 
 // Grow the textarea to fit its content (CSS max-height caps it at 10 rows and

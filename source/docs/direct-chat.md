@@ -120,6 +120,15 @@ Details that live here:
 
 ## Settings sidebar
 
+The right panel remembers which panel is selected and whether it is shown as
+two separate localStorage keys (`chat.sidebarMode`, `chat.sidebarVisible`),
+so hiding the sidebar — or Cmd/Ctrl+B, which toggles visibility — never
+loses the panel choice. The two room-type-specific panels map to each other
+when navigating (a direct room shows Settings where an agents room shows
+Members, and the inapplicable option is hidden from the select); Stats and
+Export carry over unchanged. Switching room types therefore never closes
+the sidebar.
+
 The right panel's Settings mode (direct rooms only;
 `webapp/chat_template.py` `renderDirectSettings`) edits the room's knobs via
 `GET/PUT /chat/api/rooms/<uuid>/settings`: the model picker (its empty

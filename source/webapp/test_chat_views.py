@@ -58,11 +58,26 @@ def test_direct_room_settings_sidebar():
 
 def test_sidebar_modes_match_room_type():
     """Members is hidden in direct rooms (no agents there); Settings is hidden
-    in agents rooms (model/prompt only exist for direct rooms)."""
+    in agents rooms (model/prompt only exist for direct rooms). Instead of
+    dropping to hidden, the remembered mode maps to its counterpart
+    (Members<->Settings) so navigation never closes the sidebar."""
     body = _body()
     assert "function syncSidebarModeOptions" in body
     assert "membersOpt.hidden = membersOpt.disabled = direct" in body
     assert "settingsOpt.hidden = settingsOpt.disabled = !direct" in body
+    assert "function effectiveSidebarMode" in body
+    assert "function activeSidebarMode" in body
+
+
+def test_sidebar_visibility_is_separate_from_mode():
+    """The panel choice and the shown/hidden state persist under separate
+    localStorage keys, and Cmd/Ctrl+B toggles visibility without touching
+    the panel choice."""
+    body = _body()
+    assert "chat.sidebarVisible" in body
+    assert "function persistSidebarPrefs" in body
+    assert "sidebarVisible = !sidebarVisible" in body
+    assert "e.key.toLowerCase() === 'b'" in body
 
 
 def test_direct_room_prompt_picker():
