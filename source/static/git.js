@@ -369,14 +369,26 @@ function gitMakeKebab(node, opts){
     e.stopPropagation();
     const willOpen = menu.hidden;
     document.querySelectorAll('.git-menu').forEach(m => { m.hidden = true; });
-    if (willOpen){
-      const r = kebab.getBoundingClientRect();
-      menu.style.left = r.left + 'px';
-      menu.style.top = (r.bottom + 4) + 'px';
-      menu.hidden = false;
-    }
+    if (willOpen) gitPlaceMenu(menu, kebab.getBoundingClientRect());
   });
   node.appendChild(kebab); node.appendChild(menu);
+}
+
+// Position a fixed kebab menu near its anchor, clamped inside the viewport:
+// below the anchor when it fits, flipped above when it would overflow the
+// bottom edge (nodes at the bottom of a long tree). Unhides the menu first so
+// its offsetWidth/Height are measurable.
+function gitPlaceMenu(menu, anchorRect){
+  menu.hidden = false;
+  const margin = 6;
+  const left = Math.max(margin,
+    Math.min(anchorRect.left, window.innerWidth - menu.offsetWidth - margin));
+  let top = anchorRect.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight - margin){
+    top = anchorRect.top - menu.offsetHeight - 4;
+  }
+  menu.style.left = left + 'px';
+  menu.style.top = Math.max(margin, top) + 'px';
 }
 
 // ---- add folder / add repo ----

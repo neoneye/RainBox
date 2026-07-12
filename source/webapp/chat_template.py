@@ -683,6 +683,25 @@ function addCopyButton(container, source){
   container.appendChild(btn);
 }
 
+// Position a fixed-position kebab menu near its anchor, clamped inside the
+// viewport: preferred spot is below the anchor; if that would overflow the
+// bottom edge the menu flips above it (messages at the bottom of the log,
+// rooms at the bottom of the tree). Left/right are clamped with a margin.
+// Unhides the menu first so its offsetWidth/Height are measurable.
+function placeMenu(menu, anchorRect, alignRight){
+  menu.hidden = false;
+  const margin = 6;
+  let left = alignRight ? (anchorRect.right - menu.offsetWidth) : anchorRect.left;
+  left = Math.max(margin, Math.min(left, window.innerWidth - menu.offsetWidth - margin));
+  let top = anchorRect.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight - margin){
+    top = anchorRect.top - menu.offsetHeight - 4;  // flip above the anchor
+  }
+  top = Math.max(margin, top);
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+}
+
 // The message overflow (...) menu. Reuses the .room-menu styling + the global
 // click/Escape dismiss handler (see below), and anchors as position:fixed under
 // the kebab like the room/folder menus. Items: copy the message UUID, and (in
@@ -740,12 +759,9 @@ function buildMessageMenu(m){
       // parked menu first so at most one lives in <body> at a time.
       document.querySelectorAll('body > .room-menu.msg-id-menu').forEach(m => m.remove());
       document.body.appendChild(menu);
-      // Anchor under the kebab, right edges aligned so it doesn't overflow off
-      // the right of the message column.
-      const r = kebab.getBoundingClientRect();
-      menu.hidden = false;          // unhide first so offsetWidth is measurable
-      menu.style.top = (r.bottom + 4) + 'px';
-      menu.style.left = (r.right - menu.offsetWidth) + 'px';
+      // Anchor at the kebab, right edges aligned so it doesn't overflow off
+      // the right of the message column; clamped to the viewport.
+      placeMenu(menu, kebab.getBoundingClientRect(), true);
     }
   });
   wrap.appendChild(kebab);
@@ -1594,11 +1610,8 @@ function buildRoomMenu(roomUuid){
     const willOpen = menu.hidden;
     document.querySelectorAll('.room-menu').forEach(m => { m.hidden = true; });
     if (willOpen){
-      // Anchor the fixed menu under the kebab, left edges aligned.
-      const r = kebab.getBoundingClientRect();
-      menu.style.left = r.left + 'px';
-      menu.style.top = (r.bottom + 4) + 'px';
-      menu.hidden = false;
+      // Anchor the fixed menu at the kebab, left edges aligned; viewport-clamped.
+      placeMenu(menu, kebab.getBoundingClientRect(), false);
     }
   });
   wrap.appendChild(kebab);
@@ -1641,10 +1654,7 @@ function buildFolderMenu(folderId){
     const willOpen = menu.hidden;
     document.querySelectorAll('.room-menu').forEach(m => { m.hidden = true; });
     if (willOpen){
-      const rect = kebab.getBoundingClientRect();
-      menu.style.left = rect.left + 'px';
-      menu.style.top = (rect.bottom + 4) + 'px';
-      menu.hidden = false;
+      placeMenu(menu, kebab.getBoundingClientRect(), false);
     }
   });
   wrap.appendChild(kebab);

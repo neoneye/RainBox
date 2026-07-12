@@ -143,3 +143,12 @@ def test_message_edit_saves_on_enter():
     body = _body()
     assert "const doSave = async () => {" in body
     assert "e.key === 'Enter' && !e.shiftKey && !save.disabled" in body
+
+
+def test_kebab_menus_stay_inside_viewport():
+    """Fixed-position kebab menus are clamped to the viewport: a menu opened
+    near the bottom of the log/tree flips above its anchor instead of
+    rendering off-screen."""
+    body = _body()
+    assert "function placeMenu" in body
+    assert "top = anchorRect.top - menu.offsetHeight - 4" in body

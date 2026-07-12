@@ -342,9 +342,17 @@ function openClaimMenu(c, anchor) {
   items.push(it('Copy memory id', false, 'copyid'));  // always available
   menu.innerHTML = items.join('');
   document.body.appendChild(menu);
+  // Clamp inside the viewport: below the anchor when it fits, flipped above
+  // when it would overflow the bottom edge (leaves at the bottom of the tree).
   const rect = anchor.getBoundingClientRect();
-  menu.style.left = Math.min(rect.left, window.innerWidth - 180) + 'px';
-  menu.style.top = (rect.bottom + 4) + 'px';
+  const margin = 6;
+  menu.style.left = Math.max(margin,
+    Math.min(rect.left, window.innerWidth - menu.offsetWidth - margin)) + 'px';
+  let top = rect.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight - margin){
+    top = rect.top - menu.offsetHeight - 4;
+  }
+  menu.style.top = Math.max(margin, top) + 'px';
   menu.querySelectorAll('.item').forEach(btn => btn.addEventListener('click', () => {
     const fn = btn.getAttribute('data-fn'); closeMenu();
     if (fn === 'activate') memActivate(c.uuid);
