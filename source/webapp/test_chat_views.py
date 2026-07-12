@@ -135,3 +135,11 @@ def test_direct_room_message_retry():
     assert "'/retry'" in body
     assert "textContent = 'Retry'" in body
     assert "window.confirm('Retrying from here deletes everything after this turn" in body
+
+
+def test_message_edit_saves_on_enter():
+    """In the in-place message editor, Enter saves (Shift+Enter for a newline,
+    Escape cancels) — the same keys the compose box uses to send."""
+    body = _body()
+    assert "const doSave = async () => {" in body
+    assert "e.key === 'Enter' && !e.shiftKey && !save.disabled" in body

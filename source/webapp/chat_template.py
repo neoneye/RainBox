@@ -1037,7 +1037,7 @@ function startEditMessage(m, msgEl, bodyEl, actionsEl){
   cancel.addEventListener('click', () => {
     if (room === currentRoom) upsertMessage(m);
   });
-  save.addEventListener('click', async () => {
+  const doSave = async () => {
     const text = ta.value.trim();
     if (!text){ ta.focus(); return; }
     save.disabled = true;
@@ -1047,6 +1047,18 @@ function startEditMessage(m, msgEl, bodyEl, actionsEl){
     } catch (e) {
       save.disabled = false;
       alert('Edit failed: ' + e.message);
+    }
+  };
+  save.addEventListener('click', doSave);
+  // Enter saves, Shift+Enter inserts a newline, Escape cancels — the same
+  // keys the compose box uses to send.
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !save.disabled){
+      e.preventDefault();
+      doSave();
+    } else if (e.key === 'Escape'){
+      e.stopPropagation();  // cancel the edit only, not a modal elsewhere
+      if (room === currentRoom) upsertMessage(m);
     }
   });
 }
