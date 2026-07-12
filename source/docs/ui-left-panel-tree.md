@@ -15,7 +15,7 @@ the same split (`webapp/git_views.py`, `static/git.js`, `webapp/git_api.py`,
 (`webapp/prompt_views.py`, `static/prompt.js`, `webapp/prompt_api.py`,
 `db/prompt.py`) is a rule-for-rule port of `/git` whose leaf detail pane is an
 editor: leaf content stays out of the tree payload and version hash, saved via
-a separate per-item PUT, so textarea autosaves never 409 an open tree.
+a separate per-item PUT, so saving content never 409s an open tree.
 
 Folder create/rename/delete dialogs use the app-wide modal pattern — see
 [`ui-modals.md`](ui-modals.md).

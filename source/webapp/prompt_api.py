@@ -57,7 +57,7 @@ def _parse_uuid(raw: str) -> UUID | None:
 @app.route("/prompt/api/prompts/<prompt_uuid>", methods=["GET", "PUT"])
 def prompt_detail(prompt_uuid: str) -> tuple[Response, int] | Response:
     """GET: one prompt incl. content + parent info, for the editor pane.
-    PUT {content}: textarea autosave (last write wins)."""
+    PUT {content}: the editor's explicit Save (last write wins)."""
     pu = _parse_uuid(prompt_uuid)
     if pu is None:
         return jsonify({"ok": False, "error": "bad uuid"}), 400

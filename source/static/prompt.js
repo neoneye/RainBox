@@ -1,8 +1,9 @@
 // /prompt page logic (vanilla JS, no framework). The HTML shell + CSS live in
 // webapp/prompt_views.py; this file is served at /static/prompt.js with an
 // mtime cache-buster. Tree state hydrates from GET /prompt/api/tree and saves
-// via debounced whole-tree PUTs (version-guarded); prompt content autosaves
-// per-prompt via PUT /prompt/api/prompts/<uuid>. Mirrors static/git.js.
+// via debounced whole-tree PUTs (version-guarded); prompt content is read-only
+// until an explicit Edit → Save (PUT /prompt/api/prompts/<uuid>) or Cancel.
+// Mirrors static/git.js.
 
 // ---- helpers ----
 function promptEscapeHtml(s){
@@ -58,14 +59,12 @@ function promptSyncUrl(){
   history.replaceState(null, '', url);
 }
 function promptSelectFolder(id){
-  promptFlushContent();
   promptSelectedFolder = id;
   promptSelectedItem = null;
   promptRenderTree();
   promptRender();
 }
 function promptSelectItem(uuid){
-  promptFlushContent();
   const p = promptByUuid(uuid);
   promptSelectedItem = uuid;
   promptSelectedFolder = p ? (p.folderId || null) : null;
@@ -265,7 +264,6 @@ function promptSaveDescription(){
 // over the hidden #prompt-content textarea; these wrappers are the only place
 // the rest of the page touches it.
 let promptCM = null;
-let promptCMSetting = false;   // true while setValue runs (suppresses the change hook)
 function promptInitEditor(){
   promptCM = CodeMirror.fromTextArea(document.getElementById('prompt-content'), {
     mode: 'markdown',
@@ -273,14 +271,10 @@ function promptInitEditor(){
     lineWrapping: true,
     placeholder: 'Write the system prompt here…',
   });
-  promptCM.on('change', () => { if (!promptCMSetting) promptContentEdited(); });
+  promptEditorReadOnly(true);  // content is read-only until Edit is clicked
 }
 function promptEditorValue(){ return promptCM.getValue(); }
-function promptEditorSet(value){
-  promptCMSetting = true;
-  promptCM.setValue(value);
-  promptCMSetting = false;
-}
+function promptEditorSet(value){ promptCM.setValue(value); }
 function promptEditorReadOnly(ro){ promptCM.setOption('readOnly', ro ? 'nocursor' : false); }
 function promptEditorVisible(show){
   promptCM.getWrapperElement().style.display = show ? '' : 'none';
@@ -323,6 +317,7 @@ function promptRenderEditor(){
   if (promptEditorUuid !== p.uuid) promptDiffOpen = false;
   promptApplyDiffVisibility();
   if (promptEditorUuid !== p.uuid){
+    if (promptEditMode) promptExitEdit();  // content is being replaced anyway
     promptEditorUuid = p.uuid;
     promptLoadContent(p.uuid);
   }
@@ -343,6 +338,7 @@ function promptApplyDiffVisibility(){
     promptDiffOpen ? 'Back to editor' : 'Diff against parent';
 }
 async function promptLoadContent(uuid){
+  promptContentLoading = true;   // Edit is refused until the content is in
   promptEditorSet('');
   promptEditorReadOnly(true);
   let d = null;
@@ -351,16 +347,14 @@ async function promptLoadContent(uuid){
     d = await r.json();
   } catch (e) { /* fall through to the unavailable message */ }
   if (promptEditorUuid !== uuid) return;  // selection moved on; drop this response
+  promptContentLoading = false;
   if (!d || !d.ok){
     // A just-created prompt may not have hit the DB yet (the tree save is
     // in flight); its content is empty by construction, so an empty editor
-    // is correct either way.
-    promptEditorReadOnly(false);
+    // is correct either way. Stays read-only until Edit is clicked.
     return;
   }
   promptEditorSet(d.content || '');
-  promptEditorReadOnly(false);
-  document.getElementById('prompt-save-state').textContent = '';
   // Backfill server-assigned timestamps onto the local tree row (a client-side
   // created row has none until now) and refresh the dates line.
   const local = promptByUuid(uuid);
@@ -371,54 +365,73 @@ async function promptLoadContent(uuid){
   }
 }
 
-// ---- content autosave (debounced per-prompt PUT; last write wins) ----
-let promptContentTimer = null;
-let promptContentPending = null;   // {uuid, content} not yet PUT
-function promptSetSaveState(text){
-  document.getElementById('prompt-save-state').textContent = text;
+// ---- explicit edit mode (content is read-only until Edit → Save/Cancel) ----
+// No autosave: an accidental keystroke in a system prompt must never persist
+// on its own. Edit raises the editor above the shared modal backdrop, so the
+// rest of the page is grayed out and non-clickable until the edit is resolved
+// — Save PUTs the content, Cancel restores the snapshot. Backdrop-click / Esc
+// follow the ui-modals.md dirty guard (dismiss = Cancel, only while unchanged).
+let promptEditMode = false;
+let promptEditOriginal = '';      // content snapshot at Edit time (Cancel / dirty check)
+let promptContentLoading = false; // fetch in flight — its setValue would clobber an edit
+function promptSyncEditButtons(){
+  document.getElementById('prompt-edit-btn').hidden = promptEditMode;
+  document.getElementById('prompt-save-btn').hidden = !promptEditMode;
+  document.getElementById('prompt-cancel-btn').hidden = !promptEditMode;
+  document.getElementById('prompt-newchat-btn').hidden = promptEditMode;
+  document.getElementById('prompt-clone-btn').hidden = promptEditMode;
+  document.getElementById('prompt-diff-btn').hidden = promptEditMode;
+  document.getElementById('prompt-editor').classList.toggle('editing', promptEditMode);
+  document.getElementById('ui-modal-backdrop').hidden = !promptEditMode;
 }
-function promptContentEdited(){
-  if (!promptEditorUuid) return;
-  promptContentPending = {uuid: promptEditorUuid, content: promptEditorValue()};
-  promptSetSaveState('Saving…');
-  clearTimeout(promptContentTimer);
-  promptContentTimer = setTimeout(promptContentPush, 600);
+function promptStartEdit(){
+  if (!promptEditorUuid || promptEditMode || promptContentLoading) return;
+  if (promptDiffOpen){ promptDiffOpen = false; promptApplyDiffVisibility(); }
+  promptEditMode = true;
+  promptEditOriginal = promptEditorValue();
+  promptEditorReadOnly(false);
+  promptSyncEditButtons();
+  promptCM.focus();
 }
-async function promptContentPush(){
-  clearTimeout(promptContentTimer);
-  const pending = promptContentPending;
-  promptContentPending = null;
-  if (!pending) return;
+function promptExitEdit(){
+  promptEditMode = false;
+  promptEditOriginal = '';
+  promptEditorReadOnly(true);
+  promptSyncEditButtons();
+}
+function promptCancelEdit(){
+  if (!promptEditMode) return;
+  promptEditorSet(promptEditOriginal);
+  promptExitEdit();
+}
+async function promptSaveEdit(){
+  if (!promptEditMode || !promptEditorUuid) return;
+  const uuid = promptEditorUuid;
+  const saveBtn = document.getElementById('prompt-save-btn');
+  saveBtn.disabled = true;
+  let ok = false;
   try {
-    const r = await fetch('/prompt/api/prompts/' + encodeURIComponent(pending.uuid), {
+    const r = await fetch('/prompt/api/prompts/' + encodeURIComponent(uuid), {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({content: pending.content}),
+      body: JSON.stringify({content: promptEditorValue()}),
     });
-    if (r.ok){
-      promptTouch(promptByUuid(pending.uuid));
-      if (promptEditorUuid === pending.uuid && !promptContentPending) promptSetSaveState('Saved');
-    } else {
-      promptSetSaveState('Save failed');
-    }
-  } catch (e) {
-    promptSetSaveState('Save failed — offline?');
+    ok = r.ok;
+  } catch (e) { /* ok stays false */ }
+  saveBtn.disabled = false;
+  if (!ok){
+    promptToastMsg('Save failed — the prompt is still in edit mode.');
+    return;
   }
+  promptTouch(promptByUuid(uuid));
+  if (promptSelectedItem === uuid) promptRenderDates(promptByUuid(uuid));
+  promptExitEdit();
+  promptToastMsg('Prompt saved.');
 }
-// Called before the selection moves away (and on page hide): push any pending
-// content edit immediately so switching prompts never drops keystrokes.
-function promptFlushContent(){
-  if (promptContentPending) promptContentPush();
-}
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden' && promptContentPending){
-    // keepalive lets the PUT outlive the page during unload.
-    const pending = promptContentPending;
-    promptContentPending = null;
-    clearTimeout(promptContentTimer);
-    fetch('/prompt/api/prompts/' + encodeURIComponent(pending.uuid), {
-      method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({content: pending.content}), keepalive: true,
-    }).catch(() => {});
+// Unsaved edit-mode changes are lost on tab close — warn like any editor.
+window.addEventListener('beforeunload', (e) => {
+  if (promptEditMode && promptEditorValue() !== promptEditOriginal){
+    e.preventDefault();
+    e.returnValue = '';
   }
 });
 
@@ -428,7 +441,6 @@ async function promptCloneCurrent(){
   await promptCloneUuid(promptSelectedItem);
 }
 async function promptCloneUuid(uuid){
-  promptFlushContent();
   // Flush any pending structural edits first: the clone bumps the server-side
   // tree version, which would 409 a queued stale PUT.
   clearTimeout(promptSaveTimer);
@@ -451,7 +463,6 @@ async function promptCloneUuid(uuid){
 async function promptNewChat(){
   const p = promptSelectedItem ? promptByUuid(promptSelectedItem) : null;
   if (!p) return;
-  promptFlushContent();  // the room resolves content server-side; store the newest text first
   const btn = document.getElementById('prompt-newchat-btn');
   btn.disabled = true;
   try {
@@ -490,7 +501,6 @@ function promptDiffAgainstChanged(){
   if (promptSelectedItem && sel.value) promptLoadDiff(promptSelectedItem, sel.value);
 }
 async function promptLoadDiff(uuid, againstUuid){
-  promptFlushContent();
   const box = document.getElementById('prompt-diff');
   box.innerHTML = '<div class="prompt-diff-line muted">loading…</div>';
   let d = null;
@@ -1124,6 +1134,11 @@ function promptOpenModalDirty(){
     return promptDeleteRequireName
       ? document.getElementById('prompt-delete-input').value.trim() !== '' : false;
   }
+  // Content edit mode behaves like an open modal: dirty once the text differs
+  // from the snapshot — then only Save / Cancel end it.
+  if (promptEditMode){
+    return promptEditorValue() !== promptEditOriginal;
+  }
   return false;
 }
 function promptCloseOpenModal(){
@@ -1132,6 +1147,7 @@ function promptCloseOpenModal(){
   if (!document.getElementById('prompt-desc-modal').hidden){ promptCloseDescModal(); return; }
   if (!document.getElementById('prompt-rename-modal').hidden){ promptCloseRenameModal(); return; }
   if (!document.getElementById('prompt-delete-modal').hidden){ promptCloseDeleteModal(); return; }
+  if (promptEditMode){ promptCancelEdit(); return; }
 }
 function promptDismissIfClean(){ if (!promptOpenModalDirty()) promptCloseOpenModal(); }
 

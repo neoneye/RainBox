@@ -7,8 +7,8 @@ clone links back to the prompt it was based on, so the ancestor chain is the
 edit history and the editor pane can 2-way diff against any ancestor.
 Persistence is real: the browser-side state (promptFolders / promptItems)
 hydrates from and saves to GET/PUT /prompt/api/tree (webapp/prompt_api.py →
-db.prompt_load_tree/prompt_save_tree); prompt content autosaves per-prompt.
-Mirrors the /git page; desktop-first.
+db.prompt_load_tree/prompt_save_tree); prompt content is read-only until an
+explicit Edit → Save (per-prompt PUT). Mirrors the /git page; desktop-first.
 """
 from pathlib import Path
 
@@ -91,9 +91,16 @@ PROMPT_TEMPLATE = """
     padding:0.3em 0.8em;font:inherit;font-size:0.85rem;cursor:pointer}
   .prompt-toolbar button:hover{border-color:#2563eb;color:#2563eb}
   .prompt-toolbar select{font:inherit;font-size:0.85rem;padding:0.25em}
-  #prompt-save-state{margin-left:auto}
+  #prompt-save-btn{background:#2563eb;border-color:#2563eb;color:#fff}
+  #prompt-save-btn:hover{background:#1d4ed8;color:#fff}
   #prompt-editor{flex:1;display:flex;flex-direction:column;min-height:0}
   #prompt-editor[hidden]{display:none}
+  /* Edit mode: the editor (meta line + toolbar + CodeMirror) is raised above
+     the shared modal backdrop, so everything else on the page is grayed out
+     and non-clickable until Save or Cancel. */
+  #prompt-editor.editing{position:relative;z-index:1600;background:#fff;border-radius:8px}
+  /* Read-only affordance: muted page background behind the text until Edit. */
+  #prompt-editor:not(.editing) .CodeMirror{background:#fbfbfb}
   /* The CodeMirror editor replaces the (hidden) #prompt-content textarea. */
   #prompt-editor .CodeMirror{flex:1;height:auto;min-height:16em;border:1px solid #d1d5db;border-radius:6px;
     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.88rem;line-height:1.45}
@@ -162,11 +169,13 @@ PROMPT_TEMPLATE = """
         <span id="prompt-dates" class="muted"></span>
       </div>
       <div class="prompt-toolbar">
+        <button id="prompt-edit-btn" onclick="promptStartEdit()">Edit</button>
+        <button id="prompt-save-btn" onclick="promptSaveEdit()" hidden>Save</button>
+        <button id="prompt-cancel-btn" onclick="promptCancelEdit()" hidden>Cancel</button>
         <button id="prompt-newchat-btn" onclick="promptNewChat()">New chat</button>
         <button id="prompt-clone-btn" onclick="promptCloneCurrent()">Clone</button>
         <button id="prompt-diff-btn" onclick="promptToggleDiff()">Diff against parent</button>
         <select id="prompt-diff-against" hidden onchange="promptDiffAgainstChanged()"></select>
-        <span id="prompt-save-state" class="muted"></span>
       </div>
       <textarea id="prompt-content" spellcheck="false"
                 placeholder="Write the system prompt here&hellip;"></textarea>

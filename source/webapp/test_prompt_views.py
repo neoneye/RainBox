@@ -39,9 +39,26 @@ def test_page_has_editor_markers():
 def test_js_has_core_markers():
     b = _body()
     for marker in ["promptLoadTree", "promptRenderTree", "promptItemNode",
-                   "promptCloneUuid", "promptLoadDiff", "promptContentPush",
+                   "promptCloneUuid", "promptLoadDiff", "promptSaveEdit",
                    "promptSavePush", "/prompt/api/tree"]:
         assert marker in b, f"missing JS marker: {marker}"
+
+
+def test_content_editing_is_explicit():
+    """Prompt content is read-only until Edit is clicked; the edit is resolved
+    only by Save or Cancel, with the rest of the page behind the modal
+    backdrop meanwhile — no autosave, so an accidental keystroke in a system
+    prompt can never persist on its own."""
+    b = _body()
+    assert 'id="prompt-edit-btn"' in b
+    assert 'id="prompt-save-btn"' in b
+    assert 'id="prompt-cancel-btn"' in b
+    assert "function promptStartEdit" in b
+    assert "function promptSaveEdit" in b
+    assert "function promptCancelEdit" in b
+    assert "promptEditorReadOnly(true);  // content is read-only until Edit is clicked" in b
+    assert "#prompt-editor.editing{position:relative;z-index:1600" in b
+    assert "promptContentEdited" not in b  # the autosave machinery is gone
 
 
 def test_editor_is_codemirror():

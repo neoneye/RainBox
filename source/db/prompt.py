@@ -42,8 +42,8 @@ def _to_uuid(value: Any) -> UUID | None:
 
 def prompt_tree_version() -> str:
     """Opaque version token for the persisted tree (optimistic concurrency).
-    Covers only structural fields — `content` is excluded so textarea
-    autosaves never invalidate an open page's tree version."""
+    Covers only structural fields — `content` is excluded so saving a
+    prompt's text never invalidates an open page's tree version."""
     folders = db.session.execute(
         sa.select(PromptFolder).order_by(PromptFolder.uuid)
     ).scalars().all()
@@ -250,8 +250,8 @@ def prompt_get(prompt_uuid: UUID) -> dict[str, Any] | None:
 
 
 def prompt_update_content(prompt_uuid: UUID, content: str) -> bool:
-    """Replace a prompt's content (textarea autosave; last write wins).
-    Returns False if the uuid is unknown."""
+    """Replace a prompt's content (the editor's explicit Save; last write
+    wins). Returns False if the uuid is unknown."""
     p = _prompt_row(prompt_uuid)
     if p is None:
         return False
