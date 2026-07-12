@@ -398,3 +398,78 @@ def test_models_listing(client):
                 db.ModelConfig.uuid == cfg_uuid
             ).delete()
             db.db.session.commit()
+
+
+def _post_rows(app, room_uuid, human_uuid):
+    """Seed a 4-turn conversation: user, reply, user, reply. Returns the rows."""
+    with app.app_context():
+        m1 = db.post_chat_message(room_uuid, human_uuid, "question one")
+        m2 = db.post_chat_message(room_uuid, DIRECT_CHAT_UUID, "answer one")
+        m3 = db.post_chat_message(room_uuid, human_uuid, "question two")
+        m4 = db.post_chat_message(room_uuid, DIRECT_CHAT_UUID, "answer two")
+        return [(m.id, str(m.uuid)) for m in (m1, m2, m3, m4)]
+
+
+def test_retry_on_model_reply_rewinds_to_prior_user_message(client, direct_room):
+    """Retry on a model reply deletes it (and everything after) and re-enqueues
+    the direct-chat responder on the user message it answered."""
+    test_client, app = client
+    room_uuid, human_uuid = direct_room
+    (id1, _u1), (id2, _u2), (_id3, u3), (id4, _u4) = _post_rows(app, room_uuid, human_uuid)
+    resp = test_client.post(f"/chat/api/rooms/{room_uuid}/messages/{id4}/retry")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["retry_of"] == u3          # anchored on "question two"
+    assert data["deleted_ids"] == [id4]    # only the bad answer goes
+    with app.app_context():
+        remaining = [m["id"] for m in db.list_room_messages(room_uuid)]
+        assert id4 not in remaining and id1 in remaining and id2 in remaining
+        payloads = _drain_direct_inbox()
+        assert len(payloads) == 1 and u3 in payloads[0]
+
+
+def test_retry_on_user_message_deletes_following_and_reasks(client, direct_room):
+    """Retry on the operator's own earlier message rewinds everything after it
+    (later user turns included — the client confirms that first)."""
+    test_client, app = client
+    room_uuid, human_uuid = direct_room
+    (id1, u1), (id2, _), (id3, _), (id4, _) = _post_rows(app, room_uuid, human_uuid)
+    resp = test_client.post(f"/chat/api/rooms/{room_uuid}/messages/{id1}/retry")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["retry_of"] == u1
+    assert data["deleted_ids"] == [id2, id3, id4]
+    with app.app_context():
+        assert [m["id"] for m in db.list_room_messages(room_uuid)] == [id1]
+        payloads = _drain_direct_inbox()
+        assert len(payloads) == 1 and u1 in payloads[0]
+
+
+def test_retry_rejected_in_agents_room(client, agents_room):
+    test_client, app = client
+    room_uuid, human_uuid = agents_room
+    with app.app_context():
+        m = db.post_chat_message(room_uuid, human_uuid, "hi")
+        mid = m.id
+    resp = test_client.post(f"/chat/api/rooms/{room_uuid}/messages/{mid}/retry")
+    assert resp.status_code == 403
+
+
+def test_retry_without_prior_user_message_409(client, direct_room):
+    """A model row with no user turn before it has nothing to retry from."""
+    test_client, app = client
+    room_uuid, _human = direct_room
+    with app.app_context():
+        m = db.post_chat_message(room_uuid, DIRECT_CHAT_UUID, "orphan notice",
+                                 kind="notice")
+        mid = m.id
+    resp = test_client.post(f"/chat/api/rooms/{room_uuid}/messages/{mid}/retry")
+    assert resp.status_code == 409
+
+
+def test_retry_missing_message_404(client, direct_room):
+    test_client, _app = client
+    room_uuid, _human = direct_room
+    resp = test_client.post(f"/chat/api/rooms/{room_uuid}/messages/999999/retry")
+    assert resp.status_code == 404

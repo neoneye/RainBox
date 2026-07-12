@@ -685,8 +685,10 @@ function addCopyButton(container, source){
 
 // The message overflow (...) menu. Reuses the .room-menu styling + the global
 // click/Escape dismiss handler (see below), and anchors as position:fixed under
-// the kebab like the room/folder menus. One item: copy the message UUID.
-function buildMessageMenu(uuid){
+// the kebab like the room/folder menus. Items: copy the message UUID, and (in
+// direct rooms) Retry — ask the model again from this turn.
+function buildMessageMenu(m){
+  const uuid = m.uuid;
   const wrap = document.createElement('div');
   wrap.className = 'msg-menu-wrap';
   const kebab = document.createElement('button');
@@ -700,6 +702,20 @@ function buildMessageMenu(uuid){
   menu.className = 'room-menu msg-id-menu';
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
+  if (currentRoomIsDirect() && !m.streaming){
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'item';
+    retry.setAttribute('role', 'menuitem');
+    retry.textContent = 'Retry';
+    retry.title = 'Ask the model again from this turn (pick another model in Settings first if you like)';
+    retry.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden = true;
+      retryFromMessage(m);
+    });
+    menu.appendChild(retry);
+  }
   const item = document.createElement('button');
   item.type = 'button';
   item.className = 'item';
@@ -966,8 +982,9 @@ function makeMessage(m){
     if (m.feedback === 'downvote') dn.classList.add('fb-selected-down');
     actions.appendChild(fb);
   }
-  // Overflow (...) menu, always present: "Copy message id" copies the UUID.
-  actions.appendChild(buildMessageMenu(m.uuid));
+  // Overflow (...) menu, always present: "Copy message id" copies the UUID;
+  // direct rooms also get "Retry" (re-ask the model from this turn).
+  actions.appendChild(buildMessageMenu(m));
   msg.appendChild(actions);
   if (toggleTop){
     const apply = (expanded) => {
@@ -1049,6 +1066,38 @@ async function deleteMessage(m, btn){
   } catch (e) {
     btn.disabled = false;
     alert('Delete failed: ' + e.message);
+  }
+}
+
+// Retry: ask the model again from this turn (direct rooms only) — e.g. after
+// a timeout or a low-quality answer, typically having picked another model in
+// the Settings sidebar first. The server rewinds to the turn's anchor (the
+// clicked message when it's the operator's own, else the last user message
+// before it) and deletes everything after it, so when later messages include
+// the operator's own turns we confirm before losing them.
+async function retryFromMessage(m){
+  const room = currentRoom;
+  // What gets deleted: rows after the clicked human message, or the clicked
+  // model row and everything after it (any human rows in between are
+  // impossible — the anchor is the last human turn before the model row).
+  const afterId = (m.sender_type === 'human' && m.kind === 'message') ? m.id : m.id - 1;
+  let following = [];
+  try { following = await getJSON('/chat/api/rooms/' + room + '/messages?after=' + afterId); }
+  catch (e) { alert('Retry failed: ' + e.message); return; }
+  if (room !== currentRoom) return;  // room switched while loading
+  const userCount = following.filter(
+    r => r.sender_type === 'human' && r.kind === 'message').length;
+  if (userCount > 0){
+    const noun = userCount === 1 ? '1 of your own messages' : userCount + ' of your own messages';
+    if (!window.confirm('Retrying from here deletes everything after this turn — '
+        + 'including ' + noun + '. Continue?')) return;
+  }
+  try {
+    const d = await postJSON('/chat/api/rooms/' + room + '/messages/' + m.id + '/retry', {});
+    if (room === currentRoom && d.deleted_ids) removeDeletedMessages(d.deleted_ids);
+    chatToast('Retrying — asking the model again…');
+  } catch (e) {
+    alert('Retry failed: ' + e.message);
   }
 }
 

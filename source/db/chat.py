@@ -278,6 +278,32 @@ def delete_chat_message(message_id: int) -> None:
     db.session.commit()
 
 
+def delete_room_messages_from(room_uuid: UUID, from_id: int) -> list[int]:
+    """Delete every message in the room with id >= from_id (the retry rewind:
+    the retried turn replaces everything the conversation produced after its
+    anchor) and NOTIFY once with all deleted ids so open tabs drop the bubbles
+    live. Returns the deleted ids (possibly empty). Raises ValueError if any
+    row in range is still streaming — its writer is still updating it by id,
+    so a rewind must wait for the reply to settle or be stopped."""
+    rows = (
+        db.session.query(ChatMessage)
+        .filter(ChatMessage.room_uuid == room_uuid, ChatMessage.id >= from_id)
+        .order_by(ChatMessage.id.asc())
+        .all()
+    )
+    if not rows:
+        return []
+    if any(r.streaming for r in rows):
+        raise ValueError("cannot rewind while a reply is still streaming")
+    ids = [r.id for r in rows]
+    for r in rows:
+        db.session.delete(r)
+    db.session.flush()
+    _chat_notify(room_uuid=room_uuid, message_id=0, deleted_progress_ids=ids)
+    db.session.commit()
+    return ids
+
+
 class ChatTreeError(ValueError):
     """A chat folder/room tree payload failed structural validation (bad uuid,
     dangling/cyclic folder ref, unknown room folderId, missing/unknown room).

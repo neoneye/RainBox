@@ -362,6 +362,46 @@ def edit_chat_room_message(room_uuid: str, message_id: int) -> Response:
     return jsonify(db.get_room_message(ruuid, message_id))
 
 
+@app.route("/chat/api/rooms/<room_uuid>/messages/<int:message_id>/retry",
+           methods=["POST"])
+def retry_chat_room_message(room_uuid: str, message_id: int) -> Response:
+    """Ask the model again from this turn (direct rooms only) — e.g. after a
+    timeout or a low-quality answer, typically with a different model picked
+    in Settings first.
+
+    The retry anchor is the message itself when it's a human turn, else the
+    last human turn before it. Everything after the anchor is deleted (the
+    new reply replaces the old turn's output — the client warns first when
+    that includes the operator's own later messages), then the direct-chat
+    responder is enqueued on the anchor."""
+    ruuid = _parse_uuid(room_uuid)
+    room = db.get_chatroom(ruuid)
+    if room is None:
+        abort(404, "room not found")
+    if room.room_type != "direct":
+        abort(403, "retry is only available in direct rooms")
+    msg = db.get_room_message(ruuid, message_id)
+    if msg is None:
+        abort(404, "message not found")
+    if msg["sender_type"] == "human" and msg["kind"] == "message":
+        anchor = msg
+    else:
+        rows = db.list_room_messages(ruuid)
+        priors = [r for r in rows if r["id"] < message_id
+                  and r["sender_type"] == "human" and r["kind"] == "message"]
+        if not priors:
+            abort(409, "no earlier user message to retry from")
+        anchor = priors[-1]
+    try:
+        deleted = db.delete_room_messages_from(ruuid, anchor["id"] + 1)
+    except ValueError as exc:
+        abort(409, str(exc))
+    _maybe_trigger_direct_chat(
+        ruuid, UUID(anchor["sender_uuid"]), UUID(anchor["uuid"]))
+    return jsonify({"ok": True, "retry_of": anchor["uuid"],
+                    "deleted_ids": deleted})
+
+
 # Parameter names whose values must not leave the server in an export
 # (ModelConfig.arguments carries credentials like api_key).
 _SECRET_PARAM_MARKERS = ("key", "token", "secret", "password")

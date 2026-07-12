@@ -125,3 +125,13 @@ def test_export_prefs_persist_in_localstorage():
     assert "chat.exportPrefs" in body
     assert "function loadExportPrefs" in body
     assert "function saveExportPrefs" in body
+
+
+def test_direct_room_message_retry():
+    """The message overflow menu offers Retry in direct rooms: re-ask the model
+    from that turn, confirming first when later user messages would be deleted."""
+    body = _body()
+    assert "function retryFromMessage" in body
+    assert "'/retry'" in body
+    assert "textContent = 'Retry'" in body
+    assert "window.confirm('Retrying from here deletes everything after this turn" in body
