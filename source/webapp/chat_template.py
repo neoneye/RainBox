@@ -2192,9 +2192,27 @@ function renderStats(){
 // Scope (all / last N) and metadata level (full / minimal) map straight onto
 // the /export endpoint's query params; nothing is fetched until a button is
 // clicked, so the export always reflects the room's messages at that moment.
+// The selections persist in localStorage, so the panel reopens the way it was
+// last used (across rooms and reloads).
+const EXPORT_PREFS_KEY = 'chat.exportPrefs';
+function loadExportPrefs(){
+  const prefs = {scope: 'all', lastN: 20, metadata: 'full'};
+  try {
+    const saved = JSON.parse(localStorage.getItem(EXPORT_PREFS_KEY) || '{}');
+    if (saved.scope === 'all' || saved.scope === 'last') prefs.scope = saved.scope;
+    const n = parseInt(saved.lastN, 10);
+    if (Number.isFinite(n) && n > 0) prefs.lastN = n;
+    if (saved.metadata === 'full' || saved.metadata === 'minimal') prefs.metadata = saved.metadata;
+  } catch (e) {}
+  return prefs;
+}
+function saveExportPrefs(prefs){
+  try { localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(prefs)); } catch (e) {}
+}
 function renderExport(){
   const room = currentRoom;
   const roomObj = currentRoomObj();
+  const prefs = loadExportPrefs();
   sidebarEl.innerHTML = '';
   const h = document.createElement('h3');
   h.className = 'sidebar-title';
@@ -2213,19 +2231,26 @@ function renderExport(){
     opt.textContent = label;
     scopeSel.appendChild(opt);
   });
+  scopeSel.value = prefs.scope;
   sidebarEl.appendChild(scopeSel);
   const nInput = document.createElement('input');
   nInput.type = 'number';
   nInput.className = 'ds-timeout';
   nInput.min = '1';
   nInput.step = '1';
-  nInput.value = '20';
+  nInput.value = String(prefs.lastN);
   nInput.title = 'How many of the newest messages to export';
-  nInput.style.display = 'none';
+  nInput.style.display = prefs.scope === 'last' ? '' : 'none';
   nInput.style.marginTop = '0.4em';
   sidebarEl.appendChild(nInput);
   scopeSel.addEventListener('change', () => {
     nInput.style.display = scopeSel.value === 'last' ? '' : 'none';
+    prefs.scope = scopeSel.value;
+    saveExportPrefs(prefs);
+  });
+  nInput.addEventListener('input', () => {
+    const n = parseInt(nInput.value, 10);
+    if (Number.isFinite(n) && n > 0){ prefs.lastN = n; saveExportPrefs(prefs); }
   });
 
   const metaLabel = document.createElement('span');
@@ -2240,6 +2265,11 @@ function renderExport(){
     opt.value = v;
     opt.textContent = label;
     metaSel.appendChild(opt);
+  });
+  metaSel.value = prefs.metadata;
+  metaSel.addEventListener('change', () => {
+    prefs.metadata = metaSel.value;
+    saveExportPrefs(prefs);
   });
   sidebarEl.appendChild(metaSel);
 

@@ -116,3 +116,12 @@ def test_room_rename_goes_through_confirm_modal():
     assert 'id="chat-rename-confirm"' in body
     assert "function openChatRenameModal" in body
     assert "function confirmChatRenameModal" in body
+
+
+def test_export_prefs_persist_in_localstorage():
+    """The Export panel's scope / last-N / metadata selections persist in
+    localStorage so the panel reopens the way it was last used."""
+    body = _body()
+    assert "chat.exportPrefs" in body
+    assert "function loadExportPrefs" in body
+    assert "function saveExportPrefs" in body
