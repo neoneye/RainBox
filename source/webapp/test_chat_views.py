@@ -56,6 +56,15 @@ def test_direct_room_settings_sidebar():
     assert "ds-model" in body
 
 
+def test_sidebar_modes_match_room_type():
+    """Members is hidden in direct rooms (no agents there); Settings is hidden
+    in agents rooms (model/prompt only exist for direct rooms)."""
+    body = _body()
+    assert "function syncSidebarModeOptions" in body
+    assert "membersOpt.hidden = membersOpt.disabled = direct" in body
+    assert "settingsOpt.hidden = settingsOpt.disabled = !direct" in body
+
+
 def test_direct_room_prompt_picker():
     """The Settings sidebar links a room to a stored /prompt version via a
     modal showing the prompt folder tree."""

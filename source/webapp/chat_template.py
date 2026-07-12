@@ -1836,6 +1836,7 @@ async function selectRoom(uuid, scrollMsgId){
   renderRooms();
   const room = rooms.find(r => r.uuid === uuid);
   titleNameEl.textContent = room ? room.name : '';
+  syncSidebarModeOptions();
   // A direct room with no model — and no global default to fall back to —
   // can't reply, so surface its Settings panel for this visit (not persisted
   // to localStorage) so a fresh room is immediately configurable.
@@ -1973,6 +1974,24 @@ document.getElementById('chat-rename-input').addEventListener('keydown', (e) => 
     e.preventDefault(); confirmChatRenameModal();
   }
 });
+
+// Members lists agents, so it's meaningless in a direct LLM room; Settings
+// (model picker + system prompt) only exists for direct rooms. Hide whichever
+// mode doesn't apply to the open room, and if the sidebar is currently on
+// that mode, fall back to hidden (the localStorage preference is left alone,
+// so a reload restores it in rooms where it is valid).
+function syncSidebarModeOptions(){
+  const direct = currentRoomIsDirect();
+  const membersOpt = sidebarModeSel.querySelector('option[value="members"]');
+  const settingsOpt = sidebarModeSel.querySelector('option[value="settings"]');
+  membersOpt.hidden = membersOpt.disabled = direct;
+  settingsOpt.hidden = settingsOpt.disabled = !direct;
+  const invalid = direct ? 'members' : 'settings';
+  if (sidebarMode === invalid){
+    sidebarMode = 'hidden';
+    sidebarModeSel.value = 'hidden';
+  }
+}
 
 // Right sidebar: hidden / members / stats / settings.
 async function renderSidebar(){
