@@ -70,6 +70,8 @@ history); `proposals/` holds design-time intent and reviews.
 - [ui-modals.md](ui-modals.md) — the app-wide modal pattern.
 - [ui-modal-rename.md](ui-modal-rename.md) — renaming is modal-confirmed
   (click-to-rename name display, Cancel/Rename only) and why.
+- [ui-kebab-menu.md](ui-kebab-menu.md) — the 3-dot overflow menu pattern:
+  fixed positioning, viewport clamping (flip above when below won't fit).
 
 ## Proposals & reviews
 
