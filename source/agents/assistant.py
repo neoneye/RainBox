@@ -224,8 +224,13 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
                             agent_uuid=ctx.agent_uuid)
         answer = qkb._resolve_match(
             qkb.Match(qa_id=uuid_str, method="exact", score=1.0), qctx)
-        text, _ = fence_recalled_memory(
-            f"{uuid_str}, seed/{entry.get('_source', 'upstream')}: {answer}")
+        # Same tag shape as the query-mode fact lines: source, dynamic?, path.
+        tags = f"seed/{entry.get('_source', 'upstream')}"
+        if entry.get("kind") == "dynamic":
+            tags += ", dynamic"
+        if entry.get("path"):
+            tags += f", {entry['path']}"
+        text, _ = fence_recalled_memory(f"{uuid_str}, {tags}: {answer}")
         return AssistantObservation(
             ok=True, text=text, data={"matched": True, "uuid": uuid_str, "source": "seed"})
     try:
@@ -290,10 +295,15 @@ def _action_query_memory(
 
     # (B) Per-fact cap: build one line per fact, shortening long ones. Dynamic
     # seed entries (live handlers) carry a `dynamic` tag; static ones do not.
+    # The entry's `path` (e.g. system.uptime_host) rides along as a tag so the
+    # model — and the operator reading the trace — can tell apart answers whose
+    # text alone is ambiguous (two uptime strings vs a load average, …).
     fact_lines: list[str] = []
     truncated_count = 0
     for s in overlay + upstream:
         tags = f"seed/{s.source}" + (", dynamic" if s.kind == "dynamic" else "")
+        if s.path:
+            tags += f", {s.path}"
         line, tr = _fact_line(s.uuid, tags, s.answer)
         fact_lines.append(line)
         truncated_count += tr
