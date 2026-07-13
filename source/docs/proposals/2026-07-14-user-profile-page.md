@@ -126,6 +126,12 @@ Design decisions baked in above:
   shows a **live preview line** ("Preview: 14.07.2026 · 21:30") rendered
   client-side from the profile's timezone + both formats, updating as the
   selects change — the preview is the documentation.
+- **Locale fields never constrain each other.** Country, units, language,
+  and the format selects are independent preferences: a European profile
+  with `YYYY-MM-DD` (the operator's own choice — ISO 8601 is common in
+  tech and in parts of Europe) is a first-class configuration, not an
+  inconsistency. No field's value filters another field's options, and
+  nothing warns about "unusual" combinations.
 - **Timezone / language / currency / country are text inputs backed by
   `<datalist>`s**, not hard `<select>`s: the common values are one keystroke
   away, but an uncommon-yet-valid value (a niche IANA zone, a regional
@@ -228,7 +234,11 @@ code to get wrong:
   Duplicating a built-in creates a **real** top-level row (the virtual
   folder can't hold user rows) named after the example.
 
-The five profiles (fictional people — no real PII, per standing policy):
+The five profiles (fictional people — no real PII, per standing policy)
+show each locale's *typical* conventions — they are starting points for
+duplication, not rules; any profile, including the operator's own, sets
+whatever formats it prefers (a European choosing `YYYY-MM-DD` just picks it
+in the selector):
 
 | Label | Person | units | time | date | lang | currency | country/city | timezone |
 |---|---|---|---|---|---|---|---|---|
