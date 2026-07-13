@@ -51,7 +51,7 @@ folder detail table.
   renamed via the click-to-rename modal
   ([`ui-modal-rename.md`](../ui-modal-rename.md)). It is *not* derived from
   first/last name — a demo profile's label ("Germany") and its example
-  person's name ("Emmy Noether") serve different masters.
+  person's name ("Karl Weierstraß") serve different masters.
 - **Folder detail table columns:** Name / Person / Language / Units / Time /
   Country — enough to tell demo profiles apart at a glance.
 - **Kebab on a profile:** Rename, **Duplicate**, Delete (type-to-confirm).
@@ -259,7 +259,7 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 | Brazil | César Lattes | co-discovered the pion | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
 | UK | Rosalind Franklin | imaged the structure of DNA | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
 | France | Évariste Galois | founded group theory | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
-| Germany | Emmy Noether | tied symmetry to conservation laws | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
+| Germany | Karl Weierstraß | made calculus rigorous (ε–δ) | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
 | Netherlands | Hendrik Lorentz | the Lorentz transformation | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
 | Spain | Santiago Ramón y Cajal | showed the brain is made of neurons | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
 | Italy | Rita Levi-Montalcini | discovered nerve growth factor | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
@@ -287,8 +287,21 @@ any example teaches something.
 
 Each also carries gender, a modern plausible birthday, and a
 `preferred_name` (the scientist's given name); `email`/`address` stay blank
-(nothing to demo there, and blanks show the sparse-JSONB behaviour). The
-twenty profiles are the living
+(nothing to demo there, and blanks show the sparse-JSONB behaviour). For
+the entries whose scientist wrote their name in a non-Latin script, the
+`nickname` field holds the native spelling: 华罗庚 (Hua), 湯川秀樹
+(Yukawa), 우장춘 (Woo), 伍連德 (Wu), עמוס טברסקי (Tversky), সত্যেন্দ্রনাথ বসু
+(Bose).
+
+**The examples are also the Unicode test fixture.** Between the names,
+nicknames, abouts, and cities they deliberately cover Latin diacritics
+(é É ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK, Hangul, Bengali,
+and right-to-left Hebrew — so an encoding or rendering bug anywhere on the
+page (tree row, form field, folder detail table, JSON round-trip) shows up
+on shipped data before it can corrupt an operator's own. The
+validate-the-shipped-file test doubles as the encoding round-trip test.
+
+The twenty profiles are the living
 answer to "what does a filled-in profile look like" — the demo script is:
 open `Example/`, duplicate the closest archetype, rename it to the friend,
 adjust.
