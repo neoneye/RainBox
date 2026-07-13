@@ -253,8 +253,8 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 
 | Label | Person | About | units | time | date | lang | currency | city | timezone |
 |---|---|---|---|---|---|---|---|---|---|
-| US | Barbara McClintock | discovered transposons | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
-| Canada | Frederick Banting | co-discovered insulin | metric | 12h | YYYY-MM-DD | en-CA / fr-CA | CAD | Montreal | America/Toronto |
+| US | Raymond Davis Jr. | detected solar neutrinos | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
+| Canada | Maud Menten | Michaelis–Menten enzyme kinetics | metric | 12h | YYYY-MM-DD | en-CA / fr-CA | CAD | Montreal | America/Toronto |
 | Mexico | Mario Molina | explained ozone depletion | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
 | Brazil | César Lattes | co-discovered the pion | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
 | UK | Rosalind Franklin | imaged the structure of DNA | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
@@ -293,13 +293,16 @@ the entries whose scientist wrote their name in a non-Latin script, the
 (Yukawa), 우장춘 (Woo), 伍連德 (Wu), עמוס טברסקי (Tversky), সত্যেন্দ্রনাথ বসু
 (Bose).
 
-**The examples are also the Unicode test fixture.** Between the names,
-nicknames, abouts, and cities they deliberately cover Latin diacritics
-(é É ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK, Hangul, Bengali,
-and right-to-left Hebrew — so an encoding or rendering bug anywhere on the
-page (tree row, form field, folder detail table, JSON round-trip) shows up
-on shipped data before it can corrupt an operator's own. The
-validate-the-shipped-file test doubles as the encoding round-trip test.
+**The examples are also the name-handling test fixture.** Between the
+names, nicknames, abouts, and cities they deliberately cover Latin
+diacritics (é É ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
+Hangul, Bengali, right-to-left Hebrew, and a generational suffix —
+`last_name` is "Davis Jr.", a standing test that nothing assumes a last
+name is one dot-free word — so an encoding, rendering, or name-splitting
+bug anywhere on the page (tree row, form field, folder detail table, JSON
+round-trip) shows up on shipped data before it can corrupt an operator's
+own. The validate-the-shipped-file test doubles as the encoding round-trip
+test.
 
 The twenty profiles are the living
 answer to "what does a filled-in profile look like" — the demo script is:
