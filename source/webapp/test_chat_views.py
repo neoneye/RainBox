@@ -39,6 +39,18 @@ def test_typed_newlines_render_as_line_breaks():
     assert "marked.parse(src, { breaks: true, gfm: true })" in body
 
 
+def test_debug_and_thinking_messages_wrap_long_text():
+    """Diagnostic rows must fit the chat pane instead of forcing horizontal
+    scrolling for JSON, reasoning, or other long unbroken values."""
+    body = _body()
+    assert (
+        ".msg-debug .msg-text{min-width:0;overflow-wrap:anywhere;"
+        "word-break:break-word}"
+    ) in body
+    assert ".msg-debug .msg-text pre{white-space:pre-wrap;overflow-wrap:anywhere;" in body
+    assert "word-break:break-word;overflow-x:hidden" in body
+
+
 def test_new_room_modal_has_room_type_choice():
     body = _body()
     assert 'name="chat-room-type"' in body

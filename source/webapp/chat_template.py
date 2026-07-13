@@ -199,6 +199,12 @@ CHAT_TEMPLATE: str = """
   .msg-text code{background:#eee;padding:1px 4px;border-radius:3px;font-family:ui-monospace,monospace;font-size:90%}
   .msg-text pre{background:#f4f4f4;padding:0.6em;border-radius:5px;overflow:auto}
   .msg-text pre code{background:none;padding:0}
+  /* Diagnostic output is often JSON, reasoning, or tool output with long
+     unbroken values. Keep ordinary chat code blocks horizontally scrollable,
+     but wrap debug/thinking content to the available chat width. */
+  .msg-debug .msg-text{min-width:0;overflow-wrap:anywhere;word-break:break-word}
+  .msg-debug .msg-text pre{white-space:pre-wrap;overflow-wrap:anywhere;
+                          word-break:break-word;overflow-x:hidden}
   .msg-text a{color:#0653a8}
   /* Single container that holds the copy button + feedback row. Owns the
      top gap between the message body and the action buttons so every
