@@ -348,17 +348,24 @@ function kbRenderBoardList(){
 
 function kbFolderLi(f){
   const li = document.createElement('li');
-  const node = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the folder view in a new
+  // tab; a plain click is intercepted below and selects/toggles in-page.
+  const node = document.createElement('a');
   const expanded = kbIsExpanded(f.uuid);
   const hasKids = kbFolderHasChildren(f.uuid);
   node.className = 'kb-node' + (f.uuid === kbSelectedFolder ? ' sel' : '');
+  node.href = '/kanban?id=' + encodeURIComponent(f.uuid);
   node.draggable = true;
   node.innerHTML =
     '<span class="kb-ficon">' + (expanded && hasKids ? KB_ICON_FOLDER_OPEN : KB_ICON_FOLDER) + '</span>' +
     '<span class="kb-node-name"></span>';
   node.querySelector('.kb-node-name').textContent = f.name || '(unnamed)';
   node.title = f.name;
-  node.addEventListener('click', () => kbFolderClick(f.uuid));
+  node.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    kbFolderClick(f.uuid);
+  });
   kbMakeKebab(node, [
     ['Rename', '', () => kbRenameFolder(f.uuid)],
     ['New subfolder', '', () => kbNewFolder(f.uuid)],
@@ -1021,7 +1028,11 @@ function kbRenderSidebarDev(el){
 // click never destroys typed data inside the modal itself.
 document.getElementById('ui-modal-backdrop').addEventListener('click', kbDismissIfClean);
 // The static "All boards" root node selects the whole-tree view (no uuid).
-document.getElementById('kb-all-boards').addEventListener('click', () => kbSelectFolder('all'));
+document.getElementById('kb-all-boards').addEventListener('click', (e) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+  e.preventDefault();
+  kbSelectFolder('all');
+});
 
 // ---- init ----
 (async function kbInit(){

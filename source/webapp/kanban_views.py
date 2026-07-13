@@ -190,7 +190,7 @@ KANBAN_TEMPLATE = """
 <aside class="kb-side" id="kb-side">
   <!-- Static "All boards" root above the action buttons, then the tree —
        same arrangement as /cron's "All jobs". -->
-  <div id="kb-all-boards" class="kb-node"><span class="kb-node-name">All boards</span></div>
+  <a id="kb-all-boards" class="kb-node" href="/kanban"><span class="kb-node-name">All boards</span></a>
   <hr class="kb-tree-sep">
   <div class="kb-side-head">
     <button onclick="kbNewBoard()">+ Board</button>

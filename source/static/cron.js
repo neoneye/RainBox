@@ -1089,10 +1089,13 @@ function cronFolderLi(f){
   const jobs = cronJobsInFolder(f.id);
   const hasKids = (kids.length + jobs.length) > 0;
   const expanded = cronIsExpanded(f.id);
-  const node = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the folder view in a new
+  // tab; a plain click is intercepted below and selects/toggles in-page.
+  const node = document.createElement('a');
   node.className = 'cron-node'
     + ((cronSelectedFolder === f.id && !cronEditUuid) ? ' sel' : '')
     + (cronFolderEnabled(f.id) ? '' : ' off');
+  node.href = '/cron?id=' + encodeURIComponent(f.id);
   const icon = document.createElement('span');
   icon.className = 'cron-ficon';
   icon.innerHTML = (expanded && hasKids) ? CRON_ICON_FOLDER_OPEN : CRON_ICON_FOLDER;
@@ -1100,7 +1103,11 @@ function cronFolderLi(f){
   label.className = 'cron-folder-label';
   label.textContent = f.name;
   node.appendChild(icon); node.appendChild(label);
-  node.addEventListener('click', () => cronFolderClick(f.id));
+  node.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    cronFolderClick(f.id);
+  });
   cronMakeDraggable(node, 'folder', f.id);
   cronMakeFolderDrop(node, f.id);
   cronMakeKebab(node, {
@@ -1551,7 +1558,11 @@ function cronInitTreeDnD(){
   cronWireRootDrop(document.getElementById('cron-root-drop'), false);  // bottom zone → end
   // The static "All jobs" node selects all jobs; it is NOT a drop target
   // (use the "Move to top level" zone to move a node to the root).
-  document.getElementById('cron-all-jobs').addEventListener('click', () => cronSelectFolder(null));
+  document.getElementById('cron-all-jobs').addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    cronSelectFolder(null);
+  });
   // Dismiss any open kebab menu on an outside click or Escape.
   document.addEventListener('click', () => {
     document.querySelectorAll('.cron-menu').forEach(m => { m.hidden = true; });

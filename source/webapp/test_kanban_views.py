@@ -157,3 +157,12 @@ def test_board_rows_are_real_links():
     assert "node.href = '/kanban?id=' + encodeURIComponent(b.uuid)" in body
     assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
     assert "text-decoration:none" in body
+
+
+def test_folder_rows_are_real_links():
+    # Folder rows (and the static "All boards" root node) are anchors too, so
+    # CMD/Ctrl click opens the folder view in a new tab via its ?id= deep
+    # link; the root node deep-links to the bare page (no ?id=).
+    body = _body()
+    assert "node.href = '/kanban?id=' + encodeURIComponent(f.uuid)" in body
+    assert '<a id="kb-all-boards" class="kb-node" href="/kanban">' in body

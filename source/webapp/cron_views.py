@@ -150,7 +150,9 @@ CRON_TEMPLATE = """
   .cron-tree.cron-dragging-on .cron-root-drop{display:block}
   .cron-root-drop.over{background:#eff6ff;border-color:#2563eb}
   .cron-node,.cron-job-node{-webkit-user-select:none;user-select:none}
-  .cron-node{display:flex;align-items:center;gap:4px;padding:8px 4px;border-radius:4px;cursor:pointer;white-space:nowrap}
+  /* Folder rows are anchors (CMD/Ctrl-click opens a new tab) — suppress link styling. */
+  .cron-node{display:flex;align-items:center;gap:4px;padding:8px 4px;border-radius:4px;cursor:pointer;white-space:nowrap;
+             color:inherit;text-decoration:none}
   .cron-node:hover{background:#f1f5f9}
   .cron-node.sel{background:#dbeafe;font-weight:600}
   .cron-ficon{display:inline-flex;align-items:center;color:#6b7280}
@@ -190,7 +192,7 @@ CRON_TEMPLATE = """
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="cron-split">
 <aside id="cron-tree" class="cron-tree">
-  <div id="cron-all-jobs" class="cron-node"><span>All jobs</span></div>
+  <a id="cron-all-jobs" class="cron-node" href="/cron"><span>All jobs</span></a>
   <hr class="cron-tree-sep">
   <div class="cron-tree-head">
     <div class="cron-tree-actions">

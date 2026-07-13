@@ -65,8 +65,9 @@ CHAT_TEMPLATE: str = """
   /* ---- folder tree (ported from /cron) ---- */
   #rooms ul{list-style:none;margin:0;padding:0}
   #rooms ul ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
+  /* Folder rows are anchors (CMD/Ctrl-click opens a new tab) — suppress link styling. */
   .chat-node{position:relative;display:flex;align-items:center;gap:0.4em;width:100%;box-sizing:border-box;
-             padding:0.4em 0.6em;border-radius:6px;cursor:pointer;color:#333;font-size:0.9rem}
+             padding:0.4em 0.6em;border-radius:6px;cursor:pointer;color:#333;font-size:0.9rem;text-decoration:none}
   .chat-node:hover{background:#eef0f6}
   .chat-node.sel{background:#dbeafe;font-weight:600}
   /* Folder kebab: hidden by default, shown only when the folder is selected
@@ -1303,8 +1304,11 @@ function folderLi(f){
   const kidRooms = roomsInFolder(f.id);
   const hasKids = (kids.length + kidRooms.length) > 0;
   const expanded = isExpanded(f.id);
-  const node = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the folder view in a new
+  // tab; a plain click is intercepted below and selects/toggles in-page.
+  const node = document.createElement('a');
   node.className = 'chat-node' + (selectedFolder === f.id ? ' sel' : '');
+  node.href = '/chat?id=' + encodeURIComponent(f.id);
   const icon = document.createElement('span');
   icon.className = 'chat-ficon';
   icon.innerHTML = (expanded && hasKids) ? CHAT_ICON_FOLDER_OPEN : CHAT_ICON_FOLDER;
@@ -1314,7 +1318,9 @@ function folderLi(f){
   node.appendChild(icon);
   node.appendChild(label);
   node.title = f.name;
-  node.addEventListener('click', () => {
+  node.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
     // First click selects the folder (shows its contents table); clicking the
     // already-selected folder toggles its expand/collapse (mirrors /cron).
     const wasSelected = (selectedFolder === f.id);
@@ -1666,6 +1672,7 @@ function buildFolderMenu(folderId){
     item.textContent = label;
     item.addEventListener('click', (e) => {
       e.stopPropagation();
+      e.preventDefault();  // the menu sits inside the folder's anchor — never follow it
       menu.hidden = true;
       if (label === 'Copy folder id') copyIdToast(folderId, 'Folder');
       else if (label === 'Delete') confirmDeleteFolder(folderId);
@@ -1675,6 +1682,7 @@ function buildFolderMenu(folderId){
   });
   kebab.addEventListener('click', (e) => {
     e.stopPropagation();
+    e.preventDefault();  // the kebab sits inside the folder's anchor — never follow it
     const willOpen = menu.hidden;
     document.querySelectorAll('.room-menu').forEach(m => { m.hidden = true; });
     if (willOpen){

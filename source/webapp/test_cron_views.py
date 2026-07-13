@@ -307,3 +307,12 @@ def test_job_rows_are_real_links():
     assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
     assert body.count("e.preventDefault();") >= 3  # plain click + kebab + menu items
     assert "text-decoration:none" in body
+
+
+def test_folder_rows_are_real_links():
+    # Folder rows (and the static "All jobs" root node) are anchors too, so
+    # CMD/Ctrl click opens the folder view in a new tab via its ?id= deep
+    # link; the root node deep-links to the bare page (no ?id=).
+    body = _body()
+    assert "node.href = '/cron?id=' + encodeURIComponent(f.id)" in body
+    assert '<a id="cron-all-jobs" class="cron-node" href="/cron">' in body

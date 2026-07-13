@@ -201,3 +201,13 @@ def test_room_rows_are_real_links():
     # anchors must not look like links nor hijack the row's drag-and-drop
     assert "text-decoration:none" in body
     assert "btn.draggable = false" in body
+
+
+def test_folder_rows_are_real_links():
+    """Folder rows are anchors too, so CMD/Ctrl click opens the folder view
+    in a new tab via its ?id= deep link. The folder kebab lives inside the
+    anchor, so its handlers preventDefault to never follow the link."""
+    body = _body()
+    assert "node.href = '/chat?id=' + encodeURIComponent(f.id)" in body
+    # kebab + menu-item handlers inside the folder anchor must not navigate
+    assert body.count("never follow") >= 2
