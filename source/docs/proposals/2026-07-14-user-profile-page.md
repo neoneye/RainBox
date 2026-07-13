@@ -91,6 +91,10 @@ PROFILE_FIELDS = [
           choices=["", "male", "female", "other"]),
     Field("preferred_name", "Identity", kind="text",  label="Address them as",
           hint="How the assistant addresses this person, e.g. “Simon” or “you”."),
+    Field("about",          "Identity", kind="text",  label="About",
+          multiline=True,
+          hint="Self-description in their own words, e.g. “programmer, "
+               "modern day alchemist doing code”."),
     Field("birthday",       "Identity", kind="date",  label="Birthday"),
     # group "Locale & formats"
     Field("units",          "Locale & formats", kind="enum", label="Units",
@@ -247,37 +251,39 @@ names are the only historical element: every other detail stays fictional
 and modern (per the no-real-PII policy, and so a demo never shows a
 19th-century birth year):
 
-| Label | Person (their discovery) | units | time | date | lang | currency | city | timezone |
-|---|---|---|---|---|---|---|---|---|
-| US | Barbara McClintock (transposons) | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
-| Canada | Frederick Banting (insulin) | metric | 12h | YYYY-MM-DD | en-CA / fr-CA | CAD | Montreal | America/Toronto |
-| Mexico | Mario Molina (ozone depletion) | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
-| Brazil | César Lattes (pion) | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
-| UK | Rosalind Franklin (DNA structure) | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
-| France | Évariste Galois (group theory) | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
-| Germany | Emmy Noether (symmetry ↔ conservation) | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
-| Netherlands | Hendrik Lorentz (Lorentz transformation) | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
-| Spain | Santiago Ramón y Cajal (the neuron) | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
-| Italy | Rita Levi-Montalcini (nerve growth factor) | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
-| Denmark | Ole Rømer (speed of light is finite) | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
-| Sweden | Svante Arrhenius (greenhouse effect) | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
-| Poland | Stefan Banach (functional analysis) | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
-| Israel | Amos Tversky (judgment under uncertainty) | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
-| India | Satyendra Nath Bose (Bose–Einstein statistics) | metric | 12h | DD/MM/YYYY | en-IN / hi | INR | Bengaluru | Asia/Kolkata |
-| China | Hua Luogeng (analytic number theory) | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | Shanghai | Asia/Shanghai |
-| Japan | Hideki Yukawa (meson theory) | metric | 24h | YYYY-MM-DD | ja / en | JPY | Tokyo | Asia/Tokyo |
-| South Korea | Woo Jang-choon (triangle of U) | metric | 12h | YYYY-MM-DD | ko / en | KRW | Seoul | Asia/Seoul |
-| Singapore | Wu Lien-teh (modern epidemic control) | metric | 12h | DD/MM/YYYY | en-SG / zh | SGD | Singapore | Asia/Singapore |
-| Australia | Howard Florey (penicillin as a medicine) | metric | 12h | DD/MM/YYYY | en-AU | AUD | Sydney | Australia/Sydney |
+| Label | Person | About | units | time | date | lang | currency | city | timezone |
+|---|---|---|---|---|---|---|---|---|---|
+| US | Barbara McClintock | discovered transposons | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
+| Canada | Frederick Banting | co-discovered insulin | metric | 12h | YYYY-MM-DD | en-CA / fr-CA | CAD | Montreal | America/Toronto |
+| Mexico | Mario Molina | explained ozone depletion | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
+| Brazil | César Lattes | co-discovered the pion | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
+| UK | Rosalind Franklin | imaged the structure of DNA | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
+| France | Évariste Galois | founded group theory | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
+| Germany | Emmy Noether | tied symmetry to conservation laws | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
+| Netherlands | Hendrik Lorentz | the Lorentz transformation | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
+| Spain | Santiago Ramón y Cajal | showed the brain is made of neurons | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
+| Italy | Rita Levi-Montalcini | discovered nerve growth factor | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
+| Denmark | Ole Rømer | showed light has a finite speed | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
+| Sweden | Svante Arrhenius | predicted the greenhouse effect | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
+| Poland | Stefan Banach | founded functional analysis | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
+| Israel | Amos Tversky | mapped judgment under uncertainty | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
+| India | Satyendra Nath Bose | Bose–Einstein statistics | metric | 12h | DD/MM/YYYY | en-IN / hi | INR | Bengaluru | Asia/Kolkata |
+| China | Hua Luogeng | advanced analytic number theory | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | Shanghai | Asia/Shanghai |
+| Japan | Hideki Yukawa | predicted the meson | metric | 24h | YYYY-MM-DD | ja / en | JPY | Tokyo | Asia/Tokyo |
+| South Korea | Woo Jang-choon | the triangle of U | metric | 12h | YYYY-MM-DD | ko / en | KRW | Seoul | Asia/Seoul |
+| Singapore | Wu Lien-teh | pioneered modern epidemic control | metric | 12h | DD/MM/YYYY | en-SG / zh | SGD | Singapore | Asia/Singapore |
+| Australia | Howard Florey | turned penicillin into a medicine | metric | 12h | DD/MM/YYYY | en-AU | AUD | Sydney | Australia/Sydney |
 
 Each entry's `country` field carries the country name (the label doubles as
 it, so the column is omitted above). Rough grouping in the file — Americas,
 Europe, Middle East, Asia, Oceania — is also the fixed tree order. Two
 placements are approximations rather than birthplaces: Wu Lien-teh worked
 across the Straits Settlements and Amos Tversky's field was cognitive
-science — both earn their rows on the strength of the discovery. The
-discovery goes in the profile's `nickname` field (e.g. "transposons"), so
-opening any example teaches something.
+science — both earn their rows on the strength of the discovery. The About
+column above is each entry's `about` value — the self-description field
+every profile has (the operator's own might read "programmer, modern day
+alchemist doing code"); on the examples it holds the discovery, so opening
+any example teaches something.
 
 Each also carries gender, a modern plausible birthday, and a
 `preferred_name` (the scientist's given name); `email`/`address` stay blank
