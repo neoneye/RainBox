@@ -4,9 +4,10 @@
 profile** — the structured record of a human (name, locale, formats, contact),
 editable through a form pane. The immediate use is demoing rainbox to friends:
 the operator creates a profile per friend in seconds, and a built-in
-`Example/` folder ships five read-only locale archetypes (European, US,
-Canadian, Chinese, Australian) that double as documentation of what a
-filled-in profile looks like and update with every rainbox release. The longer arc is multi-user preparation: this table is the person
+`Example/` folder ships twenty read-only locale archetypes covering the
+major tech countries (US, Germany, Japan, South Korea, India, China, …)
+that double as documentation of what a filled-in profile looks like and
+update with every rainbox release. The longer arc is multi-user preparation: this table is the person
 record that real accounts will eventually hang off.
 
 ## Relationship to the two existing "profile" concepts
@@ -46,10 +47,10 @@ folder detail table.
 - **Files:** `webapp/profile_views.py` (markup + CSS), `static/profile.js`
   (tree + form JS), `webapp/profile_api.py`, `db/profile.py`. Nav entry
   "Profile" next to Settings.
-- **Leaf name = a standalone label** ("Simon", "Demo — no PII", "European"),
+- **Leaf name = a standalone label** ("Simon", "Demo — no PII", "Germany"),
   renamed via the click-to-rename modal
   ([`ui-modal-rename.md`](../ui-modal-rename.md)). It is *not* derived from
-  first/last name — a demo profile's label ("European") and its example
+  first/last name — a demo profile's label ("Germany") and its example
   person's name ("Lena Fischer") serve different masters.
 - **Folder detail table columns:** Name / Person / Language / Units / Time /
   Country — enough to tell demo profiles apart at a glance.
@@ -97,7 +98,8 @@ PROFILE_FIELDS = [
     Field("timezone",       "Locale & formats", kind="text", label="Timezone",
           datalist="tz", hint="IANA name, e.g. Europe/Copenhagen"),
     Field("date_format",    "Locale & formats", kind="enum", label="Date format",
-          choices=["", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY", "DD.MM.YYYY"]),
+          choices=["", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY",
+                   "DD.MM.YYYY", "DD-MM-YYYY"]),
     Field("time_format",    "Locale & formats", kind="enum", label="Time format",
           choices=["", "24h", "12h"]),
     Field("language",       "Locale & formats", kind="text", label="Language (primary)",
@@ -121,7 +123,7 @@ PROFILE_FIELDS = [
 Design decisions baked in above:
 
 - **Datetime formatting is two enums, not a strftime string.** Free-form
-  format strings are a footgun (nobody remembers `%-d`), and four date
+  format strings are a footgun (nobody remembers `%-d`), and five date
   shapes + two clock shapes cover every locale the page targets. The form
   shows a **live preview line** ("Preview: 14.07.2026 · 21:30") rendered
   client-side from the profile's timezone + both formats, updating as the
@@ -207,7 +209,7 @@ including the uuid-collision check that keeps `?id=` unambiguous) plus
 
 ## Built-in examples (read-only, shipped with the app)
 
-The `Example/` folder and its five profiles are **not DB rows**. They ship
+The `Example/` folder and its twenty profiles are **not DB rows**. They ship
 as a data file, `data/profile_examples.json` (the same shipped-content
 pattern as `data/operators/demo.json` and the base Q&A registry): one entry
 per profile with a **fixed, hardcoded uuid** (so `?id=` deep links survive
@@ -234,23 +236,42 @@ code to get wrong:
   Duplicating a built-in creates a **real** top-level row (the virtual
   folder can't hold user rows) named after the example.
 
-The five profiles (fictional people — no real PII, per standing policy)
+The twenty profiles (fictional people — no real PII, per standing policy)
 show each locale's *typical* conventions — they are starting points for
 duplication, not rules; any profile, including the operator's own, sets
 whatever formats it prefers (a European choosing `YYYY-MM-DD` just picks it
 in the selector):
 
-| Label | Person | units | time | date | lang | currency | country/city | timezone |
+| Label | Person | units | time | date | lang | currency | city | timezone |
 |---|---|---|---|---|---|---|---|---|
-| European | Lena Fischer | metric | 24h | DD.MM.YYYY | de / en | EUR | Germany, Berlin | Europe/Berlin |
-| US | Mike Johnson | imperial | 12h | MM/DD/YYYY | en-US | USD | USA, Denver | America/Denver |
-| Canadian | Claire Tremblay | metric | 12h | YYYY-MM-DD | en-CA / fr-CA | CAD | Canada, Montreal | America/Toronto |
-| Chinese | Wei Zhang | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | China, Shanghai | Asia/Shanghai |
-| Australian | Olivia Baker | metric | 12h | DD/MM/YYYY | en-AU | AUD | Australia, Sydney | Australia/Sydney |
+| US | Mike Johnson | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
+| Canada | Claire Tremblay | metric | 12h | YYYY-MM-DD | en-CA / fr-CA | CAD | Montreal | America/Toronto |
+| Mexico | Sofía Hernández | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
+| Brazil | João Silva | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
+| UK | Emma Wilson | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
+| France | Camille Dubois | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
+| Germany | Lena Fischer | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
+| Netherlands | Daan de Vries | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
+| Spain | Lucía García | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
+| Italy | Marco Rossi | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
+| Denmark | Freja Nielsen | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
+| Sweden | Elsa Lindqvist | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
+| Poland | Zofia Kowalska | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
+| Israel | Noa Cohen | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
+| India | Aarav Sharma | metric | 12h | DD/MM/YYYY | en-IN / hi | INR | Bengaluru | Asia/Kolkata |
+| China | Wei Zhang | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | Shanghai | Asia/Shanghai |
+| Japan | Haruto Sato | metric | 24h | YYYY-MM-DD | ja / en | JPY | Tokyo | Asia/Tokyo |
+| South Korea | Minjun Kim | metric | 12h | YYYY-MM-DD | ko / en | KRW | Seoul | Asia/Seoul |
+| Singapore | Ethan Tan | metric | 12h | DD/MM/YYYY | en-SG / zh | SGD | Singapore | Asia/Singapore |
+| Australia | Olivia Baker | metric | 12h | DD/MM/YYYY | en-AU | AUD | Sydney | Australia/Sydney |
+
+Each entry's `country` field carries the country name (the label doubles as
+it, so the column is omitted above). Rough grouping in the file — Americas,
+Europe, Middle East, Asia, Oceania — is also the fixed tree order.
 
 Each also carries a plausible nickname, gender, birthday, and a
 `preferred_name`; `email`/`address` stay blank (nothing to demo there, and
-blanks show the sparse-JSONB behaviour). The five profiles are the living
+blanks show the sparse-JSONB behaviour). The twenty profiles are the living
 answer to "what does a filled-in profile look like" — the demo script is:
 open `Example/`, duplicate the closest archetype, rename it to the friend,
 adjust.
