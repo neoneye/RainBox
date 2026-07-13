@@ -185,7 +185,7 @@ A SIGINT/SIGTERM handler sets a `threading.Event` (`stop_event`) and calls `serv
 1. **Routing pass:** scan the journal for rows in `state='completed' AND routed_at IS NULL`. For each, look up the source agent's `next` uuid in `agents/config`. If non-null, enqueue a lineage payload into that next agent's inbox. Mark the row routed regardless (terminal rows get marked too, so they aren't re-scanned).
 2. **Wake-up pass:** call `db.agent_uuids_with_work()` (returns the set of agent UUIDs whose inbox is non-empty). For each role in `agents/config` whose UUID is in that set and whose agent is not currently running, `spawn()` it and register its socket on the `selectors`.
 3. **Socket drain:** `sel.select(timeout=1.0)` blocks in the kernel for up to one tick. For each readable socket, `recv` once, append to its buffer, split on `\n`, log each JSON message, and update the agent's `last_heartbeat`. An empty `recv` (EOF) marks the agent as dead.
-4. **Watchdog:** if `now - last_heartbeat > HEARTBEAT_TIMEOUT` (60 s) for any alive agent, log a warning, `SIGKILL` it, mark dead. (Agents only heartbeat *between* inbox items, not during one, so this must exceed the slowest single LLM call — raised from 3 s once real model calls landed.)
+4. **Watchdog:** if `now - last_heartbeat > HEARTBEAT_TIMEOUT` (60 s) for any alive agent, log a warning, `SIGKILL` it, and mark it dead. A background heartbeat runs during `handle()`, including model calls; the timeout therefore catches a dead process or broken status channel rather than ordinary slow inference.
 5. **Reap:** for each dead agent, `waitpid`, unregister and close its socket, drop it from the registry. Do **not** respawn — the next tick's wake-up pass will re-spawn if work appears.
 
 **Shutdown:** when `stop_event` is set, the loop exits, `SIGKILL`s and reaps any agents still alive, closes sockets, returns.
@@ -210,12 +210,12 @@ Subclasses only override `handle()` (and optionally `setup()`):
 - `Agent.handle` / `ModelGroupAgent.handle` — placeholders (`time.sleep(1)`); `ModelGroupAgent` records which models it *would* try.
 - `StructuredLLMAgent.handle` — builds two messages (a fixed system prompt + a per-item `user_prompt(payload)`), tries each model in the group in priority order via `as_structured_llm(...)`, and returns the parsed Pydantic model. `StructuredChatAgent` and `FollowUpClassifierAgent` build on this.
 
-The agent never holds an item outside the database — `take_item` moves it from inbox to journal in a single transaction, so a crash mid-task leaves the row in the journal as `processing` (recoverable) rather than lost.
+The agent never holds an item outside the database — `take_item` moves it from inbox to journal in a single transaction. If a worker exits mid-task, the supervisor marks the journal failed. Assistant runs additionally checkpoint an in-flight model request before dispatch, allowing recovery to retain its exact prompts, model, configured timeout, and failure reason.
 
 ## Heartbeat / kill / respawn behavior
 
-- **Healthy agent**: emits a heartbeat at every state transition (≤ 1 s apart while there's inbox work). When the inbox is empty it sends `{"status": "idle"}` and exits; the parent sees EOF, reaps it. **No automatic respawn** — the supervisor's next wake-up pass will spawn it again only if its inbox becomes non-empty (e.g., because the routing pass just enqueued downstream work, or the demo button reseeded).
-- **Hung agent** (no message for > 60 s): the watchdog sends `SIGKILL`, `waitpid` reaps it, the socket is closed. The journal row it was working on stays in `processing` state — recoverable. Whether it gets respawned depends on whether its inbox still has work. (60 s because an agent doesn't heartbeat mid-`handle()`; a slow model load + inference must fit inside it.)
+- **Healthy agent**: emits state transitions plus a background heartbeat every 20 seconds during `handle()`. When the inbox is empty it sends `{"status": "idle"}` and exits; the parent sees EOF and reaps it. **No automatic respawn** — the supervisor's next wake-up pass spawns it again only if its inbox becomes non-empty.
+- **Dead or disconnected agent** (no message for > 60 s): the watchdog sends `SIGKILL`, `waitpid` reaps it, and the supervisor fails its active journal. An interrupted assistant run becomes `killed`, gets a deterministic failure summary, turns its active model-call checkpoint into a failed timeline step, and posts an operational chat notice that clears its stale progress bubble. Startup performs the same recovery for runs abandoned by a previous supervisor process.
 - **Shutdown** (Ctrl-C): the SIGINT/SIGTERM handler sets `stop_event` and shuts the webserver. The supervisor loop exits, `SIGKILL`s any remaining agents, and the main thread returns.
 
 ## Wire format
@@ -393,7 +393,7 @@ A candid assessment of this code as the basis for an AI-agent system.
 ### What's still missing
 
 1. **LLM is wired for the chat/tool/document agents, not the demo pipeline.** `StructuredChatAgent`, `UnstructuredChatAgent`, `FollowUpClassifierAgent`, router variants, query-router variants, document-editing agents, and tool agents make real provider-backed LLM calls when configured. The `dreamer/critic/verifier` pipeline agents still run the `time.sleep(1)` placeholder — swapping them over is now a matter of giving each a `StructuredLLMAgent` subclass with its own system prompt, not new plumbing.
-2. **Heartbeat is coarse.** Raised from 3 s to 60 s so a single (possibly cold-loading) model call fits inside it, but it's still a blunt instrument: an agent doesn't heartbeat *during* `handle()`, so a call slower than 60 s gets `SIGKILL`ed. Better: (a) any progress message resets the deadline, (b) a `{"type":"thinking","budget":N}` extension message, or (c) progress-bearing heartbeats during the call.
+2. **Heartbeat detects liveness, not semantic progress.** The background thread keeps a process alive during long model calls, but it also keeps heartbeating if `handle()` is deadlocked while the process itself remains healthy. Per-call model timeouts are the primary bound for that case; the supervisor watchdog covers process or status-channel failure.
 3. **Retry / backoff policy.** The journal *can* hold `failed` rows (and `handle()` exceptions now produce them), but nothing reads them. A real system needs "if `failed` and attempts < N, re-enqueue with attempts+1 and an exponential delay."
 4. **Bidirectional protocol post-config.** The agent reads its inbox directly from Postgres and doesn't react to anything the supervisor sends after the initial config message. Cancellation and live steering still need a socket-side protocol.
 5. **Routing topology is hardcoded linear.** `next: UUID | None` only expresses a single successor. Real workflows need fanout (one role feeds many), fanin (many feed one), conditional routing (route based on result content), and stop conditions (verifier might loop back to dreamer if confidence is low).
@@ -406,7 +406,7 @@ A candid assessment of this code as the basis for an AI-agent system.
 
 ### One-line judgement
 
-This behaves like a multi-agent system: durable, type-checked, observable through Flask-Admin, with end-to-end lineage carried in each routed payload, real structured LLM calls behind the chat agents, a live group-chat UI over SSE, and a single Ctrl-C-stoppable entrypoint. What's left to make it useful for broader LLM workloads is moving the `dreamer/critic/verifier` pipeline off its `time.sleep(1)` placeholder onto the same `StructuredLLMAgent` path, making the heartbeat progress-aware rather than a fixed 60 s, and growing the routing topology beyond linear successor.
+This behaves like a multi-agent system: durable, type-checked, observable through Flask-Admin, with end-to-end lineage carried in each routed payload, real structured LLM calls behind the chat agents, a live group-chat UI over SSE, and a single Ctrl-C-stoppable entrypoint. What's left to make it useful for broader LLM workloads is moving the `dreamer/critic/verifier` pipeline off its `time.sleep(1)` placeholder onto the same `StructuredLLMAgent` path, adding semantic-progress detection beyond liveness heartbeats, and growing the routing topology beyond linear successor.
 
 ### Where to go from here
 

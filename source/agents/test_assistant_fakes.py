@@ -23,31 +23,35 @@ def _reply(message: str) -> AssistantStepDecision:
 
 def test_scripted_decisions_returns_in_order():
     fake = scripted_decisions(_reply("one"), _reply("two"))
-    first = fake(transcript="", scratchpad=[], step_index=0)
-    second = fake(transcript="", scratchpad=[], step_index=1)
+    first = fake(messages=[], scratchpad=[], step_index=0)
+    second = fake(messages=[], scratchpad=[], step_index=1)
     assert first.args["message"] == "one"
     assert second.args["message"] == "two"
 
 
 def test_scripted_decisions_raises_when_over_consumed():
     fake = scripted_decisions(_reply("only"))
-    fake(transcript="", scratchpad=[], step_index=0)
+    fake(messages=[], scratchpad=[], step_index=0)
     with pytest.raises(AssertionError, match="more decisions than were scripted"):
-        fake(transcript="", scratchpad=[], step_index=1)
+        fake(messages=[], scratchpad=[], step_index=1)
 
 
 def test_scripted_decisions_accepts_decide_next_step_kwargs():
     """The stand-in must accept the exact kwargs the real _decide_next_step is
     called with, so monkeypatching it is a drop-in replacement."""
     fake = scripted_decisions(_reply("ok"))
-    decision = fake(transcript="<human> hi", scratchpad=[{"action": "x"}], step_index=3)
+    decision = fake(
+        messages=[{"sender_type": "human", "text": "hi"}],
+        scratchpad=[{"action": "x"}],
+        step_index=3,
+    )
     assert decision.action is AssistantActionName.REPLY
 
 
 def test_scripted_decisions_empty_raises_immediately():
     fake = scripted_decisions()
     with pytest.raises(AssertionError, match="more decisions than were scripted"):
-        fake(transcript="", scratchpad=[], step_index=0)
+        fake(messages=[], scratchpad=[], step_index=0)
 
 
 # --- the decision schema ------------------------------------------------------

@@ -7,6 +7,7 @@ agents/test_assistant.py.
 """
 
 import json
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -401,6 +402,84 @@ def test_finish_run_sets_terminal_status_and_summary(app_ctx):
         assert reloaded.finished_at is not None
     finally:
         _cleanup_run(run.uuid)
+
+
+def test_recover_interrupted_model_call_preserves_diagnostics(app_ctx):
+    human = db.get_human_user()
+    assert human is not None
+    room = db.create_chatroom(f"trace-recover-{uuid4().hex[:8]}", human.uuid, [])
+    db.post_chat_message(room.uuid, human.uuid, "why did the model stop?")
+    agent_uuid = uuid4()
+    db.enqueue(agent_uuid, {"room_uuid": str(room.uuid)})
+    item = db.take_item(agent_uuid)
+    assert item is not None
+    journal_id, _ = item
+    run = db.start_assistant_run(
+        journal_id=journal_id,
+        room_uuid=room.uuid,
+        agent_uuid=agent_uuid,
+        step_limit=6,
+    )
+    db.post_progress(room.uuid, agent_uuid, "Working on it")
+    model_uuid = uuid4()
+    group_uuid = uuid4()
+    try:
+        db.checkpoint_assistant_call(
+            run,
+            step_index=3,
+            system_prompt="exact system prompt",
+            user_prompt="exact user data",
+            requested_at=datetime.now(UTC),
+            model_group_uuid=group_uuid,
+        )
+        db.checkpoint_assistant_model_attempt(
+            run,
+            model_uuid=model_uuid,
+            model_name="gemma-test",
+            timeout_seconds=45,
+        )
+
+        recovered = db.recover_interrupted_assistant_run(
+            journal_id,
+            "Supervisor killed the agent after a heartbeat timeout of 60s.",
+        )
+        db.post_assistant_failure_notice(recovered, "duplicate recovery attempt")
+
+        assert recovered is not None
+        assert recovered.status == "killed"
+        assert recovered.finished_at is not None
+        assert "active_call" not in recovered.metadata_
+        assert recovered.summary["outcome"] == "failed"
+        assert recovered.summary["source"] == "failure-fallback"
+        assert "Configured model timeout: 45s" in recovered.final_summary
+
+        step = db.list_assistant_steps(run.uuid)[-1]
+        assert step.step_index == 3
+        assert step.phase == "failed"
+        assert step.system_prompt == "exact system prompt"
+        assert step.user_prompt == "exact user data"
+        assert step.model_uuid == model_uuid
+        assert step.model_group_uuid == group_uuid
+        assert "heartbeat timeout" in step.error
+        assert "Configured model timeout: 45s" in step.error
+
+        journal = db.db.session.get(db.Journal, journal_id)
+        assert journal.state == "failed"
+        result = json.loads(journal.result)
+        assert result["assistant_run_uuid"] == str(run.uuid)
+        assert result["status"] == "killed"
+
+        room_messages = db.list_room_messages(room.uuid)
+        assert not any(message["kind"] == "progress" for message in room_messages)
+        notices = [message for message in room_messages if message["kind"] == "notice"]
+        assert len(notices) == 1
+        assert "I stopped before completing this request" in notices[0]["text"]
+        assert f"/assistant?id={run.uuid}" in notices[0]["text"]
+    finally:
+        _cleanup_run(run.uuid)
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.db.session.query(db.Journal).filter(db.Journal.id == journal_id).delete()
+        db.db.session.commit()
 
 
 def test_get_assistant_run_returns_row_or_none(app_ctx):

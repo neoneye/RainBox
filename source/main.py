@@ -18,14 +18,17 @@ logger = logging.getLogger(__name__)
 from werkzeug.serving import make_server  # noqa: E402
 
 import db  # noqa: E402
-from agents.config import AgentConfigEntry, agent_config  # noqa: E402
+from agents.config import (  # noqa: E402
+    ASSISTANT_RUN_SUMMARIZER_UUID,
+    AgentConfigEntry,
+    agent_config,
+)
 from webapp import app  # noqa: E402
 from webapp.core import sync_models_from_providers  # noqa: E402
 
 # Max time an agent may go without sending a status message before the
-# supervisor considers it hung and kills it. An agent only heartbeats between
-# inbox items, not during one — so this must exceed the slowest single unit of
-# work (an LLM call), which easily takes more than a few seconds.
+# supervisor considers it hung and kills it. Agents emit background heartbeats
+# during handle(), so this measures a dead worker or broken status channel.
 HEARTBEAT_TIMEOUT: float = 60.0
 TICK_TIMEOUT: float = 1.0
 # When fully idle (no live agents, no pending work) the loop has nothing to
@@ -58,6 +61,8 @@ class Agent(TypedDict):
     buffer: bytes
     last_heartbeat: float
     alive: bool
+    current_journal_id: UUID | None
+    death_reason: str | None
 
 
 def spawn(name: str, params: AgentConfigEntry) -> Agent:
@@ -87,7 +92,46 @@ def spawn(name: str, params: AgentConfigEntry) -> Agent:
         "buffer": b"",
         "last_heartbeat": time.monotonic(),
         "alive": True,
+        "current_journal_id": None,
+        "death_reason": None,
     }
+
+
+def _recover_assistant_journal(journal_id: UUID, reason: str) -> None:
+    """Best-effort closure for an assistant worker that vanished mid-handle."""
+    try:
+        run = db.recover_interrupted_assistant_run(journal_id, reason)
+        if run is not None:
+            db.enqueue(
+                ASSISTANT_RUN_SUMMARIZER_UUID, {"run_uuid": str(run.uuid)}
+            )
+            logger.error(
+                "recovered interrupted assistant run %s journal=%s: %s",
+                run.uuid,
+                journal_id,
+                reason,
+            )
+        else:
+            db.fail_journal_if_processing(journal_id, {
+                "ok": False,
+                "status": "killed",
+                "error": reason,
+            })
+    except Exception:
+        logger.exception(
+            "failed to recover interrupted assistant journal %s", journal_id
+        )
+        db.db.session.rollback()
+
+
+def _recover_runs_from_previous_supervisor() -> None:
+    """On startup, no worker from the previous supervisor can be managed here."""
+    for run in db.list_active_assistant_runs():
+        if run.journal_id is not None:
+            _recover_assistant_journal(
+                run.journal_id,
+                "Supervisor restarted while the assistant run was active.",
+            )
 
 
 def supervisor_loop(stop_event: threading.Event) -> None:
@@ -98,6 +142,7 @@ def supervisor_loop(stop_event: threading.Event) -> None:
     last_cron_tick = 0.0
 
     with app.app_context():
+        _recover_runs_from_previous_supervisor()
         while not stop_event.is_set():
             # Cron scheduler pass (throttled). Self-guarded: a cron bug must not
             # take down the supervisor thread.
@@ -162,6 +207,7 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                 chunk = ag["sock"].recv(4096)
                 if not chunk:
                     ag["alive"] = False
+                    ag["death_reason"] = "Agent worker connection closed unexpectedly."
                     continue
                 ag["buffer"] += chunk
                 while b"\n" in ag["buffer"]:
@@ -172,6 +218,11 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                     # Any message resets the silence-watchdog timer. Heartbeats
                     # exist only to do that during a long handle(); don't log them.
                     ag["last_heartbeat"] = time.monotonic()
+                    status = msg.get("status")
+                    if status in ("processing", "heartbeat") and msg.get("journal_id"):
+                        ag["current_journal_id"] = UUID(msg["journal_id"])
+                    elif status in ("completed", "failed"):
+                        ag["current_journal_id"] = None
                     if msg.get("status") != "heartbeat":
                         logger.info("agent %s -> %s", name, msg)
 
@@ -185,14 +236,24 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                     except ProcessLookupError:
                         pass
                     ag["alive"] = False
+                    ag["death_reason"] = (
+                        "Supervisor killed the agent after a heartbeat timeout "
+                        f"of {HEARTBEAT_TIMEOUT:g}s."
+                    )
 
             for name in list(agents):
                 ag = agents[name]
                 if not ag["alive"]:
+                    wait_status = None
                     try:
-                        os.waitpid(ag["pid"], 0)
+                        _, wait_status = os.waitpid(ag["pid"], 0)
                     except ChildProcessError:
                         pass
+                    reason = ag["death_reason"] or "Agent worker exited unexpectedly."
+                    if wait_status is not None:
+                        reason += f" Process exit code: {os.waitstatus_to_exitcode(wait_status)}."
+                    if ag["current_journal_id"] is not None:
+                        _recover_assistant_journal(ag["current_journal_id"], reason)
                     try:
                         sel.unregister(ag["sock"])
                     except (KeyError, ValueError):
@@ -208,6 +269,11 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                 pass
         for name in list(agents):
             ag = agents[name]
+            if ag["current_journal_id"] is not None:
+                _recover_assistant_journal(
+                    ag["current_journal_id"],
+                    "Supervisor shut down while the assistant run was active.",
+                )
             try:
                 os.waitpid(ag["pid"], 0)
             except ChildProcessError:

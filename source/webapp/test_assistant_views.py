@@ -282,6 +282,19 @@ def test_unsummarized_run_shows_pending(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_unsummarized_failed_run_shows_failure_reason(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "killed", final_summary="worker exited with code 9")
+    try:
+        detail = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "worker exited with code 9" in detail
+        assert "Not yet summarized" not in detail
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_step_token_counts_render_in_timeline(app_ctx, client):
     room = _room()
     run = db.start_assistant_run(

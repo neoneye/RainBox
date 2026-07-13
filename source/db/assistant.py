@@ -29,6 +29,7 @@ from db.models import (
     ChatUser,
     db,
 )
+from db.queue import fail_journal_if_processing
 
 StepPhase = Literal["planned", "running", "observed", "failed", "final", "control"]
 
@@ -237,6 +238,224 @@ def set_run_summary(run: AssistantRun, summary: dict[str, Any]) -> AssistantRun:
     run.summary = {**summary, "summarized_at": datetime.now(UTC).isoformat()}
     db.session.add(run)
     db.session.commit()
+    return run
+
+
+def checkpoint_assistant_call(
+    run: AssistantRun,
+    *,
+    step_index: int,
+    system_prompt: str,
+    user_prompt: str,
+    requested_at: datetime,
+    model_group_uuid: UUID | None,
+) -> AssistantRun:
+    """Persist a model request before dispatch so a killed worker leaves evidence."""
+    metadata = dict(run.metadata_ or {})
+    metadata["active_call"] = {
+        "step_index": step_index,
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "requested_at": requested_at.isoformat(),
+        "model_group_uuid": str(model_group_uuid) if model_group_uuid else None,
+        "attempts": [],
+    }
+    run.metadata_ = metadata
+    db.session.add(run)
+    db.session.commit()
+    return run
+
+
+def checkpoint_assistant_model_attempt(
+    run: AssistantRun,
+    *,
+    model_uuid: UUID,
+    model_name: str,
+    timeout_seconds: float,
+) -> AssistantRun:
+    """Append the model and configured timeout to the active call checkpoint."""
+    metadata = dict(run.metadata_ or {})
+    active = dict(metadata.get("active_call") or {})
+    attempts = list(active.get("attempts") or [])
+    attempts.append({
+        "model_uuid": str(model_uuid),
+        "model_name": model_name,
+        "timeout_seconds": timeout_seconds,
+        "started_at": datetime.now(UTC).isoformat(),
+    })
+    active["attempts"] = attempts
+    metadata["active_call"] = active
+    run.metadata_ = metadata
+    db.session.add(run)
+    db.session.commit()
+    return run
+
+
+def checkpoint_assistant_model_failure(
+    run: AssistantRun, *, model_uuid: UUID, error: str
+) -> AssistantRun:
+    """Attach an attempt error while retaining the prompts and timeout context."""
+    metadata = dict(run.metadata_ or {})
+    active = dict(metadata.get("active_call") or {})
+    attempts = list(active.get("attempts") or [])
+    for index in range(len(attempts) - 1, -1, -1):
+        attempt = attempts[index]
+        if attempt.get("model_uuid") == str(model_uuid) and not attempt.get("error"):
+            attempt = dict(attempt)
+            attempt["error"] = error
+            attempt["finished_at"] = datetime.now(UTC).isoformat()
+            attempts[index] = attempt
+            break
+    active["attempts"] = attempts
+    metadata["active_call"] = active
+    run.metadata_ = metadata
+    db.session.add(run)
+    db.session.commit()
+    return run
+
+
+def clear_assistant_call_checkpoint(run: AssistantRun) -> AssistantRun:
+    metadata = dict(run.metadata_ or {})
+    if "active_call" not in metadata:
+        return run
+    metadata.pop("active_call", None)
+    run.metadata_ = metadata
+    db.session.add(run)
+    db.session.commit()
+    return run
+
+
+def set_failure_run_summary(run: AssistantRun, error: str) -> AssistantRun:
+    """Store a non-LLM fallback summary immediately for a failed run."""
+    trigger = get_run_trigger_message(run)
+    trigger_text = (trigger or {}).get("text") or "Assistant request"
+    return set_run_summary(run, {
+        "trigger": str(trigger_text)[:240],
+        "obstacles": [error],
+        "outcome": "failed",
+        "source": "failure-fallback",
+    })
+
+
+def post_assistant_failure_notice(
+    run: AssistantRun, error: str
+) -> ChatMessage:
+    """Post one operational chat notice for a failed run and clear progress."""
+    run_uuid = str(run.uuid)
+    existing = (
+        db.session.query(ChatMessage)
+        .filter(
+            ChatMessage.room_uuid == run.room_uuid,
+            ChatMessage.sender_uuid == run.agent_uuid,
+            ChatMessage.kind == "notice",
+            ChatMessage.meta.contains({"assistant_failure_run_uuid": run_uuid}),
+        )
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    if existing is not None:
+        return existing
+
+    reason = error.strip()[:1000] or "The assistant worker stopped unexpectedly."
+    run_link = f"/assistant?id={run.uuid}"
+    text = (
+        "I stopped before completing this request.\n\n"
+        f"Reason: {reason}\n\n"
+        f"Inspect the failed run: [{run_link}]({run_link})"
+    )
+    return post_chat_message(
+        run.room_uuid,
+        run.agent_uuid,
+        text,
+        kind="notice",
+        meta={"assistant_failure_run_uuid": run_uuid},
+    )
+
+
+def list_active_assistant_runs() -> list[AssistantRun]:
+    """Runs that a newly started supervisor cannot have a live worker for."""
+    return (
+        db.session.query(AssistantRun)
+        .filter(AssistantRun.status.in_(("running", "stopping")))
+        .order_by(AssistantRun.started_at)
+        .all()
+    )
+
+
+def recover_interrupted_assistant_run(
+    journal_id: UUID, reason: str
+) -> AssistantRun | None:
+    """Close an assistant run whose worker exited outside normal exception handling."""
+    run = (
+        db.session.query(AssistantRun)
+        .filter(AssistantRun.journal_id == journal_id)
+        .one_or_none()
+    )
+    if run is None or run.status not in ("running", "stopping"):
+        return None
+
+    now = datetime.now(UTC)
+    active = dict((run.metadata_ or {}).get("active_call") or {})
+    attempts = list(active.get("attempts") or [])
+    last_attempt = attempts[-1] if attempts else {}
+    timeout = last_attempt.get("timeout_seconds")
+    model_name = last_attempt.get("model_name")
+    detail = reason
+    if model_name:
+        detail += f" Active model: {model_name}."
+    if timeout is not None:
+        detail += f" Configured model timeout: {timeout:g}s."
+
+    steps = list_assistant_steps(run.uuid)
+    running_step = next((step for step in reversed(steps) if step.phase == "running"), None)
+    if running_step is not None:
+        settle_assistant_step(running_step, phase="failed", error=detail)
+    else:
+        default_index = max((s.step_index for s in steps), default=-1) + 1
+        step_index = int(active.get("step_index", default_index))
+        if any(step.step_index == step_index for step in steps):
+            step_index = default_index
+        requested_at = None
+        try:
+            requested_at = datetime.fromisoformat(active["requested_at"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        duration_ms = None
+        if requested_at is not None:
+            duration_ms = max(0, int((now - requested_at).total_seconds() * 1000))
+        model_uuid = None
+        model_group_uuid = None
+        try:
+            if last_attempt.get("model_uuid"):
+                model_uuid = UUID(last_attempt["model_uuid"])
+            if active.get("model_group_uuid"):
+                model_group_uuid = UUID(active["model_group_uuid"])
+        except (TypeError, ValueError):
+            pass
+        append_assistant_step(
+            run_uuid=run.uuid,
+            step_index=step_index,
+            phase="failed",
+            action=None,
+            error=detail,
+            system_prompt=active.get("system_prompt"),
+            user_prompt=active.get("user_prompt"),
+            requested_at=requested_at,
+            duration_ms=duration_ms,
+            model_group_uuid=model_group_uuid,
+            model_uuid=model_uuid,
+        )
+
+    finish_run(run, "killed", final_summary=detail)
+    set_failure_run_summary(run, detail)
+    fail_journal_if_processing(journal_id, {
+        "ok": False,
+        "status": "killed",
+        "assistant_run_uuid": str(run.uuid),
+        "error": detail,
+    })
+    clear_assistant_call_checkpoint(run)
+    post_assistant_failure_notice(run, detail)
     return run
 
 

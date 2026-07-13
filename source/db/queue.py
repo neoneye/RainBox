@@ -69,6 +69,20 @@ def journal_update(
     db.session.commit()
 
 
+def fail_journal_if_processing(
+    journal_id: UUID, result: dict[str, Any]
+) -> bool:
+    """Fail an abandoned journal without overwriting a terminal result."""
+    row = db.session.get(Journal, journal_id)
+    if row is None or row.state != "processing":
+        return False
+    row.state = "failed"
+    row.updated_at = datetime.now(UTC)
+    row.result = json.dumps(result)
+    db.session.commit()
+    return True
+
+
 def fetch_unrouted_completed() -> list[dict[str, Any]]:
     """Journal rows that are completed but have not yet been routed to the next agent."""
     rows = (

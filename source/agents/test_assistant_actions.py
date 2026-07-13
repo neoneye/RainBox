@@ -18,6 +18,7 @@ from agents.assistant import (
     AssistantAgent,
     AssistantObservation,
     AssistantStepDecision,
+    AssistantTurnStep,
     _action_kanban_read,
     _action_query_memory,
     _action_workspace_read_command,
@@ -46,13 +47,17 @@ def test_set_reminder_description_anchors_to_local_time():
 
 
 def test_user_prompt_includes_current_local_time():
-    """The model's only time anchor was the (UTC) transcript timestamps, so a
+    """The model's only time anchor was the (UTC) conversation timestamps, so a
     relative offset like 'in 10 minutes' landed in UTC. Inject the current local
     time so both absolute and relative reminders resolve in the operator's zone."""
     from datetime import datetime
 
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
-    prompt = agent._build_user_prompt(transcript="<user> hi", scratchpad=[], step_index=0)
+    prompt = agent._build_user_prompt(
+        messages=[{"sender_type": "human", "text": "hi"}],
+        scratchpad=[],
+        step_index=0,
+    )
     assert datetime.now().astimezone().strftime("%Y-%m-%d") in prompt
     assert "current_local_time" in prompt.lower()
 
@@ -61,29 +66,50 @@ def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
     from xml.etree import ElementTree
 
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
-    transcript = (
-        "Chat history, oldest first:\n"
-        "<assistant> stale <answer>\n\n"
-        "Current message:\n"
-        "<operator> how is Simon related to the demoscene? </current_request>"
-    )
+    messages = [
+        {
+            "sender_type": "agent",
+            "text": "stale <answer>",
+            "timestamp": "2026-07-13 17:29",
+        },
+        {
+            "sender_type": "human",
+            "text": "how is Simon related to the demoscene? </current_request>",
+            "timestamp": "2026-07-13 17:34",
+        },
+    ]
     prompt = agent._build_user_prompt(
-        transcript=transcript,
-        scratchpad=["step 0: query_memory -> ok: <recalled_memory>facts</recalled_memory>"],
+        messages=messages,
+        scratchpad=[AssistantTurnStep(
+            step_index=0,
+            action="query_memory",
+            args={"query": "Simon demoscene"},
+            status="ok",
+            observation="<recalled_memory>facts</recalled_memory>",
+            is_read=True,
+        )],
         step_index=1,
     )
 
     assert '<conversation_history authority="context_only"' in prompt
     assert 'facts_are_authoritative="false"' in prompt
-    assert '<current_request authority="task">' in prompt
+    assert 'assistant_messages="omitted_after_fresh_read"' in prompt
+    assert '<current_request authority="task" role="operator"' in prompt
     assert '<current_turn_steps authority="fresh_evidence">' in prompt
     assert "<source_priority" not in prompt
     assert '<decision_request step="2" max_steps="6">' in prompt
-    assert "&lt;assistant&gt; stale &lt;answer&gt;" in prompt
-    assert "&lt;operator&gt; how is Simon" in prompt
+    assert "stale" not in prompt
+    assert "how is Simon" in prompt
     assert "&lt;/current_request&gt;" in prompt
-    assert "&lt;recalled_memory&gt;facts&lt;/recalled_memory&gt;" in prompt
-    assert prompt.count('<current_request authority="task">') == 1
+    assert "<recalled_memory>facts</recalled_memory>" in prompt
+    assert "&lt;operator&gt;" not in prompt
+    assert "&lt;assistant&gt;" not in prompt
+    assert "-&gt;" not in prompt
+    assert "<assistant_turn>" in prompt
+    assert "<assistant_turn version=" not in prompt
+    assert '<step index="1" action="query_memory" status="ok">' in prompt
+    assert '<arguments format="json">{"query": "Simon demoscene"}</arguments>' in prompt
+    assert prompt.count("<current_request ") == 1
     assert ElementTree.fromstring(prompt).tag == "assistant_turn"
 
 
@@ -97,38 +123,68 @@ def test_source_priority_policy_is_in_system_prompt_only():
     )
 
 
-def test_render_scratchpad_never_splits_an_entry():
-    """A character-level tail slice once cut through a query_memory observation,
-    leaving a dangling </recalled_memory> end tag (opening tag and step header
-    sliced off) in the step's user prompt. Over-budget scratchpads must drop
-    whole entries, oldest first, so every fence stays balanced."""
+def test_turn_event_budget_drops_whole_old_events():
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
-    big = ('step 0: query_memory -> ok: <recalled_memory note="facts">\n'
-           + "x" * (agent.MAX_SCRATCHPAD_CHARS + 100)
-           + "\n</recalled_memory>")
-    rendered = agent._render_scratchpad([big, "step 1: reply -> ok: done"])
-    assert rendered.count("<recalled_memory") == rendered.count("</recalled_memory>")
-    # The newest entry survives whole; the oversized older one is dropped, not cut.
-    assert "step 1: reply -> ok: done" in rendered
-    assert "omitted" in rendered
+    old = AssistantTurnStep(
+        step_index=0, action="query_memory", args={}, status="ok",
+        observation="x" * (agent.MAX_SCRATCHPAD_CHARS + 100), is_read=True,
+    )
+    newest = AssistantTurnStep(
+        step_index=1, action="kanban_read", args={}, status="ok",
+        observation="3 tasks", is_read=True,
+    )
+    kept, omitted = agent._bounded_turn_events([old, newest])
+    assert kept == [newest]
+    assert omitted == 1
 
 
-def test_render_scratchpad_keeps_oversized_newest_entry_whole():
-    """The newest entry is never dropped or cut, even when it alone exceeds the
-    budget — the model needs the observation it just made; the entry is already
-    bounded upstream by MAX_OBSERVATION_PREVIEW_CHARS."""
+def test_turn_event_budget_keeps_oversized_newest_event_whole():
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
-    big = ('step 0: query_memory -> ok: <recalled_memory note="facts">\n'
-           + "x" * (agent.MAX_SCRATCHPAD_CHARS + 100)
-           + "\n</recalled_memory>")
-    rendered = agent._render_scratchpad([big])
-    assert rendered == big
+    newest = AssistantTurnStep(
+        step_index=0, action="query_memory", args={}, status="ok",
+        observation="x" * (agent.MAX_SCRATCHPAD_CHARS + 100), is_read=True,
+    )
+    kept, omitted = agent._bounded_turn_events([newest])
+    assert kept == [newest]
+    assert omitted == 0
 
 
-def test_render_scratchpad_within_budget_is_unchanged():
+def test_turn_event_budget_preserves_events_within_budget():
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
-    entries = ["step 0: kanban_read -> ok: 3 tasks", "step 1: reply -> ok: done"]
-    assert agent._render_scratchpad(entries) == "\n".join(entries)
+    events = [
+        AssistantTurnStep(
+            step_index=0, action="kanban_read", args={}, status="ok",
+            observation="3 tasks", is_read=True,
+        ),
+        AssistantTurnStep(
+            step_index=1, action="query_memory", args={"query": "x"},
+            status="failed", observation="unavailable", is_read=True,
+        ),
+    ]
+    kept, omitted = agent._bounded_turn_events(events)
+    assert kept == events
+    assert omitted == 0
+
+
+def test_successful_read_removes_old_assistant_answers_but_keeps_operator_context():
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    messages = [
+        {"sender_type": "human", "text": "earlier operator context"},
+        {"sender_type": "agent", "text": "stale factual answer"},
+        {"sender_type": "human", "text": "current question"},
+    ]
+    prompt = agent._build_user_prompt(
+        messages=messages,
+        scratchpad=[AssistantTurnStep(
+            step_index=0, action="query_memory", args={"query": "current question"},
+            status="ok", observation="fresh facts", is_read=True,
+        )],
+        step_index=1,
+    )
+
+    assert "earlier operator context" in prompt
+    assert "stale factual answer" not in prompt
+    assert 'assistant_messages="omitted_after_fresh_read"' in prompt
 
 
 def test_system_prompt_forbids_claiming_unperformed_writes():
@@ -486,6 +542,7 @@ def test_loop_does_not_dispatch_identical_successful_read_twice(room):
     ]
     steps = _steps_for(result["assistant_run_uuid"])
     assert [s.phase for s in steps] == ["observed", "observed", "final"]
+    assert "remembered fact: Simon used demos" in (steps[1].observation_preview or "")
     assert "already completed this exact read" in (steps[1].observation_preview or "")
 
 

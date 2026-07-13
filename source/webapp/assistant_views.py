@@ -277,7 +277,11 @@ ASSISTANT_TEMPLATE = """
               <div>None</div>
             {% endif %}
           {% else %}
-            <div class="muted">Not yet summarized (runs shortly after the assistant finishes).</div>
+            {% if selected.status in ('failed', 'killed') %}
+              <div>{{ selected.final_summary or 'The run failed before diagnostics could be recorded.' }}</div>
+            {% else %}
+              <div class="muted">Not yet summarized (runs shortly after the assistant finishes).</div>
+            {% endif %}
           {% endif %}
         </div>
         <div class="dcell">
@@ -762,7 +766,13 @@ def _run_markdown(run, ctx: dict) -> str:
         obstacles = summary.get("obstacles") or []
         out += [f"- {o}" for o in obstacles] if obstacles else ["None"]
     else:
-        out.append("Not yet summarized.")
+        if run.status in ("failed", "killed"):
+            out.append(
+                run.final_summary
+                or "The run failed before diagnostics could be recorded."
+            )
+        else:
+            out.append("Not yet summarized.")
     out.append("")
 
     # Trigger message.

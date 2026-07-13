@@ -33,7 +33,7 @@ def scripted_decisions(
     """Return a stand-in for `_decide_next_step` that yields `decisions` in order.
 
     The returned callable ignores its keyword arguments (the real method is
-    called as `_decide_next_step(transcript=..., scratchpad=..., step_index=...)`),
+    called as `_decide_next_step(messages=..., scratchpad=..., step_index=...)`),
     so a test only has to script the model's outputs, not its inputs.
 
     It raises `AssertionError` if the loop asks for more decisions than were

@@ -283,7 +283,7 @@ def test_invalid_args_produce_traceable_failed_step_not_a_crash(room):
 def test_decide_next_step_calls_structured_completion_with_decision_model(app_ctx):
     """The real _decide_next_step (not the scripted fake) must route through the
     extracted _structured_completion with the AssistantStepDecision schema and a
-    prompt that carries the transcript."""
+    prompt that carries the structured messages."""
     agent = _agent()
     captured: dict = {}
 
@@ -295,7 +295,13 @@ def test_decide_next_step_calls_structured_completion_with_decision_model(app_ct
 
     agent._structured_completion = fake_completion
     decision = agent._decide_next_step(
-        transcript="<alice> what is the git status?", scratchpad=[], step_index=0
+        messages=[{
+            "sender_type": "human",
+            "text": "what is the git status?",
+            "timestamp": "2026-07-13 17:00",
+        }],
+        scratchpad=[],
+        step_index=0,
     )
 
     assert decision.action is AssistantActionName.REPLY
@@ -418,3 +424,35 @@ def test_killed_mid_run_leaves_last_committed_step_and_marks_run_failed(room):
     # model raised while deciding step 1), not a row count.
     assert steps[-1].phase == "failed"
     assert steps[-1].step_index == 1
+    assert run.summary["outcome"] == "failed"
+    assert "RuntimeError: model exploded" in run.summary["obstacles"]
+
+
+def test_handled_model_failure_persists_last_prompts(room):
+    room_uuid, message_uuid = room
+    agent = _agent()
+    db.post_progress(room_uuid, agent.agent_uuid, "Working on it")
+
+    def failed_decide(**_kwargs):
+        agent._last_system_prompt = "system policy used for failed call"
+        agent._last_user_prompt = "user data used for failed call"
+        raise TimeoutError("structured stream exceeded 45s")
+
+    agent._decide_next_step = failed_decide
+    with pytest.raises(TimeoutError):
+        agent.handle(
+            uuid4(),
+            {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)},
+        )
+
+    step = db.list_assistant_steps(agent._run.uuid)[-1]
+    assert step.system_prompt == "system policy used for failed call"
+    assert step.user_prompt == "user data used for failed call"
+    assert "45s" in step.error
+    assert agent._run.summary["outcome"] == "failed"
+    messages = db.list_room_messages(room_uuid)
+    assert not any(message["kind"] == "progress" for message in messages)
+    notices = [message for message in messages if message["kind"] == "notice"]
+    assert len(notices) == 1
+    assert "I stopped before completing this request" in notices[0]["text"]
+    assert f"/assistant?id={agent._run.uuid}" in notices[0]["text"]

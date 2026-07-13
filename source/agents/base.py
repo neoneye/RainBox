@@ -15,11 +15,6 @@
 #        surfacing, diluting the deadline (the /models probes already pass
 #        max_retries=0). Consider max_retries=0 for agent calls and let the
 #        model-group fallback own retries.
-#      - The agent emits NO heartbeat during an LLM call (the heartbeat thread
-#        in agents/base.py _handle_with_heartbeat), so a reasoning model that
-#        streams for >60s is SIGKILLed mid-reply. _stream_reply already flushes
-#        to the DB ~every 150ms; those flushes could double as heartbeats to
-#        keep slow reasoning models alive.
 
 import json
 import logging
@@ -237,6 +232,16 @@ class ModelGroupAgent(Agent):
             len(self.candidate_model_uuids),
         )
 
+    def _model_attempt_started(
+        self, model_uuid: UUID, model_name: str, timeout_seconds: float
+    ) -> None:
+        """Hook for agents that durably track an in-flight model attempt."""
+
+    def _model_attempt_failed(
+        self, model_uuid: UUID, model_name: str, error: Exception
+    ) -> None:
+        """Hook for agents that durably track a failed model attempt."""
+
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         # INTENTIONAL STUB — keep functional, do NOT make abstract. This is the
         # *default* dispatch for any role without a specialized class, including
@@ -297,8 +302,16 @@ class ModelGroupAgent(Agent):
         token_counter = TokenCountingHandler()
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
+            model_name = str(model_uuid)
+            attempt_started = False
             try:
                 _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+                timeout_s = float(
+                    args.get("request_timeout") or args.get("timeout") or 60.0
+                )
+                self._last_model_uuid = model_uuid
+                self._model_attempt_started(model_uuid, model_name, timeout_s)
+                attempt_started = True
                 logger.info(
                     "agent %s: calling model %s (this loads it into LM Studio if "
                     "it isn't already; a large cold model may take a while)",
@@ -320,9 +333,6 @@ class ModelGroupAgent(Agent):
                 # delivers tokens continuously, so it never trips on a runaway
                 # generation. Bound the whole stream with a wall-clock deadline
                 # instead; abandoning the generator closes the provider stream.
-                timeout_s = float(
-                    args.get("request_timeout") or args.get("timeout") or 60.0
-                )
                 deadline = time.monotonic() + timeout_s
                 last = None
                 # Capture the reasoning ("thinking") channel while the stream is
@@ -358,10 +368,11 @@ class ModelGroupAgent(Agent):
                     "output": token_counter.completion_llm_token_count,
                     "ms": int((time.monotonic() - t0) * 1000),
                 }
-                self._last_model_uuid = model_uuid
                 return result
             except Exception as e:
                 last_error = e
+                if attempt_started:
+                    self._model_attempt_failed(model_uuid, model_name, e)
                 logger.warning(
                     "agent %s: model %s failed (%s); trying next in group",
                     self.name,
