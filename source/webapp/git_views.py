@@ -45,12 +45,15 @@ GIT_TEMPLATE = """
   .git-tree-list ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
   /* Tree node rows — folder + leaf — copied from /cron's .cron-node/.cron-job-node. */
   .git-node,.git-repo-node{-webkit-user-select:none;user-select:none}
-  .git-node{display:flex;align-items:center;gap:4px;padding:8px 4px;border-radius:4px;cursor:pointer;white-space:nowrap}
+  /* Rows are anchors (CMD/Ctrl-click opens a new tab) — suppress link styling. */
+  .git-node{display:flex;align-items:center;gap:4px;padding:8px 4px;border-radius:4px;cursor:pointer;white-space:nowrap;
+            color:inherit;text-decoration:none}
   .git-node:hover{background:#f1f5f9}
   .git-node.sel{background:#dbeafe;font-weight:600}
   .git-ficon{display:inline-flex;align-items:center;color:#6b7280}
   .git-ficon svg{width:15px;height:15px;display:block}
-  .git-repo-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151}
+  .git-repo-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151;
+                 text-decoration:none}
   .git-repo-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .git-repo-node:hover{background:#f1f5f9}
   .git-repo-node.sel{background:#dbeafe;font-weight:600}
@@ -101,7 +104,7 @@ GIT_TEMPLATE = """
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="git-split" id="git-split">
   <div class="git-tree" id="git-tree">
-    <div class="git-node" id="git-all">All repositories</div>
+    <a class="git-node" id="git-all" href="/git">All repositories</a>
     <hr class="git-tree-sep">
     <div class="git-actions">
       <button onclick="gitAddFolder(false)">+ Folder</button>

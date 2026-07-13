@@ -34,3 +34,16 @@ def test_js_has_core_markers():
                    "gitAddRepoConfirm", "/git/api/check-path",
                    "gitLoadRepoDetail", "gitSavePush"]:
         assert marker in b, f"missing JS marker: {marker}"
+
+
+def test_tree_rows_are_real_links():
+    # Folder and repo rows (and the static "All repositories" node) are
+    # anchors with a real href so CMD/Ctrl click (and middle click) opens the
+    # selection in a new tab via its ?id= deep link. Plain clicks are still
+    # intercepted for in-page selection; modified clicks pass through.
+    body = _body()
+    assert "node.href = '/git?id=' + encodeURIComponent(f.id)" in body
+    assert "n.href = '/git?id=' + encodeURIComponent(r.uuid)" in body
+    assert '<a class="git-node" id="git-all" href="/git">' in body
+    assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
+    assert "text-decoration:none" in body

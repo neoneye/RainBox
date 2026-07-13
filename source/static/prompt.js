@@ -557,9 +557,12 @@ function promptFolderLi(f){
   const leaves = promptsInFolder(f.id);
   const hasKids = (kids.length + leaves.length) > 0;
   const expanded = promptIsExpanded(f.id);
-  const node = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the folder view in a new
+  // tab; a plain click is intercepted below and selects/toggles in-page.
+  const node = document.createElement('a');
   const selected = (promptSelectedFolder === f.id && !promptSelectedItem);
   node.className = 'prompt-node' + (selected ? ' sel' : '');
+  node.href = '/prompt?id=' + encodeURIComponent(f.id);
   const icon = document.createElement('span');
   icon.className = 'prompt-ficon';
   icon.innerHTML = (expanded && hasKids) ? PROMPT_ICON_FOLDER_OPEN : PROMPT_ICON_FOLDER;
@@ -567,7 +570,11 @@ function promptFolderLi(f){
   label.className = 'prompt-folder-label';
   label.textContent = f.name;
   node.appendChild(icon); node.appendChild(label);
-  node.addEventListener('click', () => promptFolderClick(f.id));
+  node.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    promptFolderClick(f.id);
+  });
   promptMakeDraggable(node, 'folder', f.id);
   promptMakeFolderDrop(node, f.id);
   // Kebab is rendered on every row but only shown (via CSS) on the selected one,
@@ -587,14 +594,21 @@ function promptFolderLi(f){
   return li;
 }
 function promptItemNode(p){
-  const n = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the prompt in a new tab; a
+  // plain click is intercepted below and selects the prompt in-page instead.
+  const n = document.createElement('a');
   const selected = (promptSelectedItem === p.uuid);
   n.className = 'prompt-item-node' + (selected ? ' sel' : '');
+  n.href = '/prompt?id=' + encodeURIComponent(p.uuid);
   n.title = p.name;
   // No leaf icon in the tree — every leaf here is a prompt, so an icon is noise.
   const label = document.createElement('span'); label.className = 'prompt-item-label'; label.textContent = p.name;
   n.appendChild(label);
-  n.addEventListener('click', () => promptSelectItem(p.uuid));
+  n.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    promptSelectItem(p.uuid);
+  });
   promptMakeDraggable(n, 'item', p.uuid);
   promptMakeItemDrop(n, p.uuid);
   // Kebab on every row, shown (via CSS) only on the selected one — matches /cron.
@@ -644,11 +658,13 @@ function promptMakeKebab(node, opts){
     item.type = 'button'; item.className = 'item' + (spec[2] ? ' ' + spec[2] : '');
     item.setAttribute('role', 'menuitem');
     item.textContent = spec[0];
-    item.addEventListener('click', e => { e.stopPropagation(); menu.hidden = true; spec[1](); });
+    // preventDefault: the menu sits inside the row's anchor — never follow it.
+    item.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); menu.hidden = true; spec[1](); });
     menu.appendChild(item);
   });
   kebab.addEventListener('click', e => {
     e.stopPropagation();
+    e.preventDefault();  // the kebab sits inside the row's anchor — never follow it
     const willOpen = menu.hidden;
     document.querySelectorAll('.prompt-menu').forEach(m => { m.hidden = true; });
     if (willOpen) promptPlaceMenu(menu, kebab.getBoundingClientRect());
@@ -912,7 +928,11 @@ function promptInitTreeDnD(){
     if (promptDrag){ e.preventDefault(); promptDropInto(null, false); }  // empty space → end of root
   });
   promptWireRootDrop(document.getElementById('prompt-root-drop'), false);
-  document.getElementById('prompt-all').addEventListener('click', () => promptSelectFolder(null));
+  document.getElementById('prompt-all').addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    promptSelectFolder(null);
+  });
   // Dismiss any open kebab menu on an outside click or Escape.
   document.addEventListener('click', () => {
     document.querySelectorAll('.prompt-menu').forEach(m => { m.hidden = true; });

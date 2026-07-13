@@ -62,13 +62,16 @@ MEMORY_TEMPLATE = """
   .mem-tree-list ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
   .mem-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:6px 0}
   .mem-node,.mem-claim-node{-webkit-user-select:none;user-select:none}
-  .mem-node{display:flex;align-items:center;gap:4px;padding:8px 4px;border-radius:4px;cursor:pointer;white-space:nowrap;box-sizing:border-box}
+  /* Rows are anchors (CMD/Ctrl-click opens a new tab) — suppress link styling. */
+  .mem-node{display:flex;align-items:center;gap:4px;padding:8px 4px;border-radius:4px;cursor:pointer;white-space:nowrap;box-sizing:border-box;
+            color:inherit;text-decoration:none}
   .mem-node:hover{background:#f1f5f9}
   .mem-node.sel{background:#dbeafe;font-weight:600}
   .mem-ficon{display:inline-flex;align-items:center;color:#6b7280}
   .mem-ficon svg{width:15px;height:15px;display:block}
   .mem-group-count{margin-left:6px;color:#6b7280;font-weight:400;font-size:0.82rem}
-  .mem-claim-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151}
+  .mem-claim-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151;
+                  text-decoration:none}
   .mem-claim-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .mem-claim-node:hover{background:#f1f5f9}
   .mem-claim-node.sel{background:#dbeafe;font-weight:600}
@@ -129,7 +132,7 @@ MEMORY_TEMPLATE = """
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="mem-split">
 <aside id="mem-tree" class="mem-tree">
-  <div id="mem-all" class="mem-node"><span>All memories</span></div>
+  <a id="mem-all" class="mem-node" href="/memory"><span>All memories</span></a>
   <hr class="mem-tree-sep">
   <div class="mem-filters">
     <input type="text" id="mem-filter-text" placeholder="filter text / subject…" autocomplete="off">

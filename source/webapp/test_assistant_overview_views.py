@@ -36,3 +36,14 @@ def test_js_has_core_markers():
                    "aoSyncUrl", "aoReadUrl", "history.replaceState",
                    "/assistant-overview/api/runs", "/assistant?id="]:
         assert marker in b, f"missing marker: {marker}"
+
+
+def test_run_rows_are_real_links():
+    # Every cell of a run row wraps its content in a real anchor to the
+    # inspector, so CMD/Ctrl click (and middle click) opens the run in a new
+    # tab. A plain click anywhere on the row still navigates in-page.
+    body = _body()
+    assert "const href = '/assistant?id=' + encodeURIComponent(run.uuid);" in body
+    assert "ao-cell" in body
+    assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
+    assert "text-decoration:none" in body

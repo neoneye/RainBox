@@ -292,9 +292,12 @@ function gitFolderLi(f){
   const repos = gitReposInFolder(f.id);
   const hasKids = (kids.length + repos.length) > 0;
   const expanded = gitIsExpanded(f.id);
-  const node = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the folder view in a new
+  // tab; a plain click is intercepted below and selects/toggles in-page.
+  const node = document.createElement('a');
   const selected = (gitSelectedFolder === f.id && !gitSelectedRepo);
   node.className = 'git-node' + (selected ? ' sel' : '');
+  node.href = '/git?id=' + encodeURIComponent(f.id);
   const icon = document.createElement('span');
   icon.className = 'git-ficon';
   icon.innerHTML = (expanded && hasKids) ? GIT_ICON_FOLDER_OPEN : GIT_ICON_FOLDER;
@@ -302,7 +305,11 @@ function gitFolderLi(f){
   label.className = 'git-folder-label';
   label.textContent = f.name;
   node.appendChild(icon); node.appendChild(label);
-  node.addEventListener('click', () => gitFolderClick(f.id));
+  node.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    gitFolderClick(f.id);
+  });
   gitMakeDraggable(node, 'folder', f.id);
   gitMakeFolderDrop(node, f.id);
   // Kebab is rendered on every row but only shown (via CSS) on the selected one,
@@ -322,14 +329,21 @@ function gitFolderLi(f){
   return li;
 }
 function gitRepoNode(r){
-  const n = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the repo in a new tab; a
+  // plain click is intercepted below and selects the repo in-page instead.
+  const n = document.createElement('a');
   const selected = (gitSelectedRepo === r.uuid);
   n.className = 'git-repo-node' + (selected ? ' sel' : '');
+  n.href = '/git?id=' + encodeURIComponent(r.uuid);
   n.title = r.path || r.name;
   // No repo icon in the tree — every leaf here is a git repo, so the icon is noise.
   const label = document.createElement('span'); label.className = 'git-repo-label'; label.textContent = r.name;
   n.appendChild(label);
-  n.addEventListener('click', () => gitSelectRepo(r.uuid));
+  n.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    gitSelectRepo(r.uuid);
+  });
   gitMakeDraggable(n, 'repo', r.uuid);
   gitMakeRepoDrop(n, r.uuid);
   // Kebab on every row, shown (via CSS) only on the selected one — matches /cron.
@@ -362,11 +376,13 @@ function gitMakeKebab(node, opts){
     item.type = 'button'; item.className = 'item' + (spec[2] ? ' ' + spec[2] : '');
     item.setAttribute('role', 'menuitem');
     item.textContent = spec[0];
-    item.addEventListener('click', e => { e.stopPropagation(); menu.hidden = true; spec[1](); });
+    // preventDefault: the menu sits inside the row's anchor — never follow it.
+    item.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); menu.hidden = true; spec[1](); });
     menu.appendChild(item);
   });
   kebab.addEventListener('click', e => {
     e.stopPropagation();
+    e.preventDefault();  // the kebab sits inside the row's anchor — never follow it
     const willOpen = menu.hidden;
     document.querySelectorAll('.git-menu').forEach(m => { m.hidden = true; });
     if (willOpen) gitPlaceMenu(menu, kebab.getBoundingClientRect());
@@ -664,7 +680,11 @@ function gitInitTreeDnD(){
     if (gitDrag){ e.preventDefault(); gitDropInto(null, false); }  // empty space → end of root
   });
   gitWireRootDrop(document.getElementById('git-root-drop'), false);
-  document.getElementById('git-all').addEventListener('click', () => gitSelectFolder(null));
+  document.getElementById('git-all').addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    gitSelectFolder(null);
+  });
   // Dismiss any open kebab menu on an outside click or Escape.
   document.addEventListener('click', () => {
     document.querySelectorAll('.git-menu').forEach(m => { m.hidden = true; });

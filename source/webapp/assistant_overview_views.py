@@ -57,7 +57,10 @@ OVERVIEW_TEMPLATE = """
     padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;
     letter-spacing:0.03em;color:#9ca3af;user-select:none}
   .ao-table th.sortable{cursor:pointer}
-  .ao-table td{padding:12px 14px;border-bottom:1px solid #e5e7eb;font-size:0.9rem}
+  /* Cell padding lives on the .ao-cell anchor (not the td) so the row's link
+     covers the full clickable area — CMD/Ctrl-click opens the run in a new tab. */
+  .ao-table td{padding:0;border-bottom:1px solid #e5e7eb;font-size:0.9rem}
+  .ao-table td>.ao-cell{display:block;padding:12px 14px;color:inherit;text-decoration:none}
   .ao-table tbody tr{cursor:pointer}
   .ao-table tbody tr:hover{background:#f1f5f9}
   .ao-date{font-size:0.8rem;color:#374151}

@@ -173,8 +173,10 @@ async function refresh() {
 
 function renderLeft() {
   const root = document.getElementById('group-list');
+  // Real hrefs so CMD/Ctrl/middle click opens the group in a new tab; a plain
+  // click is intercepted by the list's click delegate below.
   const items = groups.map(g =>
-    `<li><a class="${g.uuid === selectedId ? 'selected' : ''}" data-id="${escapeHtml(g.uuid)}">${escapeHtml(g.name)}</a></li>`
+    `<li><a class="${g.uuid === selectedId ? 'selected' : ''}" data-id="${escapeHtml(g.uuid)}" href="?id=${encodeURIComponent(g.uuid)}">${escapeHtml(g.name)}</a></li>`
   ).join('');
   root.innerHTML = items +
     `<li><a class="new-group" id="new-group-btn">+ new group</a></li>`;
@@ -256,6 +258,8 @@ document.getElementById('group-list').addEventListener('click', async (ev) => {
   }
   const row = ev.target.closest('a[data-id]');
   if (row) {
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;  // browser handles new tab/window
+    ev.preventDefault();
     creating = false;
     setSelected(row.dataset.id);
     render();

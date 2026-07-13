@@ -95,3 +95,16 @@ def test_rename_goes_through_confirm_modal():
     assert "prompt-rename-display" in b
     assert "function promptOpenRenameModal" in b
     assert "function promptConfirmRenameModal" in b
+
+
+def test_tree_rows_are_real_links():
+    # Folder and prompt rows (and the static "All prompts" node) are anchors
+    # with a real href so CMD/Ctrl click (and middle click) opens the
+    # selection in a new tab via its ?id= deep link. Plain clicks are still
+    # intercepted for in-page selection; modified clicks pass through.
+    body = _body()
+    assert "node.href = '/prompt?id=' + encodeURIComponent(f.id)" in body
+    assert "n.href = '/prompt?id=' + encodeURIComponent(p.uuid)" in body
+    assert '<a class="prompt-node" id="prompt-all" href="/prompt">' in body
+    assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
+    assert "text-decoration:none" in body

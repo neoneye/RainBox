@@ -88,3 +88,18 @@ def test_tombstone_hits_ui_present():
     assert 'function tombstoneHitsHtml' in body
     assert 'tombstone_hits' in body
     assert 'Suppressed re-assertions' in body
+
+
+def test_tree_rows_are_real_links():
+    # Status-group and claim rows (and the static "All memories" node) are
+    # anchors with a real href so CMD/Ctrl click (and middle click) opens the
+    # selection in a new tab. Groups deep-link as ?id=<status>, claims as
+    # ?id=<uuid>; restoreFromUrl resolves both. Plain clicks are still
+    # intercepted for in-page selection; modified clicks pass through.
+    body = _body()
+    assert "node.href = '/memory?id=' + encodeURIComponent(status)" in body
+    assert "node.href = '/memory?id=' + encodeURIComponent(c.uuid)" in body
+    assert '<a id="mem-all" class="mem-node" href="/memory">' in body
+    assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
+    assert "STATUS_ORDER.includes(id)" in body  # group deep link restores
+    assert "text-decoration:none" in body

@@ -51,12 +51,15 @@ PROMPT_TEMPLATE = """
   .prompt-tree-list ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
   /* Tree node rows — folder + leaf — copied from /cron's .cron-node/.cron-job-node. */
   .prompt-node,.prompt-item-node{-webkit-user-select:none;user-select:none}
-  .prompt-node{display:flex;align-items:center;gap:4px;padding:8px 4px;border-radius:4px;cursor:pointer;white-space:nowrap}
+  /* Rows are anchors (CMD/Ctrl-click opens a new tab) — suppress link styling. */
+  .prompt-node{display:flex;align-items:center;gap:4px;padding:8px 4px;border-radius:4px;cursor:pointer;white-space:nowrap;
+               color:inherit;text-decoration:none}
   .prompt-node:hover{background:#f1f5f9}
   .prompt-node.sel{background:#dbeafe;font-weight:600}
   .prompt-ficon{display:inline-flex;align-items:center;color:#6b7280}
   .prompt-ficon svg{width:15px;height:15px;display:block}
-  .prompt-item-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151}
+  .prompt-item-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151;
+                    text-decoration:none}
   .prompt-item-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .prompt-item-node:hover{background:#f1f5f9}
   .prompt-item-node.sel{background:#dbeafe;font-weight:600}
@@ -144,7 +147,7 @@ PROMPT_TEMPLATE = """
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="prompt-split" id="prompt-split">
   <div class="prompt-tree" id="prompt-tree">
-    <div class="prompt-node" id="prompt-all">All prompts</div>
+    <a class="prompt-node" id="prompt-all" href="/prompt">All prompts</a>
     <hr class="prompt-tree-sep">
     <div class="prompt-actions">
       <button onclick="promptAddFolder(false)">+ Folder</button>

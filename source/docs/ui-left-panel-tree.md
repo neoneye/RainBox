@@ -218,15 +218,29 @@ is the nicer UX; do that on new pages.
     the drag source and kebab host — set `draggable = false` on the anchor so
     dragging moves the row, not the link's URL (`roomNode`,
     `chat_template.py`).
-  - All folder nodes, `/cron` jobs, `/kanban` boards: the node element **is**
-    the anchor (drag source and kebab host in one). The kebab and its menu are
-    then nested inside the anchor, so their click handlers must call
-    `e.preventDefault()` in addition to `stopPropagation()` — otherwise a menu
-    click can follow the link (`buildFolderMenu`, `chat_template.py`;
-    `cronMakeKebab`, `static/cron.js`; `kbMakeKebab`, `static/kanban.js`).
+  - All folder nodes and the other pages' leaves (`/cron` jobs, `/kanban`
+    boards, `/git` repos, `/prompt` prompts, `/memory` claims): the node
+    element **is** the anchor (drag source and kebab host in one). The kebab
+    and its menu are then nested inside the anchor, so their click handlers
+    must call `e.preventDefault()` in addition to `stopPropagation()` —
+    otherwise a menu click can follow the link (`buildFolderMenu`,
+    `chat_template.py`; `cronMakeKebab`, `static/cron.js`; `kbMakeKebab`,
+    `static/kanban.js`; `gitMakeKebab`, `static/git.js`; `promptMakeKebab`,
+    `static/prompt.js`; `claimLi`'s inline kebab branch, `static/memory.js`).
 
-  `/git` and `/prompt` still render div rows (no new-tab support yet); use
-  the anchor form when touching them or building a new page.
+  The same convention extends beyond the folder trees:
+  - `/memory`'s status groups deep-link as `?id=<status>` (the status string —
+    it can never collide with a claim uuid), so group rows are anchors too;
+    `syncUrl`/`restoreFromUrl` handle both kinds (`static/memory.js`).
+  - **Table lists** (`/assistant-overview`): a `<tr>` can't be an anchor, so
+    each cell wraps its content in `<a class="ao-cell" href=…>` with the td's
+    padding moved onto the block-display anchor (td `padding:0`), and the
+    row's `onclick` only covers clicks on cell gaps — returning early for
+    modified clicks and for clicks the anchors already handle (`aoRow`,
+    `static/assistant-overview.js`).
+  - **Plain `<ul>` lists** (`/modelgroups`): rows already were anchors — they
+    just need a real `href="?id=<uuid>"` plus the modified-click guard in the
+    list's click delegate (`renderLeft`, `model_group_views.py`).
 - **URL deep-linking — one `?id=<uuid>` param, not per-kind params.** `/cron`
   mirrors the selection to a single `?id=<uuid>` that addresses **either** a
   folder or an item (uuids are globally unique across kinds — see the validator

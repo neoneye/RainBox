@@ -96,13 +96,21 @@ function renderTree() {
 
 function groupLi(status, list) {
   const li = document.createElement('li');
-  const node = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the group view in a new
+  // tab (?id=<status>); a plain click is intercepted below and
+  // selects/toggles in-page.
+  const node = document.createElement('a');
   node.className = 'mem-node' + (selectedGroup === status ? ' sel' : '');
+  node.href = '/memory?id=' + encodeURIComponent(status);
   const open = isExpanded(status) && list.length > 0;
   node.innerHTML = '<span class="mem-ficon">' + (open ? MEM_ICON_FOLDER_OPEN : MEM_ICON_FOLDER) + '</span>' +
     '<span>' + escapeHtml(STATUS_LABEL[status] || status) + '</span>' +
     '<span class="mem-group-count">' + list.length + '</span>';
-  node.addEventListener('click', () => groupClick(status, list.length));
+  node.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    groupClick(status, list.length);
+  });
   li.appendChild(node);
   if (open) {
     const sub = document.createElement('ul');
@@ -114,14 +122,20 @@ function groupLi(status, list) {
 
 function claimLi(c) {
   const li = document.createElement('li');
-  const node = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the claim in a new tab; a
+  // plain click is intercepted below and opens the claim in-page instead.
+  const node = document.createElement('a');
   node.className = 'mem-claim-node' + (currentClaimUuid === c.uuid ? ' sel' : '');
+  node.href = '/memory?id=' + encodeURIComponent(c.uuid);
   const label = c.text + (c.stale ? '  (stale)' : '');
   node.innerHTML = '<span class="mem-claim-label" title="' + escapeHtml(c.text) + '">' +
     escapeHtml(label) + '</span>' +
     '<button class="mem-kebab" title="Actions"></button>';
   node.addEventListener('click', (e) => {
-    if (e.target.closest('.mem-kebab')) { e.stopPropagation(); openClaimMenu(c, e.target.closest('.mem-kebab')); return; }
+    // The kebab sits inside the anchor — never follow the link from it.
+    if (e.target.closest('.mem-kebab')) { e.stopPropagation(); e.preventDefault(); openClaimMenu(c, e.target.closest('.mem-kebab')); return; }
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
     openClaim(c.uuid);
   });
   li.appendChild(node);
@@ -495,20 +509,28 @@ function openModalDirty() {
 function dismissIfClean() { if (!openModalDirty()) closeOpenModal(); }
 
 // --- url deep-link ---------------------------------------------------------
+// ?id= addresses either a claim (uuid) or a status group (its status string);
+// statuses can never collide with uuids. "All memories" maps to no ?id=.
 function syncUrl() {
   const u = new URL(window.location);
   if (currentClaimUuid) u.searchParams.set('id', currentClaimUuid);
+  else if (selectedGroup && selectedGroup !== 'all') u.searchParams.set('id', selectedGroup);
   else u.searchParams.delete('id');
   history.replaceState(null, '', u);
 }
 function restoreFromUrl() {
   const id = new URL(window.location).searchParams.get('id');
   if (id && claimByUuid(id)) { openClaim(id); return true; }
+  if (id && STATUS_ORDER.includes(id)) { groupClick(id, 0); return true; }
   return false;
 }
 
 // --- init ------------------------------------------------------------------
-document.getElementById('mem-all').addEventListener('click', selectAll);
+document.getElementById('mem-all').addEventListener('click', (e) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+  e.preventDefault();
+  selectAll();
+});
 ['mem-filter-text', 'mem-filter-scope', 'mem-filter-kind', 'mem-filter-sens'].forEach(id =>
   document.getElementById(id).addEventListener('input', () => {
     renderTree();

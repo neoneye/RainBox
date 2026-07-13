@@ -29,33 +29,48 @@ function aoChip(label, kind) {
 
 function aoRow(run) {
   const tr = document.createElement('tr');
-  tr.onclick = () => { location.href = '/assistant?id=' + encodeURIComponent(run.uuid); };
+  const href = '/assistant?id=' + encodeURIComponent(run.uuid);
+  // Each cell wraps its content in a real anchor so CMD/Ctrl/middle click
+  // opens the run in a new tab. A plain click on an anchor navigates via the
+  // anchor's default; the tr handler only covers clicks on cell gaps.
+  const cell = (cls) => {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    const a = document.createElement('a');
+    a.className = 'ao-cell';
+    a.href = href;
+    td.appendChild(a);
+    return [td, a];
+  };
+  tr.onclick = (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    if (e.target.closest('a')) return;  // the anchor's default navigation handles it
+    location.href = href;
+  };
 
-  const date = document.createElement('td');
+  const [date, dateA] = cell();
   const d1 = document.createElement('div');
   d1.className = 'ao-date';
   d1.textContent = run.started_date;
   const d2 = document.createElement('div');
   d2.className = 'ao-time';
   d2.textContent = run.started_time;
-  date.append(d1, d2);
+  dateA.append(d1, d2);
 
-  const status = document.createElement('td');
-  status.appendChild(aoChip(run.status_label, run.status_kind));
+  const [status, statusA] = cell();
+  statusA.appendChild(aoChip(run.status_label, run.status_kind));
 
-  const sum = document.createElement('td');
+  const [sum, sumA] = cell();
   const s = document.createElement('div');
   s.className = 'ao-sum' + (run.summary ? '' : ' pending');
   s.textContent = run.summary || 'summarizing…';
-  sum.appendChild(s);
+  sumA.appendChild(s);
 
-  const steps = document.createElement('td');
-  steps.className = 'ao-mono';
-  steps.textContent = run.steps;
+  const [steps, stepsA] = cell('ao-mono');
+  stepsA.textContent = run.steps;
 
-  const dur = document.createElement('td');
-  dur.className = 'ao-mono';
-  dur.textContent = run.duration || '—';
+  const [dur, durA] = cell('ao-mono');
+  durA.textContent = run.duration || '—';
 
   tr.append(date, status, sum, steps, dur);
   return tr;
