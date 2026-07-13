@@ -115,8 +115,9 @@ only by `undo_write_intent`.
   dynamic handlers) and active memory claims, tiered user-overlay → upstream →
   claims, fenced as untrusted data, with per-fact (1200 chars, tagged
   `truncateN`) and total (11000 chars) budgets and a `{"uuid": ...}` mode to
-  read one fact in full. Details in `qa-system.md` and
-  `memory-architecture.md`.
+  read one fact in full. Seed fact lines carry the entry's `path` as a tag
+  (e.g. `seed/upstream, dynamic, system.uptime_host`) so look-alike answers
+  stay tellable apart. Details in `qa-system.md` and `memory-architecture.md`.
 - **`workspace_read_command`** — one allowlisted, non-shell argv run in the
   workspace root (`tools/command_policy.validate_command` +
   `tools/workspace_command_runner`). The policy excludes interpreters,

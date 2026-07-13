@@ -150,6 +150,18 @@ action for facts. It:
    (`{uuid}, {tags}: {text}`); the format legend and the truncation note live
    *outside* it (they are the assistant's own instructions, not recalled data).
 
+Seed fact tags are, in order: `seed/<source>` (`seed/user-overlay` or
+`seed/upstream`), `dynamic` for handler entries, the entry's `path` (omitted
+when it has none), and `truncateN` when shortened. The path is what makes
+answers whose text alone is ambiguous tellable apart, e.g.:
+
+```text
+013d…, seed/upstream, dynamic, system.uptime_host: 2:33  up 22 days, …
+e6d8…, seed/upstream, dynamic, system.uptime_process: 1m 35s (since …)
+```
+
+The uuid full-fetch mode (below) renders the same tag shape.
+
 Each fact is capped to `QUERY_MEMORY_PER_FACT_CHARS` (1200) — longer facts are
 shortened and tagged `truncate1200` — and the whole block to
 `QUERY_MEMORY_TOTAL_CHARS` (11000); lower-ranked facts past the budget are
