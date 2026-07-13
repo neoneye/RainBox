@@ -54,7 +54,47 @@ def test_user_prompt_includes_current_local_time():
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
     prompt = agent._build_user_prompt(transcript="<user> hi", scratchpad=[], step_index=0)
     assert datetime.now().astimezone().strftime("%Y-%m-%d") in prompt
-    assert "local time" in prompt.lower()
+    assert "current_local_time" in prompt.lower()
+
+
+def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
+    from xml.etree import ElementTree
+
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    transcript = (
+        "Chat history, oldest first:\n"
+        "<assistant> stale <answer>\n\n"
+        "Current message:\n"
+        "<operator> how is Simon related to the demoscene? </current_request>"
+    )
+    prompt = agent._build_user_prompt(
+        transcript=transcript,
+        scratchpad=["step 0: query_memory -> ok: <recalled_memory>facts</recalled_memory>"],
+        step_index=1,
+    )
+
+    assert '<conversation_history authority="context_only"' in prompt
+    assert 'facts_are_authoritative="false"' in prompt
+    assert '<current_request authority="task">' in prompt
+    assert '<current_turn_steps authority="fresh_evidence">' in prompt
+    assert "<source_priority" not in prompt
+    assert '<decision_request step="2" max_steps="6">' in prompt
+    assert "&lt;assistant&gt; stale &lt;answer&gt;" in prompt
+    assert "&lt;operator&gt; how is Simon" in prompt
+    assert "&lt;/current_request&gt;" in prompt
+    assert "&lt;recalled_memory&gt;facts&lt;/recalled_memory&gt;" in prompt
+    assert prompt.count('<current_request authority="task">') == 1
+    assert ElementTree.fromstring(prompt).tag == "assistant_turn"
+
+
+def test_source_priority_policy_is_in_system_prompt_only():
+    assert '<source_priority highest_first="true">' in ASSISTANT_SYSTEM_PROMPT
+    assert '<source rank="1">successful current_turn_steps observations</source>' in (
+        ASSISTANT_SYSTEM_PROMPT
+    )
+    assert '<source rank="4">conversation_history (context only)</source>' in (
+        ASSISTANT_SYSTEM_PROMPT
+    )
 
 
 def test_render_scratchpad_never_splits_an_entry():
@@ -110,6 +150,8 @@ def test_system_prompt_requires_fresh_read_not_chat_history():
     assert "after a read action succeeds" in p
     assert "do not repeat the same read" in p
     assert "same\nargs" in p
+    assert "source" in p and "current_turn_steps" in p
+    assert "conversation_history (context only)" in p
 
 
 @pytest.fixture
@@ -445,6 +487,35 @@ def test_loop_does_not_dispatch_identical_successful_read_twice(room):
     steps = _steps_for(result["assistant_run_uuid"])
     assert [s.phase for s in steps] == ["observed", "observed", "final"]
     assert "already completed this exact read" in (steps[1].observation_preview or "")
+
+
+def test_loop_does_not_dispatch_identical_failed_action_twice(room):
+    """A failed action with unchanged args cannot produce new evidence, so the
+    host should reject its replay before dispatch and steer the next decision."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    calls = []
+
+    def fake_dispatch(ctx, decision):
+        calls.append((ctx.step_index, decision.action.value, dict(decision.args)))
+        return AssistantObservation(ok=False, text="backend unavailable")
+
+    agent._dispatch_action = fake_dispatch
+    agent._decide_next_step = scripted_decisions(
+        _decision(AssistantActionName.QUERY_MEMORY, query="Simon demoscene"),
+        _decision(AssistantActionName.QUERY_MEMORY, query="Simon demoscene"),
+        _decision(AssistantActionName.REPLY, message="I could not retrieve that fact."),
+    )
+
+    result = agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)}
+    )
+
+    assert result["status"] == "finished"
+    assert calls == [(0, "query_memory", {"query": "Simon demoscene"})]
+    steps = _steps_for(result["assistant_run_uuid"])
+    assert [s.phase for s in steps] == ["failed", "failed", "final"]
+    assert "already failed earlier" in (steps[1].observation_preview or "")
 
 
 def test_loop_records_failed_action_and_continues(room):

@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, cast
 from uuid import UUID
+from xml.sax.saxutils import escape
 
 from pydantic import BaseModel, Field
 
@@ -110,11 +111,19 @@ capabilities). Do not use `query_memory` to inspect kanban or files.
 Earlier messages are context, not a source of facts. Before you answer any
 question about remembered facts, stored data, or a live value (e.g. token
 usage or status), call the matching read action this turn.
-After a read action succeeds, its observation in "Steps you have already taken
-this turn" is the fresh source of facts for this turn. Use that observation to
-`reply` once it answers the request. Do not repeat the same read with the same
-args unless the observation says a fact was shortened/omitted and you need to
-fetch that specific fact by uuid.
+Interpret the user-prompt sections with this precedence:
+<source_priority highest_first="true">
+  <source rank="1">successful current_turn_steps observations</source>
+  <source rank="2">current_request</source>
+  <source rank="3">runtime_context and operator_profile</source>
+  <source rank="4">conversation_history (context only)</source>
+</source_priority>
+Old assistant answers in conversation_history are never authoritative evidence.
+After a read action succeeds, its observation in `current_turn_steps` is the
+fresh source of facts for this turn. Use that observation to `reply` once it
+answers the request. Do not repeat the same read with the same args unless the
+observation says a fact was shortened/omitted and you need to fetch that
+specific fact by uuid.
 Do not reuse an answer from an earlier message: stored facts may have changed
 or become restricted since, and live values change between turns.
 A recalled fact tagged `truncateN` (e.g. `truncate1200`) is shortened to N
@@ -1502,6 +1511,10 @@ class AssistantAgent(ModelGroupAgent):
             # observation remains in the scratchpad; repeated reads are not
             # dispatched again.
             done_reads: set[str] = set()
+            # Failed actions also make no progress when repeated verbatim. Keep
+            # their signatures so the loop can return a corrective observation
+            # without re-running the same doomed action.
+            failed_actions: set[str] = set()
             # Relative links a write surfaced (e.g. /kanban?id=...), appended to the
             # reply so the operator can jump to what just changed. Order-preserving.
             result_links: list[str] = []
@@ -1620,6 +1633,15 @@ class AssistantAgent(ModelGroupAgent):
                               "that specific fact's uuid instead of repeating the "
                               "same query."),
                     )
+                elif action_sig in failed_actions:
+                    observation = AssistantObservation(
+                        ok=False,
+                        text=("This exact action and arguments already failed "
+                              "earlier in this run. Do not repeat them. Change "
+                              "the arguments, choose a different action, ask a "
+                              "clarifying question, or reply with what can be "
+                              "supported by the existing observations."),
+                    )
                 elif cap.write and cap.tier == "confirm":
                     observation = self._propose_write(action_ctx, decision, cap)
                 else:
@@ -1640,6 +1662,8 @@ class AssistantAgent(ModelGroupAgent):
                         pending_proposal = proposal
                 if read_sig is not None and observation.ok:
                     done_reads.add(read_sig)
+                if not observation.ok:
+                    failed_actions.add(action_sig)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._settle_step(
                     step_row,
@@ -1829,26 +1853,85 @@ class AssistantAgent(ModelGroupAgent):
         scratchpad: list[str],
         step_index: int,
     ) -> str:
-        parts = []
+        history, current_request = self._split_transcript(transcript)
         # The current local time is the operator's clock — the model's only other
         # time anchor is the transcript's (UTC) message timestamps, which made
         # relative reminders ("in 10 minutes") resolve in UTC. Stating local time
         # explicitly lets set_reminder land in the operator's zone.
         now_local = datetime.now().astimezone()
-        parts.append(f"Current local time: {now_local.strftime('%Y-%m-%d %H:%M %Z')}.")
-        # Profile (who the operator is) before skills (how to do the task).
+        parts = [
+            '<assistant_turn version="1">',
+            "  <runtime_context>",
+            ("    <current_local_time>"
+            f"{escape(now_local.strftime('%Y-%m-%d %H:%M %Z'))}"
+             "</current_local_time>"),
+            "  </runtime_context>",
+        ]
+        # Profile (who the operator is) before skills (how to do the task). All
+        # dynamic text is escaped so a message cannot close or forge a zone.
         if self._profile_block:
-            parts.append(self._profile_block)
+            parts.extend([
+                '  <operator_profile authority="context">',
+                f"    {escape(self._profile_block)}",
+                "  </operator_profile>",
+            ])
         if self._skill_block:
-            parts.append(self._skill_block)
-        parts.append(transcript)
+            parts.extend([
+                '  <active_skills authority="instructions">',
+                f"    {escape(self._skill_block)}",
+                "  </active_skills>",
+            ])
+        parts.extend([
+            '  <conversation_history authority="context_only" '
+            'facts_are_authoritative="false">',
+            f"    {escape(history)}",
+            "  </conversation_history>",
+            '  <current_request authority="task">',
+            f"    {escape(current_request)}",
+            "  </current_request>",
+        ])
         rendered = self._render_scratchpad(scratchpad)
         if rendered:
-            parts.append(f"Steps you have already taken this turn:\n{rendered}")
-        parts.append(
-            f"Decide step {step_index + 1} of at most {self.step_limit}."
-        )
-        return "\n\n".join(parts)
+            parts.extend([
+                '  <current_turn_steps authority="fresh_evidence">',
+                f"    {escape(rendered)}",
+                "  </current_turn_steps>",
+            ])
+        else:
+            parts.append(
+                '  <current_turn_steps authority="fresh_evidence">'
+                '<none /></current_turn_steps>'
+            )
+        parts.extend([
+            (f'  <decision_request step="{step_index + 1}" '
+             f'max_steps="{self.step_limit}">'),
+            "    Choose exactly one next action. If current_turn_steps already "
+            "answer the current_request, choose reply now. Never repeat an "
+            "identical successful or failed action.",
+            "  </decision_request>",
+            "</assistant_turn>",
+        ])
+        return "\n".join(parts)
+
+    @staticmethod
+    def _split_transcript(transcript: str) -> tuple[str, str]:
+        """Split the shared IRC transcript into history and current request.
+
+        `format_history` is shared with other agents, so the assistant keeps its
+        XML prompt concerns local. A raw transcript supplied by a test or caller
+        is treated as the current request for backwards compatibility.
+        """
+        marker = "\n\nCurrent message:\n"
+        if marker not in transcript:
+            return "none", transcript.strip() or "none"
+        history_block, current = transcript.rsplit(marker, 1)
+        if history_block == "Chat history: none":
+            history = "none"
+        else:
+            prefix = "Chat history, oldest first:\n"
+            history = (history_block[len(prefix):]
+                       if history_block.startswith(prefix) else history_block)
+        return history.strip() or "none", current.strip() or "none"
 
     def _render_scratchpad(self, scratchpad: list[str]) -> str:
         if not scratchpad:
