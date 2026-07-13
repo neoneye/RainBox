@@ -4,7 +4,7 @@
 profile** — the structured record of a human (name, locale, formats, contact),
 editable through a form pane. The immediate use is demoing rainbox to friends:
 the operator creates a profile per friend in seconds, and a built-in
-`Example/` folder ships twenty read-only locale archetypes covering the
+`Templates/` folder ships twenty read-only locale archetypes covering the
 major tech countries (US, Germany, Japan, South Korea, India, China, …)
 that double as documentation of what a filled-in profile looks like and
 update with every rainbox release. The longer arc is multi-user preparation: this table is the person
@@ -50,8 +50,8 @@ folder detail table.
 - **Leaf name = a standalone label** ("Simon", "Demo — no PII", "Germany"),
   renamed via the click-to-rename modal
   ([`ui-modal-rename.md`](../ui-modal-rename.md)). It is *not* derived from
-  first/last name — a demo profile's label ("Germany") and its example
-  person's name ("Karl Weierstraß") serve different masters.
+  first/last name — a template's label ("Germany") and the name of the
+  person it describes ("Karl Weierstraß") serve different masters.
 - **Folder detail table columns:** Name / Person / Language / Units / Time /
   Country — enough to tell demo profiles apart at a glance.
 - **Kebab on a profile:** Rename, **Duplicate**, Delete (type-to-confirm).
@@ -59,7 +59,7 @@ folder detail table.
   placed right after the source — the one-action way to mint a friend's
   account from an archetype. (Same shape as `/prompt`'s clone, minus the
   version lineage: no `parent_uuid`, duplication is a convenience, not
-  ancestry.) On a built-in example the kebab offers **Duplicate only** —
+  ancestry.) On a built-in template the kebab offers **Duplicate only** —
   no rename, no delete (see below).
 
 ## Data model
@@ -203,7 +203,7 @@ Mirrors `webapp/prompt_api.py`:
   writes the whole blob. 400 "read-only built-in" for a built-in uuid.
 - `POST /profile/api/profiles/<uuid>/duplicate` → new row, copied `data`,
   name "<name> copy", positioned after the source (for a built-in source:
-  a top-level row named after the example).
+  a top-level row named after the template).
 
 `db/profile.py` supplies `profile_load_tree` / `profile_save_tree` /
 `profile_tree_version` / `validate_profile_tree` (ported from `db/prompt.py`,
@@ -211,15 +211,15 @@ including the uuid-collision check that keeps `?id=` unambiguous) plus
 `profile_get` / `profile_update_data` / `profile_duplicate` and
 `validate_profile_data(data)` built from the registry.
 
-## Built-in examples (read-only, shipped with the app)
+## Built-in templates (read-only, shipped with the app)
 
-The `Example/` folder and its twenty profiles are **not DB rows**. They ship
-as a data file, `data/profile_examples.json` (the same shipped-content
+The `Templates/` folder and its twenty profiles are **not DB rows**. They
+ship as a data file, `data/profile_templates.json` (the same shipped-content
 pattern as `data/operators/demo.json` and the base Q&A registry): one entry
 per profile with a **fixed, hardcoded uuid** (so `?id=` deep links survive
 restarts and releases), a name, and a `data` blob. `db/profile.py` loads
 and caches the file and merges the entries into the `GET /profile/api/tree`
-response under a virtual `Example` folder (also fixed-uuid), rendered after
+response under a virtual `Templates` folder (also fixed-uuid), rendered after
 the operator's own root content.
 
 Read-only and always-current then fall out by construction, with no guard
@@ -234,11 +234,11 @@ code to get wrong:
   of rainbox serves the new content on the next page load. No migration, no
   re-seed logic, no drift between installs.
 - **UI affordances:** built-in rows render with a subtle "built-in" tag;
-  they are not draggable and the `Example` folder accepts no drops; the
-  form pane shows their fields disabled with a hint line "Built-in example —
+  they are not draggable and the `Templates` folder accepts no drops; the
+  form pane shows their fields disabled with a hint line "Built-in template —
   Duplicate to make an editable copy"; the kebab offers only Duplicate.
   Duplicating a built-in creates a **real** top-level row (the virtual
-  folder can't hold user rows) named after the example.
+  folder can't hold user rows) named after the template.
 
 The twenty profiles show each locale's *typical* conventions — they are
 starting points for duplication, not rules; any profile, including the
@@ -282,8 +282,8 @@ across the Straits Settlements and Amos Tversky's field was cognitive
 science — both earn their rows on the strength of the discovery. The About
 column above is each entry's `about` value — the self-description field
 every profile has (the operator's own might read "programmer, modern day
-alchemist doing code"); on the examples it holds the discovery, so opening
-any example teaches something.
+alchemist doing code"); on the templates it holds the discovery, so opening
+any template teaches something.
 
 Each also carries gender, a modern plausible birthday, and a
 `preferred_name` (the scientist's given name); `email`/`address` stay blank
@@ -293,7 +293,7 @@ the entries whose scientist wrote their name in a non-Latin script, the
 (Yukawa), 우장춘 (Woo), 伍連德 (Wu), עמוס טברסקי (Tversky), সত্যেন্দ্রনাথ বসু
 (Bose).
 
-**The examples are also the name-handling test fixture.** Between the
+**The templates are also the name-handling test fixture.** Between the
 names, nicknames, abouts, and cities they deliberately cover Latin
 diacritics (é É ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
 Hangul, Bengali, right-to-left Hebrew, and a generational suffix —
@@ -306,14 +306,14 @@ test.
 
 The twenty profiles are the living
 answer to "what does a filled-in profile look like" — the demo script is:
-open `Example/`, duplicate the closest archetype, rename it to the friend,
+open `Templates/`, duplicate the closest archetype, rename it to the friend,
 adjust.
 
 ## Phasing
 
 1. **The page.** Tables, `db/profile.py`, API, views + JS (tree ported from
    `/prompt`, pane replaced by the registry-driven form), rename/duplicate/
-   delete, autosave, datetime preview, built-in examples, nav entry.
+   delete, autosave, datetime preview, built-in templates, nav entry.
    *Acceptance:* tree behaviours verified in a real browser per the tree
    doc's §8 process rule (drag to root strip, kebab on selected row,
    type-to-confirm delete — not by code-diffing); form round-trips every
@@ -348,8 +348,8 @@ deterministic, no live LLM, no browser:
    excluded from `profile_tree_version()`; a tree PUT containing a built-in
    uuid → 400; data PUT on a built-in uuid → 400; a user row reusing a
    built-in uuid rejected by the validator; duplicate of a built-in creates
-   a real editable top-level row; `data/profile_examples.json` entries all
-   pass `validate_profile_data` (so a release can't ship a broken example).
+   a real editable top-level row; `data/profile_templates.json` entries all
+   pass `validate_profile_data` (so a release can't ship a broken template).
 6. Views: marker-string tests for the pane fieldsets and datalists —
    remembering these prove presence, not behaviour (§8), and that the inline
    JS is a **non-raw** Python string (no bare `\n`-style escapes).
@@ -372,7 +372,7 @@ deterministic, no live LLM, no browser:
 - **Locale presets as a first-class mechanism** (pick "Chinese" → fields
   fill in) — rejected as machinery; duplicating a built-in archetype
   achieves the same in one kebab action with zero new concepts.
-- **Examples as seeded or flagged DB rows** (seed-once-when-empty, or rows
+- **Templates as seeded or flagged DB rows** (seed-once-when-empty, or rows
   with a `builtin` column protected by guards) — rejected. Seed-once can't
   deliver updates (edited/deleted rows must not be resurrected, so new
   releases can't touch them), and a protected-row design needs delete/rename/
