@@ -27,7 +27,7 @@ CHAT_TEMPLATE: str = """
 
 
   .room{position:relative;display:block;width:100%;text-align:left;border:none;background:none;cursor:pointer;
-        padding:0.5em 0.7em;border-radius:6px;font:inherit;color:#333}
+        padding:0.5em 0.7em;border-radius:6px;font:inherit;color:#333;text-decoration:none;box-sizing:border-box}
   .room:hover{background:#eef0f6}
   .room.active{background:#e3ebfb;font-weight:600}  /* match the selected folder/kanban node */
   .room-name{display:block}
@@ -1348,9 +1348,12 @@ function roomNode(r){
   const isActive = r.uuid === currentRoom;
   const row = document.createElement('div');
   row.className = 'room-row' + (isActive ? ' active' : '');
-  const btn = document.createElement('button');
+  // A real anchor so CMD/Ctrl/middle click opens the chat in a new tab; a
+  // plain click is intercepted below and selects the room in-page instead.
+  const btn = document.createElement('a');
   btn.className = 'room' + (isActive ? ' active' : '');
-  btn.type = 'button';
+  btn.href = '/chat?id=' + encodeURIComponent(r.uuid);
+  btn.draggable = false;  // the row is the drag source, not the link's URL
   btn.dataset.room = r.uuid;
   const name = document.createElement('span');
   name.className = 'room-name';
@@ -1363,7 +1366,11 @@ function roomNode(r){
     dot.textContent = n;
     btn.appendChild(dot);
   }
-  btn.addEventListener('click', () => selectRoom(r.uuid));
+  btn.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    selectRoom(r.uuid);
+  });
   row.appendChild(btn);
   if (isActive) row.appendChild(buildRoomMenu(r.uuid));
   makeDraggable(row, 'room', r.uuid);

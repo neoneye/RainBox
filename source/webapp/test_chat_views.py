@@ -188,3 +188,16 @@ def test_kebab_menus_stay_inside_viewport():
     body = _body()
     assert "function placeMenu" in body
     assert "top = anchorRect.top - menu.offsetHeight - 4" in body
+
+
+def test_room_rows_are_real_links():
+    """Rooms in the left-panel tree are anchors with a real href so CMD/Ctrl
+    click (and middle click) opens the chat in a new tab. Plain clicks are
+    still intercepted for in-page selection; modified clicks pass through to
+    the browser."""
+    body = _body()
+    assert "btn.href = '/chat?id=' + encodeURIComponent(r.uuid)" in body
+    assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
+    # anchors must not look like links nor hijack the row's drag-and-drop
+    assert "text-decoration:none" in body
+    assert "btn.draggable = false" in body
