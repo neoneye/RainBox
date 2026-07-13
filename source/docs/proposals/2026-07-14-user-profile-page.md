@@ -3,10 +3,10 @@
 **Status: proposal.** A new left-panel-tree page where each leaf is a **person
 profile** — the structured record of a human (name, locale, formats, contact),
 editable through a form pane. The immediate use is demoing rainbox to friends:
-the operator creates a profile per friend in seconds, and a seeded `Example/`
-folder ships five locale archetypes (European, US, Canadian, Chinese,
-Australian) that double as documentation of what a filled-in profile looks
-like. The longer arc is multi-user preparation: this table is the person
+the operator creates a profile per friend in seconds, and a built-in
+`Example/` folder ships five read-only locale archetypes (European, US,
+Canadian, Chinese, Australian) that double as documentation of what a
+filled-in profile looks like and update with every rainbox release. The longer arc is multi-user preparation: this table is the person
 record that real accounts will eventually hang off.
 
 ## Relationship to the two existing "profile" concepts
@@ -58,7 +58,8 @@ folder detail table.
   placed right after the source — the one-action way to mint a friend's
   account from an archetype. (Same shape as `/prompt`'s clone, minus the
   version lineage: no `parent_uuid`, duplication is a convenience, not
-  ancestry.)
+  ancestry.) On a built-in example the kebab offers **Duplicate only** —
+  no rename, no delete (see below).
 
 ## Data model
 
@@ -178,14 +179,19 @@ field never 409s an open tree, and vice versa.
 Mirrors `webapp/prompt_api.py`:
 
 - `GET /profile/api/tree` → `{folders, profiles, version}` (no `data`).
-- `PUT /profile/api/tree` — full replace, `version` + `deletes` guarded,
-  400 on `ProfileTreeError`, 409 on `ProfileTreeConflict`.
-- `GET /profile/api/profiles/<uuid>` → `{ok, uuid, name, data}`.
+  Built-in entries are merged in with `builtin: true` so the client renders
+  them without a second fetch; they are excluded from `version`.
+- `PUT /profile/api/tree` — full replace of the **user-owned** tree,
+  `version` + `deletes` guarded, 400 on `ProfileTreeError` (including any
+  payload carrying a built-in uuid), 409 on `ProfileTreeConflict`.
+- `GET /profile/api/profiles/<uuid>` → `{ok, uuid, name, data, builtin}` —
+  serves built-ins from the shipped file, user rows from the DB.
 - `PUT /profile/api/profiles/<uuid>` `{data}` — validates against the
   registry (unknown keys / wrong types / out-of-enum → 400 naming the field),
-  writes the whole blob.
+  writes the whole blob. 400 "read-only built-in" for a built-in uuid.
 - `POST /profile/api/profiles/<uuid>/duplicate` → new row, copied `data`,
-  name "<name> copy", positioned after the source.
+  name "<name> copy", positioned after the source (for a built-in source:
+  a top-level row named after the example).
 
 `db/profile.py` supplies `profile_load_tree` / `profile_save_tree` /
 `profile_tree_version` / `validate_profile_tree` (ported from `db/prompt.py`,
@@ -193,12 +199,36 @@ including the uuid-collision check that keeps `?id=` unambiguous) plus
 `profile_get` / `profile_update_data` / `profile_duplicate` and
 `validate_profile_data(data)` built from the registry.
 
-## Seeded examples
+## Built-in examples (read-only, shipped with the app)
 
-On init, when **both tables are empty**, seed one `Example/` folder with five
-profiles (fictional people — no real PII, per standing policy). They are
-ordinary rows: rename, edit, or delete freely; deleting them does not
-re-seed (the emptiness check makes seeding once-only in practice).
+The `Example/` folder and its five profiles are **not DB rows**. They ship
+as a data file, `data/profile_examples.json` (the same shipped-content
+pattern as `data/operators/demo.json` and the base Q&A registry): one entry
+per profile with a **fixed, hardcoded uuid** (so `?id=` deep links survive
+restarts and releases), a name, and a `data` blob. `db/profile.py` loads
+and caches the file and merges the entries into the `GET /profile/api/tree`
+response under a virtual `Example` folder (also fixed-uuid), rendered after
+the operator's own root content.
+
+Read-only and always-current then fall out by construction, with no guard
+code to get wrong:
+
+- **Undeletable/unrenamable/uneditable** — there is no row to delete. The
+  tree PUT never includes them (the client excludes them; the validator
+  additionally rejects any payload carrying a built-in uuid, and the
+  uuid-collision check keeps user rows off those uuids). `PUT
+  /profile/api/profiles/<builtin-uuid>` returns 400 "read-only built-in".
+- **Updated with rainbox** — the file is part of the release; a new version
+  of rainbox serves the new content on the next page load. No migration, no
+  re-seed logic, no drift between installs.
+- **UI affordances:** built-in rows render with a subtle "built-in" tag;
+  they are not draggable and the `Example` folder accepts no drops; the
+  form pane shows their fields disabled with a hint line "Built-in example —
+  Duplicate to make an editable copy"; the kebab offers only Duplicate.
+  Duplicating a built-in creates a **real** top-level row (the virtual
+  folder can't hold user rows) named after the example.
+
+The five profiles (fictional people — no real PII, per standing policy):
 
 | Label | Person | units | time | date | lang | currency | country/city | timezone |
 |---|---|---|---|---|---|---|---|---|
@@ -210,7 +240,7 @@ re-seed (the emptiness check makes seeding once-only in practice).
 
 Each also carries a plausible nickname, gender, birthday, and a
 `preferred_name`; `email`/`address` stay blank (nothing to demo there, and
-blanks show the sparse-JSONB behaviour). The five rows are the living
+blanks show the sparse-JSONB behaviour). The five profiles are the living
 answer to "what does a filled-in profile look like" — the demo script is:
 open `Example/`, duplicate the closest archetype, rename it to the friend,
 adjust.
@@ -219,12 +249,13 @@ adjust.
 
 1. **The page.** Tables, `db/profile.py`, API, views + JS (tree ported from
    `/prompt`, pane replaced by the registry-driven form), rename/duplicate/
-   delete, autosave, datetime preview, seeds, nav entry.
+   delete, autosave, datetime preview, built-in examples, nav entry.
    *Acceptance:* tree behaviours verified in a real browser per the tree
    doc's §8 process rule (drag to root strip, kebab on selected row,
    type-to-confirm delete — not by code-diffing); form round-trips every
-   field; invalid enum/int rejected with the field named; duplicate copies
-   all data; seeds appear exactly once on a fresh DB.
+   field; invalid enum/date rejected with the field named; duplicate copies
+   all data; built-ins render read-only, survive a tree save untouched, and
+   cannot be edited, renamed, deleted, or dragged.
 2. **Assistant integration (separate proposal when wanted).** `?` Active-
    profile setting, working-context line 1 quoting it, units/timezone/format
    preferences steering assistant output, lens `profile_uuid` linkage.
@@ -249,8 +280,12 @@ deterministic, no live LLM, no browser:
    (sparse blob) valid; `dynamic` subtree ignored.
 4. Duplicate: copies `data` deep, new uuid, "<name> copy", positioned after
    source.
-5. Seeds: fresh DB → `Example/` + 5 profiles; second init → still 5; a DB
-   with any existing row → no seeding.
+5. Built-ins: present in `GET tree` with `builtin: true` on a fresh DB;
+   excluded from `profile_tree_version()`; a tree PUT containing a built-in
+   uuid → 400; data PUT on a built-in uuid → 400; a user row reusing a
+   built-in uuid rejected by the validator; duplicate of a built-in creates
+   a real editable top-level row; `data/profile_examples.json` entries all
+   pass `validate_profile_data` (so a release can't ship a broken example).
 6. Views: marker-string tests for the pane fieldsets and datalists —
    remembering these prove presence, not behaviour (§8), and that the inline
    JS is a **non-raw** Python string (no bare `\n`-style escapes).
@@ -271,8 +306,15 @@ deterministic, no live LLM, no browser:
   failure mode the rename-modal doc exists to prevent, multiplied across 17
   fields. Autosave removes the state that can be lost.
 - **Locale presets as a first-class mechanism** (pick "Chinese" → fields
-  fill in) — rejected as machinery; duplicating a seeded archetype achieves
-  the same in one kebab action with zero new concepts.
+  fill in) — rejected as machinery; duplicating a built-in archetype
+  achieves the same in one kebab action with zero new concepts.
+- **Examples as seeded or flagged DB rows** (seed-once-when-empty, or rows
+  with a `builtin` column protected by guards) — rejected. Seed-once can't
+  deliver updates (edited/deleted rows must not be resurrected, so new
+  releases can't touch them), and a protected-row design needs delete/rename/
+  edit/drag guards in four places that all have to be right. Virtual entries
+  from a shipped file make read-only and always-current structural: there is
+  no row to delete and the file *is* the release.
 
 ## See also
 
