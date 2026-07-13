@@ -192,6 +192,38 @@ is the nicer UX; do that on new pages.
   `.*-tree-sep{border:none;border-top:1px solid #e5e7eb;margin:6px 0}`. Don't
   put the action buttons at the very top with no separators — that diverges from
   `/cron` and was a `/kanban` rework.
+- **Leaf rows are real links — `<a href="/<page>?id=<uuid>">`, not
+  buttons/divs.** CMD/Ctrl/Shift-click and middle-click must open the item in a
+  new tab (via the `?id=` deep link below); a JS-only click handler on a
+  non-anchor gives the browser nothing to open. A plain click is intercepted
+  and selects in-page as before; modified clicks return early so the browser
+  handles them:
+
+  ```js
+  node.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    selectItem(id);
+  });
+  ```
+
+  CSS: the anchor needs `text-decoration:none` (plus `color:inherit` if the
+  row class sets no color), or rows render as blue underlined links. Two
+  structures exist, differing in where the kebab and drag source live:
+  - `/chat`: the anchor sits **inside** a `.room-row` wrapper that is the drag
+    source and kebab host — set `draggable = false` on the anchor so dragging
+    moves the row, not the link's URL (`roomNode`, `chat_template.py`).
+  - `/cron` and `/kanban`: the node element **is** the anchor (drag source and
+    kebab host in one). The kebab and its menu are then nested inside the
+    anchor, so their click handlers must call `e.preventDefault()` in addition
+    to `stopPropagation()` — otherwise a menu click can follow the link
+    (`cronJobNode`/`cronMakeKebab`, `static/cron.js`; `kbBoardNode`/
+    `kbMakeKebab`, `static/kanban.js`).
+
+  Folders stay non-link divs on all pages — their click is select/toggle, and
+  the folder deep link remains reachable via the URL. `/git` and `/prompt`
+  still render div leaves (no new-tab support yet); use the anchor form when
+  touching them or building a new page.
 - **URL deep-linking — one `?id=<uuid>` param, not per-kind params.** `/cron`
   mirrors the selection to a single `?id=<uuid>` that addresses **either** a
   folder or an item (uuids are globally unique across kinds — see the validator
@@ -357,7 +389,10 @@ it.** Specific traps that each shipped before being caught:
    selected; folder-vs-item mutual exclusivity. **Sidebar layout = `/cron`'s
    chrome:** static "All X" node → `<hr>` → action buttons → `<hr>` → tree (§5).
    **Deep-link with one `?id=<uuid>`** (folder or item; "All X" → no param),
-   never per-kind params.
+   never per-kind params. **Leaf rows are `<a href>` anchors** so CMD/Ctrl and
+   middle click open the item in a new tab (§5): plain click `preventDefault()`
+   + in-page select, modified clicks fall through, `text-decoration:none`, and
+   `preventDefault()` on kebab/menu handlers nested inside the anchor.
 6. **Drag-drop:** folder 3-zone (before/after/into) + leaf 2-zone + root drop;
    `folderInSubtree` cycle guard; auto-expand on drop; debounced save.
 7. **Detail pane:** flatten subtree with depth; depth-indented rows (plain item

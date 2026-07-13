@@ -77,8 +77,9 @@ KANBAN_TEMPLATE = """
   .kb-tree-list{list-style:none;margin:0;padding:0}
   .kb-tree-list ul{list-style:none;margin:0;padding:0}
   .kb-tree-list ul ul{margin-left:0.85em;border-left:1px solid #e5e7eb;padding-left:0.35em}
+  /* Board rows are anchors (CMD/Ctrl-click opens a new tab) — suppress link styling. */
   .kb-node{box-sizing:border-box;display:flex;align-items:center;gap:4px;padding:6px;border-radius:6px;
-    cursor:pointer;-webkit-user-select:none;user-select:none;white-space:nowrap}
+    cursor:pointer;-webkit-user-select:none;user-select:none;white-space:nowrap;color:inherit;text-decoration:none}
   .kb-node:hover{background:#f1f5f9}
   .kb-node.sel{background:#dbeafe;font-weight:600}
   .kb-node.kb-drop-into{outline:2px dashed #2563eb;outline-offset:-2px}

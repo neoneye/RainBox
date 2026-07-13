@@ -155,7 +155,8 @@ CRON_TEMPLATE = """
   .cron-node.sel{background:#dbeafe;font-weight:600}
   .cron-ficon{display:inline-flex;align-items:center;color:#6b7280}
   .cron-ficon svg{width:15px;height:15px;display:block}
-  .cron-job-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151}
+  /* Job rows are anchors (CMD/Ctrl-click opens a new tab) — suppress link styling. */
+  .cron-job-node{display:flex;align-items:center;gap:4px;padding:4px 4px;border-radius:4px;cursor:pointer;color:#374151;text-decoration:none}
   .cron-job-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cron-job-node:hover{background:#f1f5f9}
   .cron-job-node.sel{background:#dbeafe;font-weight:600}  /* match the selected folder/node */

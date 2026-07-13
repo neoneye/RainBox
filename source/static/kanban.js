@@ -269,6 +269,7 @@ function kbMakeKebab(node, items){
     item.textContent = label;
     item.addEventListener('click', e => {
       e.stopPropagation();
+      e.preventDefault();  // the menu sits inside a leaf's anchor — never follow it
       menu.hidden = true;
       fn();
     });
@@ -276,6 +277,7 @@ function kbMakeKebab(node, items){
   });
   kebab.addEventListener('click', e => {
     e.stopPropagation();  // don't re-select the underlying board item
+    e.preventDefault();   // the kebab sits inside a leaf's anchor — never follow it
     const willOpen = menu.hidden;
     document.querySelectorAll('.kb-menu').forEach(m => { m.hidden = true; });
     if (willOpen) kbPlaceMenu(menu, kebab.getBoundingClientRect());
@@ -376,15 +378,22 @@ function kbFolderLi(f){
 
 function kbBoardNode(b){
   const li = document.createElement('li');
-  const node = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the board in a new tab; a
+  // plain click is intercepted below and selects the board in-page instead.
+  const node = document.createElement('a');
   node.className = 'kb-node' + (b.uuid === kbSelected ? ' sel' : '');
+  node.href = '/kanban?id=' + encodeURIComponent(b.uuid);
   node.draggable = true;
   // No icon on leaf boards — matches /chat's room rows.
   node.innerHTML = '<span class="kb-node-name"></span>';
   node.querySelector('.kb-node-name').textContent =
     (b.name || '(unnamed board)') + ' (' + b.taskCount + ')';
   node.title = b.name;
-  node.addEventListener('click', () => kbSelectBoard(b.uuid));
+  node.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    kbSelectBoard(b.uuid);
+  });
   kbMakeKebab(node, [
     ['Duplicate', '', () => kbDuplicateBoard(b.uuid)],
     ['Copy board id', '', () => kbCopyId(b.uuid, 'Board')],

@@ -145,3 +145,15 @@ def test_kanban_no_native_dialogs():
     assert "confirm(" not in body   # kbConfirm* are PascalCase, not confirm(
     assert "alert(" not in body
     assert 'id="kb-confirm-modal"' in body
+
+
+def test_board_rows_are_real_links():
+    # Boards in the left-panel tree are anchors with a real href so CMD/Ctrl
+    # click (and middle click) opens the board in a new tab. Plain clicks are
+    # still intercepted for in-page selection; modified clicks pass through
+    # to the browser. The kebab lives inside the anchor, so its handlers
+    # preventDefault to never follow the link.
+    body = _body()
+    assert "node.href = '/kanban?id=' + encodeURIComponent(b.uuid)" in body
+    assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
+    assert "text-decoration:none" in body

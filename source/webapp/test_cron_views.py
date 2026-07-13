@@ -294,3 +294,16 @@ def test_cron_page_has_check_health_button():
     assert "function cronCheckHealth" in body
     assert "/check_health" in body
     assert 'id="cjd-health-check-out"' in body
+
+
+def test_job_rows_are_real_links():
+    # Jobs in the left-panel tree are anchors with a real href so CMD/Ctrl
+    # click (and middle click) opens the job in a new tab. Plain clicks are
+    # still intercepted for in-page selection; modified clicks pass through
+    # to the browser. The kebab lives inside the anchor, so its handlers
+    # preventDefault to never follow the link.
+    body = _body()
+    assert "n.href = '/cron?id=' + encodeURIComponent(j.uuid)" in body
+    assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
+    assert body.count("e.preventDefault();") >= 3  # plain click + kebab + menu items
+    assert "text-decoration:none" in body

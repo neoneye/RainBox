@@ -999,14 +999,21 @@ function cronSelectNode(type, id){
 }
 
 function cronJobNode(j){
-  const n = document.createElement('div');
+  // A real anchor so CMD/Ctrl/middle click opens the job in a new tab; a
+  // plain click is intercepted below and selects the job in-page instead.
+  const n = document.createElement('a');
   n.className = 'cron-job-node' + (cronEditUuid === j.uuid ? ' sel' : '') + (cronJobLive(j) ? '' : ' off');
+  n.href = '/cron?id=' + encodeURIComponent(j.uuid);
   n.title = j.name;
   const label = document.createElement('span');
   label.className = 'cron-job-label';
   label.textContent = j.name;
   n.appendChild(label);
-  n.addEventListener('click', () => cronSelectJob(j.uuid));
+  n.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    cronSelectJob(j.uuid);
+  });
   cronMakeDraggable(n, 'job', j.uuid);
   cronMakeJobDrop(n, j.uuid);
   cronMakeKebab(n, {
@@ -1060,6 +1067,7 @@ function cronMakeKebab(node, opts){
     item.textContent = spec[0];
     item.addEventListener('click', e => {
       e.stopPropagation();
+      e.preventDefault();  // the menu sits inside a leaf's anchor — never follow it
       menu.hidden = true;
       if (spec[2]) spec[2]();
     });
@@ -1067,6 +1075,7 @@ function cronMakeKebab(node, opts){
   });
   kebab.addEventListener('click', e => {
     e.stopPropagation();  // don't select/toggle the underlying node
+    e.preventDefault();   // the kebab sits inside a leaf's anchor — never follow it
     const willOpen = menu.hidden;
     document.querySelectorAll('.cron-menu').forEach(m => { m.hidden = true; });
     if (willOpen) cronPlaceMenu(menu, kebab.getBoundingClientRect());
