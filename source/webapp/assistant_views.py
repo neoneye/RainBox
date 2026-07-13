@@ -188,7 +188,8 @@ ASSISTANT_TEMPLATE = """
      result (response); the uppercase io-label tells them apart. */
   .as-main .step .io { margin:0.4rem 0; }
   /* Extra space above these so the labels are easy to scan for. */
-  .as-main .step .io-out, .as-main .step .io-call, .as-main .step .io-in { margin-top:1.4rem; }
+  .as-main .step .io-out, .as-main .step .io-call, .as-main .step .io-in,
+  .as-main .step .io-think { margin-top:1.4rem; }
   .as-main .step .io-label { font-size:0.68rem; text-transform:uppercase;
                              letter-spacing:0.04em; color:#6b7280; margin-bottom:0.2rem;
                              display:flex; align-items:center; }
@@ -340,6 +341,18 @@ ASSISTANT_TEMPLATE = """
             <pre>{{ step.user_prompt }}</pre>
           </details>
           {% endif %}
+        </div>
+        {% endif %}
+        {% if step.reasoning %}
+        <div class="io io-think">
+          {# The model's native reasoning channel (a reasoning model's thinking
+             before it emitted the structured decision); absent for
+             non-reasoning models. Collapsed like the request prompts. #}
+          <div class="io-label">model reasoning</div>
+          <details class="prompt">
+            <summary>reasoning ({{ step.reasoning | length }} chars)</summary>
+            <pre>{{ step.reasoning }}</pre>
+          </details>
         </div>
         {% endif %}
         <div class="io io-out">
@@ -662,6 +675,11 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -
             lines.append("_user prompt_")
             lines.append(_fence(step.user_prompt))
             lines.append("")
+    if step.reasoning:
+        lines.append("**model reasoning**")
+        lines.append("")
+        lines.append(_fence(step.reasoning))
+        lines.append("")
     meta = _response_meta_md(step, model_names)
     lines.append("**model response**" + (f" · {meta}" if meta else ""))
     lines.append("")

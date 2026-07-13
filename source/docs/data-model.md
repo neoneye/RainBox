@@ -197,6 +197,10 @@ Key fields:
   the step's *current state*, not a per-transition log
 - `action`, `reason`, `args`
 - `system_prompt`, `user_prompt`: the exact decide-call prompt
+- `reasoning`: the model's native thinking channel from the decide call
+  (captured via instrumentation while the structured output streamed); NULL
+  for a non-reasoning model. Distinct from `reason`, the schema's short
+  operator-facing audit note
 - `observation_preview` (capped, model-facing) and `observation` (the full
   `{ok, text, data}` JSONB — the authoritative function-result record)
 - `error`

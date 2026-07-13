@@ -1509,6 +1509,17 @@ class AssistantAgent(ModelGroupAgent):
                 model_uuid = self._last_model_uuid
                 system_prompt = self._last_system_prompt
                 user_prompt = self._last_user_prompt
+                # The model's native reasoning ("thinking") channel for this
+                # decide call; None for a non-reasoning model. Stored on the
+                # step row and surfaced in the room as a collapsible thought
+                # bubble (kind="thinking" — the same kind the direct-chat agent
+                # streams; excluded from transcripts, so the model never sees
+                # its own reasoning fed back).
+                reasoning = self._last_reasoning
+                if reasoning:
+                    db.post_chat_message(
+                        room_uuid, self.agent_uuid, reasoning, kind="thinking"
+                    )
 
                 error = self._validate_decision(decision)
                 if error is not None:
@@ -1516,7 +1527,7 @@ class AssistantAgent(ModelGroupAgent):
                         step_index=step_index, phase="failed", decision=decision,
                         error=error, usage=usage, model_uuid=model_uuid,
                         system_prompt=system_prompt, user_prompt=user_prompt,
-                        requested_at=requested_at,
+                        reasoning=reasoning, requested_at=requested_at,
                     )
                     scratchpad.append(
                         f"step {step_index}: action '{decision.action.value}' "
@@ -1529,7 +1540,7 @@ class AssistantAgent(ModelGroupAgent):
                         step_index=step_index, phase="final", decision=decision,
                         usage=usage, model_uuid=model_uuid,
                         system_prompt=system_prompt, user_prompt=user_prompt,
-                        requested_at=requested_at,
+                        reasoning=reasoning, requested_at=requested_at,
                     )
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
@@ -1554,7 +1565,7 @@ class AssistantAgent(ModelGroupAgent):
                     step_index=step_index, decision=decision, usage=usage,
                     model_uuid=model_uuid,
                     system_prompt=system_prompt, user_prompt=user_prompt,
-                    requested_at=requested_at)
+                    reasoning=reasoning, requested_at=requested_at)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
                     room_uuid=room_uuid,
@@ -1663,7 +1674,11 @@ class AssistantAgent(ModelGroupAgent):
     def _fail_run(self, run: Any, exc: Exception, step_index: int) -> None:
         err = f"{type(exc).__name__}: {exc}"
         try:
-            self._record_step(step_index=step_index, phase="failed", error=err)
+            # A crash mid-decide (e.g. a reasoning model timing out) leaves the
+            # partial reasoning on the seam; record it so the trace shows what
+            # the model was thinking when the step died.
+            self._record_step(step_index=step_index, phase="failed", error=err,
+                              reasoning=self._last_reasoning)
             db.finish_run(run, "failed", final_summary=err)
         except Exception:
             logger.exception("assistant: failed to mark run %s failed", run.uuid)
@@ -2024,6 +2039,7 @@ class AssistantAgent(ModelGroupAgent):
         self, *, step_index: int, decision: AssistantStepDecision,
         usage: dict[str, int] | None = None, model_uuid: "UUID | None" = None,
         system_prompt: str | None = None, user_prompt: str | None = None,
+        reasoning: str | None = None,
         requested_at: "datetime | None" = None,
     ) -> "db.AssistantStep | None":
         """Open a non-terminal action step: insert its single `running` row
@@ -2050,6 +2066,7 @@ class AssistantAgent(ModelGroupAgent):
             args=decision.args,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            reasoning=reasoning,
             requested_at=requested_at,
             model_group_uuid=self.model_group_uuid,
             model_uuid=model_uuid,
@@ -2092,6 +2109,7 @@ class AssistantAgent(ModelGroupAgent):
         model_uuid: "UUID | None" = None,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
+        reasoning: str | None = None,
         requested_at: "datetime | None" = None,
     ) -> None:
         """Record a single-insert (no open/settle lifecycle) trace step — the
@@ -2123,6 +2141,7 @@ class AssistantAgent(ModelGroupAgent):
                 args=args,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                reasoning=reasoning,
                 requested_at=requested_at,
                 observation_preview=observation_preview,
                 error=error,

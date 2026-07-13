@@ -429,3 +429,30 @@ def test_init_db_twice_preserves_sentinel_assistant_run(app_ctx):
         assert reloaded.journal_id == sentinel_jid
     finally:
         _cleanup_run(sentinel.uuid)
+
+
+def test_step_persists_model_reasoning(app_ctx):
+    """The model's native reasoning ("thinking") channel is stored per step, on
+    both the open/settle path and the single-insert path — and stays NULL for a
+    non-reasoning model (no reasoning channel at all)."""
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+    )
+    try:
+        opened = db.open_assistant_step(
+            run_uuid=run.uuid, step_index=0, action="query_memory",
+            reason="look it up", args={"query": "git status"},
+            reasoning="the operator asked about git; I should query memory",
+        )
+        db.append_assistant_step(
+            run_uuid=run.uuid, step_index=1, phase="control",
+            action="redirect", reasoning=None,
+        )
+        db.db.session.expire_all()
+        steps = db.list_assistant_steps(run.uuid)
+        assert steps[0].uuid == opened.uuid
+        assert steps[0].reasoning == (
+            "the operator asked about git; I should query memory")
+        assert steps[1].reasoning is None
+    finally:
+        _cleanup_run(run.uuid)

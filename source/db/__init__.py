@@ -342,6 +342,8 @@ def init_db(app: Flask) -> None:
             db.session.execute(sa.text(
                 "ALTER TABLE model_group DROP COLUMN IF EXISTS requires_structured_output"
             ))
+        _add_column_if_missing("assistant_step", "reasoning",
+                               "reasoning TEXT")
         _add_column_if_missing("eval_run", "is_baseline",
                                "is_baseline BOOLEAN NOT NULL DEFAULT FALSE")
         _add_column_if_missing("cron_folder", "description",

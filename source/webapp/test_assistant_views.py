@@ -441,3 +441,43 @@ def test_query_memory_data_renders_as_table_with_tooltips():
     md = "\n".join(_step_md(_Step(), {}, {}))
     assert "| QA static | QA dynamic | memory | truncated | omitted |" in md
     assert "| 3 | 0 | 6 | 0 | 0 |" in md
+
+
+def test_step_reasoning_renders_collapsed_in_timeline_and_markdown(app_ctx, client):
+    """A step's captured model reasoning shows as a collapsed "model reasoning"
+    block on the page and a **model reasoning** section in the markdown export;
+    a step without reasoning (non-reasoning model) renders neither."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look it up",
+        reasoning="the operator wants git state, memory holds that")
+    db.settle_assistant_step(step, phase="observed", observation_preview="found it")
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "model reasoning" in body
+        assert "the operator wants git state, memory holds that" in body
+        md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
+        assert "**model reasoning**" in md
+        assert "the operator wants git state, memory holds that" in md
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_step_without_reasoning_has_no_reasoning_block(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look it up")
+    db.settle_assistant_step(step, phase="observed", observation_preview="found it")
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "model reasoning" not in body
+        md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
+        assert "**model reasoning**" not in md
+    finally:
+        _cleanup(run.uuid, room.uuid)

@@ -1112,6 +1112,11 @@ class AssistantStep(db.Model):
     action: Mapped[str | None] = mapped_column(Text)
     reason: Mapped[str | None] = mapped_column(Text)
     args: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # The model's native reasoning ("thinking") channel from this step's decide
+    # call, captured via instrumentation while the structured output streamed.
+    # NULL for a non-reasoning model, control steps, and legacy rows. Distinct
+    # from `reason`, which is the schema's short operator-facing audit note.
+    reasoning: Mapped[str | None] = mapped_column(Text)
     # The exact prompt sent to the model for this step's decide call (the
     # "model request" half of the LLM interaction); NULL for control steps and
     # legacy rows that predate prompt capture.

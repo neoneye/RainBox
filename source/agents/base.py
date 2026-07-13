@@ -213,6 +213,13 @@ class ModelGroupAgent(Agent):
         # alongside the step it produced (None until one runs).
         self._last_system_prompt: str | None = None
         self._last_user_prompt: str | None = None
+        # The reasoning ("thinking") text the most recent _structured_completion
+        # call streamed, captured via instrumentation because the structured
+        # wrapper drops it from the parsed result. None for a non-reasoning
+        # model (no reasoning channel) or before any call runs; on a failed
+        # call it holds the last attempt's partial reasoning (useful when a
+        # reasoning model times out mid-think).
+        self._last_reasoning: str | None = None
 
     def setup(self) -> None:
         self.model_group_uuid: UUID | None = None
@@ -270,7 +277,7 @@ class ModelGroupAgent(Agent):
         the loop falls back to the next candidate."""
         from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
         from llama_index.core.llms import ChatMessage, MessageRole
-        from llm import prepare_llm
+        from llm import capture_reasoning, prepare_llm
 
         if not self.candidate_model_uuids:
             raise RuntimeError(
@@ -286,6 +293,7 @@ class ModelGroupAgent(Agent):
         # a caller reading self._last_usage after a failed call sees None.
         self._last_usage = None
         self._last_model_uuid = None
+        self._last_reasoning = None
         token_counter = TokenCountingHandler()
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
@@ -317,12 +325,21 @@ class ModelGroupAgent(Agent):
                 )
                 deadline = time.monotonic() + timeout_s
                 last = None
-                for last in sllm.stream_chat(messages):
-                    if time.monotonic() > deadline:
-                        raise TimeoutError(
-                            f"structured stream exceeded {timeout_s:.0f}s "
-                            "(model still generating)"
-                        )
+                # Capture the reasoning ("thinking") channel while the stream is
+                # consumed — the structured wrapper drops it from the parsed
+                # result, so instrumentation is the only place it's visible.
+                # Recorded per attempt, even on failure (the partial reasoning
+                # of a timed-out call is exactly what one wants to inspect).
+                with capture_reasoning() as tally:
+                    try:
+                        for last in sllm.stream_chat(messages):
+                            if time.monotonic() > deadline:
+                                raise TimeoutError(
+                                    f"structured stream exceeded {timeout_s:.0f}s "
+                                    "(model still generating)"
+                                )
+                    finally:
+                        self._last_reasoning = tally.reasoning_text.strip() or None
                 if last is None:
                     raise RuntimeError("structured stream produced no response")
                 # .raw is typed Any | None by LlamaIndex; on a successful

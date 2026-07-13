@@ -202,6 +202,14 @@ Every run is durable in `assistant_run` / `assistant_step` (see
 - Each step stores the exact decide-call prompts (`system_prompt`,
   `user_prompt`), the model used, token counts, `duration_ms`, and the
   `requested_at`/`created_at`/`settled_at` timestamps.
+- Each step also stores the model's native `reasoning` ("thinking") channel,
+  captured via instrumentation while the structured output streams (the
+  structured wrapper drops it from the parsed result). A reasoning model's
+  thinking shows on the /assistant step ("model reasoning", collapsed) and is
+  posted into the room as a `kind="thinking"` bubble; a non-reasoning model
+  emits no reasoning channel, so nothing is stored or shown. On a decide-call
+  crash (e.g. a timeout mid-think) the failed step keeps the partial
+  reasoning.
 - The journal `result` is a short summary plus pointers
   (`assistant_run_uuid`, step count) — the tables are the trace, the journal
   is not.

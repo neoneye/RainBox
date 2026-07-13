@@ -129,6 +129,48 @@ def test_step_records_token_usage_and_model_from_the_decide_call(room):
     assert final.model_uuid == model_uuid
 
 
+def test_step_records_and_posts_model_reasoning(room):
+    """The native reasoning text the structured-completion seam exposes (via
+    _last_reasoning) is stored on the step that decision produced AND posted
+    into the room as a kind="thinking" row, so /assistant and /chat both show
+    what a reasoning model was thinking."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+
+    def decider(**_kwargs):
+        # what base.py would set for a reasoning model
+        agent._last_reasoning = "The operator greeted me; a short reply suffices."
+        return _reply("Hello!")
+
+    agent._decide_next_step = decider
+    agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    final = db.list_assistant_steps(agent._run.uuid)[-1]
+    assert final.reasoning == "The operator greeted me; a short reply suffices."
+    thinking = [
+        m for m in db.list_room_messages(room_uuid) if m["kind"] == "thinking"
+    ]
+    assert [m["text"] for m in thinking] == [
+        "The operator greeted me; a short reply suffices."
+    ]
+
+
+def test_non_reasoning_model_leaves_no_reasoning_trace(room):
+    """A non-reasoning model exposes no reasoning text; the step's reasoning
+    stays NULL and no thinking row is posted (the scripted seam, like base.py
+    on a reasoning-free call, leaves _last_reasoning as None)."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(_reply("Hello!"))
+    agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    final = db.list_assistant_steps(agent._run.uuid)[-1]
+    assert final.reasoning is None
+    assert not [
+        m for m in db.list_room_messages(room_uuid) if m["kind"] == "thinking"
+    ]
+
+
 def test_terminal_run_enqueues_a_summary(room):
     """When a run reaches a terminal state, the assistant enqueues the
     assistant_run_summarizer (off the critical path) carrying this run's uuid."""
