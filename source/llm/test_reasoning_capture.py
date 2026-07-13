@@ -44,6 +44,7 @@ def test_completed_chat_reasoning_text_is_captured():
         messages=_messages(), response=_response("let me think about this", "pong")
     ))
     assert tally.reasoning_text == "let me think about this"
+    assert tally.content_text == "pong"
     assert tally.reasoning_chars == len("let me think about this")
     assert tally.content_chars == len("pong")
 
@@ -59,6 +60,7 @@ def test_inflight_partial_is_kept_when_no_end_event_fires():
         messages=_messages(), response=_response("thinking so far", "")
     ))
     assert tally.reasoning_text == "thinking so far"
+    assert tally.content_text == ""
 
 
 def test_end_event_settles_the_inflight_partial():
@@ -72,6 +74,7 @@ def test_end_event_settles_the_inflight_partial():
         messages=_messages(), response=_response("thinking, done", "pong")
     ))
     assert tally.reasoning_text == "thinking, done"
+    assert tally.content_text == "pong"
 
 
 def test_non_reasoning_model_yields_empty_reasoning_text():
@@ -80,6 +83,7 @@ def test_non_reasoning_model_yields_empty_reasoning_text():
         messages=_messages(), response=_response("", "pong")
     ))
     assert tally.reasoning_text == ""
+    assert tally.content_text == "pong"
     assert tally.reasoning_chars == 0
     assert tally.content_chars == len("pong")
 
@@ -95,3 +99,16 @@ def test_multiple_completed_chats_are_joined():
         messages=_messages(), response=_response("second thought", "b")
     ))
     assert tally.reasoning_text == "first thought\n\nsecond thought"
+    assert tally.content_text == "a\n\nb"
+
+
+def test_inflight_partial_content_is_retained():
+    tally = _ReasoningTally()
+    tally.handle(LLMChatInProgressEvent(
+        messages=_messages(), response=_response("thinking", '{"action":"rep')
+    ))
+    tally.handle(LLMChatInProgressEvent(
+        messages=_messages(), response=_response("thinking more", '{"action":"reply"')
+    ))
+    assert tally.reasoning_text == "thinking more"
+    assert tally.content_text == '{"action":"reply"'

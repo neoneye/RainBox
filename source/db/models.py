@@ -1117,6 +1117,10 @@ class AssistantStep(db.Model):
     # NULL for a non-reasoning model, control steps, and legacy rows. Distinct
     # from `reason`, which is the schema's short operator-facing audit note.
     reasoning: Mapped[str | None] = mapped_column(Text)
+    # Raw provider content from the decide call. Usually the structured JSON;
+    # for a worker interrupted mid-stream, the latest durable partial response.
+    # NULL on legacy/control rows and providers that expose no content stream.
+    model_response: Mapped[str | None] = mapped_column(Text)
     # The exact prompt sent to the model for this step's decide call (the
     # "model request" half of the LLM interaction); NULL for control steps and
     # legacy rows that predate prompt capture.

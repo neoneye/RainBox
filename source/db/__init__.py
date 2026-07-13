@@ -416,6 +416,8 @@ def init_db(app: Flask) -> None:
         # the model that step (additive nullable; legacy rows stay NULL).
         _add_column_if_missing("assistant_step", "system_prompt", "system_prompt TEXT")
         _add_column_if_missing("assistant_step", "user_prompt", "user_prompt TEXT")
+        # Raw/partial provider response for successful and interrupted decides.
+        _add_column_if_missing("assistant_step", "model_response", "model_response TEXT")
         # The full AssistantObservation ({ok, text, data}) the action returned.
         _add_column_if_missing("assistant_step", "observation", "observation JSONB")
         # When the decide LLM request was sent — the "model request" time.
@@ -513,5 +515,3 @@ def reset_demo_data() -> None:
     db.session.execute(sa.delete(Inbox))
     db.session.execute(sa.delete(Journal))
     db.session.commit()
-
-

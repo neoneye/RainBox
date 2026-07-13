@@ -206,12 +206,14 @@ Every run is durable in `assistant_run` / `assistant_step` (see
 - Terminal-only rows (`final`, a `failed` validation, a crash, `control`) are
   single inserts.
 - Each step stores the exact decide-call prompts (`system_prompt`,
-  `user_prompt`), the model used, token counts, `duration_ms`, and the
+  `user_prompt`), raw `model_response`, the model used, token counts,
+  `duration_ms`, and the
   `requested_at`/`created_at`/`settled_at` timestamps.
 - Before dispatching a decide call, the run's `metadata.active_call` checkpoint
   stores its step index, exact system/user prompts, request time, model group,
   and an attempt list. Each attempt adds the resolved model name/UUID,
-  configured timeout, start time, and failure when applicable. The checkpoint
+  configured timeout, start time, latest partial reasoning/response (flushed at
+  most once per second), and failure when applicable. The checkpoint
   is removed only after the resulting step is durable. This covers the window
   where no `assistant_step` exists yet because the model has not returned.
 - Each step also stores the model's native `reasoning` ("thinking") channel,
@@ -252,6 +254,12 @@ There are two terminal failure paths:
   failed step with the exact prompts/model/configured timeout. It then marks
   the run `killed`, fails the journal, stores the fallback summary, and posts
   the failure notice.
+
+The supervisor liveness clock is explicitly refreshed at every assistant step
+boundary and by streamed model-progress checkpoints. Its 60-second guard is
+therefore scoped to the active step, not accumulated from the beginning of the
+run. The provider's configured structured-stream timeout is independently
+restarted for each model attempt in each step.
 
 Failure notices carry `meta.assistant_failure_run_uuid`, making notice creation
 idempotent per run. They use `kind="notice"`: visible in `/chat`, excluded from

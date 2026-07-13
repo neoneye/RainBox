@@ -15,6 +15,7 @@ deterministic fake via `agents/assistant_fakes.py`).
 
 import json
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -1436,6 +1437,7 @@ class AssistantAgent(ModelGroupAgent):
     STEP_LIMIT: int = 6
     MAX_RECENT_MESSAGES: int = 30
     MAX_SCRATCHPAD_CHARS: int = 5000
+    MODEL_PROGRESS_CHECKPOINT_INTERVAL: float = 1.0
     # How much of an observation the trace stores per step. Set to the largest
     # per-capability output_cap_chars (12000) so the trace captures the whole
     # observation an action returned — the operator inspecting a run wants all of
@@ -1463,6 +1465,8 @@ class AssistantAgent(ModelGroupAgent):
         # Coarse current activity, surfaced in heartbeats so a slow run looks
         # different from a hung one.
         self._activity: str = "idle"
+        self._model_progress_checkpoint_at: float = 0.0
+        self._model_progress_snapshot: tuple[str | None, str | None] = (None, None)
 
     @staticmethod
     def _room_uuid(payload: dict[str, Any]) -> UUID:
@@ -1562,6 +1566,10 @@ class AssistantAgent(ModelGroupAgent):
                 if stopped is not None:
                     return stopped
                 self._activity = f"deciding step {step_index}"
+                # The watchdog is a per-step guard. Reset it immediately at
+                # every boundary instead of letting completed steps consume one
+                # whole-run silence budget.
+                self._emit_heartbeat()
                 requested_at = datetime.now(UTC)
                 decision = self._decide_next_step(
                     messages=messages, scratchpad=scratchpad, step_index=step_index
@@ -1573,6 +1581,7 @@ class AssistantAgent(ModelGroupAgent):
                 model_uuid = self._last_model_uuid
                 system_prompt = self._last_system_prompt
                 user_prompt = self._last_user_prompt
+                model_response = self._last_response_text
                 # The model's native reasoning ("thinking") channel for this
                 # decide call; None for a non-reasoning model. Stored on the
                 # step row and surfaced in the room as a collapsible thought
@@ -1591,7 +1600,8 @@ class AssistantAgent(ModelGroupAgent):
                         step_index=step_index, phase="failed", decision=decision,
                         error=error, usage=usage, model_uuid=model_uuid,
                         system_prompt=system_prompt, user_prompt=user_prompt,
-                        reasoning=reasoning, requested_at=requested_at,
+                        reasoning=reasoning, model_response=model_response,
+                        requested_at=requested_at,
                     )
                     scratchpad.append(AssistantTurnStep(
                         step_index=step_index,
@@ -1607,7 +1617,8 @@ class AssistantAgent(ModelGroupAgent):
                         step_index=step_index, phase="final", decision=decision,
                         usage=usage, model_uuid=model_uuid,
                         system_prompt=system_prompt, user_prompt=user_prompt,
-                        reasoning=reasoning, requested_at=requested_at,
+                        reasoning=reasoning, model_response=model_response,
+                        requested_at=requested_at,
                     )
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
@@ -1632,7 +1643,8 @@ class AssistantAgent(ModelGroupAgent):
                     step_index=step_index, decision=decision, usage=usage,
                     model_uuid=model_uuid,
                     system_prompt=system_prompt, user_prompt=user_prompt,
-                    reasoning=reasoning, requested_at=requested_at)
+                    reasoning=reasoning, model_response=model_response,
+                    requested_at=requested_at)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
                     room_uuid=room_uuid,
@@ -1789,6 +1801,7 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt=self._last_system_prompt,
                 user_prompt=self._last_user_prompt,
                 reasoning=self._last_reasoning,
+                model_response=self._last_response_text,
                 model_uuid=self._last_model_uuid,
             )
         except Exception:
@@ -1846,6 +1859,8 @@ class AssistantAgent(ModelGroupAgent):
     def _model_attempt_started(
         self, model_uuid: UUID, model_name: str, timeout_seconds: float
     ) -> None:
+        self._model_progress_checkpoint_at = 0.0
+        self._model_progress_snapshot = (None, None)
         if self._run is not None:
             db.checkpoint_assistant_model_attempt(
                 self._run,
@@ -1858,11 +1873,48 @@ class AssistantAgent(ModelGroupAgent):
         self, model_uuid: UUID, model_name: str, error: Exception
     ) -> None:
         if self._run is not None:
+            db.checkpoint_assistant_model_progress(
+                self._run,
+                model_uuid=model_uuid,
+                reasoning=self._last_reasoning,
+                response_text=self._last_response_text,
+            )
             db.checkpoint_assistant_model_failure(
                 self._run,
                 model_uuid=model_uuid,
                 error=f"{type(error).__name__}: {error}",
             )
+
+    def _model_attempt_progress(
+        self,
+        model_uuid: UUID,
+        model_name: str,
+        reasoning: str | None,
+        response_text: str | None,
+    ) -> None:
+        if self._run is None:
+            return
+        snapshot = (reasoning, response_text)
+        if snapshot == self._model_progress_snapshot:
+            return
+        now = time.monotonic()
+        if (
+            self._model_progress_checkpoint_at
+            and now - self._model_progress_checkpoint_at
+            < self.MODEL_PROGRESS_CHECKPOINT_INTERVAL
+        ):
+            return
+        db.checkpoint_assistant_model_progress(
+            self._run,
+            model_uuid=model_uuid,
+            reasoning=reasoning,
+            response_text=response_text,
+        )
+        self._model_progress_checkpoint_at = now
+        self._model_progress_snapshot = snapshot
+        # Stream progress is also proof of liveness. This complements the
+        # background timer and keeps the watchdog scoped to the active step.
+        self._emit_heartbeat()
 
     # --- prompt assembly ------------------------------------------------------
 
@@ -2333,6 +2385,7 @@ class AssistantAgent(ModelGroupAgent):
         usage: dict[str, int] | None = None, model_uuid: "UUID | None" = None,
         system_prompt: str | None = None, user_prompt: str | None = None,
         reasoning: str | None = None,
+        model_response: str | None = None,
         requested_at: "datetime | None" = None,
     ) -> "db.AssistantStep | None":
         """Open a non-terminal action step: insert its single `running` row
@@ -2360,6 +2413,7 @@ class AssistantAgent(ModelGroupAgent):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             reasoning=reasoning,
+            model_response=model_response,
             requested_at=requested_at,
             model_group_uuid=self.model_group_uuid,
             model_uuid=model_uuid,
@@ -2405,6 +2459,7 @@ class AssistantAgent(ModelGroupAgent):
         system_prompt: str | None = None,
         user_prompt: str | None = None,
         reasoning: str | None = None,
+        model_response: str | None = None,
         requested_at: "datetime | None" = None,
     ) -> None:
         """Record a single-insert (no open/settle lifecycle) trace step — the
@@ -2437,6 +2492,7 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 reasoning=reasoning,
+                model_response=model_response,
                 requested_at=requested_at,
                 observation_preview=observation_preview,
                 error=error,

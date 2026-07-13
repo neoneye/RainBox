@@ -494,3 +494,27 @@ def test_step_without_reasoning_has_no_reasoning_block(app_ctx, client):
         assert "**model reasoning**" not in md
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_interrupted_step_shows_partial_model_response(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid,
+        step_index=0,
+        phase="failed",
+        action=None,
+        error="worker killed",
+        model_response='{"reason":"enough evidence","action":"rep',
+    )
+    db.finish_run(run, "killed")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "partial model response" in body
+        assert "enough evidence" in body
+        md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
+        assert "**partial model response**" in md
+        assert "enough evidence" in md
+    finally:
+        _cleanup(run.uuid, room.uuid)

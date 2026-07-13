@@ -360,11 +360,12 @@ ASSISTANT_TEMPLATE = """
         </div>
         {% endif %}
         <div class="io io-out">
+          {% set decision_text = decision_json.get(step.uuid|string, '') %}
           {% set has_toks = step.input_tokens is not none or step.output_tokens is not none %}
           {% set has_right = step.model_uuid or has_toks or step.duration_ms is not none %}
           {# This io-meta line (model · tokens · throughput · duration · time) is
              duplicated in Python by _response_meta_md(); change both together. #}
-          <div class="io-label">model response{% if has_right or step.created_at %}<span class="io-meta">
+          <div class="io-label">{% if step.model_response and not decision_text %}partial model response{% else %}model response{% endif %}{% if has_right or step.created_at %}<span class="io-meta">
             {% if step.model_uuid %}<a class="io-model" href="/models?id={{ step.model_uuid }}"
                 title="{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }}">model ↗</a>{% endif %}
             {% if has_toks %}<span title="Input tokens: the size of the prompt sent to the model for this step">in {{ step.input_tokens or 0 }}</span>
@@ -373,7 +374,7 @@ ASSISTANT_TEMPLATE = """
             {% if step.duration_ms is not none %}<span title="Duration: how long the model took to produce this response">took {{ '%.1f'|format(step.duration_ms / 1000) }}s</span>{% endif %}
             {% if step.created_at %}<span class="io-time" title="When this model response was recorded: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}
           </span>{% endif %}</div>
-          <pre>{{ decision_json.get(step.uuid|string, '') }}</pre>
+          <pre>{{ decision_text or step.model_response or '' }}</pre>
         </div>
         {% if step.action %}
         <div class="io io-call">
@@ -685,11 +686,17 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -
         lines.append(_fence(step.reasoning))
         lines.append("")
     meta = _response_meta_md(step, model_names)
-    lines.append("**model response**" + (f" · {meta}" if meta else ""))
-    lines.append("")
     decision = decision_json.get(str(step.uuid), "")
-    if decision:
-        lines.append(_fence(decision, "json"))
+    response_label = (
+        "partial model response"
+        if step.model_response and not decision
+        else "model response"
+    )
+    lines.append(f"**{response_label}**" + (f" · {meta}" if meta else ""))
+    lines.append("")
+    response_text = decision or step.model_response or ""
+    if response_text:
+        lines.append(_fence(response_text, "json" if decision else ""))
         lines.append("")
     if step.action:
         when = _hms(step.created_at)
@@ -845,7 +852,8 @@ def _load_run_detail(selected) -> dict:
             {"reason": s.reason, "action": s.action, "args": s.args or {}},
             ensure_ascii=False,
         )
-        for s in steps if s.phase != "control"
+        for s in steps
+        if s.phase != "control" and (s.action is not None or s.reason is not None)
     }
     # The full final reply (the run stores only a truncated final_summary).
     reply = db.get_run_final_reply(selected)

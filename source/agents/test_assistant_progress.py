@@ -101,3 +101,39 @@ def test_facts_marker_does_not_leave_the_operator_without_a_progress_signal(app_
             AssistantRun.room_uuid == chatroom.uuid).delete()
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
         db.db.session.commit()
+
+
+def test_each_step_boundary_emits_immediate_liveness(app_ctx):
+    """Completed steps reset the watchdog; it must not become a whole-run timer."""
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(
+        f"step-heartbeat-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "answer this")
+    db.set_setting("qa.facts_invalidated_at", None)
+    sent = []
+    agent = AssistantAgent(
+        agent_uuid=ASSISTANT_UUID, name="assistant", send=sent.append)
+    agent.HEARTBEAT_INTERVAL = 999
+    decisions = iter([
+        AssistantStepDecision(
+            reason="invalid first try", action=AssistantActionName.REPLY, args={}),
+        AssistantStepDecision(
+            reason="answer", action=AssistantActionName.REPLY,
+            args={"message": "done"}),
+    ])
+    agent._decide_next_step = lambda **_kwargs: next(decisions)
+    try:
+        result = agent._handle_with_heartbeat(
+            uuid4(), {"room_uuid": str(chatroom.uuid)})
+        assert result["status"] == "finished"
+        activities = [
+            message.get("activity") for message in sent
+            if message.get("status") == "heartbeat"
+        ]
+        assert activities == ["deciding step 0", "deciding step 1"]
+    finally:
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(
+            db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()

@@ -438,6 +438,12 @@ def test_recover_interrupted_model_call_preserves_diagnostics(app_ctx):
             model_name="gemma-test",
             timeout_seconds=45,
         )
+        db.checkpoint_assistant_model_progress(
+            run,
+            model_uuid=model_uuid,
+            reasoning="partial reasoning before the worker died",
+            response_text='{"reason":"ready","action":"rep',
+        )
 
         recovered = db.recover_interrupted_assistant_run(
             journal_id,
@@ -460,6 +466,8 @@ def test_recover_interrupted_model_call_preserves_diagnostics(app_ctx):
         assert step.user_prompt == "exact user data"
         assert step.model_uuid == model_uuid
         assert step.model_group_uuid == group_uuid
+        assert step.reasoning == "partial reasoning before the worker died"
+        assert step.model_response == '{"reason":"ready","action":"rep'
         assert "heartbeat timeout" in step.error
         assert "Configured model timeout: 45s" in step.error
 

@@ -207,6 +207,8 @@ Key fields:
   (captured via instrumentation while the structured output streamed); NULL
   for a non-reasoning model. Distinct from `reason`, the schema's short
   operator-facing audit note
+- `model_response`: raw provider content from the decide call; on interruption,
+  the most recently checkpointed partial structured response
 - `observation_preview` (capped, model-facing) and `observation` (the full
   `{ok, text, data}` JSONB — the authoritative function-result record)
 - `error`

@@ -118,6 +118,10 @@ def test_step_records_token_usage_and_model_from_the_decide_call(room):
         # what base.py would set
         agent._last_usage = {"input": 412, "output": 87, "ms": 5100}
         agent._last_model_uuid = model_uuid
+        agent._last_response_text = (
+            '{"reason":"ready to answer","action":"reply",'
+            '"args":{"message":"done"}}'
+        )
         return _reply("done")
 
     agent._decide_next_step = decider
@@ -127,6 +131,7 @@ def test_step_records_token_usage_and_model_from_the_decide_call(room):
     assert final.input_tokens == 412 and final.output_tokens == 87
     assert final.duration_ms == 5100
     assert final.model_uuid == model_uuid
+    assert final.model_response == agent._last_response_text
 
 
 def test_step_records_and_posts_model_reasoning(room):

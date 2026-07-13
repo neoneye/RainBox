@@ -31,6 +31,20 @@ from db.models import (
 )
 from db.queue import fail_journal_if_processing
 
+
+_MODEL_PROGRESS_TEXT_LIMIT = 100_000
+
+
+def _bounded_model_progress_text(value: str | None) -> str | None:
+    """Keep checkpoints useful without growing the run's JSON metadata forever."""
+    if value is None or len(value) <= _MODEL_PROGRESS_TEXT_LIMIT:
+        return value
+    marker = "\n\n...[checkpoint truncated]...\n\n"
+    remaining = _MODEL_PROGRESS_TEXT_LIMIT - len(marker)
+    head = remaining // 2
+    return value[:head] + marker + value[-(remaining - head):]
+
+
 StepPhase = Literal["planned", "running", "observed", "failed", "final", "control"]
 
 
@@ -110,6 +124,7 @@ def open_assistant_step(
     system_prompt: str | None = None,
     user_prompt: str | None = None,
     reasoning: str | None = None,
+    model_response: str | None = None,
     requested_at: datetime | None = None,
     model_group_uuid: UUID | None = None,
     model_uuid: UUID | None = None,
@@ -132,6 +147,7 @@ def open_assistant_step(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         reasoning=reasoning,
+        model_response=model_response,
         requested_at=requested_at,
         model_group_uuid=model_group_uuid,
         model_uuid=model_uuid,
@@ -177,6 +193,7 @@ def append_assistant_step(
     system_prompt: str | None = None,
     user_prompt: str | None = None,
     reasoning: str | None = None,
+    model_response: str | None = None,
     requested_at: datetime | None = None,
     observation_preview: str | None = None,
     error: str | None = None,
@@ -201,6 +218,7 @@ def append_assistant_step(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         reasoning=reasoning,
+        model_response=model_response,
         requested_at=requested_at,
         observation_preview=observation_preview,
         error=error,
@@ -305,6 +323,34 @@ def checkpoint_assistant_model_failure(
             attempt["error"] = error
             attempt["finished_at"] = datetime.now(UTC).isoformat()
             attempts[index] = attempt
+            break
+    active["attempts"] = attempts
+    metadata["active_call"] = active
+    run.metadata_ = metadata
+    db.session.add(run)
+    db.session.commit()
+    return run
+
+
+def checkpoint_assistant_model_progress(
+    run: AssistantRun,
+    *,
+    model_uuid: UUID,
+    reasoning: str | None,
+    response_text: str | None,
+) -> AssistantRun:
+    """Persist the latest streamed reasoning/content for interruption recovery."""
+    metadata = dict(run.metadata_ or {})
+    active = dict(metadata.get("active_call") or {})
+    attempts = list(active.get("attempts") or [])
+    for index in range(len(attempts) - 1, -1, -1):
+        attempt = attempts[index]
+        if attempt.get("model_uuid") == str(model_uuid) and not attempt.get("error"):
+            updated = dict(attempt)
+            updated["partial_reasoning"] = _bounded_model_progress_text(reasoning)
+            updated["partial_response"] = _bounded_model_progress_text(response_text)
+            updated["last_progress_at"] = datetime.now(UTC).isoformat()
+            attempts[index] = updated
             break
     active["attempts"] = attempts
     metadata["active_call"] = active
@@ -440,6 +486,8 @@ def recover_interrupted_assistant_run(
             error=detail,
             system_prompt=active.get("system_prompt"),
             user_prompt=active.get("user_prompt"),
+            reasoning=last_attempt.get("partial_reasoning"),
+            model_response=last_attempt.get("partial_response"),
             requested_at=requested_at,
             duration_ms=duration_ms,
             model_group_uuid=model_group_uuid,

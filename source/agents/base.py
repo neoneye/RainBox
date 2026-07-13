@@ -77,6 +77,7 @@ class Agent:
         # Serializes socket writes: the heartbeat thread and the main loop both
         # emit status messages, and a raw sendall from two threads can interleave.
         self._send_lock = threading.Lock()
+        self._active_journal_id: UUID | None = None
 
     def _emit(self, msg: dict[str, Any]) -> None:
         """Thread-safe status send to the supervisor."""
@@ -91,13 +92,12 @@ class Agent:
         (but healthy) turn. The heartbeat carries no work — it only resets the
         supervisor's last-message timer (any message does)."""
         stop = threading.Event()
+        self._active_journal_id = journal_id
 
         def _beat() -> None:
             while not stop.wait(self.HEARTBEAT_INTERVAL):
                 try:
-                    msg = {"status": "heartbeat", "journal_id": str(journal_id)}
-                    msg.update(self._heartbeat_extra())
-                    self._emit(msg)
+                    self._emit_heartbeat()
                 except Exception:
                     return  # socket gone; nothing useful to do from this thread
         hb = threading.Thread(target=_beat, name=f"hb-{self.name}", daemon=True)
@@ -107,6 +107,18 @@ class Agent:
         finally:
             stop.set()
             hb.join(timeout=2.0)
+            self._active_journal_id = None
+
+    def _emit_heartbeat(self) -> None:
+        """Emit liveness immediately, used by the timer and step boundaries."""
+        if self._active_journal_id is None:
+            return
+        msg = {
+            "status": "heartbeat",
+            "journal_id": str(self._active_journal_id),
+        }
+        msg.update(self._heartbeat_extra())
+        self._emit(msg)
 
     def _heartbeat_extra(self) -> dict[str, Any]:
         """Extra fields merged into each heartbeat. Default empty; agents that do
@@ -215,6 +227,9 @@ class ModelGroupAgent(Agent):
         # call it holds the last attempt's partial reasoning (useful when a
         # reasoning model times out mid-think).
         self._last_reasoning: str | None = None
+        # Raw provider content from the latest structured call. On an
+        # interrupted stream this is the latest partial JSON/text received.
+        self._last_response_text: str | None = None
 
     def setup(self) -> None:
         self.model_group_uuid: UUID | None = None
@@ -241,6 +256,15 @@ class ModelGroupAgent(Agent):
         self, model_uuid: UUID, model_name: str, error: Exception
     ) -> None:
         """Hook for agents that durably track a failed model attempt."""
+
+    def _model_attempt_progress(
+        self,
+        model_uuid: UUID,
+        model_name: str,
+        reasoning: str | None,
+        response_text: str | None,
+    ) -> None:
+        """Hook for throttled persistence of an in-flight model stream."""
 
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         # INTENTIONAL STUB — keep functional, do NOT make abstract. This is the
@@ -299,6 +323,7 @@ class ModelGroupAgent(Agent):
         self._last_usage = None
         self._last_model_uuid = None
         self._last_reasoning = None
+        self._last_response_text = None
         token_counter = TokenCountingHandler()
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
@@ -343,6 +368,19 @@ class ModelGroupAgent(Agent):
                 with capture_reasoning() as tally:
                     try:
                         for last in sllm.stream_chat(messages):
+                            response_text = (
+                                getattr(getattr(last, "message", None), "content", None)
+                                or tally.content_text
+                                or ""
+                            )
+                            self._last_reasoning = tally.reasoning_text.strip() or None
+                            self._last_response_text = response_text.strip() or None
+                            self._model_attempt_progress(
+                                model_uuid,
+                                model_name,
+                                self._last_reasoning,
+                                self._last_response_text,
+                            )
                             if time.monotonic() > deadline:
                                 raise TimeoutError(
                                     f"structured stream exceeded {timeout_s:.0f}s "
@@ -350,6 +388,8 @@ class ModelGroupAgent(Agent):
                                 )
                     finally:
                         self._last_reasoning = tally.reasoning_text.strip() or None
+                        if not self._last_response_text:
+                            self._last_response_text = tally.content_text.strip() or None
                 if last is None:
                     raise RuntimeError("structured stream produced no response")
                 # .raw is typed Any | None by LlamaIndex; on a successful

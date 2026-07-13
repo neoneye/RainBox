@@ -205,9 +205,9 @@ class _ReasoningTally(BaseEventHandler):
     `completed_reasoning` holds each *completed* chat's reasoning
     (LLMChatEndEvent); `inflight_reasoning` holds the latest *cumulative*
     partial of the chat in progress (LLMChatInProgressEvent), which is the only
-    data left when a streamed call is cut off by a timeout — so `reasoning_text`
-    / the char counts stay meaningful even when no End fires. Content is only
-    counted, never kept (the caller already has the final content)."""
+    data left when a streamed call is cut off by a timeout — so
+    `reasoning_text`, `content_text`, and the char counts stay meaningful even
+    when no End fires."""
 
     totals: dict[str, int] = Field(
         default_factory=lambda: {"reasoning": 0, "content": 0}
@@ -217,6 +217,8 @@ class _ReasoningTally(BaseEventHandler):
     )
     completed_reasoning: list[str] = Field(default_factory=list)
     inflight_reasoning: str = Field(default="")
+    completed_content: list[str] = Field(default_factory=list)
+    inflight_content: str = Field(default="")
 
     @classmethod
     def class_name(cls) -> str:
@@ -238,13 +240,17 @@ class _ReasoningTally(BaseEventHandler):
         if isinstance(event, LLMChatEndEvent):
             if reasoning:
                 self.completed_reasoning.append(reasoning)
+            if content:
+                self.completed_content.append(content)
             self.totals["reasoning"] += len(reasoning)
             self.totals["content"] += len(content)
             self.inflight_reasoning = ""
+            self.inflight_content = ""
             self.inflight["reasoning"] = 0
             self.inflight["content"] = 0
         else:  # in-progress events carry the cumulative partial, not a delta
             self.inflight_reasoning = reasoning
+            self.inflight_content = content
             self.inflight["reasoning"] = len(reasoning)
             self.inflight["content"] = len(content)
 
@@ -263,6 +269,14 @@ class _ReasoningTally(BaseEventHandler):
         return self.totals["reasoning"] + self.inflight["reasoning"]
 
     @property
+    def content_text(self) -> str:
+        """Completed content plus the latest cumulative in-flight partial."""
+        parts = [*self.completed_content]
+        if self.inflight_content:
+            parts.append(self.inflight_content)
+        return "\n\n".join(parts)
+
+    @property
     def content_chars(self) -> int:
         return self.totals["content"] + self.inflight["content"]
 
@@ -271,9 +285,9 @@ class _ReasoningTally(BaseEventHandler):
 def capture_reasoning() -> Iterator["_ReasoningTally"]:
     """Capture the model's native thinking (the <think> block / reasoning
     channel) across every underlying LLM chat in the block, via instrumentation.
-    Yields a tally whose `.reasoning_text` / `.reasoning_chars` /
-    `.content_chars` stay readable both on success and after a timeout (the
-    latest streamed partial is retained). Works through structured-output /
+    Yields a tally whose `.reasoning_text` / `.content_text` and char counts
+    stay readable both on success and after a timeout (the latest streamed
+    partial is retained). Works through structured-output /
     tool wrappers that drop the thinking block from the final response —
     capturing what a reasoning model thinks before producing structured output,
     which a schema field like EditPlan.reasoning cannot show."""
