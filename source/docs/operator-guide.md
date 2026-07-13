@@ -208,6 +208,22 @@ Check:
 - the supervisor process is running.
 - Flask-Admin `Inbox` and `Journal` rows for failures.
 
+For the ReAct `assistant`, also open the linked `/assistant?id=<run-uuid>` run.
+A handled model error or interrupted worker should produce all of the following:
+
+- the run is terminal (`failed` or `killed`), not indefinitely `running`;
+- the failed timeline step shows the exact system prompt, user prompt, model,
+  error, and configured timeout when available;
+- the run has an immediate fallback summary even if the summarizer model fails;
+- `/chat` shows an operational “I stopped before completing this request”
+  notice linking to the run, and no longer shows “Working on it”.
+
+The supervisor performs this cleanup when it reaps a worker and at startup for
+runs abandoned by a previous supervisor. If the process was running older code,
+restart RainBox once so startup recovery can close those orphaned runs. Failure
+notices are `kind="notice"`, so they are visible but are not fed back into the
+assistant's conversation prompt.
+
 ### Seed-memory / QueryAgent retrieval fails
 
 The curated Q&A pairs live in the `data_seed_memory` pgvector table, embedded from

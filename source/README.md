@@ -9,7 +9,7 @@ Unlike other frameworks where the agents runs in the same process, being fragile
 
 A small Python demo of an **OS-process supervisor for AI agents**, built from POSIX primitives without a workflow framework.
 
-A single executable (`main.py`) runs a Flask webserver and an idle-by-default supervisor in the same process. When work shows up in an agent's inbox (Postgres-backed), the supervisor spawns that agent as a child process via `posix_spawn`, hands it an inherited `socketpair` for JSONL communication, and multiplexes it via a `selectors` loop. Each agent drains its inbox, journals each item through `processing → completed`, then exits when idle; the supervisor reaps it and does **not** respawn until new work appears. A heartbeat-based watchdog SIGKILLs hung agents. Ctrl-C stops both the webserver and the supervisor cleanly.
+A single executable (`main.py`) runs a Flask webserver and an idle-by-default supervisor in the same process. When work shows up in an agent's inbox (Postgres-backed), the supervisor spawns that agent as a child process via `posix_spawn`, hands it an inherited `socketpair` for JSONL communication, and multiplexes it via a `selectors` loop. Each agent drains its inbox, journals each item through `processing → completed`, then exits when idle; the supervisor reaps it and does **not** respawn until new work appears. A heartbeat watchdog SIGKILLs unresponsive processes or broken status channels. Ctrl-C stops both the webserver and the supervisor cleanly.
 
 `dreamer`, `critic`, and `verifier` form a linear pipeline: each agent's `completed` journal row is routed by the supervisor into the next agent's inbox. Clicking **Run demo** in the webapp seeds 5 items into dreamer's inbox; the supervisor wakes dreamer, which produces 5 critic items, which produce 5 verifier items, with full lineage carried in each payload. The roles `followup`, `chat_structured`, `chat_unstructured`, `tool_demo`, `workspace_shell`, `router`, `query`, `query_router`, `query_filter_router`, `mcp`, and `assistant` back the group-chat feature; `workspace_shell` (deterministic command runner) and `query` (embedding-only retriever) skip the LLM completion path, while the others make **real LLM calls** when configured with model groups. The `edit_document*` roles are payload-driven document-editing planners: they consume `{document, instructions}` inbox payloads, return validated patch data in the journal result, and progressively experiment with richer patch schemas, status/comment fields, EOF handling, and reasoning fields. They plan edits but do not apply them directly.
 
@@ -186,9 +186,9 @@ A SIGINT/SIGTERM handler sets a `threading.Event` (`stop_event`) and calls `serv
 2. **Wake-up pass:** call `db.agent_uuids_with_work()` (returns the set of agent UUIDs whose inbox is non-empty). For each role in `agents/config` whose UUID is in that set and whose agent is not currently running, `spawn()` it and register its socket on the `selectors`.
 3. **Socket drain:** `sel.select(timeout=1.0)` blocks in the kernel for up to one tick. For each readable socket, `recv` once, append to its buffer, split on `\n`, log each JSON message, and update the agent's `last_heartbeat`. An empty `recv` (EOF) marks the agent as dead.
 4. **Watchdog:** if `now - last_heartbeat > HEARTBEAT_TIMEOUT` (60 s) for any alive agent, log a warning, `SIGKILL` it, and mark it dead. A background heartbeat runs during `handle()`, including model calls; the timeout therefore catches a dead process or broken status channel rather than ordinary slow inference.
-5. **Reap:** for each dead agent, `waitpid`, unregister and close its socket, drop it from the registry. Do **not** respawn — the next tick's wake-up pass will re-spawn if work appears.
+5. **Reap:** for each dead agent, `waitpid`, fail its active journal, and recover any interrupted assistant run before unregistering and closing its socket. Recovery persists the active model-call diagnostics and posts a terminal chat notice. Do **not** respawn — the next tick's wake-up pass will re-spawn if work appears.
 
-**Shutdown:** when `stop_event` is set, the loop exits, `SIGKILL`s and reaps any agents still alive, closes sockets, returns.
+**Startup / shutdown:** startup recovers assistant runs left `running`/`stopping` by a previous supervisor. On shutdown the loop `SIGKILL`s remaining agents, recovers their active work, reaps them, closes sockets, and returns.
 
 ### `agents/__main__.py`
 
@@ -385,7 +385,7 @@ A candid assessment of this code as the basis for an AI-agent system.
 
 ### What's right (runtime layer)
 
-- **Real persistence.** Inbox + journal in Postgres means agent state survives crashes, supervisor restarts, and machine reboots. That's the difference between "demo" and "could actually run a workload." `take_item` being atomic is the load-bearing detail — a crash mid-task leaves a recoverable `processing` row, never a lost item.
+- **Real persistence.** Inbox + journal in Postgres means agent state survives crashes, supervisor restarts, and machine reboots. That's the difference between "demo" and "could actually run a workload." `take_item` being atomic is the load-bearing detail: a crash leaves a durable `processing` row until the supervisor transitions it to `failed`, never a lost item.
 - **Schema-enforced state machine.** The journal `state` column is constrained at the schema level (`CHECK (state IN (...))`) and at the Python level (`Literal["processing","completed","failed","stopped"]`). That's a real type-safe lifecycle, not just a convention.
 - **Operator interface.** The webapp + Flask-Admin lets a human inspect tables and enqueue work without restarting the supervisor. The difference between "I can run this" and "I can operate this."
 - **Type-checked.** Annotations throughout + `pyrightconfig.json` means a static check catches schema/code drift early.

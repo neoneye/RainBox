@@ -177,10 +177,16 @@ Key fields:
 - `step_limit`
 - `started_at`, `finished_at`
 - `final_summary`
-- `metadata` (run/model diagnostics)
+- `metadata` (run/model diagnostics). While a decide call is in flight,
+  `metadata.active_call` checkpoints `{step_index, system_prompt, user_prompt,
+  requested_at, model_group_uuid, attempts[]}`. Attempt entries retain the
+  resolved model UUID/name, configured timeout, timestamps, and any error so a
+  killed worker can be reconstructed before an `assistant_step` exists. The
+  checkpoint is cleared after step persistence or interruption recovery.
 - `summary`: a post-completion JSONB digest (`{trigger, obstacles[], outcome,
-  summarized_at}`) produced off the critical path by the
-  `assistant_run_summarizer` agent; NULL until summarized
+  summarized_at}`); failures receive a deterministic digest immediately, while
+  the off-path `assistant_run_summarizer` may later replace it with a
+  model-produced digest
 
 ### `assistant_step`
 
@@ -208,6 +214,12 @@ Key fields:
 - `input_tokens`, `output_tokens`, `duration_ms`: the decide call's usage/latency
 - `requested_at`, `created_at`, `settled_at`: model request → response →
   observation recorded
+
+An interrupted decide call is recovered into a terminal `failed` step from the
+run-level `active_call` checkpoint. Its `action` may be NULL because the worker
+vanished before a structured decision existed, while its prompts, model,
+configured-timeout error, request time, and measured elapsed duration remain
+inspectable.
 
 ### `assistant_control`
 

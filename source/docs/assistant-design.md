@@ -38,14 +38,19 @@ operator confirmation — is decided by code, never by prompt text.
 Running out of steps posts a "couldn't complete this within the step limit"
 message with a link to the run's inspector page and finishes the run
 `stopped`. Any exception marks the run `failed` (against the step it died on)
-and re-raises so the journal records the failure too.
+and re-raises so the journal records the failure too. It also posts a visible
+`kind="notice"` failure message with the reason and run link. A notice is
+operational output, not conversation history, and atomically clears the
+assistant's lingering progress rows in that room.
 
 **Triggering.** A human post in a room enqueues every responder agent in it
 (`webapp/chat_api.py::_maybe_trigger_chat_agents`), which also posts the
 "working on it" progress bubble — at enqueue time, because the assistant runs
 in a freshly spawned process and the operator would otherwise stare at nothing
 during spawn+import. The payload carries `room_uuid` and the triggering
-`message_uuid` (used as evidence provenance for memory writes).
+`message_uuid` (used as evidence provenance for memory writes). Every terminal
+reply, stop message, step-limit message, or failure notice clears that progress
+bubble through `db.post_chat_message`'s terminal-kind transaction.
 
 ## Prompt assembly
 
@@ -203,6 +208,12 @@ Every run is durable in `assistant_run` / `assistant_step` (see
 - Each step stores the exact decide-call prompts (`system_prompt`,
   `user_prompt`), the model used, token counts, `duration_ms`, and the
   `requested_at`/`created_at`/`settled_at` timestamps.
+- Before dispatching a decide call, the run's `metadata.active_call` checkpoint
+  stores its step index, exact system/user prompts, request time, model group,
+  and an attempt list. Each attempt adds the resolved model name/UUID,
+  configured timeout, start time, and failure when applicable. The checkpoint
+  is removed only after the resulting step is durable. This covers the window
+  where no `assistant_step` exists yet because the model has not returned.
 - Each step also stores the model's native `reasoning` ("thinking") channel,
   captured via instrumentation while the structured output streams (the
   structured wrapper drops it from the parsed result). A reasoning model's
@@ -215,11 +226,38 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   (`assistant_run_uuid`, step count) — the tables are the trace, the journal
   is not.
 
-After every terminal state the assistant enqueues the
+After every terminal state the assistant stores an immediate deterministic
+failure digest when applicable, then enqueues the
 **`assistant_run_summarizer`** agent (off the critical path), which makes one
 structured call over the trace and stores a `{trigger, obstacles[], outcome}`
-digest on `assistant_run.summary` for the inspector. It posts no chat and
-enqueues nothing, so it can never summarize itself.
+digest on `assistant_run.summary` for the inspector. The deterministic digest
+means a failed run is useful even if the summarizer model is unavailable; a
+later successful summarizer call may replace it. The summarizer posts no chat
+and enqueues nothing, so it can never summarize itself.
+
+## Failure recovery
+
+There are two terminal failure paths:
+
+- **Handled exception** — `_fail_run` records a failed step with the latest
+  prompts, model UUID, and partial reasoning; marks the run `failed`; stores the
+  fallback summary; posts the operational failure notice; and re-raises so
+  `Agent.run()` marks the journal failed. A structured stream timeout therefore
+  remains visible as the step error rather than becoming a silent exit.
+- **Worker interruption** — the supervisor tracks the journal currently owned
+  by each child. EOF, watchdog kill, or supervisor shutdown calls
+  `recover_interrupted_assistant_run`; startup applies the same recovery to
+  `running`/`stopping` runs left by the previous supervisor. Recovery turns an
+  open action row into `failed`, or materializes `metadata.active_call` as a
+  failed step with the exact prompts/model/configured timeout. It then marks
+  the run `killed`, fails the journal, stores the fallback summary, and posts
+  the failure notice.
+
+Failure notices carry `meta.assistant_failure_run_uuid`, making notice creation
+idempotent per run. They use `kind="notice"`: visible in `/chat`, excluded from
+the assistant prompt (`kind == "message"` is the conversation), and terminal
+for progress cleanup. The notice includes a deep link to `/assistant`, where
+the failed step exposes the full model request and error.
 
 ## Controls (stop / redirect)
 
