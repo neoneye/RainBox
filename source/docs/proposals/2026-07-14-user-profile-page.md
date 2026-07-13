@@ -51,7 +51,7 @@ folder detail table.
   renamed via the click-to-rename modal
   ([`ui-modal-rename.md`](../ui-modal-rename.md)). It is *not* derived from
   first/last name — a demo profile's label ("Germany") and its example
-  person's name ("Lena Fischer") serve different masters.
+  person's name ("Emmy Noether") serve different masters.
 - **Folder detail table columns:** Name / Person / Language / Units / Time /
   Country — enough to tell demo profiles apart at a glance.
 - **Kebab on a profile:** Rename, **Duplicate**, Delete (type-to-confirm).
@@ -236,42 +236,53 @@ code to get wrong:
   Duplicating a built-in creates a **real** top-level row (the virtual
   folder can't hold user rows) named after the example.
 
-The twenty profiles (fictional people — no real PII, per standing policy)
-show each locale's *typical* conventions — they are starting points for
-duplication, not rules; any profile, including the operator's own, sets
-whatever formats it prefers (a European choosing `YYYY-MM-DD` just picks it
-in the selector):
+The twenty profiles show each locale's *typical* conventions — they are
+starting points for duplication, not rules; any profile, including the
+operator's own, sets whatever formats it prefers (a European choosing
+`YYYY-MM-DD` just picks it in the selector). Each is **named in homage to a
+deceased scientist from that country** who made a groundbreaking
+contribution — deliberately skipping the household names (no Einstein, no
+Newton, no von Neumann) in favour of the discoverers one layer down. The
+names are the only historical element: every other detail stays fictional
+and modern (per the no-real-PII policy, and so a demo never shows a
+19th-century birth year):
 
-| Label | Person | units | time | date | lang | currency | city | timezone |
+| Label | Person (their discovery) | units | time | date | lang | currency | city | timezone |
 |---|---|---|---|---|---|---|---|---|
-| US | Mike Johnson | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
-| Canada | Claire Tremblay | metric | 12h | YYYY-MM-DD | en-CA / fr-CA | CAD | Montreal | America/Toronto |
-| Mexico | Sofía Hernández | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
-| Brazil | João Silva | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
-| UK | Emma Wilson | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
-| France | Camille Dubois | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
-| Germany | Lena Fischer | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
-| Netherlands | Daan de Vries | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
-| Spain | Lucía García | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
-| Italy | Marco Rossi | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
-| Denmark | Freja Nielsen | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
-| Sweden | Elsa Lindqvist | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
-| Poland | Zofia Kowalska | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
-| Israel | Noa Cohen | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
-| India | Aarav Sharma | metric | 12h | DD/MM/YYYY | en-IN / hi | INR | Bengaluru | Asia/Kolkata |
-| China | Wei Zhang | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | Shanghai | Asia/Shanghai |
-| Japan | Haruto Sato | metric | 24h | YYYY-MM-DD | ja / en | JPY | Tokyo | Asia/Tokyo |
-| South Korea | Minjun Kim | metric | 12h | YYYY-MM-DD | ko / en | KRW | Seoul | Asia/Seoul |
-| Singapore | Ethan Tan | metric | 12h | DD/MM/YYYY | en-SG / zh | SGD | Singapore | Asia/Singapore |
-| Australia | Olivia Baker | metric | 12h | DD/MM/YYYY | en-AU | AUD | Sydney | Australia/Sydney |
+| US | Barbara McClintock (transposons) | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
+| Canada | Frederick Banting (insulin) | metric | 12h | YYYY-MM-DD | en-CA / fr-CA | CAD | Montreal | America/Toronto |
+| Mexico | Mario Molina (ozone depletion) | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
+| Brazil | César Lattes (pion) | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
+| UK | Rosalind Franklin (DNA structure) | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
+| France | Évariste Galois (group theory) | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
+| Germany | Emmy Noether (symmetry ↔ conservation) | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
+| Netherlands | Hendrik Lorentz (Lorentz transformation) | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
+| Spain | Santiago Ramón y Cajal (the neuron) | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
+| Italy | Rita Levi-Montalcini (nerve growth factor) | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
+| Denmark | Ole Rømer (speed of light is finite) | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
+| Sweden | Svante Arrhenius (greenhouse effect) | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
+| Poland | Stefan Banach (functional analysis) | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
+| Israel | Amos Tversky (judgment under uncertainty) | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
+| India | Satyendra Nath Bose (Bose–Einstein statistics) | metric | 12h | DD/MM/YYYY | en-IN / hi | INR | Bengaluru | Asia/Kolkata |
+| China | Hua Luogeng (analytic number theory) | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | Shanghai | Asia/Shanghai |
+| Japan | Hideki Yukawa (meson theory) | metric | 24h | YYYY-MM-DD | ja / en | JPY | Tokyo | Asia/Tokyo |
+| South Korea | Woo Jang-choon (triangle of U) | metric | 12h | YYYY-MM-DD | ko / en | KRW | Seoul | Asia/Seoul |
+| Singapore | Wu Lien-teh (modern epidemic control) | metric | 12h | DD/MM/YYYY | en-SG / zh | SGD | Singapore | Asia/Singapore |
+| Australia | Howard Florey (penicillin as a medicine) | metric | 12h | DD/MM/YYYY | en-AU | AUD | Sydney | Australia/Sydney |
 
 Each entry's `country` field carries the country name (the label doubles as
 it, so the column is omitted above). Rough grouping in the file — Americas,
-Europe, Middle East, Asia, Oceania — is also the fixed tree order.
+Europe, Middle East, Asia, Oceania — is also the fixed tree order. Two
+placements are approximations rather than birthplaces: Wu Lien-teh worked
+across the Straits Settlements and Amos Tversky's field was cognitive
+science — both earn their rows on the strength of the discovery. The
+discovery goes in the profile's `nickname` field (e.g. "transposons"), so
+opening any example teaches something.
 
-Each also carries a plausible nickname, gender, birthday, and a
-`preferred_name`; `email`/`address` stay blank (nothing to demo there, and
-blanks show the sparse-JSONB behaviour). The twenty profiles are the living
+Each also carries gender, a modern plausible birthday, and a
+`preferred_name` (the scientist's given name); `email`/`address` stay blank
+(nothing to demo there, and blanks show the sparse-JSONB behaviour). The
+twenty profiles are the living
 answer to "what does a filled-in profile look like" — the demo script is:
 open `Example/`, duplicate the closest archetype, rename it to the friend,
 adjust.
