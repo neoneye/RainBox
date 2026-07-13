@@ -1825,11 +1825,23 @@ class AssistantAgent(ModelGroupAgent):
     def _render_scratchpad(self, scratchpad: list[str]) -> str:
         if not scratchpad:
             return ""
-        text = "\n".join(scratchpad)
-        if len(text) > self.MAX_SCRATCHPAD_CHARS:
-            # Keep the most recent context when the budget is exceeded.
-            text = text[-self.MAX_SCRATCHPAD_CHARS:]
-        return text
+        # Keep the most recent context when the budget is exceeded, dropping
+        # WHOLE entries oldest-first — an entry can hold a <recalled_memory>
+        # fence, and a character-level cut through it leaves a dangling end
+        # tag in the prompt. The newest entry is always kept intact (the model
+        # needs the observation it just made); it is bounded upstream by
+        # MAX_OBSERVATION_PREVIEW_CHARS.
+        kept: list[str] = []
+        used = 0
+        for entry in reversed(scratchpad):
+            if kept and used + len(entry) + 1 > self.MAX_SCRATCHPAD_CHARS:
+                omitted = len(scratchpad) - len(kept)
+                kept.append(f"({omitted} earlier step(s) omitted — over the "
+                            "scratchpad budget)")
+                break
+            used += len(entry) + 1
+            kept.append(entry)
+        return "\n".join(reversed(kept))
 
     # --- validation, terminal output, trace -----------------------------------
 

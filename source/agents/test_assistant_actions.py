@@ -57,6 +57,40 @@ def test_user_prompt_includes_current_local_time():
     assert "local time" in prompt.lower()
 
 
+def test_render_scratchpad_never_splits_an_entry():
+    """A character-level tail slice once cut through a query_memory observation,
+    leaving a dangling </recalled_memory> end tag (opening tag and step header
+    sliced off) in the step's user prompt. Over-budget scratchpads must drop
+    whole entries, oldest first, so every fence stays balanced."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    big = ('step 0: query_memory -> ok: <recalled_memory note="facts">\n'
+           + "x" * (agent.MAX_SCRATCHPAD_CHARS + 100)
+           + "\n</recalled_memory>")
+    rendered = agent._render_scratchpad([big, "step 1: reply -> ok: done"])
+    assert rendered.count("<recalled_memory") == rendered.count("</recalled_memory>")
+    # The newest entry survives whole; the oversized older one is dropped, not cut.
+    assert "step 1: reply -> ok: done" in rendered
+    assert "omitted" in rendered
+
+
+def test_render_scratchpad_keeps_oversized_newest_entry_whole():
+    """The newest entry is never dropped or cut, even when it alone exceeds the
+    budget — the model needs the observation it just made; the entry is already
+    bounded upstream by MAX_OBSERVATION_PREVIEW_CHARS."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    big = ('step 0: query_memory -> ok: <recalled_memory note="facts">\n'
+           + "x" * (agent.MAX_SCRATCHPAD_CHARS + 100)
+           + "\n</recalled_memory>")
+    rendered = agent._render_scratchpad([big])
+    assert rendered == big
+
+
+def test_render_scratchpad_within_budget_is_unchanged():
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    entries = ["step 0: kanban_read -> ok: 3 tasks", "step 1: reply -> ok: done"]
+    assert agent._render_scratchpad(entries) == "\n".join(entries)
+
+
 def test_system_prompt_forbids_claiming_unperformed_writes():
     """Run 19: the model read a task then replied 'successfully moved' with no
     kanban_move_task step. The prompt must forbid claiming a write it didn't perform."""
