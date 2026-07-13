@@ -110,6 +110,11 @@ capabilities). Do not use `query_memory` to inspect kanban or files.
 Earlier messages are context, not a source of facts. Before you answer any
 question about remembered facts, stored data, or a live value (e.g. token
 usage or status), call the matching read action this turn.
+After a read action succeeds, its observation in "Steps you have already taken
+this turn" is the fresh source of facts for this turn. Use that observation to
+`reply` once it answers the request. Do not repeat the same read with the same
+args unless the observation says a fact was shortened/omitted and you need to
+fetch that specific fact by uuid.
 Do not reuse an answer from an earlier message: stored facts may have changed
 or become restricted since, and live values change between turns.
 A recalled fact tagged `truncateN` (e.g. `truncate1200`) is shortened to N
@@ -1492,6 +1497,11 @@ class AssistantAgent(ModelGroupAgent):
             # it would duplicate state, so an identical repeat is blocked and the
             # model is steered to `reply`.
             done_writes: set[str] = set()
+            # Same idea for reads: repeating an identical successful read wastes
+            # a step and can trap weaker/local models in a query loop. The first
+            # observation remains in the scratchpad; repeated reads are not
+            # dispatched again.
+            done_reads: set[str] = set()
             # Relative links a write surfaced (e.g. /kanban?id=...), appended to the
             # reply so the operator can jump to what just changed. Order-preserving.
             result_links: list[str] = []
@@ -1585,11 +1595,12 @@ class AssistantAgent(ModelGroupAgent):
                     message_uuid=message_uuid,
                 )
                 cap = self._caps[decision.action]
-                write_sig = (
+                action_sig = (
                     f"{decision.action.value}:"
                     f"{json.dumps(decision.args, sort_keys=True, default=str)}"
-                    if cap.write else None
                 )
+                write_sig = action_sig if cap.write else None
+                read_sig = action_sig if cap.read else None
                 if write_sig is not None and write_sig in done_writes:
                     # Identical to a write already completed this run — don't replay
                     # it (that would duplicate state); tell the model it's done.
@@ -1598,6 +1609,16 @@ class AssistantAgent(ModelGroupAgent):
                         text=("You already completed this exact action earlier in "
                               "this run. Do not repeat it — use `reply` to confirm "
                               "to the operator."),
+                    )
+                elif read_sig is not None and read_sig in done_reads:
+                    observation = AssistantObservation(
+                        ok=True,
+                        text=("You already completed this exact read earlier in this "
+                              "run. Do not repeat it — use the earlier observation "
+                              "in the scratchpad to answer with `reply`. If a fact "
+                              "was shortened or omitted, call `query_memory` with "
+                              "that specific fact's uuid instead of repeating the "
+                              "same query."),
                     )
                 elif cap.write and cap.tier == "confirm":
                     observation = self._propose_write(action_ctx, decision, cap)
@@ -1617,6 +1638,8 @@ class AssistantAgent(ModelGroupAgent):
                     proposal = observation.data.get("proposal")
                     if proposal:
                         pending_proposal = proposal
+                if read_sig is not None and observation.ok:
+                    done_reads.add(read_sig)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._settle_step(
                     step_row,
@@ -1635,6 +1658,11 @@ class AssistantAgent(ModelGroupAgent):
                     scratchpad.append(
                         "the write succeeded — the request is fulfilled; use `reply` "
                         "now to confirm and do not perform another write for it"
+                    )
+                if read_sig is not None and observation.ok:
+                    scratchpad.append(
+                        "the read succeeded — if this observation answers the "
+                        "request, use `reply` now; do not repeat the same read"
                     )
 
             # Ran out of steps without a terminal action. Link the run page so the

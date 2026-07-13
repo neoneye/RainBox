@@ -107,6 +107,9 @@ def test_system_prompt_requires_fresh_read_not_chat_history():
     p = ASSISTANT_SYSTEM_PROMPT.lower()
     assert "do not reuse an answer from an earlier message" in p
     assert "call the matching read action" in p
+    assert "after a read action succeeds" in p
+    assert "do not repeat the same read" in p
+    assert "same\nargs" in p
 
 
 @pytest.fixture
@@ -412,6 +415,36 @@ def test_loop_dispatches_read_action_then_replies(room):
     observed = steps[0]
     assert observed.action == "query_memory"
     assert observed.observation_preview is not None
+
+
+def test_loop_does_not_dispatch_identical_successful_read_twice(room):
+    """If the model repeats the exact same read, the loop should not replay the
+    action. The earlier observation is already in the scratchpad; the repeat gets
+    a steering observation that tells the model to reply."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    calls = []
+
+    def fake_dispatch(ctx, decision):
+        calls.append((ctx.step_index, decision.action.value, dict(decision.args)))
+        return AssistantObservation(ok=True, text="remembered fact: Simon used demos")
+
+    agent._dispatch_action = fake_dispatch
+    agent._decide_next_step = scripted_decisions(
+        _decision(AssistantActionName.QUERY_MEMORY, query="Simon relation to demoscene"),
+        _decision(AssistantActionName.QUERY_MEMORY, query="Simon relation to demoscene"),
+        _decision(AssistantActionName.REPLY, message="Simon used demos."),
+    )
+
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+
+    assert result["status"] == "finished"
+    assert calls == [
+        (0, "query_memory", {"query": "Simon relation to demoscene"})
+    ]
+    steps = _steps_for(result["assistant_run_uuid"])
+    assert [s.phase for s in steps] == ["observed", "observed", "final"]
+    assert "already completed this exact read" in (steps[1].observation_preview or "")
 
 
 def test_loop_records_failed_action_and_continues(room):
