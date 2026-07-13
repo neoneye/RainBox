@@ -79,7 +79,7 @@ rendering, and (later) prompt rendering:
 
 ```python
 # profile_fields.py — one row per field; drives the validator AND the form.
-# kind: "text" | "enum" | "int" | "email" — the complete set for v1.
+# kind: "text" | "enum" | "date" | "email" — the complete set for v1.
 PROFILE_FIELDS = [
     # group "Identity"
     Field("first_name",     "Identity", kind="text",  label="First name"),
@@ -89,8 +89,7 @@ PROFILE_FIELDS = [
           choices=["", "male", "female", "other"]),
     Field("preferred_name", "Identity", kind="text",  label="Address them as",
           hint="How the assistant addresses this person, e.g. “Simon” or “you”."),
-    Field("birth_year",     "Identity", kind="int",   label="Birth year",
-          min=1900, max=2100),
+    Field("birthday",       "Identity", kind="date",  label="Birthday"),
     # group "Locale & formats"
     Field("units",          "Locale & formats", kind="enum", label="Units",
           choices=["", "metric", "imperial"]),
@@ -135,9 +134,12 @@ Design decisions baked in above:
   BCP-47/4217 membership. The datalists ship as static JS arrays in
   `profile.js` (timezones via `Intl.supportedValuesOf('timeZone')` at
   runtime — no list to maintain).
-- **Birth year, not birth date** — deliberate precision floor; a demo/friend
-  record does not need a full DOB, and the assistant only ever needs age
-  arithmetic.
+- **Birthday is a full date.** This is a personal assistant's record of a
+  person: it must support birthday greetings and reminders, not just age
+  arithmetic, so the field is a complete date. The form uses a native
+  `<input type="date">`; storage is ISO `YYYY-MM-DD` in the JSONB regardless
+  of the profile's `date_format` (that enum governs how the *assistant
+  presents* dates, not how they are stored).
 - **Every field optional.** An empty profile is valid; the form renders
   blanks, the JSONB stays sparse (absent key, not `""`), and later prompt
   rendering skips absent fields.
@@ -206,7 +208,7 @@ re-seed (the emptiness check makes seeding once-only in practice).
 | Chinese | Wei Zhang | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | China, Shanghai | Asia/Shanghai |
 | Australian | Olivia Baker | metric | 12h | DD/MM/YYYY | en-AU | AUD | Australia, Sydney | Australia/Sydney |
 
-Each also carries a plausible nickname, gender, birth year, and a
+Each also carries a plausible nickname, gender, birthday, and a
 `preferred_name`; `email`/`address` stay blank (nothing to demo there, and
 blanks show the sparse-JSONB behaviour). The five rows are the living
 answer to "what does a filled-in profile look like" — the demo script is:
@@ -242,7 +244,8 @@ deterministic, no live LLM, no browser:
 2. `data` excluded from tree payload and version hash — saving `data` does
    not change `profile_tree_version()`.
 3. `validate_profile_data`: unknown key → error naming it; enum out of set →
-   error; `birth_year` bounds; multiline `address` accepted; absent keys
+   error; `birthday` must be a valid ISO calendar date (rejects `2026-02-30`
+   and non-ISO shapes); multiline `address` accepted; absent keys
    (sparse blob) valid; `dynamic` subtree ignored.
 4. Duplicate: copies `data` deep, new uuid, "<name> copy", positioned after
    source.
