@@ -268,7 +268,7 @@ policy, and so a demo never shows a 19th-century birth year):
 | Denmark | Øjvind Winge | founded the genetics of yeast | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
 | Sweden | Anders Jonas Ångström | pioneered spectroscopy | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
 | Poland | Zofia Kielan-Jaworowska | led the Gobi expeditions that rewrote early-mammal evolution | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
-| Israel | Amos Tversky | mapped judgment under uncertainty | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
+| Israel | Abraham Fränkel | the F in ZF set theory | metric | 24h | DD/MM/YYYY | he / en | ILS | Jerusalem | Asia/Jerusalem |
 | India | Satyendra Nath Bose | Bose–Einstein statistics | metric | 12h | DD/MM/YYYY | en-IN / hi | INR | Bengaluru | Asia/Kolkata |
 | China | Wu Chien-Shiung | overthrew parity conservation | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | Shanghai | Asia/Shanghai |
 | Japan | Hideki Yukawa | predicted the meson | metric | 24h | YYYY-MM-DD | ja / en | JPY | Tokyo | Asia/Tokyo |
@@ -282,9 +282,8 @@ Europe, Middle East, Asia, Oceania — is also the fixed tree order. Some
 rows are career or legacy placements rather than birthplaces — Wu Lien-teh
 (Straits Settlements), Wu Chien-Shiung (Chinese-born, career in the US), Ynés
 Mexía
-(US-born, of Mexican heritage, collected across Mexico) — and Amos
-Tversky's field was cognitive science; all earn their rows on the strength
-of the discovery. The About
+(US-born, of Mexican heritage, collected across Mexico) — all earn their
+rows on the strength of the discovery. The About
 column above is each entry's `about` value — the self-description field
 every profile has (the operator's own might read "programmer, modern day
 alchemist doing code"); on the templates it holds the discovery, so opening
@@ -295,8 +294,8 @@ Each also carries gender, a modern plausible birthday, and a
 (nothing to demo there, and blanks show the sparse-JSONB behaviour). For
 the entries whose scientist wrote their name in a non-Latin script, the
 `nickname` field holds the native spelling: 吳健雄 (Wu Chien-Shiung),
-湯川秀樹 (Yukawa), 우장춘 (Woo), 伍連德 (Wu Lien-teh), עמוס טברסקי
-(Tversky), সত্যেন্দ্রনাথ বসু (Bose).
+湯川秀樹 (Yukawa), 우장춘 (Woo), 伍連德 (Wu Lien-teh), אברהם הלוי פרנקל
+(Fränkel), সত্যেন্দ্রনাথ বসু (Bose).
 Canada's shows the field's other purpose — the name a person actually goes
 by: `first_name`/`last_name` are Conrad/Kirouac, `nickname` is "Frère
 Marie-Victorin", the religious name all of Québec knew him by.
@@ -305,7 +304,7 @@ Marie-Victorin", the religious name all of Québec knew him by.
 names, nicknames, abouts, and cities they deliberately cover Latin
 diacritics (É é í â è ó ã), the Danish Ø ("Øjvind Winge"), the Swedish Å and
 ö ("Ångström" — a special letter at the very start of the string), the
-German ß (Weierstraß), Greek (ε–δ), CJK,
+German ß (Weierstraß) and ä (Fränkel), Greek (ε–δ), CJK,
 Hangul, Bengali, right-to-left Hebrew, a generational suffix
 (`last_name` "Davis Jr."), an apostrophe-particle surname (`last_name`
 "van 't Hoff" — apostrophe, internal space, lowercase particles), an
