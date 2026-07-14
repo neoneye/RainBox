@@ -58,6 +58,47 @@ def test_page_has_tree_and_modal_markers():
         assert marker in body, f"missing marker: {marker}"
 
 
+def _body() -> str:
+    client = app.test_client()
+    page = client.get("/profile").get_data(as_text=True)
+    js = client.get("/static/profile.js")
+    assert js.status_code == 200  # the shell references it; it must serve
+    return page + js.get_data(as_text=True)
+
+
+def test_js_has_core_markers():
+    b = _body()
+    for marker in ["profileLoadTree", "profileRenderTree", "profileItemNode",
+                   "profileSavePush", "profileDataPush", "profileFieldEdited",
+                   "profileDuplicateUuid", "profileUpdatePreview",
+                   "profileFlushData", "profileRenderDynamic",
+                   "/profile/api/tree", "Intl.supportedValuesOf",
+                   "Preview unavailable", "beforeunload"]:
+        assert marker in b, f"missing JS marker: {marker}"
+
+
+def test_rename_goes_through_confirm_modal():
+    """Renaming is modal-confirmed: the right pane shows the node's name as a
+    click-to-rename control, and all editing happens in the rename modal, so
+    a typed-but-unconfirmed name can't be silently lost."""
+    b = _body()
+    for marker in ["profile-rename-display", "function profileOpenRenameModal",
+                   "function profileConfirmRenameModal"]:
+        assert marker in b, f"missing rename marker: {marker}"
+
+
+def test_tree_rows_are_real_links():
+    # Folder and profile rows (and the static "All profiles" node) are anchors
+    # with a real href so CMD/Ctrl click (and middle click) opens the
+    # selection in a new tab via its ?id= deep link.
+    b = _body()
+    assert "node.href = '/profile?id=' + encodeURIComponent(f.id)" in b
+    assert "n.href = '/profile?id=' + encodeURIComponent(p.uuid)" in b
+    assert '<a class="profile-node" id="profile-all" href="/profile">' in b
+    assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in b
+    assert "text-decoration:none" in b
+
+
 def test_no_backslash_escapes_in_template():
     # The template is a non-raw Python string: a \n-style escape inside any
     # inline script would be eaten by Python and break the page silently.

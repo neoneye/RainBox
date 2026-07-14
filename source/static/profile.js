@@ -899,8 +899,288 @@ async function profileSavePush(){
   }
 }
 
-// ---- form pane (placeholder — replaced by the autosaving form) ----
-function profileRenderForm(){}
+// ---- datalists (static arrays; timezones from the runtime — no list to maintain) ----
+const PROFILE_DL_LANG = ['da','de','en','en-AU','en-CA','en-GB','en-IN','en-SG','en-US','es','es-MX','fr','fr-CA','he','it','ja','ko','nl','pl','pt-BR','sv','te','zh','zh-Hans','zh-Hant'];
+const PROFILE_DL_CURRENCY = ['AUD','BRL','CAD','CHF','CNY','DKK','EUR','GBP','ILS','INR','JPY','KRW','MXN','NOK','PLN','SEK','SGD','USD'];
+const PROFILE_DL_COUNTRY = ['Australia','Brazil','Canada','China','Denmark','France','Germany','India','Israel','Italy','Japan','Mexico','Netherlands','Poland','Singapore','South Korea','Spain','Sweden','UK','US'];
+function profileFillDatalist(id, values){
+  const dl = document.getElementById(id);
+  dl.innerHTML = '';
+  values.forEach(v => { const o = document.createElement('option'); o.value = v; dl.appendChild(o); });
+}
+function profileInitDatalists(){
+  profileFillDatalist('profile-dl-lang', PROFILE_DL_LANG);
+  profileFillDatalist('profile-dl-currency', PROFILE_DL_CURRENCY);
+  profileFillDatalist('profile-dl-country', PROFILE_DL_COUNTRY);
+  let zones = [];
+  // Without Intl.supportedValuesOf the timezone input stays free text over an
+  // empty list — never blocked, just unassisted.
+  try { if (Intl.supportedValuesOf) zones = Intl.supportedValuesOf('timeZone'); } catch (e) {}
+  profileFillDatalist('profile-dl-tz', zones);
+}
+
+// ---- form pane ----
+const PROFILE_FIELD_KEYS = Array.from(
+  document.querySelectorAll('#profile-form [data-key]')).map(el => el.dataset.key);
+function profileFieldEl(key){
+  return document.querySelector('#profile-form [data-key="' + key + '"]');
+}
+let profileFormUuid = null;   // uuid whose data the form currently holds
+
+function profileRenderForm(){
+  const el = document.getElementById('profile-form');
+  const p = profileSelectedItem ? profileByUuid(profileSelectedItem) : null;
+  if (!p){ el.hidden = true; profileFormUuid = null; return; }
+  el.hidden = false;
+  document.getElementById('profile-builtin-hint').hidden = !p.builtin;
+  if (profileFormUuid !== p.uuid){
+    profileFormUuid = p.uuid;
+    profileFillForm({});
+    profileSetFormDisabled(true);   // until the data arrives (built-ins stay disabled)
+    profileRenderDynamic(null);
+    profileLoadData(p.uuid);
+  }
+  profileRenderStatus();
+}
+async function profileLoadData(uuid){
+  let d = null;
+  try {
+    const r = await fetch('/profile/api/profiles/' + encodeURIComponent(uuid));
+    d = await r.json();
+  } catch (e) { /* handled below */ }
+  // A late GET is discarded unless its uuid is still the selected profile.
+  if (profileFormUuid !== uuid || profileSelectedItem !== uuid) return;
+  const st = profileFormState[uuid];
+  if (st && st.snapshot && (st.dirty || st.inFlight || st.failed)){
+    // A pending local edit outranks the fetched snapshot — show what the
+    // autosave is about to push, not what the server last acknowledged.
+    profileFillForm(st.snapshot);
+    profileSetFormDisabled(false);
+    return;
+  }
+  if (!d || !d.ok){
+    // A just-created profile may not be saved yet (the tree save is in
+    // flight); its data is {} by construction, so the blank form is correct.
+    profileSetFormDisabled(false);
+    return;
+  }
+  profileFillForm(d.data || {});
+  profileSetFormDisabled(!!d.builtin);
+  profileRenderDynamic((d.data && d.data.dynamic) || null);
+}
+function profileFillForm(data){
+  PROFILE_FIELD_KEYS.forEach(k => {
+    profileFieldEl(k).value = (data && data[k] != null) ? data[k] : '';
+  });
+  profileUpdatePreview();
+}
+function profileReadForm(){
+  // Complete editable snapshot; blanks stay off (the server canonicalizes
+  // "" away regardless, this just keeps the payload sparse like the storage).
+  const out = {};
+  PROFILE_FIELD_KEYS.forEach(k => {
+    const v = profileFieldEl(k).value;
+    if (v !== '') out[k] = v;
+  });
+  return out;
+}
+function profileSetFormDisabled(dis){
+  PROFILE_FIELD_KEYS.forEach(k => { profileFieldEl(k).disabled = dis; });
+}
+// Connector-written observations under data.dynamic: a read-only "Last seen"
+// group, rendered only when present. Humans never edit these; the PUT
+// preserves them server-side.
+function profileRenderDynamic(dyn){
+  const fs = document.getElementById('profile-dynamic');
+  const box = document.getElementById('profile-dynamic-rows');
+  box.innerHTML = '';
+  const keys = (dyn && typeof dyn === 'object') ? Object.keys(dyn) : [];
+  fs.hidden = !keys.length;
+  keys.forEach(k => {
+    const e = dyn[k] || {};
+    const div = document.createElement('div');
+    div.className = 'profile-dynamic-row muted';
+    const val = (e.value != null) ? String(e.value) : JSON.stringify(e);
+    div.textContent = k + ': ' + val + (e.seen_at ? ' — seen ' + profileShortDate(e.seen_at) : '');
+    box.appendChild(div);
+  });
+}
+
+// ---- datetime preview (the preview is the documentation for the enums) ----
+function profileFormatDateParts(parts, fmt){
+  switch (fmt){
+    case 'DD/MM/YYYY': return parts.day + '/' + parts.month + '/' + parts.year;
+    case 'MM/DD/YYYY': return parts.month + '/' + parts.day + '/' + parts.year;
+    case 'DD.MM.YYYY': return parts.day + '.' + parts.month + '.' + parts.year;
+    case 'DD-MM-YYYY': return parts.day + '-' + parts.month + '-' + parts.year;
+    default: return parts.year + '-' + parts.month + '-' + parts.day;   // YYYY-MM-DD
+  }
+}
+function profileUpdatePreview(){
+  const el = document.getElementById('profile-preview');
+  const tz = profileFieldEl('timezone').value.trim();
+  const dateFmt = profileFieldEl('date_format').value || 'YYYY-MM-DD';
+  const hour12 = (profileFieldEl('time_format').value || '24h') === '12h';
+  try {
+    // Blank timezone = the browser's local zone; an invalid or half-typed
+    // zone throws here and must never break the rest of the form.
+    const opts = {year: 'numeric', month: '2-digit', day: '2-digit',
+                  hour: '2-digit', minute: '2-digit', hour12: hour12};
+    if (tz) opts.timeZone = tz;
+    const parts = {};
+    new Intl.DateTimeFormat('en-GB', opts).formatToParts(new Date())
+      .forEach(p => { parts[p.type] = p.value; });
+    const time = parts.hour + ':' + parts.minute +
+      (parts.dayPeriod ? ' ' + parts.dayPeriod.toLowerCase() : '');
+    el.textContent = 'Preview: ' + profileFormatDateParts(parts, dateFmt) + ' · ' + time;
+  } catch (e) {
+    el.textContent = 'Preview unavailable — timezone not recognized';
+  }
+}
+
+// ---- autosave (debounced 400 ms per profile; one in-flight PUT per profile;
+// a queued re-send carries the newest snapshot; failures retain the dirty
+// snapshot and retry with capped backoff for as long as the page is open) ----
+const PROFILE_SAVE_DEBOUNCE_MS = 400;
+const PROFILE_RETRY_MAX_MS = 30000;
+let profileFormState = {};   // uuid -> {timer, retryTimer, retryDelay, inFlight, dirty, failed, snapshot}
+function profileFormStateFor(uuid){
+  if (!profileFormState[uuid]){
+    profileFormState[uuid] = {timer: null, retryTimer: null, retryDelay: 1000,
+                              inFlight: false, dirty: false, failed: false, snapshot: null};
+  }
+  return profileFormState[uuid];
+}
+function profileFieldEdited(){
+  const p = profileFormUuid ? profileByUuid(profileFormUuid) : null;
+  if (!p || p.builtin) return;
+  const uuid = profileFormUuid;
+  const st = profileFormStateFor(uuid);
+  st.snapshot = profileReadForm();
+  st.dirty = true;
+  if (st.retryTimer){ clearTimeout(st.retryTimer); st.retryTimer = null; }  // an edit retries a failure immediately
+  clearTimeout(st.timer);
+  st.timer = setTimeout(() => { st.timer = null; profileDataPush(uuid); },
+                        PROFILE_SAVE_DEBOUNCE_MS);
+  profileUpdatePreview();
+  profileRenderStatus();
+}
+async function profileDataPush(uuid){
+  const st = profileFormStateFor(uuid);
+  if (st.timer){ clearTimeout(st.timer); st.timer = null; }
+  if (st.inFlight || !st.dirty || !st.snapshot) return;  // the ack handler re-sends queued edits
+  st.inFlight = true;
+  st.dirty = false;   // a new edit mid-flight re-marks it; failure below restores it
+  const snapshot = st.snapshot;
+  profileRenderStatus();
+  let ok = false, d = null;
+  try {
+    const r = await fetch('/profile/api/profiles/' + encodeURIComponent(uuid), {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({data: snapshot}),
+    });
+    d = await r.json().catch(() => null);
+    ok = r.ok;
+  } catch (e) { /* ok stays false */ }
+  st.inFlight = false;
+  if (ok){
+    st.failed = false;
+    st.retryDelay = 1000;
+    // Refresh the row's local summary from the canonical snapshot so a folder
+    // table opened later shows the saved values without reloading the tree.
+    const row = profileByUuid(uuid);
+    if (row && d && d.summary){ row.summary = d.summary; profileTouch(row); }
+    if (st.dirty) profileDataPush(uuid);   // queued re-send with the newest snapshot
+  } else {
+    st.dirty = true;    // retain the dirty snapshot
+    st.failed = true;
+    st.retryTimer = setTimeout(() => { st.retryTimer = null; profileDataPush(uuid); },
+                               st.retryDelay);
+    st.retryDelay = Math.min(st.retryDelay * 2, PROFILE_RETRY_MAX_MS);  // capped; keeps retrying while the page is open
+  }
+  profileRenderStatus();
+}
+function profileRenderStatus(){
+  const el = document.getElementById('profile-save-status');
+  const st = profileFormUuid ? profileFormState[profileFormUuid] : null;
+  if (!st){ el.textContent = ''; return; }
+  if (st.failed) el.textContent = 'Save failed — retrying';
+  else if (st.inFlight || st.dirty || st.timer) el.textContent = 'Saving…';
+  else if (st.snapshot) el.textContent = 'Saved ✓';
+  else el.textContent = '';
+}
+function profileAnySavePending(){
+  return Object.keys(profileFormState).some(u => {
+    const st = profileFormState[u];
+    return st && (st.dirty || st.inFlight || st.failed || st.timer);
+  });
+}
+// The unload guard is active only while a save is pending or failed; it is
+// gone the moment the latest snapshot is acknowledged. Confirming the dialog
+// deliberately abandons the pending edit — the browser wording says so.
+window.addEventListener('beforeunload', (e) => {
+  if (profileAnySavePending()){ e.preventDefault(); e.returnValue = ''; }
+});
+window.addEventListener('online', () => {
+  Object.keys(profileFormState).forEach(u => {
+    const st = profileFormState[u];
+    if (st && st.failed && !st.inFlight){
+      if (st.retryTimer){ clearTimeout(st.retryTimer); st.retryTimer = null; }
+      profileDataPush(u);
+    }
+  });
+});
+// Cancel the debounce and await the newest data PUT; false if it can't be saved.
+async function profileFlushData(uuid){
+  const st = profileFormState[uuid];
+  if (!st) return true;
+  if (st.timer){ clearTimeout(st.timer); st.timer = null; }
+  if (st.retryTimer){ clearTimeout(st.retryTimer); st.retryTimer = null; }
+  while (st.dirty || st.inFlight){
+    if (st.inFlight){
+      await new Promise(res => setTimeout(res, 50));
+    } else {
+      await profileDataPush(uuid);
+      if (st.failed) return false;
+    }
+  }
+  return !st.failed;
+}
+
+// ---- duplicate (kebab) — the one-action way to mint a profile from an
+// archetype. No version lineage: duplication is a convenience, not ancestry. ----
+async function profileDuplicateUuid(uuid){
+  // Flush pending structural edits first: the source row must exist
+  // server-side, and the new row bumps the version a queued stale tree PUT
+  // would 409 on.
+  clearTimeout(profileSaveTimer);
+  await profileSavePush();
+  if (!profileTreeSaveOk){
+    profileToastMsg('Duplicate aborted — the tree could not be saved.');
+    return;
+  }
+  const p = profileByUuid(uuid);
+  if (p && !p.builtin){
+    // An edit followed immediately by Duplicate must be part of the copy.
+    const flushed = await profileFlushData(uuid);
+    if (!flushed){
+      profileToastMsg('Duplicate aborted — the latest edits could not be saved.');
+      return;
+    }
+  }
+  let d = null;
+  try {
+    const r = await fetch('/profile/api/profiles/' + encodeURIComponent(uuid) + '/duplicate',
+                          {method: 'POST'});
+    d = await r.json();
+  } catch (e) { /* handled below */ }
+  if (!d || !d.ok){
+    profileToastMsg('Duplicate failed: ' + ((d && d.error) || 'server unreachable'));
+    return;
+  }
+  await profileLoadTree();
+  profileSelectItem(d.profile.uuid);
+}
 
 // ---- dirty-guarded dismissal (clicking backdrop / Esc) ----
 function profileOpenModalDirty(){
@@ -938,6 +1218,11 @@ function profileDismissIfClean(){ if (!profileOpenModalDirty()) profileCloseOpen
 
 // ---- wiring + initial paint ----
 profileInitTreeDnD();
+profileInitDatalists();
+document.querySelectorAll('#profile-form [data-key]').forEach(el => {
+  el.addEventListener('input', profileFieldEdited);
+  el.addEventListener('change', profileFieldEdited);
+});
 document.getElementById('profile-folder-input').addEventListener('input', () => {
   document.getElementById('profile-folder-create').disabled =
     document.getElementById('profile-folder-input').value.trim() === '';
