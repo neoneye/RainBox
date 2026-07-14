@@ -904,9 +904,9 @@ async function profileSavePush(){
 }
 
 // ---- datalists (static arrays; timezones from the runtime — no list to maintain) ----
-const PROFILE_DL_LANG = ['da','de','en','en-AU','en-CA','en-GB','en-IN','en-SG','en-US','es','es-MX','fr','fr-CA','he','it','ja','ko','nl','pl','pt-BR','sv','te','zh','zh-Hans','zh-Hant'];
+const PROFILE_DL_LANG = ['da','de','en','en-AU','en-CA','en-GB','en-IN','en-SG','en-US','es','es-MX','fr','fr-CA','he','it','ja','ko','nb','nl','pl','pt-BR','sv','te','zh','zh-Hans','zh-Hant'];
 const PROFILE_DL_CURRENCY = ['AUD','BRL','CAD','CHF','CNY','DKK','EUR','GBP','ILS','INR','JPY','KRW','MXN','NOK','PLN','SEK','SGD','USD'];
-const PROFILE_DL_COUNTRY = ['Australia','Brazil','Canada','China','Denmark','France','Germany','India','Israel','Italy','Japan','Mexico','Netherlands','Poland','Singapore','South Korea','Spain','Sweden','UK','US'];
+const PROFILE_DL_COUNTRY = ['Australia','Brazil','Canada','China','Denmark','France','Germany','India','Israel','Italy','Japan','Mexico','Netherlands','Norway','Poland','Singapore','South Korea','Spain','Sweden','UK','US'];
 function profileFillDatalist(id, values){
   const dl = document.getElementById(id);
   dl.innerHTML = '';

@@ -45,7 +45,7 @@ def test_tree_get_shape_includes_builtins():
     assert isinstance(out["folders"], list) and isinstance(out["profiles"], list)
     assert out["version"]
     builtins = [p for p in out["profiles"] if p.get("builtin")]
-    assert len(builtins) == 20
+    assert len(builtins) == 21
     assert all("summary" in p for p in out["profiles"])
     assert all("data" not in p for p in out["profiles"])
 

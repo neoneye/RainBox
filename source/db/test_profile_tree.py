@@ -178,7 +178,7 @@ def test_builtins_merged_into_tree(app_ctx, empty_tree):
     builtin_folders = [f for f in out["folders"] if f.get("builtin")]
     assert [f["id"] for f in builtin_folders] == [tf]
     builtins = [p for p in out["profiles"] if p.get("builtin")]
-    assert len(builtins) == 20
+    assert len(builtins) == 21
     assert all(p["folderId"] == tf for p in builtins)
     assert builtins[0]["name"] == "US" and builtins[-1]["name"] == "Australia"
     assert builtins[6]["summary"]["full_name"] == "Karl Weierstraß"
@@ -187,7 +187,7 @@ def test_builtins_merged_into_tree(app_ctx, empty_tree):
 
 def test_builtins_excluded_from_version(app_ctx, empty_tree):
     out = db.profile_load_tree()
-    assert len(out["profiles"]) == 20 and len(out["folders"]) == 1  # virtual rows only
+    assert len(out["profiles"]) == 21 and len(out["folders"]) == 1  # virtual rows only
     # The version token covers user rows only, so a builtin-free save of the
     # (empty) user tree against it is a clean no-op — nothing stale, nothing
     # to delete.
@@ -205,7 +205,7 @@ def test_tree_put_rejects_builtin_uuids(app_ctx):
 
 def test_all_templates_validate(app_ctx):
     entries = db.profile_templates_entries()
-    assert len(entries) == 20
+    assert len(entries) == 21
     for e in entries:
         canonical = db.validate_profile_data(e["data"])
         assert canonical == e["data"]        # shipped data is already canonical (no "" values)

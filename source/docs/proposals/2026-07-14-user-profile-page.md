@@ -4,7 +4,7 @@
 profile** — the structured record of a human (name, locale, formats, contact),
 editable through a form pane. The immediate use is demoing rainbox to friends:
 the operator creates a profile per friend in seconds, and a built-in
-`Templates/` folder ships twenty read-only locale archetypes covering the
+`Templates/` folder ships twenty-one read-only locale archetypes covering the
 major tech countries (US, Germany, Japan, South Korea, India, China, …)
 that double as documentation of what a filled-in profile looks like and
 update with every rainbox release. The longer arc is multi-user preparation: this table is the person
@@ -303,7 +303,7 @@ deleted, not retained accidentally.
 
 ## Built-in templates (read-only, shipped with the app)
 
-The `Templates/` folder and its twenty profiles are **not DB rows**. They
+The `Templates/` folder and its twenty-one profiles are **not DB rows**. They
 ship as a data file, `data/profile_templates.json` (the same shipped-content
 pattern as `data/operators/demo.json` and the base Q&A registry): one entry
 per profile with a **fixed, hardcoded uuid** (so `?id=` deep links survive
@@ -330,7 +330,7 @@ code to get wrong:
   Duplicating a built-in creates a **real** top-level row (the virtual
   folder can't hold user rows) named after the template.
 
-The twenty profiles show each locale's *typical* conventions — they are
+The twenty-one profiles show each locale's *typical* conventions — they are
 starting points for duplication, not rules; any profile, including the
 operator's own, sets whatever formats it prefers (a European choosing
 `YYYY-MM-DD` just picks it in the selector). Each is **named in homage to a
@@ -357,6 +357,7 @@ policy, and so a demo never shows a 19th-century birth year):
 | Italy | Rita Levi-Montalcini | discovered nerve growth factor | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
 | Denmark | Øjvind Winge | founded the genetics of yeast | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
 | Sweden | Anders Jonas Ångström | pioneered spectroscopy | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
+| Norway | Fredrik Carl Mülertz Størmer | computed the charged-particle orbits behind the aurora | metric | 24h | DD.MM.YYYY | nb / en | NOK | Oslo | Europe/Oslo |
 | Poland | Zofia Kielan-Jaworowska | led the Gobi expeditions that rewrote early-mammal evolution | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
 | Israel | Yuval Ne’eman | ordered the particle zoo (SU(3)) | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
 | India | Yallāpragaḍa Subbārāvu | co-created methotrexate chemotherapy | metric | 12h | DD/MM/YYYY | en-IN / te | INR | Bengaluru | Asia/Kolkata |
@@ -413,7 +414,7 @@ detail table, JSON round-trip) shows up on shipped data before it can corrupt
 an operator's own. The validate-the-shipped-file test doubles as the encoding
 round-trip test.
 
-The twenty profiles are the living
+The twenty-one profiles are the living
 answer to "what does a filled-in profile look like" — the demo script is:
 open `Templates/`, duplicate the closest archetype, rename it to the friend,
 adjust.
