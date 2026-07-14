@@ -87,6 +87,9 @@ PROFILE_FIELDS = [
     Field("full_name",      "Identity", kind="text",  label="Full name",
           hint="However they write it — any script, order, or particles; "
                "one field, never split into first/last."),
+    Field("native_name",    "Identity", kind="text",  label="Native name",
+          hint="The name in its native script when that differs from the "
+               "Latin form — e.g. 湯川秀樹, יובל נאמן, యల్లాప్రగడ సుబ్బారావు."),
     Field("preferred_name", "Identity", kind="text",  label="Address them as",
           hint="What the assistant calls them, e.g. “Simon” or “you”."),
     Field("handle",         "Identity", kind="text",  label="Internet nickname",
@@ -134,12 +137,14 @@ Design decisions baked in above:
   names, mononyms, suffixes. Splitting into first/last is a Western
   assumption that mis-handles most of the world; the built-in templates alone
   break it a dozen ways (Wu Chien-Shiung, Ferdinand Jakob Heinrich von
-  Mueller, Yuval Ne’eman). Two companion fields carry the *other* two jobs a
-  name does: **`preferred_name`** (what the assistant calls them — a given
-  name, a chosen name, or "you"; for a non-Latin `full_name` it also carries
-  the romanization) and **`handle`** (their internet nickname / username).
-  The assistant addresses them by `preferred_name`, records them by
-  `full_name`, and can @-mention them by `handle`.
+  Mueller, Yuval Ne’eman). Three companion fields carry the *other* jobs a
+  name does: **`native_name`** (the same name in its native script — 湯川秀樹,
+  יובל נאמן — so the romanized `full_name` stays sortable and pronounceable
+  while the authentic spelling is preserved), **`preferred_name`** (what the
+  assistant calls them — a given name, a chosen name, or "you"), and
+  **`handle`** (their internet nickname / username). The assistant addresses
+  them by `preferred_name`, records them by `full_name`, shows the native
+  spelling from `native_name`, and can @-mention them by `handle`.
 - **Datetime formatting is two enums, not a strftime string.** Free-form
   format strings are a footgun (nobody remembers `%-d`), and five date
   shapes + two clock shapes cover every locale the page targets. The form
@@ -189,7 +194,7 @@ order, one label + input per field, the name display (click-to-rename) as
 the heading. **Field edits autosave** — debounced 400 ms per profile, one
 in-flight PUT with a queued re-send, exactly the tree's debounce discipline —
 with a quiet "Saved ✓" status in the pane corner (no toast per keystroke).
-Rationale: a Save button on an 18-field form is the inline-rename failure
+Rationale: a Save button on a 19-field form is the inline-rename failure
 mode multiplied — type into five fields, wander off, lose five edits. With
 autosave there is no dangling state to lose, so no dirty guard and no
 `beforeunload` handler are needed. Last write wins per profile, same as
@@ -306,31 +311,33 @@ any template teaches something.
 Each also carries gender, a modern plausible birthday, and a
 `preferred_name` (the scientist's given name); `handle`/`email`/`address`
 stay blank (nothing to demo there, and blanks show the sparse-JSONB
-behaviour). The `full_name` is written the way each scientist wrote it — for
-those with a non-Latin name that means the native script, with the
-romanization in `preferred_name`: 吳健雄 (Chien-Shiung), 湯川秀樹 (Hideki),
-우장춘 (Jang-choon), 伍連德 (Lien-teh), יובל נאמן (Yuval). Canada shows the
-`preferred_name` doing its other job — the name a person actually goes by:
-`full_name` is "Conrad Kirouac", `preferred_name` is "Frère Marie-Victorin",
-the religious name all of Québec knew him by.
+behaviour). Every template's `full_name` is the romanized Latin form (so it
+sorts and reads everywhere); the ones whose scientist used a non-Latin script
+also fill `native_name`: 吳健雄 (Wu Chien-Shiung), 湯川秀樹 (Hideki Yukawa),
+우장춘 (Woo Jang-choon), 伍連德 (Wu Lien-teh), יובל נאמן (Yuval Ne’eman),
+యల్లాప్రగడ సుబ్బారావు (Subbārāvu). Canada shows `preferred_name` doing its
+own job — the name a person actually goes by: `full_name` is "Conrad
+Kirouac", `preferred_name` is "Frère Marie-Victorin", the religious name all
+of Québec knew him by.
 
 **The templates are also the name-handling test fixture.** Across their
-`full_name`s, abouts, and cities they deliberately cover Latin diacritics
-(É é í â è ó ã), the Danish Ø ("Øjvind Winge"), the Swedish Å and ö
-("Ångström" — a special letter at the very start of the string), the German
-ß (Weierstraß), the macron and retroflex under-dot of Indic transliteration
-(ā + ḍ, "Yallāpragaḍa Subbārāvu"), Greek (ε–δ), CJK, Hangul, and
-right-to-left Hebrew — plus every awkward *shape* a name takes, all in the
-one `full_name` field, which is the whole point: there is no first/last
-split to mis-handle. A generational suffix ("Raymond Davis Jr."), a particle
+`full_name`s, `native_name`s, abouts, and cities they deliberately cover
+Latin diacritics (É é í â è ó ã), the Danish Ø ("Øjvind Winge"), the Swedish
+Å and ö ("Ångström" — a special letter at the very start of the string), the
+German ß (Weierstraß), the macron and retroflex under-dot of Indic
+transliteration (ā + ḍ, "Yallāpragaḍa Subbārāvu"), Greek (ε–δ), and — in
+`native_name` — CJK, Hangul, Telugu, and right-to-left Hebrew. On top of the
+scripts come the awkward *shapes* a name takes, all in the one `full_name`
+field, which is the whole point: there is no first/last split to
+mis-handle. A generational suffix ("Raymond Davis Jr."), a particle
 surname with an apostrophe and internal space ("Jacobus van 't Hoff"), three
 given names before a nobiliary particle ("Ferdinand Jakob Heinrich von
 Mueller"), an apostrophe inside a given name ("D'Arcy Wentworth Thompson"), a
 typographic apostrophe for a Hebrew ayin ("Yuval Ne’eman" — U+2019, not the
 ASCII `'` of the two above), a compound surname joined by a conjunction
 ("Maurício Rocha e Silva"), a hyphenated double surname ("Zofia
-Kielan-Jaworowska"), a family-name-first order (the native-script full_names
-above), and a `preferred_name` sharing nothing with the `full_name`
+Kielan-Jaworowska"), a family-name-first order (the `native_name`s above),
+and a `preferred_name` sharing nothing with the `full_name`
 ("Conrad Kirouac", known as "Frère Marie-Victorin"). So an encoding,
 rendering, or ordering bug anywhere on the page (tree row, form field, folder
 detail table, JSON round-trip) shows up on shipped data before it can corrupt
@@ -389,7 +396,7 @@ deterministic, no live LLM, no browser:
 
 ## Alternatives considered
 
-- **One column per field** — rejected: 18 nullable columns today, a
+- **One column per field** — rejected: 19 nullable columns today, a
   migration for every future field, and the dynamic subtree wouldn't fit at
   all. The registry gives the same type safety at the validation layer.
 - **Reusing the lens JSON files** (`operators/<profile>.json`) as the store —
@@ -402,12 +409,13 @@ deterministic, no live LLM, no browser:
   rename path.
 - **A first-name / last-name pair** — rejected: it is a Western assumption
   that mishandles family-name-first order, mononyms, particles, and multiple
-  given names (the templates break it a dozen ways). One `full_name` plus a
-  `preferred_name` (what to call them) plus a `handle` (their online
-  nickname) covers the three jobs a name actually does without imposing a
-  structure most of the world's names don't have.
+  given names (the templates break it a dozen ways). One `full_name`, a
+  `native_name` (the native-script spelling), a `preferred_name` (what to
+  call them), and a `handle` (their online nickname) cover the jobs a name
+  actually does without imposing a structure most of the world's names don't
+  have.
 - **A Save button instead of autosave** — rejected: the dangling-edit
-  failure mode the rename-modal doc exists to prevent, multiplied across 18
+  failure mode the rename-modal doc exists to prevent, multiplied across 19
   fields. Autosave removes the state that can be lost.
 - **Locale presets as a first-class mechanism** (pick "Chinese" → fields
   fill in) — rejected as machinery; duplicating a built-in archetype
