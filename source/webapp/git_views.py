@@ -32,7 +32,7 @@ GIT_TEMPLATE = """
   .muted{color:#6b7280;font-size:0.85rem}
   .git-split{flex:1;display:grid;grid-template-columns:260px 1fr;min-height:0}
   .git-tree{overflow:auto;min-height:0;border-right:1px solid #e5e7eb;background:#fbfbfb;padding:10px;font-size:0.9rem}
-  .git-main{overflow:auto;padding:16px 20px}
+  .git-main{overflow:auto;padding:16px}
   .git-actions{display:flex;gap:6px}
   /* Small blue pill buttons, matching /cron's tree-action buttons. */
   .git-actions button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;

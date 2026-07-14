@@ -122,7 +122,7 @@ KANBAN_TEMPLATE = """
     color:#1a1a2e;padding:7px 10px;border-radius:6px}
   .kb-menu .item:hover{background:#eef0f6}
   .kb-menu .item.danger{color:#b91c1c}
-  .kb-main{overflow:auto;min-height:0;min-width:0;padding:14px 18px;display:flex;flex-direction:column}
+  .kb-main{overflow:auto;min-height:0;min-width:0;padding:14px 16px;display:flex;flex-direction:column}
   .kb-board-head{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px}
   .kb-board-title{font-weight:700;font-size:1.4rem;margin-right:6px}
   .kb-board-head button{padding:4px 11px;font-size:0.82rem}

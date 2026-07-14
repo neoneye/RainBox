@@ -384,6 +384,13 @@ it.** Specific traps that each shipped before being caught:
   `margin-bottom:1.5em`, which otherwise opens a big gap above the split), tint
   the tree `background:#fbfbfb`, and style the `+ Folder`/`+ Item` buttons (don't
   leave them as default grey browser buttons). `/git` missed all three.
+- **Main-pane horizontal padding is 16px — don't hand-pick 18px or 20px.**
+  With the standard 260px tree panel, 16px puts every page's detail content
+  at the same x as `/chat`'s room title and log (260 + 1em = 276px), so
+  flipping between pages never shifts the content edge. Vertical padding is
+  the page's own choice. Verify by measuring `getBoundingClientRect().left`
+  of the pane's first text against `/chat`'s `.room-title` — several pages
+  shipped with 18/20px before anyone measured.
 - **The folder detail table is the RECURSIVE subtree, not direct children**
   (§7). `/git` first shipped direct-children-only and it diverged from
   `/cron`/`/chat`; use the depth-first `flattenTree` with depth-indented rows.
@@ -427,6 +434,7 @@ it.** Specific traps that each shipped before being caught:
 7. **Detail pane:** flatten subtree with depth; depth-indented rows (plain item
    names, no view-specific decoration); per-row Details link (folder drills in,
    item opens); `hidden`-attr pane toggle (+ explicit `[hidden]{display:none}`
-   if the pane sets `display`). **Hide the WHOLE item view (title bar, body,
+   if the pane sets `display`); main pane horizontal padding 16px (§8 — content
+   edge aligns with `/chat` at 276px). **Hide the WHOLE item view (title bar, body,
    footer, right sidebar) on folder-select**, or stale item info leaks (§7).
 8. **Modals** for folder create/rename/delete per [`ui-modals.md`](ui-modals.md).
