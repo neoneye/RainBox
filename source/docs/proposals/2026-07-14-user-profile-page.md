@@ -30,6 +30,17 @@ style) reads from the active profile instead of being implicit. This page
 deliberately ships **none** of that wiring — it is a data page first, so the
 demo use case lands without touching prompt assembly.
 
+`ChatUser` is an actor record, not a fourth profile concept. It identifies who
+sent a chat message and is referenced by room creation/membership; a person
+profile is the richer human record and can also describe a friend who has no
+account and has never entered a chat. The two stay independent in v1. When
+accounts land, the account row is the explicit one-to-one binding between a
+human `chat_user_uuid` (message actor) and a **user-owned** `profile_uuid`
+(person record), with both pointers unique; a built-in template can never be
+bound to an account. `ChatUser.name` remains the short chat display label,
+while `profile.data.full_name` is the person's full record name. This makes the
+future identity join explicit without adding a premature nullable pointer now.
+
 ## Page structure
 
 A rule-for-rule port of the `/prompt` page (the tree-with-editor-pane
@@ -45,8 +56,15 @@ profiles → hr → buttons → hr → tree → root-drop strip), and the recurs
 folder detail table.
 
 - **Files:** `webapp/profile_views.py` (markup + CSS), `static/profile.js`
-  (tree + form JS), `webapp/profile_api.py`, `db/profile.py`. Nav entry
-  "Profile" next to Settings.
+  (tree + form JS), `webapp/profile_api.py`, `db/profile.py`,
+  `profile_fields.py` (registry), and `data/profile_templates.json` (shipped
+  built-ins). The two models live in `db/models.py`; `db/__init__.py` exports
+  the persistence functions; `webapp/__init__.py` imports the view/API modules
+  so their routes register; and `webapp/core.py` adds the Admin views and the
+  nav entry "Profile" next to Settings. Tests live beside the existing prompt
+  suites in `db/test_profile_tree.py`, `webapp/test_profile_api.py`, and
+  `webapp/test_profile_views.py`. New tables are additive and are created by
+  the existing `db.create_all()` startup path.
 - **Leaf name = a standalone label** ("Simon", "Demo — no PII", "Germany"),
   renamed via the click-to-rename modal
   ([`ui-modal-rename.md`](../ui-modal-rename.md)). It is *not* derived from
@@ -56,11 +74,13 @@ folder detail table.
   Country — enough to tell demo profiles apart at a glance.
 - **Kebab on a profile:** Rename, **Duplicate**, Delete (type-to-confirm).
   Duplicate copies the whole `data` blob into a new row named "<name> copy",
-  placed right after the source — the one-action way to mint a friend's
-  account from an archetype. (Same shape as `/prompt`'s clone, minus the
-  version lineage: no `parent_uuid`, duplication is a convenience, not
-  ancestry.) On a built-in template the kebab offers **Duplicate only** —
-  no rename, no delete (see below).
+  placed in the same folder right after a user-owned source — the one-action
+  way to mint a friend's account from an archetype. (Same shape as `/prompt`'s
+  clone, minus the version lineage: no `parent_uuid`, duplication is a
+  convenience, not ancestry.) A built-in source instead produces a real row at
+  the end of the user-owned top level, immediately before the virtual
+  `Templates/` folder in root rendering. On a built-in template the kebab
+  offers **Duplicate only** — no rename, no delete (see below).
 
 ## Data model
 
@@ -95,7 +115,7 @@ PROFILE_FIELDS = [
     Field("handle",         "Identity", kind="text",  label="Internet nickname",
           hint="Online handle / username, e.g. “neoneye”."),
     Field("gender",         "Identity", kind="enum",  label="Gender",
-          choices=["", "male", "female", "other"]),
+          choices=["male", "female", "other"]),
     Field("about",          "Identity", kind="text",  label="About",
           multiline=True,
           hint="Self-description in their own words, e.g. “programmer, "
@@ -103,14 +123,14 @@ PROFILE_FIELDS = [
     Field("birthday",       "Identity", kind="date",  label="Birthday"),
     # group "Locale & formats"
     Field("units",          "Locale & formats", kind="enum", label="Units",
-          choices=["", "metric", "imperial"]),
+          choices=["metric", "imperial"]),
     Field("timezone",       "Locale & formats", kind="text", label="Timezone",
           datalist="tz", hint="IANA name, e.g. Europe/Copenhagen"),
     Field("date_format",    "Locale & formats", kind="enum", label="Date format",
-          choices=["", "YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY",
+          choices=["YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY",
                    "DD.MM.YYYY", "DD-MM-YYYY"]),
     Field("time_format",    "Locale & formats", kind="enum", label="Time format",
-          choices=["", "24h", "12h"]),
+          choices=["24h", "12h"]),
     Field("language",       "Locale & formats", kind="text", label="Language (primary)",
           datalist="lang", hint="BCP-47, e.g. da, en-US, zh-Hans"),
     Field("language_2",     "Locale & formats", kind="text", label="Language (secondary)",
@@ -150,7 +170,12 @@ Design decisions baked in above:
   shapes + two clock shapes cover every locale the page targets. The form
   shows a **live preview line** ("Preview: 14.07.2026 · 21:30") rendered
   client-side from the profile's timezone + both formats, updating as the
-  selects change — the preview is the documentation.
+  selects change — the preview is the documentation. A blank timezone uses
+  the browser's local zone. Because timezone validation is deliberately soft,
+  preview construction is wrapped in `try/catch`: an invalid or half-typed
+  zone shows "Preview unavailable — timezone not recognized" and never breaks
+  the rest of the form. If `Intl.supportedValuesOf` is unavailable, the
+  timezone input still works as free text with an empty datalist.
 - **Locale fields never constrain each other.** Country, units, language,
   and the format selects are independent preferences: a European profile
   with `YYYY-MM-DD` (the operator's own choice — ISO 8601 is common in
@@ -174,7 +199,11 @@ Design decisions baked in above:
   presents* dates, not how they are stored).
 - **Every field optional.** An empty profile is valid; the form renders
   blanks, the JSONB stays sparse (absent key, not `""`), and later prompt
-  rendering skips absent fields.
+  rendering skips absent fields. The blank option rendered for each enum is a
+  form affordance, not a registry choice. Before validation, the API
+  canonicalizes every known editable key whose value is `""` by removing it;
+  it then validates the remaining values and stores only that canonical sparse
+  object. Unknown keys are rejected even when their value is empty.
 
 ### Dynamic info (future, shape reserved now)
 
@@ -182,53 +211,95 @@ Current location, screen size, connection type (Telegram / Discord /
 rainbox UI) are **observations written by connectors, not fields edited by
 humans**. Reserving the shape now costs one rule: connector-written data
 goes under `data["dynamic"][...]` with a `seen_at` timestamp per entry, the
-validator ignores the `dynamic` subtree, and the form renders it (when
-present) as a read-only "Last seen" group under the editable groups. No
-connector writes it in this proposal; the rule just prevents a future
-migration of editable-vs-observed fields.
+form renders it (when present) as a read-only "Last seen" group under the
+editable groups, and the human-facing PUT rejects a submitted `dynamic` key as
+read-only. The server treats that PUT as a complete snapshot of the **editable
+registry fields only**: it canonicalizes and validates them, then merges them
+into the current row while preserving the row's existing `dynamic` subtree.
+Future connectors get a separate narrow update operation for individual
+dynamic entries; they never call the human PUT. No connector writes dynamic
+data in this proposal, but defining ownership and merge behaviour now prevents
+both a migration and a stale form autosave overwriting a newer observation.
 
 ## Detail pane and saving
 
 The pane renders the registry's groups as three `<fieldset>`s in registry
 order, one label + input per field, the name display (click-to-rename) as
-the heading. **Field edits autosave** — debounced 400 ms per profile, one
-in-flight PUT with a queued re-send, exactly the tree's debounce discipline —
-with a quiet "Saved ✓" status in the pane corner (no toast per keystroke).
-Rationale: a Save button on a 19-field form is the inline-rename failure
-mode multiplied — type into five fields, wander off, lose five edits. With
-autosave there is no dangling state to lose, so no dirty guard and no
-`beforeunload` handler are needed. Last write wins per profile, same as
-`/prompt` content.
+the heading. **Field edits autosave** — debounced 400 ms per profile, with
+timers/state keyed by profile uuid, one in-flight PUT per profile, and a queued
+re-send carrying the newest snapshot. A late detail GET is discarded unless
+its uuid is still selected. The pane status moves through "Saving…", "Saved
+✓", and "Save failed — retrying"; failures retain the dirty snapshot and
+retry with exponential backoff whose delay is capped while retries continue
+for as long as the page is open (and immediately on the next edit or `online`
+event), rather than silently waiting for an unrelated change. On
+acknowledgement the client also refreshes that row's local `summary` from the
+canonical editable snapshot, so a subsequently opened folder table reflects
+the saved values without reloading the whole tree.
 
-Like `/prompt`'s content, **`data` stays out of the tree payload and the
-version hash** (structural fields only: uuid, name, description, parent,
-folder, position), saved via its own per-profile PUT — so autosaving a form
-field never 409s an open tree, and vice versa.
+A Save button on a 19-field form would leave too much easy-to-lose state, but
+autosave still has a short dirty window. A `beforeunload` dirty guard is active
+only while a save is pending or failed and is removed as soon as the latest
+snapshot is acknowledged; if the operator deliberately confirms leaving, the
+UI makes clear that the pending edit may be lost. In-page profile selection
+does not cancel another profile's timer. These lifecycle rules make the
+remaining risk visible instead of claiming that debounce alone eliminates
+unsaved state. Last acknowledged write wins per profile, same as `/prompt`
+content.
+
+Like `/prompt`'s content, the **full `data` blob stays out of the tree payload
+and the version hash**. The small derived `summary` below may ride on GET rows,
+but the hash still covers structural fields only (uuid, name, description,
+parent, folder, position). Data saves use their own per-profile PUT, so
+autosaving a form field never 409s an open tree, and vice versa.
 
 ## API
 
 Mirrors `webapp/prompt_api.py`:
 
 - `GET /profile/api/tree` → `{folders, profiles, version}` (no `data`).
-  Built-in entries are merged in with `builtin: true` so the client renders
-  them without a second fetch; they are excluded from `version`.
+  Each profile carries a read-only `summary` projection containing
+  `full_name`, `language`, `units`, `time_format`, and `country`, which is
+  sufficient for the recursive folder detail table without an N-request
+  detail-fetch fan-out. `summary` is derived from `data`, is not accepted by
+  PUT, and is excluded from `version` just like the full data blob. Built-in
+  entries are merged in with `builtin: true` and the same summary shape so the
+  client renders them without a second fetch; they are excluded from
+  `version`.
 - `PUT /profile/api/tree` — full replace of the **user-owned** tree,
-  `version` + `deletes` guarded, 400 on `ProfileTreeError` (including any
-  payload carrying a built-in uuid), 409 on `ProfileTreeConflict`.
+  `version` + `deletes` guarded. The client projects its mixed GET state back
+  to structural folder/profile keys only, omitting every built-in row and every
+  `summary`; the validator rejects either if submitted. 400 on
+  `ProfileTreeError` (including any payload carrying a built-in uuid), 409 on
+  `ProfileTreeConflict`.
 - `GET /profile/api/profiles/<uuid>` → `{ok, uuid, name, data, builtin}` —
   serves built-ins from the shipped file, user rows from the DB.
-- `PUT /profile/api/profiles/<uuid>` `{data}` — validates against the
-  registry (unknown keys / wrong types / out-of-enum → 400 naming the field),
-  writes the whole blob. 400 "read-only built-in" for a built-in uuid.
-- `POST /profile/api/profiles/<uuid>/duplicate` → new row, copied `data`,
-  name "<name> copy", positioned after the source (for a built-in source:
-  a top-level row named after the template).
+- `PUT /profile/api/profiles/<uuid>` `{data}` — accepts a complete editable
+  snapshot, canonicalizes blank strings away, validates against the registry
+  (unknown keys / wrong types / out-of-enum → 400 naming the field), rejects
+  `dynamic` as read-only, and replaces the editable keys while preserving the
+  server's current `dynamic` subtree. 400 "read-only built-in" for a built-in
+  uuid.
+- `POST /profile/api/profiles/<uuid>/duplicate` → new row with copied `data`
+  and name "<name> copy". A user-owned copy is placed in the same folder after
+  its source; a built-in copy is placed at the end of the user-owned top level.
+  Before every POST, the client first flushes pending structural tree edits so
+  the source exists and the duplicate cannot invalidate a queued stale tree
+  PUT. For a user-owned source it then cancels the data debounce and awaits the
+  newest data PUT. Failure of either flush aborts duplication visibly. After a
+  successful POST it reloads the tree, matching `/prompt` clone's version
+  discipline.
 
 `db/profile.py` supplies `profile_load_tree` / `profile_save_tree` /
 `profile_tree_version` / `validate_profile_tree` (ported from `db/prompt.py`,
 including the uuid-collision check that keeps `?id=` unambiguous) plus
 `profile_get` / `profile_update_data` / `profile_duplicate` and
-`validate_profile_data(data)` built from the registry.
+`validate_profile_data(data)` built from the registry. Validation returns the
+canonical sparse editable object; `profile_update_data` merges it with the
+current server-owned dynamic subtree in the same transaction. Concretely, the
+stored result is the canonical editable object plus the pre-update `dynamic`
+value when one exists; editable keys omitted from the complete snapshot are
+deleted, not retained accidentally.
 
 ## Built-in templates (read-only, shipped with the app)
 
@@ -358,41 +429,55 @@ adjust.
    doc's §8 process rule (drag to root strip, kebab on selected row,
    type-to-confirm delete — not by code-diffing); form round-trips every
    field; invalid enum/date rejected with the field named; duplicate copies
-   all data; built-ins render read-only, survive a tree save untouched, and
-   cannot be edited, renamed, deleted, or dragged.
+   all data; an edit followed immediately by Duplicate copies the edit; an
+   invalid/half-typed timezone leaves the form working; pending/failed saves
+   visibly guard page exit; built-ins render read-only, survive a tree save
+   untouched, and cannot be edited, renamed, deleted, or dragged.
 2. **Assistant integration (separate proposal when wanted).** `?` Active-
    profile setting, working-context line 1 quoting it, units/timezone/format
    preferences steering assistant output, lens `profile_uuid` linkage.
 3. **Accounts (deferred, unchanged).** When the security work's Phase 2
-   lands real request identity, an account maps to a person profile
-   (identity) + an operator lens (visibility). This table is ready to be
-   pointed at; nothing else here presumes auth exists.
+   lands real request identity, an account binds one human `ChatUser` actor to
+   one user-owned person profile (identity) and selects an operator lens
+   (visibility). Both account pointers are unique; built-ins are ineligible.
+   Nothing in v1 presumes auth exists.
 
 ## Tests
 
-Ported from the `/prompt` suites plus registry-specific ones — all
-deterministic, no live LLM, no browser:
+The automated suites are ported from `/prompt` plus registry-specific cases;
+they are deterministic, use no live LLM, and require no browser. The explicit
+real-browser acceptance checks remain in Phase 1 above.
 
 1. Tree: load/save round-trip, version 409 on stale save, `deletes` guard,
    dangling/cyclic folder rejection, folder-vs-profile uuid collision
-   rejection.
+   rejection; a tree PUT carrying derived `summary` is rejected.
 2. `data` excluded from tree payload and version hash — saving `data` does
-   not change `profile_tree_version()`.
+   not change `profile_tree_version()`. Tree rows expose only the five-field
+   derived `summary`; changing data updates that summary without changing the
+   structural version.
 3. `validate_profile_data`: unknown key → error naming it; enum out of set →
    error; `birthday` must be a valid ISO calendar date (rejects `2026-02-30`
    and non-ISO shapes); multiline `address` accepted; absent keys
-   (sparse blob) valid; `dynamic` subtree ignored.
-4. Duplicate: copies `data` deep, new uuid, "<name> copy", positioned after
-   source.
+   (sparse blob) valid; known `""` values canonicalized away; unknown empty
+   keys still rejected; a submitted `dynamic` key rejected as read-only.
+4. Duplicate of a user-owned source: copies `data` deep, new uuid, "<name>
+   copy", positioned after the source. Browser acceptance additionally covers
+   edit → immediate Duplicate, proving the client flushes the pending data
+   save before the POST.
 5. Built-ins: present in `GET tree` with `builtin: true` on a fresh DB;
    excluded from `profile_tree_version()`; a tree PUT containing a built-in
    uuid → 400; data PUT on a built-in uuid → 400; a user row reusing a
    built-in uuid rejected by the validator; duplicate of a built-in creates
    a real editable top-level row; `data/profile_templates.json` entries all
    pass `validate_profile_data` (so a release can't ship a broken template).
-6. Views: marker-string tests for the pane fieldsets and datalists —
-   remembering these prove presence, not behaviour (§8), and that the inline
-   JS is a **non-raw** Python string (no bare `\n`-style escapes).
+6. Dynamic merge: seed a server-side `dynamic` entry, PUT a stale editable
+   snapshot, and prove the observation survives byte-for-byte; duplicate still
+   copies the complete stored blob, including dynamic.
+7. Views: marker-string tests for the pane fieldsets and datalists —
+   remembering these prove presence, not behaviour (§8) — plus the
+   mtime-cache-busted external `profile.js` reference. Any small inline script
+   left in the non-raw Python HTML template contains no bare `\n`-style
+   escapes.
 
 ## Alternatives considered
 
@@ -416,7 +501,8 @@ deterministic, no live LLM, no browser:
   have.
 - **A Save button instead of autosave** — rejected: the dangling-edit
   failure mode the rename-modal doc exists to prevent, multiplied across 19
-  fields. Autosave removes the state that can be lost.
+  fields. Autosave minimizes routine dirty state; the narrowly active unload
+  guard covers its debounce, in-flight, and retry windows honestly.
 - **Locale presets as a first-class mechanism** (pick "Chinese" → fields
   fill in) — rejected as machinery; duplicating a built-in archetype
   achieves the same in one kebab action with zero new concepts.
