@@ -362,14 +362,16 @@ def _mention_hits(needle: str) -> list[tuple[_Source, UUID]]:
     return out
 
 
-def _qa_mentions(needle: str) -> list[dict[str, Any]]:
+def _qa_matches(needle: str, *, allow_mentions: bool) -> list[dict[str, Any]]:
     """Q&A registry entries (base data/question_answer.jsonl + the operator's
-    customize-dir overlay) whose questions/answer/handler quote the fragment.
-    Searched at the SOURCE jsonl, not the derived pgvector table, so an edit
-    is findable before a repopulate. Shields are honored exactly like
-    retrieval honors them: an entry carrying a shield appears only when that
-    shield is unlocked (qa.unlocked_shields) — fail closed. The `uuid` field
-    carries the entry's qa id (its identity in the registry)."""
+    customize-dir overlay) matching the fragment. The entry's ID is its
+    identity — often itself a uuid — so an id hit scores like a direct uuid
+    match (exact/substring); a hit in the questions/answer/handler/path text
+    is a 'mention'. Searched at the SOURCE jsonl, not the derived pgvector
+    table, so an edit is findable before a repopulate. Shields are honored
+    exactly like retrieval honors them: an entry carrying a shield appears
+    only when that shield is unlocked (qa.unlocked_shields) — fail closed.
+    The `uuid` field carries the entry's qa id."""
     from memory.seed_memory import (QA_JSONL_PATH, _entry_locked, _load_jsonl,
                                     _overlay_path, _unlocked_shields)
 
@@ -383,23 +385,32 @@ def _qa_mentions(needle: str) -> list[dict[str, Any]]:
     for e in entries:
         if _entry_locked(e, unlocked):
             continue
+        ident = str(e.get("id") or "").lower().replace("-", "")
         blob = " ".join(
-            [str(e.get("answer") or ""), str(e.get("handler") or "")]
+            [str(e.get("answer") or ""), str(e.get("handler") or ""),
+             str(e.get("path") or "")]
             + [str(q) for q in (e.get("questions") or [])]
         ).lower().replace("-", "")
-        if needle not in blob:
+        if needle == ident:
+            match, confidence = "exact", 1.0
+        elif needle in ident:
+            match, confidence = "substring", 0.70 + 0.25 * len(needle) / 32
+        elif allow_mentions and needle in blob:
+            match, confidence = "mention", _MENTION_SCORE
+        else:
             continue
         questions = e.get("questions") or []
         path = (str(overlay) if e.get("_source") == "user-overlay" and overlay
                 else str(QA_JSONL_PATH))
         out.append({
             "kind": "Q&A entry", "uuid": str(e.get("id")),
-            "match": "mention", "confidence": _MENTION_SCORE,
+            "match": match, "confidence": round(confidence, 3),
             "name": _excerpt(str(questions[0]) if questions else e.get("id")),
             "url": None,
             "parents": [{"kind": "q&a file", "uuid": str(e.get("id")),
                          "name": path}],
         })
+    out.sort(key=lambda m: -m["confidence"])
     return out[:_MENTION_ROWS_PER_SOURCE]
 
 
@@ -461,14 +472,14 @@ def find_uuid(query: str, limit: int = 20) -> list[dict[str, Any]]:
             ratio = _best_window_ratio(q, u.hex)
             if ratio >= _FUZZY_THRESHOLD:
                 scored.append((0.9 * ratio, "fuzzy", source, u))
-    qa_matches: list[dict[str, Any]] = []
+    qa_matches = _qa_matches(
+        q, allow_mentions=len(q) >= FIND_UUID_MIN_MENTION_QUERY)
     if len(q) >= FIND_UUID_MIN_MENTION_QUERY:
         seen = {(source.kind, u) for _, _, source, u in scored}
         for source, u in _mention_hits(q):
             if (source.kind, u) not in seen:
                 seen.add((source.kind, u))
                 scored.append((_MENTION_SCORE, "mention", source, u))
-        qa_matches = _qa_mentions(q)
     scored.sort(key=lambda m: (-m[0], m[2].kind))
     out: list[dict[str, Any]] = []
     for score, match, source, u in scored[:limit]:

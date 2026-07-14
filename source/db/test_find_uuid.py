@@ -169,12 +169,15 @@ def test_mention_in_qa_registry_respects_shields(app_ctx, tmp_path):
 
     open_frag = "0b171e57-aa01"    # spans a dash, like a hand-copied fragment
     shielded_frag = "0b171e57-bb02"
+    qa_uuid = "cadf3498-fa22-4d68-9d91-f258f39cea62"
     (tmp_path / "question_answer.jsonl").write_text("\n".join([
         _json.dumps({"id": "test.open", "questions": ["where is the run?"],
                      "answer": "run 0b171e57-aa01-4c1c-8f00-000000000001"}),
         _json.dumps({"id": "test.shielded", "questions": ["secret thing"],
                      "answer": "see 0b171e57-bb02-4c1c-8f00-000000000002",
                      "shield": "pii"}),
+        _json.dumps({"id": qa_uuid, "questions": ["who are you?"],
+                     "answer": "the bot"}),
     ]) + "\n")
     old_dir = db.get_setting("customize.dir")
     old_shields = db.get_setting("qa.unlocked_shields")
@@ -185,6 +188,12 @@ def test_mention_in_qa_registry_respects_shields(app_ctx, tmp_path):
         assert m["uuid"] == "test.open" and m["match"] == "mention"
         assert m["name"] == "where is the run?"
         assert m["parents"][0]["name"].endswith("question_answer.jsonl")
+        # An entry whose ID is itself a uuid is a DIRECT match on that id —
+        # full id exact, a fragment (even a short one) substring.
+        m = next(x for x in db.find_uuid(qa_uuid) if x["kind"] == "Q&A entry")
+        assert m["match"] == "exact" and m["uuid"] == qa_uuid
+        m = next(x for x in db.find_uuid("cadf") if x["kind"] == "Q&A entry")
+        assert m["match"] == "substring"
         # Shield locked: the entry is invisible — fail closed.
         assert not any(x["kind"] == "Q&A entry"
                        for x in db.find_uuid(shielded_frag))
