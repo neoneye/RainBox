@@ -351,10 +351,11 @@ function profileItemNode(p){
   n.className = 'profile-item-node' + (selected ? ' sel' : '');
   n.href = '/profile?id=' + encodeURIComponent(p.uuid);
   n.title = p.name;
-  // No leaf icon in the tree — every leaf here is a profile, so an icon is noise.
+  // No leaf icon in the tree — every leaf here is a profile, so an icon is
+  // noise. Built-in leaves carry no tag either: the Templates folder above
+  // them already says built-in once, tagging all 20 rows repeats it.
   const label = document.createElement('span'); label.className = 'profile-item-label'; label.textContent = p.name;
   n.appendChild(label);
-  if (p.builtin) n.appendChild(profileMakeBuiltinTag());
   n.addEventListener('click', (e) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
     e.preventDefault();
