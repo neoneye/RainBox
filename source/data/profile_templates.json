@@ -2,7 +2,7 @@
   "folder": {
     "uuid": "b3ad81a4-0e35-5237-9eb4-38c7e6321d03",
     "name": "Templates",
-    "description": "Built-in locale archetypes — duplicate one to start a profile. Ships with rainbox and updates with each release."
+    "description": "Built-in locale archetypes — duplicate one to start a profile."
   },
   "profiles": [
     {
