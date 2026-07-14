@@ -62,7 +62,7 @@ OLLAMA_BASE: str = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").r
 OLLAMA_KEY: str = "ollama"  # Ollama ignores the key but the OpenAI client requires one
 
 # Retrieval / acceptance thresholds. Picked from observed scores against this
-# JSONL + nomic embeddings (genuine matches >= ~0.66, unrelated <= ~0.47); the
+# JSONL (genuine matches >= ~0.66, unrelated <= ~0.47); the
 # margin is checked between distinct qa_ids, not raw nodes, because multiple
 # question alternates share the same qa_id and would otherwise look ambiguous.
 TOP_K: int = 5

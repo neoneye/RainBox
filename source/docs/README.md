@@ -27,6 +27,9 @@ history); `proposals/` holds design-time intent and reviews.
 - [kanban-design.md](kanban-design.md) — boards as a coordination ledger:
   worker leases, authority dispatcher, serializations, assistant
   capabilities.
+- [find-uuid-design.md](find-uuid-design.md) — the cross-table uuid
+  resolver behind /find and the assistant's `find_uuid` action:
+  exact/substring/fuzzy/mention passes, sources, ranking, Q&A shields.
 - [conversation-design.md](conversation-design.md) — bounded
   persona-to-persona conversations: manager, CAS turn guards, pause/resume.
 - [direct-chat.md](direct-chat.md) — one-to-one operator↔model rooms:

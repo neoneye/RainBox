@@ -101,6 +101,7 @@ only by `undo_write_intent`.
 | `query_memory` | memory | read | — |
 | `workspace_read_command` | workspace | read | — |
 | `kanban_read` | kanban | read | — |
+| `find_uuid` | lookup | read | — |
 | `remember` | memory | log-and-undo | `reject_memory_candidate` (internal) |
 | `forget_memory` | memory | log-and-undo | `reactivate_memory` (internal) |
 | `activate_memory` | memory | **confirm** | — |

@@ -6,13 +6,7 @@ it works internally: [deep-research.md](deep-research.md).
 
 ## Prerequisites
 
-1. **The branch.** The code lives on the `deep-research` branch until merged:
-
-   ```bash
-   cd ~/git/rainbox && git checkout deep-research
-   ```
-
-2. **Research dependencies.** They live in their own pin file
+1. **Research dependencies.** They live in their own pin file
    (`research/requirements.txt`) so they can't entangle the main app's
    dependency resolution, but they install into the same venv:
 
@@ -20,20 +14,20 @@ it works internally: [deep-research.md](deep-research.md).
    cd source && venv/bin/pip install -r research/requirements.txt
    ```
 
-3. **Postgres + a model provider running.** The CLI reads model groups from
+2. **Postgres + a model provider running.** The CLI reads model groups from
    your normal RainBox database (`rainbox_production`), and the models run on
    whichever provider backs them — start LM Studio / Ollama / Jan as usual
    (see [operator-guide.md](operator-guide.md)).
 
-4. **A model group named `research`.** Start the app (`python3 main.py`),
-   open `/modelgroups`, and create a group named `research` with at least one
+3. **A model group named `research`.** Start the app (`python3 main.py`),
+   open `/modelgroup`, and create a group named `research` with at least one
    member. Pick a model that handles **structured output** well — the
    splitter, query-gen, and URL-selection stages use it. Add a fallback
    member or two if you have them; the pipeline falls through the group in
    priority order on any failure, same as agent bindings. A different group
    works too via `--model-group <name>`.
 
-5. **A search provider — optional.** DuckDuckGo works out of the box with no
+4. **A search provider — optional.** DuckDuckGo works out of the box with no
    key (that's the zero-config default). For better results, export one of:
 
    ```bash
@@ -155,9 +149,9 @@ and total ms per model tell you whether the fast model is doing the job.
 
 | symptom | fix |
 |---------|-----|
-| `error: model group 'research' not found; available groups: [...]` | Create it on `/modelgroups`, or pass `--model-group` with one from the list. |
-| `error: model group 'research' has no members` | Add at least one model to the group on `/modelgroups`. |
-| `error: search provider 'brave' is not configured` | Export the env var from step 5, or drop `--search brave`. |
+| `error: model group 'research' not found; available groups: [...]` | Create it on `/modelgroup`, or pass `--model-group` with one from the list. |
+| `error: model group 'research' has no members` | Add at least one model to the group on `/modelgroup`. |
+| `error: search provider 'brave' is not configured` | Export the env var from step 4, or drop `--search brave`. |
 | `error: all models in the research model group failed` | Provider not running, model missing, or context too small — test the member on `/model` first. |
 | Empty or thin findings sections | DDG snippets can be weak; try `--search brave`, or a stronger model for the group. |
 | `failed: timed out` / `structured stream exceeded 120s` on most calls | The model is slower than the timeout floor — raise it with `--llm-timeout 300`, or put a faster model first in the group. |

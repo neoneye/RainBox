@@ -29,13 +29,18 @@ Each subsystem has its own page; Flask-Admin (`/admin`) is the raw table-level
 fallback.
 
 - `/chat` — rooms, agents, SSE-streamed replies.
+- `/prompt` — versioned system prompts (folder tree, clone lineage, diff).
 - `/memory` — claim review: lifecycle actions, conflicts, tombstones.
 - `/cron` — the scheduler tree (System folder holds the seeded backup and
   memory-sync jobs).
 - `/kanban` — boards, folder tree, task execution.
 - `/git` — registered local repositories.
+- `/profile` — person profiles (folder tree, structured person fields).
 - `/assistant` — assistant run inspector (traces, steps, write intents).
 - `/conversations` — persona-to-persona conversation runs.
+- `/find` — paste a uuid (or a fragment, even typo'd) to learn what it is
+  and jump to it; also searches mentions in chats/logs and the Q&A registry.
+- `/user` — identity card for a chat participant (`?id=<uuid>`).
 - `/model`, `/modelgroup`, `/agentmodel` — model configs, fallback
   groups, agent bindings.
 - `/settings` — typed operator settings (DB → env → default) with provenance.
@@ -68,7 +73,8 @@ Useful responder agents:
 - `mcp`: FunctionAgent backed by MCP tools.
 
 (`followup` and `assistant_run_summarizer` also exist but run as internal
-helpers, not room responders.)
+helpers, and `direct_chat` backs one-to-one direct rooms — none of them are
+room responders you add.)
 
 ## Memory Operations
 

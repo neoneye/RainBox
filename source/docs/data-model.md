@@ -468,6 +468,32 @@ Folder tree for organizing registered repositories.
 
 Tracked local Git repositories and their display placement in the Git page.
 
+## Prompt Tables
+
+### `prompt_folder`
+
+Folder tree for organizing stored system prompts on /prompt.
+
+### `prompt`
+
+One version of a system prompt. Versioning is the ancestor chain: cloning is
+the only way to make a new version, and the clone's `parent_uuid` points at
+the row it was copied from (null = a lineage root). Direct-chat rooms may
+link a version via `chatroom.prompt_uuid`.
+
+## Profile Tables
+
+### `profile_folder`
+
+Folder tree for organizing person profiles on /profile.
+
+### `profile`
+
+A person profile: `name` is the standalone tree label; all person fields
+live in the sparse `data` JSONB (schema = `profile_fields.PROFILE_FIELDS`;
+absent key = unset). Connector-written observations live under
+`data["dynamic"]` and survive human-facing saves.
+
 ## Eval Tables
 
 ### `eval_case`
