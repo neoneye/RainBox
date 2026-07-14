@@ -326,11 +326,12 @@ function profileFolderLi(f){
     node.draggable = false;  // anchors are natively draggable — switch that off too
   }
   profileMakeFolderDrop(node, f.id);
-  // Kebab is rendered on every row but only shown (via CSS) on the selected one,
-  // so row heights stay consistent — matches /cron. The built-in Templates
-  // folder has no actions, so its kebab stays permanently hidden.
+  // Kebab is rendered on every row but only shown (via CSS) on the selected
+  // one, so row heights stay consistent — matches /cron. No Rename item: a
+  // selected folder's pane heading is already the click-to-rename control.
+  // The built-in Templates folder has no actions, so its kebab stays
+  // permanently hidden.
   profileMakeKebab(node, f.builtin ? {} : {
-    onRename: () => profileKebabRename('folder', f.id),
     onDelete: () => profileConfirmDeleteFolder(f.id),
   });
   li.appendChild(node);
@@ -377,12 +378,6 @@ function profileItemNode(p){
   });
   return n;
 }
-// Kebab "Rename" selects the node and opens the rename modal on it.
-function profileKebabRename(type, id){
-  profileSelectNode(type, id);
-  const node = type === 'item' ? profileByUuid(id) : profileFolderById(id);
-  if (node) profileOpenRenameModal(type, node, node.name);
-}
 // Position a fixed kebab menu near its anchor, clamped inside the viewport:
 // below the anchor when it fits, flipped above when it would overflow the
 // bottom edge (nodes at the bottom of a long tree). Unhides the menu first so
@@ -399,9 +394,10 @@ function profilePlaceMenu(menu, anchorRect){
   menu.style.left = left + 'px';
   menu.style.top = Math.max(margin, top) + 'px';
 }
-// 3-dot overflow menu. opts: { onRename?, onDuplicate?, onDelete? }. With no
-// actions at all the kebab element is still rendered (constant row height)
-// but stays permanently invisible.
+// 3-dot overflow menu. opts: { onDuplicate?, onDelete? } — renaming lives on
+// the pane heading (click-to-rename), not here. With no actions at all the
+// kebab element is still rendered (constant row height) but stays
+// permanently invisible.
 function profileMakeKebab(node, opts){
   opts = opts || {};
   const kebab = document.createElement('button');
@@ -410,7 +406,6 @@ function profileMakeKebab(node, opts){
   const menu = document.createElement('div');
   menu.className = 'profile-menu'; menu.setAttribute('role', 'menu'); menu.hidden = true;
   const items = [];
-  if (opts.onRename) items.push(['Rename', opts.onRename, '']);
   if (opts.onDuplicate) items.push(['Duplicate', opts.onDuplicate, '']);
   if (opts.onDelete) items.push(['Delete', opts.onDelete, 'danger']);
   if (!items.length) kebab.classList.add('profile-kebab-none');
