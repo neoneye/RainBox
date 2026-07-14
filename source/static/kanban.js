@@ -818,50 +818,18 @@ function kbFillTaskSelects(agentUuid, columnUuid){
 }
 function kbFillColumnSelect(columns, selected){
   const colSel = document.getElementById('kb-t-col');
+  colSel.disabled = false;   // a previous board pick may have disabled it
   colSel.innerHTML = '';
   columns.forEach(c => colSel.appendChild(new Option(c.name, c.uuid)));
   if (selected) colSel.value = selected;
 }
-// The task's column, carried over to a TARGET board's column list: same name
-// (case-insensitive), else same position (clamped to the last), else the
-// first — a board move is not a state change, so "In progress" stays in
-// progress. Mirrors the server default in kanban_move_task_to_board.
-function kbMatchColumn(targetColumns, taskColumnUuid){
-  if (!targetColumns.length) return null;
-  const src = kbCurrent.columns.find(c => c.uuid === taskColumnUuid);
-  if (!src) return targetColumns[0].uuid;
-  const want = src.name.trim().toLowerCase();
-  const byName = targetColumns.find(c => c.name.trim().toLowerCase() === want);
-  if (byName) return byName.uuid;
-  const idx = Math.min(kbCurrent.columns.indexOf(src), targetColumns.length - 1);
-  return targetColumns[idx].uuid;
-}
-// Picking another board in the task modal repopulates the Column select with
-// THAT board's columns (fetched fresh — the index holds no columns), the
-// task's column carried over via kbMatchColumn; Save then performs the
-// server-side move. Back to the open board restores its columns. A failed
-// fetch reverts the pick.
-document.getElementById('kb-t-board').addEventListener('change', async () => {
-  const boardSel = document.getElementById('kb-t-board');
+// Picking another board in the task modal arms a MOVE on Save. The Column
+// select is disabled then — the column carries over server-side (same name,
+// else same position): a board move is not a state change, not a choice.
+document.getElementById('kb-t-board').addEventListener('change', () => {
   if (!kbCurrent) return;
-  if (boardSel.value === kbCurrent.uuid){
-    const t = kbEditingTask ? kbTask(kbEditingTask) : null;
-    kbFillColumnSelect(kbCurrent.columns, (t && t.columnUuid) || kbModalColumn);
-    return;
-  }
-  const want = boardSel.value;
-  const target = await kbLoadBoard(want);
-  if (boardSel.value !== want) return;  // user picked again meanwhile
-  if (!target){
-    kbToast('Could not load that board.');
-    boardSel.value = kbCurrent.uuid;
-    const t = kbEditingTask ? kbTask(kbEditingTask) : null;
-    kbFillColumnSelect(kbCurrent.columns, (t && t.columnUuid) || kbModalColumn);
-    return;
-  }
-  const t = kbEditingTask ? kbTask(kbEditingTask) : null;
-  kbFillColumnSelect(target.columns,
-                     kbMatchColumn(target.columns, t ? t.columnUuid : null));
+  document.getElementById('kb-t-col').disabled =
+    document.getElementById('kb-t-board').value !== kbCurrent.uuid;
 });
 function kbNewTask(columnUuid){
   if (!kbCurrent) return;
@@ -973,7 +941,7 @@ function kbSaveTaskModal(){
   const columnUuid = document.getElementById('kb-t-col').value;
   const boardUuid = document.getElementById('kb-t-board').value;
   if (kbEditingTask && boardUuid && kbCurrent && boardUuid !== kbCurrent.uuid){
-    kbMoveTaskToBoard(kbEditingTask, boardUuid, columnUuid,
+    kbMoveTaskToBoard(kbEditingTask, boardUuid,
                       {title: title, desc: desc, agentUuid: agentUuid});
     return;
   }
@@ -992,13 +960,12 @@ function kbSaveTaskModal(){
 }
 // Move the open task to another board — SERVER-SIDE (POST /move-to-board),
 // because the page's per-board bulk save could only fake it as delete +
-// recreate, destroying the task's uuid and audit trail. The modal's text
-// edits are saved to the current board first (they must not be lost, and the
-// move endpoint doesn't carry them), then the server moves the row and the
-// source board + tree counts re-hydrate. `columnUuid` is a TARGET-board
-// column (the select was repopulated on the board pick) — it is deliberately
-// NOT written to the local task, which the bulk save would reject.
-async function kbMoveTaskToBoard(taskUuid, boardUuid, columnUuid, edits){
+// recreate, destroying the task's uuid and audit trail. The column carries
+// over server-side. The modal's text edits are saved to the current board
+// first (they must not be lost, and the move endpoint doesn't carry them),
+// then the server moves the row and the source board + tree counts
+// re-hydrate.
+async function kbMoveTaskToBoard(taskUuid, boardUuid, edits){
   const t = kbTask(taskUuid);
   if (!t) return;
   t.title = edits.title;
@@ -1011,8 +978,7 @@ async function kbMoveTaskToBoard(taskUuid, boardUuid, columnUuid, edits){
   try {
     const r = await fetch('/kanban/api/tasks/' + encodeURIComponent(taskUuid) + '/move-to-board', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({boardId: boardUuid, columnId: columnUuid || null,
-                            actor: 'human'}),
+      body: JSON.stringify({boardId: boardUuid, actor: 'human'}),
     });
     j = await r.json();
   } catch (e) { /* fall through */ }

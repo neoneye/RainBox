@@ -1141,24 +1141,23 @@ def kanban_move_task(
 
 
 def kanban_move_task_to_board(
-    task_uuid: UUID, board_uuid: UUID, column_uuid: UUID | None = None,
-    *, actor: str = "", note: str = "",
+    task_uuid: UUID, board_uuid: UUID, *, actor: str = "",
 ) -> dict[str, Any] | None:
-    """Move a task to another BOARD, appended at the end of `column_uuid`
-    (must be on the target board). When `column_uuid` is omitted the task's
-    column is PRESERVED: the target column with the same name
-    (case-insensitive), else the one at the same position (clamped to the
-    last), else the target's first column — a board move is not a state
-    change, so "In progress" stays in progress. The task keeps its uuid,
-    audit trail, assignee, and lease — the reason this is a server-side
-    operation: the page's per-board bulk save could only fake it as delete +
-    recreate, which destroys both. A 'moved' event names the boards. Moving
-    to the task's own board delegates to kanban_move_task (a plain column
-    move). Raises KanbanError for an unknown target board or a column that
-    isn't on it."""
+    """Move a task to another BOARD. The column CARRIES OVER — the target
+    column with the same name (case-insensitive), else the one at the same
+    position (clamped to the last), else the target's first: a board move
+    is not a state change, so "In progress" stays in progress. The task
+    keeps its uuid, audit trail, assignee, and lease — the reason this is
+    a server-side operation: the page's per-board bulk save could only
+    fake it as delete + recreate, which destroys both. A 'moved' audit
+    event names both boards and the landing column. Moving a task to the
+    board it is already on is a no-op (no event). Raises KanbanError for
+    an unknown target board."""
     t = _task(task_uuid)
     if t is None:
         return None
+    if board_uuid == t.board_uuid:
+        return _task_brief(t)
     board = db.session.execute(
         sa.select(KanbanBoard).where(KanbanBoard.uuid == board_uuid)
     ).scalar_one_or_none()
@@ -1168,29 +1167,22 @@ def kanban_move_task_to_board(
         sa.select(KanbanColumn).where(KanbanColumn.board_uuid == board_uuid)
         .order_by(KanbanColumn.position, KanbanColumn.id)
     ).scalars().all()
-    if column_uuid is None:
-        if not columns:
-            raise KanbanError(f"board {board_uuid} has no columns")
-        src_cols = db.session.execute(
-            sa.select(KanbanColumn).where(KanbanColumn.board_uuid == t.board_uuid)
-            .order_by(KanbanColumn.position, KanbanColumn.id)
-        ).scalars().all()
-        src = next((c for c in src_cols if c.uuid == t.column_uuid), None)
-        col = None
-        if src is not None:
-            want = src.name.strip().lower()
-            col = next((c for c in columns
-                        if c.name.strip().lower() == want), None)
-            if col is None:
-                col = columns[min(src_cols.index(src), len(columns) - 1)]
+    if not columns:
+        raise KanbanError(f"board {board_uuid} has no columns")
+    src_cols = db.session.execute(
+        sa.select(KanbanColumn).where(KanbanColumn.board_uuid == t.board_uuid)
+        .order_by(KanbanColumn.position, KanbanColumn.id)
+    ).scalars().all()
+    src = next((c for c in src_cols if c.uuid == t.column_uuid), None)
+    col = None
+    if src is not None:
+        want = src.name.strip().lower()
+        col = next((c for c in columns
+                    if c.name.strip().lower() == want), None)
         if col is None:
-            col = columns[0]
-    else:
-        col = next((c for c in columns if c.uuid == column_uuid), None)
-        if col is None:
-            raise KanbanError(f"column {column_uuid} is not on board {board_uuid}")
-    if board_uuid == t.board_uuid:
-        return kanban_move_task(task_uuid, col.uuid, actor=actor, note=note)
+            col = columns[min(src_cols.index(src), len(columns) - 1)]
+    if col is None:
+        col = columns[0]
     old_board = db.session.execute(
         sa.select(KanbanBoard.name).where(KanbanBoard.uuid == t.board_uuid)
     ).scalar_one_or_none() or "?"
@@ -1200,10 +1192,9 @@ def kanban_move_task_to_board(
         sa.select(sa.func.coalesce(sa.func.max(KanbanTask.position), -1))
         .where(KanbanTask.column_uuid == col.uuid, KanbanTask.uuid != task_uuid)
     ).scalar_one()) + 1
-    detail = (f"board {old_board} → {board.name} ({col.name})"
-              + (f" — {note}" if note else ""))
-    db.session.add(KanbanTaskEvent(task_uuid=task_uuid, kind="moved",
-                                   actor=str(actor or ""), detail=detail))
+    db.session.add(KanbanTaskEvent(
+        task_uuid=task_uuid, kind="moved", actor=str(actor or ""),
+        detail=f"board {old_board} → {board.name} ({col.name})"))
     db.session.commit()
     return _task_brief(t)
 

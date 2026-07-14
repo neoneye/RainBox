@@ -490,37 +490,28 @@ def test_move_task(board):
 
 def test_move_task_to_board(board):
     tu = _one_task(board)
+    db.kanban_move_task(tu, _u(board["columns"][1]["uuid"]))  # → "In progress"
     other = db.kanban_create_board("Other board")
     try:
-        out = db.kanban_move_task_to_board(
-            tu, _u(other["uuid"]), _u(other["columns"][1]["uuid"]),
-            actor="human", note="handoff")
+        out = db.kanban_move_task_to_board(tu, _u(other["uuid"]), actor="human")
         assert out["boardUuid"] == other["uuid"]
+        # The column CARRIES OVER by name: "In progress" stays in progress.
         assert out["columnUuid"] == other["columns"][1]["uuid"]
         # The task keeps its uuid + audit trail; the move names both boards.
         events = db.kanban_task_events(tu)
         assert any(e["kind"] == "created" for e in events)
-        moved = next(e for e in events if e["kind"] == "moved")
-        assert "board Test board → Other board (In progress)" in moved["detail"]
-        assert "handoff" in moved["detail"]
+        assert any(e["detail"] == "board Test board → Other board (In progress)"
+                   for e in events if e["kind"] == "moved")
         assert db.kanban_load_board(_u(board["uuid"]))["tasks"] == []
-        # Omitted column → the task's column is PRESERVED by name (moving
-        # back here: "In progress" stays in progress, not reset to "To do").
-        out = db.kanban_move_task_to_board(tu, _u(board["uuid"]))
-        assert out["boardUuid"] == board["uuid"]
-        assert out["columnUuid"] == board["columns"][1]["uuid"]
-        # Loud failures: unknown board; a column not on the target board.
+        # Moving to the board it is already on is a no-op (no new event).
+        n_events = len(db.kanban_task_events(tu))
+        out = db.kanban_move_task_to_board(tu, _u(other["uuid"]))
+        assert out["boardUuid"] == other["uuid"]
+        assert len(db.kanban_task_events(tu)) == n_events
+        # An unknown target board is loud.
         with pytest.raises(db.KanbanError):
             db.kanban_move_task_to_board(tu, _u(str(uuid4())))
-        with pytest.raises(db.KanbanError):
-            db.kanban_move_task_to_board(tu, _u(other["uuid"]),
-                                         _u(board["columns"][0]["uuid"]))
-        # Same board + explicit column = a plain column move.
-        out = db.kanban_move_task_to_board(tu, _u(board["uuid"]),
-                                           _u(board["columns"][1]["uuid"]))
-        assert out["boardUuid"] == board["uuid"]
-        assert out["columnUuid"] == board["columns"][1]["uuid"]
-        # No name match on the target → the same POSITION carries over.
+        # No same-named column on the target → the same POSITION carries over.
         weird = db.kanban_create_board("Weird columns")
         try:
             fresh = db.kanban_load_board(_u(weird["uuid"]))
@@ -541,13 +532,11 @@ def test_move_task_to_board_endpoint(board):
     client = _client()
     try:
         resp = client.post(f"/kanban/api/tasks/{tu}/move-to-board",
-                           json={"boardId": other["uuid"],
-                                 "columnId": other["columns"][0]["uuid"],
-                                 "actor": "human"})
+                           json={"boardId": other["uuid"], "actor": "human"})
         assert resp.status_code == 200
         task = resp.get_json()["task"]
         assert task["boardUuid"] == other["uuid"]
-        assert task["columnUuid"] == other["columns"][0]["uuid"]
+        assert task["columnUuid"] == other["columns"][0]["uuid"]  # "To do" carried over
         # Bad inputs are loud.
         assert client.post(f"/kanban/api/tasks/{tu}/move-to-board",
                            json={}).status_code == 400
