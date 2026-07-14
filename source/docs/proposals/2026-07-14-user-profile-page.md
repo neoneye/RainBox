@@ -254,7 +254,7 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 | Label | Person | About | units | time | date | lang | currency | city | timezone |
 |---|---|---|---|---|---|---|---|---|---|
 | US | Raymond Davis Jr. | detected solar neutrinos | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
-| Canada | Maud Menten | Michaelis–Menten enzyme kinetics | metric | 12h | YYYY-MM-DD | en-CA / fr-CA | CAD | Montreal | America/Toronto |
+| Canada | Marie-Victorin | wrote the Flore laurentienne, Québec's definitive botany | metric | 12h | YYYY-MM-DD | fr-CA / en-CA | CAD | Montreal | America/Toronto |
 | Mexico | Mario Molina | explained ozone depletion | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
 | Brazil | Johanna Döbereiner | pioneered biological nitrogen fixation in crops | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
 | UK | Rosalind Franklin | imaged the structure of DNA | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
@@ -265,7 +265,7 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 | Italy | Rita Levi-Montalcini | discovered nerve growth factor | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
 | Denmark | Ole Rømer | showed light has a finite speed | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
 | Sweden | Sofya Kovalevskaya | the Cauchy–Kovalevskaya theorem | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
-| Poland | Stefan Banach | founded functional analysis | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
+| Poland | Zofia Kielan-Jaworowska | led the Gobi expeditions that rewrote early-mammal evolution | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
 | Israel | Amos Tversky | mapped judgment under uncertainty | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
 | India | Satyendra Nath Bose | Bose–Einstein statistics | metric | 12h | DD/MM/YYYY | en-IN / hi | INR | Bengaluru | Asia/Kolkata |
 | China | Wu Chien-Shiung | overthrew parity conservation | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | Shanghai | Asia/Shanghai |
@@ -295,15 +295,20 @@ the entries whose scientist wrote their name in a non-Latin script, the
 `nickname` field holds the native spelling: 吳健雄 (Wu Chien-Shiung),
 湯川秀樹 (Yukawa), 우장춘 (Woo), 伍連德 (Wu Lien-teh), עמוס טברסקי
 (Tversky), সত্যেন্দ্রনাথ বসু (Bose), Софья Ковалевская (Kovalevskaya).
+Canada's shows the field's other purpose — the name a person actually goes
+by: `first_name`/`last_name` are Conrad/Kirouac, `nickname` is "Frère
+Marie-Victorin", the religious name all of Québec knew him by.
 
 **The templates are also the name-handling test fixture.** Between the
 names, nicknames, abouts, and cities they deliberately cover Latin
-diacritics (É â ö ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
+diacritics (É â è é ö ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
 Hangul, Bengali, Cyrillic, right-to-left Hebrew, a generational suffix
-(`last_name` "Davis Jr."), and an apostrophe-particle surname (`last_name`
-"van 't Hoff" — apostrophe, internal space, lowercase particles) — standing
-tests that nothing assumes a last name is one capitalized dot-free
-word — so an encoding, rendering, or name-splitting
+(`last_name` "Davis Jr."), an apostrophe-particle surname (`last_name`
+"van 't Hoff" — apostrophe, internal space, lowercase particles), a
+hyphenated double surname (Kielan-Jaworowska), and a person whose everyday
+name lives in `nickname` rather than first/last (Frère
+Marie-Victorin) — standing tests that nothing assumes a last name is one
+capitalized dot-free word — so an encoding, rendering, or name-splitting
 bug anywhere on the page (tree row, form field, folder detail table, JSON
 round-trip) shows up on shipped data before it can corrupt an operator's
 own. The validate-the-shipped-file test doubles as the encoding round-trip
