@@ -1232,7 +1232,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.KANBAN_READ: Capability(
         name=AssistantActionName.KANBAN_READ, family="kanban",
-        description=('read kanban state as JSON — use this to find a board or list a '
+        description=('read kanban state — use this to find a board or list a '
                      'board\'s columns before creating/moving a task. args: optional '
                      '{"task_uuid"} for one task\'s detail + recent events, '
                      '{"board_uuid"} for a board; empty lists all boards '
