@@ -17,6 +17,15 @@ nothing is false — substring hits suppress the fuzzy pass, not exact ones):
   best SequenceMatcher ratio of the query against every same-length window
   of each uuid's hex — catches one or two typo'd characters
 
+A separate MENTION pass (query ≥ 8 chars, always runs) finds the fragment
+inside TEXT fields — chat messages, task titles/descriptions, task events,
+cron jobs, prompts, memory claims, journal payloads — because uuids that no
+longer (or never) exist as rows still appear in conversations and logs.
+Dashes are ignored on both sides, so a fragment spanning a dash boundary in
+the quoted uuid still hits. A mention is reported as the CONTAINING entity
+(the chat message, the task, …) with match="mention", ranked below direct
+uuid matches.
+
 Every match is described with its kind, display name, parent chain
 (inner → outer: a task's column, board, folders …), and the `?id=` deep-link
 url of the page that shows it. Read-only; no events are written.
@@ -34,17 +43,22 @@ from db.models import (AssistantRun, AssistantStep, ChatMessage, Chatroom,
                        ChatroomFolder, ChatUser, CronFolder, CronJob, CronRun,
                        GitFolder, GitRepo, Journal, KanbanBoard,
                        KanbanBoardFolder, KanbanColumn, KanbanTask,
-                       MemoryClaim, ModelConfig, ModelConfigOverride,
-                       ModelGroup, Profile, ProfileFolder, Prompt,
-                       PromptFolder, db)
+                       KanbanTaskEvent, MemoryClaim, ModelConfig,
+                       ModelConfigOverride, ModelGroup, Profile,
+                       ProfileFolder, Prompt, PromptFolder, db)
 
-__all__ = ["find_uuid", "FIND_UUID_MIN_QUERY", "FIND_UUID_MIN_FUZZY_QUERY"]
+__all__ = ["find_uuid", "FIND_UUID_MIN_QUERY", "FIND_UUID_MIN_FUZZY_QUERY",
+           "FIND_UUID_MIN_MENTION_QUERY"]
 
 # Shorter fragments match half the database; refuse loudly instead.
 FIND_UUID_MIN_QUERY = 4
 # Fuzzy needs enough signal that a ratio means anything.
 FIND_UUID_MIN_FUZZY_QUERY = 8
+# Text mentions need enough signal not to hit every row with hex in it.
+FIND_UUID_MIN_MENTION_QUERY = 8
 _FUZZY_THRESHOLD = 0.78
+_MENTION_SCORE = 0.5          # below every direct uuid match
+_MENTION_ROWS_PER_SOURCE = 10  # newest hits per text source, keeps floods out
 
 
 def _excerpt(text: str, n: int = 60) -> str:
@@ -290,6 +304,61 @@ _SOURCES: tuple[_Source, ...] = (
     _Source("journal", Journal, _journal, uuid_attr="id"),
 )
 
+_BY_KIND = {s.kind: s for s in _SOURCES}
+
+
+@dataclass(frozen=True)
+class _TextSource:
+    """Where uuids appear as TEXT rather than as a row's identity. A hit in
+    `columns` of `model` is reported as the entity of `entity_kind` whose
+    uuid sits in `entity_uuid_attr` of the SAME row — usually the row itself
+    (uuid), but e.g. a kanban task EVENT hit reports the event's task."""
+    model: Any
+    columns: tuple[str, ...]
+    entity_kind: str
+    entity_uuid_attr: str = "uuid"
+
+
+_TEXT_SOURCES: tuple[_TextSource, ...] = (
+    _TextSource(ChatMessage, ("text",), "chat message"),
+    _TextSource(KanbanTask, ("title", "description"), "kanban task"),
+    _TextSource(KanbanTaskEvent, ("detail",), "kanban task",
+                entity_uuid_attr="task_uuid"),
+    _TextSource(CronJob, ("message", "command", "description"), "cron job"),
+    _TextSource(Prompt, ("content",), "prompt"),
+    _TextSource(MemoryClaim, ("text",), "memory claim"),
+    _TextSource(Journal, ("payload", "result"), "journal",
+                entity_uuid_attr="id"),
+)
+
+
+def _mention_hits(needle: str) -> list[tuple[_Source, UUID]]:
+    """Entities whose text contains the (dash-stripped) fragment. The dash
+    strip happens on BOTH sides — replace(lower(col),'-','') in SQL — so a
+    fragment spanning a dash boundary of a uuid quoted in prose still hits.
+    LIKE wildcards in the query are escaped; newest rows first, capped per
+    source."""
+    escaped = (needle.replace("\\", "\\\\")
+               .replace("%", r"\%").replace("_", r"\_"))
+    out: list[tuple[_Source, UUID]] = []
+    for ts in _TEXT_SOURCES:
+        conds = [
+            sa.func.replace(
+                sa.func.lower(sa.func.coalesce(getattr(ts.model, c), "")),
+                "-", "",
+            ).like(f"%{escaped}%", escape="\\")
+            for c in ts.columns
+        ]
+        rows = db.session.execute(
+            sa.select(getattr(ts.model, ts.entity_uuid_attr))
+            .where(sa.or_(*conds))
+            .order_by(ts.model.id.desc())
+            .limit(_MENTION_ROWS_PER_SOURCE)
+        ).scalars().all()
+        source = _BY_KIND[ts.entity_kind]
+        out.extend((source, u) for u in rows)
+    return out
+
 
 def _normalize(query: str) -> str:
     """Lowercase and drop uuid punctuation/wrapping (dashes, braces, quotes,
@@ -349,6 +418,12 @@ def find_uuid(query: str, limit: int = 20) -> list[dict[str, Any]]:
             ratio = _best_window_ratio(q, u.hex)
             if ratio >= _FUZZY_THRESHOLD:
                 scored.append((0.9 * ratio, "fuzzy", source, u))
+    if len(q) >= FIND_UUID_MIN_MENTION_QUERY:
+        seen = {(source.kind, u) for _, _, source, u in scored}
+        for source, u in _mention_hits(q):
+            if (source.kind, u) not in seen:
+                seen.add((source.kind, u))
+                scored.append((_MENTION_SCORE, "mention", source, u))
     scored.sort(key=lambda m: (-m[0], m[2].kind))
     out: list[dict[str, Any]] = []
     for score, match, source, u in scored[:limit]:

@@ -123,6 +123,58 @@ def test_prefix_match_ranks_above_middle_match(world):
     assert uuids.index(prefix_uuid) < uuids.index(middle_uuid)
 
 
+def test_mention_in_chat_message_text(app_ctx):
+    """A uuid that exists ONLY inside a chat message's text (no row carries
+    it) is still found: the message is reported as a 'mention', linking to
+    its room — even when the query fragment spans a dash boundary."""
+    ghost = "3adf3498-fa22-4bbb-8bbb-123456789abc"
+    user = db.ChatUser(name="find-test human", user_type="human")
+    db.db.session.add(user)
+    db.db.session.commit()
+    room = db.create_chatroom("Q&A find test", user.uuid, [])
+    try:
+        db.post_chat_message(room.uuid, user.uuid,
+                             f"the run for task {ghost} failed twice")
+        matches = db.find_uuid("adf3498-fa22")  # spans the first dash
+        m = next(x for x in matches if x["kind"] == "chat message")
+        assert m["match"] == "mention"
+        assert m["name"].startswith("the run for task")  # the message excerpt
+        assert m["url"] == f"/chat?id={room.uuid}"
+        assert any(p["kind"] == "chat room" and p["name"] == "Q&A find test"
+                   for p in m["parents"])
+    finally:
+        db.delete_chatroom(room.uuid)
+        db.db.session.delete(user)
+        db.db.session.commit()
+
+
+def test_mention_in_task_event_reports_the_task(world):
+    """A uuid quoted in a task EVENT detail surfaces the task that owns the
+    event — the entity a caller can act on, not the log line."""
+    ghost = "aaaabbbb-cccc-4ddd-8eee-ffff00001111"
+    task_uuid = UUID(world["task"]["uuid"])
+    db.kanban_append_event(task_uuid, "note", actor="human",
+                           detail=f"duplicated from `{ghost}`")
+    matches = db.find_uuid("aaaabbbbcccc")
+    m = next(x for x in matches if x["kind"] == "kanban task")
+    assert m["match"] == "mention" and m["uuid"] == str(task_uuid)
+
+
+def test_direct_match_is_not_duplicated_as_mention(world):
+    """A task whose description quotes its OWN uuid appears once, as the
+    direct match — the mention pass dedupes against it."""
+    task_uuid = world["task"]["uuid"]
+    bu = UUID(world["board"]["uuid"])
+    fresh = db.kanban_load_board(bu)
+    for t in fresh["tasks"]:
+        if t["uuid"] == task_uuid:
+            t["description"] = f"my own id is {task_uuid}"
+    db.kanban_save_board(bu, fresh)
+    matches = db.find_uuid(task_uuid)
+    hits = _hits(matches, task_uuid)
+    assert len(hits) == 1 and hits[0]["match"] == "exact"
+
+
 def test_exact_ranks_above_substring(world):
     """The full uuid of one entity is also a query; its exact hit sorts
     before any coincidental substring hits elsewhere."""

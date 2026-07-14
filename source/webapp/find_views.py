@@ -51,7 +51,9 @@ FIND_TEMPLATE = """
 <main class="pp-find">
   <h1>Find</h1>
   <div class="hint">Paste a uuid — or a fragment of one (beginning, end, middle,
-    even with a typo) — and find out what it is, wherever it lives.</div>
+    even with a typo) — and find out what it is, wherever it lives. Fragments of
+    8+ characters also surface <em>mentions</em>: chat messages, tasks, logs
+    whose text quotes the uuid.</div>
   <div class="bar">
     <input id="find-q" type="text" autocomplete="off" spellcheck="false"
            placeholder="e.g. 213a2397-8187-4596-8f32-c6ca22d7c5f8 or 213a2397" autofocus>
