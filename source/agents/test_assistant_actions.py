@@ -470,6 +470,33 @@ def test_kanban_read_unknown_task_is_blocked(app_ctx):
     assert obs.ok is False
 
 
+# --- find_uuid ----------------------------------------------------------------
+
+
+def test_find_uuid_resolves_a_fragment(app_ctx):
+    """A partial uuid resolves to the entity with kind, full uuid, and
+    parents — the weak-LLM path to a correct uuid without guessing."""
+    from agents.assistant import _action_find_uuid
+
+    board = db.kanban_create_board("Find action board")
+    try:
+        prefix = UUID(board["uuid"]).hex[:10]
+        obs = _action_find_uuid(_ctx(), {"query": prefix})
+        assert obs.ok
+        matches = json.loads(obs.text)["matches"]
+        (m,) = [m for m in matches if m["uuid"] == board["uuid"]]
+        assert m["kind"] == "kanban board" and m["match"] == "substring"
+    finally:
+        db.kanban_delete_board(UUID(board["uuid"]))
+
+
+def test_find_uuid_refuses_short_query(app_ctx):
+    from agents.assistant import _action_find_uuid
+
+    obs = _action_find_uuid(_ctx(), {"query": "7d"})
+    assert obs.ok is False and "at least" in obs.text
+
+
 # --- argument validation ------------------------------------------------------
 
 

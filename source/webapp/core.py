@@ -154,6 +154,7 @@ NAV_TEMPLATE = """
         <a href="{{ url_for('demo_voice_echo') }}" class="{{ 'pp-active' if request.endpoint == 'demo_voice_echo' }}">Echo</a>
       </div>
     </details>
+    <a href="{{ url_for('find_page') }}" class="{{ 'pp-active' if request.endpoint == 'find_page' }}">Find</a>
     <a href="{{ url_for('doctor_page') }}" class="{{ 'pp-active' if request.endpoint == 'doctor_page' }}">Doctor</a>
     <a href="{{ url_for('demo_multimodal') }}" class="{{ 'pp-active' if request.endpoint == 'demo_multimodal' }}">Multimodal</a>
     <span class="pp-spacer"></span>

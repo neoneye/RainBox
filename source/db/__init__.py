@@ -30,6 +30,7 @@ from db.git import *  # noqa: F401,F403  re-export git tree ops + repo inspectio
 from db.prompt import *  # noqa: F401,F403  re-export system-prompt tree + version-lineage ops
 from db.profile import *  # noqa: F401,F403  re-export person-profile tree + data ops
 from db.settings import *  # noqa: F401,F403  re-export app_setting registry/accessors
+from db.find_uuid import *  # noqa: F401,F403  re-export the cross-table fuzzy uuid lookup
 
 logger = logging.getLogger(__name__)
 

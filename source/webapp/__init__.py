@@ -43,5 +43,6 @@ from . import assistant_views  # noqa: F401,E402
 from . import assistant_overview_api  # noqa: F401,E402
 from . import assistant_overview_views  # noqa: F401,E402
 from . import user_views  # noqa: F401,E402
+from . import find_views  # noqa: F401,E402
 
 __all__ = ["app"]

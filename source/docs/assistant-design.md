@@ -131,6 +131,11 @@ only by `undo_write_intent`.
   serialization (`kanban_board_llm_json`), or the folder tree of boards; every
   observation is JSON. Reading writes no events (unlike worker operations).
   See `kanban-design.md`.
+- **`find_uuid`** — resolve a uuid the model isn't sure about (a fragment,
+  a typo'd paste) across every uuid-bearing table via `db.find_uuid`: each
+  JSON match carries kind, name, parent chain, page url, and the FULL uuid to
+  use in subsequent actions — so a weak model never has to guess an id. The
+  same lookup backs the operator's `/find` page.
 
 ## Write tiers
 

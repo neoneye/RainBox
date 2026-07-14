@@ -1,0 +1,108 @@
+"""db.find_uuid: the cross-table fuzzy uuid lookup — exact, substring
+(prefix/suffix/middle), and typo-tolerant fuzzy matching, with kind, parent
+chain, and deep-link url in every match."""
+
+from uuid import UUID
+
+import pytest
+
+import db
+
+
+@pytest.fixture
+def app_ctx():
+    app = db.make_app()
+    db.init_db(app)
+    ctx = app.app_context()
+    ctx.push()
+    try:
+        yield app
+    finally:
+        db.db.session.rollback()
+        ctx.pop()
+
+
+@pytest.fixture
+def world(app_ctx):
+    """A kanban folder > board > task chain to look up; removed afterwards."""
+    folder = db.kanban_create_folder("find-uuid folder")
+    board = db.kanban_create_board("find-uuid board",
+                                   folder_uuid=UUID(folder["uuid"]))
+    task = db.kanban_create_task(
+        UUID(board["uuid"]), UUID(board["columns"][0]["uuid"]),
+        title="find-uuid task")
+    try:
+        yield {"folder": folder, "board": board, "task": task}
+    finally:
+        db.kanban_delete_board(UUID(board["uuid"]))
+        db.kanban_delete_folder(UUID(folder["uuid"]))
+
+
+def _hits(matches, uuid_str):
+    return [m for m in matches if m["uuid"] == uuid_str]
+
+
+def test_exact_match_with_parents_and_url(world):
+    task_uuid = world["task"]["uuid"]
+    matches = db.find_uuid(task_uuid)
+    (m,) = _hits(matches, task_uuid)
+    assert m["kind"] == "kanban task" and m["match"] == "exact"
+    assert m["name"] == "find-uuid task"
+    assert m["url"] == f"/kanban?id={task_uuid}"
+    # Parents inner → outer: column, board, folder.
+    kinds = [p["kind"] for p in m["parents"]]
+    assert kinds == ["kanban column", "kanban board", "kanban folder"]
+    assert m["parents"][1]["uuid"] == world["board"]["uuid"]
+    assert m["parents"][2]["name"] == "find-uuid folder"
+
+
+def test_exact_match_ignores_dashes_braces_case(world):
+    bu = world["board"]["uuid"]
+    for spelling in (bu.upper(), "{" + bu + "}", bu.replace("-", ""),
+                     f"urn:uuid:{bu}"):
+        (m,) = _hits(db.find_uuid(spelling), bu)
+        assert m["match"] == "exact", spelling
+
+
+def test_prefix_suffix_and_middle_fragments(world):
+    bu = world["board"]["uuid"]
+    hex32 = UUID(bu).hex
+    for fragment in (hex32[:8], hex32[-8:], hex32[10:20]):
+        (m,) = _hits(db.find_uuid(fragment), bu)
+        assert m["match"] == "substring", fragment
+
+
+def test_fuzzy_match_tolerates_a_typo(world):
+    bu = world["board"]["uuid"]
+    hex32 = UUID(bu).hex
+    # Flip one character of a 16-char fragment to a hex value it isn't.
+    typo = ("0" if hex32[8] != "0" else "1") + hex32[9:24]
+    matches = db.find_uuid(typo)
+    (m,) = _hits(matches, bu)
+    assert m["match"] == "fuzzy" and m["confidence"] < 1.0
+
+
+def test_short_query_is_refused(app_ctx):
+    with pytest.raises(ValueError):
+        db.find_uuid("7de")
+
+
+def test_no_match_returns_empty_list(app_ctx):
+    # 12 hex chars that exist nowhere (fuzzy threshold keeps randoms out).
+    assert db.find_uuid("fedcba987654fedcba987654fedcba98") == []
+
+
+def test_column_links_to_its_board(world):
+    col_uuid = world["board"]["columns"][0]["uuid"]
+    (m,) = _hits(db.find_uuid(col_uuid), col_uuid)
+    assert m["kind"] == "kanban column"
+    assert m["url"] == f"/kanban?id={world['board']['uuid']}"
+    assert m["parents"][0]["kind"] == "kanban board"
+
+
+def test_exact_ranks_above_substring(world):
+    """The full uuid of one entity is also a query; its exact hit sorts
+    before any coincidental substring hits elsewhere."""
+    matches = db.find_uuid(world["task"]["uuid"])
+    assert matches[0]["uuid"] == world["task"]["uuid"]
+    assert matches[0]["match"] == "exact"

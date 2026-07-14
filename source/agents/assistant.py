@@ -52,6 +52,7 @@ class AssistantActionName(str, Enum):
     QUERY_MEMORY = "query_memory"
     WORKSPACE_READ_COMMAND = "workspace_read_command"
     KANBAN_READ = "kanban_read"
+    FIND_UUID = "find_uuid"
 
     # Write actions, each risk-tiered:
     REMEMBER = "remember"              # log-and-undo: create a candidate memory
@@ -108,6 +109,10 @@ use actions from the list below; any other action is rejected.
 Match the read action to the data you need: `kanban_read` for boards/tasks,
 `query_memory` for remembered facts and general questions (project/git status,
 capabilities). Do not use `query_memory` to inspect kanban or files.
+When you have a uuid (or a fragment of one) and don't know what it refers to,
+use `find_uuid` — it resolves partial or typo'd uuids across every table and
+returns the entity, its parents, and the exact full uuid to use in other
+actions. Never guess or fabricate a uuid.
 Earlier messages are context, not a source of facts. Before you answer any
 question about remembered facts, stored data, or a live value (e.g. token
 usage or status), call the matching read action this turn.
@@ -511,6 +516,25 @@ def _action_kanban_read(
         ok=True,
         text=json.dumps({"tree": _nodes(None)}, indent=2, ensure_ascii=False),
         data={"count": len(boards)},
+    )
+
+
+def _action_find_uuid(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Resolve a (partial, possibly typo'd) uuid across every uuid-bearing
+    table — db.find_uuid. The observation is the JSON match list: each
+    match's kind, name, FULL uuid (the string to use in other actions),
+    parent chain, and page url. Read-only, no events written."""
+    query = str(args.get("query", "")).strip()
+    try:
+        matches = db.find_uuid(query)
+    except ValueError as exc:
+        return AssistantObservation(ok=False, text=str(exc))
+    return AssistantObservation(
+        ok=True,
+        text=json.dumps({"matches": matches}, indent=2, ensure_ascii=False),
+        data={"count": len(matches)},
     )
 
 
@@ -1239,6 +1263,18 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'in their folder tree'),
         summary="read kanban boards and tasks",
         optional_args=frozenset({"board_uuid", "task_uuid"}), action=_action_kanban_read,
+    ),
+    AssistantActionName.FIND_UUID: Capability(
+        name=AssistantActionName.FIND_UUID, family="lookup",
+        description=('resolve a uuid you are not sure about — searches every '
+                     'table (kanban, cron, chat, prompt, profile, git, runs, …) '
+                     'and returns each match\'s kind, name, parents, and FULL '
+                     'uuid. The query may be a fragment (beginning, end, or '
+                     'middle of the uuid, minimum 4 characters) and may contain '
+                     'a typo. Use this instead of guessing a uuid. '
+                     'args: {"query": "213a2397"}'),
+        summary="look up what a uuid refers to",
+        required_args=("query",), action=_action_find_uuid,
     ),
     AssistantActionName.REMEMBER: Capability(
         name=AssistantActionName.REMEMBER, family="memory",
