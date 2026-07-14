@@ -249,6 +249,37 @@ def kanban_create_folder(
     return _folder_brief(folder)
 
 
+def kanban_get_folder(folder_uuid: UUID) -> dict[str, Any] | None:
+    """Public single-folder read: the folder brief, or None if it is gone."""
+    folder = db.session.execute(
+        sa.select(KanbanBoardFolder).where(KanbanBoardFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+    return _folder_brief(folder) if folder is not None else None
+
+
+def kanban_update_folder(
+    folder_uuid: UUID, *, name: str | None = None, description: str | None = None,
+) -> dict[str, Any] | None:
+    """Row-level edit of a folder's name and/or description (None leaves the
+    field untouched; description may be set to ""). An empty name raises
+    KanbanError. Placement (parent/position) is the tree save's job, not
+    this editor's."""
+    folder = db.session.execute(
+        sa.select(KanbanBoardFolder).where(KanbanBoardFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+    if folder is None:
+        return None
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise KanbanError("folder name is required")
+        folder.name = name
+    if description is not None:
+        folder.description = str(description)
+    db.session.commit()
+    return _folder_brief(folder)
+
+
 def kanban_delete_folder(folder_uuid: UUID) -> bool:
     """Delete a folder NON-DESTRUCTIVELY: its direct child folders and boards
     reparent up to the deleted folder's own parent (root if it had none), then

@@ -66,6 +66,7 @@ class AssistantActionName(str, Enum):
     # The kanban family: two reads + the risk-tiered writes.
     KANBAN_READ = "kanban_read"
     KANBAN_QUERY = "kanban_query"                # read: find boards/folders/tasks by name (fuzzy)
+    KANBAN_FOLDER_SET_NAME = "kanban_folder_set_name"  # log-and-undo: rename a folder
     KANBAN_BOARD_CREATE = "kanban_board_create"  # log-and-undo: create a new board
     KANBAN_BOARD_DELETE = "kanban_board_delete"  # internal: board_create's undo inverse (not prompt-exposed)
     KANBAN_BOARD_SET_NAME = "kanban_board_set_name"  # log-and-undo: rename a board
@@ -775,9 +776,10 @@ def _action_activate_memory(
 
 def _kanban_link(target_uuid: UUID | str) -> str:
     """A relative link to the kanban page (origin-independent). `?id=` accepts a
-    board OR a task uuid — a task uuid selects its board and opens that task's
-    overlay — so writes link to the specific task they touched. Surfaced in the
-    assistant's reply so the operator can jump straight to what changed."""
+    folder, board, OR task uuid — a task uuid selects its board and opens that
+    task's overlay — so writes link to the specific entity they touched.
+    Surfaced in the assistant's reply so the operator can jump straight to
+    what changed."""
     return f"/kanban?id={target_uuid}"
 
 
@@ -1084,6 +1086,53 @@ def _action_set_kanban_board_description(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
     return _set_kanban_board_field(ctx, args, "description")
+
+
+def _action_set_kanban_folder_name(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: rename a kanban folder — same shape as the board/
+    task field editors (no-op guard, expect_name guarded undo via the same
+    capability)."""
+    raw_folder = args.get("folder_uuid")
+    try:
+        folder_uuid = UUID(str(raw_folder))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid folder_uuid: {raw_folder!r}")
+    before = db.kanban_get_folder(folder_uuid)
+    if before is None:
+        return AssistantObservation(ok=False, text="no such kanban folder")
+    old, new = str(before["name"] or ""), str(args.get("name") or "").strip()
+    expect = args.get("expect_name")
+    if expect is not None and old != str(expect):
+        return AssistantObservation(
+            ok=False, text="folder name changed since the write; not undoing")
+    if new == old:
+        return AssistantObservation(
+            ok=False,
+            text=("the folder's name is already exactly that text, so this "
+                  "edit changes nothing."),
+        )
+    try:
+        updated = db.kanban_update_folder(folder_uuid, name=new)
+    except db.KanbanError as e:
+        return AssistantObservation(ok=False, text=f"cannot edit: {e}")
+    if updated is None:
+        return AssistantObservation(ok=False, text="no such kanban folder")
+    return AssistantObservation(
+        ok=True,
+        text=f"Renamed the folder to '{new}' (undoable).",
+        data={
+            "folder_uuid": str(folder_uuid),
+            "old_name": old, "new_name": new,
+            "link": _kanban_link(str(folder_uuid)),
+            "undo": {
+                "capability": "kanban_folder_set_name",
+                "payload": {"folder_uuid": str(folder_uuid), "name": old,
+                            "expect_name": new},
+            },
+        },
+    )
 
 
 def _action_complete_kanban_task(
@@ -1576,6 +1625,17 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'action. args: {"query": "chores"}'),
         summary="find kanban boards/folders/tasks by name",
         required_args=("query",), action=_action_kanban_query,
+    ),
+    AssistantActionName.KANBAN_FOLDER_SET_NAME: Capability(
+        name=AssistantActionName.KANBAN_FOLDER_SET_NAME, family="kanban",
+        description=('rename a kanban folder (folders group boards in the '
+                     '/kanban tree; get a folder\'s uuid from kanban_read or '
+                     'kanban_query); reversible (undoable). args: '
+                     '{"folder_uuid": "...", "name": "the new name"}'),
+        summary="rename a kanban folder",
+        required_args=("folder_uuid", "name"),
+        action=_action_set_kanban_folder_name,
+        read=False, write=True, tier="log_and_undo",
     ),
     AssistantActionName.KANBAN_BOARD_CREATE: Capability(
         name=AssistantActionName.KANBAN_BOARD_CREATE, family="kanban",

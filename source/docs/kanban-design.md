@@ -109,7 +109,7 @@ route through observe/work/shape.
 ## Assistant capabilities (log-and-undo)
 
 The personal assistant (`agents/assistant.py`) exposes kanban to chat. Two
-read actions and ten prompt-exposed write actions; every write returns an
+read actions and eleven prompt-exposed write actions; every write returns an
 `undo` descriptor `{capability, payload}` that is recorded as a completed row
 in the undo ledger, and the `/undo` endpoint replays it. Two capabilities
 exist only as undo inverses and are never prompt-exposed.
@@ -125,6 +125,7 @@ exist only as undo inverses and are never prompt-exposed.
 | `kanban_task_create` | create a task; an omitted/unresolvable `column_uuid` falls back to the board's **first column** | `kanban_task_delete` (internal) |
 | `kanban_task_set_title` / `kanban_task_set_description` | edit one text field of a task (`db.kanban_update_task`): the description REPLACES the whole text; an empty title is refused (a task must stay addressable by name); setting a field to its current value is flagged as a no-op; the edit appends an `edited` audit event with an old → new excerpt | same capability with the previous value (carries `expect_title`/`expect_description`) |
 | `kanban_board_set_name` / `kanban_board_set_description` | edit one text field of a board (`db.kanban_update_board`): same rules as the task editors; boards have no event trail, but the board version token changes so a concurrently open page save is refused as stale | same capability with the previous value (carries `expect_name`/`expect_description`) |
+| `kanban_folder_set_name` | rename a folder (`db.kanban_update_folder`): same rules as the other field editors; placement (parent/position) stays the tree save's job | same capability with the previous value (carries `expect_name`) |
 | `kanban_board_create` | create a board with the default columns; the store assigns the uuid | `kanban_board_delete` (internal) |
 
 Undo is **state-guarded**: a move-undo carries `expect_column` (where the

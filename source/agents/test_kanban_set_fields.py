@@ -14,6 +14,7 @@ from agents.assistant import (
     AssistantActionName,
     _action_set_kanban_board_description,
     _action_set_kanban_board_name,
+    _action_set_kanban_folder_name,
     _action_set_kanban_task_description,
     _action_set_kanban_task_title,
 )
@@ -63,6 +64,7 @@ def test_capabilities_are_log_and_undo_writes():
         (AssistantActionName.KANBAN_TASK_SET_DESCRIPTION, ("task_uuid", "description")),
         (AssistantActionName.KANBAN_BOARD_SET_NAME, ("board_uuid", "name")),
         (AssistantActionName.KANBAN_BOARD_SET_DESCRIPTION, ("board_uuid", "description")),
+        (AssistantActionName.KANBAN_FOLDER_SET_NAME, ("folder_uuid", "name")),
     ):
         cap = CAPABILITIES[name]
         assert cap.write is True and cap.read is False
@@ -178,6 +180,51 @@ def test_set_board_description(board):
     assert obs.ok is True
     assert db.kanban_load_board(UUID(bu))["description"] == "the new blurb"
     assert obs.data["undo"]["payload"]["description"] == "the old blurb"
+
+
+@pytest.fixture
+def folder(app_ctx):
+    f = db.kanban_create_folder("old folder")
+    try:
+        yield f
+    finally:
+        db.kanban_delete_folder(UUID(f["uuid"]))
+
+
+def test_set_folder_name_and_undo(folder):
+    fu = folder["uuid"]
+    obs = _action_set_kanban_folder_name(
+        _ctx(), {"folder_uuid": fu, "name": "renamed folder"})
+    assert obs.ok is True
+    assert db.kanban_get_folder(UUID(fu))["name"] == "renamed folder"
+    assert obs.data["undo"] == {
+        "capability": "kanban_folder_set_name",
+        "payload": {"folder_uuid": fu, "name": "old folder",
+                    "expect_name": "renamed folder"}}
+    undo = _action_set_kanban_folder_name(_ctx(), obs.data["undo"]["payload"])
+    assert undo.ok is True
+    assert db.kanban_get_folder(UUID(fu))["name"] == "old folder"
+
+
+def test_set_folder_name_guards(folder):
+    fu = folder["uuid"]
+    # No-op: the current name.
+    obs = _action_set_kanban_folder_name(_ctx(), {"folder_uuid": fu, "name": "old folder"})
+    assert obs.ok is False and "changes nothing" in obs.text
+    # Empty name refused.
+    assert _action_set_kanban_folder_name(
+        _ctx(), {"folder_uuid": fu, "name": "  "}).ok is False
+    # Undo refused if the name changed again since the write.
+    obs = _action_set_kanban_folder_name(_ctx(), {"folder_uuid": fu, "name": "renamed"})
+    assert obs.ok is True
+    db.kanban_update_folder(UUID(fu), name="renamed again")
+    undo = _action_set_kanban_folder_name(_ctx(), obs.data["undo"]["payload"])
+    assert undo.ok is False and "changed since" in undo.text
+    # Bad targets.
+    assert _action_set_kanban_folder_name(
+        _ctx(), {"folder_uuid": "nope", "name": "x"}).ok is False
+    assert _action_set_kanban_folder_name(
+        _ctx(), {"folder_uuid": str(uuid4()), "name": "x"}).ok is False
 
 
 def test_invalid_and_missing_targets(board):

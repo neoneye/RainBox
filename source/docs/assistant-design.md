@@ -120,6 +120,7 @@ only by `undo_write_intent`.
 | `kanban_task_set_title`, `kanban_task_set_description` | kanban | log-and-undo | same capability, previous value (text-guarded) |
 | `kanban_board_create` | kanban | log-and-undo | `kanban_board_delete` (internal) |
 | `kanban_board_set_name`, `kanban_board_set_description` | kanban | log-and-undo | same capability, previous value (text-guarded) |
+| `kanban_folder_set_name` | kanban | log-and-undo | same capability, previous value (text-guarded) |
 | `set_reminder` | cron | **confirm** (dry-run) | — |
 | `edit_file` | workspace | **confirm** (dry-run diff) | — |
 | `propose_skill` | skill | log-and-undo | `skill_delete` (internal) |
