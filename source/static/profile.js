@@ -367,11 +367,11 @@ function profileItemNode(p){
     n.draggable = false;  // anchors are natively draggable — switch that off too
   }
   // Kebab on every row, shown (via CSS) only on the selected one — matches
-  // /cron. Built-ins are read-only: Duplicate is their only action.
+  // /cron. No Rename item: a selected profile's pane heading is already the
+  // click-to-rename control. Built-ins are read-only: Duplicate only.
   profileMakeKebab(n, p.builtin ? {
     onDuplicate: () => profileDuplicateUuid(p.uuid),
   } : {
-    onRename: () => profileKebabRename('item', p.uuid),
     onDuplicate: () => profileDuplicateUuid(p.uuid),
     onDelete: () => profileConfirmDeleteItem(p.uuid),
   });
