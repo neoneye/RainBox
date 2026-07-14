@@ -9,7 +9,7 @@ function gitEscapeHtml(s){
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 
-// ---- state (browser-only, lost on refresh) ----
+// ---- state (in-memory; hydrated from GET /git/api/tree, saved via PUT) ----
 let gitFolders = [];           // {id, name, description, parentId, ...}
 let gitRepos = [];             // {uuid, name, folderId, path, description, ...}
 let gitSelectedFolder = null;  // folder id, or null for "All repositories" / root
@@ -359,8 +359,8 @@ function gitKebabRename(type, id){
   const node = type === 'repo' ? gitRepoByUuid(id) : gitFolderById(id);
   if (node) gitOpenRenameModal(type, node);
 }
-// 3-dot overflow menu. opts: { onRename? }. Folders and repos both offer Rename
-// only; add repos/folders via the "+ Repo"/"+ Folder" buttons. No Delete (deferred).
+// 3-dot overflow menu. opts: { onRename?, onDelete? }. Folders and repos both
+// offer Rename + Delete; add repos/folders via the "+ Repo"/"+ Folder" buttons.
 function gitMakeKebab(node, opts){
   opts = opts || {};
   const kebab = document.createElement('button');

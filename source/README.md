@@ -114,6 +114,11 @@ Current architecture/operator docs:
 - [`docs/data-model.md`](docs/data-model.md) — table map for supervisor, chat, memory, telemetry, eval, config, and cron data.
 - [`docs/backup.md`](docs/backup.md) — encrypted database backups (age + zstd), scheduling, remote git upload, and restore.
 - [`docs/find-uuid-design.md`](docs/find-uuid-design.md) — the cross-table uuid resolver behind `/find` and the assistant's `find_uuid` action: exact/substring/fuzzy/mention matching, sources, ranking, Q&A shields.
+- [`docs/supervisor-design.md`](docs/supervisor-design.md) — the core runtime: inbox→journal queue, spawn-on-demand agents, heartbeat watchdog, recovery, routing.
+- [`docs/settings-design.md`](docs/settings-design.md) — typed operator settings: registry, DB → env → default provenance, the /settings page.
+- [`docs/git-design.md`](docs/git-design.md) — the /git page: repo pointers, guarded tree save, read-only inspection.
+- [`docs/profile-design.md`](docs/profile-design.md) — person profiles: field registry, sparse data JSONB, locale templates.
+- [`docs/evals-design.md`](docs/evals-design.md) — the evals framework internals: case model, scoring, gate/optimizer/monitor mechanics.
 
 To see the `chat_structured` agent reply, assign it a model group at `/agentmodel`, keep its provider running, and post a message in a room it's a member of (`main.py` must be running so the supervisor can spawn it).
 

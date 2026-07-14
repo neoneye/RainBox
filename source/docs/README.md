@@ -17,6 +17,12 @@ history); `proposals/` holds design-time intent and reviews.
 
 ## Subsystem designs
 
+- [supervisor-design.md](supervisor-design.md) — the core runtime: the
+  inbox→journal queue, spawn-on-demand child processes, heartbeat watchdog,
+  recovery, routing, the agent class hierarchy.
+- [settings-design.md](settings-design.md) — typed operator settings: the
+  code-owned registry, DB → env → default resolution with provenance, the
+  /settings page, Q&A repopulate actions.
 - [assistant-design.md](assistant-design.md) — the ReAct loop: capability
   registry, write tiers (log-and-undo / confirm), undo ledger, controls,
   trace, worker-failure recovery, chat notices, inspector.
@@ -30,6 +36,12 @@ history); `proposals/` holds design-time intent and reviews.
 - [find-uuid-design.md](find-uuid-design.md) — the cross-table uuid
   resolver behind /find and the assistant's `find_uuid` action:
   exact/substring/fuzzy/mention passes, sources, ranking, Q&A shields.
+- [git-design.md](git-design.md) — the /git page: registered-repo pointers,
+  the guarded tree save, read-only inspection (two rev-parse reads, fixed
+  argv, 5 s timeout), deliberate non-goals.
+- [profile-design.md](profile-design.md) — person profiles: the
+  field-registry-driven form + validator, sparse data JSONB, the
+  connector-owned `dynamic` subtree, built-in locale templates.
 - [conversation-design.md](conversation-design.md) — bounded
   persona-to-persona conversations: manager, CAS turn guards, pause/resume.
 - [direct-chat.md](direct-chat.md) — one-to-one operator↔model rooms:
@@ -63,6 +75,9 @@ history); `proposals/` holds design-time intent and reviews.
 - [eval-loop.md](eval-loop.md) — feedback → eval case → run → gate →
   optimizer.
 - [eval-playbook.md](eval-playbook.md) — the practical eval workflow.
+- [evals-design.md](evals-design.md) — the `evals/` framework internals:
+  case model, run lifecycle, scoring math, comparison/gate/optimizer/monitor
+  mechanics, extension points.
 - `memory-systems/` — comparative survey of external memory systems.
 
 ## Data & frontend conventions

@@ -114,7 +114,7 @@ def profile_templates_entries() -> list[dict[str, Any]]:
 
 @lru_cache(maxsize=1)
 def profile_builtin_uuids() -> frozenset[UUID]:
-    """Every fixed built-in uuid (the virtual folder + the 20 templates).
+    """Every fixed built-in uuid (the virtual folder + the 21 templates).
     The tree validator keeps user rows off these."""
     return frozenset({profile_templates_folder_uuid()} |
                      {UUID(e["uuid"]) for e in profile_templates_entries()})
