@@ -160,6 +160,44 @@ def test_mention_in_task_event_reports_the_task(world):
     assert m["match"] == "mention" and m["uuid"] == str(task_uuid)
 
 
+def test_mention_in_qa_registry_respects_shields(app_ctx, tmp_path):
+    """A uuid quoted in the Q&A registry (the operator's customize-dir
+    overlay jsonl) is found as a 'Q&A entry' mention — and an entry carrying
+    a shield appears only when that shield is unlocked, exactly like
+    retrieval (fail closed)."""
+    import json as _json
+
+    open_frag = "0b171e57-aa01"    # spans a dash, like a hand-copied fragment
+    shielded_frag = "0b171e57-bb02"
+    (tmp_path / "question_answer.jsonl").write_text("\n".join([
+        _json.dumps({"id": "test.open", "questions": ["where is the run?"],
+                     "answer": "run 0b171e57-aa01-4c1c-8f00-000000000001"}),
+        _json.dumps({"id": "test.shielded", "questions": ["secret thing"],
+                     "answer": "see 0b171e57-bb02-4c1c-8f00-000000000002",
+                     "shield": "pii"}),
+    ]) + "\n")
+    old_dir = db.get_setting("customize.dir")
+    old_shields = db.get_setting("qa.unlocked_shields")
+    db.set_setting("customize.dir", str(tmp_path))
+    db.set_setting("qa.unlocked_shields", [])
+    try:
+        m = next(x for x in db.find_uuid(open_frag) if x["kind"] == "Q&A entry")
+        assert m["uuid"] == "test.open" and m["match"] == "mention"
+        assert m["name"] == "where is the run?"
+        assert m["parents"][0]["name"].endswith("question_answer.jsonl")
+        # Shield locked: the entry is invisible — fail closed.
+        assert not any(x["kind"] == "Q&A entry"
+                       for x in db.find_uuid(shielded_frag))
+        # Shield unlocked: the entry appears.
+        db.set_setting("qa.unlocked_shields", ["pii"])
+        m = next(x for x in db.find_uuid(shielded_frag)
+                 if x["kind"] == "Q&A entry")
+        assert m["uuid"] == "test.shielded"
+    finally:
+        db.set_setting("customize.dir", old_dir)
+        db.set_setting("qa.unlocked_shields", old_shields)
+
+
 def test_direct_match_is_not_duplicated_as_mention(world):
     """A task whose description quotes its OWN uuid appears once, as the
     direct match — the mention pass dedupes against it."""
