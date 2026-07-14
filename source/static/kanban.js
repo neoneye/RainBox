@@ -822,10 +822,25 @@ function kbFillColumnSelect(columns, selected){
   columns.forEach(c => colSel.appendChild(new Option(c.name, c.uuid)));
   if (selected) colSel.value = selected;
 }
+// The task's column, carried over to a TARGET board's column list: same name
+// (case-insensitive), else same position (clamped to the last), else the
+// first — a board move is not a state change, so "In progress" stays in
+// progress. Mirrors the server default in kanban_move_task_to_board.
+function kbMatchColumn(targetColumns, taskColumnUuid){
+  if (!targetColumns.length) return null;
+  const src = kbCurrent.columns.find(c => c.uuid === taskColumnUuid);
+  if (!src) return targetColumns[0].uuid;
+  const want = src.name.trim().toLowerCase();
+  const byName = targetColumns.find(c => c.name.trim().toLowerCase() === want);
+  if (byName) return byName.uuid;
+  const idx = Math.min(kbCurrent.columns.indexOf(src), targetColumns.length - 1);
+  return targetColumns[idx].uuid;
+}
 // Picking another board in the task modal repopulates the Column select with
-// THAT board's columns (fetched fresh — the index holds no columns); Save
-// then performs the server-side move. Back to the open board restores its
-// columns. A failed fetch reverts the pick.
+// THAT board's columns (fetched fresh — the index holds no columns), the
+// task's column carried over via kbMatchColumn; Save then performs the
+// server-side move. Back to the open board restores its columns. A failed
+// fetch reverts the pick.
 document.getElementById('kb-t-board').addEventListener('change', async () => {
   const boardSel = document.getElementById('kb-t-board');
   if (!kbCurrent) return;
@@ -844,7 +859,9 @@ document.getElementById('kb-t-board').addEventListener('change', async () => {
     kbFillColumnSelect(kbCurrent.columns, (t && t.columnUuid) || kbModalColumn);
     return;
   }
-  kbFillColumnSelect(target.columns, target.columns.length ? target.columns[0].uuid : null);
+  const t = kbEditingTask ? kbTask(kbEditingTask) : null;
+  kbFillColumnSelect(target.columns,
+                     kbMatchColumn(target.columns, t ? t.columnUuid : null));
 });
 function kbNewTask(columnUuid){
   if (!kbCurrent) return;

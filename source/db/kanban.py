@@ -1145,13 +1145,17 @@ def kanban_move_task_to_board(
     *, actor: str = "", note: str = "",
 ) -> dict[str, Any] | None:
     """Move a task to another BOARD, appended at the end of `column_uuid`
-    (must be on the target board) or the target's first column when omitted.
-    The task keeps its uuid, audit trail, assignee, and lease — the reason
-    this is a server-side operation: the page's per-board bulk save could
-    only fake it as delete + recreate, which destroys both. A 'moved' event
-    names the boards. Moving to the task's own board delegates to
-    kanban_move_task (a plain column move). Raises KanbanError for an
-    unknown target board or a column that isn't on it."""
+    (must be on the target board). When `column_uuid` is omitted the task's
+    column is PRESERVED: the target column with the same name
+    (case-insensitive), else the one at the same position (clamped to the
+    last), else the target's first column — a board move is not a state
+    change, so "In progress" stays in progress. The task keeps its uuid,
+    audit trail, assignee, and lease — the reason this is a server-side
+    operation: the page's per-board bulk save could only fake it as delete +
+    recreate, which destroys both. A 'moved' event names the boards. Moving
+    to the task's own board delegates to kanban_move_task (a plain column
+    move). Raises KanbanError for an unknown target board or a column that
+    isn't on it."""
     t = _task(task_uuid)
     if t is None:
         return None
@@ -1167,7 +1171,20 @@ def kanban_move_task_to_board(
     if column_uuid is None:
         if not columns:
             raise KanbanError(f"board {board_uuid} has no columns")
-        col = columns[0]
+        src_cols = db.session.execute(
+            sa.select(KanbanColumn).where(KanbanColumn.board_uuid == t.board_uuid)
+            .order_by(KanbanColumn.position, KanbanColumn.id)
+        ).scalars().all()
+        src = next((c for c in src_cols if c.uuid == t.column_uuid), None)
+        col = None
+        if src is not None:
+            want = src.name.strip().lower()
+            col = next((c for c in columns
+                        if c.name.strip().lower() == want), None)
+            if col is None:
+                col = columns[min(src_cols.index(src), len(columns) - 1)]
+        if col is None:
+            col = columns[0]
     else:
         col = next((c for c in columns if c.uuid == column_uuid), None)
         if col is None:

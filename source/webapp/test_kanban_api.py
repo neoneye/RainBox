@@ -504,10 +504,11 @@ def test_move_task_to_board(board):
         assert "board Test board → Other board (In progress)" in moved["detail"]
         assert "handoff" in moved["detail"]
         assert db.kanban_load_board(_u(board["uuid"]))["tasks"] == []
-        # Omitted column → the target's FIRST column (here: moving back).
+        # Omitted column → the task's column is PRESERVED by name (moving
+        # back here: "In progress" stays in progress, not reset to "To do").
         out = db.kanban_move_task_to_board(tu, _u(board["uuid"]))
         assert out["boardUuid"] == board["uuid"]
-        assert out["columnUuid"] == board["columns"][0]["uuid"]
+        assert out["columnUuid"] == board["columns"][1]["uuid"]
         # Loud failures: unknown board; a column not on the target board.
         with pytest.raises(db.KanbanError):
             db.kanban_move_task_to_board(tu, _u(str(uuid4())))
@@ -519,6 +520,17 @@ def test_move_task_to_board(board):
                                            _u(board["columns"][1]["uuid"]))
         assert out["boardUuid"] == board["uuid"]
         assert out["columnUuid"] == board["columns"][1]["uuid"]
+        # No name match on the target → the same POSITION carries over.
+        weird = db.kanban_create_board("Weird columns")
+        try:
+            fresh = db.kanban_load_board(_u(weird["uuid"]))
+            for c, name in zip(fresh["columns"], ("Backlog", "Doing", "Shipped")):
+                c["name"] = name
+            db.kanban_save_board(_u(weird["uuid"]), fresh)
+            out = db.kanban_move_task_to_board(tu, _u(weird["uuid"]))
+            assert out["columnUuid"] == fresh["columns"][1]["uuid"]
+        finally:
+            db.kanban_delete_board(_u(weird["uuid"]))
     finally:
         db.kanban_delete_board(_u(other["uuid"]))
 
