@@ -244,15 +244,14 @@ The twenty profiles show each locale's *typical* conventions — they are
 starting points for duplication, not rules; any profile, including the
 operator's own, sets whatever formats it prefers (a European choosing
 `YYYY-MM-DD` just picks it in the selector). Each is **named in homage to a
-groundbreaking scientist from that country**, deliberately skipping the
-household names (no Einstein, no Newton, no von Neumann) in favour of the
-discoverers one layer down. All are deceased but one: the Denmark row is
-Kjeld Møllgård (born 1943, likely still living), chosen because his name is
-the only realistic way to get two *different* Danish special letters (ø + å)
-into the fixture — no deceased Danish discoverer's name carries two. The
-names are the only historical element: every other detail stays fictional
-and modern (per the no-real-PII policy, and so a demo never shows a
-19th-century birth year):
+deceased, groundbreaking scientist from that country**, deliberately
+skipping the household names (no Einstein, no Newton, no von Neumann) in
+favour of the discoverers one layer down. **Only the dead qualify** — a
+living namesake is an open-ended reputational risk (they may later do
+something that makes the name an unfortunate default), a risk a dead
+person's completed life cannot carry. The names are the only historical
+element: every other detail stays fictional and modern (per the no-real-PII
+policy, and so a demo never shows a 19th-century birth year):
 
 | Label | Person | About | units | time | date | lang | currency | city | timezone |
 |---|---|---|---|---|---|---|---|---|---|
@@ -266,7 +265,7 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 | Netherlands | Jacobus van 't Hoff | founded stereochemistry | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
 | Spain | Santiago Ramón y Cajal | showed the brain is made of neurons | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
 | Italy | Rita Levi-Montalcini | discovered nerve growth factor | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
-| Denmark | Kjeld Møllgård | showed the fetal brain has working barriers | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
+| Denmark | Søren Sørensen | invented the pH scale | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
 | Sweden | Sofya Kovalevskaya | the Cauchy–Kovalevskaya theorem | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
 | Poland | Zofia Kielan-Jaworowska | led the Gobi expeditions that rewrote early-mammal evolution | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
 | Israel | Amos Tversky | mapped judgment under uncertainty | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
@@ -305,7 +304,7 @@ Marie-Victorin", the religious name all of Québec knew him by.
 
 **The templates are also the name-handling test fixture.** Between the
 names, nicknames, abouts, and cities they deliberately cover Latin
-diacritics (É é í â è ó ã), two different Danish letters in one name (ø + å, "Kjeld Møllgård"), the German ß (Weierstraß), Greek (ε–δ), CJK,
+diacritics (É é í â è ó ã and Danish ø twice over — "Søren Sørensen"), the German ß (Weierstraß), Greek (ε–δ), CJK,
 Hangul, Bengali, Cyrillic, right-to-left Hebrew, a generational suffix
 (`last_name` "Davis Jr."), an apostrophe-particle surname (`last_name`
 "van 't Hoff" — apostrophe, internal space, lowercase particles), an
