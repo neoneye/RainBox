@@ -274,16 +274,16 @@ policy, and so a demo never shows a 19th-century birth year):
 | Japan | Hideki Yukawa | predicted the meson | metric | 24h | YYYY-MM-DD | ja / en | JPY | Tokyo | Asia/Tokyo |
 | South Korea | Woo Jang-choon | the triangle of U | metric | 12h | YYYY-MM-DD | ko / en | KRW | Seoul | Asia/Seoul |
 | Singapore | Wu Lien-teh | pioneered modern epidemic control | metric | 12h | DD/MM/YYYY | en-SG / zh | SGD | Singapore | Asia/Singapore |
-| Australia | Howard Florey | turned penicillin into a medicine | metric | 12h | DD/MM/YYYY | en-AU | AUD | Sydney | Australia/Sydney |
+| Australia | Ferdinand Jakob Heinrich von Mueller | documented Australia's flora | metric | 12h | DD/MM/YYYY | en-AU | AUD | Melbourne | Australia/Melbourne |
 
 Each entry's `country` field carries the country name (the label doubles as
 it, so the column is omitted above). Rough grouping in the file — Americas,
 Europe, Middle East, Asia, Oceania — is also the fixed tree order. Some
 rows are career or legacy placements rather than birthplaces — Wu Lien-teh
 (Straits Settlements), Wu Chien-Shiung (Chinese-born, career in the US), Ynés
-Mexía
-(US-born, of Mexican heritage, collected across Mexico) — all earn their
-rows on the strength of the discovery. The About
+Mexía (US-born, of Mexican heritage, collected across Mexico), Ferdinand von
+Mueller (German-born, Victoria's founding Government Botanist) — all earn
+their rows on the strength of the discovery. The About
 column above is each entry's `about` value — the self-description field
 every profile has (the operator's own might read "programmer, modern day
 alchemist doing code"); on the templates it holds the discovery, so opening
@@ -308,7 +308,9 @@ German ß (Weierstraß), the macron and retroflex under-dot of Indic
 transliteration (ā + ḍ, "Yallāpragaḍa Subbārāvu"), Greek (ε–δ), CJK,
 Hangul, Telugu, right-to-left Hebrew, a generational suffix
 (`last_name` "Davis Jr."), an apostrophe-particle surname (`last_name`
-"van 't Hoff" — apostrophe, internal space, lowercase particles), an
+"van 't Hoff" — apostrophe, internal space, lowercase particles), a German
+nobiliary particle with three given names (`first_name` "Ferdinand Jakob
+Heinrich", `last_name` "von Mueller"), an
 apostrophe in the given name (`first_name` "D'Arcy Wentworth"), a
 typographic apostrophe standing for a Hebrew ayin (`last_name` "Ne’eman" —
 U+2019, not the ASCII `'` of the two above), a
