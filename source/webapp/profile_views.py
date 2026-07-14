@@ -32,8 +32,11 @@ def _profile_js_version() -> int:
 def _form_fields_html() -> str:
     """The registry's groups as <fieldset>s in registry order, one label +
     input per field. Inputs carry data-key; profile.js fills, reads, and
-    autosaves them. Hints ride as title tooltips; enum selects get a leading
-    blank option (a form affordance — blank means the field is unset)."""
+    autosaves them. Hints ride as title tooltips (and, on datalist-backed
+    fields, as visible placeholders); enum selects get a leading blank option
+    (a form affordance — blank means the field is unset). Datalist-backed
+    fields also get an advisory warning line profile.js fills when the typed
+    value is provably invalid — advisory only, saving is never blocked."""
     parts = []
     for group in FIELD_GROUPS:
         parts.append(f'<fieldset class="profile-fieldset"><legend>{escape(group)}</legend>')
@@ -50,7 +53,16 @@ def _form_fields_html() -> str:
             else:
                 itype = {"date": "date", "email": "email"}.get(f.kind, "text")
                 dl = f' list="profile-dl-{f.datalist}"' if f.datalist else ""
-                parts.append(f'<input id="{fid}" data-key="{f.key}" type="{itype}"{dl}{hint}>')
+                ph = f' placeholder="{escape(f.hint)}"' if f.datalist and f.hint else ""
+                inp = f'<input id="{fid}" data-key="{f.key}" type="{itype}"{dl}{ph}{hint}>'
+                if f.key == "timezone":
+                    # One-click fill from the browser — non-developers should
+                    # not have to know their IANA zone name.
+                    inp = ('<div class="pf-inline">' + inp +
+                           '<button type="button" id="profile-tz-mine">Use my timezone</button></div>')
+                parts.append(inp)
+            if f.datalist:
+                parts.append(f'<div class="pf-warn" id="pf-warn-{f.key}" hidden></div>')
         if group == "Locale & formats":
             # Live datetime preview from timezone + both format selects — the
             # preview is the documentation for the format enums.
@@ -141,6 +153,15 @@ PROFILE_TEMPLATE = """
   .profile-fieldset input:disabled,.profile-fieldset select:disabled,.profile-fieldset textarea:disabled{background:#f3f4f6;color:#6b7280}
   .profile-fieldset input:focus,.profile-fieldset select:focus,.profile-fieldset textarea:focus{outline:2px solid #93c5fd;outline-offset:-1px}
   #profile-preview{margin-top:8px}
+  /* Advisory validation line under datalist-backed fields — amber, never blocking. */
+  .pf-warn{color:#b45309;font-size:0.78rem;margin-top:2px}
+  .pf-warn[hidden]{display:none}
+  .pf-inline{display:flex;gap:6px;align-items:center}
+  .pf-inline input{flex:1 1 auto}
+  .pf-inline button{flex:0 0 auto;border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:5px 10px;font:inherit;font-size:0.78rem;cursor:pointer;white-space:nowrap}
+  .pf-inline button:hover{border-color:#2563eb;color:#2563eb}
+  .pf-inline button:disabled{color:#9ca3af;border-color:#e5e7eb;cursor:default}
   .profile-dynamic-row{padding:2px 0}
   /* Drag-only "move to top level" strip, sitting right under the tree (like /cron). */
   .profile-root-drop{display:none;margin-top:8px;padding:8px;border:1px dashed #93c5fd;border-radius:6px;color:#2563eb;font-size:0.82rem;text-align:center;-webkit-user-select:none;user-select:none}

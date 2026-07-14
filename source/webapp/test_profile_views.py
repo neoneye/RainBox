@@ -42,6 +42,23 @@ def test_form_fieldsets_from_registry():
     assert "Built-in template" in body
 
 
+def test_soft_validation_affordances():
+    """Datalist-backed fields carry visible placeholders and an advisory
+    warning line; timezone gets a one-click browser fill. Advisory only —
+    the server deliberately stays soft on IANA/BCP-47/4217 membership."""
+    body = _page()
+    for key in ("timezone", "language", "language_2", "currency", "currency_2",
+                "country"):
+        assert f'id="pf-warn-{key}"' in body, f"missing warning line for {key}"
+    assert 'placeholder="IANA name, e.g. Europe/Copenhagen"' in body
+    assert 'id="profile-tz-mine"' in body
+    b = _body()
+    for marker in ("profileUpdateWarnings", "profileCheckTimezone",
+                   "profileCheckLanguage", "profileCheckCurrency",
+                   "resolvedOptions().timeZone"):
+        assert marker in b, f"missing JS marker: {marker}"
+
+
 def test_folder_table_columns():
     body = _page()
     for col in ("<th>Name</th>", "<th>Person</th>", "<th>Language</th>",

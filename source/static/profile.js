@@ -977,6 +977,7 @@ function profileFillForm(data){
     profileFieldEl(k).value = (data && data[k] != null) ? data[k] : '';
   });
   profileUpdatePreview();
+  profileUpdateWarnings();
 }
 function profileReadForm(){
   // Complete editable snapshot; blanks stay off (the server canonicalizes
@@ -990,6 +991,39 @@ function profileReadForm(){
 }
 function profileSetFormDisabled(dis){
   PROFILE_FIELD_KEYS.forEach(k => { profileFieldEl(k).disabled = dis; });
+  document.getElementById('profile-tz-mine').disabled = dis;
+}
+
+// ---- advisory validation (never blocks a save — the server stays soft so an
+// uncommon-yet-valid value is never rejected; these warn only when the typed
+// value is PROVABLY invalid, so a non-developer isn't left saving junk silently) ----
+function profileCheckTimezone(v){
+  try { new Intl.DateTimeFormat('en', {timeZone: v}); return null; }
+  catch (e) { return 'Not a known timezone — pick one from the list, e.g. Europe/Copenhagen.'; }
+}
+function profileCheckLanguage(v){
+  try { Intl.getCanonicalLocales(v); return null; }
+  catch (e) { return 'Not a valid language tag — e.g. da, en-US, zh-Hans.'; }
+}
+function profileCheckCurrency(v){
+  return /^[A-Za-z]{3}$/.test(v) ? null : 'Currency codes are three letters — e.g. DKK, USD, EUR.';
+}
+const PROFILE_SOFT_CHECKS = {
+  timezone: profileCheckTimezone,
+  language: profileCheckLanguage,
+  language_2: profileCheckLanguage,
+  currency: profileCheckCurrency,
+  currency_2: profileCheckCurrency,
+};
+function profileUpdateWarnings(){
+  Object.keys(PROFILE_SOFT_CHECKS).forEach(k => {
+    const el = document.getElementById('pf-warn-' + k);
+    if (!el) return;
+    const v = profileFieldEl(k).value.trim();
+    const warn = v ? PROFILE_SOFT_CHECKS[k](v) : null;
+    el.textContent = warn || '';
+    el.hidden = !warn;
+  });
 }
 // Connector-written observations under data.dynamic: a read-only "Last seen"
 // group, rendered only when present. Humans never edit these; the PUT
@@ -1067,6 +1101,7 @@ function profileFieldEdited(){
   st.timer = setTimeout(() => { st.timer = null; profileDataPush(uuid); },
                         PROFILE_SAVE_DEBOUNCE_MS);
   profileUpdatePreview();
+  profileUpdateWarnings();
   profileRenderStatus();
 }
 async function profileDataPush(uuid){
@@ -1226,6 +1261,12 @@ profileInitDatalists();
 document.querySelectorAll('#profile-form [data-key]').forEach(el => {
   el.addEventListener('input', profileFieldEdited);
   el.addEventListener('change', profileFieldEdited);
+});
+document.getElementById('profile-tz-mine').addEventListener('click', () => {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  if (!zone) return;
+  profileFieldEl('timezone').value = zone;
+  profileFieldEdited();
 });
 document.getElementById('profile-folder-input').addEventListener('input', () => {
   document.getElementById('profile-folder-create').disabled =
