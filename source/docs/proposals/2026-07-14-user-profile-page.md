@@ -255,7 +255,7 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 |---|---|---|---|---|---|---|---|---|---|
 | US | Raymond Davis Jr. | detected solar neutrinos | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
 | Canada | Marie-Victorin | wrote the Flore laurentienne, Québec's definitive botany | metric | 12h | YYYY-MM-DD | fr-CA / en-CA | CAD | Montreal | America/Toronto |
-| Mexico | Mario Molina | explained ozone depletion | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
+| Mexico | Ynés Mexía | discovered some 500 new plant species | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
 | Brazil | Johanna Döbereiner | pioneered biological nitrogen fixation in crops | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
 | UK | Rosalind Franklin | imaged the structure of DNA | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
 | France | Émilie du Châtelet | showed kinetic energy scales with velocity squared | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
@@ -280,7 +280,8 @@ Europe, Middle East, Asia, Oceania — is also the fixed tree order. Some
 rows are career or legacy placements rather than birthplaces — Wu Lien-teh
 (Straits Settlements), Johanna Döbereiner (Czech-born, Brazilian by career
 and citizenship), Sofya Kovalevskaya (Russian-born, Stockholm's mathematics
-chair), Wu Chien-Shiung (Chinese-born, career in the US) — and Amos
+chair), Wu Chien-Shiung (Chinese-born, career in the US), Ynés Mexía
+(US-born, of Mexican heritage, collected across Mexico) — and Amos
 Tversky's field was cognitive science; all earn their rows on the strength
 of the discovery. The About
 column above is each entry's `about` value — the self-description field
@@ -301,7 +302,7 @@ Marie-Victorin", the religious name all of Québec knew him by.
 
 **The templates are also the name-handling test fixture.** Between the
 names, nicknames, abouts, and cities they deliberately cover Latin
-diacritics (É â è é ö ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
+diacritics (É é í â è ö ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
 Hangul, Bengali, Cyrillic, right-to-left Hebrew, a generational suffix
 (`last_name` "Davis Jr."), an apostrophe-particle surname (`last_name`
 "van 't Hoff" — apostrophe, internal space, lowercase particles), a
