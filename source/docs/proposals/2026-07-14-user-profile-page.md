@@ -257,7 +257,7 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 | Canada | Marie-Victorin | wrote the Flore laurentienne, Québec's definitive botany | metric | 12h | YYYY-MM-DD | fr-CA / en-CA | CAD | Montreal | America/Toronto |
 | Mexico | Ynés Mexía | discovered some 500 new plant species | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
 | Brazil | Maurício Rocha e Silva | discovered bradykinin, the blood-pressure peptide | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
-| UK | Rosalind Franklin | imaged the structure of DNA | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
+| UK | D'Arcy Wentworth Thompson | founded mathematical biology (On Growth and Form) | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
 | France | Émilie du Châtelet | showed kinetic energy scales with velocity squared | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
 | Germany | Karl Weierstraß | made calculus rigorous (ε–δ) | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
 | Netherlands | Jacobus van 't Hoff | founded stereochemistry | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
@@ -305,7 +305,8 @@ names, nicknames, abouts, and cities they deliberately cover Latin
 diacritics (É é í â è ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
 Hangul, Bengali, Cyrillic, right-to-left Hebrew, a generational suffix
 (`last_name` "Davis Jr."), an apostrophe-particle surname (`last_name`
-"van 't Hoff" — apostrophe, internal space, lowercase particles), a
+"van 't Hoff" — apostrophe, internal space, lowercase particles), an
+apostrophe in the given name (`first_name` "D'Arcy Wentworth"), a
 Portuguese compound surname joined by a conjunction (`last_name` "Rocha e
 Silva"), a hyphenated double surname (Kielan-Jaworowska), and a person whose everyday
 name lives in `nickname` rather than first/last (Frère
