@@ -135,7 +135,7 @@ only by `undo_write_intent`.
   a typo'd paste) across every uuid-bearing table via `db.find_uuid`: each
   JSON match carries kind, name, parent chain, page url, and the FULL uuid to
   use in subsequent actions — so a weak model never has to guess an id. The
-  same lookup backs the operator's `/find` page.
+  same lookup backs the operator's `/find` page. See `find-uuid-design.md`.
 
 ## Write tiers
 

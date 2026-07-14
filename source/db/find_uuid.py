@@ -32,6 +32,9 @@ Every match is described with its kind, display name, parent chain
 (inner → outer: a task's column, board, folders …), and the `?id=` deep-link
 url of the page that shows it. Read-only; no events are written.
 
+Full design — passes, scores, source tables, extension guide:
+docs/find-uuid-design.md.
+
 Re-exported from db for import compatibility.
 """
 from dataclasses import dataclass

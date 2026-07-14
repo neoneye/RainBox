@@ -113,6 +113,7 @@ Current architecture/operator docs:
 - [`docs/operator-guide.md`](docs/operator-guide.md) — day-to-day app operation.
 - [`docs/data-model.md`](docs/data-model.md) — table map for supervisor, chat, memory, telemetry, eval, config, and cron data.
 - [`docs/backup.md`](docs/backup.md) — encrypted database backups (age + zstd), scheduling, remote git upload, and restore.
+- [`docs/find-uuid-design.md`](docs/find-uuid-design.md) — the cross-table uuid resolver behind `/find` and the assistant's `find_uuid` action: exact/substring/fuzzy/mention matching, sources, ranking, Q&A shields.
 
 To see the `chat_structured` agent reply, assign it a model group at `/agent_models`, keep its provider running, and post a message in a room it's a member of (`main.py` must be running so the supervisor can spawn it).
 
