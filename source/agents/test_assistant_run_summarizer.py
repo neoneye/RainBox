@@ -122,9 +122,9 @@ def test_find_repeated_calls_groups_identical_calls():
 def test_find_repeated_calls_is_arg_order_independent_and_fuzzy():
     # Same call, keys in different order + a tiny value tweak — still one cluster.
     steps = [
-        _step(0, "query_memory", {"q": "where are my keys", "limit": 5}),
-        _step(1, "query_memory", {"limit": 5, "q": "where are my keys"}),
-        _step(2, "query_memory", {"q": "where are my keyz", "limit": 5}),
+        _step(0, "memory_query", {"q": "where are my keys", "limit": 5}),
+        _step(1, "memory_query", {"limit": 5, "q": "where are my keys"}),
+        _step(2, "memory_query", {"q": "where are my keyz", "limit": 5}),
     ]
     groups = _find_repeated_calls(steps)
     assert len(groups) == 1
@@ -135,7 +135,7 @@ def test_find_repeated_calls_is_arg_order_independent_and_fuzzy():
 def test_find_repeated_calls_ignores_distinct_calls():
     steps = [
         _step(0, "kanban_read", {"board_uuid": "b1"}),
-        _step(1, "query_memory", {"q": "x"}),
+        _step(1, "memory_query", {"q": "x"}),
         _step(2, "kanban_task_create", {"title": "t"}),
     ]
     assert _find_repeated_calls(steps) == []
@@ -143,8 +143,8 @@ def test_find_repeated_calls_ignores_distinct_calls():
 
 def test_find_repeated_calls_same_action_different_args_not_grouped():
     steps = [
-        _step(0, "query_memory", {"q": "where are my keys today please"}),
-        _step(1, "query_memory", {"q": "what time is the dentist appointment"}),
+        _step(0, "memory_query", {"q": "where are my keys today please"}),
+        _step(1, "memory_query", {"q": "what time is the dentist appointment"}),
     ]
     assert _find_repeated_calls(steps) == []
 
@@ -167,6 +167,6 @@ def test_prompt_includes_repeated_call_hint_with_score():
 def test_prompt_omits_hint_for_distinct_calls():
     agent = _agent()
     steps = [_step(0, "kanban_read", {"board_uuid": "b1"}),
-             _step(1, "query_memory", {"q": "x"})]
+             _step(1, "memory_query", {"q": "x"})]
     prompt = agent._build_prompt(SimpleNamespace(status="finished"), steps, None)
     assert "repeated calls" not in prompt.lower()

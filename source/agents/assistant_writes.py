@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 # rows written before a capability was renamed still carry its former name.
 # Resolution maps those to the current capability instead of refusing to undo.
 LEGACY_CAPABILITY_NAMES: dict[str, str] = {
+    "remember": "memory_remember",
+    "activate_memory": "memory_activate",
+    "forget_memory": "memory_forget",
+    "reject_memory_candidate": "memory_reject_candidate",
+    "reactivate_memory": "memory_reactivate",
     "kanban_move_task": "kanban_task_column",
     "kanban_complete": "kanban_task_complete",
     "kanban_comment": "kanban_task_comment",

@@ -101,7 +101,7 @@ def _make_debug_assistant_row(observation):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=ASSISTANT_UUID, step_limit=6)
     db.append_assistant_step(
-        run_uuid=run.uuid, step_index=0, phase="observed", action="query_memory",
+        run_uuid=run.uuid, step_index=0, phase="observed", action="memory_query",
         reason="look it up", args={"query": "x"}, observation_preview=observation)
     msg = next(m for m in db.list_room_messages(room.uuid) if m["kind"] == "debug-assistant")
     return room, msg
@@ -132,7 +132,7 @@ def test_edit_page_shows_resolved_trace_field(app_ctx):
         body = resp.get_data(as_text=True)
         assert "Resolved trace" in body          # the read-only field is present
         assert long_obs in body                  # with the full observation
-        assert "query_memory" in body
+        assert "memory_query" in body
     finally:
         db.db.session.query(db.ChatMessage).filter_by(room_uuid=room.uuid).delete()
         db.db.session.query(db.Chatroom).filter_by(uuid=room.uuid).delete()

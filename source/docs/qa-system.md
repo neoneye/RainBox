@@ -6,7 +6,7 @@ The Q&A system answers questions about the operator and the running system from
 a curated knowledge base, separate from the dynamic memory-claim store. It backs
 two things:
 
-- The **assistant**'s `query_memory` read action (the ReAct loop in
+- The **assistant**'s `memory_query` read action (the ReAct loop in
   `agents/assistant.py`).
 - The **chat** query agents that answer a message directly, plus the always-on
   "Curated facts" block injected into every chat turn.
@@ -134,7 +134,7 @@ A shield hides sensitive entries from the LLM until the operator unlocks them.
 
 ## Consumers
 
-### Assistant `query_memory`
+### Assistant `memory_query`
 
 `_action_query_memory` (`agents/assistant.py`) is the assistant's single read
 action for facts. It:
@@ -169,7 +169,7 @@ dropped at a fact boundary (never mid-word) and counted in a note appended
 outside the fence. This keeps one large overlay entry (some are >5000 chars)
 from crowding out every other fact.
 
-To read a shortened or omitted fact in full, the model calls `query_memory`
+To read a shortened or omitted fact in full, the model calls `memory_query`
 again with `{"uuid": "<the fact's uuid>"}` instead of `{"query": ...}`
 (`_query_memory_full`): the uuid mode returns that single entry untruncated —
 seed entries still respect shields, claims never return secrets. The system
@@ -241,7 +241,7 @@ validation errors (duplicate id/path, bad JSON, non-string shield) raise with
 `sync_kb` runs from two places:
 
 - **Automatically** — `_ensure_populated` (called by the assistant's
-  `query_memory` and the chat query agents) syncs on the first call of each
+  `memory_query` and the chat query agents) syncs on the first call of each
   process and re-checks an `(mtime_ns, size)` snapshot of the source files on
   later calls, so an unchanged corpus costs one `stat()` per file. Agents run
   in freshly spawned processes, so a JSONL edit is picked up on the next
@@ -276,7 +276,7 @@ validation errors (duplicate id/path, bad JSON, non-string shield) raise with
 ### Facts-invalidation notice
 
 Changing a shield or repopulating the Q&A can stale facts the assistant already
-answered earlier in a conversation. `query_memory` filters correctly, but a prior
+answered earlier in a conversation. `memory_query` filters correctly, but a prior
 answer still sits in the chat transcript, so the model can reuse it. To counter
 this:
 
@@ -286,7 +286,7 @@ this:
   no-op button press posts no notice); a full rebuild always stamps.
 - The next time the assistant runs in a room, it posts a one-time visible notice
   telling the model that earlier answers may be out of date and to re-check via
-  `query_memory` (`_maybe_post_facts_marker`). It is deduped per invalidation via
+  `memory_query` (`_maybe_post_facts_marker`). It is deduped per invalidation via
   the marker's `meta.facts_invalidation` timestamp, and does not remove any
   history — the operator's message stays the current one.
 

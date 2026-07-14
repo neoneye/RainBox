@@ -98,14 +98,14 @@ only by `undo_write_intent`.
 | Capability | Family | Tier | Undo |
 |---|---|---|---|
 | `reply`, `ask_clarifying_question` | conversation | terminal | — |
-| `query_memory` | memory | read | — |
+| `memory_query` | memory | read | — |
+| `memory_remember` | memory | log-and-undo | `memory_reject_candidate` (internal) |
+| `memory_activate` | memory | **confirm** | — |
+| `memory_forget` | memory | log-and-undo | `memory_reactivate` (internal) |
 | `workspace_read_command` | workspace | read | — |
+| `find_uuid` | lookup | read | — |
 | `kanban_read` | kanban | read | — |
 | `kanban_query` | kanban | read | — |
-| `find_uuid` | lookup | read | — |
-| `remember` | memory | log-and-undo | `reject_memory_candidate` (internal) |
-| `forget_memory` | memory | log-and-undo | `reactivate_memory` (internal) |
-| `activate_memory` | memory | **confirm** | — |
 | `kanban_task_column` | kanban | log-and-undo | inverse move (position-aware) |
 | `kanban_task_change_board` | kanban | log-and-undo | inverse board move (board-aware) |
 | `kanban_task_complete` | kanban | log-and-undo | move back to prior column |
@@ -119,7 +119,7 @@ only by `undo_write_intent`.
 
 ## Read actions
 
-- **`query_memory`** — hybrid retrieval over curated seed Q&A (static +
+- **`memory_query`** — hybrid retrieval over curated seed Q&A (static +
   dynamic handlers) and active memory claims, tiered user-overlay → upstream →
   claims, fenced as untrusted data, with per-fact (1200 chars, tagged
   `truncateN`) and total (11000 chars) budgets and a `{"uuid": ...}` mode to
@@ -160,13 +160,13 @@ row's `result.undo` carries the inverse op (`{capability, payload}`) that
 
 - **Position-aware undo** — a move-undo carries `expect_column` and refuses if
   the task has since moved elsewhere.
-- **State-guarded inverses** — undo of `remember` refuses if the claim is no
-  longer candidate/active; undo of `forget` refuses unless still `rejected`;
+- **State-guarded inverses** — undo of `memory_remember` refuses if the claim is no
+  longer candidate/active; undo of `memory_forget` refuses unless still `rejected`;
   undo of `propose_skill` deletes only a still-pending candidate. An undo can
   never clobber a state that changed since the write.
 - **Append-only surfaces retract, not erase** — a comment's undo posts
   `↩ retracted: …` (which itself needs no further undo).
-- **No-op writes are not recorded** — a `remember` that dedupes into an
+- **No-op writes are not recorded** — a `memory_remember` that dedupes into an
   existing claim (`noop`) has nothing to undo, so no ledger row.
 - **Duplicate-write block** — the loop keeps a signature set
   (`action:sorted-args`) of writes completed this run; an identical re-issue
@@ -338,9 +338,9 @@ webapp `test_assistant_*` suites for the endpoints and pages.
 - `skills-design.md` — the skills the assistant retrieves, proposes, and
   activates.
 - `memory-architecture.md` — the memory trust model behind
-  `remember`/`forget`/`activate_memory` and the profile block.
+  `memory_remember`/`memory_forget`/`memory_activate` and the profile block.
 - `kanban-design.md` — the kanban capability family and why it sits outside
   the worker authority model.
-- `qa-system.md` — the Q&A knowledge base behind `query_memory`.
+- `qa-system.md` — the Q&A knowledge base behind `memory_query`.
 - `proposals/2026-06-25-security-review-mitigations.md` — Finding 4 (the
   unauthenticated confirm boundary).

@@ -47,7 +47,7 @@ def _agent() -> AssistantAgent:
 
 
 def _query(q="anything"):
-    return AssistantStepDecision(reason="look", action=AssistantActionName.QUERY_MEMORY,
+    return AssistantStepDecision(reason="look", action=AssistantActionName.MEMORY_QUERY,
                                  args={"query": q})
 
 
@@ -100,7 +100,7 @@ def test_stop_at_step_boundary_leaves_clean_trace(room):
     assert run.final_summary and "stopped by operator" in run.final_summary
     phases = [(s.action, s.phase) for s in _steps(run.uuid)]
     # Step 0's work is intact; a control step records the stop.
-    assert ("query_memory", "observed") in phases
+    assert ("memory_query", "observed") in phases
     assert ("stop", "control") in phases
     # The model was asked once (step 0); the stop prevented a second decision.
     assert agent._decide_next_step.calls["n"] == 1
@@ -122,7 +122,7 @@ def test_redirect_consumed_before_next_step(room):
     run_id = result["assistant_run_uuid"]
     phases = [(s.action, s.phase) for s in _steps(run_id)]
     assert ("redirect", "control") in phases   # the redirect was applied
-    assert ("query_memory", "observed") in phases  # step 0 intact
+    assert ("memory_query", "observed") in phases  # step 0 intact
     assert ("reply", "final") in phases        # continued to a terminal reply
     # The redirect was marked applied (no longer pending).
     assert db.list_pending_controls(run_id) == []
@@ -130,6 +130,6 @@ def test_redirect_consumed_before_next_step(room):
 
 def test_heartbeat_reports_progress_activity(app_ctx):
     agent = _agent()
-    agent._activity = "running query_memory"
+    agent._activity = "running memory_query"
     extra = agent._heartbeat_extra()
-    assert extra["activity"] == "running query_memory"
+    assert extra["activity"] == "running memory_query"

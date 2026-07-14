@@ -1,7 +1,7 @@
 """The user profile block: a query-independent digest of the operator's active
 self-model, injected into the assistant prompt like the skills block.
 
-Unlike ``query_memory`` (a model-chosen action with a query), the profile block
+Unlike ``memory_query`` (a model-chosen action with a query), the profile block
 is assembled once per turn and is *always* present — it surfaces stable
 preferences, project decisions, and operator facts regardless of whether the
 model thinks to ask. Selection is deliberately non-vector: this is a small

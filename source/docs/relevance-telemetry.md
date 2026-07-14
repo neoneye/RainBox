@@ -47,7 +47,7 @@ to have influenced the final text".
 
 ### Assistant Hybrid Memory Retrieval
 
-The assistant's `query_memory` action uses `retrieve_memories_hybrid`, which
+The assistant's `memory_query` action uses `retrieve_memories_hybrid`, which
 hard-filters memory claims, then ranks with vector similarity, Postgres
 full-text rank, and subject/object entity boosts.
 

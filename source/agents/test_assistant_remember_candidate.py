@@ -93,7 +93,7 @@ def test_handle_wires_message_uuid_into_evidence_source_id(app_ctx):
     try:
         agent = _agent()
         agent._decide_next_step = scripted_decisions(
-            _decision(AssistantActionName.REMEMBER, text=text),
+            _decision(AssistantActionName.MEMORY_REMEMBER, text=text),
             _decision(AssistantActionName.REPLY, message="Noted."),
         )
         agent.handle(uuid4(), {"room_uuid": str(room.uuid), "message_uuid": str(message)})

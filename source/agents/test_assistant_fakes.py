@@ -68,9 +68,9 @@ def test_decision_parses_action_from_string_value():
     """Structured output arrives as JSON, so the action comes in as its string
     value and must coerce to the enum member."""
     decision = AssistantStepDecision.model_validate(
-        {"reason": "look it up", "action": "query_memory", "args": {"query": "git status"}}
+        {"reason": "look it up", "action": "memory_query", "args": {"query": "git status"}}
     )
-    assert decision.action is AssistantActionName.QUERY_MEMORY
+    assert decision.action is AssistantActionName.MEMORY_QUERY
 
 
 def test_decision_rejects_unknown_action():
@@ -87,14 +87,14 @@ def test_action_enum_covers_the_known_action_surface():
     assert {a.value for a in AssistantActionName} == {
         "reply",
         "ask_clarifying_question",
-        "query_memory",
+        "memory_query",
         "workspace_read_command",
         "find_uuid",
         "kanban_read",
         "kanban_query",
-        "remember",
-        "activate_memory",
-        "forget_memory",
+        "memory_remember",
+        "memory_activate",
+        "memory_forget",
         "kanban_task_column",
         "kanban_task_change_board",
         "kanban_task_complete",
@@ -108,6 +108,6 @@ def test_action_enum_covers_the_known_action_surface():
         "propose_skill",
         "activate_skill",
         "skill_delete",
-        "reject_memory_candidate",
-        "reactivate_memory",
+        "memory_reject_candidate",
+        "memory_reactivate",
     }

@@ -4,7 +4,7 @@ The contract is `AssistantActionName` + `AssistantStepDecision`: the model emits
 one structured decision per step, the loop validates it, dispatches the action,
 records a durable per-step trace (assistant_run / assistant_step tables), feeds
 the observation back, and repeats until a terminal `reply`/`ask_clarifying_question`
-or the step cap. Actions are read-only (query_memory,
+or the step cap. Actions are read-only (memory_query,
 workspace_read_command, kanban_read) and write families (memory, skills, kanban,
 reminders, files) — each risk-tiered (log-and-undo / confirm) and traced.
 
@@ -47,14 +47,23 @@ class AssistantActionName(str, Enum):
     REPLY = "reply"
     ASK_CLARIFYING_QUESTION = "ask_clarifying_question"
 
+    # Families are kept contiguous (`<family>_<verb>`) so their actions group
+    # together in the prompt catalog (which renders in this enum order).
+
+    # The memory family: one read + the risk-tiered writes.
+    MEMORY_QUERY = "memory_query"        # read: recall facts, answer general questions
+    MEMORY_REMEMBER = "memory_remember"  # log-and-undo: create a candidate memory
+    MEMORY_REJECT_CANDIDATE = "memory_reject_candidate"  # internal: remember's undo inverse (not prompt-exposed)
+    MEMORY_ACTIVATE = "memory_activate"  # confirm-tier: activate a candidate
+    MEMORY_FORGET = "memory_forget"      # log-and-undo: reject a memory (stop recalling it)
+    MEMORY_REACTIVATE = "memory_reactivate"  # internal: forget's undo inverse (not prompt-exposed)
+
     # Read-only actions: each performs one bounded read and returns an
     # observation the loop feeds back to the model.
-    QUERY_MEMORY = "query_memory"
     WORKSPACE_READ_COMMAND = "workspace_read_command"
     FIND_UUID = "find_uuid"
 
-    # The kanban family, kept contiguous (`kanban_<entity>_<verb>`) so the
-    # actions group together in the prompt catalog: one read + the writes.
+    # The kanban family: two reads + the risk-tiered writes.
     KANBAN_READ = "kanban_read"
     KANBAN_QUERY = "kanban_query"                # read: find boards/folders/tasks by name (fuzzy)
     KANBAN_BOARD_CREATE = "kanban_board_create"  # log-and-undo: create a new board
@@ -67,16 +76,13 @@ class AssistantActionName(str, Enum):
     KANBAN_TASK_COMMENT = "kanban_task_comment"  # log-and-undo: comment on a task
 
     # Write actions, each risk-tiered:
-    REMEMBER = "remember"              # log-and-undo: create a candidate memory
-    ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
-    FORGET_MEMORY = "forget_memory"      # log-and-undo: reject a memory (stop recalling it)
     SET_REMINDER = "set_reminder"      # confirm-tier (dry-run): schedule a reminder message
     EDIT_FILE = "edit_file"            # confirm-tier (dry-run diff): edit a workspace file
+
+    # The skill family: proposal, activation, and the internal inverse.
     PROPOSE_SKILL = "propose_skill"    # log-and-undo: write an inert candidate skill
     ACTIVATE_SKILL = "activate_skill"  # confirm-tier: activate a candidate skill
     SKILL_DELETE = "skill_delete"      # internal: propose_skill's undo inverse (not prompt-exposed)
-    REJECT_MEMORY_CANDIDATE = "reject_memory_candidate"  # internal: remember's undo inverse
-    REACTIVATE_MEMORY = "reactivate_memory"  # internal: forget's undo inverse (not prompt-exposed)
 
 
 class AssistantStepDecision(BaseModel):
@@ -112,8 +118,8 @@ request is ambiguous or missing information, use `ask_clarifying_question`. Only
 use actions from the list below; any other action is rejected.
 
 Match the read action to the data you need: `kanban_read` for boards/tasks,
-`query_memory` for remembered facts and general questions (project/git status,
-capabilities). Do not use `query_memory` to inspect kanban or files.
+`memory_query` for remembered facts and general questions (project/git status,
+capabilities). Do not use `memory_query` to inspect kanban or files.
 When you have a uuid (or a fragment of one) and don't know what it refers to,
 use `find_uuid` — it resolves partial or typo'd uuids across every table and
 returns the entity, its parents, and the exact full uuid to use in other
@@ -141,7 +147,7 @@ Do not reuse an answer from an earlier message: stored facts may have changed
 or become restricted since, and live values change between turns.
 A recalled fact tagged `truncateN` (e.g. `truncate1200`) is shortened to N
 characters, and an "omitted" note means lower-ranked facts were dropped to fit.
-When you need the full text of such a fact, call `query_memory` again with that
+When you need the full text of such a fact, call `memory_query` again with that
 fact's uuid — `{"uuid": "<the fact's uuid>"}` — instead of a query.
 When a step fails, fix the specific problem it reports — never resubmit the same
 args, and never invent placeholder values like `<COLUMN_UUID>`; if you lack an
@@ -158,7 +164,7 @@ yet, perform it now — do not `reply` claiming a result you have not produced."
 FACTS_INVALIDATION_NOTICE: str = (
     "Notice: a setting changed since earlier in this conversation, so stored "
     "facts and the Q&A knowledge base may now differ. Re-check any fact with "
-    "query_memory before relying on it — earlier answers in this conversation "
+    "memory_query before relying on it — earlier answers in this conversation "
     "may be out of date."
 )
 
@@ -234,13 +240,13 @@ AssistantTurnEvent = AssistantTurnStep | AssistantTurnRedirect
 AssistantAction = Callable[[AssistantActionContext, dict[str, Any]], AssistantObservation]
 
 
-# query_memory keeps its observation readable and bounded: each fact is capped
+# memory_query keeps its observation readable and bounded: each fact is capped
 # to PER_FACT chars (long ones tagged `truncateN`), and the whole block to TOTAL
 # chars (lower-ranked facts past the budget are dropped at a fact boundary, never
 # mid-word). A shortened or omitted fact can be read in full via the uuid mode
 # (`{"uuid": ...}`) — see ASSISTANT_SYSTEM_PROMPT.
-QUERY_MEMORY_PER_FACT_CHARS: int = 1200
-QUERY_MEMORY_TOTAL_CHARS: int = 11000
+MEMORY_QUERY_PER_FACT_CHARS: int = 1200
+MEMORY_QUERY_TOTAL_CHARS: int = 11000
 
 
 RECALLED_MEMORY_LEGEND: str = "{memory_uuid}, {memory_tags}: {memory_text}"
@@ -250,15 +256,15 @@ def _fact_line(uuid: str, tags: str, text: str) -> tuple[str, bool]:
     """Render one recalled-fact line (see RECALLED_MEMORY_LEGEND), shortening text
     over the per-fact cap and marking it with a `truncate{cap}` tag. Returns
     (line, was_truncated)."""
-    if len(text) > QUERY_MEMORY_PER_FACT_CHARS:
-        return (f"{uuid}, {tags}, truncate{QUERY_MEMORY_PER_FACT_CHARS}: "
-                f"{text[:QUERY_MEMORY_PER_FACT_CHARS]}", True)
+    if len(text) > MEMORY_QUERY_PER_FACT_CHARS:
+        return (f"{uuid}, {tags}, truncate{MEMORY_QUERY_PER_FACT_CHARS}: "
+                f"{text[:MEMORY_QUERY_PER_FACT_CHARS]}", True)
     return f"{uuid}, {tags}: {text}", False
 
 
 def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantObservation:
     """Return one memory in full (untruncated) by uuid — the escape hatch for a
-    fact query_memory shortened. Seed entries respect shields; claims never
+    fact memory_query shortened. Seed entries respect shields; claims never
     return secrets. `matched: False` when the uuid resolves to nothing visible."""
     from memory import seed_memory as qkb
     from memory.retrieval import fence_recalled_memory
@@ -315,7 +321,7 @@ def _action_query_memory(
         return _query_memory_full(ctx, uuid_arg)
     query = str(args.get("query", "")).strip()
     if not query:
-        return AssistantObservation(ok=False, text="query_memory needs a 'query' or a 'uuid'.")
+        return AssistantObservation(ok=False, text="memory_query needs a 'query' or a 'uuid'.")
     qctx = QueryContext(
         room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
     )
@@ -365,9 +371,9 @@ def _action_query_memory(
         for raw in dynamic_block.split("\n")[2:]:
             raw = raw[2:] if raw.startswith("- ") else raw
             head, sep, body = raw.partition(": ")
-            if sep and len(body) > QUERY_MEMORY_PER_FACT_CHARS:
-                raw = (f"{head}, truncate{QUERY_MEMORY_PER_FACT_CHARS}: "
-                       f"{body[:QUERY_MEMORY_PER_FACT_CHARS]}")
+            if sep and len(body) > MEMORY_QUERY_PER_FACT_CHARS:
+                raw = (f"{head}, truncate{MEMORY_QUERY_PER_FACT_CHARS}: "
+                       f"{body[:MEMORY_QUERY_PER_FACT_CHARS]}")
                 truncated_count += 1
             fact_lines.append(raw)
 
@@ -377,7 +383,7 @@ def _action_query_memory(
     kept: list[str] = []
     omitted = 0
     for i, line in enumerate(fact_lines):
-        if kept and used + len(line) + 1 > QUERY_MEMORY_TOTAL_CHARS:
+        if kept and used + len(line) + 1 > MEMORY_QUERY_TOTAL_CHARS:
             omitted = len(fact_lines) - i
             break
         used += len(line) + 1
@@ -392,11 +398,11 @@ def _action_query_memory(
         # ASSISTANT_SYSTEM_PROMPT.
         segs = []
         if truncated_count:
-            segs.append(f"Long facts shortened to {QUERY_MEMORY_PER_FACT_CHARS} chars "
-                        f"(tagged truncate{QUERY_MEMORY_PER_FACT_CHARS}).")
+            segs.append(f"Long facts shortened to {MEMORY_QUERY_PER_FACT_CHARS} chars "
+                        f"(tagged truncate{MEMORY_QUERY_PER_FACT_CHARS}).")
         if omitted:
             segs.append(f"{omitted} lower-ranked fact(s) omitted.")
-        segs.append('To read a fact in full, call query_memory with '
+        segs.append('To read a fact in full, call memory_query with '
                     '{"uuid": "<the fact\'s uuid>"}.')
         text += "\n\n" + " ".join(segs)
     return AssistantObservation(
@@ -622,7 +628,7 @@ def _action_remember(
               f"memory_uuid (never invent one)."),
         data={"memory_uuid": str(claim.uuid), "status": claim.status,
               "link": _memory_link(claim.uuid),
-              "undo": {"capability": "reject_memory_candidate",
+              "undo": {"capability": "memory_reject_candidate",
                        "payload": {"memory_uuid": str(claim.uuid)}}},
     )
 
@@ -655,10 +661,10 @@ def _action_forget_memory(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
     """Log-and-undo write: forget (reject) a memory so it stops being recalled.
-    Resolve the target by `memory_uuid` (from query_memory) or by `text` — text
+    Resolve the target by `memory_uuid` (from memory_query) or by `text` — text
     searches active AND candidate claims, so a just-remembered memory can be
     forgotten. Executes immediately and reversibly: rejects the claim, prunes its
-    embedding, and carries an inverse op (`reactivate_memory`) so undo restores
+    embedding, and carries an inverse op (`memory_reactivate`) so undo restores
     it. The mirror image of `remember`."""
     raw_uuid = args.get("memory_uuid")
     text = str(args.get("text", "")).strip()
@@ -688,7 +694,7 @@ def _action_forget_memory(
         claim = matches[0]
     else:
         return AssistantObservation(
-            ok=False, text="forget_memory needs a memory_uuid or text")
+            ok=False, text="memory_forget needs a memory_uuid or text")
 
     db.reject_memory(claim.uuid, {"provenance": "confirmed_by_user",
                                   "source_type": "manual"})
@@ -700,7 +706,7 @@ def _action_forget_memory(
               f"undo reactivates it.)"),
         data={"memory_uuid": str(claim.uuid),
               "link": _memory_link(claim.uuid),
-              "undo": {"capability": "reactivate_memory",
+              "undo": {"capability": "memory_reactivate",
                        "payload": {"memory_uuid": str(claim.uuid)}}},
     )
 
@@ -708,7 +714,7 @@ def _action_forget_memory(
 def _action_reactivate_memory(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Internal: reactivate a forgotten memory — forget_memory's undo inverse. Not
+    """Internal: reactivate a forgotten memory — memory_forget's undo inverse. Not
     prompt-exposed (reached only via undo_write_intent). Refuses a claim that is
     not currently `rejected`, so the undo can't clobber a state that changed since
     forget (the version-guard discipline shared by every reversible write)."""
@@ -1350,8 +1356,8 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         summary="ask the user for missing information",
         required_args=("question",), terminal=True,
     ),
-    AssistantActionName.QUERY_MEMORY: Capability(
-        name=AssistantActionName.QUERY_MEMORY, family="memory",
+    AssistantActionName.MEMORY_QUERY: Capability(
+        name=AssistantActionName.MEMORY_QUERY, family="memory",
         description=('recall stored facts AND answer general questions (project '
                      'status, git status, capabilities, model info) from the '
                      'knowledge base. NOT for kanban or files — use kanban_read / '
@@ -1360,6 +1366,47 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         summary="recall facts and answer general questions",
         required_args=(), optional_args=frozenset({"query", "uuid"}),
         action=_action_query_memory, output_cap_chars=12000,
+    ),
+    AssistantActionName.MEMORY_REMEMBER: Capability(
+        name=AssistantActionName.MEMORY_REMEMBER, family="memory",
+        description=('remember a fact as an inert candidate (reject to undo). '
+                     'args: {"text": "..."}'),
+        summary="remember a fact as a candidate",
+        required_args=("text",), action=_action_remember,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.MEMORY_REJECT_CANDIDATE: Capability(
+        name=AssistantActionName.MEMORY_REJECT_CANDIDATE, family="memory",
+        description="(internal) reject a candidate memory — remember's undo inverse.",
+        summary="reject a candidate memory",
+        required_args=("memory_uuid",), action=_action_reject_memory_candidate,
+        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
+    ),
+    AssistantActionName.MEMORY_ACTIVATE: Capability(
+        name=AssistantActionName.MEMORY_ACTIVATE, family="memory",
+        description=('propose activating a candidate memory so it steers future '
+                     'answers; needs your confirmation. args: {"memory_uuid": "..."}'),
+        summary="activate a candidate memory",
+        required_args=("memory_uuid",), action=_action_activate_memory,
+        read=False, write=True, tier="confirm",
+    ),
+    AssistantActionName.MEMORY_FORGET: Capability(
+        name=AssistantActionName.MEMORY_FORGET, family="memory",
+        description=('forget a memory so it stops being recalled; reversible '
+                     '(undoable). args: {"memory_uuid": "..."} (from memory_query) '
+                     'or {"text": "..."} — text matches active AND candidate '
+                     'memories'),
+        summary="forget a memory",
+        optional_args=frozenset({"memory_uuid", "text"}),
+        action=_action_forget_memory,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.MEMORY_REACTIVATE: Capability(
+        name=AssistantActionName.MEMORY_REACTIVATE, family="memory",
+        description="(internal) reactivate a forgotten memory — forget's undo inverse.",
+        summary="reactivate a forgotten memory",
+        required_args=("memory_uuid",), action=_action_reactivate_memory,
+        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
     AssistantActionName.WORKSPACE_READ_COMMAND: Capability(
         name=AssistantActionName.WORKSPACE_READ_COMMAND, family="workspace",
@@ -1487,33 +1534,6 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         required_args=("task_uuid", "text"), action=_action_comment_kanban_task,
         read=False, write=True, tier="log_and_undo",
     ),
-    AssistantActionName.REMEMBER: Capability(
-        name=AssistantActionName.REMEMBER, family="memory",
-        description=('remember a fact as an inert candidate (reject to undo). '
-                     'args: {"text": "..."}'),
-        summary="remember a fact as a candidate",
-        required_args=("text",), action=_action_remember,
-        read=False, write=True, tier="log_and_undo",
-    ),
-    AssistantActionName.ACTIVATE_MEMORY: Capability(
-        name=AssistantActionName.ACTIVATE_MEMORY, family="memory",
-        description=('propose activating a candidate memory so it steers future '
-                     'answers; needs your confirmation. args: {"memory_uuid": "..."}'),
-        summary="activate a candidate memory",
-        required_args=("memory_uuid",), action=_action_activate_memory,
-        read=False, write=True, tier="confirm",
-    ),
-    AssistantActionName.FORGET_MEMORY: Capability(
-        name=AssistantActionName.FORGET_MEMORY, family="memory",
-        description=('forget a memory so it stops being recalled; reversible '
-                     '(undoable). args: {"memory_uuid": "..."} (from query_memory) '
-                     'or {"text": "..."} — text matches active AND candidate '
-                     'memories'),
-        summary="forget a memory",
-        optional_args=frozenset({"memory_uuid", "text"}),
-        action=_action_forget_memory,
-        read=False, write=True, tier="log_and_undo",
-    ),
     AssistantActionName.SET_REMINDER: Capability(
         name=AssistantActionName.SET_REMINDER, family="cron",
         description=('schedule a reminder that messages you at a time; needs your '
@@ -1560,20 +1580,6 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         description="(internal) delete a skill file — propose_skill's undo inverse.",
         summary="delete a skill",
         required_args=("skill_id",), action=_action_delete_skill,
-        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
-    ),
-    AssistantActionName.REJECT_MEMORY_CANDIDATE: Capability(
-        name=AssistantActionName.REJECT_MEMORY_CANDIDATE, family="memory",
-        description="(internal) reject a candidate memory — remember's undo inverse.",
-        summary="reject a candidate memory",
-        required_args=("memory_uuid",), action=_action_reject_memory_candidate,
-        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
-    ),
-    AssistantActionName.REACTIVATE_MEMORY: Capability(
-        name=AssistantActionName.REACTIVATE_MEMORY, family="memory",
-        description="(internal) reactivate a forgotten memory — forget's undo inverse.",
-        summary="reactivate a forgotten memory",
-        required_args=("memory_uuid",), action=_action_reactivate_memory,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
 }
@@ -1884,7 +1890,7 @@ class AssistantAgent(ModelGroupAgent):
                               "read earlier in this run, so it was not dispatched "
                               "again. Use the observation above to answer with "
                               "`reply`. If a fact was shortened or omitted, call "
-                              "`query_memory` with that specific fact's uuid instead "
+                              "`memory_query` with that specific fact's uuid instead "
                               "of repeating the same query."),
                         data=prior.data,
                     )
@@ -2160,7 +2166,7 @@ class AssistantAgent(ModelGroupAgent):
 
     def _build_profile_block(self, journal_id: UUID, room_uuid: UUID) -> str:
         """Render the operator self-model digest (active memory) for this turn.
-        Query-independent (unlike `query_memory`); empty when there is no active
+        Query-independent (unlike `memory_query`); empty when there is no active
         profile. Best-effort: a retrieval failure must not break the turn."""
         try:
             block, _ = user_profile.build_profile_block(
@@ -2355,7 +2361,7 @@ class AssistantAgent(ModelGroupAgent):
     def _set_observation_content(
         node: ET.Element, action: str, text: str
     ) -> None:
-        """Preserve query_memory's trusted outer fence as nested XML.
+        """Preserve memory_query's trusted outer fence as nested XML.
 
         Recalled fact bodies have already had angle brackets neutralized by
         `fence_recalled_memory`; all other observations remain ordinary escaped
@@ -2364,7 +2370,7 @@ class AssistantAgent(ModelGroupAgent):
         start = text.find("<recalled_memory")
         close = "</recalled_memory>"
         end = text.find(close, start) if start >= 0 else -1
-        if action != AssistantActionName.QUERY_MEMORY.value or start < 0 or end < 0:
+        if action != AssistantActionName.MEMORY_QUERY.value or start < 0 or end < 0:
             node.text = text
             return
         end += len(close)

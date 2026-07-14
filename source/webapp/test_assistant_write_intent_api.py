@@ -33,7 +33,7 @@ def _propose_activation(app):
         )
         agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
         agent._decide_next_step = scripted_decisions(
-            AssistantStepDecision(reason="propose", action=AssistantActionName.ACTIVATE_MEMORY,
+            AssistantStepDecision(reason="propose", action=AssistantActionName.MEMORY_ACTIVATE,
                                   args={"memory_uuid": str(cand.uuid)}),
             AssistantStepDecision(reason="done", action=AssistantActionName.REPLY,
                                   args={"message": "proposed"}),

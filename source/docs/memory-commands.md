@@ -11,7 +11,7 @@ initialized. That means explicit memory operations do not depend on the
 embedder or the Q&A registry being available.
 
 These commands are separate from prompt-time memory retrieval. Both normal chat
-(via `build_chat_memory_block`) and the assistant's `query_memory` action use
+(via `build_chat_memory_block`) and the assistant's `memory_query` action use
 the hybrid `retrieve_memories_hybrid` path backed by `memory_embedding` when
 embeddings are available. The legacy lexical `retrieve_memories` function is
 retained only for deterministic memory-retrieval eval cases in `evals/runner.py`.

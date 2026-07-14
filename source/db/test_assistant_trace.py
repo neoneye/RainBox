@@ -57,7 +57,7 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
     try:
         db.append_assistant_step(
             run_uuid=run.uuid, step_index=0, phase="running",
-            action="query_memory", reason="look it up", args={"query": "git status"},
+            action="memory_query", reason="look it up", args={"query": "git status"},
         )
         # Simulate another reader (fresh state) mid-action: the running row is
         # already durable, before any "observed" row exists.
@@ -68,7 +68,7 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
             .all()
         )
         assert len(running) == 1
-        assert running[0].action == "query_memory"
+        assert running[0].action == "memory_query"
         assert running[0].args == {"query": "git status"}
     finally:
         _cleanup_run(run.uuid)
@@ -85,7 +85,7 @@ def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
     try:
         db.append_assistant_step(
             run_uuid=run.uuid, step_index=0, phase="failed",
-            action="query_memory", error="boom: kaboom",
+            action="memory_query", error="boom: kaboom",
         )
         # Queryable by phase/action without scanning chat history.
         failed = (
@@ -113,13 +113,13 @@ def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
         # `planned` posts NO anchor (the observation doesn't exist yet).
         db.append_assistant_step(
             run_uuid=run.uuid, step_index=0, phase="planned",
-            action="query_memory", reason="look it up", args={"query": "the-query"},
+            action="memory_query", reason="look it up", args={"query": "the-query"},
         )
         assert not [m for m in db.list_room_messages(chatroom.uuid)
                     if m["kind"] == "debug-assistant"]
         db.append_assistant_step(
             run_uuid=run.uuid, step_index=0, phase="observed",
-            action="query_memory", reason="look it up", args={"query": "the-query"},
+            action="memory_query", reason="look it up", args={"query": "the-query"},
             observation_preview="found the fact",
         )
         rows = [
@@ -130,7 +130,7 @@ def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
         assert rows[0]["content_type"] == "json"
         state = json.loads(rows[0]["text"])          # the full step state as JSON
         assert state["step"] == 0
-        assert state["action"] == "query_memory"
+        assert state["action"] == "memory_query"
         assert state["reason"] == "look it up"
         assert state["args"] == {"query": "the-query"}  # args in full
         assert state["observation"] == "found the fact"
@@ -148,7 +148,7 @@ def test_open_and_append_persist_token_counts(app_ctx):
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
     try:
         opened = db.open_assistant_step(
-            run_uuid=run.uuid, step_index=0, action="query_memory", reason="r",
+            run_uuid=run.uuid, step_index=0, action="memory_query", reason="r",
             input_tokens=412, output_tokens=87)
         assert opened.input_tokens == 412 and opened.output_tokens == 87
         # append (terminal single-insert) carries them too; default is None.
@@ -170,7 +170,7 @@ def test_open_then_settle_is_one_mutable_row(app_ctx):
     )
     try:
         step = db.open_assistant_step(
-            run_uuid=run.uuid, step_index=0, action="query_memory",
+            run_uuid=run.uuid, step_index=0, action="memory_query",
             reason="look it up", args={"query": "the-query"},
         )
         assert step.uuid is not None
@@ -194,7 +194,7 @@ def test_open_then_settle_is_one_mutable_row(app_ctx):
                    if m["kind"] == "debug-assistant"]
         assert len(anchors) == 1
         state = json.loads(anchors[0]["text"])
-        assert state["action"] == "query_memory"
+        assert state["action"] == "memory_query"
         assert state["observation"] == "found the fact"
     finally:
         _cleanup_run(run.uuid)
@@ -213,14 +213,14 @@ def test_unsettled_open_step_remains_a_durable_running_row(app_ctx):
     )
     try:
         db.open_assistant_step(
-            run_uuid=run.uuid, step_index=0, action="query_memory",
+            run_uuid=run.uuid, step_index=0, action="memory_query",
             reason="look it up", args={"query": "git status"},
         )
         db.db.session.expire_all()  # simulate a fresh reader after a crash
         rows = db.list_assistant_steps(run.uuid)
         assert len(rows) == 1
         assert rows[0].phase == "running"
-        assert rows[0].action == "query_memory"
+        assert rows[0].action == "memory_query"
         assert rows[0].args == {"query": "git status"}
     finally:
         _cleanup_run(run.uuid)
@@ -527,7 +527,7 @@ def test_step_persists_model_reasoning(app_ctx):
     )
     try:
         opened = db.open_assistant_step(
-            run_uuid=run.uuid, step_index=0, action="query_memory",
+            run_uuid=run.uuid, step_index=0, action="memory_query",
             reason="look it up", args={"query": "git status"},
             reasoning="the operator asked about git; I should query memory",
         )

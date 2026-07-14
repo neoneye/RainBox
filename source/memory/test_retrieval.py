@@ -269,7 +269,7 @@ def test_format_memory_context_returns_empty_string_when_no_memories():
 
 def test_format_memory_context_includes_uuid_only_when_requested():
     """The chat-context block omits uuids (noise for a reply), but the assistant's
-    query_memory needs them to point at a specific memory (e.g. to forget it)."""
+    memory_query needs them to point at a specific memory (e.g. to forget it)."""
     m = _retrieved(text="I prefer pasta.")
     assert str(m.uuid) not in format_memory_context([m])            # default: clean
     with_id = format_memory_context([m], include_uuid=True)

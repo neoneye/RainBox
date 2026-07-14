@@ -396,7 +396,7 @@ def format_memory_context(
     concatenate without producing a stray header).
 
     `include_uuid` appends each memory's uuid — off for the always-on chat
-    context (noise for a reply), on for the assistant's `query_memory` so it can
+    context (noise for a reply), on for the assistant's `memory_query` so it can
     point at a specific memory (e.g. to forget it)."""
     if not memories:
         return ""

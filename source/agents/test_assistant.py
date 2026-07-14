@@ -87,7 +87,7 @@ def _query_memory(query: str) -> AssistantStepDecision:
     # without ever terminating.
     return AssistantStepDecision(
         reason="look it up",
-        action=AssistantActionName.QUERY_MEMORY,
+        action=AssistantActionName.MEMORY_QUERY,
         args={"query": query},
     )
 

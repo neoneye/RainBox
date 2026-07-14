@@ -1,4 +1,4 @@
-"""The assistant's forget_memory capability (log-and-undo): reject a memory by
+"""The assistant's memory_forget capability (log-and-undo): reject a memory by
 uuid or text so it stops being recalled, executing immediately and reversibly
 (undo reactivates it). Searches active AND candidate memories (a just-remembered
 memory must be forgettable). Mirrors `remember` (its inverse)."""
@@ -49,7 +49,7 @@ def _claim(text, status="active"):
 
 
 def test_forget_capability_is_log_and_undo():
-    cap = CAPABILITIES[AssistantActionName.FORGET_MEMORY]
+    cap = CAPABILITIES[AssistantActionName.MEMORY_FORGET]
     assert cap.write is True and cap.tier == "log_and_undo"
     assert cap.dry_run is False and cap.prompt_exposed is True
 
@@ -90,13 +90,13 @@ def test_forget_observation_links_to_the_memory_page(app_ctx):
 
 
 def test_forget_returns_an_undo_record_that_reactivates(app_ctx):
-    """Log-and-undo: forget carries an inverse op pointing at reactivate_memory,
+    """Log-and-undo: forget carries an inverse op pointing at memory_reactivate,
     so undo restores the exact claim it rejected."""
     c = _claim(f"undo me {uuid4().hex[:6]}")
     try:
         obs = _action_forget_memory(_ctx(), {"memory_uuid": str(c.uuid)})
         undo = obs.data["undo"]
-        assert undo["capability"] == "reactivate_memory"
+        assert undo["capability"] == "memory_reactivate"
         assert undo["payload"]["memory_uuid"] == str(c.uuid)
         # Replaying the inverse restores the active claim.
         back = _action_reactivate_memory(_ctx(), undo["payload"])
@@ -144,7 +144,7 @@ def test_forget_via_loop_executes_inline_and_is_undoable(app_ctx):
     db.post_chat_message(chatroom.uuid, human.uuid, f"forget {text}")
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="forget", action=AssistantActionName.FORGET_MEMORY,
+        AssistantStepDecision(reason="forget", action=AssistantActionName.MEMORY_FORGET,
                               args={"text": text}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
                               args={"message": "done"}),

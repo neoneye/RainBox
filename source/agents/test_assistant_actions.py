@@ -32,10 +32,10 @@ from agents.config import ASSISTANT_UUID
 def test_read_action_descriptions_disambiguate_query_memory_from_kanban():
     """The model once used the general Q&A action to 'query the kanban boards'.
     The catalog must steer inspecting a board to kanban_read, and mark
-    query_memory as not-for-kanban."""
-    qm = CAPABILITIES[AssistantActionName.QUERY_MEMORY].description.lower()
+    memory_query as not-for-kanban."""
+    qm = CAPABILITIES[AssistantActionName.MEMORY_QUERY].description.lower()
     kb = CAPABILITIES[AssistantActionName.KANBAN_READ].description.lower()
-    assert "kanban" in qm and "not for" in qm          # query_memory says: not for kanban
+    assert "kanban" in qm and "not for" in qm          # memory_query says: not for kanban
     assert "column" in kb                              # kanban_read: look up a board's columns
     assert "kanban_read" in ASSISTANT_SYSTEM_PROMPT.lower()
 
@@ -83,7 +83,7 @@ def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
         messages=messages,
         scratchpad=[AssistantTurnStep(
             step_index=0,
-            action="query_memory",
+            action="memory_query",
             args={"query": "Simon demoscene"},
             status="ok",
             observation="<recalled_memory>facts</recalled_memory>",
@@ -108,7 +108,7 @@ def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
     assert "-&gt;" not in prompt
     assert "<assistant_turn>" in prompt
     assert "<assistant_turn version=" not in prompt
-    assert '<step index="1" action="query_memory" status="ok">' in prompt
+    assert '<step index="1" action="memory_query" status="ok">' in prompt
     assert '<arguments format="json">{"query": "Simon demoscene"}</arguments>' in prompt
     assert prompt.count("<current_request ") == 1
     assert ElementTree.fromstring(prompt).tag == "assistant_turn"
@@ -127,7 +127,7 @@ def test_source_priority_policy_is_in_system_prompt_only():
 def test_turn_event_budget_drops_whole_old_events():
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
     old = AssistantTurnStep(
-        step_index=0, action="query_memory", args={}, status="ok",
+        step_index=0, action="memory_query", args={}, status="ok",
         observation="x" * (agent.MAX_SCRATCHPAD_CHARS + 100), is_read=True,
     )
     newest = AssistantTurnStep(
@@ -142,7 +142,7 @@ def test_turn_event_budget_drops_whole_old_events():
 def test_turn_event_budget_keeps_oversized_newest_event_whole():
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
     newest = AssistantTurnStep(
-        step_index=0, action="query_memory", args={}, status="ok",
+        step_index=0, action="memory_query", args={}, status="ok",
         observation="x" * (agent.MAX_SCRATCHPAD_CHARS + 100), is_read=True,
     )
     kept, omitted = agent._bounded_turn_events([newest])
@@ -158,7 +158,7 @@ def test_turn_event_budget_preserves_events_within_budget():
             observation="3 tasks", is_read=True,
         ),
         AssistantTurnStep(
-            step_index=1, action="query_memory", args={"query": "x"},
+            step_index=1, action="memory_query", args={"query": "x"},
             status="failed", observation="unavailable", is_read=True,
         ),
     ]
@@ -177,7 +177,7 @@ def test_successful_read_removes_old_assistant_answers_but_keeps_operator_contex
     prompt = agent._build_user_prompt(
         messages=messages,
         scratchpad=[AssistantTurnStep(
-            step_index=0, action="query_memory", args={"query": "current question"},
+            step_index=0, action="memory_query", args={"query": "current question"},
             status="ok", observation="fresh facts", is_read=True,
         )],
         step_index=1,
@@ -240,7 +240,7 @@ def _ctx() -> AssistantActionContext:
     )
 
 
-# --- query_memory -------------------------------------------------------------
+# --- memory_query -------------------------------------------------------------
 
 
 def test_query_memory_returns_relevant_fact_and_never_secret(app_ctx, fresh_subject):
@@ -289,7 +289,7 @@ def test_query_memory_includes_seed_memories_tiered(app_ctx):
 
 
 def test_query_memory_surfaces_dynamic_handler_answer(app_ctx):
-    """query_memory resolves dynamic seed handlers (project status, git status):
+    """memory_query resolves dynamic seed handlers (project status, git status):
     a git-status handler answer must appear in the fenced block."""
     from memory.seed_memory import SeedMemory
     def fake_seed(query, *, qctx, **_):
@@ -340,7 +340,7 @@ def test_query_memory_merges_seed_and_dynamic_without_duplicate_legend(app_ctx, 
 
 
 def test_query_memory_observation_is_fenced_when_memories_present(app_ctx, fresh_subject):
-    """The query_memory observation must wrap retrieved facts in a recalled_memory
+    """The memory_query observation must wrap retrieved facts in a recalled_memory
     fence so they enter the model context as untrusted reference data."""
     try:
         db.create_memory_claim(
@@ -560,7 +560,7 @@ def test_loop_dispatches_read_action_then_replies(room):
     room_uuid, message_uuid = room
     agent = _agent()
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.QUERY_MEMORY, query="anything"),
+        _decision(AssistantActionName.MEMORY_QUERY, query="anything"),
         _decision(AssistantActionName.REPLY, message="All set."),
     )
     result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
@@ -571,7 +571,7 @@ def test_loop_dispatches_read_action_then_replies(room):
     # reply is a single terminal row.
     assert [s.phase for s in steps] == ["observed", "final"]
     observed = steps[0]
-    assert observed.action == "query_memory"
+    assert observed.action == "memory_query"
     assert observed.observation_preview is not None
 
 
@@ -589,8 +589,8 @@ def test_loop_does_not_dispatch_identical_successful_read_twice(room):
 
     agent._dispatch_action = fake_dispatch
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.QUERY_MEMORY, query="Simon relation to demoscene"),
-        _decision(AssistantActionName.QUERY_MEMORY, query="Simon relation to demoscene"),
+        _decision(AssistantActionName.MEMORY_QUERY, query="Simon relation to demoscene"),
+        _decision(AssistantActionName.MEMORY_QUERY, query="Simon relation to demoscene"),
         _decision(AssistantActionName.REPLY, message="Simon used demos."),
     )
 
@@ -598,7 +598,7 @@ def test_loop_does_not_dispatch_identical_successful_read_twice(room):
 
     assert result["status"] == "finished"
     assert calls == [
-        (0, "query_memory", {"query": "Simon relation to demoscene"})
+        (0, "memory_query", {"query": "Simon relation to demoscene"})
     ]
     steps = _steps_for(result["assistant_run_uuid"])
     assert [s.phase for s in steps] == ["observed", "observed", "final"]
@@ -619,8 +619,8 @@ def test_loop_does_not_dispatch_identical_failed_action_twice(room):
 
     agent._dispatch_action = fake_dispatch
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.QUERY_MEMORY, query="Simon demoscene"),
-        _decision(AssistantActionName.QUERY_MEMORY, query="Simon demoscene"),
+        _decision(AssistantActionName.MEMORY_QUERY, query="Simon demoscene"),
+        _decision(AssistantActionName.MEMORY_QUERY, query="Simon demoscene"),
         _decision(AssistantActionName.REPLY, message="I could not retrieve that fact."),
     )
 
@@ -629,7 +629,7 @@ def test_loop_does_not_dispatch_identical_failed_action_twice(room):
     )
 
     assert result["status"] == "finished"
-    assert calls == [(0, "query_memory", {"query": "Simon demoscene"})]
+    assert calls == [(0, "memory_query", {"query": "Simon demoscene"})]
     steps = _steps_for(result["assistant_run_uuid"])
     assert [s.phase for s in steps] == ["failed", "failed", "final"]
     assert "already failed earlier" in (steps[1].observation_preview or "")
@@ -656,7 +656,7 @@ def test_loop_records_failed_action_and_continues(room):
     assert failed.error and "blocked" in failed.error.lower()
 
 
-# --- query_memory truncation (per-fact cap + overall budget + uuid full-fetch) ---
+# --- memory_query truncation (per-fact cap + overall budget + uuid full-fetch) ---
 
 
 def test_query_memory_truncates_large_facts_and_tags_them(app_ctx):
@@ -717,8 +717,8 @@ def test_query_memory_omits_tail_and_notes_it(app_ctx):
 
 
 def test_query_memory_uuid_returns_full_seed_entry(app_ctx, monkeypatch):
-    """query_memory with a uuid returns that one entry in full, untruncated —
-    the escape hatch for a fact query_memory shortened."""
+    """memory_query with a uuid returns that one entry in full, untruncated —
+    the escape hatch for a fact memory_query shortened."""
     from memory import seed_memory as qkb
     big = "z" * 3000
     monkeypatch.setattr(qkb, "_load_kb", lambda: None)

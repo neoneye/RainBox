@@ -2,7 +2,7 @@
 
 - log-and-undo tier (`remember`): executes immediately, creates an inert
   candidate, leaves a reversible trace.
-- confirm tier (`activate_memory`): the assistant only *proposes*; it is never
+- confirm tier (`memory_activate`): the assistant only *proposes*; it is never
   executed inline. Execution requires an approved intent and is bound to the
   exact proposed payload.
 """
@@ -69,8 +69,8 @@ def _decision(action, **args):
 
 
 def test_write_capabilities_declare_tiers():
-    remember = CAPABILITIES[AssistantActionName.REMEMBER]
-    activate = CAPABILITIES[AssistantActionName.ACTIVATE_MEMORY]
+    remember = CAPABILITIES[AssistantActionName.MEMORY_REMEMBER]
+    activate = CAPABILITIES[AssistantActionName.MEMORY_ACTIVATE]
     assert remember.write is True and remember.tier == "log_and_undo"
     assert activate.write is True and activate.tier == "confirm"
 
@@ -104,7 +104,7 @@ def test_remember_dedupes_an_existing_claim(room):
     agent = _agent()
     text = f"Simon has a Triangle Draw mug {uuid4().hex[:6]}"
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.REMEMBER, text=text),
+        _decision(AssistantActionName.MEMORY_REMEMBER, text=text),
         _decision(AssistantActionName.REPLY, message="Noted."))
     try:
         agent.handle(uuid4(), {"room_uuid": str(room)})
@@ -115,7 +115,7 @@ def test_remember_dedupes_an_existing_claim(room):
         # Ask again with different casing/spacing — should resolve to the same claim.
         agent2 = _agent()
         agent2._decide_next_step = scripted_decisions(
-            _decision(AssistantActionName.REMEMBER, text="  simon HAS a triangle draw MUG " + text.split(" ")[-1]),
+            _decision(AssistantActionName.MEMORY_REMEMBER, text="  simon HAS a triangle draw MUG " + text.split(" ")[-1]),
             _decision(AssistantActionName.REPLY, message="Already have it."))
         agent2.handle(uuid4(), {"room_uuid": str(room)})
         # still exactly one claim with the original text; no second row created
@@ -143,7 +143,7 @@ def test_remember_creates_candidate_memory_and_is_undoable(room):
     agent = _agent()
     text = f"the build server is ci-{uuid4().hex[:6]}"
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.REMEMBER, text=text),
+        _decision(AssistantActionName.MEMORY_REMEMBER, text=text),
         _decision(AssistantActionName.REPLY, message="Noted."),
     )
     try:
@@ -169,7 +169,7 @@ def test_remember_is_undoable_through_the_write_intent_ledger(room):
     agent = _agent()
     text = f"teal sky {uuid4().hex[:6]}"
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.REMEMBER, text=text),
+        _decision(AssistantActionName.MEMORY_REMEMBER, text=text),
         _decision(AssistantActionName.REPLY, message="ok"),
     )
     try:
@@ -205,7 +205,7 @@ def test_undo_remember_leaves_no_tombstone_but_direct_reject_does(room):
     text_undo = f"undo-no-tomb {uuid4().hex[:6]}"
     text_direct = f"direct-reject-tomb {uuid4().hex[:6]}"
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.REMEMBER, text=text_undo),
+        _decision(AssistantActionName.MEMORY_REMEMBER, text=text_undo),
         _decision(AssistantActionName.REPLY, message="ok"),
     )
     try:
@@ -269,7 +269,7 @@ def test_undo_remember_leaves_no_tombstone_but_direct_reject_does(room):
         db.db.session.commit()
 
 
-# --- confirm tier: activate_memory --------------------------------------------
+# --- confirm tier: memory_activate --------------------------------------------
 
 
 def _candidate(text):
@@ -283,7 +283,7 @@ def test_confirm_tier_proposes_without_executing(room):
     cand = _candidate(f"candidate fact {uuid4().hex[:6]}")
     agent = _agent()
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.ACTIVATE_MEMORY, memory_uuid=str(cand.uuid)),
+        _decision(AssistantActionName.MEMORY_ACTIVATE, memory_uuid=str(cand.uuid)),
         _decision(AssistantActionName.REPLY, message="Proposed."),
     )
     try:
@@ -306,7 +306,7 @@ def test_confirm_then_execute_activates_claim(room):
     cand = _candidate(f"to activate {uuid4().hex[:6]}")
     agent = _agent()
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.ACTIVATE_MEMORY, memory_uuid=str(cand.uuid)),
+        _decision(AssistantActionName.MEMORY_ACTIVATE, memory_uuid=str(cand.uuid)),
         _decision(AssistantActionName.REPLY, message="Proposed."),
     )
     try:
@@ -331,7 +331,7 @@ def test_execute_refused_unless_proposed(room):
     cand = _candidate(f"reject me {uuid4().hex[:6]}")
     agent = _agent()
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.ACTIVATE_MEMORY, memory_uuid=str(cand.uuid)),
+        _decision(AssistantActionName.MEMORY_ACTIVATE, memory_uuid=str(cand.uuid)),
         _decision(AssistantActionName.REPLY, message="Proposed."),
     )
     try:
@@ -358,7 +358,7 @@ def test_execute_refuses_non_confirm_tier_capability(app_ctx):
     )
     # 'remember' is log_and_undo, not confirm — a proposed intent for it must be refused.
     intent = db.create_write_intent(
-        run_uuid=run.uuid, capability_name="remember",
+        run_uuid=run.uuid, capability_name="memory_remember",
         payload={"text": "x"}, preview_text="remember: …",
         room_uuid=run.room_uuid, agent_uuid=ASSISTANT_UUID,
     )

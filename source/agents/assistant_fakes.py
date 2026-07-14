@@ -12,7 +12,7 @@ live model — monkeypatch `_decide_next_step` with `scripted_decisions(...)`.
         agent, "_decide_next_step",
         scripted_decisions(
             AssistantStepDecision(reason="Need git status.",
-                                  action=AssistantActionName.QUERY_MEMORY,
+                                  action=AssistantActionName.MEMORY_QUERY,
                                   args={"query": "git status"}),
             AssistantStepDecision(reason="Have enough.",
                                   action=AssistantActionName.REPLY,

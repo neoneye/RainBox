@@ -11,7 +11,7 @@ fresh embedding):
   its text changes (at most one embedding row per claim).
 - `refresh_claim_embedding()` is the write-path hook: embed while a claim is
   active or candidate; prune its embedding once it is neither. The memory write
-  path (remember/confirm/correct/forget and the assistant's activate_memory)
+  path (remember/confirm/correct/forget and the assistant's memory_activate)
   calls it after a status change.
 - `prune_stale_embeddings()` is the lazy safety net: drop embeddings for claims
   that are no longer live (not active/candidate, or expired).

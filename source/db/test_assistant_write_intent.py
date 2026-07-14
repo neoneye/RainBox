@@ -37,7 +37,7 @@ def run(app_ctx):
 
 def test_create_write_intent_is_proposed_with_payload_hash(run):
     intent = db.create_write_intent(
-        run_uuid=run.uuid, capability_name="activate_memory",
+        run_uuid=run.uuid, capability_name="memory_activate",
         payload={"memory_uuid": "abc"}, preview_text="activate memory abc",
         room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,
     )
@@ -46,20 +46,20 @@ def test_create_write_intent_is_proposed_with_payload_hash(run):
     assert intent.payload_hash  # bound to capability + payload
     # The hash is stable for the same capability + payload.
     assert intent.payload_hash == db.write_intent_payload_hash(
-        "activate_memory", {"memory_uuid": "abc"}
+        "memory_activate", {"memory_uuid": "abc"}
     )
 
 
 def test_payload_hash_changes_with_payload_or_capability(run):
-    h1 = db.write_intent_payload_hash("activate_memory", {"memory_uuid": "a"})
-    h2 = db.write_intent_payload_hash("activate_memory", {"memory_uuid": "b"})
+    h1 = db.write_intent_payload_hash("memory_activate", {"memory_uuid": "a"})
+    h2 = db.write_intent_payload_hash("memory_activate", {"memory_uuid": "b"})
     h3 = db.write_intent_payload_hash("other_cap", {"memory_uuid": "a"})
     assert h1 != h2 and h1 != h3
 
 
 def test_state_transitions_stamp_timestamps(run):
     intent = db.create_write_intent(
-        run_uuid=run.uuid, capability_name="activate_memory",
+        run_uuid=run.uuid, capability_name="memory_activate",
         payload={"x": 1}, preview_text="p", room_uuid=run.room_uuid,
         agent_uuid=run.agent_uuid,
     )
@@ -80,7 +80,7 @@ def test_state_transitions_stamp_timestamps(run):
 
 def test_get_write_intent_roundtrip(run):
     intent = db.create_write_intent(
-        run_uuid=run.uuid, capability_name="activate_memory",
+        run_uuid=run.uuid, capability_name="memory_activate",
         payload={"x": 1}, preview_text="p", room_uuid=run.room_uuid,
         agent_uuid=run.agent_uuid,
     )

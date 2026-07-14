@@ -101,7 +101,7 @@ def test_step_is_anchored_and_has_permalink(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look")
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="look")
     db.settle_assistant_step(step, phase="observed", observation_preview="ok")
     db.finish_run(run, "finished")
     try:
@@ -163,10 +163,10 @@ def test_completed_intent_without_undo_has_no_action(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="activate_memory", reason="activate")
+        run_uuid=run.uuid, step_index=0, action="memory_activate", reason="activate")
     db.settle_assistant_step(step, phase="observed", observation_preview="done")
     intent = db.create_write_intent(
-        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="activate_memory",
+        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="memory_activate",
         payload={"memory_uuid": "m"}, preview_text="activated", room_uuid=room.uuid,
         agent_uuid=run.agent_uuid, state="completed", result={})  # no undo record
     db.finish_run(run, "finished")
@@ -300,7 +300,7 @@ def test_step_token_counts_render_in_timeline(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     with_tok = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="query_memory", reason="r",
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="r",
         input_tokens=412, output_tokens=87, duration_ms=5100)
     db.settle_assistant_step(with_tok, phase="observed", observation_preview="ok")
     # a control step has no counts
@@ -323,7 +323,7 @@ def test_run_dashboard_aggregates_status_steps_time_tokens(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     s1 = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="query_memory", reason="r",
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="r",
         input_tokens=400, output_tokens=50, duration_ms=3000)
     db.settle_assistant_step(s1, phase="observed", observation_preview="ok")
     s2 = db.open_assistant_step(
@@ -352,7 +352,7 @@ def test_step_model_renders_as_a_link(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="query_memory", reason="r",
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="r",
         model_uuid=mc.uuid)
     db.settle_assistant_step(step, phase="observed", observation_preview="ok")
     db.finish_run(run, "finished")
@@ -399,7 +399,7 @@ def test_markdown_export_serializes_the_run(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look it up",
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="look it up",
         args={"query": "report"}, input_tokens=120, output_tokens=15, duration_ms=2000)
     db.settle_assistant_step(step, phase="observed", observation_preview="found it")
     db.finish_run(run, "finished", final_summary="all done — the verdict")
@@ -417,7 +417,7 @@ def test_markdown_export_serializes_the_run(app_ctx, client):
         assert "### Obstacles" in md and "- the disk was full" in md
         assert "## Run" in md and "please file the report" in md
         assert "## Timeline" in md
-        assert "Step 1 of 1 — query_memory" in md   # action + its description
+        assert "Step 1 of 1 — memory_query" in md   # action + its description
         assert '"query": "report"' in md             # action args block
         assert "found it" in md                       # observation
         assert "## Verdict — Finished" in md and "all done — the verdict" in md
@@ -431,7 +431,7 @@ def test_markdown_export_unknown_run_is_404(app_ctx, client):
 
 
 def test_query_memory_data_renders_as_table_with_tooltips():
-    """The query_memory step's structured data renders as a compact counts table
+    """The memory_query step's structured data renders as a compact counts table
     (short headers + explanatory tooltips), not a raw JSON blob."""
     from webapp.assistant_views import ASSISTANT_TEMPLATE, _step_md
     # Table markup + tooltips + short headers in the HTML template.
@@ -446,7 +446,7 @@ def test_query_memory_data_renders_as_table_with_tooltips():
         assert hdr in ASSISTANT_TEMPLATE
     # Markdown mirror (_step_md) renders the same counts as a table row.
     class _Step:  # all fields default to None except the two we set
-        action = "query_memory"
+        action = "memory_query"
         observation = {"ok": True, "data": {"qa_static": 3, "qa_dynamic": 0,
                         "memory": 6, "truncated": 0, "omitted": 0}}
         def __getattr__(self, name):
@@ -464,7 +464,7 @@ def test_step_reasoning_renders_collapsed_in_timeline_and_markdown(app_ctx, clie
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look it up",
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="look it up",
         reasoning="the operator wants git state, memory holds that")
     db.settle_assistant_step(step, phase="observed", observation_preview="found it")
     db.finish_run(run, "finished")
@@ -484,7 +484,7 @@ def test_step_without_reasoning_has_no_reasoning_block(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look it up")
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="look it up")
     db.settle_assistant_step(step, phase="observed", observation_preview="found it")
     db.finish_run(run, "finished")
     try:

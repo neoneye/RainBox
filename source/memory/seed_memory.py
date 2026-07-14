@@ -932,7 +932,7 @@ def retrieve_seed_answers(
     applies the shield filter).
 
     Unlike `retrieve_seed_memories` (static-only, for the always-on chat block),
-    this resolves dynamic handlers on demand for the assistant's `query_memory`
+    this resolves dynamic handlers on demand for the assistant's `memory_query`
     action."""
     unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
     rank = _ranker or (lambda q: _semantic_ranked(q, _vector_store(),

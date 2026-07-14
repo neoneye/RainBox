@@ -195,7 +195,7 @@ ASSISTANT_TEMPLATE = """
                              display:flex; align-items:center; }
   .as-main .step .io > pre { margin:0; }
   .as-main .step .io-req pre { max-height:20rem; overflow:auto; }
-  /* Compact counts table for structured action data (e.g. query_memory). */
+  /* Compact counts table for structured action data (e.g. memory_query). */
   .as-main .step .io-data { border-collapse:collapse; font-size:0.8rem; margin:0.6rem 0 0; }
   .as-main .step .io-data th, .as-main .step .io-data td {
      border:1px solid #d1d5db; padding:2px 8px; text-align:right; }
@@ -397,7 +397,7 @@ ASSISTANT_TEMPLATE = """
                 <th title="number of QA static items">QA static</th>
                 <th title="number of QA dynamic items">QA dynamic</th>
                 <th title="number of memory items">memory</th>
-                <th title="number of facts shortened because they exceeded the 1200-char per-fact cap (tagged truncate1200); read one in full via query_memory with its uuid">truncated</th>
+                <th title="number of facts shortened because they exceeded the 1200-char per-fact cap (tagged truncate1200); read one in full via memory_query with its uuid">truncated</th>
                 <th title="number of lower-ranked facts dropped because the whole block exceeded the 11000-char budget; narrow the query or fetch a fact by its uuid">omitted</th>
               </tr></thead><tbody><tr>
                 <td>{{ obs.data.qa_static }}</td>

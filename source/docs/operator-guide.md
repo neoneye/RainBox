@@ -193,7 +193,7 @@ Useful filters:
 - `target_type="memory_claim"`, `"qa_entry"`, or `"skill"`
 - `stage="retrieved"`, `"used"`, `"downvoted"`, `"considered"`, `"injected"`
 - `source="chat_memory_retrieval"` (chat memory block)
-- `source="memory.hybrid"` (assistant `query_memory`)
+- `source="memory.hybrid"` (assistant `memory_query`)
 - `source="query_filter_router"` (Q&A filter/route decisions)
 - `source="user_profile.retrieval"` (the assistant's always-on profile block)
 - `source="skills.retrieval"` (skill injection)

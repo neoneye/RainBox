@@ -98,7 +98,7 @@ Every belief write is tagged with an `actor` from a fixed set in `db/memory.py`:
 These three actors are **override-authorized**: they can clear exact-scope
 tombstones and their writes go active immediately.
 
-- `assistant_interpreted` — the assistant's `remember` tool action: the text was
+- `assistant_interpreted` — the assistant's `memory_remember` tool action: the text was
   phrased or chosen by the model even if a human triggered the turn
 - `model_inferred` — background inference by a model
 
@@ -107,7 +107,7 @@ and are refused by an existing tombstone. They never override a tombstone.
 
 The governing principle is: deterministic or explicitly confirmed human input is
 trusted; model-phrased text is not, regardless of who initiated the request.
-This means the assistant's `remember` action produces a `candidate` for operator
+This means the assistant's `memory_remember` action produces a `candidate` for operator
 confirmation, not an active belief.
 
 ### Governed Write Path (`record_belief`)
@@ -251,7 +251,7 @@ correction logic: dedupe, tombstone checks, conflict detection, and key
 derivation from the new text.
 
 Forgetting marks a claim `rejected` (and tombstones it). An undo of a
-just-created `remember` uses `reject_memory(tombstone=False)` so undoing does
+just-created `memory_remember` uses `reject_memory(tombstone=False)` so undoing does
 not permanently block re-learning the same value; explicit forgetting and
 review-reject still tombstone.
 
@@ -261,7 +261,7 @@ Runtime retrieval lives in `memory/retrieval.py`. There are two retrieval
 functions, but the chat path now uses the hybrid one:
 
 - `retrieve_memories_hybrid`: the primary retrieval path used by both
-  `build_chat_memory_block` (chat) and the assistant's `query_memory` action.
+  `build_chat_memory_block` (chat) and the assistant's `memory_query` action.
   It hard-filters first, then blends vector similarity from `memory_embedding`,
   Postgres full-text rank, and subject/object entity boosts. Degrades to
   lexical/full-text/entity signals when an embedding is missing or the embedder
@@ -305,7 +305,7 @@ Current message:
 
 Recalled memory text is wrapped in a `<recalled_memory …>` fence
 (`fence_recalled_memory` in `memory/retrieval.py`) at the assembly boundary,
-both for the chat context block and for the assistant's `query_memory`
+both for the chat context block and for the assistant's `memory_query`
 observation. Angle brackets inside the recalled text are replaced with the
 look-alike characters `‹` and `›` so injected content cannot forge prompt
 structure or role markers. The fencing function is fail-closed: on any internal
@@ -317,7 +317,7 @@ Before building the transcript, the chat agents filter the room history to
 current message.
 
 The assistant uses memory differently: its bounded action loop can call
-`query_memory`, which uses `retrieve_memories_hybrid` and returns the fenced
+`memory_query`, which uses `retrieve_memories_hybrid` and returns the fenced
 memory context as an observation inside the persisted assistant trace.
 
 ### User Profile Block (always-on assistant digest)
@@ -325,7 +325,7 @@ memory context as an observation inside the persisted assistant trace.
 `user_profile/retrieval.py` builds a query-independent digest of the operator's
 active self-model and injects it into the assistant prompt every turn (like the
 skills block) — it surfaces stable preferences, project decisions, and operator
-facts regardless of whether the model thinks to call `query_memory`. Selection
+facts regardless of whether the model thinks to call `memory_query`. Selection
 is deliberately non-vector: a small stable ranking by confidence + recency +
 kind priority (`preference` > `project_decision` > `fact`; `procedure` and
 `episode_summary` are excluded — procedures are the skills layer's job).
@@ -368,7 +368,7 @@ Candidates are embedded immediately on creation to keep the index warm: when a
 candidate is later activated, its embedding is already present and survives the
 periodic sync, so it is retrievable the moment it becomes active. Candidates
 themselves are not retrieved into prompts — both the chat path and the
-assistant's `query_memory` (which uses `retrieve_memories_hybrid` →
+assistant's `memory_query` (which uses `retrieve_memories_hybrid` →
 `hard_filtered_claims`) filter to `active` only, so a candidate never enters the
 answer context before operator confirmation.
 
@@ -602,7 +602,7 @@ The system is still conservative and incomplete in several areas:
   rows.
 - `sensitivity` is manually assigned and coarse.
 - Memory is injected into `ChatAgent` and available to the assistant through
-  `query_memory`, but not broadly integrated into every agent type.
+  `memory_query`, but not broadly integrated into every agent type.
 - Evidence stores excerpts, but not rich source navigation or source snapshots.
 - The system does not yet summarize episodes from `journal` into reusable
   memories.
@@ -680,7 +680,7 @@ signals can be more damaging than no attribution signal.
 ### 4. Use Memory Across More Agents
 
 The chat agents (via `build_chat_memory_block`) and the assistant (via
-`query_memory` plus the always-on user-profile block) are the current
+`memory_query` plus the always-on user-profile block) are the current
 consumers. Other useful consumers:
 
 - edit-document agents: remember user editing preferences and recurring
