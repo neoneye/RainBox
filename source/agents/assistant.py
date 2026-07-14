@@ -136,7 +136,7 @@ Interpret the user-prompt sections with this precedence:
 <source_priority highest_first="true">
   <source rank="1">successful current_turn_steps observations</source>
   <source rank="2">current_request</source>
-  <source rank="3">runtime_context and operator_profile</source>
+  <source rank="3">runtime_context, operator_identity and operator_profile</source>
   <source rank="4">conversation_history (context only)</source>
 </source_priority>
 Old assistant answers in conversation_history are never authoritative evidence.
@@ -1902,6 +1902,9 @@ class AssistantAgent(ModelGroupAgent):
         # Operator self-model digest (active memory) for this turn, injected
         # before the skill block.
         self._profile_block: str = ""
+        # Operator identity (the profile.current profile's fields), injected
+        # before the self-model digest.
+        self._identity_block: str = ""
         # Coarse current activity, surfaced in heartbeats so a slow run looks
         # different from a hung one.
         self._activity: str = "idle"
@@ -1972,8 +1975,10 @@ class AssistantAgent(ModelGroupAgent):
             # inert and never injected). Best-effort: a retrieval failure must
             # not break the turn.
             self._skill_block = self._build_skill_block(messages, journal_id, room_uuid)
-            # Operator self-model digest: query-independent, always present (best
-            # -effort — a retrieval failure must not break the turn).
+            # Operator identity (who the operator is, from the profile.current
+            # profile) and self-model digest (active memory): query-independent,
+            # always present (best-effort — a failure must not break the turn).
+            self._identity_block = self._build_identity_block()
             self._profile_block = self._build_profile_block(journal_id, room_uuid)
             scratchpad: list[AssistantTurnEvent] = []
             # Signatures of writes already completed this run. A model that doesn't
@@ -2391,6 +2396,16 @@ class AssistantAgent(ModelGroupAgent):
             logger.warning("assistant: skill retrieval failed", exc_info=True)
             return ""
 
+    def _build_identity_block(self) -> str:
+        """Render the operator identity: the fields of the profile selected by
+        the `profile.current` setting. Empty when no profile is selected.
+        Best-effort: a failure must not break the turn."""
+        try:
+            return user_profile.build_identity_block()
+        except Exception:
+            logger.warning("assistant: identity block failed", exc_info=True)
+            return ""
+
     def _build_profile_block(self, journal_id: UUID, room_uuid: UUID) -> str:
         """Render the operator self-model digest (active memory) for this turn.
         Query-independent (unlike `memory_query`); empty when there is no active
@@ -2447,9 +2462,13 @@ class AssistantAgent(ModelGroupAgent):
             "%Y-%m-%d %H:%M %Z"
         )
 
-        # Profile (who the operator is) before skills (how to do the task).
-        # ElementTree escapes leaf text exactly once, so dynamic content cannot
-        # close or forge a prompt zone.
+        # Identity (who the operator is) before profile (what is remembered
+        # about them) before skills (how to do the task). ElementTree escapes
+        # leaf text exactly once, so dynamic content cannot close or forge a
+        # prompt zone.
+        if self._identity_block:
+            identity = ET.SubElement(root, "operator_identity", {"authority": "context"})
+            identity.text = self._identity_block
         if self._profile_block:
             profile = ET.SubElement(root, "operator_profile", {"authority": "context"})
             profile.text = self._profile_block

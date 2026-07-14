@@ -84,6 +84,23 @@ def _validate_chat_default_model(value: object) -> None:
         raise ValueError(f"chat.default_model: {exc}") from None
 
 
+def _validate_profile_current(value: object) -> None:
+    """Must be the uuid of an existing profile (user-owned or built-in
+    template) on the /profile page."""
+    from uuid import UUID
+
+    import db.profile as profile
+
+    try:
+        target = UUID(str(value).strip())
+    except ValueError:
+        raise ValueError(
+            f"profile.current: not a uuid: {value!r}"
+        ) from None
+    if profile.profile_get(target) is None:
+        raise ValueError(f"profile.current: no profile with uuid {target}")
+
+
 def _default_chat_model() -> object:
     """Unset fallback for chat.default_model: the alphabetically earliest
     model config override (or None when no overrides exist)."""
@@ -131,6 +148,15 @@ SETTINGS: dict[str, Setting] = {
                     "ModelConfigOverride uuid). Picking a model inside a room "
                     "overrides this for that room only. Unset = the "
                     "alphabetically earliest model config override.",
+    ),
+    "profile.current": Setting(
+        "profile.current", None, "string", None,
+        validate=_validate_profile_current,
+        description="The profile (from /profile) that IS the operator — the "
+                    "current 'account'. The assistant injects this profile's "
+                    "filled-in fields into every turn as <operator_identity>, "
+                    "so it knows who it is talking to. Unset = no identity "
+                    "block in the prompt.",
     ),
     "customize.dir": Setting(
         "customize.dir", "RAINBOX_CUSTOMIZE_DIR", "string", None,

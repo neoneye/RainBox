@@ -28,6 +28,16 @@ def _setting_row(key: str) -> dict | None:
     return next((s for s in db.all_settings() if s["key"] == key), None)
 
 
+def _profile_choices() -> list[dict]:
+    """Every profile (user-owned + built-in templates) as {uuid, label} for
+    the profile.current dropdown, in tree order."""
+    return [
+        {"uuid": p["uuid"],
+         "label": p["name"] + (" (template)" if p.get("builtin") else "")}
+        for p in db.profile_load_tree()["profiles"]
+    ]
+
+
 SETTINGS_TEMPLATE = """
 <!doctype html>
 <title>Settings &mdash; rainbox</title>
@@ -113,6 +123,7 @@ environment-managed and never stored here.</p>
 const SETTINGS = {{ settings_json|safe }};
 const QA_SHIELDS = {{ qa_shields_json|safe }};
 const MODELS = {{ models_json|safe }};  // {uuid,label,available} for chat.default_model
+const PROFILES = {{ profiles_json|safe }};  // {uuid,label} for profile.current
 
 const SOURCE_HELP = {
   db: 'Stored in the database — overrides the environment variable and the default.',
@@ -132,15 +143,24 @@ function modelLabel(uuid){
   const m = MODELS.find(x => x.uuid === uuid);
   return m ? m.label : null;
 }
+// A profile uuid's human label (the profile's name), or null.
+function profileLabel(uuid){
+  const p = PROFILES.find(x => x.uuid === uuid);
+  return p ? p.label : null;
+}
+// Human label for a uuid-valued setting, or null for plain settings.
+function uuidLabel(key, uuid){
+  if (key === 'chat.default_model') return modelLabel(uuid);
+  if (key === 'profile.current') return profileLabel(uuid);
+  return null;
+}
 // Effective value for display ("(unset)" when empty/null). chat.default_model
-// holds a model uuid — show the model's label instead (uuid in the tooltip).
+// and profile.current hold a uuid — show its label instead (uuid in the tooltip).
 function displayValue(s){
   if (s.value === null || s.value === '') return '<span class="s-val unset">(unset)</span>';
   const text = String(s.value);
-  if (s.key === 'chat.default_model'){
-    const lbl = modelLabel(text);
-    if (lbl) return '<span class="s-val" title="' + escapeHtml(text) + '">' + escapeHtml(lbl) + '</span>';
-  }
+  const lbl = uuidLabel(s.key, text);
+  if (lbl) return '<span class="s-val" title="' + escapeHtml(text) + '">' + escapeHtml(lbl) + '</span>';
   return '<span class="s-val">' + escapeHtml(text) + '</span>';
 }
 
@@ -300,13 +320,20 @@ function openEdit(key){
   origControl = dbBaseline(s);
 
   let field;
-  const isSelect = s.value_type === 'bool' || s.key === 'chat.default_model';
+  const isSelect = s.value_type === 'bool' || s.key === 'chat.default_model'
+    || s.key === 'profile.current';
   if (s.key === 'chat.default_model'){
     field = 'Value <select id="s-edit-input">'
       + '<option value="">(unset &mdash; alphabetically earliest override)</option>'
       + MODELS.map(m => '<option value="' + escapeHtml(m.uuid) + '">'
           + escapeHtml(m.label + (m.available ? '' : ' (unavailable)'))
           + '</option>').join('')
+      + '</select>';
+  } else if (s.key === 'profile.current'){
+    field = 'Value <select id="s-edit-input">'
+      + '<option value="">(unset &mdash; no operator identity)</option>'
+      + PROFILES.map(p => '<option value="' + escapeHtml(p.uuid) + '">'
+          + escapeHtml(p.label) + '</option>').join('')
       + '</select>';
   } else if (s.value_type === 'bool'){
     field = 'Value <select id="s-edit-input">'
@@ -325,7 +352,7 @@ function openEdit(key){
   // Show where the live value currently comes from, so an empty DB field isn't
   // mistaken for "no value".
   let effective = s.value === null || s.value === '' ? '(unset)' : String(s.value);
-  if (s.key === 'chat.default_model' && modelLabel(effective)) effective = modelLabel(effective);
+  if (uuidLabel(s.key, effective)) effective = uuidLabel(s.key, effective);
   let cur = 'Effective: ' + escapeHtml(effective) + ' \\u00b7 from ' + s.source;
   document.getElementById('s-modal-current').textContent = cur;
 
@@ -394,6 +421,7 @@ def settings_page() -> str:
         settings_json=_js(db.all_settings()),
         qa_shields_json=_js(seed_memory.available_qa_shields()),
         models_json=_js(db.chat_model_choices()),
+        profiles_json=_js(_profile_choices()),
     )
 
 
