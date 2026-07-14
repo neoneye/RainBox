@@ -266,7 +266,7 @@ policy, and so a demo never shows a 19th-century birth year):
 | Spain | Santiago Ramón y Cajal | showed the brain is made of neurons | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
 | Italy | Rita Levi-Montalcini | discovered nerve growth factor | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
 | Denmark | Øjvind Winge | founded the genetics of yeast | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
-| Sweden | Sofya Kovalevskaya | the Cauchy–Kovalevskaya theorem | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
+| Sweden | Anders Jonas Ångström | pioneered spectroscopy | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
 | Poland | Zofia Kielan-Jaworowska | led the Gobi expeditions that rewrote early-mammal evolution | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
 | Israel | Amos Tversky | mapped judgment under uncertainty | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
 | India | Satyendra Nath Bose | Bose–Einstein statistics | metric | 12h | DD/MM/YYYY | en-IN / hi | INR | Bengaluru | Asia/Kolkata |
@@ -280,8 +280,7 @@ Each entry's `country` field carries the country name (the label doubles as
 it, so the column is omitted above). Rough grouping in the file — Americas,
 Europe, Middle East, Asia, Oceania — is also the fixed tree order. Some
 rows are career or legacy placements rather than birthplaces — Wu Lien-teh
-(Straits Settlements), Sofya Kovalevskaya (Russian-born, Stockholm's
-mathematics chair), Wu Chien-Shiung (Chinese-born, career in the US), Ynés
+(Straits Settlements), Wu Chien-Shiung (Chinese-born, career in the US), Ynés
 Mexía
 (US-born, of Mexican heritage, collected across Mexico) — and Amos
 Tversky's field was cognitive science; all earn their rows on the strength
@@ -297,15 +296,17 @@ Each also carries gender, a modern plausible birthday, and a
 the entries whose scientist wrote their name in a non-Latin script, the
 `nickname` field holds the native spelling: 吳健雄 (Wu Chien-Shiung),
 湯川秀樹 (Yukawa), 우장춘 (Woo), 伍連德 (Wu Lien-teh), עמוס טברסקי
-(Tversky), সত্যেন্দ্রনাথ বসু (Bose), Софья Ковалевская (Kovalevskaya).
+(Tversky), সত্যেন্দ্রনাথ বসু (Bose).
 Canada's shows the field's other purpose — the name a person actually goes
 by: `first_name`/`last_name` are Conrad/Kirouac, `nickname` is "Frère
 Marie-Victorin", the religious name all of Québec knew him by.
 
 **The templates are also the name-handling test fixture.** Between the
 names, nicknames, abouts, and cities they deliberately cover Latin
-diacritics (É é í â è ó ã), the Danish Ø ("Øjvind Winge"), the German ß (Weierstraß), Greek (ε–δ), CJK,
-Hangul, Bengali, Cyrillic, right-to-left Hebrew, a generational suffix
+diacritics (É é í â è ó ã), the Danish Ø ("Øjvind Winge"), the Swedish Å and
+ö ("Ångström" — a special letter at the very start of the string), the
+German ß (Weierstraß), Greek (ε–δ), CJK,
+Hangul, Bengali, right-to-left Hebrew, a generational suffix
 (`last_name` "Davis Jr."), an apostrophe-particle surname (`last_name`
 "van 't Hoff" — apostrophe, internal space, lowercase particles), an
 apostrophe in the given name (`first_name` "D'Arcy Wentworth"), a
