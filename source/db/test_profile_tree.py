@@ -82,3 +82,91 @@ def test_validate_data_canonical_and_errors():
         db.validate_profile_data({"full_name": 5})
     with pytest.raises(db.ProfileDataError):
         db.validate_profile_data(["not", "a", "dict"])
+
+
+@pytest.fixture
+def profile_tree_snapshot(app_ctx):
+    """Snapshot the profile tables, yield, then restore — non-destructive."""
+    def grab(model):
+        rows = db.db.session.execute(sa.select(model)).scalars().all()
+        return [
+            {c.name: getattr(r, c.name) for c in model.__table__.columns if c.name != "id"}
+            for r in rows
+        ]
+    fsnap, psnap = grab(ProfileFolder), grab(Profile)
+    try:
+        yield
+    finally:
+        db.db.session.execute(sa.delete(Profile))
+        db.db.session.execute(sa.delete(ProfileFolder))
+        for row in fsnap:
+            db.db.session.add(ProfileFolder(**row))
+        for row in psnap:
+            db.db.session.add(Profile(**row))
+        db.db.session.commit()
+
+
+@pytest.fixture
+def empty_tree(profile_tree_snapshot):
+    db.db.session.execute(sa.delete(Profile))
+    db.db.session.execute(sa.delete(ProfileFolder))
+    db.db.session.commit()
+
+
+def test_save_and_load_roundtrip(app_ctx, empty_tree):
+    f_root, f_child, pr = str(uuid4()), str(uuid4()), str(uuid4())
+    db.profile_save_tree(
+        [{"id": f_root, "name": "Friends", "description": "top", "parentId": None},
+         {"id": f_child, "name": "Copenhagen", "parentId": f_root}],
+        [{"uuid": pr, "name": "Simon", "folderId": f_child}])
+    out = db.profile_load_tree()
+    user_folders = [f for f in out["folders"] if not f.get("builtin")]
+    user_profiles = [p for p in out["profiles"] if not p.get("builtin")]
+    assert [f["name"] for f in user_folders] == ["Friends", "Copenhagen"]
+    assert user_folders[1]["parentId"] == f_root
+    assert user_profiles[0]["folderId"] == f_child
+    assert "data" not in user_profiles[0]           # blob stays out of the tree payload
+    assert set(user_profiles[0]["summary"]) == set(profile_fields.SUMMARY_KEYS)
+    assert out["version"]
+
+
+def test_tree_save_preserves_data(app_ctx, empty_tree):
+    pr = str(uuid4())
+    db.profile_save_tree([], [{"uuid": pr, "name": "P", "folderId": None}])
+    row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(pr))).scalar_one()
+    row.data = {"full_name": "Keep Me"}
+    db.db.session.commit()
+    # A structural save (rename) must not touch data.
+    db.profile_save_tree([], [{"uuid": pr, "name": "P renamed", "folderId": None}])
+    row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(pr))).scalar_one()
+    assert row.name == "P renamed" and row.data == {"full_name": "Keep Me"}
+
+
+def test_version_conflict(app_ctx, profile_tree_snapshot):
+    with pytest.raises(db.ProfileTreeConflict):
+        db.profile_save_tree([], [], base_version="stale-token-xyz")
+
+
+def test_delete_tripwire(app_ctx, empty_tree):
+    f = str(uuid4())
+    db.profile_save_tree([{"id": f, "name": "F", "parentId": None}], [])
+    # Saving an empty tree would delete the folder; undeclared deletion → refused.
+    with pytest.raises(db.ProfileTreeError):
+        db.profile_save_tree([], [], expected_deletes=0)
+
+
+def test_validate_rejects_dangling_cycle_collision_summary(app_ctx):
+    with pytest.raises(db.ProfileTreeError):
+        db.validate_profile_tree([], [{"uuid": str(uuid4()), "name": "P",
+                                       "folderId": str(uuid4())}])
+    a, b = str(uuid4()), str(uuid4())
+    with pytest.raises(db.ProfileTreeError):
+        db.validate_profile_tree([{"id": a, "name": "A", "parentId": b},
+                                  {"id": b, "name": "B", "parentId": a}], [])
+    shared = str(uuid4())
+    with pytest.raises(db.ProfileTreeError):
+        db.validate_profile_tree([{"id": shared, "name": "F", "parentId": None}],
+                                 [{"uuid": shared, "name": "P", "folderId": None}])
+    with pytest.raises(db.ProfileTreeError, match="summary"):
+        db.validate_profile_tree([], [{"uuid": str(uuid4()), "name": "P",
+                                       "folderId": None, "summary": {}}])
