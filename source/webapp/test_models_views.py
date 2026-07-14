@@ -1,6 +1,6 @@
 """Tests for webapp/models_views.py.
 
-The form-helper tests are pure (no DB, no HTTP). The /models page tests
+The form-helper tests are pure (no DB, no HTTP). The /model page tests
 need an app + DB and seed real rows; each cleans up after itself.
 """
 
@@ -43,13 +43,21 @@ def test_models_tree_rows_carry_provider_badges(seeded_two_providers):
     """Both LM Studio and Jan rows render in the tree with the provider
     display name visible (via the badge text)."""
     client = app.test_client()
-    resp = client.get("/models")
+    resp = client.get("/model")
     body = resp.get_data(as_text=True)
     assert resp.status_code == 200
     assert "pp3-uitest-lm" in body
     assert "pp3-uitest-jan" in body
     assert "LM Studio" in body
     assert "Jan" in body
+
+
+def test_legacy_plural_path_redirects_to_singular():
+    # The page moved from /models to /model (singular, like /cron and
+    # /kanban); old links redirect and keep their ?id= selection.
+    resp = app.test_client().get("/models?id=abc")
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/model?id=abc")
 
 
 def test_reload_returns_per_provider_summary():
@@ -66,7 +74,7 @@ def test_reload_returns_per_provider_summary():
         client = app.test_client()
         with patch("webapp.models_views.sync_models_from_providers",
                    return_value=fake_summary):
-            resp = client.post("/models/api/reload")
+            resp = client.post("/model/api/reload")
         payload = resp.get_json()
         assert payload["ok"] is True
         assert payload["summary"]["lm_studio"]["created"] == 0
@@ -124,7 +132,7 @@ def test_rename_goes_through_confirm_modal(seeded_two_providers):
         _db.session.query(ModelConfig)
         .filter(ModelConfig.model_name == "pp3-uitest-lm").one()
     )
-    body = client.get(f"/models?id={cfg.uuid}").get_data(as_text=True)
+    body = client.get(f"/model?id={cfg.uuid}").get_data(as_text=True)
     assert 'class="pp-rename-display"' in body
     assert 'id="pp-rename-modal"' in body
     assert 'id="pp-rename-input"' in body

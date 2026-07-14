@@ -158,7 +158,7 @@ and total ms per model tell you whether the fast model is doing the job.
 | `error: model group 'research' not found; available groups: [...]` | Create it on `/modelgroups`, or pass `--model-group` with one from the list. |
 | `error: model group 'research' has no members` | Add at least one model to the group on `/modelgroups`. |
 | `error: search provider 'brave' is not configured` | Export the env var from step 5, or drop `--search brave`. |
-| `error: all models in the research model group failed` | Provider not running, model missing, or context too small — test the member on `/models` first. |
+| `error: all models in the research model group failed` | Provider not running, model missing, or context too small — test the member on `/model` first. |
 | Empty or thin findings sections | DDG snippets can be weak; try `--search brave`, or a stronger model for the group. |
 | `failed: timed out` / `structured stream exceeded 120s` on most calls | The model is slower than the timeout floor — raise it with `--llm-timeout 300`, or put a faster model first in the group. |
 | Run feels stuck | Watch stderr — a `[research]`/`[fetch]` line tells you which subtask/URL it's on. Reasoning models spend a while per notes call. |

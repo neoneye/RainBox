@@ -60,7 +60,7 @@ Conventions the describers follow:
 
 - **url** is the `?id=` deep link of the page that shows the entity
   (`/kanban?id=…`, `/cron?id=…`, `/chat?id=…`, `/git?id=…`, `/prompt?id=…`,
-  `/profile?id=…`, `/memory?id=…`, `/models?id=…`, `/modelgroup?id=…`,
+  `/profile?id=…`, `/memory?id=…`, `/model?id=…`, `/modelgroup?id=…`,
   `/assistant?id=…`). Entities without their own deep link borrow the
   nearest page that shows them: a kanban column links to its board, a chat
   message and an assistant run link to their room's page (`/chat?id=<room>`

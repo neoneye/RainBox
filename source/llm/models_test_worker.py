@@ -1,4 +1,4 @@
-"""Killable subprocess runner for a single /models test probe.
+"""Killable subprocess runner for a single /model test probe.
 
 A test probe is one blocking LLM call (test_chat / test_structured_output /
 test_tool_call). Run in-process, it can't be cancelled — a runaway model just

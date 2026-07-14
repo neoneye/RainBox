@@ -173,7 +173,7 @@ function render(state) {
 
   const body = document.getElementById('grid-body');
   if (!state.targets || state.targets.length === 0) {
-    body.innerHTML = `<tr><td colspan="${benchmarkNames.length + 2}" class="muted">No available model configs. Add one in <a href="/models">/models</a> first.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="${benchmarkNames.length + 2}" class="muted">No available model configs. Add one in <a href="/model">/model</a> first.</td></tr>`;
     return;
   }
 
@@ -323,7 +323,7 @@ def render_benchmark_page(
 
 
 GENERAL_INTRO = (
-    "Iterates the /models tree (available configs first, then each config's "
+    "Iterates the /model tree (available configs first, then each config's "
     "overrides) and runs every benchmark per target. One LLM stays loaded for "
     "each target group. Unavailable configs are skipped. Function-calling "
     "trials (tool_order, tool_route) are capped at 60s each; after 2 timeouts "

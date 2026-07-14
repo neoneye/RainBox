@@ -46,8 +46,8 @@ function-calling overrides.
 A benchmark trial is a blocking LLM call. Run in the runner thread, a runaway
 model can't be aborted — it pegs CPU/GPU until the provider's timeout, and
 `_stop_event` is only checked *between* trials. So each row runs in its own
-**child process** the runner can SIGKILL — the same idea as the `/models` test
-probes (see [LLM Providers → /models test probes](llm-providers.md)) and the
+**child process** the runner can SIGKILL — the same idea as the `/model` test
+probes (see [LLM Providers → /model test probes](llm-providers.md)) and the
 agent supervisor in `main.py`.
 
 - **`benchmarks/subproc.py`** — `stream_target_subprocess(worker, request,

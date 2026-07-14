@@ -55,7 +55,7 @@ PAGE_TEMPLATE: str = """
 <code>edit_document_v2</code>, <code>edit_document_v3</code>,
 <code>edit_document_v4</code>, <code>edit_document_v5</code>, or
 <code>edit_document_v6</code>) against
-every available model in the <a href="/models">/models</a> tree. Each cell
+every available model in the <a href="/model">/model</a> tree. Each cell
 runs one test end-to-end through the agent with the target model pinned
 (no fallback). Pass = the agent's patches, when applied to the test
 document, exactly equal the reference expected output.</p>
@@ -152,7 +152,7 @@ function cellClass(trial) {
 function render(state) {
   const statusEl = document.getElementById('status');
   if (state.total_targets === 0) {
-    statusEl.textContent = 'no available targets — add a model in /models first';
+    statusEl.textContent = 'no available targets — add a model in /model first';
   } else if (state.running) {
     statusEl.textContent = `running (${state.agent_choice}) — target ${state.current_target_index + 1} of ${state.total_targets}`;
   } else if (state.ended_at) {

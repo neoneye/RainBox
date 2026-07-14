@@ -53,7 +53,7 @@ class ModelCaller:
         if not self.candidate_model_uuids:
             raise RuntimeError(
                 f"model group {model_group!r} has no members; add models to it "
-                "on the /models page"
+                "on the /model page"
             )
 
     def describe_models(self) -> list[dict]:

@@ -11,7 +11,7 @@ in bytes and a `details` dict (format, family, parameter_size,
 quantization_level). The Ollama `/api/tags` shape uses `name` rather
 than the `id` field the rest of rainbox expects — we rename in
 fetch_native_models so the sync layer (which keys on `m["id"]`) and the
-/models detail panel both work without provider-specific shims.
+/model detail panel both work without provider-specific shims.
 """
 
 import os

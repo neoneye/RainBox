@@ -510,7 +510,7 @@ MODELS_TEMPLATE: str = """
     btn.disabled = true;
     status.className = 'empty';
     status.textContent = 'Reloading\\u2026';
-    fetch('/models/api/reload', {method: 'POST'})
+    fetch('/model/api/reload', {method: 'POST'})
       .then(r => r.json())
       .then(d => {
         if (d.ok) { window.location.reload(); }
@@ -526,7 +526,7 @@ MODELS_TEMPLATE: str = """
         btn.disabled = false;
       });
   }
-  // Build the JSON body that the /models/api/test* endpoints expect. Shared
+  // Build the JSON body that the /model/api/test* endpoints expect. Shared
   // by ppRunTest (single response) and ppRunStreamingTest (NDJSON stream).
   function ppBuildTestBody(btn, action){
     const table = btn.closest('.test-table');
@@ -578,7 +578,7 @@ MODELS_TEMPLATE: str = """
     let final = null;
     let aborted = false;
     try {
-      const resp = await fetch('/models/api/test', {
+      const resp = await fetch('/model/api/test', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(ppBuildTestBody(btn, action)),
@@ -658,7 +658,7 @@ MODELS_TEMPLATE: str = """
     let last = null;
     let aborted = false;
     try {
-      const resp = await fetch('/models/api/test_streaming_live', {
+      const resp = await fetch('/model/api/test_streaming_live', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(ppBuildTestBody(btn, 'test_streaming')),
@@ -862,10 +862,10 @@ def _build_overrides_dict(form_data: dict[str, Any], provider: str) -> dict[str,
     return overrides
 
 
-@app.route("/models/api/reload", methods=["POST"])
+@app.route("/model/api/reload", methods=["POST"])
 def models_reload_api() -> Response:
     """Re-sync model_config rows with every registered provider's current
-    model list. Used by the Reload button on /models so newly added models
+    model list. Used by the Reload button on /model so newly added models
     show up without a server restart."""
     summary = sync_models_from_providers()
     return jsonify({"ok": True, "summary": summary})
@@ -874,7 +874,7 @@ def models_reload_api() -> Response:
 def _resolve_test_target(
     data: dict[str, Any],
 ) -> tuple[str, str, dict[str, Any]]:
-    """Turn a /models/api/* JSON body into (provider_id, model_name,
+    """Turn a /model/api/* JSON body into (provider_id, model_name,
     arguments). Three targets:
       'new_override' — args come from the unsaved form (no DB row exists yet);
       'config'/'override' — args come from the saved row identified by
@@ -929,9 +929,9 @@ def _worker_env() -> dict[str, str]:
     return env
 
 
-@app.route("/models/api/test", methods=["POST"])
+@app.route("/model/api/test", methods=["POST"])
 def models_test_api() -> Response:
-    """Run a structured-output/tool/chat probe and stream NDJSON so the /models
+    """Run a structured-output/tool/chat probe and stream NDJSON so the /model
     page can show a live elapsed counter and a Stop button.
 
     The probe is one blocking LLM call, which can't be cancelled in-process — so
@@ -940,7 +940,7 @@ def models_test_api() -> Response:
     worker's result tagged `done`. Each heartbeat yield is where a client
     disconnect surfaces as GeneratorExit, which runs the finally below and
     SIGKILLs the worker — closing its HTTP socket so the provider (e.g. Ollama)
-    stops generating. Mirrors the Stop UX of /models/api/test_streaming_live."""
+    stops generating. Mirrors the Stop UX of /model/api/test_streaming_live."""
     data = request.get_json(silent=True) or {}
     action = data.get("action")
     if action not in ("test_structuredoutput", "test_tool", "test_chat"):
@@ -984,10 +984,10 @@ def models_test_api() -> Response:
     return Response(generate(), mimetype="application/x-ndjson")
 
 
-@app.route("/models/api/test_streaming_live", methods=["POST"])
+@app.route("/model/api/test_streaming_live", methods=["POST"])
 def models_test_streaming_live_api() -> Response:
     """Run the streaming probe and stream incremental stat updates back as
-    NDJSON (one JSON object per line, throttled to ~100ms). Lets the /models
+    NDJSON (one JSON object per line, throttled to ~100ms). Lets the /model
     UI render a live progress display and offer a Stop button (the client
     aborts the fetch, which closes this generator)."""
     data = request.get_json(silent=True) or {}
@@ -1003,7 +1003,15 @@ def models_test_streaming_live_api() -> Response:
     return Response(generate(), mimetype="application/x-ndjson")
 
 
-@app.route("/models", methods=["GET", "POST"])
+@app.route("/models", methods=["GET"])
+def models_legacy_redirect():
+    """The page's old plural path — singular now, like /cron and /kanban.
+    Kept as a redirect so old bookmarks/links (incl. ?id=) keep working."""
+    query = request.query_string.decode()
+    return redirect(url_for("models_page") + (f"?{query}" if query else ""))
+
+
+@app.route("/model", methods=["GET", "POST"])
 def models_page() -> str | Response:
     sort_by = request.args.get("sort", "provider")
     if sort_by not in ("provider", "model_name"):
@@ -1051,7 +1059,7 @@ def models_page() -> str | Response:
         db.session.commit()
         return redirect(url_for("models_page", id=cfg.uuid, renamed=1))
 
-    # (Config/override tests run via the JSON endpoint /models/api/test, so they
+    # (Config/override tests run via the JSON endpoint /model/api/test, so they
     # update the page in place without a form POST that would drop the ?id= URL.)
 
     # New-override save. Tests run via the JSON endpoint (see models_test_api),

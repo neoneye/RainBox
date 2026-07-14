@@ -69,7 +69,7 @@ def _purpose_for(user) -> str:
 @app.route("/user")
 def user_page() -> str:
     """Identity card for a chat participant (the human operator or an agent),
-    addressed by uuid via ?id= (consistent with /assistant, /chat, /models)."""
+    addressed by uuid via ?id= (consistent with /assistant, /chat, /model)."""
     requested = request.args.get("id")
     user = None
     if requested:

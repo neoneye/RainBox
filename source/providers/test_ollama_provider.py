@@ -50,7 +50,7 @@ def test_list_models_parses_openai_response():
 
 def test_fetch_native_models_renames_name_to_id():
     """/api/tags returns rows keyed by `name`; we expose them under `id`
-    so the sync layer and the /models detail panel (which both expect
+    so the sync layer and the /model detail panel (which both expect
     `m["id"]`) work without provider-specific shims."""
     fake = type("R", (), {
         "raise_for_status": lambda self: None,

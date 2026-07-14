@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model-group",
         default="research",
-        help="model group (name or uuid) from the /models page",
+        help="model group (name or uuid) from the /model page",
     )
     parser.add_argument("--max-subtasks", type=int, default=5)
     parser.add_argument(

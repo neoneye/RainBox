@@ -366,7 +366,7 @@ ASSISTANT_TEMPLATE = """
           {# This io-meta line (model · tokens · throughput · duration · time) is
              duplicated in Python by _response_meta_md(); change both together. #}
           <div class="io-label">{% if step.model_response and not decision_text %}partial model response{% else %}model response{% endif %}{% if has_right or step.created_at %}<span class="io-meta">
-            {% if step.model_uuid %}<a class="io-model" href="/models?id={{ step.model_uuid }}"
+            {% if step.model_uuid %}<a class="io-model" href="/model?id={{ step.model_uuid }}"
                 title="{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }}">model ↗</a>{% endif %}
             {% if has_toks %}<span title="Input tokens: the size of the prompt sent to the model for this step">in {{ step.input_tokens or 0 }}</span>
             <span title="Output tokens: the amount of text the model generated for this step">out {{ step.output_tokens or 0 }}</span>{% endif %}

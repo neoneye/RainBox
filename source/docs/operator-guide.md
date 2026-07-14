@@ -36,7 +36,7 @@ fallback.
 - `/git` — registered local repositories.
 - `/assistant` — assistant run inspector (traces, steps, write intents).
 - `/conversations` — persona-to-persona conversation runs.
-- `/models`, `/modelgroups`, `/agent_models` — model configs, fallback
+- `/model`, `/modelgroups`, `/agent_models` — model configs, fallback
   groups, agent bindings.
 - `/settings` — typed operator settings (DB → env → default) with provenance.
 - `/doctor` — environment health checks.

@@ -41,7 +41,7 @@ def prepare_llm(
     `_prepare_ollama_llm`) so chain-of-thought surfaces as a ThinkingBlock;
     every other provider uses ThinkingAwareOpenAILike over its OpenAI-compat
     endpoint. This is a pure constructor — it makes no capability decisions at
-    runtime; thinking and structured-output settling happen on /models when the
+    runtime; thinking and structured-output settling happen on /model when the
     config is saved."""
     provider = providers.get(provider_id)
     desired_ctx = int(arguments.get("context_window") or 3900)
@@ -66,7 +66,7 @@ def _prepare_ollama_llm(model: str, arguments: dict[str, Any]) -> LLM:
     is a filter-and-splat: keep the keys that are Ollama constructor fields and
     drop the app-level flags (e.g. should_use_structured_outputs). Nothing is
     remapped, defaulted, or capability-checked at runtime — `thinking` and
-    whether the model supports it are settled on the /models page when the
+    whether the model supports it are settled on the /model page when the
     config is saved, so a bad value can't surface as a runtime error here."""
     from llama_index.llms.ollama import Ollama
 
@@ -306,7 +306,7 @@ def capture_reasoning() -> Iterator["_ReasoningTally"]:
 def run_named_test(
     action: str, provider_id: str, model: str, arguments: dict[str, Any]
 ) -> dict[str, Any]:
-    """Dispatch a named /models probe ('test_chat' / 'test_structuredoutput' /
+    """Dispatch a named /model probe ('test_chat' / 'test_structuredoutput' /
     'test_tool') to its test function. Returns a dict with `message`, `elapsed`,
     and `reasoning_chars` / `content_chars` (tallied across every underlying LLM
     chat via instrumentation, so the counts survive structured-output / tool
@@ -333,7 +333,7 @@ def test_structured_output(
     provider_id: str, model: str, arguments: dict[str, Any]
 ) -> tuple[str, float]:
     """Run a ping/pong structured-output test against the named provider
-    using arbitrary OpenAILike constructor kwargs. Used by the /models
+    using arbitrary OpenAILike constructor kwargs. Used by the /model
     page to validate a proposed config — works for any config because we
     always force should_use_structured_outputs=True for the probe itself.
     Without this, OpenAILike falls back to a tool-based JSON extraction
@@ -398,7 +398,7 @@ def stream_test_streaming(
     """Generator version of the streaming probe: same intent as the old
     test_streaming (chain-of-thought-eliciting prompt, deltas dumped live to
     stdout, time-to-first-token tracked) but yields incremental stat dicts so
-    the /models UI can render live progress and offer a Stop button.
+    the /model UI can render live progress and offer a Stop button.
 
     Each yielded dict has keys:
       chunk, content_chunks, reasoning_chunks,
@@ -515,7 +515,7 @@ def test_tool_call(
     to a `send_number` tool, and verify the tool was actually invoked with
     that exact number.
 
-    The /models UI exposes this probe even for configs whose saved
+    The /model UI exposes this probe even for configs whose saved
     `is_function_calling_model` is false — so the user can ask "does this model
     support tools at all?" before creating an override. To get past the
     FunctionAgent precondition we always force the flag to True for the test;

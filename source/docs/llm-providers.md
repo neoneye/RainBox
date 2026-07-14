@@ -67,7 +67,7 @@ Per-provider quirks live inside the provider module. Examples:
   is configured per-model in Ollama itself (`OLLAMA_NUM_CTX`, Modelfile).
 - Ollama's `fetch_native_models` reads `/api/tags` (richer than the
   OpenAI shim's `/v1/models`) and renames `name` → `id` so the sync
-  layer and /models detail panel work without provider-specific shims.
+  layer and /model detail panel work without provider-specific shims.
   `/api/tags` includes `size` in bytes, so `fetch_model_sizes` is fully
   populated. Capability info isn't present in `/api/tags`, so
   `is_function_calling_model` defaults to `False` on new rows.
@@ -102,8 +102,8 @@ Two things keep `model_config` in step with what each backend exposes:
 
 1. **Startup auto-sync.** `webapp/core.py` calls
    `sync_models_from_providers()` once per process start.
-2. **Manual reload.** The Reload button on `/models` (POST
-   `/models/api/reload`) and the `--force-model-sync` CLI flag both call
+2. **Manual reload.** The Reload button on `/model` (POST
+   `/model/api/reload`) and the `--force-model-sync` CLI flag both call
    the same function.
 
 `sync_models_from_providers()` iterates every registered provider and
@@ -157,7 +157,7 @@ for and you want existing rows refreshed.
 
 ## Resolving a model at call time
 
-When an agent (or a `/models` test button) needs to actually call an LLM,
+When an agent (or a `/model` test button) needs to actually call an LLM,
 the resolution path is:
 
 1. Caller has a uuid that points at either a `ModelConfig` or a
@@ -199,7 +199,7 @@ LLM routes through it, so provider selection (Ollama native wrapper vs
   (covers the edit-document agents and so `benchmarks/editdocument.py`).
 - `benchmarks/basic.py`, `agents/query_filter_router.py`, `agents/tool_demo.py`,
   `agents/mcp.py`.
-- The `/models` page probes (`test_chat`, `test_structured_output`,
+- The `/model` page probes (`test_chat`, `test_structured_output`,
   `stream_test_streaming`, `test_tool_call`) via `_resolve_test_target`.
 
 > Historically several of these hand-built `ThinkingAwareOpenAILike`
@@ -209,7 +209,7 @@ LLM routes through it, so provider selection (Ollama native wrapper vs
 > everything through `prepare_llm` fixed it; don't reintroduce direct
 > construction.
 
-## /models page
+## /model page
 
 The page renders one combined tree with a per-row provider badge:
 
@@ -219,7 +219,7 @@ The page renders one combined tree with a per-row provider badge:
   `providers.all_providers()` so any registered provider appears automatically.
 - Each model row has a small badge (`pp-provider-badge`) carrying the
   provider's display name. All providers share the same badge styling.
-- The Reload button calls `POST /models/api/reload`, which runs
+- The Reload button calls `POST /model/api/reload`, which runs
   `sync_models_from_providers()`. The response is a provider-keyed summary such
   as `{"ok": true, "summary": {"lm_studio": {…} | null, "jan": {…} | null,
   "ollama": {…} | null}}`.
@@ -229,7 +229,7 @@ The page renders one combined tree with a per-row provider badge:
   heading ("Model info ({{ display_name }})") and the unreachable /
   not-found hints.
 
-## /models test probes
+## /model test probes
 
 Each model row, and the New-override form, exposes buttons that call the
 model for real so you can validate a config before saving it. The
@@ -264,7 +264,7 @@ agents:
   result line to stdout. The test's own output and library chatter are
   redirected to stderr (which the parent discards) so they can't corrupt
   the result line the parent parses.
-- `POST /models/api/test` is a streaming NDJSON endpoint. It spawns the
+- `POST /model/api/test` is a streaming NDJSON endpoint. It spawns the
   worker, emits `{"running": true, "elapsed": s}` heartbeats while it runs,
   then yields the worker's result tagged `"done": true`.
 - The **Stop** button aborts the client `fetch`. The disconnect surfaces in
@@ -275,7 +275,7 @@ agents:
 
 `Test streaming` cancels for free without a subprocess: it streams, so when
 the client stops reading the upstream HTTP stream is GC-closed. That path is
-`POST /models/api/test_streaming_live` (`stream_test_streaming`), and its
+`POST /model/api/test_streaming_live` (`stream_test_streaming`), and its
 probe opts `thinking` back on so Ollama reasoning is visible.
 
 Trade-off: spawning a fresh Python and importing llama-index adds ~2–4s of
@@ -292,7 +292,7 @@ the call killable.
    in `MODELS_TEMPLATE` (otherwise the badge text falls back to the raw
    id — still legible, just not a friendly display name).
 
-That's it — startup sync, the Reload button, the /models page, and all
+That's it — startup sync, the Reload button, the /model page, and all
 probe paths pick the new provider up automatically.
 
 ## Known limitations

@@ -224,7 +224,7 @@ def _model_config_name(row: Any) -> str:
 
 
 def _model_config(row: Any) -> dict:
-    return {"name": _model_config_name(row), "url": f"/models?id={row.uuid}",
+    return {"name": _model_config_name(row), "url": f"/model?id={row.uuid}",
             "parents": []}
 
 
@@ -232,7 +232,7 @@ def _model_config_override(row: Any) -> dict:
     base = _row(ModelConfig, row.model_config_uuid)
     parents = ([_parent_ref("model config", base, _model_config_name(base))]
                if base else [])
-    return {"name": row.display_name, "url": f"/models?id={row.uuid}",
+    return {"name": row.display_name, "url": f"/model?id={row.uuid}",
             "parents": parents}
 
 

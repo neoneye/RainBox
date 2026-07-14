@@ -119,7 +119,7 @@ scrapes via Firecrawl's API for JS-heavy pages.
 ## Models
 
 `caller.py` resolves a **model group** (default: the group named
-`research`; create it on the /models page) and falls through its members in
+`research`; create it on the /model page) and falls through its members in
 priority order on any failure — the same contract as agent model bindings.
 Machine-readable stages use structured outputs; prose stages use plain
 chat. Research calls run longer than chat calls, so every member's resolved

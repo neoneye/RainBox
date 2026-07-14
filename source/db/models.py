@@ -514,7 +514,7 @@ class ModelGroup(db.Model):
 class ModelGroupMember(db.Model):
     """One entry in a ModelGroup's ordered list. member_uuid references either
     a ModelConfig.uuid or a ModelConfigOverride.uuid (resolved override-first,
-    same as the /models?id= lookup). No hard FK on member_uuid because it's a
+    same as the /model?id= lookup). No hard FK on member_uuid because it's a
     polymorphic reference across two tables."""
 
     __tablename__ = "model_group_member"

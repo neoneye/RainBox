@@ -19,7 +19,7 @@ class Provider(Protocol):
 
     def base_url(self) -> str:
         """The provider's HTTP base, without trailing slash. Used for log
-        messages and the /models page header link."""
+        messages and the /model page header link."""
         ...
 
     def list_models(self) -> list[str]:

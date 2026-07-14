@@ -358,8 +358,8 @@ def test_step_model_renders_as_a_link(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        # the model name links to its /models config page
-        assert f'href="/models?id={mc.uuid}"' in body
+        # the model name links to its /model config page
+        assert f'href="/model?id={mc.uuid}"' in body
         assert "qwen-2.5-7b" in body
     finally:
         _cleanup(run.uuid, room.uuid)
