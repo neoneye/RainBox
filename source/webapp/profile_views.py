@@ -80,7 +80,9 @@ PROFILE_TEMPLATE = """
   .muted{color:#6b7280;font-size:0.85rem}
   .profile-split{flex:1;display:grid;grid-template-columns:260px 1fr;min-height:0}
   .profile-tree{overflow:auto;min-height:0;border-right:1px solid #e5e7eb;background:#fbfbfb;padding:10px;font-size:0.9rem}
-  .profile-main{overflow:auto;padding:16px 20px;display:flex;flex-direction:column;min-height:0}
+  /* 16px horizontal padding so the pane content starts at the same x as
+     /chat's room title and log (260px panel + 1em). */
+  .profile-main{overflow:auto;padding:16px;display:flex;flex-direction:column;min-height:0}
   .profile-actions{display:flex;gap:6px}
   /* Small pill buttons, matching /cron's tree-action buttons. */
   .profile-actions button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
