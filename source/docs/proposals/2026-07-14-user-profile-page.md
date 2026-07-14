@@ -190,7 +190,12 @@ Design decisions baked in above:
   range, string kinds; unknown keys rejected) but does not gatekeep IANA/
   BCP-47/4217 membership. The datalists ship as static JS arrays in
   `profile.js` (timezones via `Intl.supportedValuesOf('timeZone')` at
-  runtime — no list to maintain).
+  runtime — no list to maintain). The form adds a client-side **advisory**
+  layer on top: an inline warning under timezone/language/currency when the
+  typed value is provably invalid (Intl timezone lookup, BCP-47
+  canonicalization, 4217 three-letter shape), the field hint as a visible
+  placeholder, and a "Use my timezone" one-click fill — guidance for
+  non-developers that never blocks a save.
 - **Birthday is a full date.** This is a personal assistant's record of a
   person: it must support birthday greetings and reminders, not just age
   arithmetic, so the field is a complete date. The form uses a native
