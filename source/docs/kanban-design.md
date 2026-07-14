@@ -117,7 +117,7 @@ exist only as undo inverses and are never prompt-exposed.
 | Capability | Semantics | Undo |
 |---|---|---|
 | `kanban_read` | read without writing events, every observation JSON: `task_uuid` → task detail + board columns (move targets) + 10 recent events; `board_uuid` → the board's `kanban_board_llm_json` document; neither → every board in its folder tree (nested nodes, folder + board uuids, task counts) | — (read) |
-| `kanban_task_column` | move a task; `column_uuid` accepts the column's **name (case-insensitive) or uuid** (operators say "In progress", not a uuid); a no-op move (destination = source) is refused with the available columns listed, so the model can't claim a move that never happened | inverse move |
+| `kanban_task_column` | move a task to another column of the same board (never across boards); `column_uuid` accepts the column's **name (case-insensitive) or uuid** (operators say "In progress", not a uuid); a no-op move (destination = source) is refused with the available columns listed, so the model can't claim a move that never happened | inverse move |
 | `kanban_task_complete` | mark a task done — operator-proxy intent, so it goes straight to Done (`review=False`), not worker review-routing | move back to the prior column |
 | `kanban_task_comment` | append a 'comment' event | the trail is append-only, so undo posts a `↩ retracted: …` comment (which itself needs no further undo) |
 | `kanban_task_create` | create a task; an omitted/unresolvable `column_uuid` falls back to the board's **first column** | `kanban_task_delete` (internal) |

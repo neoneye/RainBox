@@ -1321,11 +1321,12 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.KANBAN_TASK_COLUMN: Capability(
         name=AssistantActionName.KANBAN_TASK_COLUMN, family="kanban",
-        description=('move a kanban task to another column; reversible (undoable). '
+        description=('move a kanban task to another column of the same board '
+                     '(tasks cannot move between boards); reversible (undoable). '
                      'args: {"task_uuid": "...", "column_uuid": "..."} where '
                      'column_uuid is the target column\'s NAME (e.g. "In progress") '
                      'or its uuid — prefer the name the operator used'),
-        summary="move a kanban task to another column",
+        summary="move a kanban task to another column of its board",
         required_args=("task_uuid", "column_uuid"),
         action=_action_move_kanban_task,
         read=False, write=True, tier="log_and_undo",
