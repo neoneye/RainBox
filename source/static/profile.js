@@ -150,8 +150,7 @@ function profileRenderContents(){
       const p = item.node;
       const s = p.summary || {};
       tr.innerHTML =
-        '<td class="profile-name-cell" style="padding-left:' + pad + 'px">' + profileEscapeHtml(p.name) +
-        (p.builtin ? ' <span class="profile-builtin-tag">built-in</span>' : '') + '</td>' +
+        '<td class="profile-name-cell" style="padding-left:' + pad + 'px">' + profileEscapeHtml(p.name) + '</td>' +
         '<td>' + profileEscapeHtml(s.full_name) + '</td>' +
         '<td>' + profileEscapeHtml(s.language) + '</td>' +
         '<td>' + profileEscapeHtml(s.units) + '</td>' +
