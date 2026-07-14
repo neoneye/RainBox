@@ -265,7 +265,7 @@ policy, and so a demo never shows a 19th-century birth year):
 | Netherlands | Jacobus van 't Hoff | founded stereochemistry | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
 | Spain | Santiago Ramón y Cajal | showed the brain is made of neurons | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
 | Italy | Rita Levi-Montalcini | discovered nerve growth factor | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
-| Denmark | Søren Sørensen | invented the pH scale | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
+| Denmark | Øjvind Winge | founded the genetics of yeast | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
 | Sweden | Sofya Kovalevskaya | the Cauchy–Kovalevskaya theorem | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
 | Poland | Zofia Kielan-Jaworowska | led the Gobi expeditions that rewrote early-mammal evolution | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
 | Israel | Amos Tversky | mapped judgment under uncertainty | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
@@ -304,7 +304,7 @@ Marie-Victorin", the religious name all of Québec knew him by.
 
 **The templates are also the name-handling test fixture.** Between the
 names, nicknames, abouts, and cities they deliberately cover Latin
-diacritics (É é í â è ó ã and Danish ø twice over — "Søren Sørensen"), the German ß (Weierstraß), Greek (ε–δ), CJK,
+diacritics (É é í â è ó ã), the Danish Ø ("Øjvind Winge"), the German ß (Weierstraß), Greek (ε–δ), CJK,
 Hangul, Bengali, Cyrillic, right-to-left Hebrew, a generational suffix
 (`last_name` "Davis Jr."), an apostrophe-particle surname (`last_name`
 "van 't Hoff" — apostrophe, internal space, lowercase particles), an
