@@ -106,6 +106,7 @@ only by `undo_write_intent`.
 | `forget_memory` | memory | log-and-undo | `reactivate_memory` (internal) |
 | `activate_memory` | memory | **confirm** | — |
 | `kanban_task_column` | kanban | log-and-undo | inverse move (position-aware) |
+| `kanban_task_change_board` | kanban | log-and-undo | inverse board move (board-aware) |
 | `kanban_task_complete` | kanban | log-and-undo | move back to prior column |
 | `kanban_task_comment` | kanban | log-and-undo | `↩ retracted:` comment |
 | `kanban_task_create` | kanban | log-and-undo | `kanban_task_delete` (internal) |
@@ -316,8 +317,8 @@ scripted decisions from `agents/assistant_fakes.py`. Coverage:
 `agents/test_assistant_remember_candidate.py`, `test_assistant_skills.py`,
 `test_assistant_profile.py`, `test_assistant_facts_marker.py`,
 `test_assistant_progress.py`, `test_kanban_move_action.py`,
-`test_kanban_writes_s2.py`, `test_kanban_create.py`,
-`test_kanban_create_board.py` (kanban capabilities incl. the locked
+`test_kanban_change_board.py`, `test_kanban_writes_s2.py`,
+`test_kanban_create.py`, `test_kanban_create_board.py` (kanban capabilities incl. the locked
 prompt-exposed surface), `db/test_assistant_trace.py`,
 `db/test_assistant_write_intent.py`, `db/test_assistant_control.py`, and the
 webapp `test_assistant_*` suites for the endpoints and pages.

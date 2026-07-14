@@ -526,6 +526,24 @@ def test_move_task_to_board(board):
         db.kanban_delete_board(_u(other["uuid"]))
 
 
+def test_move_task_to_board_explicit_column(board):
+    tu = _one_task(board)
+    other = db.kanban_create_board("Other board")
+    try:
+        # An explicit target column pins the landing spot over the carry-over.
+        done = _u(other["columns"][2]["uuid"])
+        out = db.kanban_move_task_to_board(tu, _u(other["uuid"]), column_uuid=done)
+        assert out["boardUuid"] == other["uuid"]
+        assert out["columnUuid"] == str(done)
+        # A column that is not on the target board is loud.
+        db.kanban_move_task_to_board(tu, _u(board["uuid"]))  # move it back
+        with pytest.raises(db.KanbanError):
+            db.kanban_move_task_to_board(
+                tu, _u(other["uuid"]), column_uuid=_u(board["columns"][0]["uuid"]))
+    finally:
+        db.kanban_delete_board(_u(other["uuid"]))
+
+
 def test_move_task_to_board_endpoint(board):
     tu = _one_task(board)
     other = db.kanban_create_board("Other board")

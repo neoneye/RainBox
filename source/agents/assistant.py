@@ -61,6 +61,7 @@ class AssistantActionName(str, Enum):
     KANBAN_TASK_CREATE = "kanban_task_create"    # log-and-undo: create a task on a board
     KANBAN_TASK_DELETE = "kanban_task_delete"    # internal: task_create's undo inverse (not prompt-exposed)
     KANBAN_TASK_COLUMN = "kanban_task_column"    # log-and-undo: move a task to another column
+    KANBAN_TASK_CHANGE_BOARD = "kanban_task_change_board"  # log-and-undo: move a task to another board
     KANBAN_TASK_COMPLETE = "kanban_task_complete"  # log-and-undo: mark a task done
     KANBAN_TASK_COMMENT = "kanban_task_comment"  # log-and-undo: comment on a task
 
@@ -842,6 +843,88 @@ def _action_move_kanban_task(
     )
 
 
+def _action_change_kanban_task_board(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Log-and-undo write: move a kanban task to a DIFFERENT board. The landing
+    column carries over by name (db.kanban_move_task_to_board's fallback chain)
+    unless `column_uuid` (a name or uuid on the TARGET board) pins it. Reversible
+    — `data["undo"]` moves the task back to its original board and column."""
+    raw_task, raw_board = args.get("task_uuid"), args.get("board_uuid")
+    try:
+        task_uuid = UUID(str(raw_task))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid task_uuid: {raw_task!r}")
+    try:
+        board_uuid = UUID(str(raw_board))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid board_uuid: {raw_board!r}")
+    before = db.kanban_get_task(task_uuid)
+    if before is None:
+        return AssistantObservation(ok=False, text="no such kanban task")
+    from_board_uuid, from_column_uuid = before["boardUuid"], before["columnUuid"]
+    # Board-aware undo: refuse to yank the task back if it has since moved to
+    # yet another board (mirrors kanban_task_column's expect_column).
+    expect = args.get("expect_board")
+    if expect is not None and str(from_board_uuid) != str(expect):
+        return AssistantObservation(
+            ok=False, text="task changed board since the write; not undoing")
+    # No-op guard: the target must be a different board — a same-board move is
+    # kanban_task_column's job, and reporting "Moved" here would be a phantom.
+    if str(board_uuid) == str(from_board_uuid):
+        return AssistantObservation(
+            ok=False,
+            text=(f"'{before['title']}' is already on that board. To move it "
+                  f"between columns of its board, use kanban_task_column."),
+        )
+    target = db.kanban_load_board(board_uuid)
+    if target is None:
+        return AssistantObservation(ok=False, text="no such kanban board")
+    column_uuid = None
+    raw_col = args.get("column_uuid")
+    if raw_col is not None and str(raw_col).strip():
+        column_uuid, cols = _resolve_board_column(board_uuid, raw_col)
+        if column_uuid is None:
+            available = ", ".join(f"'{c['name']}'" for c in cols) or "(none)"
+            return AssistantObservation(
+                ok=False,
+                text=(f"no column matching {raw_col!r} on board "
+                      f"'{target['name']}'. Columns: {available}"),
+            )
+    try:
+        moved = db.kanban_move_task_to_board(
+            task_uuid, board_uuid, actor=str(ctx.agent_uuid),
+            column_uuid=column_uuid,
+        )
+    except db.KanbanError as e:
+        return AssistantObservation(ok=False, text=f"cannot move: {e}")
+    if moved is None:
+        return AssistantObservation(ok=False, text="no such kanban task")
+    landed = next((str(c["name"]) for c in target["columns"]
+                   if str(c["uuid"]) == str(moved["columnUuid"])),
+                  str(moved["columnUuid"]))
+    return AssistantObservation(
+        ok=True,
+        text=(f"Moved '{before['title']}' to board '{target['name']}' "
+              f"(column '{landed}', undoable)."),
+        data={
+            "task_uuid": str(task_uuid),
+            "from_board_uuid": str(from_board_uuid),
+            "from_column_uuid": str(from_column_uuid),
+            "to_board_uuid": str(board_uuid),
+            "to_column_uuid": str(moved["columnUuid"]),
+            "link": _kanban_link(str(task_uuid)),
+            "undo": {
+                "capability": "kanban_task_change_board",
+                "payload": {"task_uuid": str(task_uuid),
+                            "board_uuid": str(from_board_uuid),
+                            "column_uuid": str(from_column_uuid),
+                            "expect_board": str(board_uuid)},
+            },
+        },
+    )
+
+
 def _action_complete_kanban_task(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
@@ -1329,6 +1412,23 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         summary="move a kanban task to another column of its board",
         required_args=("task_uuid", "column_uuid"),
         action=_action_move_kanban_task,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_TASK_CHANGE_BOARD: Capability(
+        name=AssistantActionName.KANBAN_TASK_CHANGE_BOARD, family="kanban",
+        description=('move a kanban task to a DIFFERENT board (for a move '
+                     'between columns of the same board, use kanban_task_column); '
+                     'reversible (undoable). The task lands in the target '
+                     'board\'s column with the same name as its current column '
+                     '(falling back to the target\'s first column). args: '
+                     '{"task_uuid": "...", "board_uuid": "..." (the target '
+                     'board, from kanban_read), optional "column_uuid" — the '
+                     'landing column\'s NAME (e.g. "In progress") or uuid to '
+                     'override the carry-over}'),
+        summary="move a kanban task to another board",
+        required_args=("task_uuid", "board_uuid"),
+        optional_args=frozenset({"column_uuid"}),
+        action=_action_change_kanban_task_board,
         read=False, write=True, tier="log_and_undo",
     ),
     AssistantActionName.KANBAN_TASK_COMPLETE: Capability(

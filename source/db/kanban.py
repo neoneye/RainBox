@@ -1142,17 +1142,19 @@ def kanban_move_task(
 
 def kanban_move_task_to_board(
     task_uuid: UUID, board_uuid: UUID, *, actor: str = "",
+    column_uuid: UUID | None = None,
 ) -> dict[str, Any] | None:
-    """Move a task to another BOARD. The column CARRIES OVER — the target
-    column with the same name (case-insensitive), else the one at the same
-    position (clamped to the last), else the target's first: a board move
-    is not a state change, so "In progress" stays in progress. The task
-    keeps its uuid, audit trail, assignee, and lease — the reason this is
-    a server-side operation: the page's per-board bulk save could only
-    fake it as delete + recreate, which destroys both. A 'moved' audit
+    """Move a task to another BOARD. `column_uuid` (a column of the TARGET
+    board) pins the landing column; when omitted the column CARRIES OVER —
+    the target column with the same name (case-insensitive), else the one
+    at the same position (clamped to the last), else the target's first: a
+    board move is not a state change, so "In progress" stays in progress.
+    The task keeps its uuid, audit trail, assignee, and lease — the reason
+    this is a server-side operation: the page's per-board bulk save could
+    only fake it as delete + recreate, which destroys both. A 'moved' audit
     event names both boards and the landing column. Moving a task to the
     board it is already on is a no-op (no event). Raises KanbanError for
-    an unknown target board."""
+    an unknown target board or a column_uuid not on the target board."""
     t = _task(task_uuid)
     if t is None:
         return None
@@ -1169,20 +1171,26 @@ def kanban_move_task_to_board(
     ).scalars().all()
     if not columns:
         raise KanbanError(f"board {board_uuid} has no columns")
-    src_cols = db.session.execute(
-        sa.select(KanbanColumn).where(KanbanColumn.board_uuid == t.board_uuid)
-        .order_by(KanbanColumn.position, KanbanColumn.id)
-    ).scalars().all()
-    src = next((c for c in src_cols if c.uuid == t.column_uuid), None)
-    col = None
-    if src is not None:
-        want = src.name.strip().lower()
-        col = next((c for c in columns
-                    if c.name.strip().lower() == want), None)
+    if column_uuid is not None:
+        col = next((c for c in columns if c.uuid == column_uuid), None)
         if col is None:
-            col = columns[min(src_cols.index(src), len(columns) - 1)]
-    if col is None:
-        col = columns[0]
+            raise KanbanError(
+                f"column {column_uuid} is not on target board {board_uuid}")
+    else:
+        src_cols = db.session.execute(
+            sa.select(KanbanColumn).where(KanbanColumn.board_uuid == t.board_uuid)
+            .order_by(KanbanColumn.position, KanbanColumn.id)
+        ).scalars().all()
+        src = next((c for c in src_cols if c.uuid == t.column_uuid), None)
+        col = None
+        if src is not None:
+            want = src.name.strip().lower()
+            col = next((c for c in columns
+                        if c.name.strip().lower() == want), None)
+            if col is None:
+                col = columns[min(src_cols.index(src), len(columns) - 1)]
+        if col is None:
+            col = columns[0]
     old_board = db.session.execute(
         sa.select(KanbanBoard.name).where(KanbanBoard.uuid == t.board_uuid)
     ).scalar_one_or_none() or "?"

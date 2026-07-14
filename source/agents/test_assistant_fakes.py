@@ -95,6 +95,7 @@ def test_action_enum_covers_the_known_action_surface():
         "activate_memory",
         "forget_memory",
         "kanban_task_column",
+        "kanban_task_change_board",
         "kanban_task_complete",
         "kanban_task_comment",
         "kanban_task_create",

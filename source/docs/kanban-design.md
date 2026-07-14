@@ -109,7 +109,7 @@ route through observe/work/shape.
 ## Assistant capabilities (log-and-undo)
 
 The personal assistant (`agents/assistant.py`) exposes kanban to chat. One
-read action and five prompt-exposed write families; every write returns an
+read action and six prompt-exposed write families; every write returns an
 `undo` descriptor `{capability, payload}` that is recorded as a completed row
 in the undo ledger, and the `/undo` endpoint replays it. Two capabilities
 exist only as undo inverses and are never prompt-exposed.
@@ -118,14 +118,16 @@ exist only as undo inverses and are never prompt-exposed.
 |---|---|---|
 | `kanban_read` | read without writing events, every observation JSON: `task_uuid` → task detail + board columns (move targets) + 10 recent events; `board_uuid` → the board's `kanban_board_llm_json` document; neither → every board in its folder tree (nested nodes, folder + board uuids, task counts) | — (read) |
 | `kanban_task_column` | move a task to another column of the same board (never across boards); `column_uuid` accepts the column's **name (case-insensitive) or uuid** (operators say "In progress", not a uuid); a no-op move (destination = source) is refused with the available columns listed, so the model can't claim a move that never happened | inverse move |
+| `kanban_task_change_board` | move a task to a **different board** via `db.kanban_move_task_to_board`: the column carries over by name (case-insensitive), else same position (clamped), else the target's first — a board move is not a state change; an optional `column_uuid` (name or uuid on the **target** board) pins the landing column instead; a same-board target is refused and points to `kanban_task_column` | inverse board move back to the original board + column (carries `expect_board`) |
 | `kanban_task_complete` | mark a task done — operator-proxy intent, so it goes straight to Done (`review=False`), not worker review-routing | move back to the prior column |
 | `kanban_task_comment` | append a 'comment' event | the trail is append-only, so undo posts a `↩ retracted: …` comment (which itself needs no further undo) |
 | `kanban_task_create` | create a task; an omitted/unresolvable `column_uuid` falls back to the board's **first column** | `kanban_task_delete` (internal) |
 | `kanban_board_create` | create a board with the default columns; the store assigns the uuid | `kanban_board_delete` (internal) |
 
 Undo is **position-aware**: a move-undo carries `expect_column` (where the
-original write left the task) and refuses if the task has since moved —
-don't yank it from where it now sits. Guard rails around the write loop:
+original write left the task) and a board-move undo carries `expect_board`;
+each refuses if the task has since moved on — don't yank it from where it
+now sits. Guard rails around the write loop:
 duplicate same-run writes are blocked, the assistant may not claim a write it
 never performed, and every kanban write appends a `/kanban?id=<task-or-board>`
 link to the reply so the operator can jump straight to what changed. A
@@ -462,9 +464,11 @@ target model's comfortable context budget.
   released).
 - `agents/test_kanban_worker.py` — the LLM worker with a faked model call
   (done/unclear/failed paths, deliverable event, Review routing).
-- `agents/test_kanban_move_action.py`, `agents/test_kanban_writes_s2.py`,
-  `agents/test_kanban_create.py`, `agents/test_kanban_create_board.py` — the
-  assistant's log-and-undo capabilities: column-by-name resolution, no-op
-  guard, position-aware undo, retraction comments, first-column default,
-  create/delete inverses, and the locked prompt-exposed action surface.
+- `agents/test_kanban_move_action.py`, `agents/test_kanban_change_board.py`,
+  `agents/test_kanban_writes_s2.py`, `agents/test_kanban_create.py`,
+  `agents/test_kanban_create_board.py` — the assistant's log-and-undo
+  capabilities: column-by-name resolution, no-op guards, position/board-aware
+  undo, column carry-over on board moves, retraction comments, first-column
+  default, create/delete inverses, and the locked prompt-exposed action
+  surface.
 - `benchmarks/test_kanban.py` — the /benchmark_kanban harness.
