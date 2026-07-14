@@ -11,11 +11,12 @@ Re-exported from db for import compatibility.
 import hashlib
 import json
 import re
+from copy import deepcopy
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 
@@ -332,3 +333,100 @@ def profile_save_tree(folders: list, profiles: list, *,
         if pu not in seen_p:
             db.session.delete(row)
     db.session.commit()
+
+
+# ---- per-profile data + duplication ----
+
+def _profile_row(profile_uuid: UUID) -> Profile | None:
+    return db.session.execute(
+        sa.select(Profile).where(Profile.uuid == profile_uuid)
+    ).scalar_one_or_none()
+
+
+def _profile_tree_row(row: Profile) -> dict[str, Any]:
+    """One user-owned profile in tree-list field names (no data blob)."""
+    return {
+        "uuid": str(row.uuid), "name": row.name,
+        "folderId": str(row.folder_uuid) if row.folder_uuid else None,
+        "summary": profile_data_summary(row.data),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def profile_get(profile_uuid: UUID) -> dict[str, Any] | None:
+    """One profile with its full data blob, for the form pane. Built-ins are
+    served from the shipped file (builtin: True), user rows from the DB.
+    Returns None if the uuid is unknown."""
+    builtin = profile_builtin_get(profile_uuid)
+    if builtin is not None:
+        return {"uuid": builtin["uuid"], "name": builtin["name"],
+                "data": builtin["data"], "builtin": True}
+    row = _profile_row(profile_uuid)
+    if row is None:
+        return None
+    return {
+        "uuid": str(row.uuid), "name": row.name, "data": row.data or {},
+        "builtin": False,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def profile_update_data(profile_uuid: UUID, data: Any) -> dict[str, Any] | None:
+    """Replace a profile's editable fields with the validated canonical
+    snapshot (raises ProfileDataError), preserving the server-owned `dynamic`
+    subtree in the same transaction — a stale form autosave can never
+    overwrite a newer connector observation. Editable keys omitted from the
+    complete snapshot are deleted, not retained. Returns the row's new
+    summary projection, or None if the uuid is unknown. Rejecting built-in
+    uuids is the API layer's job (there is no row here to update anyway)."""
+    canonical = validate_profile_data(data)
+    row = _profile_row(profile_uuid)
+    if row is None:
+        return None
+    current = row.data or {}
+    if "dynamic" in current:
+        canonical["dynamic"] = current["dynamic"]
+    row.data = canonical
+    db.session.commit()
+    return profile_data_summary(canonical)
+
+
+def profile_duplicate(profile_uuid: UUID) -> dict[str, Any] | None:
+    """Copy a profile's whole data blob (dynamic included) into a new row —
+    the one-action way to mint a friend's profile from an archetype. A
+    user-owned source yields "<name> copy" in the same folder right after the
+    source; a built-in source yields a real editable row named after the
+    template at the end of the user-owned top level (the virtual Templates
+    folder can't hold user rows). No version lineage — duplication is a
+    convenience, not ancestry. Returns the new row in tree-list field names,
+    or None if the source uuid is unknown."""
+    builtin = profile_builtin_get(profile_uuid)
+    if builtin is not None:
+        max_pos = db.session.execute(
+            sa.select(sa.func.max(Profile.position)).where(Profile.folder_uuid.is_(None))
+        ).scalar()
+        row = Profile(uuid=uuid4(), name=builtin["name"],
+                      data=deepcopy(builtin["data"]), folder_uuid=None,
+                      position=(max_pos + 1) if max_pos is not None else 0)
+        db.session.add(row)
+        db.session.commit()
+        return _profile_tree_row(row)
+    src = _profile_row(profile_uuid)
+    if src is None:
+        return None
+    row = Profile(uuid=uuid4(), name=f"{src.name} copy",
+                  data=deepcopy(src.data or {}), folder_uuid=src.folder_uuid,
+                  position=src.position + 1)
+    # Shift later siblings so the copy's slot is unambiguous even before the
+    # next whole-tree save rewrites all positions.
+    siblings = db.session.execute(
+        sa.select(Profile).where(Profile.folder_uuid == src.folder_uuid)
+    ).scalars().all()
+    for sib in siblings:
+        if sib.position > src.position:
+            sib.position += 1
+    db.session.add(row)
+    db.session.commit()
+    return _profile_tree_row(row)

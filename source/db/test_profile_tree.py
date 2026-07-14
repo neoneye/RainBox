@@ -211,3 +211,62 @@ def test_all_templates_validate(app_ctx):
         assert canonical == e["data"]        # shipped data is already canonical (no "" values)
         assert e["data"]["country"] == e["name"]
         assert "handle" not in e["data"] and "email" not in e["data"]
+
+
+def test_update_data_merges_and_deletes(app_ctx, empty_tree):
+    pr = str(uuid4())
+    db.profile_save_tree([], [{"uuid": pr, "name": "P", "folderId": None}])
+    v = db.profile_tree_version()
+    dynamic = {"location": {"value": "Copenhagen", "seen_at": "2026-07-14T10:00:00+00:00"}}
+    row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(pr))).scalar_one()
+    row.data = {"full_name": "Old Name", "city": "Aarhus", "dynamic": dynamic}
+    db.db.session.commit()
+    summary = db.profile_update_data(UUID(pr), {"full_name": "New Name", "units": "metric"})
+    assert summary["full_name"] == "New Name"
+    stored = db.profile_get(UUID(pr))["data"]
+    assert stored["dynamic"] == dynamic            # observation survives byte-for-byte
+    assert "city" not in stored                    # omitted editable key deleted, not retained
+    assert stored["full_name"] == "New Name" and stored["units"] == "metric"
+    assert db.profile_tree_version() == v          # data excluded from the structural version
+    tree_row = [p for p in db.profile_load_tree()["profiles"] if p["uuid"] == pr][0]
+    assert tree_row["summary"]["full_name"] == "New Name"   # summary rides, version stable
+    assert db.profile_update_data(uuid4(), {}) is None
+
+
+def test_duplicate_user_owned(app_ctx, empty_tree):
+    f, src, other = str(uuid4()), str(uuid4()), str(uuid4())
+    db.profile_save_tree([{"id": f, "name": "F", "parentId": None}],
+                         [{"uuid": src, "name": "Simon", "folderId": f},
+                          {"uuid": other, "name": "After", "folderId": f}])
+    blob = {"full_name": "Simon S", "dynamic": {"screen": {"value": "3440x1440",
+                                                           "seen_at": "2026-07-01T00:00:00+00:00"}}}
+    row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(src))).scalar_one()
+    row.data = blob
+    db.db.session.commit()
+    dup = db.profile_duplicate(UUID(src))
+    assert dup["name"] == "Simon copy" and dup["folderId"] == f
+    got = db.profile_get(UUID(dup["uuid"]))
+    assert got["data"] == blob and got["data"] is not blob   # deep copy, dynamic included
+    order = [p["uuid"] for p in db.profile_load_tree()["profiles"] if not p.get("builtin")]
+    assert order.index(dup["uuid"]) == order.index(src) + 1
+    assert db.profile_duplicate(uuid4()) is None
+
+
+def test_duplicate_builtin(app_ctx, empty_tree):
+    pr = str(uuid4())
+    db.profile_save_tree([], [{"uuid": pr, "name": "Existing", "folderId": None}])
+    germany = next(e for e in db.profile_templates_entries() if e["name"] == "Germany")
+    dup = db.profile_duplicate(UUID(germany["uuid"]))
+    assert dup["name"] == "Germany" and dup["folderId"] is None
+    got = db.profile_get(UUID(dup["uuid"]))
+    assert got["builtin"] is False and got["data"] == germany["data"]   # real, editable row
+    roots = [p for p in db.profile_load_tree()["profiles"]
+             if not p.get("builtin") and p["folderId"] is None]
+    assert roots[-1]["uuid"] == dup["uuid"]        # end of the user-owned top level
+
+
+def test_get_builtin_and_unknown(app_ctx):
+    germany = next(e for e in db.profile_templates_entries() if e["name"] == "Germany")
+    got = db.profile_get(UUID(germany["uuid"]))
+    assert got["builtin"] is True and got["data"]["full_name"] == "Karl Weierstraß"
+    assert db.profile_get(uuid4()) is None
