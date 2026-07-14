@@ -170,3 +170,44 @@ def test_validate_rejects_dangling_cycle_collision_summary(app_ctx):
     with pytest.raises(db.ProfileTreeError, match="summary"):
         db.validate_profile_tree([], [{"uuid": str(uuid4()), "name": "P",
                                        "folderId": None, "summary": {}}])
+
+
+def test_builtins_merged_into_tree(app_ctx, empty_tree):
+    out = db.profile_load_tree()
+    tf = str(db.profile_templates_folder_uuid())
+    builtin_folders = [f for f in out["folders"] if f.get("builtin")]
+    assert [f["id"] for f in builtin_folders] == [tf]
+    builtins = [p for p in out["profiles"] if p.get("builtin")]
+    assert len(builtins) == 20
+    assert all(p["folderId"] == tf for p in builtins)
+    assert builtins[0]["name"] == "US" and builtins[-1]["name"] == "Australia"
+    assert builtins[6]["summary"]["full_name"] == "Karl Weierstraß"
+    assert "data" not in builtins[0]
+
+
+def test_builtins_excluded_from_version(app_ctx, empty_tree):
+    out = db.profile_load_tree()
+    assert len(out["profiles"]) == 20 and len(out["folders"]) == 1  # virtual rows only
+    # The version token covers user rows only, so a builtin-free save of the
+    # (empty) user tree against it is a clean no-op — nothing stale, nothing
+    # to delete.
+    db.profile_save_tree([], [], base_version=out["version"], expected_deletes=0)
+
+
+def test_tree_put_rejects_builtin_uuids(app_ctx):
+    tf = str(db.profile_templates_folder_uuid())
+    bp = str(next(iter(db.profile_builtin_uuids() - {db.profile_templates_folder_uuid()})))
+    with pytest.raises(db.ProfileTreeError, match="built-in"):
+        db.validate_profile_tree([{"id": tf, "name": "Templates", "parentId": None}], [])
+    with pytest.raises(db.ProfileTreeError, match="built-in"):
+        db.validate_profile_tree([], [{"uuid": bp, "name": "X", "folderId": None}])
+
+
+def test_all_templates_validate(app_ctx):
+    entries = db.profile_templates_entries()
+    assert len(entries) == 20
+    for e in entries:
+        canonical = db.validate_profile_data(e["data"])
+        assert canonical == e["data"]        # shipped data is already canonical (no "" values)
+        assert e["data"]["country"] == e["name"]
+        assert "handle" not in e["data"] and "email" not in e["data"]

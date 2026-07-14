@@ -12,6 +12,8 @@ import hashlib
 import json
 import re
 from datetime import date
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -86,6 +88,46 @@ def _to_uuid(value: Any) -> UUID | None:
         return None
 
 
+# ---- built-in templates (shipped file, virtual rows — never in the DB) ----
+
+_TEMPLATES_PATH = Path(__file__).resolve().parent.parent / "data" / "profile_templates.json"
+
+
+@lru_cache(maxsize=1)
+def _templates() -> dict[str, Any]:
+    """The shipped built-in templates file, parsed once per process. The file
+    is part of the release, so a new rainbox serves new content on the next
+    page load — no re-seed logic, no drift between installs."""
+    return json.loads(_TEMPLATES_PATH.read_text(encoding="utf-8"))
+
+
+def profile_templates_folder_uuid() -> UUID:
+    """Fixed uuid of the virtual Templates folder (deep links survive releases)."""
+    return UUID(_templates()["folder"]["uuid"])
+
+
+def profile_templates_entries() -> list[dict[str, Any]]:
+    """The shipped template profiles, file order: {"uuid", "name", "data"}."""
+    return _templates()["profiles"]
+
+
+@lru_cache(maxsize=1)
+def profile_builtin_uuids() -> frozenset[UUID]:
+    """Every fixed built-in uuid (the virtual folder + the 20 templates).
+    The tree validator keeps user rows off these."""
+    return frozenset({profile_templates_folder_uuid()} |
+                     {UUID(e["uuid"]) for e in profile_templates_entries()})
+
+
+def profile_builtin_get(profile_uuid: UUID) -> dict[str, Any] | None:
+    """One built-in template entry by uuid, or None (the folder uuid is not
+    a profile and also returns None)."""
+    for e in profile_templates_entries():
+        if UUID(e["uuid"]) == profile_uuid:
+            return e
+    return None
+
+
 def profile_data_summary(data: dict[str, Any] | None) -> dict[str, Any]:
     """The read-only projection riding on tree rows: just enough of `data`
     for the folder detail table (Name / Person / Language / Units / Time /
@@ -130,6 +172,7 @@ def profile_load_tree() -> dict[str, Any]:
     profiles = db.session.execute(
         sa.select(Profile).order_by(Profile.position, Profile.id)
     ).scalars().all()
+    tpl = _templates()
     return {
         "folders": [
             {"id": str(f.uuid), "name": f.name, "description": f.description,
@@ -137,6 +180,10 @@ def profile_load_tree() -> dict[str, Any]:
              "created_at": f.created_at.isoformat() if f.created_at else None,
              "updated_at": f.updated_at.isoformat() if f.updated_at else None}
             for f in folders
+        ] + [
+            {"id": tpl["folder"]["uuid"], "name": tpl["folder"]["name"],
+             "description": tpl["folder"]["description"], "parentId": None,
+             "builtin": True}
         ],
         "profiles": [
             {"uuid": str(p.uuid), "name": p.name,
@@ -145,8 +192,14 @@ def profile_load_tree() -> dict[str, Any]:
              "created_at": p.created_at.isoformat() if p.created_at else None,
              "updated_at": p.updated_at.isoformat() if p.updated_at else None}
             for p in profiles
+        ] + [
+            {"uuid": e["uuid"], "name": e["name"],
+             "folderId": tpl["folder"]["uuid"], "builtin": True,
+             "summary": profile_data_summary(e["data"])}
+            for e in profile_templates_entries()
         ],
         # Optimistic-concurrency token; the page echoes it on PUT (409 if stale).
+        # Covers user rows only — the merged built-ins are excluded.
         "version": profile_tree_version(),
     }
 
@@ -169,6 +222,8 @@ def validate_profile_tree(folders: list, profiles: list) -> None:
         fid = _to_uuid(f.get("id"))
         if fid is None:
             raise ProfileTreeError(f"folder id is not a uuid: {f.get('id')!r}")
+        if fid in profile_builtin_uuids():
+            raise ProfileTreeError(f"folder {fid} is a read-only built-in")
         if fid in parent_of:
             raise ProfileTreeError(f"duplicate folder id: {fid}")
         if not isinstance(f.get("name", ""), str):
@@ -201,6 +256,8 @@ def validate_profile_tree(folders: list, profiles: list) -> None:
         pu = _to_uuid(p.get("uuid"))
         if pu is None:
             raise ProfileTreeError(f"profile uuid is not a uuid: {p.get('uuid')!r}")
+        if pu in profile_builtin_uuids():
+            raise ProfileTreeError(f"profile {pu} is a read-only built-in")
         if pu in profile_uuids:
             raise ProfileTreeError(f"duplicate profile uuid: {pu}")
         if pu in parent_of:
