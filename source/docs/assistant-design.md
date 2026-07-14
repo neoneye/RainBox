@@ -101,6 +101,7 @@ only by `undo_write_intent`.
 | `query_memory` | memory | read | — |
 | `workspace_read_command` | workspace | read | — |
 | `kanban_read` | kanban | read | — |
+| `kanban_query` | kanban | read | — |
 | `find_uuid` | lookup | read | — |
 | `remember` | memory | log-and-undo | `reject_memory_candidate` (internal) |
 | `forget_memory` | memory | log-and-undo | `reactivate_memory` (internal) |
@@ -133,6 +134,12 @@ only by `undo_write_intent`.
   serialization (`kanban_board_llm_json`), or the folder tree of boards; every
   observation is JSON. Reading writes no events (unlike worker operations).
   See `kanban-design.md`.
+- **`kanban_query`** — find kanban boards, folders, and tasks BY NAME via
+  `db.kanban_find_by_name`: exact, substring, and fuzzy (typo-tolerant)
+  matching over board/folder names and task titles, returning a ranked JSON
+  candidate list in `find_uuid`'s shape (kind, name, FULL uuid, parents, page
+  url) — the name-side complement to `find_uuid`, for when the operator says
+  "the chores board" and the model needs its uuid. See `kanban-design.md`.
 - **`find_uuid`** — resolve a uuid the model isn't sure about (a fragment,
   a typo'd paste) across every uuid-bearing table via `db.find_uuid`: each
   JSON match carries kind, name, parent chain, page url, and the FULL uuid to
@@ -316,7 +323,8 @@ scripted decisions from `agents/assistant_fakes.py`. Coverage:
 `agents/test_assistant_control.py` (stop/redirect),
 `agents/test_assistant_remember_candidate.py`, `test_assistant_skills.py`,
 `test_assistant_profile.py`, `test_assistant_facts_marker.py`,
-`test_assistant_progress.py`, `test_kanban_move_action.py`,
+`test_assistant_progress.py`, `test_kanban_query.py`,
+`test_kanban_move_action.py`,
 `test_kanban_change_board.py`, `test_kanban_writes_s2.py`,
 `test_kanban_create.py`, `test_kanban_create_board.py` (kanban capabilities incl. the locked
 prompt-exposed surface), `db/test_assistant_trace.py`,

@@ -56,6 +56,7 @@ class AssistantActionName(str, Enum):
     # The kanban family, kept contiguous (`kanban_<entity>_<verb>`) so the
     # actions group together in the prompt catalog: one read + the writes.
     KANBAN_READ = "kanban_read"
+    KANBAN_QUERY = "kanban_query"                # read: find boards/folders/tasks by name (fuzzy)
     KANBAN_BOARD_CREATE = "kanban_board_create"  # log-and-undo: create a new board
     KANBAN_BOARD_DELETE = "kanban_board_delete"  # internal: board_create's undo inverse (not prompt-exposed)
     KANBAN_TASK_CREATE = "kanban_task_create"    # log-and-undo: create a task on a board
@@ -520,6 +521,32 @@ def _action_kanban_read(
         ok=True,
         text=json.dumps({"tree": _nodes(None)}, indent=2, ensure_ascii=False),
         data={"count": len(boards)},
+    )
+
+
+def _action_kanban_query(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Find kanban boards, folders, and tasks BY NAME — db.kanban_find_by_name.
+    The observation is the ranked JSON candidate list: each candidate's kind,
+    name, FULL uuid (the string to use in other actions), match quality
+    (exact / substring / fuzzy), parent chain, and page url. Read-only."""
+    query = str(args.get("query", "")).strip()
+    try:
+        candidates = db.kanban_find_by_name(query)
+    except db.KanbanError as exc:
+        return AssistantObservation(ok=False, text=str(exc))
+    if not candidates:
+        return AssistantObservation(
+            ok=True,
+            text=(f"No kanban board, folder, or task matches {query!r}, even "
+                  f"fuzzily. Use kanban_read to list every board."),
+            data={"count": 0},
+        )
+    return AssistantObservation(
+        ok=True,
+        text=json.dumps({"candidates": candidates}, indent=2, ensure_ascii=False),
+        data={"count": len(candidates)},
     )
 
 
@@ -1361,6 +1388,19 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'in their folder tree'),
         summary="read kanban boards and tasks",
         optional_args=frozenset({"board_uuid", "task_uuid"}), action=_action_kanban_read,
+    ),
+    AssistantActionName.KANBAN_QUERY: Capability(
+        name=AssistantActionName.KANBAN_QUERY, family="kanban",
+        description=('find a kanban board, folder, or task BY NAME and get '
+                     'its uuid. Matching is fuzzy — exact, substring, and '
+                     'typo-tolerant — and returns a ranked candidate list '
+                     'with each match\'s kind, FULL uuid, and parents (a '
+                     'task\'s column and board, a board\'s folder). Use this '
+                     'when the operator names something ("the chores board", '
+                     '"the ship-it task") and you need its uuid for another '
+                     'action. args: {"query": "chores"}'),
+        summary="find kanban boards/folders/tasks by name",
+        required_args=("query",), action=_action_kanban_query,
     ),
     AssistantActionName.KANBAN_BOARD_CREATE: Capability(
         name=AssistantActionName.KANBAN_BOARD_CREATE, family="kanban",

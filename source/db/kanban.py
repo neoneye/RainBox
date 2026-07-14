@@ -156,6 +156,69 @@ def kanban_list_boards() -> list[dict[str, Any]]:
              "taskCount": counts.get(b.uuid, 0)} for b in boards]
 
 
+# Name search: refuse queries too short to mean anything, and require this
+# much SequenceMatcher similarity before a fuzzy candidate is worth showing.
+KANBAN_FIND_MIN_QUERY = 2
+_NAME_FUZZY_THRESHOLD = 0.65
+
+
+def _name_match(query: str, name: str) -> tuple[float, str] | None:
+    """Score a candidate name against the (lowercased, whitespace-collapsed)
+    query. Exact 1.0; substring 0.70–0.99 (more of the name covered → higher,
+    a prefix ranks above an infix); fuzzy is 0.9 × the best SequenceMatcher
+    ratio of the whole name and of each word (slightly discounted), so a
+    typo'd single word of a long name still hits. None: not a candidate."""
+    from difflib import SequenceMatcher
+
+    n = " ".join(str(name or "").split()).lower()
+    if not n:
+        return None
+    if query == n:
+        return 1.0, "exact"
+    if query in n:
+        score = 0.70 + 0.25 * len(query) / len(n)
+        if n.startswith(query):
+            score += 0.04
+        return min(score, 0.99), "substring"
+    ratio = SequenceMatcher(None, query, n).ratio()
+    for w in n.split():
+        ratio = max(ratio, SequenceMatcher(None, query, w).ratio() * 0.98)
+    if ratio >= _NAME_FUZZY_THRESHOLD:
+        return 0.9 * ratio, "fuzzy"
+    return None
+
+
+def kanban_find_by_name(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Find kanban boards, folders, and tasks whose name/title matches the
+    query — exact, substring, or fuzzy (typo-tolerant) — as a ranked candidate
+    list [{kind, uuid, name, match, confidence, url, parents}], best first:
+    the same shape as find_uuid, so callers read both the same way (parents
+    give a task's column/board and a board's folder chain). Read-only; raises
+    KanbanError for a query under KANBAN_FIND_MIN_QUERY useful characters."""
+    from db.find_uuid import _kanban_board, _kanban_folder, _kanban_task
+
+    q = " ".join(str(query or "").split()).lower()
+    if len(q) < KANBAN_FIND_MIN_QUERY:
+        raise KanbanError(
+            f"query too short — give at least {KANBAN_FIND_MIN_QUERY} "
+            f"characters of the name")
+    sources = (
+        ("kanban board", KanbanBoard, lambda r: r.name, _kanban_board),
+        ("kanban folder", KanbanBoardFolder, lambda r: r.name, _kanban_folder),
+        ("kanban task", KanbanTask, lambda r: r.title, _kanban_task),
+    )
+    scored: list[tuple[float, str, str, Any, Any]] = []
+    for kind, model, name_of, describe in sources:
+        for row in db.session.execute(sa.select(model)).scalars().all():
+            m = _name_match(q, name_of(row))
+            if m is not None:
+                scored.append((m[0], m[1], kind, row, describe))
+    scored.sort(key=lambda s: (-s[0], s[2]))
+    return [{"kind": kind, "uuid": str(row.uuid), "match": match,
+             "confidence": round(score, 3), **describe(row)}
+            for score, match, kind, row, describe in scored[:limit]]
+
+
 # ---- folder tree: create / delete / load / version / validate / save ----
 # A separate concern from board CONTENTS (columns/tasks): this layer manages
 # folders and which folder each board sits in. The save is placement-only (the
