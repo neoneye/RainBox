@@ -335,7 +335,15 @@ def find_uuid(query: str, limit: int = 20) -> list[dict[str, Any]]:
         if q == hex32:
             scored.append((1.0, "exact", source, u))
         elif q in hex32:
-            scored.append((0.75 + 0.25 * len(q) / 32, "substring", source, u))
+            # Longer fragments score higher; where the fragment sits breaks
+            # ties — people quote the BEGINNING of a uuid far more often than
+            # the end, and the end more often than the middle.
+            score = 0.70 + 0.25 * len(q) / 32
+            if hex32.startswith(q):
+                score += 0.05
+            elif hex32.endswith(q):
+                score += 0.02
+            scored.append((score, "substring", source, u))
     if not scored and len(q) >= FIND_UUID_MIN_FUZZY_QUERY:
         for source, u in pool:
             ratio = _best_window_ratio(q, u.hex)

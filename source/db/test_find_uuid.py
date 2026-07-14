@@ -100,6 +100,29 @@ def test_column_links_to_its_board(world):
     assert m["parents"][0]["kind"] == "kanban board"
 
 
+def test_prefix_match_ranks_above_middle_match(world):
+    """For the same fragment, the uuid that STARTS with it sorts above one
+    that merely contains it — people quote the beginning of a uuid."""
+    fragment = "2f70dead"
+    prefix_uuid = "2f70dead-0000-4000-8000-000000000001"
+    middle_uuid = "00000000-0000-2f70-dead-000000000002"
+    assert fragment in UUID(middle_uuid).hex
+    assert not UUID(middle_uuid).hex.startswith(fragment)
+    bu = UUID(world["board"]["uuid"])
+    fresh = db.kanban_load_board(bu)
+    todo = fresh["columns"][0]["uuid"]
+    fresh["tasks"] += [
+        {"uuid": middle_uuid, "columnUuid": todo, "title": "middle",
+         "description": "", "agentUuid": None},
+        {"uuid": prefix_uuid, "columnUuid": todo, "title": "prefix",
+         "description": "", "agentUuid": None},
+    ]
+    db.kanban_save_board(bu, fresh)
+    matches = db.find_uuid(fragment)
+    uuids = [m["uuid"] for m in matches]
+    assert uuids.index(prefix_uuid) < uuids.index(middle_uuid)
+
+
 def test_exact_ranks_above_substring(world):
     """The full uuid of one entity is also a query; its exact hit sorts
     before any coincidental substring hits elsewhere."""
