@@ -256,7 +256,7 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 | US | Raymond Davis Jr. | detected solar neutrinos | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
 | Canada | Marie-Victorin | wrote the Flore laurentienne, Québec's definitive botany | metric | 12h | YYYY-MM-DD | fr-CA / en-CA | CAD | Montreal | America/Toronto |
 | Mexico | Ynés Mexía | discovered some 500 new plant species | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
-| Brazil | Johanna Döbereiner | pioneered biological nitrogen fixation in crops | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
+| Brazil | Maurício Rocha e Silva | discovered bradykinin, the blood-pressure peptide | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
 | UK | Rosalind Franklin | imaged the structure of DNA | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
 | France | Émilie du Châtelet | showed kinetic energy scales with velocity squared | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
 | Germany | Karl Weierstraß | made calculus rigorous (ε–δ) | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
@@ -278,9 +278,9 @@ Each entry's `country` field carries the country name (the label doubles as
 it, so the column is omitted above). Rough grouping in the file — Americas,
 Europe, Middle East, Asia, Oceania — is also the fixed tree order. Some
 rows are career or legacy placements rather than birthplaces — Wu Lien-teh
-(Straits Settlements), Johanna Döbereiner (Czech-born, Brazilian by career
-and citizenship), Sofya Kovalevskaya (Russian-born, Stockholm's mathematics
-chair), Wu Chien-Shiung (Chinese-born, career in the US), Ynés Mexía
+(Straits Settlements), Sofya Kovalevskaya (Russian-born, Stockholm's
+mathematics chair), Wu Chien-Shiung (Chinese-born, career in the US), Ynés
+Mexía
 (US-born, of Mexican heritage, collected across Mexico) — and Amos
 Tversky's field was cognitive science; all earn their rows on the strength
 of the discovery. The About
@@ -302,11 +302,12 @@ Marie-Victorin", the religious name all of Québec knew him by.
 
 **The templates are also the name-handling test fixture.** Between the
 names, nicknames, abouts, and cities they deliberately cover Latin
-diacritics (É é í â è ö ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
+diacritics (É é í â è ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
 Hangul, Bengali, Cyrillic, right-to-left Hebrew, a generational suffix
 (`last_name` "Davis Jr."), an apostrophe-particle surname (`last_name`
 "van 't Hoff" — apostrophe, internal space, lowercase particles), a
-hyphenated double surname (Kielan-Jaworowska), and a person whose everyday
+Portuguese compound surname joined by a conjunction (`last_name` "Rocha e
+Silva"), a hyphenated double surname (Kielan-Jaworowska), and a person whose everyday
 name lives in `nickname` rather than first/last (Frère
 Marie-Victorin) — standing tests that nothing assumes a last name is one
 capitalized dot-free word — so an encoding, rendering, or name-splitting
