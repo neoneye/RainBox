@@ -346,7 +346,7 @@ policy, and so a demo never shows a 19th-century birth year):
 | Label | Person | About | units | time | date | lang | currency | city | timezone |
 |---|---|---|---|---|---|---|---|---|---|
 | US | Raymond Davis Jr. | detected solar neutrinos | imperial | 12h | MM/DD/YYYY | en-US | USD | Denver | America/Denver |
-| Canada | Marie-Victorin | wrote the Flore laurentienne, Québec's definitive botany | metric | 12h | YYYY-MM-DD | fr-CA / en-CA | CAD | Montreal | America/Toronto |
+| Canada | Mieczysław Grzegorz Bekker | founded terramechanics; designed the lunar rover's wheels | metric | 12h | YYYY-MM-DD | fr-CA / en-CA | CAD | Montreal | America/Toronto |
 | Mexico | Ynés Mexía | discovered some 500 new plant species | metric | 12h | DD/MM/YYYY | es-MX / en | MXN | Mexico City | America/Mexico_City |
 | Brazil | Maurício Rocha e Silva | discovered bradykinin, the blood-pressure peptide | metric | 24h | DD/MM/YYYY | pt-BR / en | BRL | São Paulo | America/Sao_Paulo |
 | UK | D'Arcy Wentworth Thompson | founded mathematical biology (On Growth and Form) | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
@@ -372,8 +372,9 @@ Europe, Middle East, Asia, Oceania — is also the fixed tree order. Some
 rows are career or legacy placements rather than birthplaces — Wu Lien-teh
 (Straits Settlements), Wu Chien-Shiung (Chinese-born, career in the US), Ynés
 Mexía (US-born, of Mexican heritage, collected across Mexico), Ferdinand von
-Mueller (German-born, Victoria's founding Government Botanist) — all earn
-their rows on the strength of the discovery. The About
+Mueller (German-born, Victoria's founding Government Botanist), Mieczysław
+Bekker (Polish-born, a decade in the Canadian Army's vehicle research) — all
+earn their rows on the strength of the discovery. The About
 column above is each entry's `about` value — the self-description field
 every profile has (the operator's own might read "programmer, modern day
 alchemist doing code"); on the templates it holds the discovery, so opening
@@ -386,16 +387,14 @@ behaviour). Every template's `full_name` is the romanized Latin form (so it
 sorts and reads everywhere); the ones whose scientist used a non-Latin script
 also fill `native_name`: 吳健雄 (Wu Chien-Shiung), 湯川秀樹 (Hideki Yukawa),
 우장춘 (Woo Jang-choon), 伍連德 (Wu Lien-teh), יובל נאמן (Yuval Ne’eman),
-యల్లాప్రగడ సుబ్బారావు (Subbārāvu). Canada shows `preferred_name` doing its
-own job — the name a person actually goes by: `full_name` is "Conrad
-Kirouac", `preferred_name` is "Frère Marie-Victorin", the religious name all
-of Québec knew him by.
+యల్లాప్రగడ సుబ్బారావు (Subbārāvu).
 
 **The templates are also the name-handling test fixture.** Across their
 `full_name`s, `native_name`s, abouts, and cities they deliberately cover
 Latin diacritics (É é í â è ó ã), the Danish Ø ("Øjvind Winge"), the Swedish
 Å and ö ("Ångström" — a special letter at the very start of the string), the
-German ß (Weierstraß), the macron and retroflex under-dot of Indic
+German ß (Weierstraß), the Polish ł ("Mieczysław Grzegorz Bekker"), the
+macron and retroflex under-dot of Indic
 transliteration (ā + ḍ, "Yallāpragaḍa Subbārāvu"), Greek (ε–δ), and — in
 `native_name` — CJK, Hangul, Telugu, and right-to-left Hebrew. On top of the
 scripts come the awkward *shapes* a name takes, all in the one `full_name`
@@ -407,9 +406,8 @@ Mueller"), an apostrophe inside a given name ("D'Arcy Wentworth Thompson"), a
 typographic apostrophe for a Hebrew ayin ("Yuval Ne’eman" — U+2019, not the
 ASCII `'` of the two above), a compound surname joined by a conjunction
 ("Maurício Rocha e Silva"), a hyphenated double surname ("Zofia
-Kielan-Jaworowska"), a family-name-first order (the `native_name`s above),
-and a `preferred_name` sharing nothing with the `full_name`
-("Conrad Kirouac", known as "Frère Marie-Victorin"). So an encoding,
+Kielan-Jaworowska"), and a family-name-first order (the `native_name`s
+above). So an encoding,
 rendering, or ordering bug anywhere on the page (tree row, form field, folder
 detail table, JSON round-trip) shows up on shipped data before it can corrupt
 an operator's own. The validate-the-shipped-file test doubles as the encoding
