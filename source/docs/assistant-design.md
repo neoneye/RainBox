@@ -127,9 +127,10 @@ only by `undo_write_intent`.
   workspace root (`tools/command_policy.validate_command` +
   `tools/workspace_command_runner`). The policy excludes interpreters,
   mutation, and network tools, so it stays a file-inspection reader.
-- **`kanban_read`** — a task's detail + 10 recent events, a board's markdown
-  serialization, or the board list. Reading writes no events (unlike worker
-  operations). See `kanban-design.md`.
+- **`kanban_read`** — a task's detail + 10 recent events, a board's JSON
+  serialization (`kanban_board_llm_json`), or the folder tree of boards; every
+  observation is JSON. Reading writes no events (unlike worker operations).
+  See `kanban-design.md`.
 
 ## Write tiers
 

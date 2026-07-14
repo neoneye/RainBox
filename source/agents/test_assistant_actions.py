@@ -6,6 +6,7 @@ AssistantObservation; the dispatcher owns validation, the output cap, and the
 running->observed/failed trace boundary. No writes, no MCP, no generated code.
 """
 
+import json
 from uuid import UUID, uuid4
 
 import pytest
@@ -391,7 +392,10 @@ def test_kanban_read_returns_board_state_without_appending_events(app_ctx):
     try:
         obs = _action_kanban_read(_ctx(), {"board_uuid": str(bu)})
         assert obs.ok
-        assert "ship the thing" in obs.text
+        document = json.loads(obs.text)   # the LLM JSON twin, not markdown
+        assert document["boardId"] == str(bu)
+        assert any(t["title"] == "ship the thing"
+                   for c in document["columns"] for t in c["tasks"])
         events_after = db.kanban_task_events(task_uuid) or []
         assert len(events_after) == len(events_before), "read must not write events"
     finally:
@@ -410,17 +414,22 @@ def test_kanban_read_without_args_lists_boards(app_ctx):
 
 
 def test_kanban_read_board_list_shows_folder_tree(app_ctx):
-    """The no-arg listing preserves the folder tree: folders appear with
-    their uuids, nesting is indentation, and a board sits under its folder."""
+    """The no-arg listing is JSON preserving the folder tree: folders carry
+    their uuids and children, and a board sits under its folder."""
     folder = db.kanban_create_folder("Projects read test")
     sub = db.kanban_create_folder("Active", UUID(folder["uuid"]))
     board = db.kanban_create_board("Tree board", folder_uuid=UUID(sub["uuid"]))
     try:
         obs = _action_kanban_read(_ctx(), {})
         assert obs.ok
-        assert f"- [folder] Projects read test ({folder['uuid']})" in obs.text
-        assert f"  - [folder] Active ({sub['uuid']})" in obs.text
-        assert f"    - Tree board ({board['uuid']}) — 0 task(s)" in obs.text
+        tree = json.loads(obs.text)["tree"]
+        f_node = next(n for n in tree if n.get("folderId") == folder["uuid"])
+        assert f_node["name"] == "Projects read test"
+        s_node = next(n for n in f_node["children"]
+                      if n.get("folderId") == sub["uuid"])
+        b_node = next(n for n in s_node["children"]
+                      if n.get("boardId") == board["uuid"])
+        assert b_node["name"] == "Tree board" and b_node["taskCount"] == 0
     finally:
         db.kanban_delete_board(UUID(board["uuid"]))
         db.kanban_delete_folder(UUID(sub["uuid"]))
@@ -444,7 +453,13 @@ def test_kanban_read_by_task_uuid_returns_task_and_events(app_ctx):
     try:
         obs = _action_kanban_read(_ctx(), {"task_uuid": str(tu)})
         assert obs.ok is True
-        assert "fix the bug" in obs.text and "please prioritize" in obs.text
+        detail = json.loads(obs.text)
+        assert detail["taskId"] == str(tu) and detail["title"] == "fix the bug"
+        assert detail["columnName"] == "To do"
+        assert [c["name"] for c in detail["boardColumns"]] == \
+            ["To do", "In progress", "Done"]
+        assert any(e["detail"] == "please prioritize"
+                   for e in detail["recentEvents"])
         assert obs.data["task_uuid"] == str(tu)
     finally:
         db.kanban_delete_board(bu)

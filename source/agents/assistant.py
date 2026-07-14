@@ -436,9 +436,11 @@ def _action_workspace_read_command(
 def _action_kanban_read(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
-    """Read kanban state without writing events: one task's detail + recent
-    events when a task_uuid is given, one board's markdown when a board_uuid is
-    given, otherwise every board in its folder tree (folder + board uuids)."""
+    """Read kanban state without writing events, observed as pretty-printed
+    JSON under the role-named id keys of the LLM serialization (boardId /
+    columnId / taskId / agentId): one task's detail + recent events when a
+    task_uuid is given, one board's columns→tasks document when a board_uuid
+    is given, otherwise every board in its folder tree."""
     task_raw = args.get("task_uuid")
     if task_raw:
         try:
@@ -449,23 +451,30 @@ def _action_kanban_read(
         if task is None:
             return AssistantObservation(ok=False, text="no such kanban task")
         board = db.kanban_load_board(UUID(str(task["boardUuid"])))
-        cur = next((c["name"] for c in (board["columns"] if board else [])
-                    if str(c["uuid"]) == str(task["columnUuid"])), task["columnUuid"])
-        all_cols = ", ".join(c["name"] for c in board["columns"]) if board else ""
-        lines = [
-            f"Task: {task['title']}",
-            f"  board: {task['boardUuid']}  column: {cur}",
-            f"  description: {task['description'] or '(none)'}",
-            f"  board columns (move targets): {all_cols}",
-        ]
+        cols = board["columns"] if board else []
         events = db.kanban_task_events(task_uuid, limit=10) or []
-        if events:
-            lines.append("  recent events (newest first):")
-            for e in events:
-                detail = f": {e['detail']}" if e.get("detail") else ""
-                lines.append(f"    - {e['kind']}{detail}")
+        payload = {
+            "taskId": str(task_uuid),
+            "title": task["title"],
+            "description": task["description"],
+            "boardId": task["boardUuid"],
+            "boardName": board["name"] if board else None,
+            "columnId": task["columnUuid"],
+            "columnName": next((c["name"] for c in cols
+                                if c["uuid"] == task["columnUuid"]), None),
+            "agentId": task["agentUuid"],
+            # Move targets: the columns of the task's board.
+            "boardColumns": [{"columnId": c["uuid"], "name": c["name"]}
+                             for c in cols],
+            "recentEvents": [
+                {"kind": e["kind"], "actor": e["actor"], "detail": e["detail"],
+                 "createdAt": e["created_at"]}
+                for e in events
+            ],
+        }
         return AssistantObservation(
-            ok=True, text="\n".join(lines), data={"task_uuid": str(task_uuid)}
+            ok=True, text=json.dumps(payload, indent=2, ensure_ascii=False),
+            data={"task_uuid": str(task_uuid)},
         )
     board_raw = args.get("board_uuid")
     if board_raw:
@@ -473,33 +482,36 @@ def _action_kanban_read(
             board_uuid = UUID(str(board_raw))
         except (ValueError, TypeError):
             return AssistantObservation(ok=False, text=f"invalid board_uuid: {board_raw!r}")
-        markdown = db.kanban_board_markdown(board_uuid)
-        if markdown is None:
+        document = db.kanban_board_llm_json(board_uuid)
+        if document is None:
             return AssistantObservation(ok=False, text="no such kanban board")
         return AssistantObservation(
-            ok=True, text=markdown, data={"board_uuid": str(board_uuid)}
+            ok=True, text=json.dumps(document, indent=2, ensure_ascii=False),
+            data={"board_uuid": str(board_uuid)},
         )
     tree = db.kanban_load_tree()
     folders, boards = tree["folders"], tree["boards"]
-    if not folders and not boards:
-        return AssistantObservation(ok=True, text="No kanban boards.")
-    # The same depth-first order as the /kanban tree (a folder's subfolders,
-    # then its boards); every folder and board carries its uuid so either can
-    # be addressed.
-    lines = ["Kanban boards:"]
 
-    def _walk(parent: str | None, depth: int) -> None:
-        pad = "  " * depth
+    # Nested nodes in the same depth-first order as the /kanban tree (a
+    # folder's subfolders, then its boards); every folder and board carries
+    # its uuid so either can be addressed.
+    def _nodes(parent: str | None) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for f in folders:
             if f["parentId"] == parent:
-                lines.append(f"{pad}- [folder] {f['name']} ({f['uuid']})")
-                _walk(f["uuid"], depth + 1)
+                out.append({"folderId": f["uuid"], "name": f["name"],
+                            "children": _nodes(f["uuid"])})
         for b in boards:
             if b["folderId"] == parent:
-                lines.append(f"{pad}- {b['name']} ({b['uuid']}) — {b['taskCount']} task(s)")
+                out.append({"boardId": b["uuid"], "name": b["name"],
+                            "taskCount": b["taskCount"]})
+        return out
 
-    _walk(None, 0)
-    return AssistantObservation(ok=True, text="\n".join(lines), data={"count": len(boards)})
+    return AssistantObservation(
+        ok=True,
+        text=json.dumps({"tree": _nodes(None)}, indent=2, ensure_ascii=False),
+        data={"count": len(boards)},
+    )
 
 
 def _action_remember(
@@ -1220,7 +1232,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.KANBAN_READ: Capability(
         name=AssistantActionName.KANBAN_READ, family="kanban",
-        description=('read kanban state — use this to find a board or list a '
+        description=('read kanban state as JSON — use this to find a board or list a '
                      'board\'s columns before creating/moving a task. args: optional '
                      '{"task_uuid"} for one task\'s detail + recent events, '
                      '{"board_uuid"} for a board; empty lists all boards '
