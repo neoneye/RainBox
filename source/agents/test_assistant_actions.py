@@ -409,6 +409,24 @@ def test_kanban_read_without_args_lists_boards(app_ctx):
         db.kanban_delete_board(bu)
 
 
+def test_kanban_read_board_list_shows_folder_tree(app_ctx):
+    """The no-arg listing preserves the folder tree: folders appear with
+    their uuids, nesting is indentation, and a board sits under its folder."""
+    folder = db.kanban_create_folder("Projects read test")
+    sub = db.kanban_create_folder("Active", UUID(folder["uuid"]))
+    board = db.kanban_create_board("Tree board", folder_uuid=UUID(sub["uuid"]))
+    try:
+        obs = _action_kanban_read(_ctx(), {})
+        assert obs.ok
+        assert f"- [folder] Projects read test ({folder['uuid']})" in obs.text
+        assert f"  - [folder] Active ({sub['uuid']})" in obs.text
+        assert f"    - Tree board ({board['uuid']}) — 0 task(s)" in obs.text
+    finally:
+        db.kanban_delete_board(UUID(board["uuid"]))
+        db.kanban_delete_folder(UUID(sub["uuid"]))
+        db.kanban_delete_folder(UUID(folder["uuid"]))
+
+
 def test_kanban_read_unknown_board_is_blocked(app_ctx):
     obs = _action_kanban_read(_ctx(), {"board_uuid": str(uuid4())})
     assert obs.ok is False

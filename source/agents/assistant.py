@@ -438,7 +438,7 @@ def _action_kanban_read(
 ) -> AssistantObservation:
     """Read kanban state without writing events: one task's detail + recent
     events when a task_uuid is given, one board's markdown when a board_uuid is
-    given, otherwise a list of all boards."""
+    given, otherwise every board in its folder tree (folder + board uuids)."""
     task_raw = args.get("task_uuid")
     if task_raw:
         try:
@@ -479,12 +479,26 @@ def _action_kanban_read(
         return AssistantObservation(
             ok=True, text=markdown, data={"board_uuid": str(board_uuid)}
         )
-    boards = db.kanban_list_boards()
-    if not boards:
+    tree = db.kanban_load_tree()
+    folders, boards = tree["folders"], tree["boards"]
+    if not folders and not boards:
         return AssistantObservation(ok=True, text="No kanban boards.")
+    # The same depth-first order as the /kanban tree (a folder's subfolders,
+    # then its boards); every folder and board carries its uuid so either can
+    # be addressed.
     lines = ["Kanban boards:"]
-    for b in boards:
-        lines.append(f"- {b.get('name')} ({b.get('uuid')})")
+
+    def _walk(parent: str | None, depth: int) -> None:
+        pad = "  " * depth
+        for f in folders:
+            if f["parentId"] == parent:
+                lines.append(f"{pad}- [folder] {f['name']} ({f['uuid']})")
+                _walk(f["uuid"], depth + 1)
+        for b in boards:
+            if b["folderId"] == parent:
+                lines.append(f"{pad}- {b['name']} ({b['uuid']}) — {b['taskCount']} task(s)")
+
+    _walk(None, 0)
     return AssistantObservation(ok=True, text="\n".join(lines), data={"count": len(boards)})
 
 
@@ -1209,7 +1223,8 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         description=('read kanban state — use this to find a board or list a '
                      'board\'s columns before creating/moving a task. args: optional '
                      '{"task_uuid"} for one task\'s detail + recent events, '
-                     '{"board_uuid"} for a board; empty lists all boards'),
+                     '{"board_uuid"} for a board; empty lists all boards '
+                     'in their folder tree'),
         summary="read kanban boards and tasks",
         optional_args=frozenset({"board_uuid", "task_uuid"}), action=_action_kanban_read,
     ),
