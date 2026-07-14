@@ -2467,7 +2467,10 @@ class AssistantAgent(ModelGroupAgent):
         # leaf text exactly once, so dynamic content cannot close or forge a
         # prompt zone.
         if self._identity_block:
-            identity = ET.SubElement(root, "operator_identity", {"authority": "context"})
+            identity = ET.SubElement(
+                root, "operator_identity",
+                {"authority": "context", "format": "json"},
+            )
             identity.text = self._identity_block
         if self._profile_block:
             profile = ET.SubElement(root, "operator_profile", {"authority": "context"})
