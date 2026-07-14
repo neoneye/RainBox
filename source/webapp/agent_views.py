@@ -94,7 +94,7 @@ without code changes. Manage the groups themselves on the
 
 @cache
 def _kind_uses_model_group(kind: str) -> bool:
-    """Whether the agent class behind `kind` consumes an /agent_models binding
+    """Whether the agent class behind `kind` consumes an /agentmodel binding
     (Agent.uses_model_group). Resolving imports the agent's module — cached so
     the cost is paid once per kind, on the first page view."""
     return bool(resolve_agent_class(kind).uses_model_group)
@@ -140,7 +140,15 @@ def _agent_group_options(entry: Mapping[str, Any], groups: list[dict]) -> list[d
     ]
 
 
-@app.route("/agent_models", methods=["GET", "POST"])
+@app.route("/agent_models", methods=["GET"])
+def agent_models_legacy_redirect():
+    """The page's old snake_case path — /agentmodel now, matching the other
+    single-word pages. Kept as a redirect so old bookmarks/links keep working."""
+    query = request.query_string.decode()
+    return redirect(url_for("agent_models_page") + (f"?{query}" if query else ""))
+
+
+@app.route("/agentmodel", methods=["GET", "POST"])
 def agent_models_page() -> str | Response:
     if request.method == "POST":
         try:

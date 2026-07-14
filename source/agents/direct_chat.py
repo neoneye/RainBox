@@ -41,7 +41,7 @@ class DirectChatAgent(Agent):
     completion out. The triggering payload is {room_uuid, message_uuid}."""
 
     # The model comes from the room's settings (or chat.default_model), never
-    # from an /agent_models binding — keep this agent off that page.
+    # from an /agentmodel binding — keep this agent off that page.
     uses_model_group = False
 
     @staticmethod

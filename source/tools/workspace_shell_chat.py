@@ -38,7 +38,7 @@ class WorkspaceShellChatAgent(Agent):
     argv (validated per-command, executed with shell=False) in the room's
     persisted cwd, and posts the raw output back into the room."""
 
-    # No LLM at all, so an /agent_models binding would be dead weight; keep
+    # No LLM at all, so an /agentmodel binding would be dead weight; keep
     # this agent off that page.
     uses_model_group = False
 

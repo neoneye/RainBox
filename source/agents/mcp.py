@@ -127,7 +127,7 @@ class MCPAgent(ModelGroupAgent):
             raise RuntimeError(
                 f"agent {self.name} needs a model group with the function-calling "
                 "constraint. Create one with the 'function calling' checkbox on "
-                "/modelgroup and bind it on /agent_models."
+                "/modelgroup and bind it on /agentmodel."
             )
         if not self.candidate_model_uuids:
             raise RuntimeError(

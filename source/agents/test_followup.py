@@ -3,7 +3,7 @@
 These make a real structured-output call to LM Studio, so they need a model
 group assigned to the "followup" agent first:
 
-    Open http://127.0.0.1:5000/agent_models and assign a model group to the
+    Open http://127.0.0.1:5000/agentmodel and assign a model group to the
     "followup" agent.
 
 If no group is assigned (or LM Studio is unreachable) the tests skip rather
@@ -40,7 +40,7 @@ def classifier():
         if group_uuid is None:
             pytest.skip(
                 "no model group assigned to the 'followup' agent — assign one at "
-                "http://127.0.0.1:5000/agent_models before running these tests"
+                "http://127.0.0.1:5000/agentmodel before running these tests"
             )
             return
         if not db.get_model_group_member_uuids(group_uuid):

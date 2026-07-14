@@ -136,7 +136,7 @@ class ConversationManagerAgent(Agent):
     """Drains manager-tick jobs and drives one `conversation_run` forward by one
     speaker turn per tick. Does no LLM work."""
 
-    # Pure scheduler — no LLM, so an /agent_models binding would be dead
+    # Pure scheduler — no LLM, so an /agentmodel binding would be dead
     # weight; keep this agent off that page.
     uses_model_group = False
 

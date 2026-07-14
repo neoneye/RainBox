@@ -226,7 +226,7 @@ rate, done/failed ratio, lease-takeover count, event quality, and absence of
 permission violations.
 
 To run the LLM worker for real (tests fake the LLM call): bind
-`kanban_worker` to a model group on `/agent_models` (granite4 per the
+`kanban_worker` to a model group on `/agentmodel` (granite4 per the
 benchmark verdict), add a column named "Review" to a board, assign the worker
 a card with a clear description, press the card's **Run** button, then read
 the card's event trail and the Review column.

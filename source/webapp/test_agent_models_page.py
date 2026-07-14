@@ -1,4 +1,4 @@
-"""Tests for the /agent_models page: only agents whose class consumes a
+"""Tests for the /agentmodel page: only agents whose class consumes a
 model-group binding (Agent.uses_model_group, default True) are listed; agents
 that opted out (direct_chat, workspace_shell, query, conversation) are hidden
 and their bindings can't be posted."""
@@ -30,9 +30,18 @@ def test_uses_model_group_flags():
     assert resolve_agent_class("dreamer").uses_model_group is True
 
 
+def test_legacy_snake_case_path_redirects(client):
+    # The page moved from /agent_models to /agentmodel (matching the other
+    # single-word pages); old links redirect and keep their query string.
+    test_client, _app = client
+    resp = test_client.get("/agent_models?saved=1")
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/agentmodel?saved=1")
+
+
 def test_page_hides_agents_that_dont_use_model_groups(client):
     test_client, _app = client
-    resp = test_client.get("/agent_models")
+    resp = test_client.get("/agentmodel")
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
     for hidden in ("direct_chat", "workspace_shell", "conversation"):
@@ -47,7 +56,7 @@ def test_page_hides_agents_that_dont_use_model_groups(client):
 def test_post_binding_rejected_for_opted_out_agent(client):
     test_client, _app = client
     resp = test_client.post(
-        "/agent_models",
+        "/agentmodel",
         data={"agent_uuid": str(DIRECT_CHAT_UUID), "model_group": ""},
     )
     assert resp.status_code == 400
@@ -57,5 +66,5 @@ def test_persona_roles_follow_their_agent_kind_class(client):
     """persona_egon runs chat_unstructured (a model-group agent), so it stays
     listed even though its role name has no class-table entry."""
     test_client, _app = client
-    resp = test_client.get("/agent_models")
+    resp = test_client.get("/agentmodel")
     assert str(agent_config["persona_egon"]["uuid"]) in resp.get_data(as_text=True)

@@ -262,7 +262,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
         so we can use two different schemas in one handle."""
         if not self.candidate_model_uuids:
             raise RuntimeError(
-                f"agent {self.name} has no model group bound (assign one on /agent_models)"
+                f"agent {self.name} has no model group bound (assign one on /agentmodel)"
             )
         messages = [
             ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),

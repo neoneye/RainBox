@@ -64,7 +64,7 @@ class Agent:
     HEARTBEAT_INTERVAL: float = 20.0
 
     # Whether the agent consumes the model-group binding chosen on the
-    # /agent_models page. True by default; a subclass that sources its model
+    # /agentmodel page. True by default; a subclass that sources its model
     # elsewhere (direct_chat: the room's own settings) or runs no LLM at all
     # (workspace_shell, conversation manager) opts out with False, which
     # hides it from that page.

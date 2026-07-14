@@ -36,7 +36,7 @@ fallback.
 - `/git` — registered local repositories.
 - `/assistant` — assistant run inspector (traces, steps, write intents).
 - `/conversations` — persona-to-persona conversation runs.
-- `/model`, `/modelgroups`, `/agent_models` — model configs, fallback
+- `/model`, `/modelgroup`, `/agentmodel` — model configs, fallback
   groups, agent bindings.
 - `/settings` — typed operator settings (DB → env → default) with provenance.
 - `/doctor` — environment health checks.
@@ -46,7 +46,7 @@ fallback.
 1. Open `/chat`.
 2. Create or select a room.
 3. Add agents to the room.
-4. Make sure LLM-backed agents are bound to model groups on `/agent_models`.
+4. Make sure LLM-backed agents are bound to model groups on `/agentmodel`.
 5. Post a human message.
 6. Watch replies stream over SSE.
 

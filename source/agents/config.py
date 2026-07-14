@@ -12,16 +12,16 @@ class AgentConfigEntry(TypedDict):
     # dispatches on config.get("agent_kind", config["name"]).
     agent_kind: NotRequired[str]
     # True for agents that drive tool/function calls (e.g. ToolDemoAgent). The
-    # /agent_models page only offers groups that require function calling to
+    # /agentmodel page only offers groups that require function calling to
     # these. Independent of requires_structured_output — a model may support
     # both, one, or neither.
     requires_function_calling: NotRequired[bool]
     # True for agents that emit structured output (StructuredLLMAgent /
-    # as_structured_llm). The /agent_models page only offers groups that require
+    # as_structured_llm). The /agentmodel page only offers groups that require
     # structured output to these.
     requires_structured_output: NotRequired[bool]
     # True for agents that need structured output turned OFF, e.g.
-    # UnstructuredChatAgent (a plain-text completion). The /agent_models page only
+    # UnstructuredChatAgent (a plain-text completion). The /agentmodel page only
     # offers groups whose structured-output constraint is "must not have" to
     # these. Mutually exclusive with requires_structured_output.
     excludes_structured_output: NotRequired[bool]
@@ -69,7 +69,7 @@ def resolve_agent_class(kind: str):  # -> type[agents.base.Agent]
     """Import and return the agent class for `kind` (a plain ModelGroupAgent as
     the default). Imports ONLY the selected module, so a spawned agent process
     loads its own dependencies (llama_index etc.) — not all 20 agents'. Used by
-    agents/__main__.py to run an agent and by /agent_models to read class-level
+    agents/__main__.py to run an agent and by /agentmodel to read class-level
     traits (e.g. uses_model_group)."""
     import importlib
 

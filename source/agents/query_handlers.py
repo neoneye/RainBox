@@ -130,7 +130,7 @@ def get_model_info(ctx: QueryContext) -> str:
     if not ctx.candidate_model_uuids:
         return (
             "I don't have a model group bound, so I can't say which model is "
-            "answering. Bind one on /agent_models."
+            "answering. Bind one on /agentmodel."
         )
 
     group_name: str | None = None

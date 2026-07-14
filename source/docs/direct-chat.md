@@ -68,7 +68,7 @@ mid-conversation. A stale global default (its model deleted since) degrades
 to the notice, not a failed journal.
 
 `DirectChatAgent` sets `uses_model_group = False` (`agents/base.py`): it
-never reads an /agent_models binding, so that page hides it.
+never reads an /agentmodel binding, so that page hides it.
 
 ## System prompt
 

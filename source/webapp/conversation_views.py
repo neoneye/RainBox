@@ -9,7 +9,7 @@ Pure UI over the existing JSON endpoints in conversation_api.py:
   POST /conversation/api/runs/<id>/stop  (stop)
 
 The supervisor (main.py) must be running for a started run to actually advance,
-and the participating personas must be bound to a model group on /agent_models.
+and the participating personas must be bound to a model group on /agentmodel.
 """
 
 from flask import render_template_string

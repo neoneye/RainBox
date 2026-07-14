@@ -214,7 +214,7 @@ class UnstructuredChatAgent(ModelGroupAgent):
             raise RuntimeError(
                 f"agent {self.name} needs a model group with the 'structured "
                 "output: must not have' constraint. Create one on /modelgroup "
-                "and bind it to this agent on /agent_models."
+                "and bind it to this agent on /agentmodel."
             )
         if not self.candidate_model_uuids:
             raise RuntimeError(

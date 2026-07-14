@@ -20,7 +20,7 @@ def test_chat_unstructured_in_agent_config():
     entry = agent_config["chat_unstructured"]
     assert entry["uuid"] == CHAT_UNSTRUCTURED_UUID
     assert entry["next"] is None
-    # It needs structured output turned OFF — the /agent_models page offers it
+    # It needs structured output turned OFF — the /agentmodel page offers it
     # only groups with "structured output: must not have" (and the model call
     # also enforces this at runtime). It must NOT require structured output.
     assert entry.get("excludes_structured_output") is True
@@ -29,7 +29,7 @@ def test_chat_unstructured_in_agent_config():
 
 
 def test_agent_group_options_filters_by_structured_output_constraint():
-    """The /agent_models dropdown offers an excludes-structured-output agent only
+    """The /agentmodel dropdown offers an excludes-structured-output agent only
     groups whose structured-output constraint is 'must not have'."""
     from webapp.agent_views import _agent_group_options
 
