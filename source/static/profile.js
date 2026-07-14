@@ -323,6 +323,8 @@ function profileFolderLi(f){
   });
   if (!f.builtin){
     profileMakeDraggable(node, 'folder', f.id);
+  } else {
+    node.draggable = false;  // anchors are natively draggable — switch that off too
   }
   profileMakeFolderDrop(node, f.id);
   // Kebab is rendered on every row but only shown (via CSS) on the selected one,
@@ -361,6 +363,8 @@ function profileItemNode(p){
   if (!p.builtin){
     profileMakeDraggable(n, 'item', p.uuid);
     profileMakeItemDrop(n, p.uuid);
+  } else {
+    n.draggable = false;  // anchors are natively draggable — switch that off too
   }
   // Kebab on every row, shown (via CSS) only on the selected one — matches
   // /cron. Built-ins are read-only: Duplicate is their only action.
