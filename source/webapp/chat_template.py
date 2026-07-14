@@ -442,7 +442,6 @@ let renderedIds = new Set();    // message ids already in the log (dedup)
 let streamingBase = {};         // message id -> last full row dict (for live in-place updates)
 let expandedSections = new Set(); // collapsible-row ids (thinking/debug) the user expanded
 const unread = {};              // room uuid -> unread count (rooms not open)
-let deferredUnreadRender = false;
 let deferredDeletedMessageIds = new Set();
 let agentsLoaded = false;
 // The sidebar remembers two things separately: WHICH panel was last used
@@ -2711,9 +2710,32 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') dismissOpenModalIfClean();
 });
 
-// Live updates: the server pushes {room_uuid, message_id} on every new message.
-// EventSource ignores `:` comment lines (the keepalives), so only real messages
-// reach onmessage.
+// Live updates: the server pushes {room_uuid, message_id, event, kind, ...}
+// on every message insert/update/edit/delete. EventSource ignores `:` comment
+// lines (the keepalives), so only real events reach onmessage.
+
+// Reflect one room's unread count in the left panel WITHOUT renderRooms().
+// A full rebuild replaces every room anchor; done per SSE event while another
+// room is active, it can destroy the node between mousedown and mouseup so
+// clicks on rooms never land. Patch the single badge in place instead — any
+// later full render reads unread[] and agrees.
+function bumpUnreadBadge(roomUuid){
+  const btn = roomsEl.querySelector('.room[data-room="' + roomUuid + '"]');
+  if (!btn) return;  // row not rendered (room inside a collapsed folder)
+  const n = unread[roomUuid] || 0;
+  let dot = btn.querySelector('.unread');
+  if (n <= 0){
+    if (dot) dot.remove();
+    return;
+  }
+  if (!dot){
+    dot = document.createElement('span');
+    dot.className = 'unread';
+    btn.appendChild(dot);
+  }
+  dot.textContent = n;
+}
+
 function startStream(){
   const es = new EventSource('/chat/stream');
   // On every (re)connect, pull anything posted while the stream was down — so a
@@ -2746,16 +2768,14 @@ function startStream(){
         fetchNew(currentRoom);
       }
     } else {
-      // message_id 0 marks a pure deletion (a direct-room message was removed,
-      // no new message) — that must not count as unread.
-      if (d.message_id){
+      // Only a NEW real message counts as unread: event 'insert' of
+      // kind 'message'. Streaming token batches (event 'update') reuse one
+      // message_id and must not re-count it; edits, deletions, and
+      // debug/thinking/progress rows aren't new messages at all.
+      if (d.event === 'insert' && d.kind === 'message'){
         unread[d.room_uuid] = (unread[d.room_uuid] || 0) + 1;
+        bumpUnreadBadge(d.room_uuid);
       }
-      if (document.hidden){
-        deferredUnreadRender = true;
-        return;
-      }
-      renderRooms();
     }
   };
   es.onerror = () => {
@@ -2768,10 +2788,6 @@ function startStream(){
 // Browsers throttle/suspend EventSource in backgrounded tabs; catch up on refocus.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden || !currentRoom) return;
-  if (deferredUnreadRender){
-    deferredUnreadRender = false;
-    renderRooms();
-  }
   if (deferredDeletedMessageIds.size){
     removeDeletedMessages(deferredDeletedMessageIds);
     deferredDeletedMessageIds = new Set();

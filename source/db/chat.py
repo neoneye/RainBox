@@ -245,6 +245,7 @@ def edit_chat_message(message_id: int, text: str) -> ChatMessage:
     _chat_notify(
         room_uuid=msg.room_uuid,
         message_id=msg.id,
+        event="edit",
         kind=msg.kind,
         streaming=False,
         text=text,
@@ -273,6 +274,7 @@ def delete_chat_message(message_id: int) -> None:
     _chat_notify(
         room_uuid=room_uuid,
         message_id=0,
+        event="delete",
         deleted_progress_ids=[message_id],
     )
     db.session.commit()
@@ -299,7 +301,9 @@ def delete_room_messages_from(room_uuid: UUID, from_id: int) -> list[int]:
     for r in rows:
         db.session.delete(r)
     db.session.flush()
-    _chat_notify(room_uuid=room_uuid, message_id=0, deleted_progress_ids=ids)
+    _chat_notify(
+        room_uuid=room_uuid, message_id=0, event="delete", deleted_progress_ids=ids
+    )
     db.session.commit()
     return ids
 
@@ -767,6 +771,7 @@ def _chat_event_payload(
     *,
     room_uuid: UUID,
     message_id: int,
+    event: str,
     deleted_progress_ids: list[int] | None = None,
     kind: str | None = None,
     streaming: bool | None = None,
@@ -774,13 +779,21 @@ def _chat_event_payload(
 ) -> dict[str, Any]:
     """Build the chat_events NOTIFY payload dict.
 
-    A plain insert carries only {room_uuid, message_id, deleted_progress_ids} —
-    the browser then fetches rows after its cursor (unchanged legacy path). A
-    streaming insert/update additionally carries {kind, streaming, text?} so the
-    browser can upsert that one bubble in place. `text` is inlined only when it
-    fits under CHAT_NOTIFY_MAX_TEXT (Postgres caps NOTIFY at ~8000 bytes); past
-    that it is omitted and the browser refetches the row by id (signalled by
-    `text` absent while `streaming` is present).
+    `event` classifies what happened: 'insert' (a NEW row), 'update' (a
+    streaming row's text grew in place), 'edit' (an operator rewrote a settled
+    row), or 'delete' (rows removed, message_id=0). `kind` is the row's kind
+    ('message', 'thinking', 'debug-*', …) whenever a row is involved. Together
+    they let the browser count unread rooms precisely: only an 'insert' of
+    kind 'message' is a new real message — token-batch updates reuse one
+    message_id and diagnostic rows aren't messages.
+
+    A plain insert carries no streaming keys — the browser fetches rows after
+    its cursor (unchanged legacy path). A streaming insert/update additionally
+    carries {streaming, text?} so the browser can upsert that one bubble in
+    place. `text` is inlined only when it fits under CHAT_NOTIFY_MAX_TEXT
+    (Postgres caps NOTIFY at ~8000 bytes); past that it is omitted and the
+    browser refetches the row by id (signalled by `text` absent while
+    `streaming` is present).
 
     The size check measures the JSON-ENCODED form, not the raw string:
     json.dumps escapes each non-ASCII char to a 6-byte \\uXXXX sequence, so
@@ -790,11 +803,13 @@ def _chat_event_payload(
     payload: dict[str, Any] = {
         "room_uuid": str(room_uuid),
         "message_id": message_id,
+        "event": event,
         "deleted_progress_ids": deleted_progress_ids or [],
     }
+    if kind is not None:
+        payload["kind"] = kind
     if streaming is not None:
         payload["streaming"] = streaming
-        payload["kind"] = kind
         if text is not None and len(json.dumps(text)) <= CHAT_NOTIFY_MAX_TEXT:
             payload["text"] = text
     return payload
@@ -867,8 +882,9 @@ def post_chat_message(
     _chat_notify(
         room_uuid=room_uuid,
         message_id=msg.id,
+        event="insert",
         deleted_progress_ids=deleted_progress_ids,
-        kind=kind if streaming else None,
+        kind=kind,
         streaming=streaming if streaming else None,
         text=text if streaming else None,
     )
@@ -892,6 +908,7 @@ def update_chat_message(
     _chat_notify(
         room_uuid=msg.room_uuid,
         message_id=msg.id,
+        event="update",
         kind=msg.kind,
         streaming=streaming,
         text=text,

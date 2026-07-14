@@ -166,3 +166,28 @@ def test_notify_payload_progress_post_has_empty_deleted_list(room_with_two_agent
     payload = notifies[0]
     assert payload["message_id"] == prog.id
     assert payload["deleted_progress_ids"] == []
+
+
+def test_notify_tags_event_and_kind_on_insert_and_update(room_with_two_agents):
+    """Inserts NOTIFY with event='insert' + the row's kind; in-place streaming
+    updates with event='update'. The browser's unread badge counts only
+    insert+kind='message' events — without the tags a streaming reply bumped
+    the badge once per token batch, and debug rows counted as unread."""
+    room_uuid, _human, agent_a, _agent_b = room_with_two_agents
+
+    conn = _listen_for_chat_notify(db.CHAT_NOTIFY_CHANNEL)
+    try:
+        msg = db.post_chat_message(room_uuid, agent_a, "", streaming=True)
+        db.update_chat_message(msg.id, "partial", streaming=True)
+        db.post_chat_message(room_uuid, agent_a, "diagnostic", kind="thinking")
+        notifies = _collect_notifies(conn, count=3)
+    finally:
+        conn.close()
+
+    assert len(notifies) == 3
+    assert notifies[0]["event"] == "insert"
+    assert notifies[0]["kind"] == "message"
+    assert notifies[1]["event"] == "update"
+    assert notifies[1]["kind"] == "message"
+    assert notifies[2]["event"] == "insert"
+    assert notifies[2]["kind"] == "thinking"

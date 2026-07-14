@@ -770,8 +770,9 @@ def post_feedback(message_uuid: str) -> Response | tuple[Response, int]:
 
 @app.route("/chat/stream")
 def chat_stream() -> Response:
-    """Server-Sent Events: one `data:` line per new chat message (the NOTIFY
-    payload, {room_uuid, message_id}); a `: keepalive` comment every heartbeat."""
+    """Server-Sent Events: one `data:` line per chat event (the NOTIFY payload,
+    {room_uuid, message_id, event, kind?, streaming?, text?, deleted_progress_ids}
+    — see db.chat._chat_event_payload); a `: keepalive` comment every heartbeat."""
 
     @stream_with_context
     def events():

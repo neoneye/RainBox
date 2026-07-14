@@ -88,7 +88,8 @@ def test_update_missing_message_is_noop(app_ctx):
 def test_payload_inlines_small_text_and_omits_large():
     room = uuid4()
     small = _chat_event_payload(
-        room_uuid=room, message_id=1, kind="message", streaming=True, text="hello"
+        room_uuid=room, message_id=1, event="update",
+        kind="message", streaming=True, text="hello"
     )
     assert small["streaming"] is True
     assert small["kind"] == "message"
@@ -96,7 +97,8 @@ def test_payload_inlines_small_text_and_omits_large():
 
     big_text = "x" * (CHAT_NOTIFY_MAX_TEXT + 1)
     big = _chat_event_payload(
-        room_uuid=room, message_id=1, kind="thinking", streaming=True, text=big_text
+        room_uuid=room, message_id=1, event="update",
+        kind="thinking", streaming=True, text=big_text
     )
     assert big["streaming"] is True
     assert "text" not in big  # omitted -> browser refetches by id
@@ -113,16 +115,28 @@ def test_payload_measures_json_encoded_size_not_raw_bytes():
     assert len(art.encode("utf-8")) <= CHAT_NOTIFY_MAX_TEXT
     assert len(json.dumps(art)) > CHAT_NOTIFY_MAX_TEXT  # ...but over it encoded
     p = _chat_event_payload(
-        room_uuid=uuid4(), message_id=1, kind="thinking", streaming=True, text=art
+        room_uuid=uuid4(), message_id=1, event="update",
+        kind="thinking", streaming=True, text=art
     )
     assert "text" not in p  # omitted -> browser refetches by id
 
 
 def test_payload_plain_insert_has_no_streaming_keys():
     p = _chat_event_payload(
-        room_uuid=uuid4(), message_id=5, deleted_progress_ids=[1, 2]
+        room_uuid=uuid4(), message_id=5, event="insert", deleted_progress_ids=[1, 2]
     )
     assert p["deleted_progress_ids"] == [1, 2]
     assert "streaming" not in p
-    assert "kind" not in p
     assert "text" not in p
+
+
+def test_payload_carries_event_type_and_kind():
+    """Every NOTIFY tags its event type ('insert'|'update'|'edit'|'delete') and
+    the row's kind, so the browser can tell a NEW message apart from streaming
+    token batches — the unread badge must only count inserts of kind='message'."""
+    p = _chat_event_payload(
+        room_uuid=uuid4(), message_id=5, event="insert", kind="thinking"
+    )
+    assert p["event"] == "insert"
+    assert p["kind"] == "thinking"
+    assert "streaming" not in p

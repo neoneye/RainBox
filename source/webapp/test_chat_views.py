@@ -211,3 +211,21 @@ def test_folder_rows_are_real_links():
     assert "node.href = '/chat?id=' + encodeURIComponent(f.id)" in body
     # kebab + menu-item handlers inside the folder anchor must not navigate
     assert body.count("never follow") >= 2
+
+
+def test_unread_badge_counts_only_new_real_messages():
+    """The badge bumps once per NEW real message (event 'insert' of
+    kind 'message') — never for streaming token batches ('update' events,
+    which reuse one message_id), edits, or debug/thinking/progress rows."""
+    body = _body()
+    assert "d.event === 'insert' && d.kind === 'message'" in body
+
+
+def test_sse_events_never_rebuild_the_room_tree():
+    """renderRooms() replaces every room anchor; calling it per SSE event
+    while another room streams destroys the node between mousedown and
+    mouseup, making rooms unclickable. The badge is patched in place."""
+    body = _body()
+    assert "function bumpUnreadBadge" in body
+    # the old full-rebuild deferral is gone along with the rebuild itself
+    assert "deferredUnreadRender" not in body
