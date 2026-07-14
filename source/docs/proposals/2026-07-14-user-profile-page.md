@@ -70,8 +70,10 @@ folder detail table.
   ([`ui-modal-rename.md`](../ui-modal-rename.md)). It is *not* derived from
   `full_name` — a template's label ("Germany") and the name of the person it
   describes ("Karl Weierstraß") serve different masters.
-- **Folder detail table columns:** Name / Person / Language / Units / Time /
-  Country — enough to tell demo profiles apart at a glance.
+- **Folder detail table columns:** Name / Person / Language / Time /
+  Country — enough to tell demo profiles apart at a glance. (Units is in the
+  summary payload but not the table — it is nearly always metric, so it earns
+  no column.)
 - **Kebab on a profile:** Rename, **Duplicate**, Delete (type-to-confirm).
   Duplicate copies the whole `data` blob into a new row named "<name> copy",
   placed in the same folder right after a user-owned source — the one-action

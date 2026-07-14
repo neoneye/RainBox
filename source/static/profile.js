@@ -129,7 +129,7 @@ function profileRenderContents(){
   // depth-first and depth-indented, mirroring the left tree.
   const nodes = profileFlattenTree(profileSelectedFolder);
   if (!nodes.length){
-    tb.innerHTML = '<tr><td colspan="7"><i>' +
+    tb.innerHTML = '<tr><td colspan="6"><i>' +
       (profileSelectedFolder === null ? 'no profiles yet' : 'empty folder') + '</i></td></tr>';
     return;
   }
@@ -143,7 +143,7 @@ function profileRenderContents(){
       tr.innerHTML =
         '<td class="profile-name-cell" style="padding-left:' + pad + 'px">' +
         '<span class="profile-ficon">' + PROFILE_ICON_FOLDER + '</span>' + profileEscapeHtml(f.name) + '</td>' +
-        '<td></td><td></td><td></td><td></td><td></td>' +
+        '<td></td><td></td><td></td><td></td>' +
         '<td><a href="#" class="row-open">Open</a></td>';
       tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); profileSelectFolder(f.id); });
     } else {
@@ -153,7 +153,6 @@ function profileRenderContents(){
         '<td class="profile-name-cell" style="padding-left:' + pad + 'px">' + profileEscapeHtml(p.name) + '</td>' +
         '<td>' + profileEscapeHtml(s.full_name) + '</td>' +
         '<td>' + profileEscapeHtml(s.language) + '</td>' +
-        '<td>' + profileEscapeHtml(s.units) + '</td>' +
         '<td>' + profileEscapeHtml(s.time_format) + '</td>' +
         '<td>' + profileEscapeHtml(s.country) + '</td>' +
         '<td><a href="#" class="row-open">Open</a></td>';

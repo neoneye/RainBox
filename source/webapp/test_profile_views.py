@@ -62,8 +62,9 @@ def test_soft_validation_affordances():
 def test_folder_table_columns():
     body = _page()
     for col in ("<th>Name</th>", "<th>Person</th>", "<th>Language</th>",
-                "<th>Units</th>", "<th>Time</th>", "<th>Country</th>"):
+                "<th>Time</th>", "<th>Country</th>"):
         assert col in body
+    assert "<th>Units</th>" not in body  # nearly always metric — not worth a column
 
 
 def test_page_has_tree_and_modal_markers():

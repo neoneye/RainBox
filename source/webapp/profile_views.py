@@ -202,7 +202,7 @@ PROFILE_TEMPLATE = """
     <div id="profile-folder-desc" hidden></div>
     <div class="profile-table-wrap" id="profile-table-wrap">
       <table class="profile-table">
-        <thead><tr><th>Name</th><th>Person</th><th>Language</th><th>Units</th><th>Time</th><th>Country</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Person</th><th>Language</th><th>Time</th><th>Country</th><th></th></tr></thead>
         <tbody id="profile-rows"></tbody>
       </table>
     </div>
