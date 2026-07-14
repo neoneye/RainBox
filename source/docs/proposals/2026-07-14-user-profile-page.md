@@ -260,15 +260,15 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 | UK | Rosalind Franklin | imaged the structure of DNA | metric | 12h | DD/MM/YYYY | en-GB | GBP | London | Europe/London |
 | France | Émilie du Châtelet | showed kinetic energy scales with velocity squared | metric | 24h | DD/MM/YYYY | fr / en | EUR | Paris | Europe/Paris |
 | Germany | Karl Weierstraß | made calculus rigorous (ε–δ) | metric | 24h | DD.MM.YYYY | de / en | EUR | Berlin | Europe/Berlin |
-| Netherlands | Hendrik Lorentz | the Lorentz transformation | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
+| Netherlands | Jacobus van 't Hoff | founded stereochemistry | metric | 24h | DD-MM-YYYY | nl / en | EUR | Amsterdam | Europe/Amsterdam |
 | Spain | Santiago Ramón y Cajal | showed the brain is made of neurons | metric | 24h | DD/MM/YYYY | es / en | EUR | Madrid | Europe/Madrid |
 | Italy | Rita Levi-Montalcini | discovered nerve growth factor | metric | 24h | DD/MM/YYYY | it / en | EUR | Milan | Europe/Rome |
 | Denmark | Ole Rømer | showed light has a finite speed | metric | 24h | DD.MM.YYYY | da / en | DKK | Copenhagen | Europe/Copenhagen |
-| Sweden | Svante Arrhenius | predicted the greenhouse effect | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
+| Sweden | Sofya Kovalevskaya | the Cauchy–Kovalevskaya theorem | metric | 24h | YYYY-MM-DD | sv / en | SEK | Stockholm | Europe/Stockholm |
 | Poland | Stefan Banach | founded functional analysis | metric | 24h | DD.MM.YYYY | pl / en | PLN | Warsaw | Europe/Warsaw |
 | Israel | Amos Tversky | mapped judgment under uncertainty | metric | 24h | DD/MM/YYYY | he / en | ILS | Tel Aviv | Asia/Jerusalem |
 | India | Satyendra Nath Bose | Bose–Einstein statistics | metric | 12h | DD/MM/YYYY | en-IN / hi | INR | Bengaluru | Asia/Kolkata |
-| China | Hua Luogeng | advanced analytic number theory | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | Shanghai | Asia/Shanghai |
+| China | Wu Chien-Shiung | overthrew parity conservation | metric | 24h | YYYY-MM-DD | zh-Hans / en | CNY | Shanghai | Asia/Shanghai |
 | Japan | Hideki Yukawa | predicted the meson | metric | 24h | YYYY-MM-DD | ja / en | JPY | Tokyo | Asia/Tokyo |
 | South Korea | Woo Jang-choon | the triangle of U | metric | 12h | YYYY-MM-DD | ko / en | KRW | Seoul | Asia/Seoul |
 | Singapore | Wu Lien-teh | pioneered modern epidemic control | metric | 12h | DD/MM/YYYY | en-SG / zh | SGD | Singapore | Asia/Singapore |
@@ -276,11 +276,13 @@ and modern (per the no-real-PII policy, and so a demo never shows a
 
 Each entry's `country` field carries the country name (the label doubles as
 it, so the column is omitted above). Rough grouping in the file — Americas,
-Europe, Middle East, Asia, Oceania — is also the fixed tree order. Two
-placements are approximations rather than birthplaces: Wu Lien-teh worked
-across the Straits Settlements and Amos Tversky's field was cognitive
-science — both earn their rows on the strength of the discovery (as does
-Johanna Döbereiner, Czech-born but Brazilian by career and citizenship). The About
+Europe, Middle East, Asia, Oceania — is also the fixed tree order. Some
+rows are career or legacy placements rather than birthplaces — Wu Lien-teh
+(Straits Settlements), Johanna Döbereiner (Czech-born, Brazilian by career
+and citizenship), Sofya Kovalevskaya (Russian-born, Stockholm's mathematics
+chair), Wu Chien-Shiung (Chinese-born, career in the US) — and Amos
+Tversky's field was cognitive science; all earn their rows on the strength
+of the discovery. The About
 column above is each entry's `about` value — the self-description field
 every profile has (the operator's own might read "programmer, modern day
 alchemist doing code"); on the templates it holds the discovery, so opening
@@ -290,16 +292,18 @@ Each also carries gender, a modern plausible birthday, and a
 `preferred_name` (the scientist's given name); `email`/`address` stay blank
 (nothing to demo there, and blanks show the sparse-JSONB behaviour). For
 the entries whose scientist wrote their name in a non-Latin script, the
-`nickname` field holds the native spelling: 华罗庚 (Hua), 湯川秀樹
-(Yukawa), 우장춘 (Woo), 伍連德 (Wu), עמוס טברסקי (Tversky), সত্যেন্দ্রনাথ বসু
-(Bose).
+`nickname` field holds the native spelling: 吳健雄 (Wu Chien-Shiung),
+湯川秀樹 (Yukawa), 우장춘 (Woo), 伍連德 (Wu Lien-teh), עמוס טברסקי
+(Tversky), সত্যেন্দ্রনাথ বসু (Bose), Софья Ковалевская (Kovalevskaya).
 
 **The templates are also the name-handling test fixture.** Between the
 names, nicknames, abouts, and cities they deliberately cover Latin
 diacritics (É â ö ó ø ã), the German ß (Weierstraß), Greek (ε–δ), CJK,
-Hangul, Bengali, right-to-left Hebrew, and a generational suffix —
-`last_name` is "Davis Jr.", a standing test that nothing assumes a last
-name is one dot-free word — so an encoding, rendering, or name-splitting
+Hangul, Bengali, Cyrillic, right-to-left Hebrew, a generational suffix
+(`last_name` "Davis Jr."), and an apostrophe-particle surname (`last_name`
+"van 't Hoff" — apostrophe, internal space, lowercase particles) — standing
+tests that nothing assumes a last name is one capitalized dot-free
+word — so an encoding, rendering, or name-splitting
 bug anywhere on the page (tree row, form field, folder detail table, JSON
 round-trip) shows up on shipped data before it can corrupt an operator's
 own. The validate-the-shipped-file test doubles as the encoding round-trip
