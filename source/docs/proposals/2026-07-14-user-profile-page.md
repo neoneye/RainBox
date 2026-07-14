@@ -1,6 +1,6 @@
 # User profile page (`/profile`)
 
-**Status: proposal.** A new left-panel-tree page where each leaf is a **person
+**Status: implemented.** A left-panel-tree page where each leaf is a **person
 profile** — the structured record of a human (name, locale, formats, contact),
 editable through a form pane. The immediate use is demoing rainbox to friends:
 the operator creates a profile per friend in seconds, and a built-in

@@ -3,7 +3,8 @@
 Several pages have a left panel that shows a **tree of folders** (which nest
 arbitrarily deep) containing **leaf items**. `/chat` (folders → chatrooms),
 `/cron` (folders → jobs), `/kanban` (folders → boards), `/git`
-(folders → repos), and `/prompt` (folders → system prompts) all implement it;
+(folders → repos), `/prompt` (folders → system prompts), and `/profile`
+(folders → person profiles) all implement it;
 this doc describes the shared pattern and the reference implementations.
 `/kanban` is the placement-only variant whose tree layer (folders + board
 placement) is kept separate from board contents: `webapp/kanban_views.py`
@@ -15,7 +16,12 @@ the same split (`webapp/git_views.py`, `static/git.js`, `webapp/git_api.py`,
 (`webapp/prompt_views.py`, `static/prompt.js`, `webapp/prompt_api.py`,
 `db/prompt.py`) is a rule-for-rule port of `/git` whose leaf detail pane is an
 editor: leaf content stays out of the tree payload and version hash, saved via
-a separate per-item PUT, so saving content never 409s an open tree.
+a separate per-item PUT, so saving content never 409s an open tree. `/profile`
+(`webapp/profile_views.py`, `static/profile.js`, `webapp/profile_api.py`,
+`db/profile.py`) is the same split with a **form** pane over a JSONB `data`
+blob (autosaved per-profile; a derived read-only `summary` rides on tree rows
+for the folder table but stays out of the version hash), plus virtual
+read-only built-in rows merged into the tree GET from a shipped file.
 
 Folder create/rename/delete dialogs use the app-wide modal pattern — see
 [`ui-modals.md`](ui-modals.md).
@@ -219,14 +225,19 @@ is the nicer UX; do that on new pages.
     dragging moves the row, not the link's URL (`roomNode`,
     `chat_template.py`).
   - All folder nodes and the other pages' leaves (`/cron` jobs, `/kanban`
-    boards, `/git` repos, `/prompt` prompts, `/memory` claims): the node
+    boards, `/git` repos, `/prompt` prompts, `/profile` profiles, `/memory`
+    claims): the node
     element **is** the anchor (drag source and kebab host in one). The kebab
     and its menu are then nested inside the anchor, so their click handlers
     must call `e.preventDefault()` in addition to `stopPropagation()` —
     otherwise a menu click can follow the link (`buildFolderMenu`,
     `chat_template.py`; `cronMakeKebab`, `static/cron.js`; `kbMakeKebab`,
     `static/kanban.js`; `gitMakeKebab`, `static/git.js`; `promptMakeKebab`,
-    `static/prompt.js`; `claimLi`'s inline kebab branch, `static/memory.js`).
+    `static/prompt.js`; `profileMakeKebab`, `static/profile.js`; `claimLi`'s
+    inline kebab branch, `static/memory.js`). A row that must NOT drag (e.g.
+    `/profile`'s read-only built-ins) needs an explicit `draggable = false` —
+    anchors are natively draggable, so merely skipping the dragstart wiring
+    still lets the browser pick the row up as a link drag.
 
   The same convention extends beyond the folder trees:
   - `/memory`'s status groups deep-link as `?id=<status>` (the status string —

@@ -1,0 +1,412 @@
+{
+  "folder": {
+    "uuid": "b3ad81a4-0e35-5237-9eb4-38c7e6321d03",
+    "name": "Templates",
+    "description": "Built-in locale archetypes — duplicate one to start a profile. Ships with rainbox and updates with each release."
+  },
+  "profiles": [
+    {
+      "uuid": "430d708a-b344-57f0-b5da-a547665c534b",
+      "name": "US",
+      "data": {
+        "full_name": "Raymond Davis Jr.",
+        "preferred_name": "Raymond",
+        "gender": "male",
+        "about": "detected solar neutrinos",
+        "birthday": "1984-10-19",
+        "units": "imperial",
+        "timezone": "America/Denver",
+        "date_format": "MM/DD/YYYY",
+        "time_format": "12h",
+        "language": "en-US",
+        "currency": "USD",
+        "country": "US",
+        "city": "Denver"
+      }
+    },
+    {
+      "uuid": "03052cc6-8166-52b8-bc23-d0709a8a8dc5",
+      "name": "Canada",
+      "data": {
+        "full_name": "Conrad Kirouac",
+        "preferred_name": "Frère Marie-Victorin",
+        "gender": "male",
+        "about": "wrote the Flore laurentienne, Québec's definitive botany",
+        "birthday": "1990-04-03",
+        "units": "metric",
+        "timezone": "America/Toronto",
+        "date_format": "YYYY-MM-DD",
+        "time_format": "12h",
+        "language": "fr-CA",
+        "language_2": "en-CA",
+        "currency": "CAD",
+        "country": "Canada",
+        "city": "Montreal"
+      }
+    },
+    {
+      "uuid": "145b1bb1-ee56-536a-a901-294eaf60266d",
+      "name": "Mexico",
+      "data": {
+        "full_name": "Ynés Mexía",
+        "preferred_name": "Ynés",
+        "gender": "female",
+        "about": "discovered some 500 new plant species",
+        "birthday": "1988-05-24",
+        "units": "metric",
+        "timezone": "America/Mexico_City",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "12h",
+        "language": "es-MX",
+        "language_2": "en",
+        "currency": "MXN",
+        "country": "Mexico",
+        "city": "Mexico City"
+      }
+    },
+    {
+      "uuid": "a8578e88-eece-56df-af03-5f43b18383bb",
+      "name": "Brazil",
+      "data": {
+        "full_name": "Maurício Rocha e Silva",
+        "preferred_name": "Maurício",
+        "gender": "male",
+        "about": "discovered bradykinin, the blood-pressure peptide",
+        "birthday": "1992-09-19",
+        "units": "metric",
+        "timezone": "America/Sao_Paulo",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "24h",
+        "language": "pt-BR",
+        "language_2": "en",
+        "currency": "BRL",
+        "country": "Brazil",
+        "city": "São Paulo"
+      }
+    },
+    {
+      "uuid": "dc120eb1-ff84-51c0-ab99-80a55656fdec",
+      "name": "UK",
+      "data": {
+        "full_name": "D'Arcy Wentworth Thompson",
+        "preferred_name": "D'Arcy",
+        "gender": "male",
+        "about": "founded mathematical biology (On Growth and Form)",
+        "birthday": "1986-05-02",
+        "units": "metric",
+        "timezone": "Europe/London",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "12h",
+        "language": "en-GB",
+        "currency": "GBP",
+        "country": "UK",
+        "city": "London"
+      }
+    },
+    {
+      "uuid": "3ef8c040-9cd7-5fdb-a051-bf4e7b5ff366",
+      "name": "France",
+      "data": {
+        "full_name": "Émilie du Châtelet",
+        "preferred_name": "Émilie",
+        "gender": "female",
+        "about": "showed kinetic energy scales with velocity squared",
+        "birthday": "1993-12-17",
+        "units": "metric",
+        "timezone": "Europe/Paris",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "24h",
+        "language": "fr",
+        "language_2": "en",
+        "currency": "EUR",
+        "country": "France",
+        "city": "Paris"
+      }
+    },
+    {
+      "uuid": "c8d7b8d3-6902-5adb-86bf-52ff5331750b",
+      "name": "Germany",
+      "data": {
+        "full_name": "Karl Weierstraß",
+        "preferred_name": "Karl",
+        "gender": "male",
+        "about": "made calculus rigorous (ε–δ)",
+        "birthday": "1985-10-31",
+        "units": "metric",
+        "timezone": "Europe/Berlin",
+        "date_format": "DD.MM.YYYY",
+        "time_format": "24h",
+        "language": "de",
+        "language_2": "en",
+        "currency": "EUR",
+        "country": "Germany",
+        "city": "Berlin"
+      }
+    },
+    {
+      "uuid": "367ed552-9f8b-596c-8be0-a28f7a98fc93",
+      "name": "Netherlands",
+      "data": {
+        "full_name": "Jacobus van 't Hoff",
+        "preferred_name": "Jacobus",
+        "gender": "male",
+        "about": "founded stereochemistry",
+        "birthday": "1987-08-30",
+        "units": "metric",
+        "timezone": "Europe/Amsterdam",
+        "date_format": "DD-MM-YYYY",
+        "time_format": "24h",
+        "language": "nl",
+        "language_2": "en",
+        "currency": "EUR",
+        "country": "Netherlands",
+        "city": "Amsterdam"
+      }
+    },
+    {
+      "uuid": "60ebfc9f-7ab4-5f9a-981b-72e934b14af7",
+      "name": "Spain",
+      "data": {
+        "full_name": "Santiago Ramón y Cajal",
+        "preferred_name": "Santiago",
+        "gender": "male",
+        "about": "showed the brain is made of neurons",
+        "birthday": "1989-05-01",
+        "units": "metric",
+        "timezone": "Europe/Madrid",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "24h",
+        "language": "es",
+        "language_2": "en",
+        "currency": "EUR",
+        "country": "Spain",
+        "city": "Madrid"
+      }
+    },
+    {
+      "uuid": "e1061ae1-947c-5543-ac83-75f8ed115db4",
+      "name": "Italy",
+      "data": {
+        "full_name": "Rita Levi-Montalcini",
+        "preferred_name": "Rita",
+        "gender": "female",
+        "about": "discovered nerve growth factor",
+        "birthday": "1991-04-22",
+        "units": "metric",
+        "timezone": "Europe/Rome",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "24h",
+        "language": "it",
+        "language_2": "en",
+        "currency": "EUR",
+        "country": "Italy",
+        "city": "Milan"
+      }
+    },
+    {
+      "uuid": "735a5a25-c127-56cf-bbb8-fb887470761a",
+      "name": "Denmark",
+      "data": {
+        "full_name": "Øjvind Winge",
+        "preferred_name": "Øjvind",
+        "gender": "male",
+        "about": "founded the genetics of yeast",
+        "birthday": "1983-05-19",
+        "units": "metric",
+        "timezone": "Europe/Copenhagen",
+        "date_format": "DD.MM.YYYY",
+        "time_format": "24h",
+        "language": "da",
+        "language_2": "en",
+        "currency": "DKK",
+        "country": "Denmark",
+        "city": "Copenhagen"
+      }
+    },
+    {
+      "uuid": "4f82f338-ae59-54fc-8a08-40e93edaa3d1",
+      "name": "Sweden",
+      "data": {
+        "full_name": "Anders Jonas Ångström",
+        "preferred_name": "Anders",
+        "gender": "male",
+        "about": "pioneered spectroscopy",
+        "birthday": "1994-08-13",
+        "units": "metric",
+        "timezone": "Europe/Stockholm",
+        "date_format": "YYYY-MM-DD",
+        "time_format": "24h",
+        "language": "sv",
+        "language_2": "en",
+        "currency": "SEK",
+        "country": "Sweden",
+        "city": "Stockholm"
+      }
+    },
+    {
+      "uuid": "14b55373-12f1-545a-a1dd-d489af095648",
+      "name": "Poland",
+      "data": {
+        "full_name": "Zofia Kielan-Jaworowska",
+        "preferred_name": "Zofia",
+        "gender": "female",
+        "about": "led the Gobi expeditions that rewrote early-mammal evolution",
+        "birthday": "1982-04-25",
+        "units": "metric",
+        "timezone": "Europe/Warsaw",
+        "date_format": "DD.MM.YYYY",
+        "time_format": "24h",
+        "language": "pl",
+        "language_2": "en",
+        "currency": "PLN",
+        "country": "Poland",
+        "city": "Warsaw"
+      }
+    },
+    {
+      "uuid": "d7c672e8-8948-5555-a46d-0bebb3695d53",
+      "name": "Israel",
+      "data": {
+        "full_name": "Yuval Ne’eman",
+        "native_name": "יובל נאמן",
+        "preferred_name": "Yuval",
+        "gender": "male",
+        "about": "ordered the particle zoo (SU(3))",
+        "birthday": "1990-05-14",
+        "units": "metric",
+        "timezone": "Asia/Jerusalem",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "24h",
+        "language": "he",
+        "language_2": "en",
+        "currency": "ILS",
+        "country": "Israel",
+        "city": "Tel Aviv"
+      }
+    },
+    {
+      "uuid": "6c56705f-ac7d-57e6-a8d8-362d21ebbda1",
+      "name": "India",
+      "data": {
+        "full_name": "Yallāpragaḍa Subbārāvu",
+        "native_name": "యల్లాప్రగడ సుబ్బారావు",
+        "preferred_name": "Subbārāvu",
+        "gender": "male",
+        "about": "co-created methotrexate chemotherapy",
+        "birthday": "1995-01-12",
+        "units": "metric",
+        "timezone": "Asia/Kolkata",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "12h",
+        "language": "en-IN",
+        "language_2": "te",
+        "currency": "INR",
+        "country": "India",
+        "city": "Bengaluru"
+      }
+    },
+    {
+      "uuid": "a53912ab-b42e-5e7b-902e-13ea6d9b8fa6",
+      "name": "China",
+      "data": {
+        "full_name": "Wu Chien-Shiung",
+        "native_name": "吳健雄",
+        "preferred_name": "Chien-Shiung",
+        "gender": "female",
+        "about": "overthrew parity conservation",
+        "birthday": "1987-05-31",
+        "units": "metric",
+        "timezone": "Asia/Shanghai",
+        "date_format": "YYYY-MM-DD",
+        "time_format": "24h",
+        "language": "zh-Hans",
+        "language_2": "en",
+        "currency": "CNY",
+        "country": "China",
+        "city": "Shanghai"
+      }
+    },
+    {
+      "uuid": "ccd0961c-892a-56fb-8916-230c82bd9bc3",
+      "name": "Japan",
+      "data": {
+        "full_name": "Hideki Yukawa",
+        "native_name": "湯川秀樹",
+        "preferred_name": "Hideki",
+        "gender": "male",
+        "about": "predicted the meson",
+        "birthday": "1989-01-23",
+        "units": "metric",
+        "timezone": "Asia/Tokyo",
+        "date_format": "YYYY-MM-DD",
+        "time_format": "24h",
+        "language": "ja",
+        "language_2": "en",
+        "currency": "JPY",
+        "country": "Japan",
+        "city": "Tokyo"
+      }
+    },
+    {
+      "uuid": "88083712-ee5e-59eb-958c-d0f44ff27bce",
+      "name": "South Korea",
+      "data": {
+        "full_name": "Woo Jang-choon",
+        "native_name": "우장춘",
+        "preferred_name": "Jang-choon",
+        "gender": "male",
+        "about": "the triangle of U",
+        "birthday": "1996-04-08",
+        "units": "metric",
+        "timezone": "Asia/Seoul",
+        "date_format": "YYYY-MM-DD",
+        "time_format": "12h",
+        "language": "ko",
+        "language_2": "en",
+        "currency": "KRW",
+        "country": "South Korea",
+        "city": "Seoul"
+      }
+    },
+    {
+      "uuid": "24adda3d-f1b8-53da-8de9-4e4a69f7f35f",
+      "name": "Singapore",
+      "data": {
+        "full_name": "Wu Lien-teh",
+        "native_name": "伍連德",
+        "preferred_name": "Lien-teh",
+        "gender": "male",
+        "about": "pioneered modern epidemic control",
+        "birthday": "1986-03-10",
+        "units": "metric",
+        "timezone": "Asia/Singapore",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "12h",
+        "language": "en-SG",
+        "language_2": "zh",
+        "currency": "SGD",
+        "country": "Singapore",
+        "city": "Singapore"
+      }
+    },
+    {
+      "uuid": "92d4c457-2a20-520f-8d56-491a590ddf0a",
+      "name": "Australia",
+      "data": {
+        "full_name": "Ferdinand Jakob Heinrich von Mueller",
+        "preferred_name": "Ferdinand",
+        "gender": "male",
+        "about": "documented Australia's flora",
+        "birthday": "1984-06-30",
+        "units": "metric",
+        "timezone": "Australia/Melbourne",
+        "date_format": "DD/MM/YYYY",
+        "time_format": "12h",
+        "language": "en-AU",
+        "currency": "AUD",
+        "country": "Australia",
+        "city": "Melbourne"
+      }
+    }
+  ]
+}

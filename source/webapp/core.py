@@ -57,6 +57,8 @@ from db import (
     ModelConfigOverride,
     ModelGroup,
     ModelGroupMember,
+    Profile,
+    ProfileFolder,
     Prompt,
     PromptFolder,
     SeedMemoryKb,
@@ -126,6 +128,7 @@ NAV_TEMPLATE = """
     <a href="{{ url_for('memory_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_page' }}">Memory</a>
     <a href="{{ url_for('assistant_overview_page') }}" class="{{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page') }}">Assistant</a>
     <a href="{{ url_for('git_page') }}" class="{{ 'pp-active' if request.endpoint == 'git_page' }}">Git</a>
+    <a href="{{ url_for('profile_page') }}" class="{{ 'pp-active' if request.endpoint == 'profile_page' }}">Profile</a>
     <a href="{{ url_for('settings_page') }}" class="{{ 'pp-active' if request.endpoint == 'settings_page' }}">Settings</a>
     <details class="pp-dd {{ 'pp-active' if request.endpoint in ('models_page', 'modelgroups_page', 'agent_models_page') }}">
       <summary>Models &#9662;</summary>
@@ -938,6 +941,60 @@ class PromptView(ModelView):
 
 admin.add_view(PromptFolderView(PromptFolder, db, category="Prompt"))
 admin.add_view(PromptView(Prompt, db, category="Prompt"))
+
+
+# Person-profile tables backing the /profile page (folder tree + profiles,
+# where each profile's person fields live in the sparse `data` JSONB).
+def _profile_open_link(view, context, model, name):
+    """Virtual column linking to the /profile page deep-linked to this node."""
+    return Markup(f'<a href="/profile?id={escape(model.uuid)}">inspect ↗</a>')
+
+
+def _profile_folder_label(view, context, model, name):
+    """Render a folder-uuid column (a profile's `folder_uuid` or a folder's
+    `parent_uuid`) as a truncated uuid (full on hover) with the folder's name
+    below. Plain columns (no FK), so look the folder up by uuid."""
+    fid = getattr(model, name)
+    if not fid:
+        return ""
+    full = str(fid)
+    short = Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
+    folder = db.session.query(ProfileFolder).filter_by(uuid=fid).first()
+    return Markup(f"{short}<br>{escape(folder.name)}") if folder else short
+
+
+class ProfileFolderView(ModelView):
+    column_list = (
+        "profile_link", "position", "uuid", "name", "description", "parent_uuid",
+        "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"profile_link": "Profile page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "parent_uuid": _profile_folder_label,
+        "profile_link": _profile_open_link,
+    }
+
+
+class ProfileView(ModelView):
+    column_list = (
+        "profile_link", "position", "uuid", "name", "folder_uuid", "data",
+        "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"profile_link": "Profile page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "folder_uuid": _profile_folder_label,
+        "profile_link": _profile_open_link,
+    }
+
+
+admin.add_view(ProfileFolderView(ProfileFolder, db, category="Profile"))
+admin.add_view(ProfileView(Profile, db, category="Profile"))
 
 
 # Kanban tables backing the /kanban page (boards + columns + tasks + the
