@@ -218,7 +218,7 @@ def _model_config_override(row: Any) -> dict:
 
 
 def _model_group(row: Any) -> dict:
-    return {"name": row.name, "url": None, "parents": []}
+    return {"name": row.name, "url": f"/modelgroups?id={row.uuid}", "parents": []}
 
 
 def _memory_claim(row: Any) -> dict:
