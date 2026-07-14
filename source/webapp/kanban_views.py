@@ -125,6 +125,14 @@ KANBAN_TEMPLATE = """
   .kb-main{overflow:auto;min-height:0;min-width:0;padding:14px 16px;display:flex;flex-direction:column}
   .kb-board-head{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px}
   .kb-board-title{font-weight:700;font-size:1.4rem;margin-right:6px}
+  /* Click-to-rename name display (docs/ui-modal-rename.md): the pane heading
+     is a button that reads as the name; a hover border + tooltip reveal it
+     opens the rename modal. The root "All boards" pseudo-node is not
+     renamable and keeps a plain .kb-board-title heading. */
+  .kb-board-head .kb-rename-display{font-family:inherit;font-weight:700;font-size:1.4rem;color:inherit;
+    background:none;text-align:left;border:1px solid transparent;border-radius:8px;
+    padding:2px 8px;margin:0 6px 0 -8px;cursor:pointer}
+  .kb-board-head .kb-rename-display:hover{border-color:#cbd5e1;background:#f8fafc}
   .kb-board-head button{padding:4px 11px;font-size:0.82rem}
   #kb-board-desc{margin:0 0 12px}
   /* Columns: a horizontal row of equal-width lanes; the row itself scrolls
@@ -165,6 +173,9 @@ KANBAN_TEMPLATE = """
      task modal carries a history list), so keep that sizing as a page override. */
   .ui-modal{width:min(560px,92vw);max-height:90vh;overflow:auto}
   .ui-modal .kb-row{margin:0.6em 0;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  /* The rows set display:flex, which would beat the UA sheet's [hidden] rule —
+     restore the attribute's meaning inside modals (uuid row, name row, …). */
+  .ui-modal [hidden]{display:none}
   .ui-modal label{font-weight:600;font-size:0.9rem;display:inline-flex;flex-direction:column;gap:3px}
   .ui-modal input[type=text],.ui-modal select{font-family:inherit;font-size:0.9rem;padding:5px 7px;font-weight:400;min-width:260px}
   .ui-modal textarea{font-family:inherit;font-size:0.9rem;font-weight:400;padding:5px 7px;width:100%;
@@ -203,15 +214,16 @@ KANBAN_TEMPLATE = """
 <section class="kb-main">
   <div id="kb-empty" class="muted">No boards yet &mdash; create one with &ldquo;+ Board&rdquo;.</div>
   <div id="kb-folder-view" hidden>
-    <div class="kb-board-head">
-      <span id="kb-folder-view-name" class="kb-board-title"></span>
-    </div>
+    <!-- The heading doubles as the rename control; kbRenderFolderView fills it
+         with a click-to-rename button (or a plain heading for "All boards"). -->
+    <div class="kb-board-head" id="kb-folder-view-name"></div>
     <div id="kb-folder-view-body"></div>
   </div>
   <div id="kb-board" hidden>
     <div class="kb-board-head">
-      <span id="kb-board-name" class="kb-board-title"></span>
-      <button class="kb-secondary" onclick="kbEditBoard()">Edit board</button>
+      <button type="button" id="kb-board-name" class="kb-rename-display"
+        title="Click to rename" onclick="kbRenameBoardClick()"></button>
+      <button class="kb-secondary" onclick="kbEditBoard()">Edit description</button>
       <select id="kb-sidebar-mode" class="kb-sidebar-mode" title="Right sidebar">
         <option value="hidden">Sidebar: off</option>
         <option value="stats">Stats</option>
@@ -227,10 +239,11 @@ KANBAN_TEMPLATE = """
 
 <div id="ui-modal-backdrop" class="ui-modal-backdrop" hidden></div>
 
-<!-- Board create/edit -->
+<!-- Board create/edit (edit mode hides the name row — renames go through the
+     click-to-rename heading and its modal, docs/ui-modal-rename.md) -->
 <div id="kb-board-modal" class="ui-modal" hidden>
   <h3 id="kb-board-modal-title">New board</h3>
-  <div class="kb-row">
+  <div class="kb-row" id="kb-b-name-row">
     <label style="width:100%">Name <input type="text" id="kb-b-name" autocomplete="off" placeholder="board name"></label>
   </div>
   <div class="kb-row">
@@ -254,6 +267,19 @@ KANBAN_TEMPLATE = """
   <div class="modal-actions">
     <button class="btn-cancel" onclick="kbCloseModals()">Cancel</button>
     <button id="kb-f-save" class="btn-primary" onclick="kbSaveFolderModal()">Create folder</button>
+  </div>
+</div>
+
+<!-- Rename (board / folder) — opened by the click-to-rename heading in the
+     main pane (docs/ui-modal-rename.md) -->
+<div id="kb-rename-modal" class="ui-modal" hidden>
+  <h3 id="kb-rename-title">Rename</h3>
+  <div class="kb-row">
+    <label style="width:100%">Name <input type="text" id="kb-rename-input" autocomplete="off"></label>
+  </div>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="kbCloseModals()">Cancel</button>
+    <button id="kb-rename-confirm" class="btn-primary" onclick="kbConfirmRenameModal()" disabled>Rename</button>
   </div>
 </div>
 

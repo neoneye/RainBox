@@ -68,7 +68,8 @@ The modal closes that gap structurally rather than by discipline:
 Any editable name/title in the UI. Implemented on: /prompt (prompts +
 folders), /profile (profiles + folders; the read-only built-in templates
 render a plain heading with no rename affordance), /cron (jobs + folders),
-/git (repos + folders), /chat (the room
+/git (repos + folders), /kanban (boards + folders; the root "All boards"
+pseudo-node renders a plain heading), /chat (the room
 title; chat folders rename through their create-folder modal), and /models
 (config + override display names — there the modal fills a hidden form field
 and submits, since that page is server-rendered; empty is a valid name there,

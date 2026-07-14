@@ -34,7 +34,7 @@ let kbEditingBoard = false;// board modal mode: false = create, true = edit sele
 let kbDrag = null;         // task uuid while a card is dragged (in-board)
 let kbDragTree = null;     // {type:'folder'|'board', id} while a tree node is dragged
 let kbFolderModalParent = null; // parent for a new subfolder (null = root)
-let kbRenamingFolder = null;    // folder uuid while the folder modal renames (null = create)
+let kbRenameState = null;       // {kind:'board'|'folder', id, original} while the rename modal is open
 
 // Expand/collapse state, default-expanded, persisted to localStorage.
 const KB_EXPAND_KEY = 'kanban.expandedFolders';
@@ -367,7 +367,6 @@ function kbFolderLi(f){
     kbFolderClick(f.uuid);
   });
   kbMakeKebab(node, [
-    ['Rename', '', () => kbRenameFolder(f.uuid)],
     ['New subfolder', '', () => kbNewFolder(f.uuid)],
     ['Copy folder id', '', () => kbCopyId(f.uuid, 'Folder')],
     ['Delete', 'danger', () => kbConfirmDeleteFolder(f.uuid)],
@@ -652,11 +651,12 @@ function kbOpenModal(id){
 }
 function kbCloseModals(){
   document.getElementById('ui-modal-backdrop').hidden = true;
-  ['kb-board-modal','kb-folder-modal','kb-task-modal','kb-md-modal','kb-confirm-modal']
+  ['kb-board-modal','kb-folder-modal','kb-rename-modal','kb-task-modal','kb-md-modal','kb-confirm-modal']
     .forEach(id => document.getElementById(id).hidden = true);
   // Forget the opened-with snapshots so a future open starts fresh.
   kbBoardModalOpenedWith = null;
   kbTaskModalOpenedWith = null;
+  kbRenameState = null;
 }
 
 // ---- dirty-guarded dismissal (backdrop click / Esc) ----
@@ -682,6 +682,12 @@ function kbModalDirty(){
     return document.getElementById('kb-t-title').value !== w.title
         || document.getElementById('kb-t-desc').value !== w.desc;
   }
+  // Rename modal: dirty once the typed name differs from the stored one —
+  // only the explicit Rename/Cancel buttons close it then.
+  if (!document.getElementById('kb-rename-modal').hidden){
+    return document.getElementById('kb-rename-input').value
+        !== ((kbRenameState && kbRenameState.original) || '');
+  }
   // Markdown modal (read-only view) and confirm modal (no data entry) are
   // never dirty.
   return false;
@@ -691,10 +697,13 @@ function kbDismissIfClean(){
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') kbDismissIfClean(); });
 
-// Board create/edit share one modal; kbEditingBoard picks the mode.
+// Board create/edit share one modal; kbEditingBoard picks the mode. Edit mode
+// is description-only — the name renames through the click-to-rename heading
+// (docs/ui-modal-rename.md), one rename path, not two.
 function kbNewBoard(){
   kbEditingBoard = false;
   document.getElementById('kb-board-modal-title').textContent = 'New board';
+  document.getElementById('kb-b-name-row').hidden = false;
   document.getElementById('kb-b-name').value = '';
   document.getElementById('kb-b-desc').value = '';
   document.getElementById('kb-b-save').textContent = 'Create board';
@@ -706,7 +715,8 @@ function kbNewBoard(){
 function kbEditBoard(){
   if (!kbCurrent) return;
   kbEditingBoard = true;
-  document.getElementById('kb-board-modal-title').textContent = 'Edit board';
+  document.getElementById('kb-board-modal-title').textContent = 'Edit description';
+  document.getElementById('kb-b-name-row').hidden = true;
   document.getElementById('kb-b-name').value = kbCurrent.name;
   document.getElementById('kb-b-desc').value = kbCurrent.description || '';
   document.getElementById('kb-b-save').textContent = 'Save';
@@ -716,18 +726,19 @@ function kbEditBoard(){
     name: document.getElementById('kb-b-name').value,
     desc: document.getElementById('kb-b-desc').value,
   };
+  document.getElementById('kb-b-desc').focus();
 }
 async function kbSaveBoardModal(){
   const name = document.getElementById('kb-b-name').value.trim();
   const desc = document.getElementById('kb-b-desc').value.trim();
-  if (!name){
-    document.getElementById('kb-b-err').textContent = 'Name is required.'; return;
-  }
   if (kbEditingBoard){
-    if (kbCurrent){ kbCurrent.name = name; kbCurrent.description = desc; kbSave(); }
+    if (kbCurrent){ kbCurrent.description = desc; kbSave(); }
     kbCloseModals();
     kbRender();
     return;
+  }
+  if (!name){
+    document.getElementById('kb-b-err').textContent = 'Name is required.'; return;
   }
   // Create server-side (the server makes the default columns + the version token).
   try {
@@ -1087,8 +1098,25 @@ function kbFlattenTree(rootId){
 function kbRenderFolderView(){
   if (kbSelectedFolder === null) return;
   const f = kbSelectedFolder === 'all' ? null : kbFolderById(kbSelectedFolder);
-  document.getElementById('kb-folder-view-name').textContent =
-    kbSelectedFolder === 'all' ? 'All boards' : (f ? f.name : '(folder)');
+  // The heading IS the rename affordance (docs/ui-modal-rename.md): a real
+  // folder renders as a click-to-rename button; the root "All boards"
+  // pseudo-node is not renamable and stays a plain heading.
+  const head = document.getElementById('kb-folder-view-name');
+  head.innerHTML = '';
+  if (f){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'kb-rename-display';
+    btn.title = 'Click to rename';
+    btn.textContent = f.name || '(unnamed)';
+    btn.addEventListener('click', () => kbOpenRenameModal('folder', f.uuid, f.name || ''));
+    head.appendChild(btn);
+  } else {
+    const span = document.createElement('span');
+    span.className = 'kb-board-title';
+    span.textContent = kbSelectedFolder === 'all' ? 'All boards' : '(folder)';
+    head.appendChild(span);
+  }
   const body = document.getElementById('kb-folder-view-body');
   const rows = kbFlattenTree(kbSelectedFolder);
   if (!rows.length){
@@ -1296,9 +1324,60 @@ function kbNeighbor(orderedIds, siblingId, after){
   const i = orderedIds.indexOf(siblingId);
   return (i >= 0 && i + 1 < orderedIds.length) ? orderedIds[i + 1] : null;
 }
-// Folder create + rename share one modal; kbRenamingFolder picks the mode.
+// ---- rename modal (docs/ui-modal-rename.md) ----
+// One modal for boards and folders, opened by the click-to-rename heading in
+// the main pane. Rename/Cancel are the only ways out once the name differs.
+function kbOpenRenameModal(kind, id, original){
+  kbRenameState = {kind: kind, id: id, original: original};
+  document.getElementById('kb-rename-title').textContent =
+    kind === 'board' ? 'Rename board' : 'Rename folder';
+  const input = document.getElementById('kb-rename-input');
+  input.value = original;
+  kbSyncRenameConfirm();
+  kbOpenModal('kb-rename-modal');
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+function kbRenameBoardClick(){
+  if (kbCurrent) kbOpenRenameModal('board', kbCurrent.uuid, kbCurrent.name || '');
+}
+// Rename is enabled only for a non-empty name that actually differs.
+function kbSyncRenameConfirm(){
+  const v = document.getElementById('kb-rename-input').value.trim();
+  document.getElementById('kb-rename-confirm').disabled =
+    v === '' || !kbRenameState || v === kbRenameState.original;
+}
+function kbConfirmRenameModal(){
+  if (!kbRenameState) return;
+  const v = document.getElementById('kb-rename-input').value.trim();
+  if (!v || v === kbRenameState.original) return;
+  const st = kbRenameState;
+  kbCloseModals();  // also clears kbRenameState
+  if (st.kind === 'folder'){
+    const f = kbFolderById(st.id);
+    if (!f) return;
+    f.name = v;
+    kbSaveTree();
+    kbRenderTree();
+    kbRenderFolderView();
+  } else {
+    if (!kbCurrent || kbCurrent.uuid !== st.id) return;
+    kbCurrent.name = v;
+    kbSave();
+    kbRenderBoard();
+    kbRefreshIndexCounts();  // syncs the tree entry's name + re-renders the tree
+  }
+  kbToast('Renamed to “' + v + '”');
+}
+document.getElementById('kb-rename-input').addEventListener('input', kbSyncRenameConfirm);
+document.getElementById('kb-rename-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('kb-rename-confirm').disabled){
+    e.preventDefault(); kbConfirmRenameModal();
+  }
+});
+
+// Folder create modal (folder renames go through the shared rename modal).
 function kbNewFolder(parentId){
-  kbRenamingFolder = null;
   kbFolderModalParent = (typeof parentId === 'string') ? parentId : null;
   document.getElementById('kb-folder-modal-title').textContent =
     kbFolderModalParent ? 'New subfolder' : 'New folder';
@@ -1308,29 +1387,10 @@ function kbNewFolder(parentId){
   kbOpenModal('kb-folder-modal');
   document.getElementById('kb-f-name').focus();
 }
-function kbRenameFolder(folderId){
-  const f = kbFolderById(folderId);
-  if (!f) return;
-  kbRenamingFolder = folderId;
-  document.getElementById('kb-folder-modal-title').textContent = 'Rename folder';
-  document.getElementById('kb-f-name').value = f.name;
-  document.getElementById('kb-f-save').textContent = 'Save';
-  document.getElementById('kb-f-err').textContent = '';
-  kbOpenModal('kb-folder-modal');
-  document.getElementById('kb-f-name').focus();
-}
 async function kbSaveFolderModal(){
   const name = document.getElementById('kb-f-name').value.trim();
   if (!name){
     document.getElementById('kb-f-err').textContent = 'Name is required.'; return;
-  }
-  if (kbRenamingFolder){
-    const f = kbFolderById(kbRenamingFolder);
-    if (f){ f.name = name; kbSaveTree(); }
-    kbCloseModals();
-    kbRenderTree();
-    if (kbSelectedFolder) kbRenderFolderView();
-    return;
   }
   // Create server-side (the server assigns the uuid + position).
   try {
