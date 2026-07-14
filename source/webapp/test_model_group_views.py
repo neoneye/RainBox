@@ -1,4 +1,4 @@
-"""Marker tests for webapp/model_group_views.py (the /modelgroups page shell;
+"""Marker tests for webapp/model_group_views.py (the /modelgroup page shell;
 its JS is inline in the rendered template, so a GET carries both markup and
 behavior — same idea as test_chat_views)."""
 
@@ -7,7 +7,15 @@ import webapp  # noqa: F401  registers model_group_views on the shared app
 
 
 def _body() -> str:
-    return app.test_client().get("/modelgroups").get_data(as_text=True)
+    return app.test_client().get("/modelgroup").get_data(as_text=True)
+
+
+def test_legacy_plural_path_redirects_to_singular():
+    # The page moved from /modelgroups to /modelgroup (singular, like /cron
+    # and /kanban); old links redirect and keep their ?id= selection.
+    resp = app.test_client().get("/modelgroups?id=abc")
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/modelgroup?id=abc")
 
 
 def test_group_rows_are_real_links():

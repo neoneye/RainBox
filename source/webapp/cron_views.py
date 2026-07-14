@@ -113,7 +113,7 @@ CRON_TEMPLATE = """
   .crh-error{color:#b91c1c;font-weight:600}
   .crh-pending{color:#92400e;font-weight:600}
   /* Split view: full-height grid (left folder tree | right panel), each pane
-     scrolls independently — consistent with /chat and /modelgroups. */
+     scrolls independently — consistent with /chat and /modelgroup. */
   .cron-split{display:grid;grid-template-columns:250px minmax(0,1fr);grid-template-rows:1fr;flex:1 1 auto;min-height:0}
   .cron-tree{overflow:auto;min-height:0;border-right:1px solid #e5e7eb;background:#fbfbfb;padding:10px;font-size:0.9rem}
   .cron-main{overflow:auto;min-height:0;min-width:0;padding:12px 16px}

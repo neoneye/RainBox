@@ -4,8 +4,10 @@ from uuid import UUID
 from flask import (
     Response,
     abort,
+    redirect,
     render_template_string,
     request,
+    url_for,
 )
 
 from db import (
@@ -339,12 +341,20 @@ refresh().catch(e => console.error(e));
 """
 
 
-@app.route("/modelgroups")
+@app.route("/modelgroup")
 def modelgroups_page() -> str:
     return render_template_string(MODELGROUPS_TEMPLATE)
 
 
-@app.route("/modelgroups/data")
+@app.route("/modelgroups")
+def modelgroups_legacy_redirect():
+    """The page's old plural path — singular now, like /cron and /kanban.
+    Kept as a redirect so old bookmarks/links (incl. ?id=) keep working."""
+    query = request.query_string.decode()
+    return redirect(url_for("modelgroups_page") + (f"?{query}" if query else ""))
+
+
+@app.route("/modelgroup/data")
 def modelgroups_data() -> Response:
     out = []
     for g in list_model_groups():
@@ -362,7 +372,7 @@ def modelgroups_data() -> Response:
     return app.response_class(json.dumps({"groups": out}), mimetype="application/json")
 
 
-@app.route("/modelgroups/create", methods=["POST"])
+@app.route("/modelgroup/create", methods=["POST"])
 def modelgroups_create() -> Response:
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -383,7 +393,7 @@ def modelgroups_create() -> Response:
     return app.response_class(json.dumps({"uuid": str(g.uuid)}), mimetype="application/json")
 
 
-@app.route("/modelgroups/rename", methods=["POST"])
+@app.route("/modelgroup/rename", methods=["POST"])
 def modelgroups_rename() -> Response:
     data = request.get_json(silent=True) or {}
     try:
@@ -400,7 +410,7 @@ def modelgroups_rename() -> Response:
     return app.response_class(json.dumps({"ok": True}), mimetype="application/json")
 
 
-@app.route("/modelgroups/delete", methods=["POST"])
+@app.route("/modelgroup/delete", methods=["POST"])
 def modelgroups_delete() -> Response:
     data = request.get_json(silent=True) or {}
     try:
@@ -414,7 +424,7 @@ def modelgroups_delete() -> Response:
     return app.response_class(json.dumps({"ok": True}), mimetype="application/json")
 
 
-@app.route("/modelgroups/members", methods=["POST"])
+@app.route("/modelgroup/members", methods=["POST"])
 def modelgroups_members() -> Response:
     data = request.get_json(silent=True) or {}
     try:
@@ -533,7 +543,7 @@ MODELGROUPPRIORITIES_TEMPLATE: str = """
 // This page edits ONE model group's ordered member list, identified by
 // GROUP_ID (?id= in the URL). The list is loaded from and saved to the
 // database. Each Select / Deselect / reorder persists immediately via
-// POST, so closing back to /modelgroups shows the result.
+// POST, so closing back to /modelgroup shows the result.
 const MODELS_URL = '{{ url_for("models_page") }}';
 const MODELGROUPS_URL = '{{ url_for("modelgroups_page") }}';
 const DATA_URL = '{{ url_for("modelgroups_data") }}';
@@ -750,7 +760,7 @@ def modelgrouppriorities_page() -> str:
                 struct_uuids.append(str(ov.uuid))
             if args_reasoning_on(resolved):
                 reasoning_uuids.append(str(ov.uuid))
-    # When opened from /modelgroups via "Edit priority list", ?id carries the
+    # When opened from /modelgroup via "Edit priority list", ?id carries the
     # group uuid; we use it to build the Close button's return URL, to swap
     # the nav for a single Close action, to show the group's name, and to apply
     # its function-calling membership constraint.

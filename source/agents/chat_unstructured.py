@@ -95,7 +95,7 @@ class UnstructuredChatAgent(ModelGroupAgent):
             logger.warning(
                 "agent %s: its model group does not have the 'structured output: "
                 "must not have' constraint — bind it to a group created with that "
-                "constraint on /modelgroups",
+                "constraint on /modelgroup",
                 self.name,
             )
 
@@ -213,7 +213,7 @@ class UnstructuredChatAgent(ModelGroupAgent):
         if not self.group_excludes_structured_output:
             raise RuntimeError(
                 f"agent {self.name} needs a model group with the 'structured "
-                "output: must not have' constraint. Create one on /modelgroups "
+                "output: must not have' constraint. Create one on /modelgroup "
                 "and bind it to this agent on /agent_models."
             )
         if not self.candidate_model_uuids:

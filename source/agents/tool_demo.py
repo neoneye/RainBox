@@ -102,7 +102,7 @@ class ToolDemoAgent(ModelGroupAgent):
             raise RuntimeError(
                 f"agent {self.name} needs a model group with the function-calling "
                 "constraint (its members aren't guaranteed to support tool calls). "
-                "Create a group with the 'function calling' checkbox on /modelgroups "
+                "Create a group with the 'function calling' checkbox on /modelgroup "
                 "and bind it to this agent on /agent_models."
             )
         if not self.candidate_model_uuids:
