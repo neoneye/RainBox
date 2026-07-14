@@ -88,6 +88,12 @@ family, LLM-facing `description` (usage caveats + arg schema) vs operator-facing
 generated from this single object, so disabling a capability removes it from
 prompt **and** dispatch at once.
 
+Action names follow `<family>_<verb>` (`memory_query`, `kanban_task_column`),
+and each family's members sit contiguously in `AssistantActionName` — the
+prompt catalog renders in enum order, so this is what groups related actions
+next to each other in the system prompt. A new action goes inside its family
+block, not at the end of the enum.
+
 The operator can turn capabilities off at runtime via the
 `assistant.disabled_capabilities` setting (a JSON list of names, editable on
 `/settings`); `capability_report()` exposes the effective set for inspection.
@@ -207,6 +213,12 @@ confirm/reject card.
 `undo_write_intent` replays a completed intent's stored inverse and marks the
 intent `undone`. One-shot by design: only `completed` intents with an `undo`
 record qualify; there is no redo.
+
+Intents persist capability names as strings, so rows written before a
+capability was renamed still carry its former name. `LEGACY_CAPABILITY_NAMES`
+(`agents/assistant_writes.py`) maps former → current name wherever a persisted
+name is resolved (confirm-execute and undo), keeping old ledger rows executable
+and undoable. Renaming a capability means adding its old name to that map.
 
 ## Trace
 

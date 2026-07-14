@@ -24,7 +24,7 @@ claim/evidence -> retrieval -> prompt injection/action observation
 -> debug row + retrieval events -> feedback -> eval case -> gated change
 ```
 
-Main residual limitations: hybrid retrieval (used by both the chat path via `build_chat_memory_block` and the assistant's `query_memory`) degrades to lexical/full-text/entity signals when the embedder is unavailable; candidate claims are embedded but never enter prompts until confirmed; there is no automatic extraction of candidate memories from chat or journal yet; and the `epistemic_confidence`/`retrieval_strength` columns are schema groundwork that the Tier-1 ranker does not yet use (it still ranks on `confidence`).
+Main residual limitations: hybrid retrieval (used by both the chat path via `build_chat_memory_block` and the assistant's `memory_query`) degrades to lexical/full-text/entity signals when the embedder is unavailable; candidate claims are embedded but never enter prompts until confirmed; there is no automatic extraction of candidate memories from chat or journal yet; and the `epistemic_confidence`/`retrieval_strength` columns are schema groundwork that the Tier-1 ranker does not yet use (it still ranks on `confidence`).
 
 ## 2. Mental Model
 
@@ -120,7 +120,7 @@ Core files:
 - `rainbox/source/memory/retrieval.py`: hybrid retrieval, `fence_recalled_memory`, prompt formatting, telemetry, debug-memory rows.
 - `rainbox/source/memory/ops.py`: explicit user commands: remember, forget, confirm, correct, recall, explain, used.
 - `rainbox/source/memory/embeddings.py`: embedding freshness (active + candidate), backfill, prune, sync.
-- `rainbox/source/agents/assistant.py`: assistant `query_memory`, `remember` (now candidate-producing), `forget_memory`, `activate_memory`, undo actions.
+- `rainbox/source/agents/assistant.py`: assistant `memory_query`, `memory_remember` (now candidate-producing), `memory_forget`, `memory_activate`, undo actions.
 - `rainbox/source/agents/assistant_writes.py`: confirm-tier write-intent execution and undo.
 - `rainbox/source/agents/chat_context.py`: profile + seed facts + hybrid memory block assembly.
 - `rainbox/source/user_profile/retrieval.py`: query-independent operator profile digest.
@@ -181,7 +181,7 @@ Every belief write is tagged with an `actor` from the set in `ACTORS`:
 - `human_review_ui`, `explicit_human_command`, `human_confirmed_write_intent` — override-authorized: writes go `active`, can clear exact-scope tombstones.
 - `assistant_interpreted`, `model_inferred` — candidate-by-default: writes go `candidate`, refused by any tombstone.
 
-The governing principle: deterministic or explicitly confirmed human input is trusted; model-phrased text is not, regardless of who initiated the request. The assistant's `remember` action is `assistant_interpreted` → produces a `candidate`, never an active belief.
+The governing principle: deterministic or explicitly confirmed human input is trusted; model-phrased text is not, regardless of who initiated the request. The assistant's `memory_remember` action is `assistant_interpreted` → produces a `candidate`, never an active belief.
 
 ### Governed Write Path (`record_belief`)
 
@@ -236,11 +236,11 @@ The result is always an active replacement claim with no dangling `conflicts_wit
 
 `agents/assistant.py` defines memory capabilities:
 
-- `query_memory`: read action (uses `retrieve_memories_hybrid`, returns fenced memory context).
-- `remember`: `assistant_interpreted` write → produces a `candidate`; never goes active immediately.
-- `forget_memory`: log-and-undo write. Explicit forget tombstones; undo passes `tombstone=False` so undoing a just-created remember does not permanently block re-learning the same value.
-- `activate_memory`: confirm-tier write.
-- internal `reject_memory_candidate` and `reactivate_memory` undo actions.
+- `memory_query`: read action (uses `retrieve_memories_hybrid`, returns fenced memory context).
+- `memory_remember`: `assistant_interpreted` write → produces a `candidate`; never goes active immediately.
+- `memory_forget`: log-and-undo write. Explicit forget tombstones; undo passes `tombstone=False` so undoing a just-created memory_remember does not permanently block re-learning the same value.
+- `memory_activate`: confirm-tier write.
+- internal `memory_reject_candidate` and `memory_reactivate` undo actions.
 
 `_action_query_memory()` merges curated seed memories with dynamic memory claims. It returns UUIDs in the observation so later actions can target exact memories.
 
@@ -290,7 +290,7 @@ Relevant remembered facts:
 - replaces `<` and `>` with look-alike characters `‹` and `›` so injected content cannot forge prompt structure or role markers;
 - is fail-closed: on any internal error returns a fenced placeholder instead of the raw body.
 
-The same fence is applied to the assistant's `query_memory` observation. Diagnostic rows (`debug-memory`, `debug-query`, `progress`, `thinking`) are filtered from the model-visible transcript before building the prompt, so they cannot become the current message.
+The same fence is applied to the assistant's `memory_query` observation. Diagnostic rows (`debug-memory`, `debug-query`, `progress`, `thinking`) are filtered from the model-visible transcript before building the prompt, so they cannot become the current message.
 
 ### Conflict-Resolution Review UI
 
@@ -419,7 +419,7 @@ Rejected-value tombstones (`MemoryRejectedValue`) prevent future model writes of
 Strengths:
 
 - Five-actor trust model structurally enforced: human actors → active; model actors → candidate.
-- The assistant's `remember` produces a `candidate`, never an immediately-active belief.
+- The assistant's `memory_remember` produces a `candidate`, never an immediately-active belief.
 - Evidence is separate and appendable; user confirmation does not erase earlier evidence.
 - Rejected values are tombstoned and block future model re-assertion; human operators can override with scoped exceptions.
 - Conflict detection is lattice-aware (room → agent → global); same-scope human writes auto-supersede; cross-scope or model writes go to candidate for review.
@@ -562,7 +562,7 @@ RainBox is worth studying if you want memory to be an inspectable, governed oper
 
 ## 14. Open Questions
 
-- How are model-inferred candidate memories created in normal operation? Currently they are written only when the assistant's `remember` action fires; no background extraction pipeline exists.
+- How are model-inferred candidate memories created in normal operation? Currently they are written only when the assistant's `memory_remember` action fires; no background extraction pipeline exists.
 - How often does the operator review and confirm candidate memories? The review UI exists, but adoption depends on operational habit.
 - How should project-scoped claims be matched once project context is available?
 - Can downvote telemetry identify stale/wrong memories reliably enough to propose review tasks?

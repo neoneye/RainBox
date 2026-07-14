@@ -60,7 +60,7 @@ Useful responder agents:
 - `chat_structured`: structured chat reply with memory retrieval.
 - `chat_unstructured`: plain-text chat reply with memory retrieval.
 - `assistant`: bounded ReAct-style assistant with trace, read actions, skills,
-  and controlled memory writes.
+  and controlled memory/kanban writes.
 - `router`: structured triage reply.
 - `query`: no-LLM Q&A retriever.
 - `query_router`: Q&A hint plus router LLM.

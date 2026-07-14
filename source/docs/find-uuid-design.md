@@ -20,6 +20,7 @@ lease is touched.
 | `/find` page | `webapp/find_views.py` | paste a uuid/fragment, results as you type, Open links jump to the entity. The search syncs into the url (`/find?q=2f70`) both ways, so the address bar is always a shareable permalink. |
 | `GET /find/api/search?q=` | `webapp/find_views.py` | the page's JSON backend; 400 for a too-short query |
 | `find_uuid` assistant action | `agents/assistant.py` | same resolver as a capability (family `lookup`), so the assistant resolves half-remembered ids into exact ones instead of guessing. The system prompt directs it here whenever it holds a uuid it is not sure about. |
+| `kanban_find_by_name` | `db/kanban.py` | the name-side counterpart behind the assistant's `kanban_query` action: its own name matching, but it reuses this module's kanban board/folder/task **describers** so both resolvers return the same candidate shape (kind, name, uuid, parents, url). Changing a describer changes both. |
 
 ## Query normalization
 
