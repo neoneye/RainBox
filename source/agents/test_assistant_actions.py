@@ -190,7 +190,7 @@ def test_successful_read_removes_old_assistant_answers_but_keeps_operator_contex
 
 def test_system_prompt_forbids_claiming_unperformed_writes():
     """Run 19: the model read a task then replied 'successfully moved' with no
-    kanban_move_task step. The prompt must forbid claiming a write it didn't perform."""
+    kanban_task_column step. The prompt must forbid claiming a write it didn't perform."""
     p = ASSISTANT_SYSTEM_PROMPT.lower()
     assert "never tell the operator you did something" in p
     assert "reading a task is not moving it" in p

@@ -65,7 +65,7 @@ def test_summarizes_run_into_summary_column(app_ctx):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="kanban_move_task", reason="move it")
+        run_uuid=run.uuid, step_index=0, action="kanban_task_column", reason="move it")
     db.settle_assistant_step(step, phase="failed", error="no such task")
     db.finish_run(run, "failed")
     agent = _agent()
@@ -84,7 +84,7 @@ def test_summarizes_run_into_summary_column(app_ctx):
         result = agent.handle(uuid4(), {"run_uuid": str(run.uuid)})
         assert result["ok"] is True
         # The prompt was built from the run's trigger + step trace (the failed step).
-        assert "kanban_move_task" in captured["prompt"]
+        assert "kanban_task_column" in captured["prompt"]
         assert "no such task" in captured["prompt"]
         # The digest is stored on the run, with a timestamp.
         fresh = db.get_assistant_run(run.uuid)
@@ -136,7 +136,7 @@ def test_find_repeated_calls_ignores_distinct_calls():
     steps = [
         _step(0, "kanban_read", {"board_uuid": "b1"}),
         _step(1, "query_memory", {"q": "x"}),
-        _step(2, "kanban_create_task", {"title": "t"}),
+        _step(2, "kanban_task_create", {"title": "t"}),
     ]
     assert _find_repeated_calls(steps) == []
 

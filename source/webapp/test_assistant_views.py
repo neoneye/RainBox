@@ -76,17 +76,17 @@ def test_timeline_shows_step_with_inline_intent_and_undo(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="kanban_move_task", reason="move it")
+        run_uuid=run.uuid, step_index=0, action="kanban_task_column", reason="move it")
     db.settle_assistant_step(step, phase="observed", observation_preview="moved the task")
     intent = db.create_write_intent(
-        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="kanban_move_task",
+        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="kanban_task_column",
         payload={"task_uuid": "t"}, preview_text="move", room_uuid=room.uuid,
         agent_uuid=run.agent_uuid, state="completed",
-        result={"undo": {"capability": "kanban_delete_task", "payload": {}}})
+        result={"undo": {"capability": "kanban_task_delete", "payload": {}}})
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "kanban_move_task" in body            # step action + intent capability
+        assert "kanban_task_column" in body            # step action + intent capability
         assert "moved the task" in body              # observation rendered
         # a completed log-and-undo intent (carries an undo record) → Undo button
         assert f"/chat/api/assistant/write-intents/{intent.uuid}/undo" in body
@@ -117,13 +117,13 @@ def test_undone_intent_is_marked_in_the_timeline(app_ctx, client):
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     step = db.open_assistant_step(
-        run_uuid=run.uuid, step_index=0, action="kanban_move_task", reason="r")
+        run_uuid=run.uuid, step_index=0, action="kanban_task_column", reason="r")
     db.settle_assistant_step(step, phase="observed", observation_preview="moved")
     intent = db.create_write_intent(
-        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="kanban_move_task",
+        run_uuid=run.uuid, step_uuid=step.uuid, capability_name="kanban_task_column",
         payload={"task_uuid": "t"}, preview_text="move", room_uuid=room.uuid,
         agent_uuid=run.agent_uuid, state="completed",
-        result={"undo": {"capability": "kanban_delete_task", "payload": {}}})
+        result={"undo": {"capability": "kanban_task_delete", "payload": {}}})
     db.set_write_intent_state(intent, "undone")
     db.finish_run(run, "finished")
     try:

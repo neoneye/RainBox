@@ -1,5 +1,5 @@
-"""S2: assistant kanban write families — mark-done (kanban_complete) and comment
-(kanban_comment), both log-and-undo. Mirrors test_kanban_move_action.py."""
+"""S2: assistant kanban write families — mark-done (kanban_task_complete) and comment
+(kanban_task_comment), both log-and-undo. Mirrors test_kanban_move_action.py."""
 
 from uuid import UUID, uuid4
 
@@ -66,7 +66,7 @@ def _comment_details(task_uuid):
 
 
 def test_capabilities_are_log_and_undo_writes():
-    for name in (AssistantActionName.KANBAN_COMPLETE, AssistantActionName.KANBAN_COMMENT):
+    for name in (AssistantActionName.KANBAN_TASK_COMPLETE, AssistantActionName.KANBAN_TASK_COMMENT):
         cap = CAPABILITIES[name]
         assert cap.write is True and cap.tier == "log_and_undo"
 
@@ -81,7 +81,7 @@ def test_complete_marks_done_and_returns_inverse(board):
     assert obs.ok is True
     assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == done  # moved to last col
     assert obs.data["undo"] == {
-        "capability": "kanban_move_task",
+        "capability": "kanban_task_column",
         "payload": {"task_uuid": task["uuid"], "column_uuid": todo,
                     "expect_column": done},
     }
@@ -102,7 +102,7 @@ def test_complete_via_loop_then_undo_reopens(board):
     todo, done = board["columns"][0]["uuid"], board["columns"][2]["uuid"]
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="done", action=AssistantActionName.KANBAN_COMPLETE,
+        AssistantStepDecision(reason="done", action=AssistantActionName.KANBAN_TASK_COMPLETE,
                               args={"task_uuid": task["uuid"]}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
                               args={"message": "done"}),
@@ -135,7 +135,7 @@ def test_comment_appends_event_and_returns_retraction_inverse(board):
     obs = _action_comment_kanban_task(_ctx(), {"task_uuid": task["uuid"], "text": "looks good"})
     assert obs.ok is True
     assert "looks good" in _comment_details(UUID(task["uuid"]))
-    assert obs.data["undo"]["capability"] == "kanban_comment"
+    assert obs.data["undo"]["capability"] == "kanban_task_comment"
     assert obs.data["undo"]["payload"]["text"] == "↩ retracted: looks good"
 
 
@@ -146,7 +146,7 @@ def test_comment_undo_posts_retraction_keeps_original(board):
     task = board["tasks"][0]
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="comment", action=AssistantActionName.KANBAN_COMMENT,
+        AssistantStepDecision(reason="comment", action=AssistantActionName.KANBAN_TASK_COMMENT,
                               args={"task_uuid": task["uuid"], "text": "looks good"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
                               args={"message": "commented"}),

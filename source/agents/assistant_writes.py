@@ -22,6 +22,26 @@ from agents.assistant import (
 logger = logging.getLogger(__name__)
 
 
+# Completed intents persist capability names in their payload/undo records, so
+# rows written before a capability was renamed still carry its former name.
+# Resolution maps those to the current capability instead of refusing to undo.
+LEGACY_CAPABILITY_NAMES: dict[str, str] = {
+    "kanban_move_task": "kanban_task_column",
+    "kanban_complete": "kanban_task_complete",
+    "kanban_comment": "kanban_task_comment",
+    "kanban_create_task": "kanban_task_create",
+    "kanban_delete_task": "kanban_task_delete",
+    "kanban_create_board": "kanban_board_create",
+    "kanban_delete_board": "kanban_board_delete",
+}
+
+
+def _resolve_capability_name(name: str) -> AssistantActionName:
+    """Parse a persisted capability name, accepting legacy names. Raises
+    ValueError for a name that matches no current or former capability."""
+    return AssistantActionName(LEGACY_CAPABILITY_NAMES.get(name, name))
+
+
 def execute_write_intent(
     intent_uuid: UUID, *, confirmed_by_uuid: UUID | None = None
 ) -> AssistantObservation:
@@ -43,7 +63,7 @@ def execute_write_intent(
         return AssistantObservation(ok=False, text="payload changed since proposal; refusing")
 
     try:
-        cap = CAPABILITIES[AssistantActionName(intent.capability_name)]
+        cap = CAPABILITIES[_resolve_capability_name(intent.capability_name)]
     except (KeyError, ValueError):
         db.set_write_intent_state(intent, "failed", error="unknown capability")
         return AssistantObservation(ok=False, text="unknown capability for intent")
@@ -102,7 +122,7 @@ def undo_write_intent(intent_uuid: UUID) -> AssistantObservation:
     if not undo:
         return AssistantObservation(ok=False, text="write intent has no undo record")
     try:
-        cap = CAPABILITIES[AssistantActionName(undo["capability"])]
+        cap = CAPABILITIES[_resolve_capability_name(undo["capability"])]
     except (KeyError, ValueError):
         return AssistantObservation(ok=False, text="unknown capability for undo")
     if cap.action is None:

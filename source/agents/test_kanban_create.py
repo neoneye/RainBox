@@ -1,5 +1,5 @@
-"""S2 batch 2: assistant kanban_create_task (log-and-undo; undo deletes the task)
-and the internal, non-model-invocable kanban_delete_task inverse."""
+"""S2 batch 2: assistant kanban_task_create (log-and-undo; undo deletes the task)
+and the internal, non-model-invocable kanban_task_delete inverse."""
 
 from uuid import UUID, uuid4
 
@@ -55,9 +55,9 @@ def _ctx():
 
 
 def test_capabilities_create_exposed_delete_internal():
-    create = CAPABILITIES[AssistantActionName.KANBAN_CREATE_TASK]
+    create = CAPABILITIES[AssistantActionName.KANBAN_TASK_CREATE]
     assert create.write is True and create.tier == "log_and_undo" and create.prompt_exposed is True
-    delete = CAPABILITIES[AssistantActionName.KANBAN_DELETE_TASK]
+    delete = CAPABILITIES[AssistantActionName.KANBAN_TASK_DELETE]
     assert delete.prompt_exposed is False
 
 
@@ -70,7 +70,7 @@ def test_create_makes_task_and_returns_delete_inverse(board):
     tu = obs.data["task_uuid"]
     assert db.kanban_get_task(UUID(tu))["title"] == "Follow up"
     assert obs.data["undo"] == {
-        "capability": "kanban_delete_task", "payload": {"task_uuid": tu}}
+        "capability": "kanban_task_delete", "payload": {"task_uuid": tu}}
     assert any(e["kind"] == "created" for e in db.kanban_task_events(UUID(tu)))
 
 
@@ -129,7 +129,7 @@ def test_create_via_loop_then_undo_deletes(board):
     bu, col = board["uuid"], board["columns"][0]["uuid"]
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE_TASK,
+        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_TASK_CREATE,
                               args={"board_uuid": bu, "column_uuid": col, "title": "Follow up"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
                               args={"message": "created"}),
@@ -165,8 +165,8 @@ def test_duplicate_create_in_same_run_is_blocked(board):
     args = {"board_uuid": bu, "title": "Dentist checkup", "description": "the 6 month check up"}
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE_TASK, args=dict(args)),
-        AssistantStepDecision(reason="create again", action=AssistantActionName.KANBAN_CREATE_TASK, args=dict(args)),
+        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_TASK_CREATE, args=dict(args)),
+        AssistantStepDecision(reason="create again", action=AssistantActionName.KANBAN_TASK_CREATE, args=dict(args)),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY, args={"message": "created"}),
     )
     try:
@@ -196,7 +196,7 @@ def test_reply_includes_clickable_task_link_after_create(board):
     bu = board["uuid"]
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_CREATE_TASK,
+        AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_TASK_CREATE,
                               args={"board_uuid": bu, "title": "Bike checkup"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
                               args={"message": "The task has been added."}),
@@ -218,7 +218,7 @@ def test_reply_includes_clickable_task_link_after_create(board):
 
 
 def test_model_cannot_invoke_delete_task(board):
-    """A scripted kanban_delete_task decision is rejected by the validator guard
+    """A scripted kanban_task_delete decision is rejected by the validator guard
     (not prompt-exposed) — the task is NOT deleted."""
     bu, col = board["uuid"], board["columns"][0]["uuid"]
     created = db.kanban_create_task(UUID(bu), UUID(col), title="keep me", actor="test")
@@ -228,7 +228,7 @@ def test_model_cannot_invoke_delete_task(board):
     db.post_chat_message(chatroom.uuid, human.uuid, "try delete")
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
-        AssistantStepDecision(reason="delete", action=AssistantActionName.KANBAN_DELETE_TASK,
+        AssistantStepDecision(reason="delete", action=AssistantActionName.KANBAN_TASK_DELETE,
                               args={"task_uuid": str(tu)}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
                               args={"message": "done"}),

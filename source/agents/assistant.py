@@ -51,20 +51,23 @@ class AssistantActionName(str, Enum):
     # observation the loop feeds back to the model.
     QUERY_MEMORY = "query_memory"
     WORKSPACE_READ_COMMAND = "workspace_read_command"
-    KANBAN_READ = "kanban_read"
     FIND_UUID = "find_uuid"
+
+    # The kanban family, kept contiguous (`kanban_<entity>_<verb>`) so the
+    # actions group together in the prompt catalog: one read + the writes.
+    KANBAN_READ = "kanban_read"
+    KANBAN_BOARD_CREATE = "kanban_board_create"  # log-and-undo: create a new board
+    KANBAN_BOARD_DELETE = "kanban_board_delete"  # internal: board_create's undo inverse (not prompt-exposed)
+    KANBAN_TASK_CREATE = "kanban_task_create"    # log-and-undo: create a task on a board
+    KANBAN_TASK_DELETE = "kanban_task_delete"    # internal: task_create's undo inverse (not prompt-exposed)
+    KANBAN_TASK_COLUMN = "kanban_task_column"    # log-and-undo: move a task to another column
+    KANBAN_TASK_COMPLETE = "kanban_task_complete"  # log-and-undo: mark a task done
+    KANBAN_TASK_COMMENT = "kanban_task_comment"  # log-and-undo: comment on a task
 
     # Write actions, each risk-tiered:
     REMEMBER = "remember"              # log-and-undo: create a candidate memory
     ACTIVATE_MEMORY = "activate_memory"  # confirm-tier: activate a candidate
     FORGET_MEMORY = "forget_memory"      # log-and-undo: reject a memory (stop recalling it)
-    KANBAN_MOVE_TASK = "kanban_move_task"  # log-and-undo: move a task between columns
-    KANBAN_COMPLETE = "kanban_complete"  # log-and-undo: mark a task done
-    KANBAN_COMMENT = "kanban_comment"    # log-and-undo: comment on a task
-    KANBAN_CREATE_TASK = "kanban_create_task"  # log-and-undo: create a task on a board
-    KANBAN_DELETE_TASK = "kanban_delete_task"  # internal: create_task's undo inverse (not prompt-exposed)
-    KANBAN_CREATE_BOARD = "kanban_create_board"  # log-and-undo: create a new board
-    KANBAN_DELETE_BOARD = "kanban_delete_board"  # internal: create_board's undo inverse (not prompt-exposed)
     SET_REMINDER = "set_reminder"      # confirm-tier (dry-run): schedule a reminder message
     EDIT_FILE = "edit_file"            # confirm-tier (dry-run diff): edit a workspace file
     PROPOSE_SKILL = "propose_skill"    # log-and-undo: write an inert candidate skill
@@ -830,7 +833,7 @@ def _action_move_kanban_task(
             "to_column_uuid": str(column_uuid),
             "link": _kanban_link(str(task_uuid)),
             "undo": {
-                "capability": "kanban_move_task",
+                "capability": "kanban_task_column",
                 "payload": {"task_uuid": str(task_uuid),
                             "column_uuid": str(from_column_uuid),
                             "expect_column": str(column_uuid)},
@@ -843,7 +846,7 @@ def _action_complete_kanban_task(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
     """Log-and-undo write: mark a task done (move it to the board's Done/last
-    column + a 'done' event). Reversible — the undo is a kanban_move_task back to the
+    column + a 'done' event). Reversible — the undo is a kanban_task_column back to the
     task's prior column. Operator-proxy intent → Done, not worker review-routing."""
     raw = args.get("task_uuid")
     try:
@@ -869,7 +872,7 @@ def _action_complete_kanban_task(
             "to_column_uuid": after["columnUuid"],
             "link": _kanban_link(str(task_uuid)),
             "undo": {
-                "capability": "kanban_move_task",
+                "capability": "kanban_task_column",
                 "payload": {"task_uuid": str(task_uuid),
                             "column_uuid": str(from_column_uuid),
                             "expect_column": str(after["columnUuid"])},
@@ -899,7 +902,7 @@ def _action_comment_kanban_task(
     # A retraction (posted by undo) is itself a comment but needs no further undo.
     if not is_retraction:
         data["undo"] = {
-            "capability": "kanban_comment",
+            "capability": "kanban_task_comment",
             "payload": {"task_uuid": str(task_uuid),
                         "text": f"↩ retracted: {text}"},
         }
@@ -948,7 +951,7 @@ def _action_create_kanban_task(
             "board_uuid": str(board_uuid),
             "column_uuid": str(column_uuid),
             "link": _kanban_link(created["uuid"]),
-            "undo": {"capability": "kanban_delete_task",
+            "undo": {"capability": "kanban_task_delete",
                      "payload": {"task_uuid": created["uuid"]}},
         },
     )
@@ -958,7 +961,7 @@ def _action_delete_kanban_task(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
     """Internal: hard-delete a task. Not prompt-exposed — reached only as the
-    undo-inverse of kanban_create_task (via undo_write_intent)."""
+    undo-inverse of kanban_task_create (via undo_write_intent)."""
     raw = args.get("task_uuid")
     try:
         task_uuid = UUID(str(raw))
@@ -979,7 +982,7 @@ def _action_create_kanban_board(
     a caller can never pick (and collide) a board uuid. Undo deletes the board."""
     title = str(args.get("title", "")).strip()
     if not title:
-        return AssistantObservation(ok=False, text="kanban_create_board needs a non-empty title")
+        return AssistantObservation(ok=False, text="kanban_board_create needs a non-empty title")
     description = str(args.get("description", "")).strip()
     try:
         created = db.kanban_create_board(title, description=description)
@@ -992,7 +995,7 @@ def _action_create_kanban_board(
         data={
             "board_uuid": board_uuid,
             "link": _kanban_link(board_uuid),
-            "undo": {"capability": "kanban_delete_board",
+            "undo": {"capability": "kanban_board_delete",
                      "payload": {"board_uuid": board_uuid}},
         },
     )
@@ -1002,7 +1005,7 @@ def _action_delete_kanban_board(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
     """Internal: hard-delete a board (with its columns/tasks/events). Not
-    prompt-exposed — reached only as the undo-inverse of kanban_create_board."""
+    prompt-exposed — reached only as the undo-inverse of kanban_board_create."""
     raw = args.get("board_uuid")
     try:
         board_uuid = UUID(str(raw))
@@ -1254,16 +1257,6 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         summary="run a read-only file-inspection command",
         required_args=("command",), action=_action_workspace_read_command,
     ),
-    AssistantActionName.KANBAN_READ: Capability(
-        name=AssistantActionName.KANBAN_READ, family="kanban",
-        description=('read kanban state — use this to find a board or list a '
-                     'board\'s columns before creating/moving a task. args: optional '
-                     '{"task_uuid"} for one task\'s detail + recent events, '
-                     '{"board_uuid"} for a board; empty lists all boards '
-                     'in their folder tree'),
-        summary="read kanban boards and tasks",
-        optional_args=frozenset({"board_uuid", "task_uuid"}), action=_action_kanban_read,
-    ),
     AssistantActionName.FIND_UUID: Capability(
         name=AssistantActionName.FIND_UUID, family="lookup",
         description=('resolve a uuid you are not sure about — searches every '
@@ -1275,6 +1268,83 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'args: {"query": "213a2397"}'),
         summary="look up what a uuid refers to",
         required_args=("query",), action=_action_find_uuid,
+    ),
+    AssistantActionName.KANBAN_READ: Capability(
+        name=AssistantActionName.KANBAN_READ, family="kanban",
+        description=('read kanban state — use this to find a board or list a '
+                     'board\'s columns before creating/moving a task. args: optional '
+                     '{"task_uuid"} for one task\'s detail + recent events, '
+                     '{"board_uuid"} for a board; empty lists all boards '
+                     'in their folder tree'),
+        summary="read kanban boards and tasks",
+        optional_args=frozenset({"board_uuid", "task_uuid"}), action=_action_kanban_read,
+    ),
+    AssistantActionName.KANBAN_BOARD_CREATE: Capability(
+        name=AssistantActionName.KANBAN_BOARD_CREATE, family="kanban",
+        description=('create a NEW kanban board with the given name (the default '
+                     'columns are added; the board uuid is assigned automatically '
+                     '— never pass one). reversible (undo deletes it). args: '
+                     '{"title": "...", optional "description"}'),
+        summary="create a new kanban board",
+        required_args=("title",),
+        optional_args=frozenset({"description"}),
+        action=_action_create_kanban_board,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_BOARD_DELETE: Capability(
+        name=AssistantActionName.KANBAN_BOARD_DELETE, family="kanban",
+        description="(internal) delete a kanban board — the undo-inverse of kanban_board_create.",
+        summary="delete a kanban board",
+        required_args=("board_uuid",), action=_action_delete_kanban_board,
+        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
+    ),
+    AssistantActionName.KANBAN_TASK_CREATE: Capability(
+        name=AssistantActionName.KANBAN_TASK_CREATE, family="kanban",
+        description=('create a kanban TASK on an EXISTING board (to make a new '
+                     'board, use kanban_board_create). reversible (undo deletes '
+                     'it). args: {"board_uuid": "..." (an existing board, from '
+                     'kanban_read), "title": "...", optional "description", '
+                     'optional "column_uuid" — omit it to use the board\'s first '
+                     'column (the usual case)}'),
+        summary="create a kanban task on an existing board",
+        required_args=("board_uuid", "title"),
+        optional_args=frozenset({"description", "column_uuid"}),
+        action=_action_create_kanban_task,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_TASK_DELETE: Capability(
+        name=AssistantActionName.KANBAN_TASK_DELETE, family="kanban",
+        description="(internal) delete a kanban task — the undo-inverse of kanban_task_create.",
+        summary="delete a kanban task",
+        required_args=("task_uuid",), action=_action_delete_kanban_task,
+        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
+    ),
+    AssistantActionName.KANBAN_TASK_COLUMN: Capability(
+        name=AssistantActionName.KANBAN_TASK_COLUMN, family="kanban",
+        description=('move a kanban task to another column; reversible (undoable). '
+                     'args: {"task_uuid": "...", "column_uuid": "..."} where '
+                     'column_uuid is the target column\'s NAME (e.g. "In progress") '
+                     'or its uuid — prefer the name the operator used'),
+        summary="move a kanban task to another column",
+        required_args=("task_uuid", "column_uuid"),
+        action=_action_move_kanban_task,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_TASK_COMPLETE: Capability(
+        name=AssistantActionName.KANBAN_TASK_COMPLETE, family="kanban",
+        description=('mark a kanban task done (moves it to the Done column); '
+                     'reversible. args: {"task_uuid": "..."}'),
+        summary="mark a kanban task done",
+        required_args=("task_uuid",), action=_action_complete_kanban_task,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_TASK_COMMENT: Capability(
+        name=AssistantActionName.KANBAN_TASK_COMMENT, family="kanban",
+        description=('add a comment to a kanban task; reversible (posts a '
+                     'retraction). args: {"task_uuid": "...", "text": "..."}'),
+        summary="add a comment to a kanban task",
+        required_args=("task_uuid", "text"), action=_action_comment_kanban_task,
+        read=False, write=True, tier="log_and_undo",
     ),
     AssistantActionName.REMEMBER: Capability(
         name=AssistantActionName.REMEMBER, family="memory",
@@ -1302,73 +1372,6 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         optional_args=frozenset({"memory_uuid", "text"}),
         action=_action_forget_memory,
         read=False, write=True, tier="log_and_undo",
-    ),
-    AssistantActionName.KANBAN_MOVE_TASK: Capability(
-        name=AssistantActionName.KANBAN_MOVE_TASK, family="kanban",
-        description=('move a kanban task to another column; reversible (undoable). '
-                     'args: {"task_uuid": "...", "column_uuid": "..."} where '
-                     'column_uuid is the target column\'s NAME (e.g. "In progress") '
-                     'or its uuid — prefer the name the operator used'),
-        summary="move a kanban task to another column",
-        required_args=("task_uuid", "column_uuid"),
-        action=_action_move_kanban_task,
-        read=False, write=True, tier="log_and_undo",
-    ),
-    AssistantActionName.KANBAN_COMPLETE: Capability(
-        name=AssistantActionName.KANBAN_COMPLETE, family="kanban",
-        description=('mark a kanban task done (moves it to the Done column); '
-                     'reversible. args: {"task_uuid": "..."}'),
-        summary="mark a kanban task done",
-        required_args=("task_uuid",), action=_action_complete_kanban_task,
-        read=False, write=True, tier="log_and_undo",
-    ),
-    AssistantActionName.KANBAN_COMMENT: Capability(
-        name=AssistantActionName.KANBAN_COMMENT, family="kanban",
-        description=('add a comment to a kanban task; reversible (posts a '
-                     'retraction). args: {"task_uuid": "...", "text": "..."}'),
-        summary="add a comment to a kanban task",
-        required_args=("task_uuid", "text"), action=_action_comment_kanban_task,
-        read=False, write=True, tier="log_and_undo",
-    ),
-    AssistantActionName.KANBAN_CREATE_TASK: Capability(
-        name=AssistantActionName.KANBAN_CREATE_TASK, family="kanban",
-        description=('create a kanban TASK on an EXISTING board (to make a new '
-                     'board, use kanban_create_board). reversible (undo deletes '
-                     'it). args: {"board_uuid": "..." (an existing board, from '
-                     'kanban_read), "title": "...", optional "description", '
-                     'optional "column_uuid" — omit it to use the board\'s first '
-                     'column (the usual case)}'),
-        summary="create a kanban task on an existing board",
-        required_args=("board_uuid", "title"),
-        optional_args=frozenset({"description", "column_uuid"}),
-        action=_action_create_kanban_task,
-        read=False, write=True, tier="log_and_undo",
-    ),
-    AssistantActionName.KANBAN_DELETE_TASK: Capability(
-        name=AssistantActionName.KANBAN_DELETE_TASK, family="kanban",
-        description="(internal) delete a kanban task — the undo-inverse of kanban_create_task.",
-        summary="delete a kanban task",
-        required_args=("task_uuid",), action=_action_delete_kanban_task,
-        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
-    ),
-    AssistantActionName.KANBAN_CREATE_BOARD: Capability(
-        name=AssistantActionName.KANBAN_CREATE_BOARD, family="kanban",
-        description=('create a NEW kanban board with the given name (the default '
-                     'columns are added; the board uuid is assigned automatically '
-                     '— never pass one). reversible (undo deletes it). args: '
-                     '{"title": "...", optional "description"}'),
-        summary="create a new kanban board",
-        required_args=("title",),
-        optional_args=frozenset({"description"}),
-        action=_action_create_kanban_board,
-        read=False, write=True, tier="log_and_undo",
-    ),
-    AssistantActionName.KANBAN_DELETE_BOARD: Capability(
-        name=AssistantActionName.KANBAN_DELETE_BOARD, family="kanban",
-        description="(internal) delete a kanban board — the undo-inverse of kanban_create_board.",
-        summary="delete a kanban board",
-        required_args=("board_uuid",), action=_action_delete_kanban_board,
-        read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
     AssistantActionName.SET_REMINDER: Capability(
         name=AssistantActionName.SET_REMINDER, family="cron",

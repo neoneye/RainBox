@@ -234,11 +234,11 @@ def test_write_intent_binds_step_uuid(app_ctx):
     )
     try:
         step = db.open_assistant_step(
-            run_uuid=run.uuid, step_index=2, action="kanban_move_task", reason="move it",
+            run_uuid=run.uuid, step_index=2, action="kanban_task_column", reason="move it",
         )
         intent = db.create_write_intent(
             run_uuid=run.uuid, step_uuid=step.uuid,
-            capability_name="kanban_move_task", payload={"task_uuid": "t"},
+            capability_name="kanban_task_column", payload={"task_uuid": "t"},
             preview_text="move", room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,
             state="completed", result={"undo": {"x": 1}},
         )
@@ -267,13 +267,13 @@ def test_list_write_intents_for_run_buckets_by_step(app_ctx):
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
     try:
         step = db.open_assistant_step(
-            run_uuid=run.uuid, step_index=0, action="kanban_move_task", reason="m")
+            run_uuid=run.uuid, step_index=0, action="kanban_task_column", reason="m")
         linked = db.create_write_intent(
-            run_uuid=run.uuid, step_uuid=step.uuid, capability_name="kanban_move_task",
+            run_uuid=run.uuid, step_uuid=step.uuid, capability_name="kanban_task_column",
             payload={}, preview_text="p", room_uuid=run.room_uuid,
             agent_uuid=run.agent_uuid, state="completed", result={"undo": {}})
         unlinked = db.create_write_intent(
-            run_uuid=run.uuid, capability_name="kanban_move_task", payload={},
+            run_uuid=run.uuid, capability_name="kanban_task_column", payload={},
             preview_text="p", room_uuid=run.room_uuid, agent_uuid=run.agent_uuid,
             state="completed", result={"undo": {}})  # step_uuid NULL
         intents = db.list_write_intents_for_run(run.uuid)

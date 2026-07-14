@@ -1,5 +1,5 @@
-"""Assistant kanban_create_board (log-and-undo; undo deletes the board) and its
-internal, non-model-invocable kanban_delete_board inverse. The caller supplies
+"""Assistant kanban_board_create (log-and-undo; undo deletes the board) and its
+internal, non-model-invocable kanban_board_delete inverse. The caller supplies
 only a name — the store assigns the board uuid, so a caller can never pick (and
 collide) one. This is the gap behind "create a board named X" failing because
 kanban_create (a TASK creator) demanded a board_uuid."""
@@ -42,10 +42,10 @@ def _ctx():
 
 
 def test_capabilities_board_create_exposed_delete_internal():
-    create = CAPABILITIES[AssistantActionName.KANBAN_CREATE_BOARD]
+    create = CAPABILITIES[AssistantActionName.KANBAN_BOARD_CREATE]
     assert create.write is True and create.tier == "log_and_undo" and create.prompt_exposed is True
     assert "board_uuid" not in create.required_args  # caller never supplies a uuid
-    delete = CAPABILITIES[AssistantActionName.KANBAN_DELETE_BOARD]
+    delete = CAPABILITIES[AssistantActionName.KANBAN_BOARD_DELETE]
     assert delete.prompt_exposed is False
 
 
@@ -62,7 +62,7 @@ def test_create_board_assigns_uuid_and_returns_delete_inverse(app_ctx):
         assert board["columns"]  # default columns were created
         assert obs.data["link"] == f"/kanban?id={bu}"
         assert obs.data["undo"] == {
-            "capability": "kanban_delete_board", "payload": {"board_uuid": bu}}
+            "capability": "kanban_board_delete", "payload": {"board_uuid": bu}}
     finally:
         if bu:
             db.kanban_delete_board(UUID(bu))
@@ -81,7 +81,7 @@ def test_create_board_via_loop_and_undo(app_ctx):
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     agent._decide_next_step = scripted_decisions(
         AssistantStepDecision(reason="make the board",
-                              action=AssistantActionName.KANBAN_CREATE_BOARD,
+                              action=AssistantActionName.KANBAN_BOARD_CREATE,
                               args={"title": name}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
                               args={"message": "done"}))

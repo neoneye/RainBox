@@ -105,11 +105,11 @@ only by `undo_write_intent`.
 | `remember` | memory | log-and-undo | `reject_memory_candidate` (internal) |
 | `forget_memory` | memory | log-and-undo | `reactivate_memory` (internal) |
 | `activate_memory` | memory | **confirm** | — |
-| `kanban_move_task` | kanban | log-and-undo | inverse move (position-aware) |
-| `kanban_complete` | kanban | log-and-undo | move back to prior column |
-| `kanban_comment` | kanban | log-and-undo | `↩ retracted:` comment |
-| `kanban_create_task` | kanban | log-and-undo | `kanban_delete_task` (internal) |
-| `kanban_create_board` | kanban | log-and-undo | `kanban_delete_board` (internal) |
+| `kanban_task_column` | kanban | log-and-undo | inverse move (position-aware) |
+| `kanban_task_complete` | kanban | log-and-undo | move back to prior column |
+| `kanban_task_comment` | kanban | log-and-undo | `↩ retracted:` comment |
+| `kanban_task_create` | kanban | log-and-undo | `kanban_task_delete` (internal) |
+| `kanban_board_create` | kanban | log-and-undo | `kanban_board_delete` (internal) |
 | `set_reminder` | cron | **confirm** (dry-run) | — |
 | `edit_file` | workspace | **confirm** (dry-run diff) | — |
 | `propose_skill` | skill | log-and-undo | `skill_delete` (internal) |
