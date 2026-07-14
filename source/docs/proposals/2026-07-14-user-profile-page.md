@@ -168,10 +168,12 @@ Design decisions baked in above:
 - **Datetime formatting is two enums, not a strftime string.** Free-form
   format strings are a footgun (nobody remembers `%-d`), and five date
   shapes + two clock shapes cover every locale the page targets. The form
-  shows a **live preview line** ("Preview: 14.07.2026 · 21:30") rendered
-  client-side from the profile's timezone + both formats, updating as the
-  selects change — the preview is the documentation. A blank timezone uses
-  the browser's local zone. Because timezone validation is deliberately soft,
+  shows a **preview line** ("Preview: 31.12.2026 · 23:59") rendered
+  client-side from both format selects, updating as they change — the
+  preview is the documentation. The sample values are fixed and chosen to be
+  unambiguous: 31 December (31 can only be a day, so DD/MM vs MM/DD is
+  readable at a glance) at 23:59 (which can only be a 24h clock; 12h shows
+  11:59 pm). Because timezone validation is deliberately soft,
   preview construction is wrapped in `try/catch`: an invalid or half-typed
   zone shows "Preview unavailable — timezone not recognized" and never breaks
   the rest of the form. If `Intl.supportedValuesOf` is unavailable, the

@@ -1055,16 +1055,13 @@ function profileUpdatePreview(){
   const dateFmt = profileFieldEl('date_format').value || 'YYYY-MM-DD';
   const hour12 = (profileFieldEl('time_format').value || '24h') === '12h';
   try {
-    // Blank timezone = the browser's local zone; an invalid or half-typed
-    // zone throws here and must never break the rest of the form.
-    const opts = {year: 'numeric', month: '2-digit', day: '2-digit',
-                  hour: '2-digit', minute: '2-digit', hour12: hour12};
-    if (tz) opts.timeZone = tz;
-    const parts = {};
-    new Intl.DateTimeFormat('en-GB', opts).formatToParts(new Date())
-      .forEach(p => { parts[p.type] = p.value; });
-    const time = parts.hour + ':' + parts.minute +
-      (parts.dayPeriod ? ' ' + parts.dayPeriod.toLowerCase() : '');
+    // The timezone's only job here is validation: an invalid or half-typed
+    // zone throws and must never break the rest of the form.
+    if (tz) new Intl.DateTimeFormat('en', {timeZone: tz});
+    // Fixed sample values, chosen to be unambiguous: 31 can only be a day
+    // (so DD/MM vs MM/DD is readable) and 23:59 can only be a 24h clock.
+    const parts = {year: String(new Date().getFullYear()), month: '12', day: '31'};
+    const time = hour12 ? '11:59 pm' : '23:59';
     el.textContent = 'Preview: ' + profileFormatDateParts(parts, dateFmt) + ' · ' + time;
   } catch (e) {
     el.textContent = 'Preview unavailable — timezone not recognized';
