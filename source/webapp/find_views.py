@@ -77,8 +77,17 @@ function fSetStatus(text, isErr){
   fStatus.className = 'status' + (isErr ? ' err' : '');
 }
 
+// Keep the url in step with the search box (?q=<fragment>), so the address
+// bar is always a permanent link to the current search.
+function fSyncUrl(q){
+  const url = new URL(window.location);
+  if (q) url.searchParams.set('q', q); else url.searchParams.delete('q');
+  history.replaceState(null, '', url);
+}
+
 async function fSearch(){
   const q = fQ.value.trim();
+  fSyncUrl(q);
   fBody.innerHTML = '';
   fTable.hidden = true;
   if (!q){ fSetStatus(''); return; }

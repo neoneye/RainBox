@@ -39,6 +39,10 @@ def test_find_page_renders(app_ctx):
     resp = _client().get("/find")
     assert resp.status_code == 200
     assert b"find-q" in resp.data  # the search input is on the page
+    # The url syncs to the search (?q=) both ways: read on load, written on
+    # search — the address bar is a permanent link to the current search.
+    assert b"fSyncUrl" in resp.data and b"replaceState" in resp.data
+    assert b"get('q')" in resp.data
 
 
 def test_search_api_resolves_a_fragment(board):
