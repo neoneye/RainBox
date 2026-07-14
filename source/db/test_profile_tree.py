@@ -55,3 +55,30 @@ def test_profile_models_round_trip(app_ctx):
         db.db.session.execute(sa.delete(Profile).where(Profile.uuid == pu))
         db.db.session.execute(sa.delete(ProfileFolder).where(ProfileFolder.uuid == fu))
         db.db.session.commit()
+
+
+def test_validate_data_canonical_and_errors():
+    ok = db.validate_profile_data({
+        "full_name": "Jacobus van 't Hoff", "units": "metric",
+        "birthday": "1987-08-30", "address": "Line one\nLine two",
+        "timezone": "", "email": "x@example.com"})
+    assert ok == {"full_name": "Jacobus van 't Hoff", "units": "metric",
+                  "birthday": "1987-08-30", "address": "Line one\nLine two",
+                  "email": "x@example.com"}          # "" canonicalized away
+    assert db.validate_profile_data({}) == {}        # sparse blob valid
+    with pytest.raises(db.ProfileDataError, match="no_such"):
+        db.validate_profile_data({"no_such": "x"})
+    with pytest.raises(db.ProfileDataError, match="no_such"):
+        db.validate_profile_data({"no_such": ""})    # unknown stays rejected when empty
+    with pytest.raises(db.ProfileDataError, match="units"):
+        db.validate_profile_data({"units": "furlongs"})
+    with pytest.raises(db.ProfileDataError, match="birthday"):
+        db.validate_profile_data({"birthday": "2026-02-30"})
+    with pytest.raises(db.ProfileDataError, match="birthday"):
+        db.validate_profile_data({"birthday": "07/14/2026"})
+    with pytest.raises(db.ProfileDataError, match="dynamic"):
+        db.validate_profile_data({"dynamic": {}})    # connector-owned, read-only
+    with pytest.raises(db.ProfileDataError, match="full_name"):
+        db.validate_profile_data({"full_name": 5})
+    with pytest.raises(db.ProfileDataError):
+        db.validate_profile_data(["not", "a", "dict"])
