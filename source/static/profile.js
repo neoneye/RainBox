@@ -1,0 +1,978 @@
+// /profile page logic (vanilla JS, no framework). The HTML shell + CSS live in
+// webapp/profile_views.py; this file is served at /static/profile.js with an
+// mtime cache-buster. Tree state hydrates from GET /profile/api/tree and saves
+// via debounced whole-tree PUTs (version-guarded, projected to structural keys
+// with the read-only built-ins left out); profile data autosaves through a
+// separate per-profile PUT. Mirrors static/prompt.js.
+
+// ---- helpers ----
+function profileEscapeHtml(s){
+  return (s || '').replace(/[&<>"]/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function profileShortDate(iso){
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toISOString().slice(0, 16).replace('T', ' ');
+}
+
+// ---- state ----
+let profileFolders = [];          // {id, name, description, parentId, builtin?, ...}
+let profileItems = [];            // {uuid, name, folderId, summary, builtin?, ...}
+let profileSelectedFolder = null; // folder id, or null for "All profiles" / root
+let profileSelectedItem = null;   // profile uuid when a profile is selected
+let profileExpanded = {};         // folder id -> false when collapsed (default expanded)
+let profileDrag = null;           // {type:'folder'|'item', id} while a node is dragged
+const PROFILE_EXPAND_KEY = 'profile.expandedFolders';
+try { profileExpanded = JSON.parse(localStorage.getItem(PROFILE_EXPAND_KEY)) || {}; }
+catch (e) { profileExpanded = {}; }
+function profilePersistExpand(){
+  try { localStorage.setItem(PROFILE_EXPAND_KEY, JSON.stringify(profileExpanded)); }
+  catch (e) { /* private mode etc. — expand state just won't survive reload */ }
+}
+
+// ---- inlined Lucide icons (https://lucide.dev), self-contained ----
+const PROFILE_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+const PROFILE_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>';
+
+// ---- lookups ----
+function profileFolderById(id){ return profileFolders.find(f => f.id === id) || null; }
+function profileByUuid(uuid){ return profileItems.find(p => p.uuid === uuid) || null; }
+function profileChildFolders(parentId){ return profileFolders.filter(f => (f.parentId || null) === (parentId || null)); }
+function profileItemsInFolder(id){ return profileItems.filter(p => (p.folderId || null) === (id || null)); }
+function profileIsExpanded(id){ return profileExpanded[id] !== false; }
+// Optimistically stamp a node as just-modified; the server sets the
+// authoritative updated_at on save and a reload reconciles.
+function profileTouch(node){ if (node) node.updated_at = new Date().toISOString(); }
+
+// ---- selection ----
+function profileCurrentSelectionId(){
+  if (profileSelectedItem) return profileSelectedItem;
+  if (profileSelectedFolder) return profileSelectedFolder;
+  return null;
+}
+function profileSyncUrl(){
+  // Reflect the selection in ?id= so the URL is a shareable deep link.
+  const url = new URL(window.location);
+  const id = profileCurrentSelectionId();
+  if (id) url.searchParams.set('id', id); else url.searchParams.delete('id');
+  history.replaceState(null, '', url);
+}
+function profileSelectFolder(id){
+  profileSelectedFolder = id;
+  profileSelectedItem = null;
+  profileRenderTree();
+  profileRender();
+}
+function profileSelectItem(uuid){
+  const p = profileByUuid(uuid);
+  profileSelectedItem = uuid;
+  profileSelectedFolder = p ? (p.folderId || null) : null;
+  profileRenderTree();
+  profileRender();
+}
+function profileSelectNode(type, id){
+  if (type === 'item') profileSelectItem(id); else profileSelectFolder(id);
+}
+function profileFolderClick(id){
+  // First click selects; clicking the already-selected folder toggles expand.
+  const wasSelected = (profileSelectedFolder === id) && !profileSelectedItem;
+  if (wasSelected){
+    profileExpanded[id] = !profileIsExpanded(id);
+    profilePersistExpand();
+    profileRenderTree();
+    profileRender();
+  } else {
+    profileSelectFolder(id);
+  }
+}
+
+// ---- right-pane render ----
+function profileRender(){
+  profileRenderRename();
+  profileRenderFolderDesc();
+  profileRenderContents();
+  profileRenderForm();
+  profileSyncUrl();
+}
+// Depth-first list of everything under parentId (null = whole tree), in the
+// same order as the left tree, each row tagged with its nesting `depth` — like
+// /cron's cronFlattenTree (docs/ui-left-panel-tree.md §7). At the root the
+// user's own content comes first and the built-in Templates folder last,
+// matching the tree render.
+function profileFlattenTree(parentId){
+  parentId = parentId || null;
+  const out = [];
+  const walk = (f, depth) => {
+    out.push({kind: 'folder', node: f, depth: depth});
+    profileChildFolders(f.id).forEach(c => walk(c, depth + 1));
+    profileItemsInFolder(f.id).forEach(p => out.push({kind: 'item', node: p, depth: depth + 1}));
+  };
+  if (parentId === null){
+    profileChildFolders(null).filter(f => !f.builtin).forEach(f => walk(f, 0));
+    profileItemsInFolder(null).forEach(p => out.push({kind: 'item', node: p, depth: 0}));
+    profileChildFolders(null).filter(f => f.builtin).forEach(f => walk(f, 0));
+  } else {
+    profileChildFolders(parentId).forEach(f => walk(f, 0));
+    profileItemsInFolder(parentId).forEach(p => out.push({kind: 'item', node: p, depth: 0}));
+  }
+  return out;
+}
+function profileRenderContents(){
+  const wrap = document.getElementById('profile-table-wrap');
+  const formView = !!profileSelectedItem;
+  wrap.hidden = formView;
+  if (formView) return;
+  const tb = document.getElementById('profile-rows');
+  tb.innerHTML = '';
+  // The selected folder's whole subtree (or the entire tree at the root),
+  // depth-first and depth-indented, mirroring the left tree.
+  const nodes = profileFlattenTree(profileSelectedFolder);
+  if (!nodes.length){
+    tb.innerHTML = '<tr><td colspan="7"><i>' +
+      (profileSelectedFolder === null ? 'no profiles yet' : 'empty folder') + '</i></td></tr>';
+    return;
+  }
+  nodes.forEach(item => {
+    const pad = 9 + item.depth * 20;  // indent the name cell by nesting depth, like the tree
+    const tr = document.createElement('tr');
+    if (item.kind === 'folder'){
+      // Folder rows carry the tree's folder icon in the Name cell; that (plus
+      // the empty person/locale cells) is what marks them as folders.
+      const f = item.node;
+      tr.innerHTML =
+        '<td class="profile-name-cell" style="padding-left:' + pad + 'px">' +
+        '<span class="profile-ficon">' + PROFILE_ICON_FOLDER + '</span>' + profileEscapeHtml(f.name) + '</td>' +
+        '<td></td><td></td><td></td><td></td><td></td>' +
+        '<td><a href="#" class="row-open">Open</a></td>';
+      tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); profileSelectFolder(f.id); });
+    } else {
+      const p = item.node;
+      const s = p.summary || {};
+      tr.innerHTML =
+        '<td class="profile-name-cell" style="padding-left:' + pad + 'px">' + profileEscapeHtml(p.name) +
+        (p.builtin ? ' <span class="profile-builtin-tag">built-in</span>' : '') + '</td>' +
+        '<td>' + profileEscapeHtml(s.full_name) + '</td>' +
+        '<td>' + profileEscapeHtml(s.language) + '</td>' +
+        '<td>' + profileEscapeHtml(s.units) + '</td>' +
+        '<td>' + profileEscapeHtml(s.time_format) + '</td>' +
+        '<td>' + profileEscapeHtml(s.country) + '</td>' +
+        '<td><a href="#" class="row-open">Open</a></td>';
+      tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); profileSelectItem(p.uuid); });
+    }
+    tb.appendChild(tr);
+  });
+}
+// The selected folder's / profile's name, shown as a click-to-rename control
+// (docs/ui-modal-rename.md). Built-ins are unrenamable, so they get a plain
+// heading with no rename affordance.
+function profileRenderRename(){
+  const el = document.getElementById('profile-node-rename');
+  el.innerHTML = '';
+  let node = null, type = null;
+  if (profileSelectedItem){ node = profileByUuid(profileSelectedItem); type = 'item'; }
+  else if (profileSelectedFolder !== null){ node = profileFolderById(profileSelectedFolder); type = 'folder'; }
+  if (!node){ el.hidden = true; return; }
+  el.hidden = false;
+  if (node.builtin){
+    const span = document.createElement('span');
+    span.className = 'profile-heading';
+    span.textContent = node.name;
+    el.appendChild(span);
+    return;
+  }
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'profile-rename-display';
+  btn.textContent = node.name;
+  btn.title = 'Click to rename';
+  btn.addEventListener('click', () => profileOpenRenameModal(type, node, node.name));
+  el.appendChild(btn);
+}
+
+// ---- rename modal ----
+let profileRenameState = null;   // {type: 'item'|'folder', id, original}
+function profileOpenRenameModal(type, node, seed){
+  profileRenameState = {type: type, id: type === 'item' ? node.uuid : node.id,
+                        original: node.name};
+  document.getElementById('profile-rename-title').textContent =
+    type === 'item' ? 'Rename profile' : 'Rename folder';
+  const input = document.getElementById('profile-rename-input');
+  input.value = seed;
+  profileSyncRenameConfirm();
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('profile-rename-modal').hidden = false;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+function profileCloseRenameModal(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('profile-rename-modal').hidden = true;
+  profileRenameState = null;
+}
+// Rename is enabled only for a non-empty name that actually differs.
+function profileSyncRenameConfirm(){
+  const v = document.getElementById('profile-rename-input').value.trim();
+  document.getElementById('profile-rename-confirm').disabled =
+    v === '' || !profileRenameState || v === profileRenameState.original;
+}
+function profileConfirmRenameModal(){
+  if (!profileRenameState) return;
+  const v = document.getElementById('profile-rename-input').value.trim();
+  if (!v || v === profileRenameState.original) return;
+  const node = profileRenameState.type === 'item'
+    ? profileByUuid(profileRenameState.id) : profileFolderById(profileRenameState.id);
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('profile-rename-modal').hidden = true;
+  profileRenameState = null;
+  if (!node) return;
+  node.name = v;
+  profileTouch(node);
+  profileRenderTree();
+  profileRender();
+  profileSave();
+  profileToastMsg('Renamed to “' + v + '”');
+}
+// Description: folders only (profiles have no description field). Built-in
+// folder shows its shipped description read-only.
+function profileFillDescValue(el, text){
+  if (text){ el.textContent = text; el.classList.remove('muted'); }
+  else { el.textContent = '(none)'; el.classList.add('muted'); }
+}
+function profileRenderFolderDesc(){
+  const el = document.getElementById('profile-folder-desc');
+  el.innerHTML = '';
+  const node = (!profileSelectedItem && profileSelectedFolder !== null)
+    ? profileFolderById(profileSelectedFolder) : null;
+  if (!node){ el.hidden = true; return; }
+  el.hidden = false;
+  const lbl = document.createElement('span'); lbl.className = 'muted'; lbl.textContent = 'Description:';
+  const val = document.createElement('span'); profileFillDescValue(val, node.description);
+  el.appendChild(lbl); el.appendChild(val);
+  if (!node.builtin){
+    const btn = document.createElement('button'); btn.textContent = 'Edit description';
+    btn.addEventListener('click', profileEditDescription);
+    el.appendChild(btn);
+  }
+}
+let profileDescOrig = '';
+function profileEditDescription(){
+  const node = profileSelectedFolder !== null ? profileFolderById(profileSelectedFolder) : null;
+  if (!node || node.builtin) return;
+  profileDescOrig = node.description || '';
+  document.getElementById('profile-desc-input').value = profileDescOrig;
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('profile-desc-modal').hidden = false;
+  document.getElementById('profile-desc-input').focus();
+}
+function profileCloseDescModal(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('profile-desc-modal').hidden = true;
+}
+function profileSaveDescription(){
+  const node = profileSelectedFolder !== null ? profileFolderById(profileSelectedFolder) : null;
+  if (node && !node.builtin){ node.description = document.getElementById('profile-desc-input').value; profileTouch(node); }
+  profileCloseDescModal();
+  profileRender();
+  profileSave();
+}
+
+// ---- left tree ----
+function profileRenderTree(){
+  document.getElementById('profile-all').className =
+    'profile-node' + ((profileSelectedFolder === null && !profileSelectedItem) ? ' sel' : '');
+  const root = document.getElementById('profile-tree-root');
+  root.innerHTML = '';
+  // User content first; the virtual Templates folder renders after it.
+  profileChildFolders(null).filter(f => !f.builtin).forEach(f => root.appendChild(profileFolderLi(f)));
+  profileItemsInFolder(null).forEach(p => {
+    const li = document.createElement('li'); li.appendChild(profileItemNode(p)); root.appendChild(li);
+  });
+  profileChildFolders(null).filter(f => f.builtin).forEach(f => root.appendChild(profileFolderLi(f)));
+}
+function profileMakeBuiltinTag(){
+  const tag = document.createElement('span');
+  tag.className = 'profile-builtin-tag';
+  tag.textContent = 'built-in';
+  return tag;
+}
+function profileFolderLi(f){
+  const li = document.createElement('li');
+  const kids = profileChildFolders(f.id);
+  const leaves = profileItemsInFolder(f.id);
+  const hasKids = (kids.length + leaves.length) > 0;
+  const expanded = profileIsExpanded(f.id);
+  // A real anchor so CMD/Ctrl/middle click opens the folder view in a new
+  // tab; a plain click is intercepted below and selects/toggles in-page.
+  const node = document.createElement('a');
+  const selected = (profileSelectedFolder === f.id && !profileSelectedItem);
+  node.className = 'profile-node' + (selected ? ' sel' : '');
+  node.href = '/profile?id=' + encodeURIComponent(f.id);
+  const icon = document.createElement('span');
+  icon.className = 'profile-ficon';
+  icon.innerHTML = (expanded && hasKids) ? PROFILE_ICON_FOLDER_OPEN : PROFILE_ICON_FOLDER;
+  const label = document.createElement('span');
+  label.className = 'profile-folder-label';
+  label.textContent = f.name;
+  node.appendChild(icon); node.appendChild(label);
+  if (f.builtin) node.appendChild(profileMakeBuiltinTag());
+  node.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    profileFolderClick(f.id);
+  });
+  if (!f.builtin){
+    profileMakeDraggable(node, 'folder', f.id);
+  }
+  profileMakeFolderDrop(node, f.id);
+  // Kebab is rendered on every row but only shown (via CSS) on the selected one,
+  // so row heights stay consistent — matches /cron. The built-in Templates
+  // folder has no actions, so its kebab stays permanently hidden.
+  profileMakeKebab(node, f.builtin ? {} : {
+    onRename: () => profileKebabRename('folder', f.id),
+    onDelete: () => profileConfirmDeleteFolder(f.id),
+  });
+  li.appendChild(node);
+  if (expanded && hasKids){
+    const ul = document.createElement('ul');
+    kids.forEach(c => ul.appendChild(profileFolderLi(c)));
+    leaves.forEach(p => { const pli = document.createElement('li'); pli.appendChild(profileItemNode(p)); ul.appendChild(pli); });
+    li.appendChild(ul);
+  }
+  return li;
+}
+function profileItemNode(p){
+  // A real anchor so CMD/Ctrl/middle click opens the profile in a new tab; a
+  // plain click is intercepted below and selects the profile in-page instead.
+  const n = document.createElement('a');
+  const selected = (profileSelectedItem === p.uuid);
+  n.className = 'profile-item-node' + (selected ? ' sel' : '');
+  n.href = '/profile?id=' + encodeURIComponent(p.uuid);
+  n.title = p.name;
+  // No leaf icon in the tree — every leaf here is a profile, so an icon is noise.
+  const label = document.createElement('span'); label.className = 'profile-item-label'; label.textContent = p.name;
+  n.appendChild(label);
+  if (p.builtin) n.appendChild(profileMakeBuiltinTag());
+  n.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    profileSelectItem(p.uuid);
+  });
+  if (!p.builtin){
+    profileMakeDraggable(n, 'item', p.uuid);
+    profileMakeItemDrop(n, p.uuid);
+  }
+  // Kebab on every row, shown (via CSS) only on the selected one — matches
+  // /cron. Built-ins are read-only: Duplicate is their only action.
+  profileMakeKebab(n, p.builtin ? {
+    onDuplicate: () => profileDuplicateUuid(p.uuid),
+  } : {
+    onRename: () => profileKebabRename('item', p.uuid),
+    onDuplicate: () => profileDuplicateUuid(p.uuid),
+    onDelete: () => profileConfirmDeleteItem(p.uuid),
+  });
+  return n;
+}
+// Kebab "Rename" selects the node and opens the rename modal on it.
+function profileKebabRename(type, id){
+  profileSelectNode(type, id);
+  const node = type === 'item' ? profileByUuid(id) : profileFolderById(id);
+  if (node) profileOpenRenameModal(type, node, node.name);
+}
+// Position a fixed kebab menu near its anchor, clamped inside the viewport:
+// below the anchor when it fits, flipped above when it would overflow the
+// bottom edge (nodes at the bottom of a long tree). Unhides the menu first so
+// its offsetWidth/Height are measurable.
+function profilePlaceMenu(menu, anchorRect){
+  menu.hidden = false;
+  const margin = 6;
+  const left = Math.max(margin,
+    Math.min(anchorRect.left, window.innerWidth - menu.offsetWidth - margin));
+  let top = anchorRect.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight - margin){
+    top = anchorRect.top - menu.offsetHeight - 4;
+  }
+  menu.style.left = left + 'px';
+  menu.style.top = Math.max(margin, top) + 'px';
+}
+// 3-dot overflow menu. opts: { onRename?, onDuplicate?, onDelete? }. With no
+// actions at all the kebab element is still rendered (constant row height)
+// but stays permanently invisible.
+function profileMakeKebab(node, opts){
+  opts = opts || {};
+  const kebab = document.createElement('button');
+  kebab.type = 'button'; kebab.className = 'profile-kebab';
+  kebab.setAttribute('aria-label', 'Item actions'); kebab.setAttribute('aria-haspopup', 'menu');
+  const menu = document.createElement('div');
+  menu.className = 'profile-menu'; menu.setAttribute('role', 'menu'); menu.hidden = true;
+  const items = [];
+  if (opts.onRename) items.push(['Rename', opts.onRename, '']);
+  if (opts.onDuplicate) items.push(['Duplicate', opts.onDuplicate, '']);
+  if (opts.onDelete) items.push(['Delete', opts.onDelete, 'danger']);
+  if (!items.length) kebab.classList.add('profile-kebab-none');
+  items.forEach(spec => {
+    const item = document.createElement('button');
+    item.type = 'button'; item.className = 'item' + (spec[2] ? ' ' + spec[2] : '');
+    item.setAttribute('role', 'menuitem');
+    item.textContent = spec[0];
+    // preventDefault: the menu sits inside the row's anchor — never follow it.
+    item.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); menu.hidden = true; spec[1](); });
+    menu.appendChild(item);
+  });
+  kebab.addEventListener('click', e => {
+    e.stopPropagation();
+    e.preventDefault();  // the kebab sits inside the row's anchor — never follow it
+    const willOpen = menu.hidden;
+    document.querySelectorAll('.profile-menu').forEach(m => { m.hidden = true; });
+    if (willOpen) profilePlaceMenu(menu, kebab.getBoundingClientRect());
+  });
+  node.appendChild(kebab); node.appendChild(menu);
+}
+
+// ---- add folder / add profile ----
+let profileAddFolderAsSub = false;
+function profileAddFolder(asSub){
+  profileAddFolderAsSub = !!asSub;
+  document.getElementById('profile-folder-title').textContent = asSub ? 'New subfolder' : 'New folder';
+  const input = document.getElementById('profile-folder-input');
+  input.value = '';
+  document.getElementById('profile-folder-create').disabled = true;
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('profile-folder-modal').hidden = false;
+  input.focus();
+}
+function profileCloseFolderModal(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('profile-folder-modal').hidden = true;
+}
+function profileAddFolderConfirm(){
+  const name = document.getElementById('profile-folder-input').value.trim();
+  if (!name) return;
+  let parentId = profileAddFolderAsSub ? profileSelectedFolder : null;
+  const parent = parentId ? profileFolderById(parentId) : null;
+  if (parent && parent.builtin) parentId = null;  // the Templates folder can't hold user rows
+  const id = crypto.randomUUID();
+  profileFolders.push({id: id, name: name, description: '', parentId: parentId});
+  if (parentId){ profileExpanded[parentId] = true; profilePersistExpand(); }
+  profileCloseFolderModal();
+  profileSelectFolder(id);
+  profileSave();
+}
+function profileAddProfile(){
+  const input = document.getElementById('profile-new-input');
+  input.value = '';
+  document.getElementById('profile-new-create').disabled = true;
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('profile-new-modal').hidden = false;
+  input.focus();
+}
+function profileCloseNewModal(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('profile-new-modal').hidden = true;
+}
+// A new profile starts with empty data (created server-side by the tree
+// save). It lands in the currently-selected folder — or at the root when the
+// selection is the read-only Templates folder. The tree save is flushed
+// immediately so the form's data fetch finds the row.
+async function profileAddProfileConfirm(){
+  const name = document.getElementById('profile-new-input').value.trim();
+  if (!name) return;
+  let folderId = profileSelectedFolder;
+  const folder = folderId ? profileFolderById(folderId) : null;
+  if (folder && folder.builtin) folderId = null;
+  const uuid = crypto.randomUUID();
+  profileItems.push({uuid: uuid, name: name, folderId: folderId, summary: {}});
+  profileCloseNewModal();
+  clearTimeout(profileSaveTimer);
+  await profileSavePush();
+  profileSelectItem(uuid);
+}
+
+// ---- drag & drop (one node at a time; built-ins are not draggable and the
+// Templates folder accepts no drops) ----
+function profileFolderInSubtree(candidateId, rootId){
+  let cur = profileFolderById(candidateId);
+  while (cur){
+    if (cur.id === rootId) return true;
+    cur = cur.parentId ? profileFolderById(cur.parentId) : null;
+  }
+  return false;
+}
+function profileMoveFolder(folderId, targetParentId, atStart){
+  targetParentId = targetParentId || null;
+  if (folderId === targetParentId) return;
+  if (targetParentId && profileFolderInSubtree(targetParentId, folderId)) return;  // no cycles
+  const f = profileFolderById(folderId);
+  if (!f) return;
+  f.parentId = targetParentId;
+  profileFolders = profileFolders.filter(x => x.id !== folderId);
+  if (atStart){
+    const i = profileFolders.findIndex(x => (x.parentId || null) === targetParentId);
+    if (i < 0) profileFolders.push(f); else profileFolders.splice(i, 0, f);
+  } else {
+    let at = profileFolders.length;
+    for (let i = profileFolders.length - 1; i >= 0; i--){
+      if ((profileFolders[i].parentId || null) === targetParentId){ at = i + 1; break; }
+    }
+    profileFolders.splice(at, 0, f);
+  }
+  profileSave();
+}
+function profileMoveFolderBeside(folderId, targetFolderId, after){
+  if (folderId === targetFolderId) return;
+  const target = profileFolderById(targetFolderId);
+  if (!target) return;
+  const newParent = target.parentId || null;
+  if (newParent && profileFolderInSubtree(newParent, folderId)) return;  // no cycles
+  const f = profileFolderById(folderId);
+  if (!f) return;
+  f.parentId = newParent;
+  profileFolders = profileFolders.filter(x => x.id !== folderId);
+  const ti = profileFolders.findIndex(x => x.id === targetFolderId);
+  if (ti < 0) profileFolders.push(f);
+  else profileFolders.splice(after ? ti + 1 : ti, 0, f);
+  profileSave();
+}
+function profileMoveItem(itemUuid, targetFolderId, beforeItemUuid){
+  targetFolderId = targetFolderId || null;
+  const idx = profileItems.findIndex(p => p.uuid === itemUuid);
+  if (idx < 0) return;
+  const item = profileItems.splice(idx, 1)[0];
+  item.folderId = targetFolderId;
+  let insertAt = beforeItemUuid ? profileItems.findIndex(p => p.uuid === beforeItemUuid) : -1;
+  if (insertAt < 0){
+    insertAt = profileItems.length;
+    for (let i = profileItems.length - 1; i >= 0; i--){
+      if ((profileItems[i].folderId || null) === targetFolderId){ insertAt = i + 1; break; }
+    }
+  }
+  profileItems.splice(insertAt, 0, item);
+  profileSave();
+}
+function profileMakeDraggable(el, type, id){
+  el.draggable = true;
+  el.addEventListener('dragstart', e => {
+    profileDrag = {type: type, id: id};
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);  // required to start a drag in Firefox
+    el.classList.add('profile-dragging');
+    document.getElementById('profile-tree').classList.add('profile-dragging-on');  // reveal root drop zone
+    e.stopPropagation();
+  });
+  el.addEventListener('dragend', () => {
+    profileDrag = null;
+    document.getElementById('profile-tree').classList.remove('profile-dragging-on');
+    profileRenderTree();
+  });
+}
+function profileDropInto(folderId, atStart){
+  if (!profileDrag) return;
+  const dragged = profileDrag;
+  if (dragged.type === 'item'){
+    let beforeUuid = null;
+    if (atStart){
+      const first = profileItems.find(p => (p.folderId || null) === (folderId || null) && p.uuid !== dragged.id);
+      beforeUuid = first ? first.uuid : null;
+    }
+    profileMoveItem(dragged.id, folderId, beforeUuid);
+  } else {
+    profileMoveFolder(dragged.id, folderId, atStart);
+  }
+  if (folderId){ profileExpanded[folderId] = true; profilePersistExpand(); }
+  profileDrag = null;
+  profileSelectNode(dragged.type, dragged.id);  // select the moved node (also renders)
+}
+function profileMakeFolderDrop(node, folderId){
+  // Three zones on a folder: top third = reorder before, bottom third = after
+  // (sibling), middle = nest into. Profile items always go "into".
+  const zoneOf = e => {
+    if (profileDrag && profileDrag.type === 'item') return 'into';
+    const r = node.getBoundingClientRect();
+    const y = e.clientY - r.top;
+    if (y < r.height / 3) return 'before';
+    if (y > r.height * 2 / 3) return 'after';
+    return 'into';
+  };
+  const okFor = z => {
+    if (!profileDrag) return false;
+    const target = profileFolderById(folderId);
+    if (target && target.builtin) return false;  // the Templates folder accepts no drops
+    if (profileDrag.type === 'item') return z === 'into';
+    if (folderId === profileDrag.id) return false;
+    if (z === 'into') return !profileFolderInSubtree(folderId, profileDrag.id);
+    const t = profileFolderById(folderId);
+    const np = t ? (t.parentId || null) : null;
+    return !(np && profileFolderInSubtree(np, profileDrag.id));
+  };
+  const clear = () => node.classList.remove('profile-drop-before', 'profile-drop-after', 'profile-drop-target');
+  node.addEventListener('dragover', e => {
+    if (!profileDrag) return;
+    e.stopPropagation();
+    const z = zoneOf(e);
+    if (!okFor(z)){ clear(); return; }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    node.classList.toggle('profile-drop-before', z === 'before');
+    node.classList.toggle('profile-drop-after', z === 'after');
+    node.classList.toggle('profile-drop-target', z === 'into');
+  });
+  node.addEventListener('dragleave', clear);
+  node.addEventListener('drop', e => {
+    if (!profileDrag) return;
+    e.stopPropagation();
+    const z = zoneOf(e);
+    if (!okFor(z)){ clear(); return; }
+    e.preventDefault();
+    clear();
+    if (z === 'into'){
+      profileDropInto(folderId, false);
+    } else {
+      const draggedId = profileDrag.id;
+      profileMoveFolderBeside(profileDrag.id, folderId, z === 'after');
+      profileDrag = null;
+      profileSelectNode('folder', draggedId);
+    }
+  });
+}
+function profileMakeItemDrop(node, itemUuid){
+  const isAfter = e => {
+    const r = node.getBoundingClientRect();
+    return (e.clientY - r.top) > r.height / 2;
+  };
+  node.addEventListener('dragover', e => {
+    if (!profileDrag) return;
+    e.preventDefault(); e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    const after = isAfter(e);
+    node.classList.toggle('profile-drop-after', after);
+    node.classList.toggle('profile-drop-before', !after);
+  });
+  node.addEventListener('dragleave', () => node.classList.remove('profile-drop-before', 'profile-drop-after'));
+  node.addEventListener('drop', e => {
+    if (!profileDrag) return;
+    e.preventDefault(); e.stopPropagation();
+    const after = isAfter(e);
+    node.classList.remove('profile-drop-before', 'profile-drop-after');
+    profileDropOnItem(itemUuid, after);
+  });
+}
+function profileDropOnItem(targetUuid, after){
+  if (!profileDrag) return;
+  if (profileDrag.type === 'item' && profileDrag.id === targetUuid) return;
+  const dragged = profileDrag;
+  const target = profileByUuid(targetUuid);
+  const targetFolder = target ? (target.folderId || null) : null;
+  if (dragged.type === 'item'){
+    let beforeUuid = targetUuid;
+    if (after){
+      const ti = profileItems.findIndex(p => p.uuid === targetUuid);
+      beforeUuid = (ti + 1 < profileItems.length) ? profileItems[ti + 1].uuid : null;
+    }
+    if (beforeUuid === dragged.id) beforeUuid = null;
+    profileMoveItem(dragged.id, targetFolder, beforeUuid);
+  } else {
+    profileMoveFolder(dragged.id, targetFolder);
+  }
+  profileDrag = null;
+  profileSelectNode(dragged.type, dragged.id);
+}
+function profileWireRootDrop(el, atStart){
+  el.addEventListener('dragover', e => {
+    if (profileDrag){ e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; el.classList.add('over'); }
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('over'));
+  el.addEventListener('drop', e => {
+    if (profileDrag){ e.preventDefault(); e.stopPropagation(); el.classList.remove('over'); profileDropInto(null, atStart); }
+  });
+}
+function profileInitTreeDnD(){
+  const root = document.getElementById('profile-tree-root');
+  root.addEventListener('dragover', e => {
+    if (profileDrag){ e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+  });
+  root.addEventListener('drop', e => {
+    if (profileDrag){ e.preventDefault(); profileDropInto(null, false); }  // empty space → end of root
+  });
+  profileWireRootDrop(document.getElementById('profile-root-drop'), false);
+  document.getElementById('profile-all').addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // browser handles new tab/window
+    e.preventDefault();
+    profileSelectFolder(null);
+  });
+  // Dismiss any open kebab menu on an outside click or Escape.
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.profile-menu').forEach(m => { m.hidden = true; });
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') document.querySelectorAll('.profile-menu').forEach(m => { m.hidden = true; });
+  });
+}
+
+// ---- delete. Uses the same whole-tree save + declared-deletes tripwire as
+// /cron: removed rows are absent from the next PUT, and profilePendingDeletes
+// tells the server how many deletions to expect. ----
+let profileDeleteOnConfirm = null;
+let profileDeleteRequireName = null;
+function profileOpenDeleteModal(opts){
+  profileDeleteOnConfirm = opts.onConfirm;
+  profileDeleteRequireName = opts.requireName || null;
+  document.getElementById('profile-delete-title').textContent = opts.title || 'Delete';
+  document.getElementById('profile-delete-msg').textContent = opts.message;
+  const nameRow = document.getElementById('profile-delete-name-row');
+  const input = document.getElementById('profile-delete-input');
+  const btn = document.getElementById('profile-delete-confirm');
+  if (profileDeleteRequireName){
+    nameRow.hidden = false;
+    document.getElementById('profile-delete-name').textContent = profileDeleteRequireName;
+    input.value = ''; btn.disabled = true;
+  } else {
+    nameRow.hidden = true; btn.disabled = false;
+  }
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('profile-delete-modal').hidden = false;
+  if (profileDeleteRequireName) input.focus();
+}
+function profileCloseDeleteModal(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('profile-delete-modal').hidden = true;
+  profileDeleteOnConfirm = null;
+  profileDeleteRequireName = null;
+}
+function profileDeleteUpdateState(){
+  const input = document.getElementById('profile-delete-input');
+  document.getElementById('profile-delete-confirm').disabled =
+    profileDeleteRequireName ? (input.value.trim() !== profileDeleteRequireName) : false;
+}
+function profileConfirmDeleteItem(uuid){
+  const p = profileByUuid(uuid);
+  if (!p || p.builtin) return;
+  profileOpenDeleteModal({
+    title: 'Delete profile',
+    message: 'Delete the profile "' + p.name + '"? Its person data is deleted too. This cannot be undone.',
+    requireName: p.name,
+    onConfirm: () => profileDeleteItem(uuid),
+  });
+}
+function profileConfirmDeleteFolder(id){
+  const f = profileFolderById(id);
+  if (!f || f.builtin) return;
+  const sub = profileFlattenTree(f.id);
+  const folderCount = sub.filter(n => n.kind === 'folder').length;
+  const itemCount = sub.filter(n => n.kind === 'item').length;
+  if (folderCount + itemCount === 0){
+    profileOpenDeleteModal({
+      title: 'Delete folder',
+      message: 'Delete empty folder "' + f.name + '"?',
+      onConfirm: () => profileDeleteFolderById(f.id),
+    });
+    return;
+  }
+  const parts = [];
+  if (folderCount) parts.push(folderCount + (folderCount === 1 ? ' subfolder' : ' subfolders'));
+  if (itemCount) parts.push(itemCount + (itemCount === 1 ? ' profile' : ' profiles'));
+  profileOpenDeleteModal({
+    title: 'Delete folder',
+    message: 'Are you sure you want to delete folder "' + f.name + '" containing ' +
+      parts.join(' and ') + '? The profiles inside are deleted too. This cannot be undone.',
+    requireName: f.name,
+    onConfirm: () => profileDeleteFolderById(f.id),
+  });
+}
+function profileDeleteItem(uuid){
+  const before = profileItems.length;
+  profileItems = profileItems.filter(p => p.uuid !== uuid);
+  profilePendingDeletes += before - profileItems.length;  // declare to the save's tripwire
+  if (profileSelectedItem === uuid) profileSelectedItem = null;
+  profileRenderTree();
+  profileRender();
+  profileSave();
+}
+function profileDeleteFolderById(id){
+  const f = profileFolderById(id);
+  if (!f) return;
+  // Cascade: this folder + every descendant folder + every profile inside any of them.
+  const folderIds = new Set([f.id]);
+  let grew = true;
+  while (grew){
+    grew = false;
+    profileFolders.forEach(c => {
+      if (folderIds.has(c.parentId) && !folderIds.has(c.id)){ folderIds.add(c.id); grew = true; }
+    });
+  }
+  const beforeF = profileFolders.length, beforeP = profileItems.length;
+  profileFolders = profileFolders.filter(x => !folderIds.has(x.id));
+  profileItems = profileItems.filter(p => !folderIds.has(p.folderId));
+  profilePendingDeletes += (beforeF - profileFolders.length) + (beforeP - profileItems.length);
+  if (profileSelectedItem && !profileByUuid(profileSelectedItem)) profileSelectedItem = null;
+  if (folderIds.has(profileSelectedFolder)) profileSelectedFolder = f.parentId || null;
+  profileRenderTree();
+  profileRender();
+  profileSave();
+}
+document.getElementById('profile-delete-input').addEventListener('input', profileDeleteUpdateState);
+document.getElementById('profile-delete-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('profile-delete-confirm').disabled){
+    e.preventDefault();
+    document.getElementById('profile-delete-confirm').click();
+  }
+});
+document.getElementById('profile-delete-confirm').addEventListener('click', () => {
+  const fn = profileDeleteOnConfirm;
+  profileCloseDeleteModal();
+  if (fn) fn();
+});
+
+// ---- persistence ----
+async function profileLoadTree(){
+  try {
+    const r = await fetch('/profile/api/tree');
+    const data = await r.json();
+    profileFolders = (data && data.folders) || [];
+    profileItems = (data && data.profiles) || [];
+    profileTreeVersion = (data && data.version) || null;
+  } catch (e) {
+    // Hydration failed: keep version null so a PUT of this empty state is
+    // refused by the server (400) instead of wiping the real tree.
+    profileFolders = []; profileItems = []; profileTreeVersion = null;
+  }
+}
+let profileToastTimer = null;
+function profileToastMsg(text){
+  const el = document.getElementById('profile-toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(profileToastTimer);
+  profileToastTimer = setTimeout(() => el.classList.remove('show'), 5000);
+}
+let profileSaveTimer = null;
+let profileTreeVersion = null;    // token from hydrate; PUTs echo it (stale → 409)
+let profilePendingDeletes = 0;    // deletions since the last save (declared to the server)
+let profileSaveInFlight = false;
+let profileSaveQueued = false;
+let profileTreeSaveOk = true;     // last structural PUT outcome (duplicate aborts on false)
+function profileSave(){
+  clearTimeout(profileSaveTimer);
+  profileSaveTimer = setTimeout(profileSavePush, 250);  // coalesce bursts into one PUT
+}
+async function profileSavePush(){
+  if (profileSaveInFlight){ profileSaveQueued = true; return; }  // serialize PUTs
+  profileSaveInFlight = true;
+  try {
+    // Project the mixed GET state back to structural keys only: built-in rows
+    // and the derived summary never ride a save (the server rejects both).
+    const r = await fetch('/profile/api/tree', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        folders: profileFolders.filter(f => !f.builtin).map(f => ({
+          id: f.id, name: f.name, description: f.description || '',
+          parentId: f.parentId || null})),
+        profiles: profileItems.filter(p => !p.builtin).map(p => ({
+          uuid: p.uuid, name: p.name, folderId: p.folderId || null})),
+        version: profileTreeVersion, deletes: profilePendingDeletes}),
+    });
+    const j = await r.json().catch(() => null);
+    if (r.status === 409){
+      // Another tab/editor changed the tree; their version wins — re-hydrate.
+      await profileLoadTree();
+      profilePendingDeletes = 0;
+      profileTreeSaveOk = false;
+      if (profileSelectedItem && !profileByUuid(profileSelectedItem)) profileSelectedItem = null;
+      if (profileSelectedFolder && !profileFolderById(profileSelectedFolder)) profileSelectedFolder = null;
+      profileRenderTree();
+      profileRender();
+      profileToastMsg('Profile tree was changed elsewhere — reloaded. Your last edit was not saved.');
+    } else if (!r.ok){
+      profileTreeSaveOk = false;
+      profileToastMsg('Save refused: ' + ((j && j.error) || ('HTTP ' + r.status)));
+    } else {
+      profileTreeVersion = (j && j.version) || profileTreeVersion;
+      profilePendingDeletes = 0;
+      profileTreeSaveOk = true;
+    }
+  } catch (e) {
+    // Network error: keep local state + version; the next edit retries.
+    profileTreeSaveOk = false;
+  } finally {
+    profileSaveInFlight = false;
+    if (profileSaveQueued){ profileSaveQueued = false; profileSavePush(); }
+  }
+}
+
+// ---- form pane (placeholder — replaced by the autosaving form) ----
+function profileRenderForm(){}
+
+// ---- dirty-guarded dismissal (clicking backdrop / Esc) ----
+function profileOpenModalDirty(){
+  if (!document.getElementById('profile-folder-modal').hidden){
+    return document.getElementById('profile-folder-input').value.trim() !== '';
+  }
+  if (!document.getElementById('profile-new-modal').hidden){
+    return document.getElementById('profile-new-input').value.trim() !== '';
+  }
+  if (!document.getElementById('profile-desc-modal').hidden){
+    return document.getElementById('profile-desc-input').value !== profileDescOrig;
+  }
+  // Rename: dirty once the typed name differs from the stored one — only the
+  // explicit Rename/Cancel buttons close it then.
+  if (!document.getElementById('profile-rename-modal').hidden){
+    return document.getElementById('profile-rename-input').value
+      !== ((profileRenameState && profileRenameState.original) || '');
+  }
+  // Delete: dirty only when the type-to-confirm box is in use and non-empty;
+  // a plain yes/no delete is never dirty.
+  if (!document.getElementById('profile-delete-modal').hidden){
+    return profileDeleteRequireName
+      ? document.getElementById('profile-delete-input').value.trim() !== '' : false;
+  }
+  return false;
+}
+function profileCloseOpenModal(){
+  if (!document.getElementById('profile-folder-modal').hidden){ profileCloseFolderModal(); return; }
+  if (!document.getElementById('profile-new-modal').hidden){ profileCloseNewModal(); return; }
+  if (!document.getElementById('profile-desc-modal').hidden){ profileCloseDescModal(); return; }
+  if (!document.getElementById('profile-rename-modal').hidden){ profileCloseRenameModal(); return; }
+  if (!document.getElementById('profile-delete-modal').hidden){ profileCloseDeleteModal(); return; }
+}
+function profileDismissIfClean(){ if (!profileOpenModalDirty()) profileCloseOpenModal(); }
+
+// ---- wiring + initial paint ----
+profileInitTreeDnD();
+document.getElementById('profile-folder-input').addEventListener('input', () => {
+  document.getElementById('profile-folder-create').disabled =
+    document.getElementById('profile-folder-input').value.trim() === '';
+});
+document.getElementById('profile-folder-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('profile-folder-create').disabled){
+    e.preventDefault(); profileAddFolderConfirm();
+  }
+});
+document.getElementById('profile-new-input').addEventListener('input', () => {
+  document.getElementById('profile-new-create').disabled =
+    document.getElementById('profile-new-input').value.trim() === '';
+});
+document.getElementById('profile-new-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('profile-new-create').disabled){
+    e.preventDefault(); profileAddProfileConfirm();
+  }
+});
+document.getElementById('profile-rename-input').addEventListener('input', profileSyncRenameConfirm);
+document.getElementById('profile-rename-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('profile-rename-confirm').disabled){
+    e.preventDefault(); profileConfirmRenameModal();
+  }
+});
+document.getElementById('ui-modal-backdrop').addEventListener('click', profileDismissIfClean);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') profileDismissIfClean(); });
+profileLoadTree().then(() => {
+  // Deep link: ?id=<uuid> selects that folder or profile on load.
+  const wantId = new URLSearchParams(window.location.search).get('id');
+  if (wantId && profileFolderById(wantId)){
+    profileSelectFolder(wantId);
+  } else if (wantId && profileByUuid(wantId)){
+    profileSelectItem(wantId);
+  } else {
+    profileRenderTree();
+    profileRender();
+  }
+});
