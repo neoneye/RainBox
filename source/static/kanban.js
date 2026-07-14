@@ -807,11 +807,45 @@ function kbFillTaskSelects(agentUuid, columnUuid){
     agentSel.appendChild(new Option(kbAgentName(agentUuid), agentUuid));
   }
   agentSel.value = agentUuid || '';
+  kbFillColumnSelect(kbCurrent.columns, columnUuid);
+  // Board select (edit mode): every board in tree render order, the open
+  // board preselected. Picking another one moves the task there on Save.
+  const boardSel = document.getElementById('kb-t-board');
+  boardSel.innerHTML = '';
+  kbFlattenTree('all').filter(n => n.kind === 'board').forEach(({node}) =>
+    boardSel.appendChild(new Option(node.name || '(unnamed board)', node.uuid)));
+  boardSel.value = kbCurrent.uuid;
+}
+function kbFillColumnSelect(columns, selected){
   const colSel = document.getElementById('kb-t-col');
   colSel.innerHTML = '';
-  kbCurrent.columns.forEach(c => colSel.appendChild(new Option(c.name, c.uuid)));
-  colSel.value = columnUuid;
+  columns.forEach(c => colSel.appendChild(new Option(c.name, c.uuid)));
+  if (selected) colSel.value = selected;
 }
+// Picking another board in the task modal repopulates the Column select with
+// THAT board's columns (fetched fresh — the index holds no columns); Save
+// then performs the server-side move. Back to the open board restores its
+// columns. A failed fetch reverts the pick.
+document.getElementById('kb-t-board').addEventListener('change', async () => {
+  const boardSel = document.getElementById('kb-t-board');
+  if (!kbCurrent) return;
+  if (boardSel.value === kbCurrent.uuid){
+    const t = kbEditingTask ? kbTask(kbEditingTask) : null;
+    kbFillColumnSelect(kbCurrent.columns, (t && t.columnUuid) || kbModalColumn);
+    return;
+  }
+  const want = boardSel.value;
+  const target = await kbLoadBoard(want);
+  if (boardSel.value !== want) return;  // user picked again meanwhile
+  if (!target){
+    kbToast('Could not load that board.');
+    boardSel.value = kbCurrent.uuid;
+    const t = kbEditingTask ? kbTask(kbEditingTask) : null;
+    kbFillColumnSelect(kbCurrent.columns, (t && t.columnUuid) || kbModalColumn);
+    return;
+  }
+  kbFillColumnSelect(target.columns, target.columns.length ? target.columns[0].uuid : null);
+});
 function kbNewTask(columnUuid){
   if (!kbCurrent) return;
   kbEditingTask = null;
@@ -820,6 +854,7 @@ function kbNewTask(columnUuid){
   document.getElementById('kb-t-title').value = '';
   document.getElementById('kb-t-desc').value = '';
   kbFillTaskSelects('', columnUuid);
+  document.getElementById('kb-t-board-label').hidden = true;  // create: nothing to move yet
   document.getElementById('kb-t-save').textContent = 'Create task';
   document.getElementById('kb-t-delete').hidden = true;
   document.getElementById('kb-t-run').hidden = true;
@@ -838,6 +873,7 @@ function kbEditTask(uuid){
   document.getElementById('kb-t-title').value = t.title;
   document.getElementById('kb-t-desc').value = t.description || '';
   kbFillTaskSelects(t.agentUuid || '', t.columnUuid);
+  document.getElementById('kb-t-board-label').hidden = false;
   document.getElementById('kb-t-save').textContent = 'Save';
   document.getElementById('kb-t-delete').hidden = false;
   document.getElementById('kb-t-run').hidden = !t.agentUuid;  // needs an assignee
@@ -918,6 +954,12 @@ function kbSaveTaskModal(){
   const desc = document.getElementById('kb-t-desc').value.trim();
   const agentUuid = document.getElementById('kb-t-agent').value || null;
   const columnUuid = document.getElementById('kb-t-col').value;
+  const boardUuid = document.getElementById('kb-t-board').value;
+  if (kbEditingTask && boardUuid && kbCurrent && boardUuid !== kbCurrent.uuid){
+    kbMoveTaskToBoard(kbEditingTask, boardUuid, columnUuid,
+                      {title: title, desc: desc, agentUuid: agentUuid});
+    return;
+  }
   if (kbEditingTask){
     const t = kbTask(kbEditingTask);
     if (t){ t.title = title; t.description = desc; t.agentUuid = agentUuid; t.columnUuid = columnUuid; }
@@ -930,6 +972,40 @@ function kbSaveTaskModal(){
   kbSave();
   kbRenderBoard();
   kbRefreshIndexCounts();
+}
+// Move the open task to another board — SERVER-SIDE (POST /move-to-board),
+// because the page's per-board bulk save could only fake it as delete +
+// recreate, destroying the task's uuid and audit trail. The modal's text
+// edits are saved to the current board first (they must not be lost, and the
+// move endpoint doesn't carry them), then the server moves the row and the
+// source board + tree counts re-hydrate. `columnUuid` is a TARGET-board
+// column (the select was repopulated on the board pick) — it is deliberately
+// NOT written to the local task, which the bulk save would reject.
+async function kbMoveTaskToBoard(taskUuid, boardUuid, columnUuid, edits){
+  const t = kbTask(taskUuid);
+  if (!t) return;
+  t.title = edits.title;
+  t.description = edits.desc;
+  t.agentUuid = edits.agentUuid;
+  kbCloseModals();
+  kbSave();
+  await kbFlushSave();
+  let j = null;
+  try {
+    const r = await fetch('/kanban/api/tasks/' + encodeURIComponent(taskUuid) + '/move-to-board', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({boardId: boardUuid, columnId: columnUuid || null,
+                            actor: 'human'}),
+    });
+    j = await r.json();
+  } catch (e) { /* fall through */ }
+  await kbReloadCurrent();  // the task left this board; counts changed too
+  if (!j || !j.ok){
+    kbToast('Move failed: ' + ((j && j.error) || 'network error'));
+    return;
+  }
+  const target = kbBoards.find(b => b.uuid === boardUuid);
+  kbToast('Moved to “' + ((target && target.name) || 'board') + '”.');
 }
 // "Run": enqueue the assigned agent to execute this task (milestone 3 —
 // enqueue-on-command). The agent's kanban adapter then claims, works, and

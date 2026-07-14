@@ -248,6 +248,27 @@ def kanban_task_move(task_uuid: str) -> tuple[Response, int] | Response:
     return _task_op(task_uuid, fn)
 
 
+@app.route("/kanban/api/tasks/<task_uuid>/move-to-board", methods=["POST"])
+def kanban_task_move_to_board(task_uuid: str) -> tuple[Response, int] | Response:
+    """Move a task to another board — the task keeps its uuid and audit
+    trail (the page's per-board bulk save cannot express this without
+    delete + recreate). Body: {boardId, columnId?, actor?, note?}; it lands
+    at the end of columnId, or the target's first column when omitted."""
+    def fn(tu: UUID, data: dict):
+        board = _uuid_or_none(str(data.get("boardId", "")))
+        if board is None:
+            raise db.KanbanError("'boardId' must be a uuid")
+        col = None
+        if data.get("columnId") is not None:
+            col = _uuid_or_none(str(data.get("columnId")))
+            if col is None:
+                raise db.KanbanError("'columnId' must be a uuid")
+        return db.kanban_move_task_to_board(tu, board, col,
+                                            actor=str(data.get("actor", "")),
+                                            note=str(data.get("note", "")))
+    return _task_op(task_uuid, fn)
+
+
 @app.route("/kanban/api/tasks/<task_uuid>/complete", methods=["POST"])
 def kanban_task_complete(task_uuid: str) -> tuple[Response, int] | Response:
     def fn(tu: UUID, data: dict):

@@ -295,6 +295,8 @@ KANBAN_TEMPLATE = """
   </div>
   <div class="kb-row">
     <label>Assigned agent <select id="kb-t-agent"></select></label>
+    <label id="kb-t-board-label" hidden>Board <select id="kb-t-board"
+      title="Pick another board to move this task there"></select></label>
     <label>Column <select id="kb-t-col"></select></label>
   </div>
   <div class="kb-row muted" id="kb-t-uuid-row" hidden>Task uuid: <code id="kb-t-uuid"></code>

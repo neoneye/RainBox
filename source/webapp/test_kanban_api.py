@@ -488,6 +488,65 @@ def test_move_task(board):
         db.kanban_delete_board(_u(other["uuid"]))
 
 
+def test_move_task_to_board(board):
+    tu = _one_task(board)
+    other = db.kanban_create_board("Other board")
+    try:
+        out = db.kanban_move_task_to_board(
+            tu, _u(other["uuid"]), _u(other["columns"][1]["uuid"]),
+            actor="human", note="handoff")
+        assert out["boardUuid"] == other["uuid"]
+        assert out["columnUuid"] == other["columns"][1]["uuid"]
+        # The task keeps its uuid + audit trail; the move names both boards.
+        events = db.kanban_task_events(tu)
+        assert any(e["kind"] == "created" for e in events)
+        moved = next(e for e in events if e["kind"] == "moved")
+        assert "board Test board → Other board (In progress)" in moved["detail"]
+        assert "handoff" in moved["detail"]
+        assert db.kanban_load_board(_u(board["uuid"]))["tasks"] == []
+        # Omitted column → the target's FIRST column (here: moving back).
+        out = db.kanban_move_task_to_board(tu, _u(board["uuid"]))
+        assert out["boardUuid"] == board["uuid"]
+        assert out["columnUuid"] == board["columns"][0]["uuid"]
+        # Loud failures: unknown board; a column not on the target board.
+        with pytest.raises(db.KanbanError):
+            db.kanban_move_task_to_board(tu, _u(str(uuid4())))
+        with pytest.raises(db.KanbanError):
+            db.kanban_move_task_to_board(tu, _u(other["uuid"]),
+                                         _u(board["columns"][0]["uuid"]))
+        # Same board + explicit column = a plain column move.
+        out = db.kanban_move_task_to_board(tu, _u(board["uuid"]),
+                                           _u(board["columns"][1]["uuid"]))
+        assert out["boardUuid"] == board["uuid"]
+        assert out["columnUuid"] == board["columns"][1]["uuid"]
+    finally:
+        db.kanban_delete_board(_u(other["uuid"]))
+
+
+def test_move_task_to_board_endpoint(board):
+    tu = _one_task(board)
+    other = db.kanban_create_board("Other board")
+    client = _client()
+    try:
+        resp = client.post(f"/kanban/api/tasks/{tu}/move-to-board",
+                           json={"boardId": other["uuid"],
+                                 "columnId": other["columns"][0]["uuid"],
+                                 "actor": "human"})
+        assert resp.status_code == 200
+        task = resp.get_json()["task"]
+        assert task["boardUuid"] == other["uuid"]
+        assert task["columnUuid"] == other["columns"][0]["uuid"]
+        # Bad inputs are loud.
+        assert client.post(f"/kanban/api/tasks/{tu}/move-to-board",
+                           json={}).status_code == 400
+        assert client.post(f"/kanban/api/tasks/{tu}/move-to-board",
+                           json={"boardId": str(uuid4())}).status_code == 400
+        assert client.post(f"/kanban/api/tasks/{uuid4()}/move-to-board",
+                           json={"boardId": other["uuid"]}).status_code == 404
+    finally:
+        db.kanban_delete_board(_u(other["uuid"]))
+
+
 def test_complete_task_ok_and_failed(board):
     tu = _one_task(board)
     done_col = board["columns"][-1]["uuid"]
