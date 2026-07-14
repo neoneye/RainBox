@@ -1410,6 +1410,54 @@ class Prompt(db.Model):
     __table_args__ = (Index("prompt_in_folder", "folder_uuid", "position"),)
 
 
+class ProfileFolder(db.Model):
+    """Folder in the /profile person-profile tree. Same structural shape as
+    PromptFolder: parent pointer, no FK, position-ordered within a parent."""
+
+    __tablename__ = "profile_folder"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")  # notes about the child nodes
+    parent_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = root; plain col, no FK
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("profile_folder_children", "parent_uuid", "position"),)
+
+
+class Profile(db.Model):
+    """A person profile: the structured record of a human, backing /profile.
+    All person fields live in the sparse `data` JSONB (schema =
+    profile_fields.PROFILE_FIELDS; absent key = unset, never ""). `name` is
+    the standalone tree label ("Simon", "Germany") — deliberately not derived
+    from data["full_name"]. Connector-written observations live under
+    data["dynamic"] and are preserved across human-facing data saves; the
+    built-in templates are NOT rows here (they ship in
+    data/profile_templates.json and merge virtually into the tree GET)."""
+
+    __tablename__ = "profile"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")
+    folder_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = unfiled at root; plain col, no FK
+    position: Mapped[int] = mapped_column(default=0)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("profile_in_folder", "folder_uuid", "position"),)
+
+
 def psycopg_dsn() -> str:
     """The DATABASE_URL as a plain libpq DSN (no SQLAlchemy `+psycopg` driver
     tag), for opening a raw psycopg connection — used by the chat SSE stream to
