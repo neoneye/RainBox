@@ -117,7 +117,9 @@ only by `undo_write_intent`.
 | `kanban_task_complete` | kanban | log-and-undo | move back to prior column |
 | `kanban_task_comment` | kanban | log-and-undo | `↩ retracted:` comment |
 | `kanban_task_create` | kanban | log-and-undo | `kanban_task_delete` (internal) |
+| `kanban_task_set_title`, `kanban_task_set_description` | kanban | log-and-undo | same capability, previous value (text-guarded) |
 | `kanban_board_create` | kanban | log-and-undo | `kanban_board_delete` (internal) |
+| `kanban_board_set_name`, `kanban_board_set_description` | kanban | log-and-undo | same capability, previous value (text-guarded) |
 | `set_reminder` | cron | **confirm** (dry-run) | — |
 | `edit_file` | workspace | **confirm** (dry-run diff) | — |
 | `propose_skill` | skill | log-and-undo | `skill_delete` (internal) |
@@ -164,8 +166,9 @@ never `proposed`, so it can never be confirm-executed into a duplicate. The
 row's `result.undo` carries the inverse op (`{capability, payload}`) that
 `undo_write_intent` replays. Guard rails:
 
-- **Position-aware undo** — a move-undo carries `expect_column` and refuses if
-  the task has since moved elsewhere.
+- **Position-aware undo** — a move-undo carries `expect_column` (a board-move
+  undo `expect_board`, a field-edit undo `expect_<field>`) and refuses if the
+  target has since moved on.
 - **State-guarded inverses** — undo of `memory_remember` refuses if the claim is no
   longer candidate/active; undo of `memory_forget` refuses unless still `rejected`;
   undo of `propose_skill` deletes only a still-pending candidate. An undo can
@@ -337,7 +340,8 @@ scripted decisions from `agents/assistant_fakes.py`. Coverage:
 `test_assistant_profile.py`, `test_assistant_facts_marker.py`,
 `test_assistant_progress.py`, `test_kanban_query.py`,
 `test_kanban_move_action.py`,
-`test_kanban_change_board.py`, `test_kanban_writes_s2.py`,
+`test_kanban_change_board.py`, `test_kanban_set_fields.py`,
+`test_kanban_writes_s2.py`,
 `test_kanban_create.py`, `test_kanban_create_board.py` (kanban capabilities incl. the locked
 prompt-exposed surface), `db/test_assistant_trace.py`,
 `db/test_assistant_write_intent.py`, `db/test_assistant_control.py`, and the

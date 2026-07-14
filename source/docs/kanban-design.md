@@ -109,7 +109,7 @@ route through observe/work/shape.
 ## Assistant capabilities (log-and-undo)
 
 The personal assistant (`agents/assistant.py`) exposes kanban to chat. Two
-read actions and six prompt-exposed write families; every write returns an
+read actions and ten prompt-exposed write actions; every write returns an
 `undo` descriptor `{capability, payload}` that is recorded as a completed row
 in the undo ledger, and the `/undo` endpoint replays it. Two capabilities
 exist only as undo inverses and are never prompt-exposed.
@@ -123,12 +123,15 @@ exist only as undo inverses and are never prompt-exposed.
 | `kanban_task_complete` | mark a task done — operator-proxy intent, so it goes straight to Done (`review=False`), not worker review-routing | move back to the prior column |
 | `kanban_task_comment` | append a 'comment' event | the trail is append-only, so undo posts a `↩ retracted: …` comment (which itself needs no further undo) |
 | `kanban_task_create` | create a task; an omitted/unresolvable `column_uuid` falls back to the board's **first column** | `kanban_task_delete` (internal) |
+| `kanban_task_set_title` / `kanban_task_set_description` | edit one text field of a task (`db.kanban_update_task`): the description REPLACES the whole text; an empty title is refused (a task must stay addressable by name); setting a field to its current value is flagged as a no-op; the edit appends an `edited` audit event with an old → new excerpt | same capability with the previous value (carries `expect_title`/`expect_description`) |
+| `kanban_board_set_name` / `kanban_board_set_description` | edit one text field of a board (`db.kanban_update_board`): same rules as the task editors; boards have no event trail, but the board version token changes so a concurrently open page save is refused as stale | same capability with the previous value (carries `expect_name`/`expect_description`) |
 | `kanban_board_create` | create a board with the default columns; the store assigns the uuid | `kanban_board_delete` (internal) |
 
-Undo is **position-aware**: a move-undo carries `expect_column` (where the
-original write left the task) and a board-move undo carries `expect_board`;
-each refuses if the task has since moved on — don't yank it from where it
-now sits. Guard rails around the write loop:
+Undo is **state-guarded**: a move-undo carries `expect_column` (where the
+original write left the task), a board-move undo carries `expect_board`, and
+a field-edit undo carries `expect_<field>` (the text the write set); each
+refuses if the task or board has since moved on — don't yank it from where
+it now sits. Guard rails around the write loop:
 duplicate same-run writes are blocked, the assistant may not claim a write it
 never performed, and every kanban write appends a `/kanban?id=<task-or-board>`
 link to the reply so the operator can jump straight to what changed. A
@@ -468,10 +471,11 @@ target model's comfortable context budget.
 - `agents/test_kanban_query.py` — name → candidates: exact/substring/fuzzy
   ranking, task parent chains, short-query refusal.
 - `agents/test_kanban_move_action.py`, `agents/test_kanban_change_board.py`,
-  `agents/test_kanban_writes_s2.py`, `agents/test_kanban_create.py`,
-  `agents/test_kanban_create_board.py` — the assistant's log-and-undo
-  capabilities: column-by-name resolution, no-op guards, position/board-aware
-  undo, column carry-over on board moves, retraction comments, first-column
-  default, create/delete inverses, and the locked prompt-exposed action
-  surface.
+  `agents/test_kanban_set_fields.py`, `agents/test_kanban_writes_s2.py`,
+  `agents/test_kanban_create.py`, `agents/test_kanban_create_board.py` — the
+  assistant's log-and-undo capabilities: column-by-name resolution, no-op
+  guards, state-guarded undo (position, board, and text-field expect values),
+  column carry-over on board moves, title/description edits, retraction
+  comments, first-column default, create/delete inverses, and the locked
+  prompt-exposed action surface.
 - `benchmarks/test_kanban.py` — the /benchmark_kanban harness.

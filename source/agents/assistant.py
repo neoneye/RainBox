@@ -68,8 +68,12 @@ class AssistantActionName(str, Enum):
     KANBAN_QUERY = "kanban_query"                # read: find boards/folders/tasks by name (fuzzy)
     KANBAN_BOARD_CREATE = "kanban_board_create"  # log-and-undo: create a new board
     KANBAN_BOARD_DELETE = "kanban_board_delete"  # internal: board_create's undo inverse (not prompt-exposed)
+    KANBAN_BOARD_SET_NAME = "kanban_board_set_name"  # log-and-undo: rename a board
+    KANBAN_BOARD_SET_DESCRIPTION = "kanban_board_set_description"  # log-and-undo: replace a board's description
     KANBAN_TASK_CREATE = "kanban_task_create"    # log-and-undo: create a task on a board
     KANBAN_TASK_DELETE = "kanban_task_delete"    # internal: task_create's undo inverse (not prompt-exposed)
+    KANBAN_TASK_SET_TITLE = "kanban_task_set_title"  # log-and-undo: rename a task
+    KANBAN_TASK_SET_DESCRIPTION = "kanban_task_set_description"  # log-and-undo: replace a task's description
     KANBAN_TASK_COLUMN = "kanban_task_column"    # log-and-undo: move a task to another column
     KANBAN_TASK_CHANGE_BOARD = "kanban_task_change_board"  # log-and-undo: move a task to another board
     KANBAN_TASK_COMPLETE = "kanban_task_complete"  # log-and-undo: mark a task done
@@ -958,6 +962,130 @@ def _action_change_kanban_task_board(
     )
 
 
+def _set_kanban_task_field(
+    ctx: AssistantActionContext, args: dict[str, Any], field: str
+) -> AssistantObservation:
+    """Shared body of kanban_task_set_title / kanban_task_set_description: a
+    log-and-undo edit of one text field. The undo record restores the previous
+    value via the same capability and carries `expect_<field>` (where the
+    write left it), refusing if the field changed since — the text-field
+    mirror of the move actions' expect_column/expect_board guards."""
+    raw_task = args.get("task_uuid")
+    try:
+        task_uuid = UUID(str(raw_task))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid task_uuid: {raw_task!r}")
+    before = db.kanban_get_task(task_uuid)
+    if before is None:
+        return AssistantObservation(ok=False, text="no such kanban task")
+    old, new = str(before[field] or ""), str(args.get(field) or "")
+    if field == "title":
+        new = new.strip()
+    expect = args.get(f"expect_{field}")
+    if expect is not None and old != str(expect):
+        return AssistantObservation(
+            ok=False, text=f"task {field} changed since the write; not undoing")
+    if new == old:
+        return AssistantObservation(
+            ok=False,
+            text=(f"the task's {field} is already exactly that text, so this "
+                  f"edit changes nothing."),
+        )
+    try:
+        updated = db.kanban_update_task(
+            task_uuid, actor=str(ctx.agent_uuid), **{field: new})
+    except db.KanbanError as e:
+        return AssistantObservation(ok=False, text=f"cannot edit: {e}")
+    if updated is None:
+        return AssistantObservation(ok=False, text="no such kanban task")
+    return AssistantObservation(
+        ok=True,
+        text=f"Set the task's {field} to '{new}' (undoable).",
+        data={
+            "task_uuid": str(task_uuid),
+            f"old_{field}": old, f"new_{field}": new,
+            "link": _kanban_link(str(task_uuid)),
+            "undo": {
+                "capability": f"kanban_task_set_{field}",
+                "payload": {"task_uuid": str(task_uuid), field: old,
+                            f"expect_{field}": new},
+            },
+        },
+    )
+
+
+def _action_set_kanban_task_title(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    return _set_kanban_task_field(ctx, args, "title")
+
+
+def _action_set_kanban_task_description(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    return _set_kanban_task_field(ctx, args, "description")
+
+
+def _set_kanban_board_field(
+    ctx: AssistantActionContext, args: dict[str, Any], field: str
+) -> AssistantObservation:
+    """Shared body of kanban_board_set_name / kanban_board_set_description —
+    same shape as _set_kanban_task_field, for a board's row fields."""
+    raw_board = args.get("board_uuid")
+    try:
+        board_uuid = UUID(str(raw_board))
+    except (ValueError, TypeError):
+        return AssistantObservation(ok=False, text=f"invalid board_uuid: {raw_board!r}")
+    before = db.kanban_load_board(board_uuid)
+    if before is None:
+        return AssistantObservation(ok=False, text="no such kanban board")
+    old, new = str(before[field] or ""), str(args.get(field) or "")
+    if field == "name":
+        new = new.strip()
+    expect = args.get(f"expect_{field}")
+    if expect is not None and old != str(expect):
+        return AssistantObservation(
+            ok=False, text=f"board {field} changed since the write; not undoing")
+    if new == old:
+        return AssistantObservation(
+            ok=False,
+            text=(f"the board's {field} is already exactly that text, so this "
+                  f"edit changes nothing."),
+        )
+    try:
+        updated = db.kanban_update_board(board_uuid, **{field: new})
+    except db.KanbanError as e:
+        return AssistantObservation(ok=False, text=f"cannot edit: {e}")
+    if updated is None:
+        return AssistantObservation(ok=False, text="no such kanban board")
+    return AssistantObservation(
+        ok=True,
+        text=f"Set the board's {field} to '{new}' (undoable).",
+        data={
+            "board_uuid": str(board_uuid),
+            f"old_{field}": old, f"new_{field}": new,
+            "link": _kanban_link(str(board_uuid)),
+            "undo": {
+                "capability": f"kanban_board_set_{field}",
+                "payload": {"board_uuid": str(board_uuid), field: old,
+                            f"expect_{field}": new},
+            },
+        },
+    )
+
+
+def _action_set_kanban_board_name(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    return _set_kanban_board_field(ctx, args, "name")
+
+
+def _action_set_kanban_board_description(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    return _set_kanban_board_field(ctx, args, "description")
+
+
 def _action_complete_kanban_task(
     ctx: AssistantActionContext, args: dict[str, Any]
 ) -> AssistantObservation:
@@ -1468,6 +1596,25 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         required_args=("board_uuid",), action=_action_delete_kanban_board,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
     ),
+    AssistantActionName.KANBAN_BOARD_SET_NAME: Capability(
+        name=AssistantActionName.KANBAN_BOARD_SET_NAME, family="kanban",
+        description=('rename a kanban board; reversible (undoable). args: '
+                     '{"board_uuid": "...", "name": "the new name"}'),
+        summary="rename a kanban board",
+        required_args=("board_uuid", "name"),
+        action=_action_set_kanban_board_name,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_BOARD_SET_DESCRIPTION: Capability(
+        name=AssistantActionName.KANBAN_BOARD_SET_DESCRIPTION, family="kanban",
+        description=('set a kanban board\'s description — REPLACES the whole '
+                     'description text; reversible (undoable). args: '
+                     '{"board_uuid": "...", "description": "the full new text"}'),
+        summary="replace a kanban board's description",
+        required_args=("board_uuid", "description"),
+        action=_action_set_kanban_board_description,
+        read=False, write=True, tier="log_and_undo",
+    ),
     AssistantActionName.KANBAN_TASK_CREATE: Capability(
         name=AssistantActionName.KANBAN_TASK_CREATE, family="kanban",
         description=('create a kanban TASK on an EXISTING board (to make a new '
@@ -1488,6 +1635,26 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         summary="delete a kanban task",
         required_args=("task_uuid",), action=_action_delete_kanban_task,
         read=False, write=True, tier="log_and_undo", prompt_exposed=False,
+    ),
+    AssistantActionName.KANBAN_TASK_SET_TITLE: Capability(
+        name=AssistantActionName.KANBAN_TASK_SET_TITLE, family="kanban",
+        description=('rename a kanban task; reversible (undoable). args: '
+                     '{"task_uuid": "...", "title": "the new title"}'),
+        summary="rename a kanban task",
+        required_args=("task_uuid", "title"),
+        action=_action_set_kanban_task_title,
+        read=False, write=True, tier="log_and_undo",
+    ),
+    AssistantActionName.KANBAN_TASK_SET_DESCRIPTION: Capability(
+        name=AssistantActionName.KANBAN_TASK_SET_DESCRIPTION, family="kanban",
+        description=('set a kanban task\'s description — REPLACES the whole '
+                     'description text (read the task first if you mean to '
+                     'extend it); reversible (undoable). args: '
+                     '{"task_uuid": "...", "description": "the full new text"}'),
+        summary="replace a kanban task's description",
+        required_args=("task_uuid", "description"),
+        action=_action_set_kanban_task_description,
+        read=False, write=True, tier="log_and_undo",
     ),
     AssistantActionName.KANBAN_TASK_COLUMN: Capability(
         name=AssistantActionName.KANBAN_TASK_COLUMN, family="kanban",

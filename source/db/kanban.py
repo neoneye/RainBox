@@ -1270,6 +1270,69 @@ def kanban_move_task_to_board(
     return _task_brief(t)
 
 
+def _edit_excerpt(text: str, n: int = 60) -> str:
+    flat = " ".join(str(text or "").split())
+    return flat if len(flat) <= n else flat[: n - 1] + "…"
+
+
+def kanban_update_task(
+    task_uuid: UUID, *, title: str | None = None, description: str | None = None,
+    actor: str = "",
+) -> dict[str, Any] | None:
+    """Row-level edit of a task's title and/or description (None leaves the
+    field untouched; description may be set to ""). A task must stay
+    addressable by name, so an empty title raises KanbanError. Appends one
+    'edited' audit event naming what changed; an edit that changes nothing
+    appends no event."""
+    t = _task(task_uuid)
+    if t is None:
+        return None
+    changes: list[str] = []
+    if title is not None:
+        title = title.strip()
+        if not title:
+            raise KanbanError("task title must be non-empty")
+        if title != t.title:
+            changes.append(f"title: {_edit_excerpt(t.title)} → {_edit_excerpt(title)}")
+            t.title = title
+    if description is not None and str(description) != t.description:
+        changes.append("description: "
+                       f"{_edit_excerpt(t.description) or '(empty)'} → "
+                       f"{_edit_excerpt(str(description)) or '(empty)'}")
+        t.description = str(description)
+    if changes:
+        db.session.add(KanbanTaskEvent(task_uuid=task_uuid, kind="edited",
+                                       actor=str(actor or ""),
+                                       detail="; ".join(changes)))
+        db.session.commit()
+    return _task_brief(t)
+
+
+def kanban_update_board(
+    board_uuid: UUID, *, name: str | None = None, description: str | None = None,
+) -> dict[str, Any] | None:
+    """Row-level edit of a board's name and/or description (None leaves the
+    field untouched; description may be set to ""). An empty name raises
+    KanbanError. Boards have no event trail (events are per task), so this is
+    just the row update — the board version token changes, so a concurrently
+    open /kanban page save is refused as stale."""
+    board = db.session.execute(
+        sa.select(KanbanBoard).where(KanbanBoard.uuid == board_uuid)
+    ).scalar_one_or_none()
+    if board is None:
+        return None
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise KanbanError("board name is required")
+        board.name = name
+    if description is not None:
+        board.description = str(description)
+    db.session.commit()
+    return {"uuid": str(board.uuid), "name": board.name,
+            "description": board.description}
+
+
 def kanban_complete_task(
     task_uuid: UUID, ok: bool, *, actor: str = "", detail: str = "",
     review: bool = False,
