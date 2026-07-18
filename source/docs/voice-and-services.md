@@ -63,7 +63,8 @@ Homebrew's OpenFst first (see the service README). With CUDA the model runs in
 bfloat16; otherwise it loads in float32 and moves to Apple MPS when available,
 falling back to CPU automatically if an MPS synthesis fails. The ~5 GB model
 downloads from Hugging Face on the first synthesis, which therefore takes
-minutes; warm synthesis on an M1 Max (MPS) runs ~8x real-time.
+minutes (plus a one-off solver-compile cost from `optimize=True`); warm
+synthesis on an M1 Max (MPS) runs ~2.5-3x real-time.
 
 Run: `cd voice_tts_dotstts && venv/bin/python server.py`
 

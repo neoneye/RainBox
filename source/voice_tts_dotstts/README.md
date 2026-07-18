@@ -47,6 +47,15 @@ HTTP only — it never imports this code.
 loads in float32 and is moved to Apple MPS when available, falling back to CPU
 automatically if an MPS synthesis fails. `/health` reports the active device.
 
+**Performance**: the model loads with `optimize=True`, which switches the
+flow-matching vocoder (the dominant cost — ~88% of synthesis time) to its
+cached/compiled solver path. On an M1 Max (MPS) that is ~5x faster than the
+unoptimized path with numerically identical output: roughly 2.5-3x real-time
+warm, so ~40 s for ~14 s of audio. The first synthesis after startup pays a
+one-off compile cost on top of the model download/load. Half-precision is not
+an option on MPS: torch 2.11's Metal matmul kernels abort on mixed dtypes,
+and the LLM core is under 2% of synthesis time anyway.
+
 ## API
 
 - `GET /health` → `{"status":"ok","model_loaded":bool,"voices":int,"device":str|null}`

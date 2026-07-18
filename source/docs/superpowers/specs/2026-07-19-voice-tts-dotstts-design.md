@@ -76,7 +76,9 @@ precision without CUDA. With CUDA: bfloat16 on the GPU. Without CUDA: load in
 float32 on CPU, widen the runtime's single-thread cap, move the model to MPS
 when available, and transparently fall back to CPU the first time an MPS
 synthesis fails. The active device is exposed in `/health` as `device`.
-(Verified working on MPS: M1 Max runs warm synthesis at roughly 8x real-time.)
+The model loads with `optimize=True` — the flow-matching vocoder dominates
+synthesis time and its cached/compiled solver path is ~5x faster on MPS with
+identical output. (Verified on an M1 Max: warm synthesis ~2.5-3x real-time.)
 
 ## Demo page `/demo_tts_dotstts`
 

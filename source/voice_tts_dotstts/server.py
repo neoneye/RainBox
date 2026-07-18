@@ -195,7 +195,11 @@ def _build_dots_synth(state: dict) -> SynthFn:  # pragma: no cover - requires do
     use_cuda = torch.cuda.is_available()
     precision = "bfloat16" if use_cuda else "float32"
     logger.info("loading %s (precision=%s)...", MODEL_NAME, precision)
-    runtime = DotsTtsRuntime.from_pretrained(MODEL_NAME, precision=precision)
+    # optimize=True switches the flow-matching solver to its cached/compiled
+    # path — measured 5x faster on MPS (the FM stage dominates synthesis time)
+    # with numerically identical output. Without CUDA the built-in warmup is
+    # skipped, so the first request pays a one-off compile cost instead.
+    runtime = DotsTtsRuntime.from_pretrained(MODEL_NAME, precision=precision, optimize=True)
     if not use_cuda:
         torch.set_num_threads(max(1, (os.cpu_count() or 2) - 2))
         if torch.backends.mps.is_available():
