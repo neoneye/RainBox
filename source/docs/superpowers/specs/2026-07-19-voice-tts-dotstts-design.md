@@ -16,7 +16,7 @@ Same split as Kokoro/Whisper (see `docs/voice-and-services.md`):
   pinned `requirements.txt`, port **5007** (kokoro 5005, whisper 5006). The
   heavy deps (`torch`, `dots.tts`) never enter the main venv.
 - **`webapp/tts_dotstts_views.py`** — same-origin proxy routes + inline-template
-  demo page. Env var `DOTSTTS_URL` (default `http://127.0.0.1:5007`). The
+  demo page. Env var `DOTS_TTS_URL` (default `http://127.0.0.1:5007`). The
   browser never talks to the service directly.
 
 ## Voice model: saved-voice library
@@ -27,12 +27,15 @@ used by the reference demo this replaces), the service owns a voice library so
 the demo page gets a Kokoro-style voice dropdown:
 
 ```
-voice_tts_dotstts/voices/          # gitignored, user data
+voice_tts_dotstts/voices_data/     # gitignored, user data
   <slug>/
     reference.wav                  # the reference sample
-    transcript.txt                 # exact transcript (UTF-8, single line)
+    transcript.txt                 # exact transcript (UTF-8)
     name.txt                       # display name
 ```
+
+(The directory is `voices_data/`, not `voices/`, so it cannot shadow the
+`voices.py` module.)
 
 The slug is derived from the display name (lowercase, alnum + dashes,
 `-2`/`-3`… suffix on collision) and doubles as the voice id.
@@ -68,11 +71,12 @@ result = runtime.generate(text=..., prompt_audio_path=..., prompt_text=...,
 # result: {"audio": tensor, "sample_rate": int, ...}
 ```
 
-**Device**: auto-detect cuda → mps → cpu. dots.tts documents CUDA only; on this
-Mac (M1 Max, 64 GB) MPS should fit the ~6–8 GB bf16 footprint but is unverified —
-the implementation verifies on first real run and falls back to CPU (float32)
-if MPS fails. The chosen device is logged and exposed in `/health` as `device`
-once the model is loaded.
+**Device**: the runtime itself only knows cuda-vs-cpu and refuses half
+precision without CUDA. With CUDA: bfloat16 on the GPU. Without CUDA: load in
+float32 on CPU, widen the runtime's single-thread cap, move the model to MPS
+when available, and transparently fall back to CPU the first time an MPS
+synthesis fails. The active device is exposed in `/health` as `device`.
+(Verified working on MPS: M1 Max runs warm synthesis at roughly 8x real-time.)
 
 ## Demo page `/demo_tts_dotstts`
 

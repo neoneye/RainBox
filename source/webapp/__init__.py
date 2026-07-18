@@ -22,6 +22,7 @@ from . import chat_api  # noqa: F401,E402
 from . import conversation_api  # noqa: F401,E402
 from . import conversation_views  # noqa: F401,E402
 from . import tts_kokoro_views  # noqa: F401,E402
+from . import tts_dotstts_views  # noqa: F401,E402
 from . import stt_whisper_views  # noqa: F401,E402
 from . import voice_echo_views  # noqa: F401,E402
 from . import multimodal_demo_views  # noqa: F401,E402

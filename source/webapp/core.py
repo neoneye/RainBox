@@ -146,10 +146,11 @@ NAV_TEMPLATE = """
         <a href="{{ url_for('benchmark_kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_kanban_page' }}">Kanban</a>
       </div>
     </details>
-    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('demo_tts_kokoro', 'demo_stt_whisper', 'demo_voice_echo') }}">
+    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('demo_tts_kokoro', 'demo_tts_dotstts', 'demo_stt_whisper', 'demo_voice_echo') }}">
       <summary>Voice &#9662;</summary>
       <div class="pp-dd-menu">
         <a href="{{ url_for('demo_tts_kokoro') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_kokoro' }}">TTS</a>
+        <a href="{{ url_for('demo_tts_dotstts') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_dotstts' }}">Clone</a>
         <a href="{{ url_for('demo_stt_whisper') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_whisper' }}">STT</a>
         <a href="{{ url_for('demo_voice_echo') }}" class="{{ 'pp-active' if request.endpoint == 'demo_voice_echo' }}">Echo</a>
       </div>

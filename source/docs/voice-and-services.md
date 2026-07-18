@@ -20,6 +20,7 @@ service is down (a health banner, not a crash).
 | Main web app | `http://127.0.0.1:5000` | — (`RAINBOX_URL` for the bridge) |
 | Whisper STT | `http://127.0.0.1:5006` | `WHISPER_STT_URL` (webapp) |
 | Kokoro TTS | `http://127.0.0.1:5005` | `KOKORO_TTS_URL` (webapp) |
+| dots.tts clone | `http://127.0.0.1:5007` | `DOTS_TTS_URL` (webapp) |
 | Telegram bridge | outbound-only | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` (required); `TELEGRAM_ROOM_NAME`, `TELEGRAM_STATE_FILE`, `RAINBOX_URL` |
 
 ## Whisper STT (`whisper_service/`)
@@ -50,6 +51,27 @@ Run: `cd kokoro_service && venv/bin/python server.py`
 API: `GET /health`; `GET /voices`; `POST /tts` with
 `{text, voice, speed}` (speed clamped 0.5–2.0) → `audio/wav` (mono 16-bit
 PCM, 24 kHz — encoded by `audio.py:float_to_wav_bytes`, stdlib-only).
+
+## dots.tts voice cloning (`voice_tts_dotstts/`)
+
+Zero-shot voice cloning over
+[rednote-hilab/dots.tts-soar](https://huggingface.co/rednote-hilab/dots.tts-soar)
+(2B params, torch; Python 3.12; 48 kHz output). A voice is a reference audio
+sample (~8-12 s) plus its exact transcript, stored one folder per voice under
+`voices_data/` (gitignored). `pynini` has no macOS wheels — build it against
+Homebrew's OpenFst first (see the service README). With CUDA the model runs in
+bfloat16; otherwise it loads in float32 and moves to Apple MPS when available,
+falling back to CPU automatically if an MPS synthesis fails. The ~5 GB model
+downloads from Hugging Face on the first synthesis, which therefore takes
+minutes; warm synthesis on an M1 Max (MPS) runs ~8x real-time.
+
+Run: `cd voice_tts_dotstts && venv/bin/python server.py`
+
+API: `GET /health` → `{status, model_loaded, voices, device}`;
+`GET /voices`; `POST /voices` (multipart `name`, `transcript`, `audio`);
+`DELETE /voices/<id>`; `POST /tts` with
+`{text, voice, seed?, num_steps?, guidance_scale?, speaker_scale?}` →
+`audio/wav` (mono 16-bit PCM, 48 kHz).
 
 ## Telegram bridge (`telegram_service/`)
 
@@ -104,6 +126,13 @@ same-origin through the web app:
 - **`/demo_tts_kokoro`** (`webapp/tts_kokoro_views.py`) — text, voice
   dropdown (populated from the service), speed slider, synthesize + download
   WAV. Proxies: `…/health`, `…/voices`, `…/synthesize` (60s timeout).
+- **`/demo_tts_dotstts`** (`webapp/tts_dotstts_views.py`) — voice cloning:
+  a Kokoro-style synthesize section (voice dropdown, text, download WAV) plus
+  an add-voice section that records via the mic (or accepts an upload),
+  re-encodes to WAV client-side with the Web Audio API, and can auto-fill the
+  transcript through the Whisper proxy. Proxies: `…/health`, `…/voices`
+  (GET/POST), `…/voices/<id>` (DELETE), `…/synthesize` (300s timeout —
+  cloning is slow off-GPU and the first request also downloads the model).
 - **`/demo_voice_echo`** (`webapp/voice_echo_views.py`) — the round trip:
   record → transcribe → speak the transcript back, with per-leg latency.
   Adds no endpoints of its own; it reuses the STT and TTS proxies (needs
