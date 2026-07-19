@@ -1644,10 +1644,14 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         description=('write and run a small self-contained Python program in a '
                      'sandbox — for exact math (e.g. multiplying big numbers) '
                      'and string manipulation (reversal, regex search, parsing). '
-                     'Standard library only: no package installs, no network, '
-                     'no files. print() intermediate results and/or end with an '
-                     'expression whose value is returned. Killed if it exceeds '
-                     '30s CPU or 100 MB memory. args: {"code": "..."}'),
+                     'Standard library plus numpy, sympy, and mpmath (e.g. '
+                     'sympy.prime, sympy.factorint); no other packages, no '
+                     'network, no files. print() intermediate results and/or '
+                     'end with an expression whose value is returned. Killed if '
+                     'it exceeds 30s CPU or 100 MB memory — prefer an efficient '
+                     'algorithm or sympy over brute force, and if killed, retry '
+                     'with a faster approach before giving up. '
+                     'args: {"code": "..."}'),
         summary="run a small Python program in a sandbox",
         required_args=("code",), action=_action_python_run,
         read=False, timeout_seconds=60, output_cap_chars=8000,

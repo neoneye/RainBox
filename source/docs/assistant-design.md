@@ -158,13 +158,17 @@ only by `undo_write_intent`.
 - **`python_run`** — run a small self-contained Python program in a Pyodide
   (WebAssembly) sandbox (`tools/python_sandbox`): exact math, string
   manipulation, and similar pure compute. A fresh `node runner.mjs` process
-  per job; package installs, network, the host filesystem, and the host
-  environment are blocked (sanitized `jsglobals`, nulled pyodide escape
-  hatches, minimal env), and the parent kills the job past 30s CPU
-  (`RLIMIT_CPU`), 100 MB memory growth above the Pyodide baseline (RSS
-  polling), or 60s wall clock. Touches no operator data. Needs node + a
-  one-time `npm install` in `tools/python_sandbox` (`tools.doctor` checks);
-  otherwise the model sees a `blocked:` observation. Design spec:
+  per job. Imports: the standard library plus a curated allowlist
+  (`allowed_packages.mjs`: numpy, sympy, mpmath) — the runner loads only the
+  allowlisted packages the code imports, from a wheel cache warmed at
+  `npm install` (postinstall), so jobs stay offline. Everything else is
+  blocked: other packages, network, the host filesystem, and the host
+  environment (sanitized `jsglobals`, nulled pyodide escape hatches, minimal
+  env). The parent kills the job past 30s CPU (`RLIMIT_CPU`), 100 MB memory
+  growth above the post-load baseline (RSS polling), or 60s wall clock.
+  Touches no operator data. Needs node + a one-time `npm install` in
+  `tools/python_sandbox` (`tools.doctor` checks); otherwise the model sees a
+  `blocked:` observation. Design spec:
   `docs/superpowers/specs/2026-07-19-python-sandbox-design.md` (repo root).
 
 ## Write tiers

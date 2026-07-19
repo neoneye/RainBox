@@ -11,7 +11,8 @@ interfere:
   polled via `ps` and the whole process group is SIGKILLed past baseline+budget.
 - Wall clock: catches sleeps/deadlocks that consume no CPU.
 
-What the sandbox blocks (see runner.mjs for the how): package installs,
+What the sandbox blocks (see runner.mjs for the how): package installs beyond
+the curated allowlist (numpy/sympy/mpmath, preloaded only when imported),
 network, the host filesystem, and the host environment — the child also gets a
 minimal env (PATH+LANG, no secrets) as defense in depth.
 """

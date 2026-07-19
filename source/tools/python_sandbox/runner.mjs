@@ -7,14 +7,17 @@
 //    no `fetch` (network), no `eval` (which also disables pyodide.code.run_js).
 //  - In Node the real filesystem is never mounted; Python sees only Pyodide's
 //    in-memory MEMFS.
-//  - After load, the public escape hatches on the pyodide API object are
-//    nulled: loadPackage (package installs — it would fetch from the CDN via
-//    Node's own fetch, bypassing jsglobals), mountNodeFS (real-filesystem
-//    mounts), FS/PATH/unpackArchive, and the private _module/_api backdoors.
+//  - Packages: only the curated ALLOWED_PACKAGES may be imported. The runner
+//    loads the ones the job's code actually imports BEFORE hardening; then the
+//    public escape hatches on the pyodide API object are nulled: loadPackage
+//    (package installs — it would fetch from the CDN via Node's own fetch,
+//    bypassing jsglobals), mountNodeFS (real-filesystem mounts),
+//    FS/PATH/unpackArchive, and the private _module/_api backdoors.
 //
 // Resource limits (CPU / memory / wall clock) are enforced by the parent
 // process (sandbox.py), which also holds the kill switch.
 import { loadPyodide } from "pyodide";
+import { ALLOWED_PACKAGES } from "./allowed_packages.mjs";
 
 const SAFE_GLOBAL_NAMES = [
   "Object", "Array", "Map", "Set", "WeakMap", "WeakSet", "Promise",
@@ -91,6 +94,24 @@ for (const name of SAFE_GLOBAL_NAMES) {
 }
 
 const py = await loadPyodide({ jsglobals });
+
+// Load the allowlisted packages the job imports (wheels are prefetched into
+// node_modules at npm install, so this is a local read). Must happen before
+// the hardening below nulls loadPackage. A job that imports none skips this
+// entirely; unparseable code falls through and gets its SyntaxError from the
+// harness.
+const code = String(job.code ?? "");
+let wanted = [];
+try {
+  const findImports = py.pyimport("pyodide.code").find_imports;
+  wanted = findImports(code).toJs().filter((n) => ALLOWED_PACKAGES.includes(n));
+} catch {
+  wanted = [];
+}
+if (wanted.length > 0) {
+  await py.loadPackage(wanted, { messageCallback: () => {} });
+}
+
 for (const name of NULLED_PYODIDE_PROPS) {
   try {
     py[name] = null;
@@ -103,7 +124,7 @@ for (const name of NULLED_PYODIDE_PROPS) {
 // memory budget.
 process.stdout.write("READY\n");
 
-py.globals.set("__USER_CODE__", String(job.code ?? ""));
+py.globals.set("__USER_CODE__", code);
 let resultJson;
 try {
   resultJson = await py.runPythonAsync(HARNESS);

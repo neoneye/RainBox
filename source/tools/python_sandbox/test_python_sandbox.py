@@ -52,6 +52,45 @@ def test_fresh_state_between_jobs():
     assert "NameError" in (result.error or "")
 
 
+# --- allowlisted packages -----------------------------------------------------
+
+
+def test_allowlisted_packages_importable():
+    """numpy/sympy/mpmath load on demand from the local wheel cache. The sympy
+    value is the run that motivated this: the 373723rd prime, independently
+    verified with a sieve."""
+    result = run_python(
+        "import numpy as np\n"
+        "import sympy\n"
+        "print(int(np.arange(10).sum()))\n"
+        "sympy.prime(373723)"
+    )
+    assert result.ok, result.error
+    assert result.stdout == "45\n"
+    assert result.result_repr == "5390017"
+
+
+def test_non_allowlisted_package_blocked():
+    result = run_python("import pandas")
+    assert not result.ok
+    assert "ModuleNotFoundError" in (result.error or "")
+
+
+def test_hardening_survives_package_load():
+    """loadPackage runs before the escape hatches are nulled — a job that
+    triggers it must still find them nulled."""
+    # Truthiness, not `is None`: with a package loaded, JS null surfaces as a
+    # falsy JsNull proxy rather than None.
+    result = run_python(
+        "import numpy\n"
+        "import pyodide_js\n"
+        "print([p for p in ('loadPackage', 'mountNodeFS', 'FS', '_module', '_api')\n"
+        "       if getattr(pyodide_js, p, None)])"
+    )
+    assert result.ok, result.error
+    assert result.stdout == "[]\n"
+
+
 # --- sandbox escapes ----------------------------------------------------------
 
 
