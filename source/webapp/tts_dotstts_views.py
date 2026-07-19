@@ -148,6 +148,8 @@ let startedAt = 0;
 let refBlob = null;
 
 const DEVICE_KEY = 'stt_device_id';  // shared with the STT/echo pages
+const SCALE_KEY = 'dotstts_speaker_scale';
+const SEED_KEY = 'dotstts_seed';
 
 function ppSaveDevice() {
   try { localStorage.setItem(DEVICE_KEY, document.getElementById('device').value); } catch (e) {}
@@ -430,9 +432,27 @@ async function ppSpeak() {
   }
 }
 
+// Persist the tuning settings: the right speaker scale / seed is a per-user
+// discovery (too low and the voice drifts toward generic English), so the
+// page remembers them like the mic device picker does.
 document.getElementById('spkscale').addEventListener('input', function() {
   document.getElementById('spkscaleval').textContent = parseFloat(this.value).toFixed(1);
+  try { localStorage.setItem(SCALE_KEY, this.value); } catch (e) {}
 });
+document.getElementById('seed').addEventListener('input', function() {
+  try { localStorage.setItem(SEED_KEY, this.value.trim()); } catch (e) {}
+});
+(function ppRestoreTuning() {
+  try {
+    const scale = parseFloat(localStorage.getItem(SCALE_KEY));
+    if (scale >= 1.0 && scale <= 3.0) {
+      document.getElementById('spkscale').value = scale;
+      document.getElementById('spkscaleval').textContent = scale.toFixed(1);
+    }
+    const seed = localStorage.getItem(SEED_KEY);
+    if (seed) document.getElementById('seed').value = seed;
+  } catch (e) {}
+})();
 
 ppHealth();
 ppLoadVoices(null);
