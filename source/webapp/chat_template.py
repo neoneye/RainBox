@@ -180,11 +180,14 @@ CHAT_TEMPLATE: str = """
   /* assistant trace step (rendered from assistant_run/assistant_step rows) */
   .astep-head{font-weight:600;color:#4338ca}
   .astep-reason{color:#555;margin:2px 0}
-  .astep-observation{margin:2px 0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.8rem;background:#eef2ff;border-radius:6px;padding:4px 8px}
-  .astep-error{margin:2px 0;color:#b91c1c;white-space:pre-wrap}
+  .astep-observation{margin:2px 0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.8rem;background:#eef2ff;border-radius:6px;padding:4px 8px}
+  .astep-error{margin:2px 0;color:#b91c1c;white-space:pre-wrap;overflow-wrap:anywhere}
   .astep-final{color:#15803d}
   .astep-label{font-weight:600;text-transform:uppercase;font-size:0.66rem;letter-spacing:0.03em;color:#6366f1}
-  .msg-text{line-height:1.5}
+  /* Wrap long unbroken tokens (big numbers, hashes, urls) instead of growing
+     a horizontal scroller on the chat log; pre blocks keep their own
+     per-block scrollbar via the .msg-text pre rule below. */
+  .msg-text{line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
   /* Collapsible reasoning ("thinking") rows: a small link-style toggle. */
   .thinking-toggle{margin:2px 0 0;padding:0;background:none;border:none;cursor:pointer;font:inherit;
                    font-size:0.8rem;color:#6d28d9;text-decoration:underline;text-underline-offset:2px}
@@ -201,9 +204,9 @@ CHAT_TEMPLATE: str = """
   .msg-text pre{background:#f4f4f4;padding:0.6em;border-radius:5px;overflow:auto}
   .msg-text pre code{background:none;padding:0}
   /* Diagnostic output is often JSON, reasoning, or tool output with long
-     unbroken values. Keep ordinary chat code blocks horizontally scrollable,
-     but wrap debug/thinking content to the available chat width. */
-  .msg-debug .msg-text{min-width:0;overflow-wrap:anywhere;word-break:break-word}
+     unbroken values. Ordinary chat code blocks stay horizontally scrollable
+     (per-block), but debug/thinking pre content wraps to the chat width. */
+  .msg-debug .msg-text{min-width:0}
   .msg-debug .msg-text pre{white-space:pre-wrap;overflow-wrap:anywhere;
                           word-break:break-word;overflow-x:hidden}
   .msg-text a{color:#0653a8}
