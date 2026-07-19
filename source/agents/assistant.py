@@ -62,6 +62,7 @@ class AssistantActionName(str, Enum):
     # observation the loop feeds back to the model.
     WORKSPACE_READ_COMMAND = "workspace_read_command"
     FIND_UUID = "find_uuid"
+    PYTHON_RUN = "python_run"    # compute: run a small Python program in a Pyodide sandbox
 
     # The kanban family: two reads + the risk-tiered writes.
     KANBAN_READ = "kanban_read"
@@ -451,6 +452,41 @@ def _action_workspace_read_command(
         ok=result.exit_code == 0,
         text=f"$ {command}\n{result.output}\n[exit code: {result.exit_code}]",
         data={"exit_code": result.exit_code},
+    )
+
+
+def _action_python_run(
+    ctx: AssistantActionContext, args: dict[str, Any]
+) -> AssistantObservation:
+    """Run a small Python program in the Pyodide (WASM) sandbox — pure compute
+    with packages, network, and the host filesystem blocked, and CPU/memory/
+    wall-clock kill limits enforced by tools.python_sandbox. Touches no
+    operator data, so it needs no ctx."""
+    from tools.python_sandbox.sandbox import SandboxUnavailable, run_python
+
+    code = str(args.get("code", ""))
+    if not code.strip():
+        return AssistantObservation(ok=False, text="blocked: empty code")
+    try:
+        result = run_python(code)
+    except SandboxUnavailable as e:
+        return AssistantObservation(ok=False, text=f"blocked: {e}")
+
+    parts: list[str] = []
+    if result.stdout:
+        parts.append(result.stdout.rstrip("\n"))
+    if result.result_repr is not None:
+        parts.append(f"result: {result.result_repr}")
+    if result.stderr:
+        parts.append(f"stderr:\n{result.stderr.rstrip()}")
+    if result.error:
+        parts.append(result.error.rstrip())
+    if not parts:
+        parts.append("(the program produced no output — print() or end with an expression)")
+    return AssistantObservation(
+        ok=result.ok,
+        text="\n".join(parts),
+        data={"duration_seconds": round(result.duration_seconds, 3)},
     )
 
 
@@ -1602,6 +1638,19 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'args: {"query": "213a2397"}'),
         summary="look up what a uuid refers to",
         required_args=("query",), action=_action_find_uuid,
+    ),
+    AssistantActionName.PYTHON_RUN: Capability(
+        name=AssistantActionName.PYTHON_RUN, family="python",
+        description=('write and run a small self-contained Python program in a '
+                     'sandbox — for exact math (e.g. multiplying big numbers) '
+                     'and string manipulation (reversal, regex search, parsing). '
+                     'Standard library only: no package installs, no network, '
+                     'no files. print() intermediate results and/or end with an '
+                     'expression whose value is returned. Killed if it exceeds '
+                     '30s CPU or 100 MB memory. args: {"code": "..."}'),
+        summary="run a small Python program in a sandbox",
+        required_args=("code",), action=_action_python_run,
+        read=False, timeout_seconds=60, output_cap_chars=8000,
     ),
     AssistantActionName.KANBAN_READ: Capability(
         name=AssistantActionName.KANBAN_READ, family="kanban",

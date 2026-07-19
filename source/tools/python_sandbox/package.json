@@ -1,0 +1,9 @@
+{
+  "name": "python-sandbox-runner",
+  "private": true,
+  "type": "module",
+  "description": "Pyodide runtime for the assistant's python_run capability (see runner.mjs)",
+  "dependencies": {
+    "pyodide": "^314.0.2"
+  }
+}

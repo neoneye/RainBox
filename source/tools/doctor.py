@@ -79,9 +79,26 @@ def check_mcp() -> Check:
                  f"{len(servers)} server(s): {', '.join(s.name for s in servers)}")
 
 
+def check_python_sandbox() -> Check:
+    """The python_run capability needs node + a one-time `npm install` in
+    tools/python_sandbox. Missing pieces degrade to a 'blocked' observation
+    for the model, so this is a warn, not a fail."""
+    import shutil
+
+    from tools.python_sandbox.sandbox import PYODIDE_DIR, SANDBOX_DIR
+    if shutil.which("node") is None:
+        return Check("python_sandbox", "warn",
+                     "node not found on PATH — python_run is blocked")
+    if not PYODIDE_DIR.is_dir():
+        return Check("python_sandbox", "warn",
+                     f"pyodide not installed — run `npm install` in {SANDBOX_DIR}")
+    return Check("python_sandbox", "ok", "node + pyodide present")
+
+
 def run_doctor(*, embed_fn: Callable[[str], list[float]] | None = None) -> list[Check]:
     return [check_capabilities(), check_model_groups(),
-            check_embedder(embed_fn=embed_fn), check_skills(), check_mcp()]
+            check_embedder(embed_fn=embed_fn), check_skills(), check_mcp(),
+            check_python_sandbox()]
 
 
 def exit_code(checks: list[Check]) -> int:

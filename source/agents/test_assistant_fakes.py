@@ -90,6 +90,7 @@ def test_action_enum_covers_the_known_action_surface():
         "memory_query",
         "workspace_read_command",
         "find_uuid",
+        "python_run",
         "kanban_read",
         "kanban_query",
         "memory_remember",
