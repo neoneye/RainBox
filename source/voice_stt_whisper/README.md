@@ -26,7 +26,7 @@ decoding, so the browser's webm/opus recordings transcribe without a system
 `ffmpeg`. Use **Python 3.12** for this venv:
 
 ```bash
-cd whisper_service
+cd voice_stt_whisper
 python3.12 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt

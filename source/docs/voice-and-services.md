@@ -23,7 +23,7 @@ service is down (a health banner, not a crash).
 | dots.tts clone | `http://127.0.0.1:5007` | `DOTS_TTS_URL` (webapp) |
 | Telegram bridge | outbound-only | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` (required); `TELEGRAM_ROOM_NAME`, `TELEGRAM_STATE_FILE`, `RAINBOX_URL` |
 
-## Whisper STT (`whisper_service/`)
+## Whisper STT (`voice_stt_whisper/`)
 
 Speech-to-text over [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 (CTranslate2 — no torch). Python 3.12 venv; model configured by
@@ -32,7 +32,7 @@ Speech-to-text over [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 downloads from Hugging Face on the first transcription and loads lazily
 behind a lock.
 
-Run: `cd whisper_service && venv/bin/python server.py`
+Run: `cd voice_stt_whisper && venv/bin/python server.py`
 
 API: `GET /health` → `{status, model_loaded, model}`;
 `POST /transcribe` (multipart `audio` + optional `language`) →
@@ -168,7 +168,7 @@ backend's OpenAI-compatible response verbatim (reasoning deltas included).
 ## Tests
 
 Every service tests against fakes, so no model/network is needed:
-`whisper_service/test_server.py`, `voice_tts_kokoro/test_server.py` /
+`voice_stt_whisper/test_server.py`, `voice_tts_kokoro/test_server.py` /
 `test_voices.py` / `test_audio.py`, `telegram_service/test_bridge.py` /
 `test_telegram_api.py` / `test_rainbox_api.py`, and the webapp proxy suites
 `webapp/test_stt_whisper_views.py`, `test_tts_kokoro_views.py`,
@@ -176,7 +176,7 @@ Every service tests against fakes, so no model/network is needed:
 
 ## See also
 
-- Per-service READMEs: `whisper_service/README.md`,
+- Per-service READMEs: `voice_stt_whisper/README.md`,
   `voice_tts_kokoro/README.md`, `telegram_service/README.md` (setup detail
   lives there; this doc is the map).
 - `llm-providers.md` — the provider registry the multimodal demo resolves

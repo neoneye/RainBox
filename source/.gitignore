@@ -1,6 +1,6 @@
 __pycache__/
 voice_tts_kokoro/venv/
-whisper_service/venv/
+voice_stt_whisper/venv/
 voice_tts_dotstts/venv/
 voice_tts_dotstts/voices_data/
 .superpowers/

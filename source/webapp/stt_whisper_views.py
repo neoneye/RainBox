@@ -52,7 +52,7 @@ STT_TEMPLATE = """
 <p class="muted">Transcribes speech with the
 <a href="https://github.com/SYSTRAN/faster-whisper" target="_blank" rel="noopener">faster-whisper</a>
 build of <code>whisper-large-v3-turbo</code>. Start it from
-<code>whisper_service/</code> (see its README).</p>
+<code>voice_stt_whisper/</code> (see its README).</p>
 
 <div class="row">
   Service: <span id="status" class="badge unknown">checking&hellip;</span>
