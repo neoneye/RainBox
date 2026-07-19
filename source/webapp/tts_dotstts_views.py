@@ -77,6 +77,23 @@ service. Start it from <code>voice_tts_dotstts/</code> (see its README).</p>
   <label for="text">Text</label><br>
   <textarea id="text" rows="4" placeholder="Type something to speak&hellip;">Voice cloning turns ten seconds of speech into a reusable voice.</textarea>
 </div>
+<details class="row">
+<summary>Advanced</summary>
+<div class="row">
+  <label for="spkscale">Speaker scale</label>
+  <input type="range" id="spkscale" min="1.0" max="3.0" step="0.1" value="1.5">
+  <span id="spkscaleval">1.5</span>
+  <span class="muted">how strongly the reference voice and accent are applied; raise it if the
+  output drifts toward generic English</span>
+</div>
+<div class="row">
+  <label for="seed">Seed</label>
+  <input type="number" id="seed" min="1" max="1000" placeholder="random" style="width:7em">
+  <span class="muted">1&ndash;1000; the same seed reproduces the same rendition, so try a few and
+  keep the one that sounds most like you</span>
+</div>
+</details>
+
 <div class="row">
   <button id="speak" onclick="ppSpeak()">Synthesize</button>
   <span class="muted" id="speakhint"></span>
@@ -373,6 +390,13 @@ async function ppSpeak() {
   const voice = document.getElementById('voice').value;
   if (!text) { ppErr('Please enter some text.'); return; }
   if (!voice) { ppErr('Please add a voice first.'); return; }
+  const payload = {
+    text: text,
+    voice: voice,
+    speaker_scale: parseFloat(document.getElementById('spkscale').value),
+  };
+  const seedRaw = document.getElementById('seed').value.trim();
+  if (seedRaw) payload.seed = parseInt(seedRaw, 10);
   btn.disabled = true; btn.textContent = 'Synthesizing…';
   document.getElementById('speakhint').textContent = 'the first request loads the model and can take minutes';
   const t0 = performance.now();
@@ -380,7 +404,7 @@ async function ppSpeak() {
     const r = await fetch('{{ url_for("demo_tts_dotstts_synthesize") }}', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text: text, voice: voice}),
+      body: JSON.stringify(payload),
     });
     if (!r.ok) {
       let msg = 'Synthesis failed (' + r.status + ').';
@@ -405,6 +429,10 @@ async function ppSpeak() {
     ppHealth();
   }
 }
+
+document.getElementById('spkscale').addEventListener('input', function() {
+  document.getElementById('spkscaleval').textContent = parseFloat(this.value).toFixed(1);
+});
 
 ppHealth();
 ppLoadVoices(null);

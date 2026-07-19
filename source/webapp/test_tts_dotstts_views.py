@@ -33,6 +33,13 @@ def test_page_renders_with_nav_and_service_url():
     assert "127.0.0.1:5007" in body   # default service URL shown
 
 
+def test_page_has_advanced_tuning_controls():
+    client = app.test_client()
+    body = client.get("/demo_tts_dotstts").get_data(as_text=True)
+    assert 'id="spkscale"' in body
+    assert 'id="seed"' in body
+
+
 def test_template_has_no_backslash_escapes():
     # The template is a non-raw Python string: any backslash would be
     # interpreted by Python and could silently corrupt the inline JS.
