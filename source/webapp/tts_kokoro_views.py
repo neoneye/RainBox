@@ -46,7 +46,7 @@ TTS_TEMPLATE = """
 <h1>Kokoro-82M TTS</h1>
 <p class="muted">Synthesizes speech with the
 <a href="https://huggingface.co/hexgrad/Kokoro-82M" target="_blank" rel="noopener">hexgrad/Kokoro-82M</a>
-service. Start it from <code>kokoro_service/</code> (see its README).</p>
+service. Start it from <code>voice_tts_kokoro/</code> (see its README).</p>
 
 <div class="row">
   Service: <span id="status" class="badge unknown">checking&hellip;</span>

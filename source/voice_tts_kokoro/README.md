@@ -16,7 +16,7 @@ brew install espeak-ng            # macOS
 ```
 
 ```bash
-cd kokoro_service
+cd voice_tts_kokoro
 python3.12 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt

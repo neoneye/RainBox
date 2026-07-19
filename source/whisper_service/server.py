@@ -1,6 +1,6 @@
 """Standalone Whisper speech-to-text REST service.
 
-Mirror of the sibling `kokoro_service/` (TTS): kept separate so its heavy
+Mirror of the sibling `voice_tts_kokoro/` (TTS): kept separate so its heavy
 dependency (`faster-whisper`, which pulls in CTranslate2) never enters the main
 project's venv. The main app's `/demo_stt_whisper` page talks to it over HTTP.
 

@@ -11,7 +11,7 @@ Defaults to `small.en` — the accuracy/latency sweet spot for real mic input
 still runs a full 30s encoder window (~5-7s per clip on an M1). `base.en` is
 faster (~0.5s) but its quality drops noticeably on real-world audio.
 
-This is the speech-to-text counterpart of `kokoro_service/` (text-to-speech);
+This is the speech-to-text counterpart of `voice_tts_kokoro/` (text-to-speech);
 the two are structured the same way.
 
 > **Note:** LM Studio lists `whisper-large-v3-turbo` among its models, but its

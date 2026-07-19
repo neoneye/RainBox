@@ -1,11 +1,11 @@
 # Telegram bridge service — isolated from the main project's deps.
 # Fully pinned (direct + transitive) for supply-chain safety, following the
-# kokoro_service convention. Regenerate with `pip freeze` after changes.
+# voice_tts_kokoro convention. Regenerate with `pip freeze` after changes.
 
 # Direct dependency
 requests==2.34.2
 
-# Transitive (pins copied from the kokoro_service lock, same platform)
+# Transitive (pins copied from the voice_tts_kokoro lock, same platform)
 certifi==2026.5.20
 charset-normalizer==3.4.7
 idna==3.18

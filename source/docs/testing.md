@@ -6,11 +6,11 @@ From `source/`:
 
 ```bash
 venv/bin/python -m pytest -q \
-  --ignore=whisper_service --ignore=kokoro_service --ignore=telegram_service
+  --ignore=whisper_service --ignore=voice_tts_kokoro --ignore=telegram_service
 ```
 
 The `--ignore` flags are required: a bare `pytest` **fails at collection**
-because `whisper_service/test_server.py` and `kokoro_service/test_server.py`
+because `whisper_service/test_server.py` and `voice_tts_kokoro/test_server.py`
 share a basename (both directories are standalone services without
 `__init__.py`, meant to be tested inside their own venvs — see below). The
 full main suite runs in ~1.5 minutes.
@@ -57,7 +57,7 @@ venvs):
 
 ```bash
 cd whisper_service && venv/bin/python -m pytest -q
-cd kokoro_service && venv/bin/python -m pytest -q
+cd voice_tts_kokoro && venv/bin/python -m pytest -q
 cd telegram_service && venv/bin/python -m pytest -q
 ```
 

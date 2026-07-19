@@ -3,7 +3,7 @@
 This page is pure orchestration in the browser. It reuses the same-origin proxy
 routes already registered by stt_whisper_views.py and tts_kokoro_views.py, so it
 adds no new proxy endpoints — just the combined page. Both backing services must
-be running (see whisper_service/ and kokoro_service/).
+be running (see whisper_service/ and voice_tts_kokoro/).
 """
 
 from flask import render_template_string

@@ -1,5 +1,5 @@
 __pycache__/
-kokoro_service/venv/
+voice_tts_kokoro/venv/
 whisper_service/venv/
 voice_tts_dotstts/venv/
 voice_tts_dotstts/voices_data/

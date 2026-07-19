@@ -4,7 +4,7 @@
 # tokenizers, onnxruntime, av, huggingface_hub, numpy, ...) is intentionally
 # left to the resolver here; after the first `pip install` run
 # `pip freeze > requirements.lock.txt` if you want a fully reproducible lock for
-# supply-chain safety (matching kokoro_service's fully-pinned approach).
+# supply-chain safety (matching voice_tts_kokoro's fully-pinned approach).
 #
 # faster-whisper uses CTranslate2 (not torch) and bundles PyAV/ffmpeg for
 # decoding, so the browser's webm/opus recordings transcribe without a system

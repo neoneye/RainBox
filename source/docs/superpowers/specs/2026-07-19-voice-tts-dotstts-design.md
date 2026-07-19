@@ -2,7 +2,7 @@
 
 ## Goal
 
-A second TTS subproject alongside `kokoro_service/`: wrap
+A second TTS subproject alongside `voice_tts_kokoro/`: wrap
 [rednote-hilab/dots.tts-soar](https://huggingface.co/rednote-hilab/dots.tts-soar)
 (2B-param zero-shot voice-cloning TTS, Apache-2.0, 48 kHz output) in a
 standalone REST service, plus a `/demo_tts_dotstts` page in the main app that
@@ -51,7 +51,7 @@ The slug is derived from the display name (lowercase, alnum + dashes,
   `num_steps` (10–32, default 12), `guidance_scale` (default 1.2),
   `speaker_scale` (default 1.5) → `audio/wav`, or `{"error"}` on 4xx/5xx.
 
-Like `kokoro_service/server.py`, `create_app(synthesize_fn=None, voices_dir=None)`
+Like `voice_tts_kokoro/server.py`, `create_app(synthesize_fn=None, voices_dir=None)`
 lets tests inject a fake synth and a tmp voice dir; the real model loads lazily
 on first `/tts`. Synth signature:
 

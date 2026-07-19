@@ -39,14 +39,14 @@ API: `GET /health` → `{status, model_loaded, model}`;
 `{text, language, duration}`. A VAD filter drops non-speech, so silence
 returns empty text instead of a hallucination.
 
-## Kokoro TTS (`kokoro_service/`)
+## Kokoro TTS (`voice_tts_kokoro/`)
 
 Text-to-speech over hexgrad/Kokoro-82M (torch; Python 3.12 — no 3.14 wheels
 yet; needs system `espeak-ng` for phonemization: `brew install espeak-ng`).
 Requirements are fully pinned, transitive deps included. Seven American-
 English voices (`voices.py`; default `af_heart`).
 
-Run: `cd kokoro_service && venv/bin/python server.py`
+Run: `cd voice_tts_kokoro && venv/bin/python server.py`
 
 API: `GET /health`; `GET /voices`; `POST /tts` with
 `{text, voice, speed}` (speed clamped 0.5–2.0) → `audio/wav` (mono 16-bit
@@ -168,7 +168,7 @@ backend's OpenAI-compatible response verbatim (reasoning deltas included).
 ## Tests
 
 Every service tests against fakes, so no model/network is needed:
-`whisper_service/test_server.py`, `kokoro_service/test_server.py` /
+`whisper_service/test_server.py`, `voice_tts_kokoro/test_server.py` /
 `test_voices.py` / `test_audio.py`, `telegram_service/test_bridge.py` /
 `test_telegram_api.py` / `test_rainbox_api.py`, and the webapp proxy suites
 `webapp/test_stt_whisper_views.py`, `test_tts_kokoro_views.py`,
@@ -177,7 +177,7 @@ Every service tests against fakes, so no model/network is needed:
 ## See also
 
 - Per-service READMEs: `whisper_service/README.md`,
-  `kokoro_service/README.md`, `telegram_service/README.md` (setup detail
+  `voice_tts_kokoro/README.md`, `telegram_service/README.md` (setup detail
   lives there; this doc is the map).
 - `llm-providers.md` — the provider registry the multimodal demo resolves
   backends from.
