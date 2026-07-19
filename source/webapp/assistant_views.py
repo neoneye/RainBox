@@ -424,6 +424,38 @@ ASSISTANT_TEMPLATE = """
         {% for it in unlinked %}{{ render_intent(it) }}{% endfor %}
       {% endif %}
 
+      {# Live view of the model call in flight (streamed checkpoints, updated
+         ~1s). Present only between "request sent" and "step row landed", so it
+         never duplicates a timeline step. Live-view only: intentionally NOT
+         mirrored in _run_markdown(), which exports the durable run record. #}
+      {% if active_call %}
+      <div class="step phase-running" id="active-call">
+        <div class="hd">
+          <span class="ix">{% if active_call.step_index is not none %}Step {{ active_call.step_index + 1 }}{% else %}Step{% endif %}</span>
+          <span class="action">model call in progress…</span>
+          {% if active_call.model_name %}<span class="action-desc">{{ active_call.model_name }}</span>{% endif %}
+        </div>
+        <div class="step-body">
+          {% if active_call.partial_reasoning %}
+          <div class="io io-think">
+            <div class="io-label">model reasoning (streaming)</div>
+            <pre>{{ active_call.partial_reasoning }}</pre>
+          </div>
+          {% endif %}
+          {% if active_call.partial_response %}
+          <div class="io io-out">
+            <div class="io-label">partial model response</div>
+            <pre>{{ active_call.partial_response }}</pre>
+          </div>
+          {% endif %}
+          {% if active_call.error %}<div class="err">{{ active_call.error }}</div>{% endif %}
+          {% if not active_call.partial_reasoning and not active_call.partial_response and not active_call.error %}
+          <div class="muted">Waiting for the model…</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
       {% if verdict %}
       <div class="card">
         <div class="hd">
@@ -535,6 +567,62 @@ ASSISTANT_TEMPLATE = """
       var el = document.getElementById(h.slice(1));
       if (el) el.scrollIntoView();
     }
+  })();
+
+  // --- live refresh ----------------------------------------------------------
+  // Rides the same chat_events SSE stream as /chat (docs/chat-frontend-rules.md:
+  // no polling, hidden tab stays silent and catches up on refocus). The step
+  // helpers in db/assistant.py NOTIFY with {assistant_run_uuid} on run/step/
+  // model-checkpoint writes; on an event for THIS run the page refetches its
+  // own server-rendered HTML and swaps the .as-main pane in place — same Jinja
+  // renderer, no client-side duplicate. The 300ms timer is a one-shot
+  // coalescer armed only by an event, never self-rescheduling.
+  (function () {
+    var runId = {% if selected %}'{{ selected.uuid }}'{% else %}null{% endif %};
+    if (!runId) return;
+    var timer = null, dirty = false, connectedOnce = false;
+    function refresh() {
+      timer = null;
+      if (document.hidden) { dirty = true; return; }
+      fetch(window.location.pathname + window.location.search)
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          var next = new DOMParser().parseFromString(html, 'text/html')
+            .querySelector('.as-main');
+          var cur = document.querySelector('.as-main');
+          if (!next || !cur) return;
+          asCloseMenu();  // its buttons would reference pre-swap run state
+          var scrollTop = cur.scrollTop;
+          cur.innerHTML = next.innerHTML;
+          cur.scrollTop = scrollTop;
+        })
+        .catch(function () { dirty = true; });
+    }
+    function schedule() {
+      if (timer === null) timer = setTimeout(refresh, 300);
+    }
+    function startRunStream() {
+      var es = new EventSource('/chat/stream');
+      es.onopen = function () {
+        // Catch up after a reconnect — events may have been missed while down.
+        if (connectedOnce) schedule();
+        connectedOnce = true;
+      };
+      es.onmessage = function (e) {
+        var d;
+        try { d = JSON.parse(e.data); } catch (err) { return; }
+        if (d.assistant_run_uuid === runId) schedule();
+      };
+      es.onerror = function () {
+        // While CONNECTING the browser retries on its own; only rebuild once
+        // it has given up (CLOSED).
+        if (es.readyState === EventSource.CLOSED) setTimeout(startRunStream, 3000);
+      };
+    }
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && dirty) { dirty = false; schedule(); }
+    });
+    startRunStream();
   })();
 </script>
 """
@@ -829,6 +917,27 @@ def _run_markdown(run, ctx: dict) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
+def _active_model_call(run) -> dict | None:
+    """The in-flight model call checkpoint for the live view: present only
+    while the loop is inside a model call (the checkpoint is cleared as soon
+    as the step row lands, so this never duplicates a timeline step). Returns
+    the newest attempt's streamed partials, or None when idle/settled."""
+    if run.status not in ("running", "stopping"):
+        return None
+    active = (run.metadata_ or {}).get("active_call")
+    if not active:
+        return None
+    attempts = active.get("attempts") or []
+    newest = attempts[-1] if attempts else {}
+    return {
+        "step_index": active.get("step_index"),
+        "model_name": newest.get("model_name"),
+        "partial_reasoning": newest.get("partial_reasoning"),
+        "partial_response": newest.get("partial_response"),
+        "error": newest.get("error"),
+    }
+
+
 def _load_run_detail(selected) -> dict:
     """Assemble the per-run detail shared by the HTML page and the markdown
     export: the step timeline (each step with its write-intents), the verbatim
@@ -872,6 +981,7 @@ def _load_run_detail(selected) -> dict:
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,
+        "active_call": _active_model_call(selected),
     }
 
 
@@ -905,6 +1015,7 @@ def assistant_page() -> str:
         pending_controls=ctx.get("pending_controls", []),
         duration=duration, model_names=ctx.get("model_names", {}),
         dash=ctx.get("dash"), verdict=ctx.get("verdict"), reply=ctx.get("reply"),
+        active_call=ctx.get("active_call"),
     )
 
 

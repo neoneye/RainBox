@@ -341,6 +341,19 @@ UI), `POST …/stop`, `POST …/redirect`, `POST …/resummarize`, and
   prompts, observations, and linked write intents, plus a markdown export at
   `/assistant/<run>/markdown`. Deep-linked as `/assistant?id=<run-uuid>`
   (chat replies and the step-limit message link here).
+
+  The page updates live while its run is active, riding the same `chat_events`
+  SSE stream as /chat (per `chat-frontend-rules.md`: no polling, hidden tab
+  stays silent and catches up on refocus). The run/step/checkpoint helpers in
+  `db/assistant.py` NOTIFY with `{assistant_run_uuid, event}` — no `room_uuid`,
+  so chat clients ignore these payloads — and on an event for the shown run the
+  page refetches its own server-rendered HTML (debounced 300ms) and swaps the
+  `.as-main` pane in place: one Jinja renderer, no client-side duplicate.
+  While the loop is inside a model call, an "in flight" card at the timeline's
+  tail shows the streamed partial reasoning/response from the `active_call`
+  checkpoint (updated ~1s); the checkpoint is cleared when the step row lands,
+  so the card never duplicates a settled step. The card is live-view chrome —
+  intentionally absent from the markdown export.
 - **`/assistant-overview`** (`webapp/assistant_overview_views.py` +
   `static/assistant-overview.js`) — a searchable, sortable, paginated table of
   all runs, each row linking into the inspector.

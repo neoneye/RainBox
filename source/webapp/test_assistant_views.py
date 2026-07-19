@@ -518,3 +518,47 @@ def test_interrupted_step_shows_partial_model_response(app_ctx, client):
         assert "enough evidence" in md
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_page_live_refreshes_via_sse_not_polling(app_ctx, client):
+    """The page rides the chat_events SSE stream and filters on
+    assistant_run_uuid; recurring timers are banned (chat-frontend-rules)."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "new EventSource('/chat/stream')" in body
+        assert "assistant_run_uuid" in body
+        assert f"'{run.uuid}'" in body
+        assert "setInterval" not in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_in_flight_model_call_card(app_ctx, client):
+    """A running run with an active_call checkpoint shows the streamed
+    partial reasoning/response; a settled run never shows the card."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    model_uuid = uuid4()
+    db.checkpoint_assistant_call(
+        run, step_index=0, system_prompt="s", user_prompt="u",
+        requested_at=datetime.now(UTC), model_group_uuid=None)
+    db.checkpoint_assistant_model_attempt(
+        run, model_uuid=model_uuid, model_name="live-model", timeout_seconds=10.0)
+    db.checkpoint_assistant_model_progress(
+        run, model_uuid=model_uuid,
+        reasoning="pondering the request", response_text='{"reason": "part')
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "model call in progress" in body
+        assert "pondering the request" in body
+        assert "live-model" in body
+
+        db.finish_run(run, "finished")
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "model call in progress" not in body
+    finally:
+        _cleanup(run.uuid, room.uuid)

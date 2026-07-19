@@ -21,6 +21,7 @@ import sqlalchemy as sa
 
 from db.chat import post_chat_message
 from db.models import (
+    CHAT_NOTIFY_CHANNEL,
     AssistantControl,
     AssistantRun,
     AssistantStep,
@@ -48,6 +49,25 @@ def _bounded_model_progress_text(value: str | None) -> str | None:
 StepPhase = Literal["planned", "running", "observed", "failed", "final", "control"]
 
 
+def _assistant_notify(run_uuid: UUID, event: str) -> None:
+    """Emit one chat_events NOTIFY keyed by `assistant_run_uuid`, so the
+    /assistant page can live-refresh the run it is showing. The payload has no
+    `room_uuid`, which is exactly why chat clients ignore it (their onmessage
+    returns early without one). `event` classifies the source ('run' lifecycle,
+    'step' open/settle, 'model' streaming checkpoint) for debuggability; the
+    page just refreshes on any of them. Must run inside the writing
+    transaction so listeners see committed rows on delivery."""
+    db.session.execute(
+        sa.text("SELECT pg_notify(:channel, :payload)"),
+        {
+            "channel": CHAT_NOTIFY_CHANNEL,
+            "payload": json.dumps(
+                {"assistant_run_uuid": str(run_uuid), "event": event}
+            ),
+        },
+    )
+
+
 def start_assistant_run(
     journal_id: UUID,
     room_uuid: UUID,
@@ -63,6 +83,8 @@ def start_assistant_run(
         step_limit=step_limit,
     )
     db.session.add(run)
+    db.session.flush()
+    _assistant_notify(run.uuid, "run")
     db.session.commit()
     return run
 
@@ -156,6 +178,8 @@ def open_assistant_step(
         duration_ms=duration_ms,
     )
     db.session.add(step)
+    db.session.flush()
+    _assistant_notify(run_uuid, "step")
     db.session.commit()
     return step
 
@@ -178,6 +202,7 @@ def settle_assistant_step(
     step.error = error
     db.session.add(step)
     db.session.flush()
+    _assistant_notify(step.run_uuid, "step")
     _post_terminal_trace(step)
     return step
 
@@ -230,6 +255,7 @@ def append_assistant_step(
     )
     db.session.add(step)
     db.session.flush()  # commit the step row before anything else this txn
+    _assistant_notify(run_uuid, "step")
     _post_terminal_trace(step)
     db.session.commit()
     return step
@@ -246,6 +272,7 @@ def finish_run(
     if final_summary is not None:
         run.final_summary = final_summary
     db.session.add(run)
+    _assistant_notify(run.uuid, "run")
     db.session.commit()
     return run
 
@@ -280,6 +307,7 @@ def checkpoint_assistant_call(
     }
     run.metadata_ = metadata
     db.session.add(run)
+    _assistant_notify(run.uuid, "model")
     db.session.commit()
     return run
 
@@ -328,6 +356,7 @@ def checkpoint_assistant_model_failure(
     metadata["active_call"] = active
     run.metadata_ = metadata
     db.session.add(run)
+    _assistant_notify(run.uuid, "model")
     db.session.commit()
     return run
 
@@ -356,6 +385,7 @@ def checkpoint_assistant_model_progress(
     metadata["active_call"] = active
     run.metadata_ = metadata
     db.session.add(run)
+    _assistant_notify(run.uuid, "model")
     db.session.commit()
     return run
 
