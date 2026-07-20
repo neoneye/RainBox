@@ -326,7 +326,7 @@ def _retrieve_seed_answers_filtered(
     preference order as `SeedMemory` rows; hallucinated qa_ids are ignored."""
     from agents.query_filter_router import (
         FILTER_SYSTEM_PROMPT, TOP_K_FILTER, FilterDecision,
-        build_filter_prompt, structured_llm_call,
+        apply_filter_scores, build_filter_prompt, structured_llm_call,
     )
     from memory import seed_memory as qkb
 
@@ -344,32 +344,39 @@ def _retrieve_seed_answers_filtered(
         FILTER_SYSTEM_PROMPT, build_filter_prompt(query, candidates),
         FilterDecision,
     )
-    kept_ids = set(decision.relevant_qa_ids)
+    # The LLM only scored; the keep/drop policy (keep all when few candidates,
+    # threshold on a full list) is code — apply_filter_scores.
+    scored = apply_filter_scores(decision, candidates)
+    by_qa_id = {c.qa_id: c for c in candidates}
     debug = {
         "mode": "llm",
         "candidates": [
             {
-                "qa_id": c.qa_id,
-                "path": str((qkb.get_entry(c.qa_id) or {}).get("path", "")),
-                "score": qkb.score_permille(c.score),
-                "matched_question": c.matched_question,
-                "kept": c.qa_id in kept_ids,
+                "qa_id": s.qa_id,
+                "path": str((qkb.get_entry(s.qa_id) or {}).get("path", "")),
+                "score": qkb.score_permille(by_qa_id[s.qa_id].score),
+                "matched_question": by_qa_id[s.qa_id].matched_question,
+                "direct": s.direct,
+                "indirect": s.indirect,
+                "relevancy": s.relevancy,
+                "kept": s.kept,
             }
-            for c in candidates
+            for s in scored
         ],
     }
-    by_qa_id = {c.qa_id: c for c in candidates}
     out: list[qkb.SeedMemory] = []
-    for qa_id in decision.relevant_qa_ids:
-        cand = by_qa_id.get(qa_id)
-        entry = qkb.get_entry(qa_id)
+    for s in scored:
+        if not s.kept:
+            continue
+        cand = by_qa_id.get(s.qa_id)
+        entry = qkb.get_entry(s.qa_id)
         if cand is None or entry is None:
             continue
         kind = str(entry.get("kind", "static"))
         answer = (str(entry.get("answer", "")) if kind == "static"
                   else qkb._resolve_match(cand, qctx))
         out.append(qkb.SeedMemory(
-            uuid=qa_id,
+            uuid=s.qa_id,
             path=str(entry.get("path", "")),
             source=str(entry.get("_source", "upstream")),
             answer=answer,

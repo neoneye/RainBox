@@ -96,6 +96,7 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
         TOP_K_FILTER,
         FilterDecision,
         QueryFilterRouterAgent,
+        apply_filter_scores,
         build_filter_prompt,
     )
     from agents.query_handlers import QueryContext
@@ -178,11 +179,17 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
                 decision = agent._llm_structured(
                     FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision
                 )
-                cand_qa_ids = {c.qa_id for c in candidates}
-                relevant_qa_ids = [
-                    q for q in decision.relevant_qa_ids if q in cand_qa_ids
-                ]
+                # LLM scores → code-side keep/drop; merge each candidate's
+                # scores into its table row so the page can show why.
+                scored = apply_filter_scores(decision, candidates)
+                relevant_qa_ids = [s.qa_id for s in scored if s.kept]
                 out["filter_kept"] = relevant_qa_ids
+                by_qa_id = {s.qa_id: s for s in scored}
+                for row in out["candidates"]:
+                    s = by_qa_id.get(row["qa_id"])
+                    if s is not None:
+                        row.update(direct=s.direct, indirect=s.indirect,
+                                   relevancy=s.relevancy)
             except Exception as e:
                 logger.warning(
                     "memory developer: filter LLM failed", exc_info=True

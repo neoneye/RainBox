@@ -5,9 +5,11 @@ candidate is relevant AND produce a reply" in a single call, this agent runs:
 
 1. **Exact alias match** → resolve directly, no LLM call.
 2. Else, top-K semantic candidates (ungated).
-3. **LLM #1 (filter)** — given the user message + candidates, return the
-   subset of qa_ids that DIRECTLY address the user. Hallucinated qa_ids are
-   ignored.
+3. **LLM #1 (filter)** — given the user message + candidates, score every
+   candidate on three Likert scales (direct/indirect/relevancy). The
+   keep/drop decision is made in code from those scores
+   (`apply_filter_scores`): fewer than top-K candidates → keep all; a full
+   list → keep those scoring high enough. Hallucinated qa_ids are ignored.
 4. The agent resolves *only* the candidates the filter kept (handlers run
    only when needed).
 5. **LLM #2 (route)** — given the chat transcript and the pre-filtered
@@ -20,7 +22,8 @@ prompt has a single concern, which is cheap to follow even for small models.
 
 import json
 import logging
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from llama_index.core.llms import ChatMessage, MessageRole
@@ -49,52 +52,109 @@ from agents.router import RouterResponse
 logger = logging.getLogger(__name__)
 
 
-class FilterDecision(BaseModel):
-    """Output of the filter LLM call: which candidate qa_ids are relevant."""
+class FilterScore(BaseModel):
+    """One candidate's relevance scores from the filter LLM. The LLM only
+    scores; keeping or dropping is decided in code (`apply_filter_scores`)."""
 
-    relevant_qa_ids: list[str] = Field(
-        description=(
-            "Subset of the listed candidate qa_ids that directly address the "
-            "user's message. Use the empty list when none are relevant. Do not "
-            "invent qa_ids — only use ones present in the candidates."
-        )
+    id: str = Field(description="The qa_id.")
+    direct: Literal["1", "2", "3", "4", "5"] = Field(
+        description="Does this `directly` address the query. Likert scale."
+    )
+    indirect: Literal["1", "2", "3", "4", "5"] = Field(
+        description="Does this `indirectly` address the query. Likert scale."
+    )
+    relevancy: Literal["1", "2", "3", "4", "5"] = Field(
+        description="Is it somehow `relevant` to the query. Likert scale."
+    )
+
+
+class FilterDecision(BaseModel):
+    """Output of the filter LLM call: a score row per listed candidate."""
+
+    items: list[FilterScore] = Field(
+        description="All the listed candidate qa_ids, each with its scores."
     )
 
 
 FILTER_SYSTEM_PROMPT: str = """\
-You are a relevance filter. Given the user's latest chat message and a list of
-candidate Q&A entries from a knowledge base, decide which (if any) of the
-candidates DIRECTLY address the user's message.
+You are a relevance scorer. Given the user's latest chat message and a list of
+candidate Q&A entries from a knowledge base, score EVERY candidate on three
+Likert scales from "1" (not at all) to "5" (fully):
 
-A candidate is relevant when its question/answer is genuinely about what the
-user is asking, telling, or doing. Closely related context also counts as
-relevant: for a question about a person, an entry about that person's family
-or household is relevant context even when it does not answer the question by
-itself.
+- `direct`: the candidate's question/answer directly addresses what the user
+  is asking, telling, or doing.
+- `indirect`: the candidate addresses the message indirectly — closely related
+  context, e.g. for a question about a person, an entry about that person's
+  family or household.
+- `relevancy`: the candidate is somehow relevant to the message at all.
 
-A candidate is NOT relevant when it is about a different topic, or when the
-user is volunteering information that the candidate does not speak to (for
-example: the user says where THEY are from, but the candidate is about the
-BOT's location — not relevant).
-
-Be selective in proportion to how many candidates compete. With a full list
-(5 or more), keep only the best matches. With only a few candidates, drop one
-only when it is clearly about an unrelated topic — when unsure, keep it.
+A candidate about a different topic, or one the user's message does not speak
+to (for example: the user says where THEY are from, but the candidate is about
+the BOT's location) scores low on all three scales.
 
 Each candidate carries a `similarity score`: an integer from 0 to 1000 (higher
 means a closer semantic match; 1000 is an exact match). Treat it as a hint, not
-a hard threshold — a high score still has to be on-topic to count as relevant.
+a hard threshold — a high score still has to be on-topic to score high.
 
-Each candidate may also carry a `path`: a dotted namespace for the entry (for
-example `identity.name`). Candidates sharing the same `path` cover the same
-thing — when several relevant candidates are redundant, keep only the single
-best one instead of listing every duplicate.
+You do not decide what is kept or dropped — that decision is made downstream
+from your scores. Score every listed candidate; omit none; do not invent ids.
 
 Return exactly one JSON object with one field:
-- `relevant_qa_ids`: a list of qa_id strings (a subset of the listed
-  candidates). Empty list if none are relevant. Do not invent qa_ids.
+- `items`: a list with one entry per listed candidate:
+  {"id": "<qa_id>", "direct": "1".."5", "indirect": "1".."5",
+   "relevancy": "1".."5"}
 
 Output only the JSON object. No prose, no markdown fences."""
+
+
+TOP_K_FILTER: int = 5
+
+# Code-side keep/drop policy over the LLM's scores (docs in apply_filter_scores).
+FILTER_KEEP_THRESHOLD: int = 4
+
+
+@dataclass
+class ScoredCandidate:
+    """One candidate after the code-side keep/drop decision: the LLM's three
+    scores (0 = the LLM omitted this candidate) plus the verdict."""
+
+    qa_id: str
+    direct: int
+    indirect: int
+    relevancy: int
+    kept: bool
+
+
+def apply_filter_scores(
+    decision: FilterDecision, candidates: list[Match], *, top_k: int = TOP_K_FILTER
+) -> list[ScoredCandidate]:
+    """The keep/drop decision, in code — the LLM only supplies scores.
+
+    Policy: with fewer than `top_k` candidates there is no real competition, so
+    ALL candidates are kept (an over-aggressive scorer can no longer empty a
+    small result set); with a full list, a candidate is kept when any of its
+    scales reaches FILTER_KEEP_THRESHOLD. Score rows for ids not in
+    `candidates` (hallucinated) are ignored; candidates the LLM did not score
+    default to 0/0/0 (dropped on a full list, kept on a small one). Returns
+    every candidate ordered best-first (direct, then indirect, then relevancy,
+    then semantic rank)."""
+    candidate_ids = {c.qa_id for c in candidates}
+    by_id: dict[str, FilterScore] = {}
+    for item in decision.items:
+        if item.id in candidate_ids and item.id not in by_id:
+            by_id[item.id] = item
+    keep_all = len(candidates) < top_k
+    scored: list[ScoredCandidate] = []
+    for c in candidates:
+        item = by_id.get(c.qa_id)
+        d, i, r = ((int(item.direct), int(item.indirect), int(item.relevancy))
+                   if item is not None else (0, 0, 0))
+        kept = keep_all or max(d, i, r) >= FILTER_KEEP_THRESHOLD
+        scored.append(ScoredCandidate(
+            qa_id=c.qa_id, direct=d, indirect=i, relevancy=r, kept=kept))
+    # Stable sort: ties keep the semantic ranking order of `candidates`.
+    scored.sort(key=lambda s: (-s.direct, -s.indirect, -s.relevancy))
+    return scored
 
 
 QUERY_FILTER_ROUTER_SYSTEM_PROMPT: str = """\
@@ -121,9 +181,6 @@ Return exactly one JSON object with three fields, and nothing else:
 - `reply`: a short reply. Always populate it.
 
 Output only the JSON object. No prose, no markdown fences."""
-
-
-TOP_K_FILTER: int = 5
 
 
 def build_filter_prompt(query: str, candidates: list[Match]) -> str:
@@ -465,9 +522,10 @@ class QueryFilterRouterAgent(ModelGroupAgent):
             # --- 2) top-K semantic candidates (ungated) ----------------------
             candidates = _semantic_ranked(query, vs)[:TOP_K_FILTER]
 
-            # --- 3) LLM filter call -----------------------------------------
+            # --- 3) LLM scores + code-side keep/drop ------------------------
             relevant_qa_ids: list[str] = []
             resolved_replies: dict[str, str] = {}
+            scored: list[ScoredCandidate] = []
             if candidates:
                 db.post_progress(room_uuid, self.agent_uuid, "step 1 of 2: filtering candidates")
                 filter_prompt = build_filter_prompt(query, candidates)
@@ -475,10 +533,11 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                     FilterDecision,
                     self._llm_structured(FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision),
                 )
-                cand_qa_ids = {c.qa_id for c in candidates}
-                # Drop hallucinated qa_ids; keep filter's order so the LLM-preferred
-                # candidate comes first in the route prompt.
-                relevant_qa_ids = [q for q in filter_decision.relevant_qa_ids if q in cand_qa_ids]
+                # The LLM only scored; the keep/drop policy runs here. Kept
+                # ids come back best-first so the strongest candidate leads
+                # the route prompt.
+                scored = apply_filter_scores(filter_decision, candidates)
+                relevant_qa_ids = [s.qa_id for s in scored if s.kept]
                 # The filter call just ran, so a model in the group has now answered;
                 # expose it to handlers (get_model_info) resolved below.
                 ctx.active_model_uuid = self._active_model_uuid
@@ -500,6 +559,11 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                             "matched_question": c.matched_question,
                         }
                         for c in candidates
+                    ],
+                    "filter_scores": [
+                        {"id": s.qa_id, "direct": s.direct, "indirect": s.indirect,
+                         "relevancy": s.relevancy, "kept": s.kept}
+                        for s in scored
                     ],
                     "filter_kept": relevant_qa_ids,
                     "resolved": resolved_replies,

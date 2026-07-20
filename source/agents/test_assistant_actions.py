@@ -333,66 +333,126 @@ def _bind_model_group(monkeypatch):
         db, "get_model_group_member_uuids", lambda group_uuid: [uuid4()])
 
 
-def test_query_memory_seed_filter_keeps_only_llm_relevant(app_ctx, monkeypatch):
-    """Seed retrieval runs the query_filter_router pipeline: ungated top-K
-    candidates → LLM relevance filter → resolve kept. A below-MIN_SCORE
-    candidate the filter keeps IS recalled (the gated path would have dropped
-    it), a high-score candidate the filter rejects is NOT, and hallucinated
-    qa_ids are ignored."""
+def _seed_entries(monkeypatch, qkb, entries):
+    monkeypatch.setattr(qkb, "get_entry", lambda qa_id: entries.get(qa_id))
+
+
+def _score(qa_id, direct="1", indirect="1", relevancy="1"):
+    return {"id": qa_id, "direct": direct, "indirect": indirect,
+            "relevancy": relevancy}
+
+
+def test_query_memory_seed_filter_drops_low_scores_on_a_full_list(app_ctx, monkeypatch):
+    """With a full top-K list the code-side policy drops low-scored candidates:
+    the LLM only scores (direct/indirect/relevancy), the keep/drop threshold
+    lives in apply_filter_scores. A below-MIN_SCORE candidate with a high score
+    IS recalled (the gated path would have dropped it); low-scored and unscored
+    candidates are NOT; hallucinated qa_ids are ignored."""
     import agents.query_filter_router as qfr
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
     _stub_seed_kb(monkeypatch, qkb)
     _bind_model_group(monkeypatch)
-    entries = {
+    _seed_entries(monkeypatch, qkb, {
         "qa-mac": {"kind": "static", "path": "identity.first_mac",
                    "_source": "user-overlay", "answer": "It was a PowerBook."},
         "qa-computer": {"kind": "static", "path": "identity.first_computer",
                         "_source": "upstream", "answer": "It was a home computer."},
         "qa-noise": {"kind": "static", "path": "other.topic",
                      "_source": "upstream", "answer": "Something off-topic."},
-    }
-    monkeypatch.setattr(qkb, "get_entry", lambda qa_id: entries.get(qa_id))
+        "qa-food": {"kind": "static", "path": "food.pizza",
+                    "_source": "upstream", "answer": "Pizza preferences."},
+        "qa-unscored": {"kind": "static", "path": "other.unscored",
+                        "_source": "upstream", "answer": "Never scored."},
+    })
     matches = [
         Match(qa_id="qa-noise", method="semantic", score=0.90, matched_question="noise"),
         Match(qa_id="qa-mac", method="semantic", score=0.62, matched_question="first mac"),
         # Below MIN_SCORE (0.60): the gated retrieval would never surface this.
         Match(qa_id="qa-computer", method="semantic", score=0.30,
               matched_question="first computer"),
+        Match(qa_id="qa-food", method="semantic", score=0.28, matched_question="pizza"),
+        Match(qa_id="qa-unscored", method="semantic", score=0.25, matched_question="x"),
     ]
     monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: matches)
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
-        assert "qa-noise" in user_prompt   # ungated candidates reach the filter
-        return (response_model(
-            relevant_qa_ids=["qa-mac", "qa-computer", "qa-hallucinated"],
-        ), model_uuids[0])
+        assert "qa-noise" in user_prompt   # ungated candidates reach the scorer
+        return (response_model(items=[
+            _score("qa-mac", direct="5", relevancy="5"),
+            _score("qa-computer", indirect="4", relevancy="3"),
+            _score("qa-noise", relevancy="2"),
+            _score("qa-food"),
+            _score("qa-hallucinated", direct="5"),
+            # qa-unscored deliberately omitted by the LLM.
+        ]), model_uuids[0])
 
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "first mac"})
     assert obs.ok
     assert "PowerBook" in obs.text
-    assert "home computer" in obs.text          # kept despite the sub-gate score
-    assert "Something off-topic" not in obs.text  # high score, but filter dropped it
+    assert "home computer" in obs.text          # indirect=4 passes the threshold
+    assert "Something off-topic" not in obs.text  # low scores → dropped
+    assert "Pizza preferences" not in obs.text
+    assert "Never scored" not in obs.text         # unscored on a full list → dropped
     assert "qa-hallucinated" not in obs.text
-    # The trace carries the filter's full decision: every candidate with a
-    # kept/dropped flag, so the operator can see what was considered.
+    # The trace carries the scores and the kept/dropped verdicts.
     sf = obs.data["seed_filter"]
     assert sf["mode"] == "llm"
-    kept_by_id = {c["qa_id"]: c["kept"] for c in sf["candidates"]}
-    assert kept_by_id == {"qa-noise": False, "qa-mac": True, "qa-computer": True}
+    by_id = {c["qa_id"]: c for c in sf["candidates"]}
+    assert by_id["qa-mac"]["kept"] and by_id["qa-mac"]["direct"] == 5
+    assert by_id["qa-computer"]["kept"] and by_id["qa-computer"]["indirect"] == 4
+    assert not by_id["qa-noise"]["kept"]
+    assert not by_id["qa-unscored"]["kept"]
 
 
-def test_filter_prompt_scales_selectivity_with_candidate_count():
-    """The relevance filter must not drop aggressively from a small candidate
-    set: selectivity scales with how many candidates compete, related context
-    counts as relevant, and uncertainty resolves toward keeping."""
+def test_query_memory_seed_filter_keeps_all_when_fewer_than_top_k(app_ctx, monkeypatch):
+    """With fewer than top-K candidates there is no real competition: every
+    candidate is kept even when the LLM scored it low — the code-side policy
+    overrides an over-aggressive scorer."""
+    import agents.query_filter_router as qfr
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    _seed_entries(monkeypatch, qkb, {
+        "qa-brother": {"kind": "static", "path": "identity.brother",
+                       "_source": "user-overlay", "answer": "Her brother fact."},
+        "qa-family": {"kind": "static", "path": "family.overview",
+                      "_source": "upstream", "answer": "The family entry."},
+    })
+    matches = [
+        Match(qa_id="qa-brother", method="semantic", score=0.80, matched_question="brother"),
+        Match(qa_id="qa-family", method="semantic", score=0.55, matched_question="family"),
+    ]
+    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: matches)
+
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+        return (response_model(items=[
+            _score("qa-brother", direct="5", relevancy="5"),
+            _score("qa-family"),   # scored 1/1/1 — would drop on a full list
+        ]), model_uuids[0])
+
+    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    obs = _action_query_memory(_ctx(), {"query": "hvem er nannas bror"})
+    assert obs.ok
+    assert "Her brother fact." in obs.text
+    assert "The family entry." in obs.text   # kept despite the low scores
+    sf = obs.data["seed_filter"]
+    assert all(c["kept"] for c in sf["candidates"])
+
+
+def test_filter_prompt_asks_for_scores_not_decisions():
+    """The filter LLM scores every candidate on three Likert scales; the
+    keep/drop decision is code (apply_filter_scores), not the prompt."""
     from agents.query_filter_router import FILTER_SYSTEM_PROMPT
     p = FILTER_SYSTEM_PROMPT.lower()
-    assert "when unsure, keep" in p
-    assert "few candidates" in p
-    assert "family" in p    # related-context example: a person's family entry
+    assert "likert" in p
+    assert "score every" in p.replace("\n", " ")
+    assert "do not decide what is kept" in p.replace("\n", " ")
+    assert "family" in p    # related-context example lives under `indirect`
 
 
 def test_query_memory_seed_filter_falls_back_when_llm_fails(app_ctx, monkeypatch):

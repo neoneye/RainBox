@@ -74,6 +74,10 @@ function memdevCandidateTable(candidates, keptIds) {
     const detail = c.kind === 'dynamic'
       ? 'handler: ' + memdevEscape(c.handler || '')
       : memdevEscape(c.answer_preview || '');
+    // Likert scores from the filter LLM (direct/indirect/relevancy);
+    // absent until the filter stage has run.
+    const dir = c.direct != null
+      ? c.direct + ' / ' + c.indirect + ' / ' + c.relevancy : '';
     return '<tr class="' + (kept.has(c.qa_id) ? 'kept' : '') + '">' +
       '<td class="num">' + memdevEscape(c.score) + '</td>' +
       '<td><code>' + memdevEscape(c.qa_id) + '</code>' +
@@ -81,11 +85,12 @@ function memdevCandidateTable(candidates, keptIds) {
       '<td>' + memdevEscape(c.kind) + '</td>' +
       '<td>' + memdevEscape(c.matched_question || '') + '<br>' +
       '<span class="muted">' + detail + '</span></td>' +
+      '<td class="num">' + memdevEscape(dir) + '</td>' +
       '<td>' + (kept.has(c.qa_id) ? 'kept' : 'dropped') + '</td></tr>';
   });
   return '<table class="memdev-table"><thead><tr>' +
     '<th>score</th><th>qa_id / path</th><th>kind</th>' +
-    '<th>matched question / answer</th><th>filter</th>' +
+    '<th>matched question / answer</th><th>dir / ind / rel</th><th>filter</th>' +
     '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
 }
 
