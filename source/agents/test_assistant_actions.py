@@ -379,7 +379,7 @@ def test_query_memory_seed_filter_drops_low_scores_on_a_full_list(app_ctx, monke
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
         assert "qa-noise" in user_prompt   # ungated candidates reach the scorer
-        return (response_model(items=[
+        return (response_model(reasoning="scores calibrated on the message", items=[
             _score("qa-mac", direct="5", relevancy="5"),
             _score("qa-computer", indirect="4", relevancy="3"),
             _score("qa-noise", relevancy="2"),
@@ -405,6 +405,11 @@ def test_query_memory_seed_filter_drops_low_scores_on_a_full_list(app_ctx, monke
     assert by_id["qa-computer"]["kept"] and by_id["qa-computer"]["indirect"] == 4
     assert not by_id["qa-noise"]["kept"]
     assert not by_id["qa-unscored"]["kept"]
+    # The scorer's think-before-scoring note reaches BOTH the trace and the
+    # observation text the assistant model reads.
+    assert sf["reasoning"] == "scores calibrated on the message"
+    assert ("Seed filter assessment: scores calibrated on the message"
+            in obs.text)
 
 
 def test_query_memory_seed_filter_keeps_all_when_fewer_than_top_k(app_ctx, monkeypatch):
@@ -430,7 +435,7 @@ def test_query_memory_seed_filter_keeps_all_when_fewer_than_top_k(app_ctx, monke
     monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: matches)
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
-        return (response_model(items=[
+        return (response_model(reasoning="scores calibrated on the message", items=[
             _score("qa-brother", direct="5", relevancy="5"),
             _score("qa-family"),   # scored 1/1/1 — would drop on a full list
         ]), model_uuids[0])
@@ -475,7 +480,7 @@ def test_seed_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch):
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
         seen_members.extend(model_uuids)
-        return (response_model(items=[_score("qa-1", direct="5")]), model_uuids[0])
+        return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct="5")]), model_uuids[0])
 
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
@@ -520,7 +525,7 @@ def test_seed_filter_prefers_the_query_filter_routers_model_group(app_ctx, monke
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
         seen_members.extend(model_uuids)
-        return (response_model(items=[_score("qa-1", direct="5")]), model_uuids[0])
+        return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct="5")]), model_uuids[0])
 
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
@@ -552,7 +557,7 @@ def test_seed_filter_falls_back_to_own_group_when_router_unbound(app_ctx, monkey
     monkeypatch.setattr(db, "get_agent_model_binding", binding_for)
     monkeypatch.setattr(db, "get_model_group_member_uuids", lambda g: [uuid4()])
     monkeypatch.setattr(qfr, "structured_llm_call", lambda *a, **k: (
-        a[4](items=[_score("qa-1", direct="5")]), a[1][0]))
+        a[4](reasoning="fallback test", items=[_score("qa-1", direct="5")]), a[1][0]))
     obs = _action_query_memory(_ctx(), {"query": "q"})
     assert obs.data["seed_filter"]["mode"] == "llm"
     assert obs.data["seed_filter"]["group_from"] == "own"

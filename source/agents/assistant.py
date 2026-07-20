@@ -362,6 +362,7 @@ def _retrieve_seed_answers_filtered(
         "mode": "llm",
         "group_from": group_from,
         "scorer_model": scorer_model,
+        "reasoning": decision.reasoning,
         "candidates": [
             {
                 "qa_id": s.qa_id,
@@ -396,6 +397,24 @@ def _retrieve_seed_answers_filtered(
             kind=kind,
         ))
     return out, debug
+
+
+# The scorer's reasoning rides along in the observation; cap it so a rambling
+# reasoning model can't blow the prompt budget with its self-calibration note.
+SEED_FILTER_ASSESSMENT_CHARS: int = 600
+
+
+def _seed_filter_assessment_line(seed_filter_debug: dict[str, Any]) -> str:
+    """The filter LLM's think-before-scoring note as an observation suffix, or
+    "" when the filter didn't run. Angle brackets are neutralized so the note
+    (generated from stored answers) can't forge the recalled-memory fence or
+    role markers; length is capped."""
+    reasoning = str(seed_filter_debug.get("reasoning") or "").strip()
+    if not reasoning:
+        return ""
+    from memory.retrieval import _sanitize_recalled
+    safe = _sanitize_recalled(reasoning)[:SEED_FILTER_ASSESSMENT_CHARS]
+    return f"\n\nSeed filter assessment: {safe}"
 
 
 def _action_query_memory(
@@ -466,8 +485,11 @@ def _action_query_memory(
 
     if not (overlay or upstream or memories):
         # The empty result is exactly when the operator wants to see what the
-        # seed filter considered and dropped — keep the debug in the trace.
-        return AssistantObservation(ok=True, text="No relevant remembered facts.",
+        # seed filter considered and dropped — keep the debug in the trace,
+        # and give the model the filter's own why-nothing-matched note.
+        text = "No relevant remembered facts."
+        text += _seed_filter_assessment_line(seed_filter_debug)
+        return AssistantObservation(ok=True, text=text,
                                     data={"seed_filter": seed_filter_debug})
 
     # (B) Per-fact cap: build one line per fact, shortening long ones. Dynamic
@@ -525,6 +547,7 @@ def _action_query_memory(
         segs.append('To read a fact in full, call memory_query with '
                     '{"uuid": "<the fact\'s uuid>"}.')
         text += "\n\n" + " ".join(segs)
+    text += _seed_filter_assessment_line(seed_filter_debug)
     return AssistantObservation(
         ok=True, text=text,
         data={"qa_static": sum(1 for s in seeds if s.kind == "static"),

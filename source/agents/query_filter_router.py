@@ -83,8 +83,20 @@ class FilterScore(BaseModel):
 
 
 class FilterDecision(BaseModel):
-    """Output of the filter LLM call: a score row per listed candidate."""
+    """Output of the filter LLM call: a self-calibration note, then a score
+    row per listed candidate. `reasoning` is declared BEFORE `items` on
+    purpose — schema property order follows field order, so the model writes
+    its overall does-anything-match assessment first and the scores are
+    conditioned on it. The note also travels with the results: the assistant
+    reads it in the memory_query observation when assessing what to do next."""
 
+    reasoning: str = Field(
+        description=(
+            "First, in 1-3 short sentences: does any candidate genuinely "
+            "match the user's message, and why or why not. Written BEFORE "
+            "scoring, to calibrate the scores that follow."
+        )
+    )
     items: list[FilterScore] = Field(
         description=(
             "One score row for every candidate in the list — omit none, "
@@ -119,12 +131,14 @@ a hard threshold — a high score still has to be on-topic to score high.
 You do not decide what is kept or dropped — that decision is made downstream
 from your scores. Score every listed candidate; omit none; do not invent ids.
 
-Return exactly one JSON object with one field:
-- `items`: a list with one entry per listed candidate:
+Return exactly one JSON object with two fields, in this order:
+- `reasoning`: first, 1-3 short sentences calibrating yourself — does any
+  candidate genuinely match the user's message, and why or why not.
+- `items`: then a list with one entry per listed candidate:
   {"id": "<qa_id>", "direct": "1".."5", "indirect": "1".."5",
    "relevancy": "1".."5"}
 
-Output only the JSON object. No prose, no markdown fences."""
+Output only the JSON object. No prose outside it, no markdown fences."""
 
 
 TOP_K_FILTER: int = 5
@@ -595,6 +609,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
             resolved_replies: dict[str, str] = {}
             scored: list[ScoredCandidate] = []
             scorer_src: str | None = None
+            filter_reasoning: str | None = None
             if candidates:
                 db.post_progress(room_uuid, self.agent_uuid, "step 1 of 2: filtering candidates")
                 filter_prompt = build_filter_prompt(query, candidates)
@@ -613,6 +628,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                 # the route prompt.
                 scored = apply_filter_scores(filter_decision, candidates)
                 relevant_qa_ids = [s.qa_id for s in scored if s.kept]
+                filter_reasoning = filter_decision.reasoning
                 # When our own group scored, that model has now answered —
                 # expose it to handlers (get_model_info) resolved below. A
                 # dedicated memory_filter group is a different agent's model,
@@ -645,6 +661,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                         for s in scored
                     ],
                     "filter_group": scorer_src,
+                    "filter_reasoning": filter_reasoning,
                     "filter_kept": relevant_qa_ids,
                     "resolved": resolved_replies,
                 }, ensure_ascii=False, separators=(",", ":")),

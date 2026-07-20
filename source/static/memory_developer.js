@@ -102,6 +102,10 @@ function memdevRenderAssistant(a) {
     parts.push(memdevSection('seed candidates + LLM filter',
       memdevCandidateTable(sf.candidates, keptIds)));
   }
+  if (sf.reasoning) {
+    parts.push(memdevSection('filter reasoning (written before scoring)',
+      memdevPre(sf.reasoning)));
+  }
   if (a.text) {
     parts.push(memdevSection('observation text (what the assistant model sees)', memdevPre(a.text)));
   } else if (!a.error) {
@@ -172,6 +176,10 @@ function memdevRenderRouter(r) {
 
   parts.push(memdevSection('1 · semantic candidates + 2 · LLM filter',
     memdevCandidateTable(r.candidates || [], r.filter_kept || [])));
+  if (r.filter_reasoning) {
+    parts.push(memdevSection('filter reasoning (written before scoring)',
+      memdevPre(r.filter_reasoning)));
+  }
   if (r.filter_error) {
     parts.push(memdevSection('filter error', '<div class="err">' + memdevEscape(r.filter_error) + '</div>'));
   }

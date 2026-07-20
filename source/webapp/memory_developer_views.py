@@ -173,6 +173,7 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
         "candidates": [],
         "filter_kept": [],
         "filter_group": None,
+        "filter_reasoning": None,
         "filter_error": None,
         "resolved": {},
         "route": None,
@@ -248,6 +249,7 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
                     FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision,
                 )
                 out["filter_model"] = _member_row(scorer_model_uuid).get("model_name")
+                out["filter_reasoning"] = decision.reasoning
                 # LLM scores → code-side keep/drop; merge each candidate's
                 # scores into its table row so the page can show why.
                 scored = apply_filter_scores(decision, candidates)

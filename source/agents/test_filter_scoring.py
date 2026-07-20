@@ -25,10 +25,25 @@ def _match(qa_id, score=0.5):
 
 
 def _decision(*items):
-    return FilterDecision(items=[
+    return FilterDecision(reasoning="test calibration note", items=[
         {"id": i[0], "direct": i[1], "indirect": i[2], "relevancy": i[3]}
         for i in items
     ])
+
+
+def test_reasoning_field_precedes_items_in_the_schema():
+    """The model writes its does-anything-match assessment BEFORE the score
+    rows — schema property order follows pydantic field order, so the field
+    order IS the generation order for the structured call."""
+    assert list(FilterDecision.model_fields) == ["reasoning", "items"]
+
+
+def test_filter_prompt_asks_for_reasoning_first():
+    from agents.query_filter_router import FILTER_SYSTEM_PROMPT
+    p = FILTER_SYSTEM_PROMPT.lower()
+    assert "`reasoning`" in p
+    assert "in this order" in p
+    assert p.index("`reasoning`") < p.index("`items`")
 
 
 def test_full_list_keeps_threshold_and_top_ranked():
