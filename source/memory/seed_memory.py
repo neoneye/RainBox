@@ -801,13 +801,13 @@ def _semantic_ranked(query: str, vs: PGVectorStore, *,
     return _drop_locked(matches, unlocked)
 
 
-# Hybrid blend weights for the filter-pipeline candidate ranking. Full-text
-# carries substantial weight because it is exactly the signal question
-# embeddings miss: a content word ("demoscene") appearing verbatim in an
-# entry's questions or answer while the embedding ranks the entry below
-# generic near-matches of the rest of the sentence.
-_W_SEED_VECTOR: float = 0.6
-_W_SEED_FULLTEXT: float = 0.4
+# Per-signal candidate budgets for the filter-pipeline ranking: the top
+# TOP_K_VECTOR entries by embedding similarity plus the top TOP_K_FULLTEXT by
+# lexical full-text, deduplicated. The signals are NOT weighted against each
+# other — their score scales aren't commensurable, and relevance judgment
+# belongs to the filter LLM downstream.
+TOP_K_VECTOR: int = 5
+TOP_K_FULLTEXT: int = 5
 # A query token matching a QUESTION says more than one matching somewhere in a
 # long answer.
 _FULLTEXT_QUESTION_BOOST: float = 2.0
@@ -872,40 +872,48 @@ def _fulltext_ranked(query: str, *,
 
 
 def _hybrid_seed_ranked(query: str, vs: PGVectorStore, *,
+                        top_k_vector: int | None = None,
+                        top_k_fulltext: int | None = None,
                         unlocked_shields: set[str] | None = None) -> list[Match]:
-    """Candidate ranking for the filter pipelines: question-embedding
-    similarity (`_semantic_ranked`) fused with the lexical full-text signal
-    (`_fulltext_ranked`).
+    """The filter pipelines' candidate set: the top `top_k_vector` entries by
+    question-embedding similarity (`_semantic_ranked`) plus the top
+    `top_k_fulltext` by lexical full-text (`_fulltext_ranked`), deduplicated.
 
-    The ORDER is a deduplicated interleave of the two signals' own rankings
-    (best vector, best full-text, second vector, ...) so that any top-K
-    prefix a caller slices contains the strongest candidates of BOTH signals.
-    A weighted score blend proved fragile here: the scales aren't
-    commensurable, and five mediocre embedding matches crowded a perfect
-    rare-token question match out of the top-5 entirely. Rank interleaving is
-    calibration-free — the relevance judgment belongs to the filter LLM
-    downstream, so retrieval's job is recall diversity, not scoring.
+    The signals are deliberately NOT weighted against each other — a weighted
+    score blend was tried and buried perfect rare-token matches under
+    mediocre embedding scores (the scales aren't commensurable). Each signal
+    fills its own quota; deciding which candidates are actually relevant is
+    the filter LLM's job. The returned order interleaves the two quotas
+    (best vector, best full-text, second vector, ...), which is
+    presentation-neutral: no signal outranks the other.
 
-    `Match.score` still carries the weighted blend (display/telemetry);
-    `method` records the surfacing signals ("semantic", "fulltext", or
-    "semantic+fulltext"); `matched_question` comes from the signal that won
-    the entry its slot. Degrades to full-text-only when the embedding server
-    is unreachable — lexical retrieval needs no model at all."""
+    `Match.score` is the surfacing signal's own normalized score (the max of
+    the two when both surfaced the entry) — display/telemetry only, never
+    compared across entries. `method` records the surfacing signals
+    ("semantic", "fulltext", or "semantic+fulltext"); `matched_question`
+    comes from the signal that won the entry its slot. Degrades to
+    full-text-only when the embedding server is unreachable — lexical
+    retrieval needs no model at all. A budget of 0 disables that signal."""
+    n_vec = TOP_K_VECTOR if top_k_vector is None else top_k_vector
+    n_lex = TOP_K_FULLTEXT if top_k_fulltext is None else top_k_fulltext
     unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
     vec_ranked: list[Match] = []
-    try:
-        vec_ranked = _semantic_ranked(query, vs, unlocked_shields=unlocked)
-    except Exception:
-        logger.warning(
-            "seed retrieval: vector ranking failed; full-text only", exc_info=True)
-    lex_ranked = _fulltext_ranked(query, unlocked_shields=unlocked)
+    if n_vec > 0:
+        try:
+            vec_ranked = _semantic_ranked(query, vs,
+                                          unlocked_shields=unlocked)[:n_vec]
+        except Exception:
+            logger.warning(
+                "seed retrieval: vector ranking failed; full-text only",
+                exc_info=True)
+    lex_ranked = (_fulltext_ranked(query, unlocked_shields=unlocked)[:n_lex]
+                  if n_lex > 0 else [])
     vec = {m.qa_id: m for m in vec_ranked}
     lex = {m.qa_id: m for m in lex_ranked}
 
     def _fused(qa_id: str, primary: Match) -> Match:
         v, f = vec.get(qa_id), lex.get(qa_id)
-        score = (_W_SEED_VECTOR * (v.score if v else 0.0)
-                 + _W_SEED_FULLTEXT * (f.score if f else 0.0))
+        score = max(v.score if v else 0.0, f.score if f else 0.0)
         method = "+".join(name for name, m in (("semantic", v), ("fulltext", f))
                           if m is not None)
         return Match(qa_id=qa_id, method=method, score=score,

@@ -602,7 +602,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
         # silently and leaving the UI looking dead.
         try:
             # --- 2) top-K semantic candidates (ungated) ----------------------
-            candidates = _hybrid_seed_ranked(query, vs)[:TOP_K_FILTER]
+            candidates = _hybrid_seed_ranked(query, vs)
 
             # --- 3) LLM scores + code-side keep/drop ------------------------
             relevant_qa_ids: list[str] = []

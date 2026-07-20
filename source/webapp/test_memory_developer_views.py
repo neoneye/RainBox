@@ -83,20 +83,24 @@ def test_query_api_requires_a_query():
     assert resp.status_code == 400
 
 
-def test_top_k_parses_defaults_and_clamps():
-    from webapp.memory_developer_views import TOP_K_MAX, _parse_top_k
-    assert _parse_top_k({}) == 5                      # default = TOP_K_FILTER
-    assert _parse_top_k({"top_k": "9"}) == 9          # string coerces
-    assert _parse_top_k({"top_k": 0}) == 1            # floor
-    assert _parse_top_k({"top_k": 999}) == TOP_K_MAX  # ceiling
-    assert _parse_top_k({"top_k": "junk"}) == 5       # garbage → default
+def test_signal_budgets_parse_defaults_and_clamp():
+    from webapp.memory_developer_views import TOP_K_MAX, _parse_signal_budgets
+    assert _parse_signal_budgets({}) == (5, 5)   # defaults = TOP_K_VECTOR/FULLTEXT
+    assert _parse_signal_budgets({"top_k_vector": "9"}) == (9, 5)
+    assert _parse_signal_budgets({"top_k_fulltext": 0}) == (5, 0)  # 0 disables
+    assert _parse_signal_budgets(
+        {"top_k_vector": 999, "top_k_fulltext": -3}) == (TOP_K_MAX, 0)
+    assert _parse_signal_budgets({"top_k_vector": "junk"}) == (5, 5)
 
 
-def test_page_has_candidates_knob_persisted_in_localstorage():
+def test_page_has_per_signal_budget_knobs_persisted_in_localstorage():
     body = _body()
-    assert 'id="memdev-topk"' in body
-    assert "memoryDeveloper.topK" in body     # localStorage persistence
-    assert '"top_k"' in body or "top_k:" in body  # sent to the API
+    assert 'id="memdev-topk-vector"' in body
+    assert 'id="memdev-topk-fulltext"' in body
+    assert "memoryDeveloper.topKVector" in body    # localStorage persistence
+    assert "memoryDeveloper.topKFulltext" in body
+    assert "top_k_vector" in body                  # sent to the API
+    assert "top_k_fulltext" in body
 
 
 def test_nav_memory_dropdown_links_here():

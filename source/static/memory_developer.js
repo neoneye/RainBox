@@ -7,14 +7,15 @@
  */
 
 const MEMDEV_QUERY_KEY = 'memoryDeveloper.lastQuery';
-const MEMDEV_TOPK_KEY = 'memoryDeveloper.topK';
+const MEMDEV_TOPK_VECTOR_KEY = 'memoryDeveloper.topKVector';
+const MEMDEV_TOPK_FULLTEXT_KEY = 'memoryDeveloper.topKFulltext';
 
-function memdevTopK() {
-  // Clamp to the input's own bounds; the server clamps again.
-  const el = document.getElementById('memdev-topk');
-  const n = parseInt(el.value, 10);
+function memdevBudget(elementId) {
+  // Per-signal candidate budget; 0 disables the signal. Clamp to the input's
+  // own bounds; the server clamps again.
+  const n = parseInt(document.getElementById(elementId).value, 10);
   if (isNaN(n)) return 5;
-  return Math.max(1, Math.min(20, n));
+  return Math.max(0, Math.min(20, n));
 }
 
 function memdevEscape(s) {
@@ -225,10 +226,12 @@ async function memdevRun() {
   const routerOut = document.getElementById('memdev-router-out');
   const query = input.value.trim();
   if (!query) { input.focus(); return; }
-  const topK = memdevTopK();
+  const topKVector = memdevBudget('memdev-topk-vector');
+  const topKFulltext = memdevBudget('memdev-topk-fulltext');
   try {
     localStorage.setItem(MEMDEV_QUERY_KEY, query);
-    localStorage.setItem(MEMDEV_TOPK_KEY, String(topK));
+    localStorage.setItem(MEMDEV_TOPK_VECTOR_KEY, String(topKVector));
+    localStorage.setItem(MEMDEV_TOPK_FULLTEXT_KEY, String(topKFulltext));
   } catch (_) {}
   button.disabled = true;
   button.textContent = 'Running…';
@@ -238,7 +241,8 @@ async function memdevRun() {
     const resp = await fetch('/memory/api/developer/query', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({query: query, top_k: topK}),
+      body: JSON.stringify({query: query, top_k_vector: topKVector,
+                            top_k_fulltext: topKFulltext}),
     });
     const data = await resp.json();
     if (!resp.ok) {
@@ -269,6 +273,8 @@ document.getElementById('memdev-query').addEventListener('keydown', (e) => {
 try {
   const last = localStorage.getItem(MEMDEV_QUERY_KEY);
   if (last) document.getElementById('memdev-query').value = last;
-  const topK = parseInt(localStorage.getItem(MEMDEV_TOPK_KEY), 10);
-  if (!isNaN(topK)) document.getElementById('memdev-topk').value = topK;
+  const topKVector = parseInt(localStorage.getItem(MEMDEV_TOPK_VECTOR_KEY), 10);
+  if (!isNaN(topKVector)) document.getElementById('memdev-topk-vector').value = topKVector;
+  const topKFulltext = parseInt(localStorage.getItem(MEMDEV_TOPK_FULLTEXT_KEY), 10);
+  if (!isNaN(topKFulltext)) document.getElementById('memdev-topk-fulltext').value = topKFulltext;
 } catch (_) {}

@@ -129,6 +129,32 @@ def test_hybrid_fulltext_only_hits_reach_the_top_k_prefix(kb, monkeypatch):
         "Demoscene / computer parties", "Simon's demo projects 1994-")
 
 
+def test_hybrid_budgets_cap_each_signal_independently(kb, monkeypatch):
+    """"5 of this and 5 of that": each signal fills its own quota; neither is
+    weighted over the other, and a budget of 0 disables its signal."""
+    calls = []
+
+    def fake_vec(q, vs, **_):
+        calls.append("vec")
+        return [Match(qa_id="qa-name", method="semantic", score=0.9,
+                      matched_question="Who is Simon?"),
+                Match(qa_id="qa-food", method="semantic", score=0.8,
+                      matched_question="Does Simon have food allergy?")]
+
+    monkeypatch.setattr(qkb, "_semantic_ranked", fake_vec)
+    # 1 + 1: exactly the best of each signal.
+    ranked = _hybrid_seed_ranked("how is Simon related to the demoscene", None,
+                                 top_k_vector=1, top_k_fulltext=1)
+    assert [m.qa_id for m in ranked] == ["qa-name", "qa-demoscene"]
+    # 0 vector: the embedding ranker is never called; full-text only.
+    calls.clear()
+    ranked = _hybrid_seed_ranked("demoscene", None,
+                                 top_k_vector=0, top_k_fulltext=2)
+    assert calls == []
+    assert ranked and all(m.method == "fulltext" for m in ranked)
+    assert len(ranked) <= 2
+
+
 def test_hybrid_degrades_to_fulltext_when_embeddings_fail(kb, monkeypatch):
     def boom(q, vs, **_):
         raise RuntimeError("embedding server down")

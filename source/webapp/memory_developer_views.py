@@ -115,7 +115,8 @@ def _models_overview() -> dict[str, Any]:
     }
 
 
-def _run_assistant_memory_query(query: str, top_k: int) -> dict[str, Any]:
+def _run_assistant_memory_query(query: str, top_k_vector: int,
+                                top_k_fulltext: int) -> dict[str, Any]:
     """The assistant's memory_query action, exactly as a run would execute it —
     but with telemetry off and no room context (see module docstring)."""
     from agents.assistant import AssistantActionContext, _action_query_memory
@@ -131,7 +132,8 @@ def _run_assistant_memory_query(query: str, top_k: int) -> dict[str, Any]:
             step_index=0,
         )
         obs = _action_query_memory(ctx, {"query": query}, record_telemetry=False,
-                                   top_k=top_k)
+                                   top_k_vector=top_k_vector,
+                                   top_k_fulltext=top_k_fulltext)
         out.update(ok=obs.ok, text=obs.text, data=obs.data or {})
     except Exception as e:
         logger.warning("memory developer: assistant memory_query failed", exc_info=True)
@@ -140,7 +142,8 @@ def _run_assistant_memory_query(query: str, top_k: int) -> dict[str, Any]:
     return out
 
 
-def _run_query_filter_router(query: str, top_k: int) -> dict[str, Any]:
+def _run_query_filter_router(query: str, top_k_vector: int,
+                             top_k_fulltext: int) -> dict[str, Any]:
     """The query_filter_router pipeline, stage by stage, read-only.
 
     Mirrors QueryFilterRouterAgent.handle() minus its side effects: nothing is
@@ -211,7 +214,8 @@ def _run_query_filter_router(query: str, top_k: int) -> dict[str, Any]:
             out["elapsed_ms"] = round((time.monotonic() - started) * 1000)
             return out
 
-        candidates = qkb._hybrid_seed_ranked(query, vs)[:top_k]
+        candidates = qkb._hybrid_seed_ranked(
+            query, vs, top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext)
         for c in candidates:
             entry = qkb.get_entry(c.qa_id) or {}
             kind = str(entry.get("kind", "?"))
@@ -253,7 +257,7 @@ def _run_query_filter_router(query: str, top_k: int) -> dict[str, Any]:
                 out["filter_reasoning"] = decision.reasoning
                 # LLM scores → code-side keep/drop; merge each candidate's
                 # scores into its table row so the page can show why.
-                scored = apply_filter_scores(decision, candidates, top_k=top_k)
+                scored = apply_filter_scores(decision, candidates)
                 relevant_qa_ids = [s.qa_id for s in scored if s.kept]
                 out["filter_kept"] = relevant_qa_ids
                 by_qa_id = {s.qa_id: s for s in scored}
@@ -311,24 +315,30 @@ def _run_query_filter_router(query: str, top_k: int) -> dict[str, Any]:
     return out
 
 
-# Bounds for the page's candidate-count knob. The default mirrors the live
-# pipelines' TOP_K_FILTER; the ceiling keeps a fat-fingered value from turning
-# one probe into a huge filter prompt.
-TOP_K_MIN: int = 1
+# Bounds for the page's per-signal candidate budgets. Defaults mirror the
+# live pipelines' TOP_K_VECTOR/TOP_K_FULLTEXT; 0 disables a signal; the
+# ceiling keeps a fat-fingered value from turning one probe into a huge
+# filter prompt.
+TOP_K_MIN: int = 0
 TOP_K_MAX: int = 20
 
 
-def _parse_top_k(body: dict[str, Any]) -> int:
-    from agents.query_filter_router import TOP_K_FILTER
-
-    raw = body.get("top_k")
+def _parse_budget(body: dict[str, Any], key: str, default: int) -> int:
+    raw = body.get(key)
     if raw is None or raw == "":
-        return TOP_K_FILTER
+        return default
     try:
-        top_k = int(raw)
+        value = int(raw)
     except (TypeError, ValueError):
-        return TOP_K_FILTER
-    return max(TOP_K_MIN, min(TOP_K_MAX, top_k))
+        return default
+    return max(TOP_K_MIN, min(TOP_K_MAX, value))
+
+
+def _parse_signal_budgets(body: dict[str, Any]) -> tuple[int, int]:
+    from memory.seed_memory import TOP_K_FULLTEXT, TOP_K_VECTOR
+
+    return (_parse_budget(body, "top_k_vector", TOP_K_VECTOR),
+            _parse_budget(body, "top_k_fulltext", TOP_K_FULLTEXT))
 
 
 @app.route("/memory/api/developer/query", methods=["POST"])
@@ -337,7 +347,7 @@ def memory_developer_query() -> Response | tuple[Response, int]:
     query = str(body.get("query", "")).strip()
     if not query:
         return jsonify({"error": "query is required"}), 400
-    top_k = _parse_top_k(body)
+    top_k_vector, top_k_fulltext = _parse_signal_budgets(body)
     try:
         models = _models_overview()
     except Exception as e:
@@ -345,10 +355,11 @@ def memory_developer_query() -> Response | tuple[Response, int]:
         models = {"error": f"{type(e).__name__}: {e}"}
     return jsonify({
         "query": query,
-        "top_k": top_k,
+        "top_k_vector": top_k_vector,
+        "top_k_fulltext": top_k_fulltext,
         "models": models,
-        "assistant": _run_assistant_memory_query(query, top_k),
-        "filter_router": _run_query_filter_router(query, top_k),
+        "assistant": _run_assistant_memory_query(query, top_k_vector, top_k_fulltext),
+        "filter_router": _run_query_filter_router(query, top_k_vector, top_k_fulltext),
     })
 
 
@@ -411,8 +422,10 @@ MEMORY_DEVELOPER_TEMPLATE = """
   <div class="memdev-queryrow">
     <input type="text" id="memdev-query" placeholder="type a query, e.g. &quot;what is the git status&quot;"
            autocomplete="off" autofocus>
-    <label class="memdev-topk muted" for="memdev-topk">candidates
-      <input type="number" id="memdev-topk" min="1" max="20" value="5"></label>
+    <label class="memdev-topk muted" for="memdev-topk-vector">vector
+      <input type="number" id="memdev-topk-vector" min="0" max="20" value="5"></label>
+    <label class="memdev-topk muted" for="memdev-topk-fulltext">fulltext
+      <input type="number" id="memdev-topk-fulltext" min="0" max="20" value="5"></label>
     <button id="memdev-run" onclick="memdevRun()">Run</button>
   </div>
   <details class="memdev-panel memdev-models" id="memdev-models" open hidden>
