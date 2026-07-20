@@ -9,7 +9,8 @@ candidate is relevant AND produce a reply" in a single call, this agent runs:
    candidate on three Likert scales (direct/indirect/relevancy). The
    keep/drop decision is made in code from those scores
    (`apply_filter_scores`): fewer than top-K candidates → keep all; a full
-   list → keep those scoring high enough. Hallucinated qa_ids are ignored.
+   list → rank best-first, keep the top-ranked (unless pure noise) plus any
+   scoring at the threshold. Hallucinated qa_ids are ignored.
 4. The agent resolves *only* the candidates the filter kept (handlers run
    only when needed).
 5. **LLM #2 (route)** — given the chat transcript and the pre-filtered
@@ -129,7 +130,14 @@ Output only the JSON object. No prose, no markdown fences."""
 TOP_K_FILTER: int = 5
 
 # Code-side keep/drop policy over the LLM's scores (docs in apply_filter_scores).
+# THRESHOLD: a scale value that marks a candidate clearly relevant on its own.
+# TOP_N/TOP_FLOOR: the best-ranked TOP_N candidates are kept on relative merit,
+# unless even their best scale sits below TOP_FLOOR (pure noise). The rank rule
+# exists because Likert calibration varies wildly between scorer models — a
+# conservative model scoring its best candidate 2/1/3 must not empty the list.
 FILTER_KEEP_THRESHOLD: int = 4
+FILTER_KEEP_TOP_N: int = 2
+FILTER_KEEP_TOP_FLOOR: int = 2
 
 
 def resolve_filter_model_group(
@@ -183,12 +191,16 @@ def apply_filter_scores(
 
     Policy: with fewer than `top_k` candidates there is no real competition, so
     ALL candidates are kept (an over-aggressive scorer can no longer empty a
-    small result set); with a full list, a candidate is kept when any of its
-    scales reaches FILTER_KEEP_THRESHOLD. Score rows for ids not in
-    `candidates` (hallucinated) are ignored; candidates the LLM did not score
-    default to 0/0/0 (dropped on a full list, kept on a small one). Returns
-    every candidate ordered best-first (direct, then indirect, then relevancy,
-    then semantic rank)."""
+    small result set). With a full list the decision is RELATIVE first,
+    absolute second: candidates are ranked best-first, the top
+    FILTER_KEEP_TOP_N survive on rank alone (unless even their best scale is
+    below FILTER_KEEP_TOP_FLOOR — pure noise stays droppable), and any
+    lower-ranked candidate with a scale at FILTER_KEEP_THRESHOLD is kept too.
+    A ranked policy can't be emptied by a scorer model that calibrates the
+    whole scale low. Score rows for ids not in `candidates` (hallucinated) are
+    ignored; candidates the LLM did not score default to 0/0/0 (dropped on a
+    full list, kept on a small one). Returns every candidate ordered
+    best-first (direct, then indirect, then relevancy, then semantic rank)."""
     candidate_ids = {c.qa_id for c in candidates}
     by_id: dict[str, FilterScore] = {}
     for item in decision.items:
@@ -200,11 +212,16 @@ def apply_filter_scores(
         item = by_id.get(c.qa_id)
         d, i, r = ((int(item.direct), int(item.indirect), int(item.relevancy))
                    if item is not None else (0, 0, 0))
-        kept = keep_all or max(d, i, r) >= FILTER_KEEP_THRESHOLD
         scored.append(ScoredCandidate(
-            qa_id=c.qa_id, direct=d, indirect=i, relevancy=r, kept=kept))
+            qa_id=c.qa_id, direct=d, indirect=i, relevancy=r, kept=keep_all))
     # Stable sort: ties keep the semantic ranking order of `candidates`.
     scored.sort(key=lambda s: (-s.direct, -s.indirect, -s.relevancy))
+    if not keep_all:
+        for rank, s in enumerate(scored):
+            best_scale = max(s.direct, s.indirect, s.relevancy)
+            s.kept = (best_scale >= FILTER_KEEP_THRESHOLD
+                      or (rank < FILTER_KEEP_TOP_N
+                          and best_scale >= FILTER_KEEP_TOP_FLOOR))
     return scored
 
 
