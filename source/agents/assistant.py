@@ -309,7 +309,8 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
 
 
 def _action_query_memory(
-    ctx: AssistantActionContext, args: dict[str, Any], *, _seed_retriever=None
+    ctx: AssistantActionContext, args: dict[str, Any], *, _seed_retriever=None,
+    record_telemetry: bool = True,
 ) -> AssistantObservation:
     """Hybrid retrieval over dynamic claims, curated static seed answers, AND
     live dynamic seed handlers (project status, git status, capabilities, model
@@ -317,7 +318,11 @@ def _action_query_memory(
     dynamic claims. Secrets are never returned (include_secret stays False).
 
     Long facts are shortened (tagged `truncateN`) and the block is bounded; pass
-    `{"uuid": ...}` instead of `{"query": ...}` to read one fact in full."""
+    `{"uuid": ...}` instead of `{"query": ...}` to read one fact in full.
+
+    `record_telemetry=False` skips the RetrievalEvent writes — for callers
+    outside a real assistant run (the /memory/developer inspection page), whose
+    probe queries must not pollute the relevance telemetry."""
     from memory.retrieval import fence_recalled_memory, format_memory_context, retrieve_memories_hybrid
     from memory import seed_memory as qkb
     from agents.query_handlers import QueryContext
@@ -350,6 +355,7 @@ def _action_query_memory(
     memories = retrieve_memories_hybrid(
         query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
         include_secret=False, journal_id=ctx.journal_id,
+        record_telemetry=record_telemetry,
     )
     dynamic_block = format_memory_context(memories, include_uuid=True) if memories else ""
 

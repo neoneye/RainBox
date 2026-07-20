@@ -26,9 +26,12 @@ def test_memory_page_renders_with_nav():
     assert "/static/memory.js?v=" in body        # cache-busted JS include
 
 
-def test_nav_has_memory_link():
+def test_nav_has_memory_dropdown():
+    # "Memory" is a nav dropdown (Memories + Developer), not a bare link.
     body = app.test_client().get("/memory").get_data(as_text=True)
-    assert ">Memory<" in body
+    assert ">Memory &#9662;<" in body
+    assert ">Memories<" in body
+    assert ">Developer<" in body
     assert "pp-active" in body
 
 

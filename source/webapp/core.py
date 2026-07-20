@@ -125,7 +125,13 @@ NAV_TEMPLATE = """
     <a href="{{ url_for('conversation_page') }}" class="{{ 'pp-active' if request.endpoint == 'conversation_page' }}">Conversations</a>
     <a href="{{ url_for('cron_page') }}" class="{{ 'pp-active' if request.endpoint == 'cron_page' }}">Cron</a>
     <a href="{{ url_for('kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'kanban_page' }}">Kanban</a>
-    <a href="{{ url_for('memory_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_page' }}">Memory</a>
+    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('memory_page', 'memory_developer_page') }}">
+      <summary>Memory &#9662;</summary>
+      <div class="pp-dd-menu">
+        <a href="{{ url_for('memory_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_page' }}">Memories</a>
+        <a href="{{ url_for('memory_developer_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_developer_page' }}">Developer</a>
+      </div>
+    </details>
     <a href="{{ url_for('assistant_overview_page') }}" class="{{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page') }}">Assistant</a>
     <a href="{{ url_for('git_page') }}" class="{{ 'pp-active' if request.endpoint == 'git_page' }}">Git</a>
     <a href="{{ url_for('profile_page') }}" class="{{ 'pp-active' if request.endpoint == 'profile_page' }}">Profile</a>

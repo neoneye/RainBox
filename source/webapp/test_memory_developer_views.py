@@ -1,0 +1,71 @@
+"""Markup/marker tests for webapp/memory_developer_views.py +
+static/memory_developer.js.
+
+The /memory/developer page is frontend-only: the route renders the HTML shell
+(+ inline CSS) and the interactivity lives in static/memory_developer.js.
+`_body()` concatenates the rendered page with the served JS, so a marker
+assertion covers both regardless of which side the marker lives on (same
+approach as test_memory_views.py).
+
+The query API itself needs live embeddings + LLMs, so only its input
+validation is tested here.
+"""
+
+from webapp.core import app  # noqa: F401  ensure routes register
+import webapp  # noqa: F401  registers memory_developer_views on the shared app
+
+
+def _body() -> str:
+    client = app.test_client()
+    page = client.get("/memory/developer").get_data(as_text=True)
+    js = client.get("/static/memory_developer.js")
+    assert js.status_code == 200  # the shell references it; it must serve
+    return page + js.get_data(as_text=True)
+
+
+def test_memory_developer_page_renders_with_nav():
+    resp = app.test_client().get("/memory/developer")
+    body = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert "pp-nav" in body                              # shared nav included
+    assert "/static/memory_developer.js?v=" in body      # cache-busted JS include
+
+
+def test_page_has_query_input_and_panels():
+    body = app.test_client().get("/memory/developer").get_data(as_text=True)
+    assert 'id="memdev-query"' in body
+    assert 'id="memdev-run"' in body
+    assert 'id="memdev-assistant-out"' in body
+    assert 'id="memdev-router-out"' in body
+    assert "memory_query" in body
+    assert "query_filter_router" in body
+
+
+def test_js_posts_to_the_query_api():
+    body = _body()
+    assert "/memory/api/developer/query" in body
+    assert "memdevRenderAssistant" in body
+    assert "memdevRenderRouter" in body
+
+
+def test_js_has_no_python_interpreted_escapes():
+    # The shell is a non-raw Python string; the JS lives in a static file
+    # precisely so backslash escapes survive. Guard the split: the inline
+    # template must stay free of backslashes.
+    from webapp.memory_developer_views import MEMORY_DEVELOPER_TEMPLATE
+    assert "\\" not in MEMORY_DEVELOPER_TEMPLATE
+
+
+def test_query_api_requires_a_query():
+    client = app.test_client()
+    resp = client.post("/memory/api/developer/query", json={})
+    assert resp.status_code == 400
+    assert "query" in resp.get_json()["error"]
+    resp = client.post("/memory/api/developer/query", json={"query": "   "})
+    assert resp.status_code == 400
+
+
+def test_nav_memory_dropdown_links_here():
+    body = app.test_client().get("/memory/developer").get_data(as_text=True)
+    assert ">Memory &#9662;<" in body
+    assert "/memory/developer" in body
