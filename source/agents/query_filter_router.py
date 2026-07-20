@@ -132,26 +132,36 @@ TOP_K_FILTER: int = 5
 FILTER_KEEP_THRESHOLD: int = 4
 
 
-def resolve_filter_model_uuids(
+def resolve_filter_model_group(
     fallbacks: list[tuple[UUID, str]],
-) -> tuple[list[UUID], str] | tuple[None, None]:
-    """Model group members for the relevance-scoring call, resolved the same
-    way for every filter caller so keep/drop decisions come from ONE model
-    identity: the dedicated `memory_filter` binding when the operator has set
-    one on /agentmodel (the knob for experimenting with scorer models), else
-    the first of `fallbacks` (`(agent_uuid, label)` pairs, tried in order)
-    with a non-empty bound group. Returns `(member_uuids, label)`, or
-    `(None, None)` when nothing is bound anywhere."""
+) -> tuple[UUID, str] | tuple[None, None]:
+    """Model group for the relevance-scoring call, resolved the same way for
+    every filter caller so keep/drop decisions come from ONE model identity:
+    the dedicated `memory_filter` binding when the operator has set one on
+    /agentmodel (the knob for experimenting with scorer models), else the
+    first of `fallbacks` (`(agent_uuid, label)` pairs, tried in order) with a
+    non-empty bound group. Returns `(group_uuid, label)`, or `(None, None)`
+    when nothing is bound anywhere."""
     from agents.config import MEMORY_FILTER_UUID
 
     for agent_uuid, label in [(MEMORY_FILTER_UUID, "memory_filter"), *fallbacks]:
         binding = db.get_agent_model_binding(agent_uuid)
         if binding is None or binding.model_group_uuid is None:
             continue
-        member_uuids = db.get_model_group_member_uuids(binding.model_group_uuid)
-        if member_uuids:
-            return member_uuids, label
+        if db.get_model_group_member_uuids(binding.model_group_uuid):
+            return binding.model_group_uuid, label
     return None, None
+
+
+def resolve_filter_model_uuids(
+    fallbacks: list[tuple[UUID, str]],
+) -> tuple[list[UUID], str] | tuple[None, None]:
+    """`resolve_filter_model_group`, unpacked to the group's priority-ordered
+    member uuids — what `structured_llm_call` consumes."""
+    group_uuid, label = resolve_filter_model_group(fallbacks)
+    if group_uuid is None or label is None:
+        return None, None
+    return db.get_model_group_member_uuids(group_uuid), label
 
 
 @dataclass

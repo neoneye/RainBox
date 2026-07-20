@@ -27,6 +27,46 @@ function memdevPre(text) {
   return '<pre class="memdev-pre">' + memdevEscape(text) + '</pre>';
 }
 
+// --- models overview -------------------------------------------------------
+function memdevMemberList(info) {
+  if (!info || !info.bound) return '<span class="muted">(no group bound)</span>';
+  const members = (info.members || []).map(m => {
+    if (m.error) return '<span class="err">' + memdevEscape(m.error) + '</span>';
+    let s = memdevEscape(m.provider + '/' + m.model);
+    if (m.override) {
+      s += ' <span class="muted">override: ' + memdevEscape(m.override);
+      if ((m.override_keys || []).length) {
+        s += ' (' + memdevEscape(m.override_keys.join(', ')) + ')';
+      }
+      s += '</span>';
+    }
+    return s;
+  });
+  return '<b>' + memdevEscape(info.name) + '</b>' +
+    ' <span class="muted">via ' + memdevEscape(info.from) + '</span><br>' +
+    members.join('<br>');
+}
+
+function memdevRenderModels(m) {
+  if (!m) return '';
+  if (m.error) {
+    return '<div class="err">' + memdevEscape(m.error) + '</div>';
+  }
+  const emb = memdevEscape((m.embedding_seed || {}).model || '?') +
+    ' <span class="muted">(seed questions, ' +
+    memdevEscape((m.embedding_seed || {}).base || '') + ')</span> · ' +
+    memdevEscape((m.embedding_claims || {}).model || '?') +
+    ' <span class="muted">(claims)</span>';
+  return '<table class="memdev-table"><tbody>' +
+    '<tr><th>embedding</th><td>' + emb + '</td></tr>' +
+    '<tr><th>filter scorer (assistant panel)</th><td>' +
+      memdevMemberList(m.filter_assistant_panel) + '</td></tr>' +
+    '<tr><th>filter scorer (router panel)</th><td>' +
+      memdevMemberList(m.filter_router_panel) + '</td></tr>' +
+    '<tr><th>route reply</th><td>' + memdevMemberList(m.route) + '</td></tr>' +
+    '</tbody></table>';
+}
+
 // --- left panel: assistant memory_query ------------------------------------
 function memdevRenderAssistant(a) {
   const parts = [];
@@ -44,13 +84,14 @@ function memdevRenderAssistant(a) {
   if (d.omitted) badges.push(memdevBadge('omitted: ' + d.omitted, 'warn'));
   const sf = d.seed_filter || {};
   if (sf.mode) {
-    // group_from: whose model group scored — 'query_filter_router' (shared
-    // scorer, the normal case) or 'own' (the assistant's group, fallback).
+    // group_from: whose binding supplied the scorer group — 'memory_filter'
+    // (dedicated), 'query_filter_router' (shared default) or 'own' (fallback).
     let label = 'seed filter: ' + sf.mode;
     if (sf.reason) label += ' (' + sf.reason + ')';
     if (sf.group_from) label += ' · ' + sf.group_from + ' group';
     badges.push(memdevBadge(label, sf.mode === 'llm' ? 'good' : 'warn'));
   }
+  if (sf.scorer_model) badges.push(memdevBadge('scored by: ' + sf.scorer_model));
   parts.push('<div class="memdev-meta">' + badges.join('') + '</div>');
   if (a.error) {
     parts.push(memdevSection('error', '<div class="err">' + memdevEscape(a.error) + '</div>'));
@@ -105,6 +146,7 @@ function memdevRenderRouter(r) {
   if (r.memory_command) badges.push(memdevBadge('memory command: ' + r.memory_command, 'warn'));
   if (r.exact) badges.push(memdevBadge('exact match', 'good'));
   if (r.filter_group) badges.push(memdevBadge('filter: ' + r.filter_group + ' group'));
+  if (r.filter_model) badges.push(memdevBadge('scored by: ' + r.filter_model));
   parts.push('<div class="memdev-meta">' + badges.join('') + '</div>');
 
   if (r.error) {
@@ -146,6 +188,7 @@ function memdevRenderRouter(r) {
       '<table class="memdev-table"><tbody>' +
       '<tr><th>subject</th><td>' + memdevEscape(r.route.subject || '') + '</td></tr>' +
       '<tr><th>action</th><td>' + memdevEscape(r.route.action || '') + '</td></tr>' +
+      (r.route.model ? '<tr><th>model</th><td>' + memdevEscape(r.route.model) + '</td></tr>' : '') +
       '</tbody></table>'));
     parts.push(memdevSection('reply', memdevPre(r.route.reply || '')));
   } else if (r.route_error) {
@@ -180,6 +223,10 @@ async function memdevRun() {
       routerOut.innerHTML = msg;
       return;
     }
+    const modelsWrap = document.getElementById('memdev-models');
+    modelsWrap.hidden = false;
+    document.getElementById('memdev-models-out').innerHTML =
+      memdevRenderModels(data.models);
     assistantOut.innerHTML = memdevRenderAssistant(data.assistant || {});
     routerOut.innerHTML = memdevRenderRouter(data.filter_router || {});
   } catch (e) {

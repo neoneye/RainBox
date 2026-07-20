@@ -56,6 +56,73 @@ def _preview(text: str) -> str:
     return text
 
 
+def _member_row(member_uuid) -> dict[str, Any]:
+    """Display info for one model-group member: the resolved provider/model,
+    plus the override's name and overridden argument keys when the member is a
+    model_config_override rather than a plain model_config."""
+    import db
+
+    row: dict[str, Any] = {"uuid": str(member_uuid)}
+    try:
+        provider_id, model_name, _args = db.resolved_model_kwargs(member_uuid)
+        row["provider"] = provider_id
+        row["model"] = model_name
+    except Exception as e:
+        row["error"] = f"{type(e).__name__}: {e}"
+        return row
+    override = (db.db.session.query(db.ModelConfigOverride)
+                .filter_by(uuid=member_uuid).first())
+    if override is not None:
+        row["override"] = override.display_name or "(unnamed override)"
+        row["override_keys"] = sorted((override.overrides or {}).keys())
+    return row
+
+
+def _group_info(group_uuid, label: str | None) -> dict[str, Any]:
+    import db
+
+    if group_uuid is None:
+        return {"bound": False}
+    group = db.get_model_group(group_uuid)
+    return {
+        "bound": True,
+        "from": label,
+        "name": group.name if group is not None else str(group_uuid),
+        "members": [
+            _member_row(m) for m in db.get_model_group_member_uuids(group_uuid)
+        ],
+    }
+
+
+def _models_overview() -> dict[str, Any]:
+    """What models each pipeline stage runs on, so a comparison on this page is
+    apples-to-apples: the embedding models (seed questions vs claims), the
+    shared relevance scorer as each panel resolves it, and the router's reply
+    group. Members list provider/model plus override name and overridden
+    argument keys."""
+    import db
+    from agents.config import ASSISTANT_UUID, QUERY_FILTER_ROUTER_UUID
+    from agents.query_filter_router import resolve_filter_model_group
+    from memory.embeddings import EMBED_MODEL_NAME as CLAIMS_EMBED
+    from memory.seed_memory import EMBED_MODEL_NAME as SEED_EMBED, OLLAMA_BASE
+
+    router_binding = db.get_agent_model_binding(QUERY_FILTER_ROUTER_UUID)
+    route_group_uuid = (router_binding.model_group_uuid
+                        if router_binding is not None else None)
+    filter_router = resolve_filter_model_group(
+        [(QUERY_FILTER_ROUTER_UUID, "own")])
+    filter_assistant = resolve_filter_model_group(
+        [(QUERY_FILTER_ROUTER_UUID, "query_filter_router"),
+         (ASSISTANT_UUID, "own")])
+    return {
+        "embedding_seed": {"model": SEED_EMBED, "base": OLLAMA_BASE},
+        "embedding_claims": {"model": CLAIMS_EMBED},
+        "filter_router_panel": _group_info(*filter_router),
+        "filter_assistant_panel": _group_info(*filter_assistant),
+        "route": _group_info(route_group_uuid, "query_filter_router"),
+    }
+
+
 def _run_assistant_memory_query(query: str) -> dict[str, Any]:
     """The assistant's memory_query action, exactly as a run would execute it —
     but with telemetry off and no room context (see module docstring)."""
@@ -184,10 +251,11 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
                 scorer_uuids, scorer_src = resolve_filter_model_uuids(
                     [(QUERY_FILTER_ROUTER_UUID, "own")])
                 out["filter_group"] = scorer_src
-                decision, _model = structured_llm_call(
+                decision, scorer_model_uuid = structured_llm_call(
                     "memory_developer.filter", scorer_uuids or [],
                     FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision,
                 )
+                out["filter_model"] = _member_row(scorer_model_uuid).get("model")
                 # LLM scores → code-side keep/drop; merge each candidate's
                 # scores into its table row so the page can show why.
                 scored = apply_filter_scores(decision, candidates)
@@ -226,10 +294,14 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
                 route = agent._llm_structured(
                     QUERY_FILTER_ROUTER_SYSTEM_PROMPT, route_prompt, RouterResponse
                 )
+                route_model = None
+                if agent._active_model_uuid is not None:
+                    route_model = _member_row(agent._active_model_uuid).get("model")
                 out["route"] = {
                     "subject": route.subject,
                     "action": route.action,
                     "reply": route.reply,
+                    "model": route_model,
                 }
             except Exception as e:
                 logger.warning(
@@ -250,8 +322,14 @@ def memory_developer_query() -> Response | tuple[Response, int]:
     query = str(body.get("query", "")).strip()
     if not query:
         return jsonify({"error": "query is required"}), 400
+    try:
+        models = _models_overview()
+    except Exception as e:
+        logger.warning("memory developer: models overview failed", exc_info=True)
+        models = {"error": f"{type(e).__name__}: {e}"}
     return jsonify({
         "query": query,
+        "models": models,
         "assistant": _run_assistant_memory_query(query),
         "filter_router": _run_query_filter_router(query),
     })
@@ -274,6 +352,10 @@ MEMORY_DEVELOPER_TEMPLATE = """
   .memdev-queryrow button:hover{background:#1d4ed8}
   .memdev-queryrow button:disabled{background:#93c5fd;cursor:default}
   .memdev-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .memdev-models{margin:0 0 14px}
+  .memdev-models[hidden]{display:none}
+  .memdev-models summary{cursor:pointer;-webkit-user-select:none;user-select:none}
+  .memdev-models .memdev-table{margin-top:8px}
   @media (max-width:1000px){.memdev-cols{grid-template-columns:1fr}}
   .memdev-panel{border:1px solid #e5e7eb;border-radius:10px;background:#fbfbfb;
     padding:14px 16px;min-width:0}
@@ -311,6 +393,10 @@ MEMORY_DEVELOPER_TEMPLATE = """
            autocomplete="off" autofocus>
     <button id="memdev-run" onclick="memdevRun()">Run</button>
   </div>
+  <details class="memdev-panel memdev-models" id="memdev-models" open hidden>
+    <summary class="memdev-section-label">models in play (per pipeline stage)</summary>
+    <div id="memdev-models-out"></div>
+  </details>
   <div class="memdev-cols">
     <section class="memdev-panel" id="memdev-assistant">
       <h2>assistant &middot; memory_query</h2>

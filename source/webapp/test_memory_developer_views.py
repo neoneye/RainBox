@@ -56,6 +56,16 @@ def test_js_renders_assistant_seed_filter_debug():
     assert "seed candidates + LLM filter" in body
 
 
+def test_page_has_models_overview_section():
+    # After a run the page shows which models each stage used (embedding,
+    # filter scorer per panel, route reply group) — apples-vs-oranges guard.
+    body = _body()
+    assert 'id="memdev-models"' in body
+    assert "memdevRenderModels" in body
+    assert "filter scorer" in body
+    assert "embedding" in body
+
+
 def test_js_has_no_python_interpreted_escapes():
     # The shell is a non-raw Python string; the JS lives in a static file
     # precisely so backslash escapes survive. Guard the split: the inline

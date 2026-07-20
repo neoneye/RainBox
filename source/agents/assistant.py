@@ -345,11 +345,15 @@ def _retrieve_seed_answers_filtered(
     candidates = qkb._semantic_ranked(query, qkb._vector_store())[:TOP_K_FILTER]
     if not candidates:
         return [], {"mode": "llm", "group_from": group_from, "candidates": []}
-    decision, _model_uuid = structured_llm_call(
+    decision, scorer_model_uuid = structured_llm_call(
         "assistant.memory_query", model_uuids,
         FILTER_SYSTEM_PROMPT, build_filter_prompt(query, candidates),
         FilterDecision,
     )
+    try:
+        _provider, scorer_model, _args = db.resolved_model_kwargs(scorer_model_uuid)
+    except Exception:
+        scorer_model = str(scorer_model_uuid)
     # The LLM only scored; the keep/drop policy (keep all when few candidates,
     # threshold on a full list) is code — apply_filter_scores.
     scored = apply_filter_scores(decision, candidates)
@@ -357,6 +361,7 @@ def _retrieve_seed_answers_filtered(
     debug = {
         "mode": "llm",
         "group_from": group_from,
+        "scorer_model": scorer_model,
         "candidates": [
             {
                 "qa_id": s.qa_id,
