@@ -98,6 +98,8 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
         QueryFilterRouterAgent,
         apply_filter_scores,
         build_filter_prompt,
+        resolve_filter_model_uuids,
+        structured_llm_call,
     )
     from agents.query_handlers import QueryContext
     from agents.router import RouterResponse
@@ -111,6 +113,7 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
         "exact": None,
         "candidates": [],
         "filter_kept": [],
+        "filter_group": None,
         "filter_error": None,
         "resolved": {},
         "route": None,
@@ -176,8 +179,14 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
         if candidates:
             try:
                 filter_prompt = build_filter_prompt(query, candidates)
-                decision = agent._llm_structured(
-                    FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision
+                # Same scorer resolution as the live pipelines: the dedicated
+                # memory_filter binding when set, else the router's own group.
+                scorer_uuids, scorer_src = resolve_filter_model_uuids(
+                    [(QUERY_FILTER_ROUTER_UUID, "own")])
+                out["filter_group"] = scorer_src
+                decision, _model = structured_llm_call(
+                    "memory_developer.filter", scorer_uuids or [],
+                    FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision,
                 )
                 # LLM scores → code-side keep/drop; merge each candidate's
                 # scores into its table row so the page can show why.

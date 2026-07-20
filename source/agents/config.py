@@ -95,6 +95,7 @@ ROUTER_UUID: UUID = UUID("04707c68-cda4-46e4-929a-48b3f53f7270")
 QUERY_UUID: UUID = UUID("cb4a4715-2b57-49fd-802c-0a05818f8b1c")
 QUERY_ROUTER_UUID: UUID = UUID("c973bca3-aa92-4a12-af20-d3f1087cac5e")
 QUERY_FILTER_ROUTER_UUID: UUID = UUID("218bb954-da6b-4712-9206-4f0f72eafcc0")
+MEMORY_FILTER_UUID: UUID = UUID("b4809a3f-12d6-4725-ab23-4808cec2d5d7")
 EDIT_DOCUMENT_V1_UUID: UUID = UUID("9f3b1a8e-2c5d-4d7a-9e3b-5f8a1c2d4e7b")
 EDIT_DOCUMENT_V2_UUID: UUID = UUID("d2a7c5e1-6b3f-4e9a-9c1d-7e4b8f2a3c5d")
 EDIT_DOCUMENT_V3_UUID: UUID = UUID("8f4d9b2a-7e3c-4a5b-9c8d-1f6e7d2c4b3a")
@@ -182,6 +183,12 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": QUERY_FILTER_ROUTER_UUID,
         "requires_structured_output": True,
         "description": "two-stage LLM: filter top-K candidates for relevance, then a simpler router LLM produces the reply using only the kept candidates",
+        "next": None,
+    },
+    "memory_filter": {
+        "uuid": MEMORY_FILTER_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that SCORES retrieval candidates (Likert relevance filter) for query_filter_router and the assistant's memory_query; unbound, those fall back to their own groups. Never receives journal work.",
         "next": None,
     },
     "edit_document_v1": {

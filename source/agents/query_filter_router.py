@@ -132,6 +132,28 @@ TOP_K_FILTER: int = 5
 FILTER_KEEP_THRESHOLD: int = 4
 
 
+def resolve_filter_model_uuids(
+    fallbacks: list[tuple[UUID, str]],
+) -> tuple[list[UUID], str] | tuple[None, None]:
+    """Model group members for the relevance-scoring call, resolved the same
+    way for every filter caller so keep/drop decisions come from ONE model
+    identity: the dedicated `memory_filter` binding when the operator has set
+    one on /agentmodel (the knob for experimenting with scorer models), else
+    the first of `fallbacks` (`(agent_uuid, label)` pairs, tried in order)
+    with a non-empty bound group. Returns `(member_uuids, label)`, or
+    `(None, None)` when nothing is bound anywhere."""
+    from agents.config import MEMORY_FILTER_UUID
+
+    for agent_uuid, label in [(MEMORY_FILTER_UUID, "memory_filter"), *fallbacks]:
+        binding = db.get_agent_model_binding(agent_uuid)
+        if binding is None or binding.model_group_uuid is None:
+            continue
+        member_uuids = db.get_model_group_member_uuids(binding.model_group_uuid)
+        if member_uuids:
+            return member_uuids, label
+    return None, None
+
+
 @dataclass
 class ScoredCandidate:
     """One candidate after the code-side keep/drop decision: the LLM's three
@@ -545,21 +567,32 @@ class QueryFilterRouterAgent(ModelGroupAgent):
             relevant_qa_ids: list[str] = []
             resolved_replies: dict[str, str] = {}
             scored: list[ScoredCandidate] = []
+            scorer_src: str | None = None
             if candidates:
                 db.post_progress(room_uuid, self.agent_uuid, "step 1 of 2: filtering candidates")
                 filter_prompt = build_filter_prompt(query, candidates)
-                filter_decision = cast(
-                    FilterDecision,
-                    self._llm_structured(FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision),
+                # Scorer group: the dedicated memory_filter binding when set,
+                # else this agent's own group — same resolution as the
+                # assistant's seed filter, so both pipelines score alike.
+                scorer_uuids, scorer_src = resolve_filter_model_uuids(
+                    [(self.agent_uuid, "own")])
+                filter_decision, scorer_model = structured_llm_call(
+                    self.name, scorer_uuids or [],
+                    FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision,
                 )
+                filter_decision = cast(FilterDecision, filter_decision)
                 # The LLM only scored; the keep/drop policy runs here. Kept
                 # ids come back best-first so the strongest candidate leads
                 # the route prompt.
                 scored = apply_filter_scores(filter_decision, candidates)
                 relevant_qa_ids = [s.qa_id for s in scored if s.kept]
-                # The filter call just ran, so a model in the group has now answered;
-                # expose it to handlers (get_model_info) resolved below.
-                ctx.active_model_uuid = self._active_model_uuid
+                # When our own group scored, that model has now answered —
+                # expose it to handlers (get_model_info) resolved below. A
+                # dedicated memory_filter group is a different agent's model,
+                # so it must not masquerade as this agent's active model.
+                if scorer_src == "own":
+                    self._active_model_uuid = scorer_model
+                    ctx.active_model_uuid = scorer_model
                 # --- 4) Resolve only the kept candidates --------------------
                 for qa_id in relevant_qa_ids:
                     cand = next((c for c in candidates if c.qa_id == qa_id), None)
@@ -584,6 +617,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                          "relevancy": s.relevancy, "kept": s.kept}
                         for s in scored
                     ],
+                    "filter_group": scorer_src,
                     "filter_kept": relevant_qa_ids,
                     "resolved": resolved_replies,
                 }, ensure_ascii=False, separators=(",", ":")),

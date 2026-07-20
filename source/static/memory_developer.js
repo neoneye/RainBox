@@ -104,6 +104,7 @@ function memdevRenderRouter(r) {
   if (r.error) badges.push(memdevBadge('error', 'bad'));
   if (r.memory_command) badges.push(memdevBadge('memory command: ' + r.memory_command, 'warn'));
   if (r.exact) badges.push(memdevBadge('exact match', 'good'));
+  if (r.filter_group) badges.push(memdevBadge('filter: ' + r.filter_group + ' group'));
   parts.push('<div class="memdev-meta">' + badges.join('') + '</div>');
 
   if (r.error) {
