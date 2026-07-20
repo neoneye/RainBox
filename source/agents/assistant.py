@@ -308,13 +308,68 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
     return none
 
 
+def _retrieve_seed_answers_filtered(query: str, *, qctx, agent_uuid: UUID):
+    """Seed retrieval the query_filter_router way: ungated top-K semantic
+    candidates, then an LLM relevance filter, then resolve only the kept
+    candidates. This recalls more than the MIN_SCORE-gated
+    `retrieve_seed_answers` (a borderline-score candidate still reaches the
+    filter) while the filter drops the off-topic ones.
+
+    The filter runs on `agent_uuid`'s own model group. Returns None when no
+    group is bound (the caller falls back to the gated retrieval); raises on
+    LLM failure (same fallback). Kept candidates come back in the filter's
+    preference order as `SeedMemory` rows; hallucinated qa_ids are ignored."""
+    from agents.query_filter_router import (
+        FILTER_SYSTEM_PROMPT, TOP_K_FILTER, FilterDecision,
+        build_filter_prompt, structured_llm_call,
+    )
+    from memory import seed_memory as qkb
+
+    binding = db.get_agent_model_binding(agent_uuid)
+    if binding is None or binding.model_group_uuid is None:
+        return None
+    model_uuids = db.get_model_group_member_uuids(binding.model_group_uuid)
+    if not model_uuids:
+        return None
+    candidates = qkb._semantic_ranked(query, qkb._vector_store())[:TOP_K_FILTER]
+    if not candidates:
+        return []
+    decision, _model_uuid = structured_llm_call(
+        "assistant.memory_query", model_uuids,
+        FILTER_SYSTEM_PROMPT, build_filter_prompt(query, candidates),
+        FilterDecision,
+    )
+    by_qa_id = {c.qa_id: c for c in candidates}
+    out: list[qkb.SeedMemory] = []
+    for qa_id in decision.relevant_qa_ids:
+        cand = by_qa_id.get(qa_id)
+        entry = qkb.get_entry(qa_id)
+        if cand is None or entry is None:
+            continue
+        kind = str(entry.get("kind", "static"))
+        answer = (str(entry.get("answer", "")) if kind == "static"
+                  else qkb._resolve_match(cand, qctx))
+        out.append(qkb.SeedMemory(
+            uuid=qa_id,
+            path=str(entry.get("path", "")),
+            source=str(entry.get("_source", "upstream")),
+            answer=answer,
+            score=cand.score,
+            kind=kind,
+        ))
+    return out
+
+
 def _action_query_memory(
     ctx: AssistantActionContext, args: dict[str, Any], *, _seed_retriever=None,
     record_telemetry: bool = True,
 ) -> AssistantObservation:
     """Hybrid retrieval over dynamic claims, curated static seed answers, AND
     live dynamic seed handlers (project status, git status, capabilities, model
-    info). Results are tiered: user-overlay seed, then upstream seed, then
+    info). Seed retrieval prefers the LLM-filtered pipeline
+    (`_retrieve_seed_answers_filtered`), degrading to the MIN_SCORE-gated
+    `retrieve_seed_answers` when no model group is bound or the filter LLM
+    fails. Results are tiered: user-overlay seed, then upstream seed, then
     dynamic claims. Secrets are never returned (include_secret stays False).
 
     Long facts are shortened (tagged `truncateN`) and the block is bounded; pass
@@ -336,17 +391,27 @@ def _action_query_memory(
     qctx = QueryContext(
         room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
     )
-    seed_fn = _seed_retriever or qkb.retrieve_seed_answers
     seeds = []
     try:
         # The assistant loop, unlike the chat route's query_filter_router.handle(),
         # never loads the seed KB — so load the registry (_entries_by_id) and ensure
         # the pgvector table is populated before retrieving, or every seed match is
         # dropped. Skip when a retriever is injected (tests stay hermetic).
-        if _seed_retriever is None:
+        if _seed_retriever is not None:
+            seeds = _seed_retriever(query, qctx=qctx)
+        else:
             qkb._load_kb()
             qkb._ensure_populated(qkb._vector_store())
-        seeds = seed_fn(query, qctx=qctx)
+            filtered = None
+            try:
+                filtered = _retrieve_seed_answers_filtered(
+                    query, qctx=qctx, agent_uuid=ctx.agent_uuid)
+            except Exception:
+                logger.warning(
+                    "assistant: seed LLM filter failed; falling back to "
+                    "gated retrieval", exc_info=True)
+            seeds = (filtered if filtered is not None
+                     else qkb.retrieve_seed_answers(query, qctx=qctx))
     except Exception:
         logger.warning("assistant: seed memory retrieval failed", exc_info=True)
     # Tier seeds: user-overlay first, then upstream; preserve score order within tier.

@@ -3,9 +3,10 @@
 Type a query and see what each of the two retrieval pipelines returns for it:
 
 - **assistant memory_query** — the assistant's `memory_query` action
-  (`agents.assistant._action_query_memory`): curated seed answers + hybrid
-  claim retrieval, rendered as the exact observation text the assistant model
-  would receive.
+  (`agents.assistant._action_query_memory`): LLM-filtered seed answers
+  (degrading to the MIN_SCORE-gated retrieval when the assistant has no model
+  group or the filter LLM fails) + hybrid claim retrieval, rendered as the
+  exact observation text the assistant model would receive.
 - **query_filter_router** — the chat route's pipeline
   (`agents.query_filter_router`), run stage by stage: exact alias → top-K
   semantic candidates → LLM relevance filter → resolve kept candidates →
@@ -95,6 +96,7 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
         TOP_K_FILTER,
         FilterDecision,
         QueryFilterRouterAgent,
+        build_filter_prompt,
     )
     from agents.query_handlers import QueryContext
     from agents.router import RouterResponse
@@ -172,7 +174,7 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
         relevant_qa_ids: list[str] = []
         if candidates:
             try:
-                filter_prompt = agent._build_filter_prompt(query, candidates)
+                filter_prompt = build_filter_prompt(query, candidates)
                 decision = agent._llm_structured(
                     FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision
                 )
@@ -296,8 +298,8 @@ MEMORY_DEVELOPER_TEMPLATE = """
   <div class="memdev-cols">
     <section class="memdev-panel" id="memdev-assistant">
       <h2>assistant &middot; memory_query</h2>
-      <p class="muted sub">seed answers + hybrid claim retrieval, as the observation
-      text the assistant model receives</p>
+      <p class="muted sub">LLM-filtered seed answers (gated fallback) + hybrid claim
+      retrieval, as the observation text the assistant model receives</p>
       <div id="memdev-assistant-out"><p class="memdev-empty">No query run yet.</p></div>
     </section>
     <section class="memdev-panel" id="memdev-router">

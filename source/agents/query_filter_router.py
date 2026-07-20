@@ -118,6 +118,79 @@ Output only the JSON object. No prose, no markdown fences."""
 
 TOP_K_FILTER: int = 5
 
+
+def build_filter_prompt(query: str, candidates: list[Match]) -> str:
+    """User prompt for the relevance-filter LLM call: the user's message plus
+    each candidate's qa_id/path/score/question and its answer (static) or
+    handler name (dynamic). Shared with the assistant's memory_query seed
+    filter and the /memory/developer page, so all filter callers present
+    candidates identically."""
+    lines = [f"Current user message: {query!r}", "", "Candidates:"]
+    for c in candidates:
+        entry = get_entry(c.qa_id) or {}
+        kind = entry.get("kind", "?")
+        lines.append(f"  - qa_id: {c.qa_id}")
+        path = entry.get("path")
+        if path:
+            lines.append(f"    path: {path}")
+        lines.append(f"    similarity score: {score_permille(c.score)}")
+        lines.append(f"    matched_question: {c.matched_question!r}")
+        lines.append(f"    kind: {kind}")
+        if kind == "static":
+            lines.append(f"    answer: {entry.get('answer', '')!r}")
+        elif kind == "dynamic":
+            lines.append(f"    handler: {entry.get('handler', '')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def structured_llm_call(
+    agent_name: str,
+    candidate_model_uuids: list[UUID],
+    system_prompt: str,
+    user_prompt: str,
+    response_model: type[BaseModel],
+) -> tuple[BaseModel, UUID]:
+    """One structured-output call, falling back through a model group's members
+    on failure. Returns (result, answering_model_uuid); raises RuntimeError when
+    no group is bound or every member fails. `agent_name` only labels log/error
+    messages. Free function (not an agent method) so non-agent callers — the
+    assistant's memory_query seed filter, the /memory/developer page — can make
+    the same call against any group's members."""
+    if not candidate_model_uuids:
+        raise RuntimeError(
+            f"agent {agent_name} has no model group bound (assign one on /agentmodel)"
+        )
+    messages = [
+        ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
+        ChatMessage(role=MessageRole.USER, content=user_prompt),
+    ]
+    last_error: Exception | None = None
+    for model_uuid in candidate_model_uuids:
+        try:
+            _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+            # Fail fast on a down/unreachable provider: the OpenAI client's
+            # default exponential backoff (max_retries=10) turns one outage
+            # into a ~30s+ hang per model with no UI feedback. We already
+            # fall back across the group's members, so per-model retries add
+            # latency without improving the odds. (Native-Ollama drops the
+            # key in prepare_llm's field filter, so this is a no-op there.)
+            args = {**args, "max_retries": 0}
+            the_llm = prepare_llm(_provider_id, model_name, args)
+            sllm = the_llm.as_structured_llm(response_model)
+            result = cast(BaseModel, sllm.chat(messages).raw)
+            return result, model_uuid
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "agent %s: model %s failed (%s); trying next in group",
+                agent_name, model_uuid, e,
+            )
+    raise RuntimeError(
+        f"agent {agent_name}: all {len(candidate_model_uuids)} models "
+        f"in the group failed; last error: {last_error}"
+    )
+
 # Posted to the room when the semantic-retrieval embeddings or the filter/route
 # LLMs can't be reached (e.g. LM Studio is not running). Without this, the
 # non-exact path raises out of handle() after the fail-fast attempt and the user
@@ -260,62 +333,15 @@ class QueryFilterRouterAgent(ModelGroupAgent):
         back through the group's members on failure. Like
         StructuredLLMAgent._structured_call but takes the schema as an argument
         so we can use two different schemas in one handle."""
-        if not self.candidate_model_uuids:
-            raise RuntimeError(
-                f"agent {self.name} has no model group bound (assign one on /agentmodel)"
-            )
-        messages = [
-            ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
-            ChatMessage(role=MessageRole.USER, content=user_prompt),
-        ]
-        last_error: Exception | None = None
-        for model_uuid in self.candidate_model_uuids:
-            try:
-                _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
-                # Fail fast on a down/unreachable provider: the OpenAI client's
-                # default exponential backoff (max_retries=10) turns one outage
-                # into a ~30s+ hang per model with no UI feedback. We already
-                # fall back across the group's members, so per-model retries add
-                # latency without improving the odds. (Native-Ollama drops the
-                # key in prepare_llm's field filter, so this is a no-op there.)
-                args = {**args, "max_retries": 0}
-                the_llm = prepare_llm(_provider_id, model_name, args)
-                sllm = the_llm.as_structured_llm(response_model)
-                result = cast(BaseModel, sllm.chat(messages).raw)
-                # Remember which group member actually answered so the
-                # get_model_info handler can report the real (post-fallback)
-                # model rather than just the first candidate.
-                self._active_model_uuid = model_uuid
-                return result
-            except Exception as e:
-                last_error = e
-                logger.warning(
-                    "agent %s: model %s failed (%s); trying next in group",
-                    self.name, model_uuid, e,
-                )
-        raise RuntimeError(
-            f"agent {self.name}: all {len(self.candidate_model_uuids)} models "
-            f"in the group failed; last error: {last_error}"
+        result, model_uuid = structured_llm_call(
+            self.name, self.candidate_model_uuids,
+            system_prompt, user_prompt, response_model,
         )
-
-    def _build_filter_prompt(self, query: str, candidates: list[Match]) -> str:
-        lines = [f"Current user message: {query!r}", "", "Candidates:"]
-        for c in candidates:
-            entry = get_entry(c.qa_id) or {}
-            kind = entry.get("kind", "?")
-            lines.append(f"  - qa_id: {c.qa_id}")
-            path = entry.get("path")
-            if path:
-                lines.append(f"    path: {path}")
-            lines.append(f"    similarity score: {score_permille(c.score)}")
-            lines.append(f"    matched_question: {c.matched_question!r}")
-            lines.append(f"    kind: {kind}")
-            if kind == "static":
-                lines.append(f"    answer: {entry.get('answer', '')!r}")
-            elif kind == "dynamic":
-                lines.append(f"    handler: {entry.get('handler', '')}")
-            lines.append("")
-        return "\n".join(lines)
+        # Remember which group member actually answered so the get_model_info
+        # handler can report the real (post-fallback) model rather than just
+        # the first candidate.
+        self._active_model_uuid = model_uuid
+        return result
 
     def _build_route_prompt(
         self,
@@ -437,7 +463,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
             resolved_replies: dict[str, str] = {}
             if candidates:
                 db.post_progress(room_uuid, self.agent_uuid, "step 1 of 2: filtering candidates")
-                filter_prompt = self._build_filter_prompt(query, candidates)
+                filter_prompt = build_filter_prompt(query, candidates)
                 filter_decision = cast(
                     FilterDecision,
                     self._llm_structured(FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision),

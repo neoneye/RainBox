@@ -318,6 +318,110 @@ def test_query_memory_loads_seed_kb_before_retrieval(app_ctx, monkeypatch):
     assert ("ensure", "VS") in calls       # pgvector table ensured populated
 
 
+def _stub_seed_kb(monkeypatch, qkb):
+    """Neutralize the seed KB's load/populate plumbing for hermetic tests."""
+    monkeypatch.setattr(qkb, "_load_kb", lambda: None)
+    monkeypatch.setattr(qkb, "_vector_store", lambda: "VS")
+    monkeypatch.setattr(qkb, "_ensure_populated", lambda vs: None)
+
+
+def _bind_model_group(monkeypatch):
+    """Pretend the acting agent has a model group with one member."""
+    binding = type("B", (), {"model_group_uuid": uuid4()})()
+    monkeypatch.setattr(db, "get_agent_model_binding", lambda agent_uuid: binding)
+    monkeypatch.setattr(
+        db, "get_model_group_member_uuids", lambda group_uuid: [uuid4()])
+
+
+def test_query_memory_seed_filter_keeps_only_llm_relevant(app_ctx, monkeypatch):
+    """Seed retrieval runs the query_filter_router pipeline: ungated top-K
+    candidates → LLM relevance filter → resolve kept. A below-MIN_SCORE
+    candidate the filter keeps IS recalled (the gated path would have dropped
+    it), a high-score candidate the filter rejects is NOT, and hallucinated
+    qa_ids are ignored."""
+    import agents.query_filter_router as qfr
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    entries = {
+        "qa-mac": {"kind": "static", "path": "identity.first_mac",
+                   "_source": "user-overlay", "answer": "It was a PowerBook."},
+        "qa-computer": {"kind": "static", "path": "identity.first_computer",
+                        "_source": "upstream", "answer": "It was a home computer."},
+        "qa-noise": {"kind": "static", "path": "other.topic",
+                     "_source": "upstream", "answer": "Something off-topic."},
+    }
+    monkeypatch.setattr(qkb, "get_entry", lambda qa_id: entries.get(qa_id))
+    matches = [
+        Match(qa_id="qa-noise", method="semantic", score=0.90, matched_question="noise"),
+        Match(qa_id="qa-mac", method="semantic", score=0.62, matched_question="first mac"),
+        # Below MIN_SCORE (0.60): the gated retrieval would never surface this.
+        Match(qa_id="qa-computer", method="semantic", score=0.30,
+              matched_question="first computer"),
+    ]
+    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: matches)
+
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+        assert "qa-noise" in user_prompt   # ungated candidates reach the filter
+        return (response_model(
+            relevant_qa_ids=["qa-mac", "qa-computer", "qa-hallucinated"],
+        ), model_uuids[0])
+
+    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    obs = _action_query_memory(_ctx(), {"query": "first mac"})
+    assert obs.ok
+    assert "PowerBook" in obs.text
+    assert "home computer" in obs.text          # kept despite the sub-gate score
+    assert "Something off-topic" not in obs.text  # high score, but filter dropped it
+    assert "qa-hallucinated" not in obs.text
+
+
+def test_query_memory_seed_filter_falls_back_when_llm_fails(app_ctx, monkeypatch):
+    """A dead filter LLM must degrade to the MIN_SCORE-gated retrieval, not to
+    an empty seed block."""
+    import agents.query_filter_router as qfr
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match, SeedMemory
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: [
+        Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
+
+    def boom(*_a, **_k):
+        raise RuntimeError("all models in the group failed")
+
+    monkeypatch.setattr(qfr, "structured_llm_call", boom)
+    monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [
+        SeedMemory(uuid="gated-1", path="p", source="upstream",
+                   answer="gated fallback fact", score=0.7)])
+    obs = _action_query_memory(_ctx(), {"query": "anything"})
+    assert obs.ok
+    assert "gated fallback fact" in obs.text
+
+
+def test_query_memory_seed_filter_skipped_without_model_group(app_ctx, monkeypatch):
+    """No model group bound → straight to the gated retrieval; the ungated
+    semantic ranking (which needs embeddings) must not even run."""
+    from memory import seed_memory as qkb
+    from memory.seed_memory import SeedMemory
+
+    _stub_seed_kb(monkeypatch, qkb)
+    monkeypatch.setattr(db, "get_agent_model_binding", lambda agent_uuid: None)
+    ranked_calls = []
+    monkeypatch.setattr(
+        qkb, "_semantic_ranked", lambda q, vs: ranked_calls.append(q) or [])
+    monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [
+        SeedMemory(uuid="gated-1", path="p", source="upstream",
+                   answer="gated fact", score=0.7)])
+    obs = _action_query_memory(_ctx(), {"query": "anything"})
+    assert obs.ok
+    assert "gated fact" in obs.text
+    assert ranked_calls == []
+
+
 def test_query_memory_merges_seed_and_dynamic_without_duplicate_legend(app_ctx, fresh_subject):
     """Seed + dynamic together: seed lines first, then dynamic facts, and the
     '{memory_uuid}, ...' legend appears exactly once (the dynamic block's own
