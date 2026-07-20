@@ -116,9 +116,12 @@ def _models_overview() -> dict[str, Any]:
 
 
 def _run_assistant_memory_query(query: str, top_k_vector: int,
-                                top_k_fulltext: int) -> dict[str, Any]:
+                                top_k_fulltext: int,
+                                room_uuid) -> dict[str, Any]:
     """The assistant's memory_query action, exactly as a run would execute it —
-    but with telemetry off and no room context (see module docstring)."""
+    but with telemetry off. `room_uuid` (None = no room) sets the probe's
+    chatroom context: with a room selected, that room's room-scoped claims
+    become reachable and room-dependent handlers resolve."""
     from agents.assistant import AssistantActionContext, _action_query_memory
     from agents.config import ASSISTANT_UUID
 
@@ -127,7 +130,7 @@ def _run_assistant_memory_query(query: str, top_k_vector: int,
     try:
         ctx = AssistantActionContext(
             journal_id=None,
-            room_uuid=None,  # type: ignore[arg-type]  — no room on the dev page
+            room_uuid=room_uuid,  # type: ignore[arg-type]  — None = no room
             agent_uuid=ASSISTANT_UUID,
             step_index=0,
         )
@@ -143,15 +146,16 @@ def _run_assistant_memory_query(query: str, top_k_vector: int,
 
 
 def _run_query_filter_router(query: str, top_k_vector: int,
-                             top_k_fulltext: int) -> dict[str, Any]:
+                             top_k_fulltext: int, room_uuid) -> dict[str, Any]:
     """The query_filter_router pipeline, stage by stage, read-only.
 
     Mirrors QueryFilterRouterAgent.handle() minus its side effects: nothing is
     posted to a chatroom, no RetrievalEvents are written, and a query that
     parses as a memory command is only *reported* (running it would mutate the
-    memory store). The route stage uses a synthetic one-message transcript
-    (there is no room), so its reply shows how the router answers the query
-    cold — without chat history."""
+    memory store). `room_uuid` (None = no room) lets room-dependent handlers
+    resolve. The route stage uses a synthetic one-message transcript rather
+    than the room's history, so its reply shows how the router answers the
+    query cold."""
     from agents.config import QUERY_FILTER_ROUTER_UUID
     from agents.query_filter_router import (
         FILTER_SYSTEM_PROMPT,
@@ -196,7 +200,7 @@ def _run_query_filter_router(query: str, top_k_vector: int,
         qkb._ensure_populated(vs)
 
         qctx = QueryContext(
-            room_uuid=None,  # type: ignore[arg-type]  — no room on the dev page
+            room_uuid=room_uuid,  # type: ignore[arg-type]  — None = no room
             query=query,
             payload={},
             agent_uuid=QUERY_FILTER_ROUTER_UUID,
@@ -341,6 +345,21 @@ def _parse_signal_budgets(body: dict[str, Any]) -> tuple[int, int]:
             _parse_budget(body, "top_k_fulltext", TOP_K_FULLTEXT))
 
 
+def _parse_room_uuid(body: dict[str, Any]):
+    """The probe's chatroom context, or None ("no room" — room-scoped claims
+    stay out of reach, exactly like a turn without a room). Garbage parses as
+    no room rather than failing the whole probe."""
+    from uuid import UUID
+
+    raw = str(body.get("room_uuid") or "").strip()
+    if not raw:
+        return None
+    try:
+        return UUID(raw)
+    except ValueError:
+        return None
+
+
 @app.route("/memory/api/developer/query", methods=["POST"])
 def memory_developer_query() -> Response | tuple[Response, int]:
     body = request.get_json(silent=True) or {}
@@ -348,6 +367,7 @@ def memory_developer_query() -> Response | tuple[Response, int]:
     if not query:
         return jsonify({"error": "query is required"}), 400
     top_k_vector, top_k_fulltext = _parse_signal_budgets(body)
+    room_uuid = _parse_room_uuid(body)
     try:
         models = _models_overview()
     except Exception as e:
@@ -357,9 +377,12 @@ def memory_developer_query() -> Response | tuple[Response, int]:
         "query": query,
         "top_k_vector": top_k_vector,
         "top_k_fulltext": top_k_fulltext,
+        "room_uuid": str(room_uuid) if room_uuid else None,
         "models": models,
-        "assistant": _run_assistant_memory_query(query, top_k_vector, top_k_fulltext),
-        "filter_router": _run_query_filter_router(query, top_k_vector, top_k_fulltext),
+        "assistant": _run_assistant_memory_query(
+            query, top_k_vector, top_k_fulltext, room_uuid),
+        "filter_router": _run_query_filter_router(
+            query, top_k_vector, top_k_fulltext, room_uuid),
     })
 
 
@@ -381,6 +404,8 @@ MEMORY_DEVELOPER_TEMPLATE = """
   .memdev-queryrow button:disabled{background:#93c5fd;cursor:default}
   .memdev-topk{display:flex;align-items:center;gap:6px;white-space:nowrap}
   .memdev-topk input{width:4.5em;font:inherit;font-size:1rem;padding:8px 6px;
+    border:1px solid #d1d5db;border-radius:8px}
+  .memdev-topk select{max-width:14em;font:inherit;font-size:0.95rem;padding:8px 6px;
     border:1px solid #d1d5db;border-radius:8px}
   .memdev-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
   .memdev-models{margin:0 0 14px}
@@ -417,8 +442,9 @@ MEMORY_DEVELOPER_TEMPLATE = """
 <div class="memdev-content">
   <p class="muted">Run one query through both retrieval pipelines and compare what
   each returns. Read-only: nothing is posted, no telemetry is recorded, and
-  memory commands are detected but never executed. There is no chatroom context
-  here, so room-scoped claims and room-dependent handlers are out of reach.</p>
+  memory commands are detected but never executed. Pick a room to probe as
+  that chatroom (reaching its room-scoped claims and room-dependent handlers);
+  with "(no room)", those stay out of reach.</p>
   <div class="memdev-queryrow">
     <input type="text" id="memdev-query" placeholder="type a query, e.g. &quot;what is the git status&quot;"
            autocomplete="off" autofocus>
@@ -426,6 +452,8 @@ MEMORY_DEVELOPER_TEMPLATE = """
       <input type="number" id="memdev-topk-vector" min="0" max="20" value="5"></label>
     <label class="memdev-topk muted" for="memdev-topk-fulltext">fulltext
       <input type="number" id="memdev-topk-fulltext" min="0" max="20" value="5"></label>
+    <label class="memdev-topk muted" for="memdev-room">room
+      <select id="memdev-room"><option value="">(no room)</option></select></label>
     <button id="memdev-run" onclick="memdevRun()">Run</button>
   </div>
   <details class="memdev-panel memdev-models" id="memdev-models" open hidden>

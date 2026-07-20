@@ -9,6 +9,27 @@
 const MEMDEV_QUERY_KEY = 'memoryDeveloper.lastQuery';
 const MEMDEV_TOPK_VECTOR_KEY = 'memoryDeveloper.topKVector';
 const MEMDEV_TOPK_FULLTEXT_KEY = 'memoryDeveloper.topKFulltext';
+const MEMDEV_ROOM_KEY = 'memoryDeveloper.roomUuid';
+
+// Populate the room selector ("" = no room) and restore the saved choice once
+// the options exist.
+async function memdevLoadRooms() {
+  try {
+    const resp = await fetch('/chat/api/rooms');
+    const rooms = await resp.json();
+    const select = document.getElementById('memdev-room');
+    for (const room of rooms) {
+      const opt = document.createElement('option');
+      opt.value = room.uuid;
+      opt.textContent = room.name;
+      select.appendChild(opt);
+    }
+    const saved = localStorage.getItem(MEMDEV_ROOM_KEY);
+    if (saved && [...select.options].some(o => o.value === saved)) {
+      select.value = saved;
+    }
+  } catch (_) { /* selector stays "(no room)" */ }
+}
 
 function memdevBudget(elementId) {
   // Per-signal candidate budget; 0 disables the signal. Clamp to the input's
@@ -228,10 +249,12 @@ async function memdevRun() {
   if (!query) { input.focus(); return; }
   const topKVector = memdevBudget('memdev-topk-vector');
   const topKFulltext = memdevBudget('memdev-topk-fulltext');
+  const roomUuid = document.getElementById('memdev-room').value;
   try {
     localStorage.setItem(MEMDEV_QUERY_KEY, query);
     localStorage.setItem(MEMDEV_TOPK_VECTOR_KEY, String(topKVector));
     localStorage.setItem(MEMDEV_TOPK_FULLTEXT_KEY, String(topKFulltext));
+    localStorage.setItem(MEMDEV_ROOM_KEY, roomUuid);
   } catch (_) {}
   button.disabled = true;
   button.textContent = 'Running…';
@@ -242,7 +265,8 @@ async function memdevRun() {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({query: query, top_k_vector: topKVector,
-                            top_k_fulltext: topKFulltext}),
+                            top_k_fulltext: topKFulltext,
+                            room_uuid: roomUuid || null}),
     });
     const data = await resp.json();
     if (!resp.ok) {
@@ -278,3 +302,4 @@ try {
   const topKFulltext = parseInt(localStorage.getItem(MEMDEV_TOPK_FULLTEXT_KEY), 10);
   if (!isNaN(topKFulltext)) document.getElementById('memdev-topk-fulltext').value = topKFulltext;
 } catch (_) {}
+memdevLoadRooms();
