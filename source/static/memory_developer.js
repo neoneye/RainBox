@@ -32,17 +32,18 @@ function memdevMemberList(info) {
   if (!info || !info.bound) return '<span class="muted">(no group bound)</span>';
   const members = (info.members || []).map(m => {
     if (m.error) return '<span class="err">' + memdevEscape(m.error) + '</span>';
-    let s = memdevEscape(m.provider + '/' + m.model);
-    if (m.override) {
-      s += ' <span class="muted">override: ' + memdevEscape(m.override);
-      if ((m.override_keys || []).length) {
-        s += ' (' + memdevEscape(m.override_keys.join(', ')) + ')';
-      }
-      s += '</span>';
-    }
+    // "provider / model / override-label" — the label is the override's
+    // effective display name ("t0.15 c100k struct" when unnamed); plain
+    // configs have no third segment.
+    let name = memdevEscape(m.provider) + ' / ' +
+      memdevEscape(m.model_display_name || m.model_name);
+    if (m.display_name) name += ' / ' + memdevEscape(m.display_name);
+    let s = '<a href="/model?id=' + memdevEscape(m.uuid) + '">' + name + '</a>';
+    if (m.available === false) s += ' <span class="err">(unavailable)</span>';
     return s;
   });
-  return '<b>' + memdevEscape(info.name) + '</b>' +
+  return '<a href="/modelgroup?id=' + memdevEscape(info.uuid) + '"><b>' +
+    memdevEscape(info.name) + '</b></a>' +
     ' <span class="muted">via ' + memdevEscape(info.from) + '</span><br>' +
     members.join('<br>');
 }

@@ -57,25 +57,16 @@ def _preview(text: str) -> str:
 
 
 def _member_row(member_uuid) -> dict[str, Any]:
-    """Display info for one model-group member: the resolved provider/model,
-    plus the override's name and overridden argument keys when the member is a
-    model_config_override rather than a plain model_config."""
-    import db
+    """Display info for one model-group member, via the same resolver the
+    model-group UI uses (db.resolve_member): provider, model, the parent
+    config's friendly label, and for overrides the effective display name —
+    the user-set name or the synthesized "t0.5 c32k struct" summary."""
+    from db.model_config import resolve_member
 
-    row: dict[str, Any] = {"uuid": str(member_uuid)}
     try:
-        provider_id, model_name, _args = db.resolved_model_kwargs(member_uuid)
-        row["provider"] = provider_id
-        row["model"] = model_name
+        return resolve_member(member_uuid)
     except Exception as e:
-        row["error"] = f"{type(e).__name__}: {e}"
-        return row
-    override = (db.db.session.query(db.ModelConfigOverride)
-                .filter_by(uuid=member_uuid).first())
-    if override is not None:
-        row["override"] = override.display_name or "(unnamed override)"
-        row["override_keys"] = sorted((override.overrides or {}).keys())
-    return row
+        return {"uuid": str(member_uuid), "error": f"{type(e).__name__}: {e}"}
 
 
 def _group_info(group_uuid, label: str | None) -> dict[str, Any]:
@@ -87,6 +78,7 @@ def _group_info(group_uuid, label: str | None) -> dict[str, Any]:
     return {
         "bound": True,
         "from": label,
+        "uuid": str(group_uuid),
         "name": group.name if group is not None else str(group_uuid),
         "members": [
             _member_row(m) for m in db.get_model_group_member_uuids(group_uuid)
@@ -255,7 +247,7 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
                     "memory_developer.filter", scorer_uuids or [],
                     FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision,
                 )
-                out["filter_model"] = _member_row(scorer_model_uuid).get("model")
+                out["filter_model"] = _member_row(scorer_model_uuid).get("model_name")
                 # LLM scores → code-side keep/drop; merge each candidate's
                 # scores into its table row so the page can show why.
                 scored = apply_filter_scores(decision, candidates)
@@ -296,7 +288,7 @@ def _run_query_filter_router(query: str) -> dict[str, Any]:
                 )
                 route_model = None
                 if agent._active_model_uuid is not None:
-                    route_model = _member_row(agent._active_model_uuid).get("model")
+                    route_model = _member_row(agent._active_model_uuid).get("model_name")
                 out["route"] = {
                     "subject": route.subject,
                     "action": route.action,
