@@ -56,15 +56,28 @@ class FilterScore(BaseModel):
     """One candidate's relevance scores from the filter LLM. The LLM only
     scores; keeping or dropping is decided in code (`apply_filter_scores`)."""
 
-    id: str = Field(description="The qa_id.")
+    id: str = Field(
+        description="The candidate's qa_id, copied verbatim from the list."
+    )
     direct: Literal["1", "2", "3", "4", "5"] = Field(
-        description="Does this `directly` address the query. Likert scale."
+        description=(
+            'How directly this candidate answers the user\'s message: '
+            '"1" = does not answer it at all, "5" = answers it outright.'
+        )
     )
     indirect: Literal["1", "2", "3", "4", "5"] = Field(
-        description="Does this `indirectly` address the query. Likert scale."
+        description=(
+            'How much closely related context this candidate adds without '
+            'answering the message itself (e.g. the family or household of a '
+            'person the user asks about): "1" = no related context, '
+            '"5" = strongly related context.'
+        )
     )
     relevancy: Literal["1", "2", "3", "4", "5"] = Field(
-        description="Is it somehow `relevant` to the query. Likert scale."
+        description=(
+            'Overall topical relevance to the user\'s message: '
+            '"1" = a different topic entirely, "5" = the same topic.'
+        )
     )
 
 
@@ -72,7 +85,10 @@ class FilterDecision(BaseModel):
     """Output of the filter LLM call: a score row per listed candidate."""
 
     items: list[FilterScore] = Field(
-        description="All the listed candidate qa_ids, each with its scores."
+        description=(
+            "One score row for every candidate in the list — omit none, "
+            "invent none."
+        )
     )
 
 
@@ -81,12 +97,15 @@ You are a relevance scorer. Given the user's latest chat message and a list of
 candidate Q&A entries from a knowledge base, score EVERY candidate on three
 Likert scales from "1" (not at all) to "5" (fully):
 
-- `direct`: the candidate's question/answer directly addresses what the user
-  is asking, telling, or doing.
-- `indirect`: the candidate addresses the message indirectly — closely related
-  context, e.g. for a question about a person, an entry about that person's
-  family or household.
-- `relevancy`: the candidate is somehow relevant to the message at all.
+- `direct`: how directly the candidate's question/answer addresses what the
+  user is asking, telling, or doing ("1" = not at all, "5" = answers it
+  outright).
+- `indirect`: how much closely related context the candidate adds without
+  answering the message itself — e.g. for a question about a person, an entry
+  about that person's family or household ("1" = none, "5" = strongly
+  related).
+- `relevancy`: overall topical relevance to the message ("1" = a different
+  topic entirely, "5" = the same topic).
 
 A candidate about a different topic, or one the user's message does not speak
 to (for example: the user says where THEY are from, but the candidate is about
