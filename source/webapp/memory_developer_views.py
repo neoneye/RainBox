@@ -211,7 +211,7 @@ def _run_query_filter_router(query: str, top_k: int) -> dict[str, Any]:
             out["elapsed_ms"] = round((time.monotonic() - started) * 1000)
             return out
 
-        candidates = qkb._semantic_ranked(query, vs)[:top_k]
+        candidates = qkb._hybrid_seed_ranked(query, vs)[:top_k]
         for c in candidates:
             entry = qkb.get_entry(c.qa_id) or {}
             kind = str(entry.get("kind", "?"))
@@ -220,6 +220,7 @@ def _run_query_filter_router(query: str, top_k: int) -> dict[str, Any]:
                 "path": str(entry.get("path", "")),
                 "kind": kind,
                 "score": qkb.score_permille(c.score),
+                "signals": c.method,
                 "matched_question": c.matched_question,
             }
             if kind == "static":

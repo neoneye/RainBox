@@ -138,7 +138,9 @@ function memdevCandidateTable(candidates, keptIds) {
     const dir = c.direct != null
       ? c.direct + ' / ' + c.indirect + ' / ' + c.relevancy : '';
     return '<tr class="' + (kept.has(c.qa_id) ? 'kept' : '') + '">' +
-      '<td class="num">' + memdevEscape(c.score) + '</td>' +
+      '<td class="num">' + memdevEscape(c.score) +
+      (c.signals ? '<br><span class="muted">' + memdevEscape(c.signals) + '</span>' : '') +
+      '</td>' +
       '<td><code>' + memdevEscape(c.qa_id) + '</code>' +
       (c.path ? '<br>' + memdevEscape(c.path) : '') + '</td>' +
       '<td>' + memdevEscape(c.kind) + '</td>' +

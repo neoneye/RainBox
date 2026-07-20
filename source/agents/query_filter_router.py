@@ -41,7 +41,7 @@ from memory.seed_memory import (
     _exact_match,
     _load_kb,
     _resolve_match,
-    _semantic_ranked,
+    _hybrid_seed_ranked,
     _vector_store,
     command_from_payload,
     get_entry,
@@ -602,7 +602,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
         # silently and leaving the UI looking dead.
         try:
             # --- 2) top-K semantic candidates (ungated) ----------------------
-            candidates = _semantic_ranked(query, vs)[:TOP_K_FILTER]
+            candidates = _hybrid_seed_ranked(query, vs)[:TOP_K_FILTER]
 
             # --- 3) LLM scores + code-side keep/drop ------------------------
             relevant_qa_ids: list[str] = []

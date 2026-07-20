@@ -375,7 +375,7 @@ def test_query_memory_seed_filter_drops_low_scores_on_a_full_list(app_ctx, monke
         Match(qa_id="qa-food", method="semantic", score=0.28, matched_question="pizza"),
         Match(qa_id="qa-unscored", method="semantic", score=0.25, matched_question="x"),
     ]
-    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: matches)
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs: matches)
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
         assert "qa-noise" in user_prompt   # ungated candidates reach the scorer
@@ -432,7 +432,7 @@ def test_query_memory_seed_filter_keeps_all_when_fewer_than_top_k(app_ctx, monke
         Match(qa_id="qa-brother", method="semantic", score=0.80, matched_question="brother"),
         Match(qa_id="qa-family", method="semantic", score=0.55, matched_question="family"),
     ]
-    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: matches)
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs: matches)
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
         return (response_model(reasoning="scores calibrated on the message", items=[
@@ -441,7 +441,7 @@ def test_query_memory_seed_filter_keeps_all_when_fewer_than_top_k(app_ctx, monke
         ]), model_uuids[0])
 
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
-    obs = _action_query_memory(_ctx(), {"query": "hvem er nannas bror"})
+    obs = _action_query_memory(_ctx(), {"query": "hvem er min bror"})
     assert obs.ok
     assert "Her brother fact." in obs.text
     assert "The family entry." in obs.text   # kept despite the low scores
@@ -464,7 +464,7 @@ def test_query_memory_top_k_caps_candidates_and_scales_keep_all(app_ctx, monkeyp
                     "answer": f"Answer {n}."}
         for n in range(5)
     })
-    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: [
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs: [
         Match(qa_id=f"qa-{n}", method="semantic", score=0.9 - n * 0.1,
               matched_question=f"q{n}")
         for n in range(5)
@@ -500,7 +500,7 @@ def test_seed_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch):
     _seed_entries(monkeypatch, qkb, {
         "qa-1": {"kind": "static", "path": "p", "_source": "upstream", "answer": "A."},
     })
-    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: [
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs: [
         Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
     filter_member = uuid4()
     filter_group, other_group = uuid4(), uuid4()
@@ -539,7 +539,7 @@ def test_seed_filter_prefers_the_query_filter_routers_model_group(app_ctx, monke
     _seed_entries(monkeypatch, qkb, {
         "qa-1": {"kind": "static", "path": "p", "_source": "upstream", "answer": "A."},
     })
-    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: [
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs: [
         Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
 
     from agents.config import MEMORY_FILTER_UUID
@@ -581,7 +581,7 @@ def test_seed_filter_falls_back_to_own_group_when_router_unbound(app_ctx, monkey
     _seed_entries(monkeypatch, qkb, {
         "qa-1": {"kind": "static", "path": "p", "_source": "upstream", "answer": "A."},
     })
-    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: [
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs: [
         Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
     from agents.config import MEMORY_FILTER_UUID
 
@@ -621,7 +621,7 @@ def test_query_memory_seed_filter_falls_back_when_llm_fails(app_ctx, monkeypatch
 
     _stub_seed_kb(monkeypatch, qkb)
     _bind_model_group(monkeypatch)
-    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: [
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs: [
         Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
 
     def boom(*_a, **_k):
@@ -648,7 +648,7 @@ def test_query_memory_seed_filter_skipped_without_model_group(app_ctx, monkeypat
     monkeypatch.setattr(db, "get_agent_model_binding", lambda agent_uuid: None)
     ranked_calls = []
     monkeypatch.setattr(
-        qkb, "_semantic_ranked", lambda q, vs: ranked_calls.append(q) or [])
+        qkb, "_hybrid_seed_ranked", lambda q, vs: ranked_calls.append(q) or [])
     monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [
         SeedMemory(uuid="gated-1", path="p", source="upstream",
                    answer="gated fact", score=0.7)])

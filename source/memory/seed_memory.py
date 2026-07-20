@@ -801,6 +801,135 @@ def _semantic_ranked(query: str, vs: PGVectorStore, *,
     return _drop_locked(matches, unlocked)
 
 
+# Hybrid blend weights for the filter-pipeline candidate ranking. Full-text
+# carries substantial weight because it is exactly the signal question
+# embeddings miss: a content word ("demoscene") appearing verbatim in an
+# entry's questions or answer while the embedding ranks the entry below
+# generic near-matches of the rest of the sentence.
+_W_SEED_VECTOR: float = 0.6
+_W_SEED_FULLTEXT: float = 0.4
+# A query token matching a QUESTION says more than one matching somewhere in a
+# long answer.
+_FULLTEXT_QUESTION_BOOST: float = 2.0
+
+
+def _fulltext_ranked(query: str, *,
+                     unlocked_shields: set[str] | None = None) -> list[Match]:
+    """Lexical ranking over the in-memory registry: IDF-weighted token overlap
+    against every entry's questions AND answer text (answers live only in the
+    registry — the vector store indexes questions). The KB is small (a few
+    hundred entries), so scoring it per query in Python is cheap and works
+    with the embedding server down. Scores are max-normalized to 0..1;
+    matched_question is the entry's best-overlapping question. Locked-shield
+    entries are excluded. No stemming: 'nannas' does not match 'nanna'."""
+    from math import log
+
+    from memory.retrieval import _tokenize
+
+    query_tokens = _tokenize(query)
+    if not query_tokens or not _entries_by_id:
+        return []
+    unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
+
+    # (qa_id, [(question, its tokens)...], union of question tokens, answer tokens)
+    docs: list[tuple[str, list[tuple[str, set[str]]], set[str], set[str]]] = []
+    df: dict[str, int] = {}
+    for qa_id, entry in _entries_by_id.items():
+        if _entry_locked(entry, unlocked):
+            continue
+        per_question = [(q, _tokenize(q)) for q in (entry.get("questions") or [])]
+        q_tokens: set[str] = set().union(*(t for _, t in per_question), set())
+        a_tokens = _tokenize(str(entry.get("answer") or ""))
+        docs.append((qa_id, per_question, q_tokens, a_tokens))
+        for tok in q_tokens | a_tokens:
+            df[tok] = df.get(tok, 0) + 1
+
+    n_docs = len(docs)
+    idf = {tok: log(1.0 + n_docs / count) for tok, count in df.items()}
+    scored: list[tuple[float, str, str]] = []   # (score, qa_id, matched_question)
+    for qa_id, per_question, q_tokens, a_tokens in docs:
+        score = 0.0
+        for tok in query_tokens:
+            if tok in q_tokens:
+                score += idf.get(tok, 0.0) * _FULLTEXT_QUESTION_BOOST
+            elif tok in a_tokens:
+                score += idf.get(tok, 0.0)
+        if score <= 0.0:
+            continue
+        matched = max(
+            per_question, key=lambda qt: len(query_tokens & qt[1]), default=("", set()),
+        )[0]
+        scored.append((score, qa_id, matched))
+    if not scored:
+        return []
+    top = max(s for s, _, _ in scored)
+    scored.sort(key=lambda x: -x[0])
+    return [
+        Match(qa_id=qa_id, method="fulltext", score=score / top,
+              matched_question=matched)
+        for score, qa_id, matched in scored
+    ]
+
+
+def _hybrid_seed_ranked(query: str, vs: PGVectorStore, *,
+                        unlocked_shields: set[str] | None = None) -> list[Match]:
+    """Candidate ranking for the filter pipelines: question-embedding
+    similarity (`_semantic_ranked`) fused with the lexical full-text signal
+    (`_fulltext_ranked`).
+
+    The ORDER is a deduplicated interleave of the two signals' own rankings
+    (best vector, best full-text, second vector, ...) so that any top-K
+    prefix a caller slices contains the strongest candidates of BOTH signals.
+    A weighted score blend proved fragile here: the scales aren't
+    commensurable, and five mediocre embedding matches crowded a perfect
+    rare-token question match out of the top-5 entirely. Rank interleaving is
+    calibration-free — the relevance judgment belongs to the filter LLM
+    downstream, so retrieval's job is recall diversity, not scoring.
+
+    `Match.score` still carries the weighted blend (display/telemetry);
+    `method` records the surfacing signals ("semantic", "fulltext", or
+    "semantic+fulltext"); `matched_question` comes from the signal that won
+    the entry its slot. Degrades to full-text-only when the embedding server
+    is unreachable — lexical retrieval needs no model at all."""
+    unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
+    vec_ranked: list[Match] = []
+    try:
+        vec_ranked = _semantic_ranked(query, vs, unlocked_shields=unlocked)
+    except Exception:
+        logger.warning(
+            "seed retrieval: vector ranking failed; full-text only", exc_info=True)
+    lex_ranked = _fulltext_ranked(query, unlocked_shields=unlocked)
+    vec = {m.qa_id: m for m in vec_ranked}
+    lex = {m.qa_id: m for m in lex_ranked}
+
+    def _fused(qa_id: str, primary: Match) -> Match:
+        v, f = vec.get(qa_id), lex.get(qa_id)
+        score = (_W_SEED_VECTOR * (v.score if v else 0.0)
+                 + _W_SEED_FULLTEXT * (f.score if f else 0.0))
+        method = "+".join(name for name, m in (("semantic", v), ("fulltext", f))
+                          if m is not None)
+        return Match(qa_id=qa_id, method=method, score=score,
+                     matched_question=primary.matched_question)
+
+    fused: list[Match] = []
+    seen: set[str] = set()
+    vec_iter, lex_iter = iter(vec_ranked), iter(lex_ranked)
+    take_vec = True
+    while True:
+        it = vec_iter if take_vec else lex_iter
+        other = lex_iter if take_vec else vec_iter
+        m = next((x for x in it if x.qa_id not in seen), None)
+        if m is None:
+            rest = [x for x in other if x.qa_id not in seen]
+            fused.extend(_fused(x.qa_id, x) for x in rest)
+            seen.update(x.qa_id for x in rest)
+            break
+        seen.add(m.qa_id)
+        fused.append(_fused(m.qa_id, m))
+        take_vec = not take_vec
+    return fused
+
+
 def _semantic_match(query: str, vs: PGVectorStore) -> Match | None:
     """Gated semantic match: require best score >= MIN_SCORE and best -
     second >= MIN_MARGIN (between distinct qa_ids). Returns None when the best

@@ -347,7 +347,7 @@ def _retrieve_seed_answers_filtered(
     if model_uuids is None:
         return None, {"mode": "gated", "reason": "no_model_group"}
     k = top_k or TOP_K_FILTER
-    candidates = qkb._semantic_ranked(query, qkb._vector_store())[:k]
+    candidates = qkb._hybrid_seed_ranked(query, qkb._vector_store())[:k]
     if not candidates:
         return [], {"mode": "llm", "group_from": group_from, "candidates": []}
     decision, scorer_model_uuid = structured_llm_call(
@@ -373,6 +373,7 @@ def _retrieve_seed_answers_filtered(
                 "qa_id": s.qa_id,
                 "path": str((qkb.get_entry(s.qa_id) or {}).get("path", "")),
                 "score": qkb.score_permille(by_qa_id[s.qa_id].score),
+                "signals": by_qa_id[s.qa_id].method,
                 "matched_question": by_qa_id[s.qa_id].matched_question,
                 "direct": s.direct,
                 "indirect": s.indirect,
