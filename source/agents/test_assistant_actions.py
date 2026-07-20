@@ -477,6 +477,98 @@ def test_query_memory_forwards_per_signal_budgets(app_ctx, monkeypatch):
     assert seen_budgets == [(7, 2)]
 
 
+def test_query_memory_claims_go_through_the_filter_too(app_ctx, monkeypatch):
+    """Memory claims (the /memory store) join the seed candidates in the ONE
+    filter call: a claim the scorer rates as noise is dropped from the
+    observation; a relevant one stays, with its Likert scores in the trace."""
+    from uuid import UUID as _UUID
+    import agents.query_filter_router as qfr
+    import memory.retrieval as retrieval
+    from memory import seed_memory as qkb
+    from memory.retrieval import RetrievedMemory
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [])
+    claim_good = _UUID("11111111-1111-1111-1111-111111111111")
+    claim_noise = _UUID("22222222-2222-2222-2222-222222222222")
+    monkeypatch.setattr(retrieval, "retrieve_memories_hybrid", lambda *a, **k: [
+        RetrievedMemory(uuid=claim_good, text="the deploy host is prod-web-01",
+                        kind="fact", scope="global", confidence=0.9,
+                        sensitivity="public", reason="fulltext"),
+        RetrievedMemory(uuid=claim_noise, text="the operator likes pizza",
+                        kind="preference", scope="global", confidence=0.9,
+                        sensitivity="public", reason="fulltext"),
+    ])
+
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+        assert "remembered fact" in user_prompt   # claims presented to the scorer
+        assert "prod-web-01" in user_prompt
+        return (response_model(reasoning="one claim matches", items=[
+            _score(str(claim_good), direct="5"),
+            _score(str(claim_noise)),   # 1/1/1 noise
+        ]), model_uuids[0])
+
+    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    obs = _action_query_memory(_ctx(), {"query": "deploy host"})
+    assert obs.ok
+    assert "prod-web-01" in obs.text
+    # Both claims < 5 candidates → keep-all would keep the noise too; verify
+    # via the trace that both were scored and both kept under the small-set
+    # rule, so the policy (not an accident) decided.
+    by_id = {c["qa_id"]: c for c in obs.data["seed_filter"]["candidates"]}
+    assert by_id[str(claim_good)]["direct"] == 5
+    assert by_id[str(claim_good)]["path"].startswith("claim ·")
+    assert by_id[str(claim_noise)]["kept"]   # small set → kept despite noise
+
+
+def test_query_memory_dropped_claim_leaves_the_observation(app_ctx, monkeypatch):
+    """On a full candidate list, a noise-scored claim is dropped from the
+    observation entirely."""
+    from uuid import UUID as _UUID
+    import agents.query_filter_router as qfr
+    import memory.retrieval as retrieval
+    from memory import seed_memory as qkb
+    from memory.retrieval import RetrievedMemory
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    _seed_entries(monkeypatch, qkb, {
+        f"qa-{n}": {"kind": "static", "path": f"p.{n}", "_source": "upstream",
+                    "answer": f"Seed answer {n}."}
+        for n in range(4)
+    })
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
+        Match(qa_id=f"qa-{n}", method="semantic", score=0.8 - n * 0.1,
+              matched_question=f"q{n}")
+        for n in range(4)
+    ])
+    claim_noise = _UUID("33333333-3333-3333-3333-333333333333")
+    monkeypatch.setattr(retrieval, "retrieve_memories_hybrid", lambda *a, **k: [
+        RetrievedMemory(uuid=claim_noise, text="an unrelated remembered fact",
+                        kind="fact", scope="global", confidence=0.9,
+                        sensitivity="public", reason="fulltext"),
+    ])
+
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+        return (response_model(reasoning="claim is off-topic", items=[
+            _score("qa-0", direct="5"),
+            _score("qa-1", direct="4"),
+            _score("qa-2"),
+            _score("qa-3"),
+            _score(str(claim_noise)),   # 1/1/1 on a full list → dropped
+        ]), model_uuids[0])
+
+    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    obs = _action_query_memory(_ctx(), {"query": "q"})
+    assert obs.ok
+    assert "Seed answer 0." in obs.text
+    assert "an unrelated remembered fact" not in obs.text
+    by_id = {c["qa_id"]: c for c in obs.data["seed_filter"]["candidates"]}
+    assert not by_id[str(claim_noise)]["kept"]
+
+
 def test_seed_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch):
     """A bound memory_filter agent (the /agentmodel knob for scorer
     experiments) outranks every fallback: the filter scores with ITS group

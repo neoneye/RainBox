@@ -308,53 +308,77 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
     return none
 
 
-def _retrieve_seed_answers_filtered(
-    query: str, *, qctx, agent_uuid: UUID,
+# Claim text shown to the scorer is capped: relevance is judged from the
+# opening of the fact, not its full body.
+_FILTER_CLAIM_PREVIEW_CHARS: int = 300
+
+
+def _filter_recalled_candidates(
+    query: str, *, qctx, agent_uuid: UUID, claim_candidates: list,
     top_k_vector: int | None = None, top_k_fulltext: int | None = None,
-) -> tuple[list | None, dict[str, Any]]:
-    """Seed retrieval the query_filter_router way: ungated top-K semantic
-    candidates, then an LLM relevance filter, then resolve only the kept
-    candidates. This recalls more than the MIN_SCORE-gated
-    `retrieve_seed_answers` (a borderline-score candidate still reaches the
-    filter) while the filter drops the off-topic ones.
+) -> tuple[list | None, list | None, dict[str, Any]]:
+    """One LLM relevance filter over EVERYTHING memory_query recalls: the
+    hybrid seed candidates (ungated top-K per signal) AND the memory claims
+    (`claim_candidates`, RetrievedMemory rows from hybrid claim retrieval —
+    the /memory store). Scoring both kinds in a single call keeps latency at
+    one scorer round-trip and lets seed entries and claims compete under the
+    same keep/drop policy.
 
     The scorer's model group resolves via `resolve_filter_model_uuids` — the
     dedicated memory_filter binding when set, else the query_filter_router's
     group, else `agent_uuid`'s own: the filter is a shared subsystem, and
     scoring with one model identity keeps the assistant's keep/drop decisions
-    consistent with the chat route's (different groups — e.g. a 4B reasoning
-    model vs a 30B coder — calibrate the Likert scales very differently for
-    the same candidates). Returns `(seeds_or_None, debug)`: seeds is None
-    when no group is bound anywhere (the caller falls back to the gated
-    retrieval); an LLM failure raises (same fallback). `debug` describes what
-    the filter saw and decided — every candidate with its score and a
-    kept/dropped flag, plus whose group scored — for the step trace and the
-    /memory/developer page. Kept candidates come back in the filter's
-    preference order as `SeedMemory` rows; hallucinated qa_ids are ignored.
+    consistent with the chat route's. Returns `(seeds, kept_claims, debug)`;
+    the first two are None when no group is bound anywhere (the caller falls
+    back to gated seed retrieval + unfiltered claims); an LLM failure raises
+    (same fallback). `debug` describes every candidate — source, score,
+    Likert scales, kept/dropped — for the step trace and /memory/developer.
+    Hallucinated ids are ignored.
 
-    `top_k_vector`/`top_k_fulltext` override the per-signal candidate budgets
+    `top_k_vector`/`top_k_fulltext` override the per-signal seed budgets
     (defaults TOP_K_VECTOR/TOP_K_FULLTEXT) — /memory/developer tuning knobs;
     live runs pass None."""
     from agents.config import QUERY_FILTER_ROUTER_UUID
     from agents.query_filter_router import (
         FILTER_SYSTEM_PROMPT, FilterDecision,
-        apply_filter_scores, build_filter_prompt,
-        resolve_filter_model_uuids, structured_llm_call,
+        apply_filter_scores, build_filter_prompt_rows,
+        resolve_filter_model_uuids, seed_candidate_rows, structured_llm_call,
     )
     from memory import seed_memory as qkb
+    from memory.seed_memory import Match
 
     model_uuids, group_from = resolve_filter_model_uuids(
         [(QUERY_FILTER_ROUTER_UUID, "query_filter_router"), (agent_uuid, "own")])
     if model_uuids is None:
-        return None, {"mode": "gated", "reason": "no_model_group"}
-    candidates = qkb._hybrid_seed_ranked(
+        return None, None, {"mode": "gated", "reason": "no_model_group"}
+    seed_cands = qkb._hybrid_seed_ranked(
         query, qkb._vector_store(),
         top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext)
-    if not candidates:
-        return [], {"mode": "llm", "group_from": group_from, "candidates": []}
+    claims_by_id = {str(m.uuid): m for m in claim_candidates}
+    if not seed_cands and not claims_by_id:
+        return [], [], {"mode": "llm", "group_from": group_from, "candidates": []}
+
+    # One combined candidate list: seed Matches as-is, each claim wrapped in a
+    # Match so apply_filter_scores ranks/keeps both kinds under one policy.
+    claim_matches = [
+        Match(qa_id=cid, method=m.reason or "memory", score=min(m.score, 1.0),
+              matched_question=None)
+        for cid, m in claims_by_id.items()
+    ]
+    candidates = seed_cands + claim_matches
+    rows = seed_candidate_rows(seed_cands) + [
+        {
+            "id": cid,
+            "source": "remembered fact",
+            "kind": m.kind,
+            "similarity score": qkb.score_permille(min(m.score, 1.0)),
+            "text": repr(m.text[:_FILTER_CLAIM_PREVIEW_CHARS]),
+        }
+        for cid, m in claims_by_id.items()
+    ]
     decision, scorer_model_uuid = structured_llm_call(
         "assistant.memory_query", model_uuids,
-        FILTER_SYSTEM_PROMPT, build_filter_prompt(query, candidates),
+        FILTER_SYSTEM_PROMPT, build_filter_prompt_rows(query, rows),
         FilterDecision,
     )
     try:
@@ -365,29 +389,39 @@ def _retrieve_seed_answers_filtered(
     # threshold on a full list) is code — apply_filter_scores.
     scored = apply_filter_scores(decision, candidates)
     by_qa_id = {c.qa_id: c for c in candidates}
+
+    def _debug_row(s) -> dict[str, Any]:
+        cand = by_qa_id[s.qa_id]
+        claim = claims_by_id.get(s.qa_id)
+        if claim is not None:
+            path = f"claim · {claim.kind}/{claim.scope}"
+            question = claim.text[:_FILTER_CLAIM_PREVIEW_CHARS]
+        else:
+            path = str((qkb.get_entry(s.qa_id) or {}).get("path", ""))
+            question = cand.matched_question
+        return {
+            "qa_id": s.qa_id, "path": path,
+            "score": qkb.score_permille(cand.score), "signals": cand.method,
+            "matched_question": question,
+            "direct": s.direct, "indirect": s.indirect,
+            "relevancy": s.relevancy, "kept": s.kept,
+        }
+
     debug = {
         "mode": "llm",
         "group_from": group_from,
         "scorer_model": scorer_model,
         "reasoning": decision.reasoning,
-        "candidates": [
-            {
-                "qa_id": s.qa_id,
-                "path": str((qkb.get_entry(s.qa_id) or {}).get("path", "")),
-                "score": qkb.score_permille(by_qa_id[s.qa_id].score),
-                "signals": by_qa_id[s.qa_id].method,
-                "matched_question": by_qa_id[s.qa_id].matched_question,
-                "direct": s.direct,
-                "indirect": s.indirect,
-                "relevancy": s.relevancy,
-                "kept": s.kept,
-            }
-            for s in scored
-        ],
+        "candidates": [_debug_row(s) for s in scored],
     }
-    out: list[qkb.SeedMemory] = []
+    seeds: list[qkb.SeedMemory] = []
+    kept_claims: list = []
     for s in scored:
         if not s.kept:
+            continue
+        claim = claims_by_id.get(s.qa_id)
+        if claim is not None:
+            kept_claims.append(claim)
             continue
         cand = by_qa_id.get(s.qa_id)
         entry = qkb.get_entry(s.qa_id)
@@ -396,7 +430,7 @@ def _retrieve_seed_answers_filtered(
         kind = str(entry.get("kind", "static"))
         answer = (str(entry.get("answer", "")) if kind == "static"
                   else qkb._resolve_match(cand, qctx))
-        out.append(qkb.SeedMemory(
+        seeds.append(qkb.SeedMemory(
             uuid=s.qa_id,
             path=str(entry.get("path", "")),
             source=str(entry.get("_source", "upstream")),
@@ -404,7 +438,7 @@ def _retrieve_seed_answers_filtered(
             score=cand.score,
             kind=kind,
         ))
-    return out, debug
+    return seeds, kept_claims, debug
 
 
 # The scorer's reasoning rides along in the observation; cap it so a rambling
@@ -430,13 +464,14 @@ def _action_query_memory(
     record_telemetry: bool = True,
     top_k_vector: int | None = None, top_k_fulltext: int | None = None,
 ) -> AssistantObservation:
-    """Hybrid retrieval over dynamic claims, curated static seed answers, AND
+    """Hybrid retrieval over memory claims, curated static seed answers, AND
     live dynamic seed handlers (project status, git status, capabilities, model
-    info). Seed retrieval prefers the LLM-filtered pipeline
-    (`_retrieve_seed_answers_filtered`), degrading to the MIN_SCORE-gated
-    `retrieve_seed_answers` when no model group is bound or the filter LLM
-    fails. Results are tiered: user-overlay seed, then upstream seed, then
-    dynamic claims. Secrets are never returned (include_secret stays False).
+    info). Seed candidates AND claim candidates go through one shared LLM
+    relevance filter (`_filter_recalled_candidates`), degrading to the
+    MIN_SCORE-gated seed retrieval plus unfiltered claims when no model group
+    is bound or the filter LLM fails. Results are tiered: user-overlay seed,
+    then upstream seed, then claims. Secrets are never returned
+    (include_secret stays False).
 
     Long facts are shortened (tagged `truncateN`) and the block is bounded; pass
     `{"uuid": ...}` instead of `{"query": ...}` to read one fact in full.
@@ -459,6 +494,13 @@ def _action_query_memory(
     qctx = QueryContext(
         room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
     )
+    # Claim candidates first: they join the seed candidates in the one shared
+    # filter call below (or pass through unfiltered on the fallback paths).
+    memories = retrieve_memories_hybrid(
+        query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
+        include_secret=False, journal_id=ctx.journal_id,
+        record_telemetry=record_telemetry,
+    )
     seeds = []
     seed_filter_debug: dict[str, Any] = {}
     try:
@@ -472,27 +514,27 @@ def _action_query_memory(
             qkb._load_kb()
             qkb._ensure_populated(qkb._vector_store())
             filtered = None
+            kept_claims = None
             try:
-                filtered, seed_filter_debug = _retrieve_seed_answers_filtered(
+                filtered, kept_claims, seed_filter_debug = _filter_recalled_candidates(
                     query, qctx=qctx, agent_uuid=ctx.agent_uuid,
+                    claim_candidates=memories,
                     top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext)
             except Exception:
                 logger.warning(
-                    "assistant: seed LLM filter failed; falling back to "
-                    "gated retrieval", exc_info=True)
+                    "assistant: recall LLM filter failed; falling back to "
+                    "gated seeds + unfiltered claims", exc_info=True)
                 seed_filter_debug = {"mode": "gated", "reason": "filter_llm_failed"}
-            seeds = (filtered if filtered is not None
-                     else qkb.retrieve_seed_answers(query, qctx=qctx))
+            if filtered is not None:
+                seeds = filtered
+                memories = kept_claims if kept_claims is not None else memories
+            else:
+                seeds = qkb.retrieve_seed_answers(query, qctx=qctx)
     except Exception:
         logger.warning("assistant: seed memory retrieval failed", exc_info=True)
     # Tier seeds: user-overlay first, then upstream; preserve score order within tier.
     overlay = [s for s in seeds if s.source == "user-overlay"]
     upstream = [s for s in seeds if s.source != "user-overlay"]
-    memories = retrieve_memories_hybrid(
-        query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
-        include_secret=False, journal_id=ctx.journal_id,
-        record_telemetry=record_telemetry,
-    )
     dynamic_block = format_memory_context(memories, include_uuid=True) if memories else ""
 
     if not (overlay or upstream or memories):

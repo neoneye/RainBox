@@ -58,7 +58,7 @@ class FilterScore(BaseModel):
     scores; keeping or dropping is decided in code (`apply_filter_scores`)."""
 
     id: str = Field(
-        description="The candidate's qa_id, copied verbatim from the list."
+        description="The candidate's id, copied verbatim from the list."
     )
     direct: Literal["1", "2", "3", "4", "5"] = Field(
         description=(
@@ -107,8 +107,8 @@ class FilterDecision(BaseModel):
 
 FILTER_SYSTEM_PROMPT: str = """\
 You are a relevance scorer. Given the user's latest chat message and a list of
-candidate Q&A entries from a knowledge base, score EVERY candidate on three
-Likert scales from "1" (not at all) to "5" (fully):
+candidates — knowledge-base Q&A entries and/or remembered facts — score EVERY
+candidate on three Likert scales from "1" (not at all) to "5" (fully):
 
 - `direct`: how directly the candidate's question/answer addresses what the
   user is asking, telling, or doing ("1" = not at all, "5" = answers it
@@ -135,7 +135,7 @@ Return exactly one JSON object with two fields, in this order:
 - `reasoning`: first, 1-3 short sentences calibrating yourself — does any
   candidate genuinely match the user's message, and why or why not.
 - `items`: then a list with one entry per listed candidate:
-  {"id": "<qa_id>", "direct": "1".."5", "indirect": "1".."5",
+  {"id": "<candidate id>", "direct": "1".."5", "indirect": "1".."5",
    "relevancy": "1".."5"}
 
 Output only the JSON object. No prose outside it, no markdown fences."""
@@ -265,29 +265,56 @@ Return exactly one JSON object with three fields, and nothing else:
 Output only the JSON object. No prose, no markdown fences."""
 
 
-def build_filter_prompt(query: str, candidates: list[Match]) -> str:
-    """User prompt for the relevance-filter LLM call: the user's message plus
-    each candidate's qa_id/path/score/question and its answer (static) or
-    handler name (dynamic). Shared with the assistant's memory_query seed
-    filter and the /memory/developer page, so all filter callers present
-    candidates identically."""
+# Field order for candidate rows in the filter prompt; a row renders only the
+# fields it carries.
+_FILTER_ROW_FIELDS: tuple[str, ...] = (
+    "source", "path", "similarity score", "matched_question", "kind",
+    "answer", "handler", "text",
+)
+
+
+def build_filter_prompt_rows(query: str, rows: list[dict[str, Any]]) -> str:
+    """User prompt for the relevance-filter LLM call from prepared candidate
+    rows — each a dict with an `id` plus any of `_FILTER_ROW_FIELDS`. The
+    generic shape lets one filter call score mixed candidate kinds (seed Q&A
+    entries and memory claims) side by side."""
     lines = [f"Current user message: {query!r}", "", "Candidates:"]
+    for row in rows:
+        lines.append(f"  - id: {row['id']}")
+        for field in _FILTER_ROW_FIELDS:
+            value = row.get(field)
+            if value not in (None, ""):
+                lines.append(f"    {field}: {value}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def seed_candidate_rows(candidates: list[Match]) -> list[dict[str, Any]]:
+    """Filter-prompt rows for seed KB candidates: qa_id/path/score/question
+    plus the answer (static) or handler name (dynamic)."""
+    rows: list[dict[str, Any]] = []
     for c in candidates:
         entry = get_entry(c.qa_id) or {}
         kind = entry.get("kind", "?")
-        lines.append(f"  - qa_id: {c.qa_id}")
-        path = entry.get("path")
-        if path:
-            lines.append(f"    path: {path}")
-        lines.append(f"    similarity score: {score_permille(c.score)}")
-        lines.append(f"    matched_question: {c.matched_question!r}")
-        lines.append(f"    kind: {kind}")
+        row: dict[str, Any] = {
+            "id": c.qa_id,
+            "path": entry.get("path"),
+            "similarity score": score_permille(c.score),
+            "matched_question": repr(c.matched_question),
+            "kind": kind,
+        }
         if kind == "static":
-            lines.append(f"    answer: {entry.get('answer', '')!r}")
+            row["answer"] = repr(entry.get("answer", ""))
         elif kind == "dynamic":
-            lines.append(f"    handler: {entry.get('handler', '')}")
-        lines.append("")
-    return "\n".join(lines)
+            row["handler"] = entry.get("handler", "")
+        rows.append(row)
+    return rows
+
+
+def build_filter_prompt(query: str, candidates: list[Match]) -> str:
+    """`build_filter_prompt_rows` over seed KB candidates — the shape the
+    query_filter_router and the /memory/developer page use directly."""
+    return build_filter_prompt_rows(query, seed_candidate_rows(candidates))
 
 
 def structured_llm_call(
