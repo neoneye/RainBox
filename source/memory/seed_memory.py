@@ -819,9 +819,17 @@ def _fulltext_ranked(query: str, *,
     against every entry's questions AND answer text (answers live only in the
     registry — the vector store indexes questions). The KB is small (a few
     hundred entries), so scoring it per query in Python is cheap and works
-    with the embedding server down. Scores are max-normalized to 0..1;
-    matched_question is the entry's best-overlapping question. Locked-shield
-    entries are excluded. No stemming: 'nannas' does not match 'nanna'."""
+    with the embedding server down.
+
+    `Match.score` is IDF-weighted QUERY COVERAGE in 0..1 — an absolute
+    measure, not max-normalized (max-normalizing handed the best hit a
+    misleading 1.0 on every query, however weak): 1.0 means every query token
+    was matched in the entry's questions; answer-only matches count at
+    1/_FULLTEXT_QUESTION_BOOST; query tokens the whole KB lacks count against
+    coverage at the rarest-token weight. Ranking order is unaffected (the
+    denominator is per-query constant). matched_question is the entry's
+    best-overlapping question. Locked-shield entries are excluded. No
+    stemming: 'nannas' does not match 'nanna'."""
     from math import log
 
     from memory.retrieval import _tokenize
@@ -846,7 +854,15 @@ def _fulltext_ranked(query: str, *,
 
     n_docs = len(docs)
     idf = {tok: log(1.0 + n_docs / count) for tok, count in df.items()}
-    scored: list[tuple[float, str, str]] = []   # (score, qa_id, matched_question)
+    # A query token absent from the whole KB is "rarest possible" (df would be
+    # 1 on first appearance) — it weighs into the coverage denominator so an
+    # entry can't score 1.0 on a query the KB only half-covers.
+    unknown_idf = log(1.0 + n_docs)
+    denom = sum(idf.get(tok, unknown_idf) * _FULLTEXT_QUESTION_BOOST
+                for tok in query_tokens)
+    if denom <= 0.0:
+        return []
+    scored: list[tuple[float, str, str]] = []   # (coverage, qa_id, matched_question)
     for qa_id, per_question, q_tokens, a_tokens in docs:
         score = 0.0
         for tok in query_tokens:
@@ -859,15 +875,12 @@ def _fulltext_ranked(query: str, *,
         matched = max(
             per_question, key=lambda qt: len(query_tokens & qt[1]), default=("", set()),
         )[0]
-        scored.append((score, qa_id, matched))
-    if not scored:
-        return []
-    top = max(s for s, _, _ in scored)
+        scored.append((score / denom, qa_id, matched))
     scored.sort(key=lambda x: -x[0])
     return [
-        Match(qa_id=qa_id, method="fulltext", score=score / top,
+        Match(qa_id=qa_id, method="fulltext", score=coverage,
               matched_question=matched)
-        for score, qa_id, matched in scored
+        for coverage, qa_id, matched in scored
     ]
 
 

@@ -58,17 +58,29 @@ def test_rare_content_word_outranks_common_token_matches(kb):
     ranked = _fulltext_ranked("how is Simon related to the demoscene")
     assert ranked[0].qa_id == "qa-demoscene"
     assert ranked[0].method == "fulltext"
-    assert ranked[0].score == 1.0                      # max-normalized
+    # Coverage, not max-normalization: 'related' matches nothing in the KB, so
+    # even the best hit sits below 1.0 instead of a misleading full score.
+    assert 0.0 < ranked[0].score < 1.0
     # Generic simon-only entries score strictly lower (IDF: 'simon' is common).
     by_id = {m.qa_id: m.score for m in ranked}
     assert by_id.get("qa-name", 0.0) < by_id["qa-demoscene"]
 
 
+def test_full_question_coverage_scores_exactly_one(kb):
+    """1.0 is reserved for a query whose every token is matched in the
+    entry's questions — the only case that deserves to read like a full hit."""
+    ranked = _fulltext_ranked("demoscene parties")
+    assert ranked[0].qa_id == "qa-demoscene"
+    assert ranked[0].score == pytest.approx(1.0)
+
+
 def test_answer_only_token_is_found(kb):
     """A token that appears in no question but in an answer still surfaces the
-    entry — the signal question embeddings can never see."""
+    entry — the signal question embeddings can never see. Answer matches count
+    at half a question match, so coverage reads 0.5, not 1.0."""
     ranked = _fulltext_ranked("søskende")
     assert [m.qa_id for m in ranked] == ["qa-sibling"]
+    assert ranked[0].score == pytest.approx(0.5)
 
 
 def test_question_match_outweighs_answer_match(kb):
