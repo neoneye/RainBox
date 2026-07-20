@@ -7,6 +7,15 @@
  */
 
 const MEMDEV_QUERY_KEY = 'memoryDeveloper.lastQuery';
+const MEMDEV_TOPK_KEY = 'memoryDeveloper.topK';
+
+function memdevTopK() {
+  // Clamp to the input's own bounds; the server clamps again.
+  const el = document.getElementById('memdev-topk');
+  const n = parseInt(el.value, 10);
+  if (isNaN(n)) return 5;
+  return Math.max(1, Math.min(20, n));
+}
 
 function memdevEscape(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
@@ -214,7 +223,11 @@ async function memdevRun() {
   const routerOut = document.getElementById('memdev-router-out');
   const query = input.value.trim();
   if (!query) { input.focus(); return; }
-  try { localStorage.setItem(MEMDEV_QUERY_KEY, query); } catch (_) {}
+  const topK = memdevTopK();
+  try {
+    localStorage.setItem(MEMDEV_QUERY_KEY, query);
+    localStorage.setItem(MEMDEV_TOPK_KEY, String(topK));
+  } catch (_) {}
   button.disabled = true;
   button.textContent = 'Running…';
   assistantOut.innerHTML = '<p class="memdev-empty">Running…</p>';
@@ -223,7 +236,7 @@ async function memdevRun() {
     const resp = await fetch('/memory/api/developer/query', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({query: query}),
+      body: JSON.stringify({query: query, top_k: topK}),
     });
     const data = await resp.json();
     if (!resp.ok) {
@@ -254,4 +267,6 @@ document.getElementById('memdev-query').addEventListener('keydown', (e) => {
 try {
   const last = localStorage.getItem(MEMDEV_QUERY_KEY);
   if (last) document.getElementById('memdev-query').value = last;
+  const topK = parseInt(localStorage.getItem(MEMDEV_TOPK_KEY), 10);
+  if (!isNaN(topK)) document.getElementById('memdev-topk').value = topK;
 } catch (_) {}

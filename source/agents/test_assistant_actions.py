@@ -449,6 +449,44 @@ def test_query_memory_seed_filter_keeps_all_when_fewer_than_top_k(app_ctx, monke
     assert all(c["kept"] for c in sf["candidates"])
 
 
+def test_query_memory_top_k_caps_candidates_and_scales_keep_all(app_ctx, monkeypatch):
+    """The /memory/developer knob: top_k caps how many candidates reach the
+    scorer, and the keep-all-when-fewer rule scales with the requested k (3
+    candidates with top_k=3 is a FULL list — no keep-all)."""
+    import agents.query_filter_router as qfr
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    _seed_entries(monkeypatch, qkb, {
+        f"qa-{n}": {"kind": "static", "path": f"p.{n}", "_source": "upstream",
+                    "answer": f"Answer {n}."}
+        for n in range(5)
+    })
+    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: [
+        Match(qa_id=f"qa-{n}", method="semantic", score=0.9 - n * 0.1,
+              matched_question=f"q{n}")
+        for n in range(5)
+    ])
+
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+        assert "qa-3" not in user_prompt   # beyond top_k → never reaches the scorer
+        return (response_model(reasoning="capped run", items=[
+            _score("qa-0", direct="5"),
+            _score("qa-1", indirect="2", relevancy="2"),  # weak but above floor
+            _score("qa-2"),   # 1/1/1 noise
+        ]), model_uuids[0])
+
+    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    obs = _action_query_memory(_ctx(), {"query": "q"}, top_k=3)
+    sf = obs.data["seed_filter"]
+    assert len(sf["candidates"]) == 3
+    # top_k=3 with 3 candidates is a full list: noise drops instead of keep-all.
+    kept = {c["qa_id"] for c in sf["candidates"] if c["kept"]}
+    assert kept == {"qa-0", "qa-1"}   # threshold keep + rank keep; noise dropped
+
+
 def test_seed_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch):
     """A bound memory_filter agent (the /agentmodel knob for scorer
     experiments) outranks every fallback: the filter scores with ITS group

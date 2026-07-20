@@ -309,7 +309,7 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
 
 
 def _retrieve_seed_answers_filtered(
-    query: str, *, qctx, agent_uuid: UUID,
+    query: str, *, qctx, agent_uuid: UUID, top_k: int | None = None,
 ) -> tuple[list | None, dict[str, Any]]:
     """Seed retrieval the query_filter_router way: ungated top-K semantic
     candidates, then an LLM relevance filter, then resolve only the kept
@@ -329,7 +329,11 @@ def _retrieve_seed_answers_filtered(
     the filter saw and decided — every candidate with its score and a
     kept/dropped flag, plus whose group scored — for the step trace and the
     /memory/developer page. Kept candidates come back in the filter's
-    preference order as `SeedMemory` rows; hallucinated qa_ids are ignored."""
+    preference order as `SeedMemory` rows; hallucinated qa_ids are ignored.
+
+    `top_k` overrides how many candidates reach the scorer (default
+    TOP_K_FILTER) — a /memory/developer tuning knob; live runs pass None. The
+    keep-all-when-fewer rule scales with it."""
     from agents.config import QUERY_FILTER_ROUTER_UUID
     from agents.query_filter_router import (
         FILTER_SYSTEM_PROMPT, TOP_K_FILTER, FilterDecision,
@@ -342,7 +346,8 @@ def _retrieve_seed_answers_filtered(
         [(QUERY_FILTER_ROUTER_UUID, "query_filter_router"), (agent_uuid, "own")])
     if model_uuids is None:
         return None, {"mode": "gated", "reason": "no_model_group"}
-    candidates = qkb._semantic_ranked(query, qkb._vector_store())[:TOP_K_FILTER]
+    k = top_k or TOP_K_FILTER
+    candidates = qkb._semantic_ranked(query, qkb._vector_store())[:k]
     if not candidates:
         return [], {"mode": "llm", "group_from": group_from, "candidates": []}
     decision, scorer_model_uuid = structured_llm_call(
@@ -356,7 +361,7 @@ def _retrieve_seed_answers_filtered(
         scorer_model = str(scorer_model_uuid)
     # The LLM only scored; the keep/drop policy (keep all when few candidates,
     # threshold on a full list) is code — apply_filter_scores.
-    scored = apply_filter_scores(decision, candidates)
+    scored = apply_filter_scores(decision, candidates, top_k=k)
     by_qa_id = {c.qa_id: c for c in candidates}
     debug = {
         "mode": "llm",
@@ -419,7 +424,7 @@ def _seed_filter_assessment_line(seed_filter_debug: dict[str, Any]) -> str:
 
 def _action_query_memory(
     ctx: AssistantActionContext, args: dict[str, Any], *, _seed_retriever=None,
-    record_telemetry: bool = True,
+    record_telemetry: bool = True, top_k: int | None = None,
 ) -> AssistantObservation:
     """Hybrid retrieval over dynamic claims, curated static seed answers, AND
     live dynamic seed handlers (project status, git status, capabilities, model
@@ -434,7 +439,8 @@ def _action_query_memory(
 
     `record_telemetry=False` skips the RetrievalEvent writes — for callers
     outside a real assistant run (the /memory/developer inspection page), whose
-    probe queries must not pollute the relevance telemetry."""
+    probe queries must not pollute the relevance telemetry. `top_k` overrides
+    the seed-candidate count for the same page's tuning knob."""
     from memory.retrieval import fence_recalled_memory, format_memory_context, retrieve_memories_hybrid
     from memory import seed_memory as qkb
     from agents.query_handlers import QueryContext
@@ -463,7 +469,7 @@ def _action_query_memory(
             filtered = None
             try:
                 filtered, seed_filter_debug = _retrieve_seed_answers_filtered(
-                    query, qctx=qctx, agent_uuid=ctx.agent_uuid)
+                    query, qctx=qctx, agent_uuid=ctx.agent_uuid, top_k=top_k)
             except Exception:
                 logger.warning(
                     "assistant: seed LLM filter failed; falling back to "
