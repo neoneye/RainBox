@@ -65,7 +65,13 @@ OLLAMA_KEY: str = "ollama"  # Ollama ignores the key but the OpenAI client requi
 # JSONL (genuine matches >= ~0.66, unrelated <= ~0.47); the
 # margin is checked between distinct qa_ids, not raw nodes, because multiple
 # question alternates share the same qa_id and would otherwise look ambiguous.
-TOP_K: int = 5
+#
+# TOP_K_NODES counts QUESTION nodes, not entries: entries carry many question
+# alternates, so a small node budget collapses into very few unique entries
+# after by-qa_id aggregation (one strong entry's alternates can eat most
+# slots, crowding everything else out of the candidate list). Retrieve wide
+# and let callers cap the aggregated per-entry ranking instead.
+TOP_K_NODES: int = 50
 MIN_SCORE: float = 0.60
 MIN_MARGIN: float = 0.05
 
@@ -764,14 +770,16 @@ def _exact_match(query: str, *, unlocked_shields: set[str] | None = None) -> Mat
 
 def _semantic_ranked(query: str, vs: PGVectorStore, *,
                      unlocked_shields: set[str] | None = None) -> list[Match]:
-    """Top-K retrieve, aggregate by qa_id (max score per qa_id), return them
-    ranked descending by score. Locked shields are excluded at the vector query
-    (so they never occupy a top-K slot) and again as an in-memory backstop.
-    **No** MIN_SCORE/MIN_MARGIN gating — for the caller to apply."""
+    """Retrieve TOP_K_NODES question nodes, aggregate by qa_id (max score per
+    qa_id), return the entries ranked descending by score — callers cap how
+    many entries they want (e.g. `[:TOP_K_FILTER]`). Locked shields are
+    excluded at the vector query (so they never occupy a node slot) and again
+    as an in-memory backstop. **No** MIN_SCORE/MIN_MARGIN gating — for the
+    caller to apply."""
     unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
     index = VectorStoreIndex.from_vector_store(vs, embed_model=_embed_model())
     nodes = index.as_retriever(
-        similarity_top_k=TOP_K, filters=_shield_filters(unlocked),
+        similarity_top_k=TOP_K_NODES, filters=_shield_filters(unlocked),
     ).retrieve(query)
     if not nodes:
         return []
