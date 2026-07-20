@@ -444,6 +444,75 @@ def test_query_memory_seed_filter_keeps_all_when_fewer_than_top_k(app_ctx, monke
     assert all(c["kept"] for c in sf["candidates"])
 
 
+def test_seed_filter_prefers_the_query_filter_routers_model_group(app_ctx, monkeypatch):
+    """The filter is a shared subsystem: when the query_filter_router has a
+    model group bound, the assistant's seed filter scores with THAT group, so
+    both pipelines' keep/drop decisions come from one model identity."""
+    import agents.query_filter_router as qfr
+    from agents.config import QUERY_FILTER_ROUTER_UUID
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _seed_entries(monkeypatch, qkb, {
+        "qa-1": {"kind": "static", "path": "p", "_source": "upstream", "answer": "A."},
+    })
+    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: [
+        Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
+
+    router_member, assistant_member = uuid4(), uuid4()
+    router_group, assistant_group = uuid4(), uuid4()
+
+    def binding_for(agent_uuid):
+        group = (router_group if agent_uuid == QUERY_FILTER_ROUTER_UUID
+                 else assistant_group)
+        return type("B", (), {"model_group_uuid": group})()
+
+    monkeypatch.setattr(db, "get_agent_model_binding", binding_for)
+    monkeypatch.setattr(
+        db, "get_model_group_member_uuids",
+        lambda group_uuid: ([router_member] if group_uuid == router_group
+                            else [assistant_member]))
+    seen_members = []
+
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+        seen_members.extend(model_uuids)
+        return (response_model(items=[_score("qa-1", direct="5")]), model_uuids[0])
+
+    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    obs = _action_query_memory(_ctx(), {"query": "q"})
+    assert seen_members == [router_member]   # not the assistant's own group
+    assert obs.data["seed_filter"]["group_from"] == "query_filter_router"
+
+
+def test_seed_filter_falls_back_to_own_group_when_router_unbound(app_ctx, monkeypatch):
+    import agents.query_filter_router as qfr
+    from agents.config import QUERY_FILTER_ROUTER_UUID
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _seed_entries(monkeypatch, qkb, {
+        "qa-1": {"kind": "static", "path": "p", "_source": "upstream", "answer": "A."},
+    })
+    monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs: [
+        Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
+    own_group = uuid4()
+
+    def binding_for(agent_uuid):
+        if agent_uuid == QUERY_FILTER_ROUTER_UUID:
+            return None
+        return type("B", (), {"model_group_uuid": own_group})()
+
+    monkeypatch.setattr(db, "get_agent_model_binding", binding_for)
+    monkeypatch.setattr(db, "get_model_group_member_uuids", lambda g: [uuid4()])
+    monkeypatch.setattr(qfr, "structured_llm_call", lambda *a, **k: (
+        a[4](items=[_score("qa-1", direct="5")]), a[1][0]))
+    obs = _action_query_memory(_ctx(), {"query": "q"})
+    assert obs.data["seed_filter"]["mode"] == "llm"
+    assert obs.data["seed_filter"]["group_from"] == "own"
+
+
 def test_filter_prompt_asks_for_scores_not_decisions():
     """The filter LLM scores every candidate on three Likert scales; the
     keep/drop decision is code (apply_filter_scores), not the prompt."""

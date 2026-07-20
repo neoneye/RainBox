@@ -317,20 +317,31 @@ def _retrieve_seed_answers_filtered(
     `retrieve_seed_answers` (a borderline-score candidate still reaches the
     filter) while the filter drops the off-topic ones.
 
-    The filter runs on `agent_uuid`'s own model group. Returns
-    `(seeds_or_None, debug)`: seeds is None when no group is bound (the caller
-    falls back to the gated retrieval); an LLM failure raises (same fallback).
+    The filter runs on the query_filter_router's model group when one is
+    bound, falling back to `agent_uuid`'s own group: the filter is a shared
+    subsystem, and scoring with one model identity keeps the assistant's
+    keep/drop decisions consistent with the chat route's (different groups —
+    e.g. a 4B reasoning model vs a 30B coder — calibrate the Likert scales
+    very differently for the same candidates). Returns `(seeds_or_None,
+    debug)`: seeds is None when no group is bound anywhere (the caller falls
+    back to the gated retrieval); an LLM failure raises (same fallback).
     `debug` describes what the filter saw and decided — every candidate with
-    its score and a kept/dropped flag — for the step trace and the
-    /memory/developer page. Kept candidates come back in the filter's
-    preference order as `SeedMemory` rows; hallucinated qa_ids are ignored."""
+    its score and a kept/dropped flag, plus which agent's group scored — for
+    the step trace and the /memory/developer page. Kept candidates come back
+    in the filter's preference order as `SeedMemory` rows; hallucinated
+    qa_ids are ignored."""
+    from agents.config import QUERY_FILTER_ROUTER_UUID
     from agents.query_filter_router import (
         FILTER_SYSTEM_PROMPT, TOP_K_FILTER, FilterDecision,
         apply_filter_scores, build_filter_prompt, structured_llm_call,
     )
     from memory import seed_memory as qkb
 
-    binding = db.get_agent_model_binding(agent_uuid)
+    group_from = "query_filter_router"
+    binding = db.get_agent_model_binding(QUERY_FILTER_ROUTER_UUID)
+    if binding is None or binding.model_group_uuid is None:
+        group_from = "own"
+        binding = db.get_agent_model_binding(agent_uuid)
     if binding is None or binding.model_group_uuid is None:
         return None, {"mode": "gated", "reason": "no_model_group"}
     model_uuids = db.get_model_group_member_uuids(binding.model_group_uuid)
@@ -338,7 +349,7 @@ def _retrieve_seed_answers_filtered(
         return None, {"mode": "gated", "reason": "empty_model_group"}
     candidates = qkb._semantic_ranked(query, qkb._vector_store())[:TOP_K_FILTER]
     if not candidates:
-        return [], {"mode": "llm", "candidates": []}
+        return [], {"mode": "llm", "group_from": group_from, "candidates": []}
     decision, _model_uuid = structured_llm_call(
         "assistant.memory_query", model_uuids,
         FILTER_SYSTEM_PROMPT, build_filter_prompt(query, candidates),
@@ -350,6 +361,7 @@ def _retrieve_seed_answers_filtered(
     by_qa_id = {c.qa_id: c for c in candidates}
     debug = {
         "mode": "llm",
+        "group_from": group_from,
         "candidates": [
             {
                 "qa_id": s.qa_id,

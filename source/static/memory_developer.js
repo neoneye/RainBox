@@ -44,7 +44,11 @@ function memdevRenderAssistant(a) {
   if (d.omitted) badges.push(memdevBadge('omitted: ' + d.omitted, 'warn'));
   const sf = d.seed_filter || {};
   if (sf.mode) {
-    const label = 'seed filter: ' + sf.mode + (sf.reason ? ' (' + sf.reason + ')' : '');
+    // group_from: whose model group scored — 'query_filter_router' (shared
+    // scorer, the normal case) or 'own' (the assistant's group, fallback).
+    let label = 'seed filter: ' + sf.mode;
+    if (sf.reason) label += ' (' + sf.reason + ')';
+    if (sf.group_from) label += ' · ' + sf.group_from + ' group';
     badges.push(memdevBadge(label, sf.mode === 'llm' ? 'good' : 'warn'));
   }
   parts.push('<div class="memdev-meta">' + badges.join('') + '</div>');
