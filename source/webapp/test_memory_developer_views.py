@@ -48,6 +48,14 @@ def test_js_posts_to_the_query_api():
     assert "memdevRenderRouter" in body
 
 
+def test_js_renders_assistant_seed_filter_debug():
+    # The assistant panel shows what its seed LLM filter kept/dropped (and a
+    # mode badge when it degraded to the gated retrieval).
+    body = _body()
+    assert "seed_filter" in body
+    assert "seed candidates + LLM filter" in body
+
+
 def test_js_has_no_python_interpreted_escapes():
     # The shell is a non-raw Python string; the JS lives in a static file
     # precisely so backslash escapes survive. Guard the split: the inline

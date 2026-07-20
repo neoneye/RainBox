@@ -376,6 +376,23 @@ def test_query_memory_seed_filter_keeps_only_llm_relevant(app_ctx, monkeypatch):
     assert "home computer" in obs.text          # kept despite the sub-gate score
     assert "Something off-topic" not in obs.text  # high score, but filter dropped it
     assert "qa-hallucinated" not in obs.text
+    # The trace carries the filter's full decision: every candidate with a
+    # kept/dropped flag, so the operator can see what was considered.
+    sf = obs.data["seed_filter"]
+    assert sf["mode"] == "llm"
+    kept_by_id = {c["qa_id"]: c["kept"] for c in sf["candidates"]}
+    assert kept_by_id == {"qa-noise": False, "qa-mac": True, "qa-computer": True}
+
+
+def test_filter_prompt_scales_selectivity_with_candidate_count():
+    """The relevance filter must not drop aggressively from a small candidate
+    set: selectivity scales with how many candidates compete, related context
+    counts as relevant, and uncertainty resolves toward keeping."""
+    from agents.query_filter_router import FILTER_SYSTEM_PROMPT
+    p = FILTER_SYSTEM_PROMPT.lower()
+    assert "when unsure, keep" in p
+    assert "few candidates" in p
+    assert "family" in p    # related-context example: a person's family entry
 
 
 def test_query_memory_seed_filter_falls_back_when_llm_fails(app_ctx, monkeypatch):
@@ -400,6 +417,8 @@ def test_query_memory_seed_filter_falls_back_when_llm_fails(app_ctx, monkeypatch
     obs = _action_query_memory(_ctx(), {"query": "anything"})
     assert obs.ok
     assert "gated fallback fact" in obs.text
+    assert obs.data["seed_filter"] == {"mode": "gated",
+                                       "reason": "filter_llm_failed"}
 
 
 def test_query_memory_seed_filter_skipped_without_model_group(app_ctx, monkeypatch):
@@ -420,6 +439,8 @@ def test_query_memory_seed_filter_skipped_without_model_group(app_ctx, monkeypat
     assert obs.ok
     assert "gated fact" in obs.text
     assert ranked_calls == []
+    assert obs.data["seed_filter"] == {"mode": "gated",
+                                       "reason": "no_model_group"}
 
 
 def test_query_memory_merges_seed_and_dynamic_without_duplicate_legend(app_ctx, fresh_subject):

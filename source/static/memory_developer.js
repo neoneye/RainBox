@@ -42,9 +42,19 @@ function memdevRenderAssistant(a) {
   if (d.memory != null) badges.push(memdevBadge('claims: ' + d.memory));
   if (d.truncated) badges.push(memdevBadge('truncated: ' + d.truncated, 'warn'));
   if (d.omitted) badges.push(memdevBadge('omitted: ' + d.omitted, 'warn'));
+  const sf = d.seed_filter || {};
+  if (sf.mode) {
+    const label = 'seed filter: ' + sf.mode + (sf.reason ? ' (' + sf.reason + ')' : '');
+    badges.push(memdevBadge(label, sf.mode === 'llm' ? 'good' : 'warn'));
+  }
   parts.push('<div class="memdev-meta">' + badges.join('') + '</div>');
   if (a.error) {
     parts.push(memdevSection('error', '<div class="err">' + memdevEscape(a.error) + '</div>'));
+  }
+  if ((sf.candidates || []).length) {
+    const keptIds = sf.candidates.filter(c => c.kept).map(c => c.qa_id);
+    parts.push(memdevSection('seed candidates + LLM filter',
+      memdevCandidateTable(sf.candidates, keptIds)));
   }
   if (a.text) {
     parts.push(memdevSection('observation text (what the assistant model sees)', memdevPre(a.text)));

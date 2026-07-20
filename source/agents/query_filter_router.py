@@ -67,12 +67,19 @@ candidate Q&A entries from a knowledge base, decide which (if any) of the
 candidates DIRECTLY address the user's message.
 
 A candidate is relevant when its question/answer is genuinely about what the
-user is asking, telling, or doing.
+user is asking, telling, or doing. Closely related context also counts as
+relevant: for a question about a person, an entry about that person's family
+or household is relevant context even when it does not answer the question by
+itself.
 
 A candidate is NOT relevant when it is about a different topic, or when the
 user is volunteering information that the candidate does not speak to (for
 example: the user says where THEY are from, but the candidate is about the
 BOT's location — not relevant).
+
+Be selective in proportion to how many candidates compete. With a full list
+(5 or more), keep only the best matches. With only a few candidates, drop one
+only when it is clearly about an unrelated topic — when unsure, keep it.
 
 Each candidate carries a `similarity score`: an integer from 0 to 1000 (higher
 means a closer semantic match; 1000 is an exact match). Treat it as a hint, not
