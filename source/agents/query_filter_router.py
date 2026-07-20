@@ -328,7 +328,7 @@ def structured_llm_call(
     on failure. Returns (result, answering_model_uuid); raises RuntimeError when
     no group is bound or every member fails. `agent_name` only labels log/error
     messages. Free function (not an agent method) so non-agent callers — the
-    assistant's memory_query seed filter, the /memory/developer page — can make
+    assistant's memory_query recall filter, the /memory/developer page — can make
     the same call against any group's members."""
     if not candidate_model_uuids:
         raise RuntimeError(
@@ -642,7 +642,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                 filter_prompt = build_filter_prompt(query, candidates)
                 # Scorer group: the dedicated memory_filter binding when set,
                 # else this agent's own group — same resolution as the
-                # assistant's seed filter, so both pipelines score alike.
+                # assistant's recall filter, so both pipelines score alike.
                 scorer_uuids, scorer_src = resolve_filter_model_uuids(
                     [(self.agent_uuid, "own")])
                 filter_decision, scorer_model = structured_llm_call(

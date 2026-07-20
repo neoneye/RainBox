@@ -48,12 +48,12 @@ def test_js_posts_to_the_query_api():
     assert "memdevRenderRouter" in body
 
 
-def test_js_renders_assistant_seed_filter_debug():
+def test_js_renders_assistant_recall_filter_debug():
     # The assistant panel shows what its seed LLM filter kept/dropped (and a
     # mode badge when it degraded to the gated retrieval).
     body = _body()
-    assert "seed_filter" in body
-    assert "seed candidates + LLM filter" in body
+    assert "recall_filter" in body
+    assert "recalled candidates + LLM filter" in body
 
 
 def test_page_has_models_overview_section():

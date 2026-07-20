@@ -443,20 +443,20 @@ def _filter_recalled_candidates(
 
 # The scorer's reasoning rides along in the observation; cap it so a rambling
 # reasoning model can't blow the prompt budget with its self-calibration note.
-SEED_FILTER_ASSESSMENT_CHARS: int = 600
+RECALL_FILTER_ASSESSMENT_CHARS: int = 600
 
 
-def _seed_filter_assessment_line(seed_filter_debug: dict[str, Any]) -> str:
+def _recall_filter_assessment_line(recall_filter_debug: dict[str, Any]) -> str:
     """The filter LLM's think-before-scoring note as an observation suffix, or
     "" when the filter didn't run. Angle brackets are neutralized so the note
     (generated from stored answers) can't forge the recalled-memory fence or
     role markers; length is capped."""
-    reasoning = str(seed_filter_debug.get("reasoning") or "").strip()
+    reasoning = str(recall_filter_debug.get("reasoning") or "").strip()
     if not reasoning:
         return ""
     from memory.retrieval import _sanitize_recalled
-    safe = _sanitize_recalled(reasoning)[:SEED_FILTER_ASSESSMENT_CHARS]
-    return f"\n\nSeed filter assessment: {safe}"
+    safe = _sanitize_recalled(reasoning)[:RECALL_FILTER_ASSESSMENT_CHARS]
+    return f"\n\nMemory filter assessment: {safe}"
 
 
 def _action_query_memory(
@@ -502,7 +502,7 @@ def _action_query_memory(
         record_telemetry=record_telemetry,
     )
     seeds = []
-    seed_filter_debug: dict[str, Any] = {}
+    recall_filter_debug: dict[str, Any] = {}
     try:
         # The assistant loop, unlike the chat route's query_filter_router.handle(),
         # never loads the seed KB — so load the registry (_entries_by_id) and ensure
@@ -516,7 +516,7 @@ def _action_query_memory(
             filtered = None
             kept_claims = None
             try:
-                filtered, kept_claims, seed_filter_debug = _filter_recalled_candidates(
+                filtered, kept_claims, recall_filter_debug = _filter_recalled_candidates(
                     query, qctx=qctx, agent_uuid=ctx.agent_uuid,
                     claim_candidates=memories,
                     top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext)
@@ -524,7 +524,7 @@ def _action_query_memory(
                 logger.warning(
                     "assistant: recall LLM filter failed; falling back to "
                     "gated seeds + unfiltered claims", exc_info=True)
-                seed_filter_debug = {"mode": "gated", "reason": "filter_llm_failed"}
+                recall_filter_debug = {"mode": "gated", "reason": "filter_llm_failed"}
             if filtered is not None:
                 seeds = filtered
                 memories = kept_claims if kept_claims is not None else memories
@@ -539,12 +539,12 @@ def _action_query_memory(
 
     if not (overlay or upstream or memories):
         # The empty result is exactly when the operator wants to see what the
-        # seed filter considered and dropped — keep the debug in the trace,
+        # recall filter considered and dropped — keep the debug in the trace,
         # and give the model the filter's own why-nothing-matched note.
         text = "No relevant remembered facts."
-        text += _seed_filter_assessment_line(seed_filter_debug)
+        text += _recall_filter_assessment_line(recall_filter_debug)
         return AssistantObservation(ok=True, text=text,
-                                    data={"seed_filter": seed_filter_debug})
+                                    data={"recall_filter": recall_filter_debug})
 
     # (B) Per-fact cap: build one line per fact, shortening long ones. Dynamic
     # seed entries (live handlers) carry a `dynamic` tag; static ones do not.
@@ -601,13 +601,13 @@ def _action_query_memory(
         segs.append('To read a fact in full, call memory_query with '
                     '{"uuid": "<the fact\'s uuid>"}.')
         text += "\n\n" + " ".join(segs)
-    text += _seed_filter_assessment_line(seed_filter_debug)
+    text += _recall_filter_assessment_line(recall_filter_debug)
     return AssistantObservation(
         ok=True, text=text,
         data={"qa_static": sum(1 for s in seeds if s.kind == "static"),
               "qa_dynamic": sum(1 for s in seeds if s.kind == "dynamic"),
               "memory": len(memories), "truncated": truncated_count, "omitted": omitted,
-              "seed_filter": seed_filter_debug},
+              "recall_filter": recall_filter_debug},
     )
 
 

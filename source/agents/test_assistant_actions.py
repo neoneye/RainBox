@@ -342,7 +342,7 @@ def _score(qa_id, direct="1", indirect="1", relevancy="1"):
             "relevancy": relevancy}
 
 
-def test_query_memory_seed_filter_drops_low_scores_on_a_full_list(app_ctx, monkeypatch):
+def test_query_memory_recall_filter_drops_low_scores_on_a_full_list(app_ctx, monkeypatch):
     """With a full top-K list the code-side policy drops low-scored candidates:
     the LLM only scores (direct/indirect/relevancy), the keep/drop threshold
     lives in apply_filter_scores. A below-MIN_SCORE candidate with a high score
@@ -398,7 +398,7 @@ def test_query_memory_seed_filter_drops_low_scores_on_a_full_list(app_ctx, monke
     assert "Never scored" not in obs.text         # unscored on a full list → dropped
     assert "qa-hallucinated" not in obs.text
     # The trace carries the scores and the kept/dropped verdicts.
-    sf = obs.data["seed_filter"]
+    sf = obs.data["recall_filter"]
     assert sf["mode"] == "llm"
     by_id = {c["qa_id"]: c for c in sf["candidates"]}
     assert by_id["qa-mac"]["kept"] and by_id["qa-mac"]["direct"] == 5
@@ -408,11 +408,11 @@ def test_query_memory_seed_filter_drops_low_scores_on_a_full_list(app_ctx, monke
     # The scorer's think-before-scoring note reaches BOTH the trace and the
     # observation text the assistant model reads.
     assert sf["reasoning"] == "scores calibrated on the message"
-    assert ("Seed filter assessment: scores calibrated on the message"
+    assert ("Memory filter assessment: scores calibrated on the message"
             in obs.text)
 
 
-def test_query_memory_seed_filter_keeps_all_when_fewer_than_top_k(app_ctx, monkeypatch):
+def test_query_memory_recall_filter_keeps_all_when_fewer_than_top_k(app_ctx, monkeypatch):
     """With fewer than top-K candidates there is no real competition: every
     candidate is kept even when the LLM scored it low — the code-side policy
     overrides an over-aggressive scorer."""
@@ -445,7 +445,7 @@ def test_query_memory_seed_filter_keeps_all_when_fewer_than_top_k(app_ctx, monke
     assert obs.ok
     assert "Her brother fact." in obs.text
     assert "The family entry." in obs.text   # kept despite the low scores
-    sf = obs.data["seed_filter"]
+    sf = obs.data["recall_filter"]
     assert all(c["kept"] for c in sf["candidates"])
 
 
@@ -516,7 +516,7 @@ def test_query_memory_claims_go_through_the_filter_too(app_ctx, monkeypatch):
     # Both claims < 5 candidates → keep-all would keep the noise too; verify
     # via the trace that both were scored and both kept under the small-set
     # rule, so the policy (not an accident) decided.
-    by_id = {c["qa_id"]: c for c in obs.data["seed_filter"]["candidates"]}
+    by_id = {c["qa_id"]: c for c in obs.data["recall_filter"]["candidates"]}
     assert by_id[str(claim_good)]["direct"] == 5
     assert by_id[str(claim_good)]["path"].startswith("claim ·")
     assert by_id[str(claim_noise)]["kept"]   # small set → kept despite noise
@@ -565,11 +565,11 @@ def test_query_memory_dropped_claim_leaves_the_observation(app_ctx, monkeypatch)
     assert obs.ok
     assert "Seed answer 0." in obs.text
     assert "an unrelated remembered fact" not in obs.text
-    by_id = {c["qa_id"]: c for c in obs.data["seed_filter"]["candidates"]}
+    by_id = {c["qa_id"]: c for c in obs.data["recall_filter"]["candidates"]}
     assert not by_id[str(claim_noise)]["kept"]
 
 
-def test_seed_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch):
+def test_recall_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch):
     """A bound memory_filter agent (the /agentmodel knob for scorer
     experiments) outranks every fallback: the filter scores with ITS group
     even when the router and the assistant have their own."""
@@ -605,12 +605,12 @@ def test_seed_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch):
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
     assert seen_members == [filter_member]
-    assert obs.data["seed_filter"]["group_from"] == "memory_filter"
+    assert obs.data["recall_filter"]["group_from"] == "memory_filter"
 
 
-def test_seed_filter_prefers_the_query_filter_routers_model_group(app_ctx, monkeypatch):
+def test_recall_filter_prefers_the_query_filter_routers_model_group(app_ctx, monkeypatch):
     """The filter is a shared subsystem: when the query_filter_router has a
-    model group bound, the assistant's seed filter scores with THAT group, so
+    model group bound, the assistant's recall filter scores with THAT group, so
     both pipelines' keep/drop decisions come from one model identity."""
     import agents.query_filter_router as qfr
     from agents.config import QUERY_FILTER_ROUTER_UUID
@@ -650,10 +650,10 @@ def test_seed_filter_prefers_the_query_filter_routers_model_group(app_ctx, monke
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
     assert seen_members == [router_member]   # not the assistant's own group
-    assert obs.data["seed_filter"]["group_from"] == "query_filter_router"
+    assert obs.data["recall_filter"]["group_from"] == "query_filter_router"
 
 
-def test_seed_filter_falls_back_to_own_group_when_router_unbound(app_ctx, monkeypatch):
+def test_recall_filter_falls_back_to_own_group_when_router_unbound(app_ctx, monkeypatch):
     import agents.query_filter_router as qfr
     from agents.config import QUERY_FILTER_ROUTER_UUID
     from memory import seed_memory as qkb
@@ -679,8 +679,8 @@ def test_seed_filter_falls_back_to_own_group_when_router_unbound(app_ctx, monkey
     monkeypatch.setattr(qfr, "structured_llm_call", lambda *a, **k: (
         a[4](reasoning="fallback test", items=[_score("qa-1", direct="5")]), a[1][0]))
     obs = _action_query_memory(_ctx(), {"query": "q"})
-    assert obs.data["seed_filter"]["mode"] == "llm"
-    assert obs.data["seed_filter"]["group_from"] == "own"
+    assert obs.data["recall_filter"]["mode"] == "llm"
+    assert obs.data["recall_filter"]["group_from"] == "own"
 
 
 def test_filter_prompt_asks_for_scores_not_decisions():
@@ -694,7 +694,7 @@ def test_filter_prompt_asks_for_scores_not_decisions():
     assert "family" in p    # related-context example lives under `indirect`
 
 
-def test_query_memory_seed_filter_falls_back_when_llm_fails(app_ctx, monkeypatch):
+def test_query_memory_recall_filter_falls_back_when_llm_fails(app_ctx, monkeypatch):
     """A dead filter LLM must degrade to the MIN_SCORE-gated retrieval, not to
     an empty seed block."""
     import agents.query_filter_router as qfr
@@ -716,11 +716,11 @@ def test_query_memory_seed_filter_falls_back_when_llm_fails(app_ctx, monkeypatch
     obs = _action_query_memory(_ctx(), {"query": "anything"})
     assert obs.ok
     assert "gated fallback fact" in obs.text
-    assert obs.data["seed_filter"] == {"mode": "gated",
+    assert obs.data["recall_filter"] == {"mode": "gated",
                                        "reason": "filter_llm_failed"}
 
 
-def test_query_memory_seed_filter_skipped_without_model_group(app_ctx, monkeypatch):
+def test_query_memory_recall_filter_skipped_without_model_group(app_ctx, monkeypatch):
     """No model group bound → straight to the gated retrieval; the ungated
     semantic ranking (which needs embeddings) must not even run."""
     from memory import seed_memory as qkb
@@ -738,7 +738,7 @@ def test_query_memory_seed_filter_skipped_without_model_group(app_ctx, monkeypat
     assert obs.ok
     assert "gated fact" in obs.text
     assert ranked_calls == []
-    assert obs.data["seed_filter"] == {"mode": "gated",
+    assert obs.data["recall_filter"] == {"mode": "gated",
                                        "reason": "no_model_group"}
 
 

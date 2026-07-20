@@ -93,11 +93,11 @@ function memdevRenderAssistant(a) {
   if (d.memory != null) badges.push(memdevBadge('claims: ' + d.memory));
   if (d.truncated) badges.push(memdevBadge('truncated: ' + d.truncated, 'warn'));
   if (d.omitted) badges.push(memdevBadge('omitted: ' + d.omitted, 'warn'));
-  const sf = d.seed_filter || {};
+  const sf = d.recall_filter || {};
   if (sf.mode) {
     // group_from: whose binding supplied the scorer group — 'memory_filter'
     // (dedicated), 'query_filter_router' (shared default) or 'own' (fallback).
-    let label = 'seed filter: ' + sf.mode;
+    let label = 'memory filter: ' + sf.mode;
     if (sf.reason) label += ' (' + sf.reason + ')';
     if (sf.group_from) label += ' · ' + sf.group_from + ' group';
     badges.push(memdevBadge(label, sf.mode === 'llm' ? 'good' : 'warn'));
@@ -109,7 +109,7 @@ function memdevRenderAssistant(a) {
   }
   if ((sf.candidates || []).length) {
     const keptIds = sf.candidates.filter(c => c.kept).map(c => c.qa_id);
-    parts.push(memdevSection('seed candidates + LLM filter',
+    parts.push(memdevSection('recalled candidates + LLM filter',
       memdevCandidateTable(sf.candidates, keptIds)));
   }
   if (sf.reasoning) {
