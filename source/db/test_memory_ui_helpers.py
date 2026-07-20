@@ -49,6 +49,40 @@ def _cleanup(*uuids):
     db.db.session.commit()
 
 
+def test_set_scope_widens_room_claim_to_global(app_ctx):
+    c = db.create_memory_claim(
+        scope="room", kind="fact", text=f"room fact {uuid4().hex[:6]}",
+        confidence=1.0, status="active", sensitivity="private",
+        subject="ui-test", room_uuid=uuid4())
+    before = c.updated_at
+    room = c.room_uuid
+    try:
+        db.set_memory_scope(c.uuid, "global", expected_updated_at=before)
+        got = db.get_memory_claim(c.uuid)
+        assert got.scope == "global"
+        assert got.room_uuid == room       # provenance key kept
+        assert got.updated_at >= before
+        # Narrowing back works because the room key is still there.
+        db.set_memory_scope(c.uuid, "room", expected_updated_at=got.updated_at)
+        assert db.get_memory_claim(c.uuid).scope == "room"
+    finally:
+        _cleanup(c.uuid)
+
+
+def test_set_scope_refuses_keyless_narrowing_and_bad_values(app_ctx):
+    c = _claim()   # global, no room/agent keys
+    try:
+        with pytest.raises(ValueError):
+            db.set_memory_scope(c.uuid, "room", expected_updated_at=c.updated_at)
+        with pytest.raises(ValueError):
+            db.set_memory_scope(c.uuid, "agent", expected_updated_at=c.updated_at)
+        with pytest.raises(ValueError):
+            db.set_memory_scope(c.uuid, "project", expected_updated_at=c.updated_at)
+        assert db.get_memory_claim(c.uuid).scope == "global"   # unchanged
+    finally:
+        _cleanup(c.uuid)
+
+
 def test_set_sensitivity_updates_field_and_timestamp(app_ctx):
     c = _claim(sensitivity="private")
     before = c.updated_at

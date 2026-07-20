@@ -74,6 +74,7 @@ def _claim_row(claim: db.MemoryClaim, used_ids: set[str]) -> dict:
         "confidence": claim.confidence,
         "room_uuid": str(claim.room_uuid) if claim.room_uuid else None,
         "room_name": _room_name(claim.room_uuid),
+        "agent_uuid": str(claim.agent_uuid) if claim.agent_uuid else None,
         "created_at": _iso(claim.created_at),
         "updated_at": _iso(claim.updated_at),
         "expires_at": _iso(claim.expires_at),
@@ -145,6 +146,7 @@ def memory_claim_detail(claim_uuid: str) -> tuple[Response, int] | Response:
         "subj_pred_key": claim.subj_pred_key or "",
         "room_uuid": str(claim.room_uuid) if claim.room_uuid else None,
         "room_name": _room_name(claim.room_uuid),
+        "agent_uuid": str(claim.agent_uuid) if claim.agent_uuid else None,
         "created_at": _iso(claim.created_at),
         "updated_at": _iso(claim.updated_at),
         "expires_at": _iso(claim.expires_at),
@@ -191,7 +193,7 @@ def memory_claim_action(claim_uuid: str, action: str) -> tuple[Response, int] | 
     except (ValueError, TypeError):
         return jsonify({"ok": False, "error": "bad uuid"}), 400
     if action not in ("activate", "reject", "reactivate", "correct",
-                      "sensitivity", "expiry"):
+                      "sensitivity", "scope", "expiry"):
         return jsonify({"ok": False, "error": f"unknown action {action!r}"}), 404
     data = request.get_json(silent=True) or {}
 
@@ -250,6 +252,10 @@ def _dispatch_action(claim, action, data, expected) -> dict:
     if action == "sensitivity":
         db.set_memory_sensitivity(cu, str(data.get("sensitivity", "")),
                                   expected_updated_at=expected)
+        return {}
+    if action == "scope":
+        db.set_memory_scope(cu, str(data.get("scope", "")),
+                            expected_updated_at=expected)
         return {}
     if action == "expiry":
         raw = data.get("expires_at")

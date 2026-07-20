@@ -217,6 +217,26 @@ def test_sensitivity_change(client):
         _cleanup(c.uuid)
 
 
+def test_scope_change_room_to_global(client):
+    from uuid import uuid4 as _uuid4
+    c = db.create_memory_claim(
+        scope="room", kind="fact", text=f"api room claim {_uuid4().hex[:6]}",
+        confidence=1.0, status="active", sensitivity="private",
+        subject="api-test", room_uuid=_uuid4())
+    try:
+        r = _post(client, c.uuid, "scope", scope="global",
+                  expected_updated_at=c.updated_at.isoformat())
+        assert r.status_code == 200
+        assert db.get_memory_claim(c.uuid).scope == "global"
+        # Keyless narrowing is a 400, not a silent no-op.
+        got = db.get_memory_claim(c.uuid)
+        r2 = _post(client, c.uuid, "scope", scope="project",
+                   expected_updated_at=got.updated_at.isoformat())
+        assert r2.status_code == 400
+    finally:
+        _cleanup(c.uuid)
+
+
 def test_expiry_set_and_clear(client):
     c = _claim(status="active")
     when = (datetime.now(UTC) + timedelta(days=3)).isoformat()

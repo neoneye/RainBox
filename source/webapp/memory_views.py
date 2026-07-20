@@ -194,6 +194,22 @@ MEMORY_TEMPLATE = """
     <button class="btn-primary" onclick="memConfirmSens()">Save</button>
   </div>
 </div>
+<!-- Scope change. -->
+<div id="mem-scope-modal" class="ui-modal" hidden>
+  <h3>Change scope</h3>
+  <p class="muted">Where this memory can be recalled: <b>global</b> = every room
+  and agent; <b>room</b> = only inside its own chatroom; <b>agent</b> = only for
+  its owning agent. Widening keeps the room/agent keys as provenance.</p>
+  <select id="mem-scope-input">
+    <option value="global">global</option>
+    <option value="room">room</option>
+    <option value="agent">agent</option>
+  </select>
+  <div class="modal-actions">
+    <button class="btn-cancel" onclick="memCloseScope()">Cancel</button>
+    <button class="btn-primary" onclick="memConfirmScope()">Save</button>
+  </div>
+</div>
 <!-- Expiry set/clear. -->
 <div id="mem-expiry-modal" class="ui-modal" hidden>
   <h3>Set expiry</h3>

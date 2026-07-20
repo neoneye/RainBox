@@ -332,6 +332,34 @@ def set_memory_sensitivity(
     return claim
 
 
+def set_memory_scope(
+    memory_uuid: UUID, scope: str, *, expected_updated_at: datetime | None = None
+) -> MemoryClaim:
+    """Change a claim's scope (policy metadata, like sensitivity — no evidence
+    row). Guarded by `expected_updated_at`.
+
+    Widening (room -> global) keeps the room/agent keys untouched as
+    provenance — a global claim is retrievable everywhere regardless.
+    Narrowing to room/agent requires the claim to carry the matching key;
+    without one it could never be retrieved anywhere, which is a dead claim,
+    not a scoping. `project` is refused: project-scoped claims are excluded
+    from retrieval entirely (no project context exists yet)."""
+    if scope not in ("global", "agent", "room"):
+        raise ValueError(f"invalid scope: {scope!r}")
+    claim = db.session.query(MemoryClaim).filter_by(uuid=memory_uuid).first()
+    if claim is None:
+        raise ValueError(f"memory claim not found: {memory_uuid}")
+    assert_claim_unchanged(claim, expected_updated_at)
+    if scope == "room" and claim.room_uuid is None:
+        raise ValueError("cannot scope to room: claim has no room_uuid")
+    if scope == "agent" and claim.agent_uuid is None:
+        raise ValueError("cannot scope to agent: claim has no agent_uuid")
+    claim.scope = scope
+    claim.updated_at = datetime.now(UTC)
+    db.session.commit()
+    return claim
+
+
 def set_memory_expiry(
     memory_uuid: UUID,
     expires_at: datetime | None,

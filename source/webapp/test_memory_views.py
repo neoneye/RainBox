@@ -52,9 +52,18 @@ def test_detail_and_table_panes_present():
 
 def test_modals_present():
     body = _body()
-    for el in ('mem-correct-modal', 'mem-sens-modal', 'mem-expiry-modal',
-               'mem-reject-modal', 'ui-modal-backdrop'):
+    for el in ('mem-correct-modal', 'mem-sens-modal', 'mem-scope-modal',
+               'mem-expiry-modal', 'mem-reject-modal', 'ui-modal-backdrop'):
         assert 'id="' + el + '"' in body, el
+
+
+def test_scope_action_and_badge_tooltips_wired():
+    body = _body()
+    assert "memOpenScope" in body                       # Scope… action
+    assert "memConfirmScope" in body
+    assert "recallable in every chatroom" in body       # scope tooltip text
+    assert "STATUS_TIPS" in body                        # badges carry titles
+    assert "never injected into prompts" in body        # secret tooltip
 
 
 def test_js_wires_facets_and_actions():

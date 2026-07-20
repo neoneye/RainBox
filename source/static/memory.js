@@ -213,15 +213,34 @@ function renderDetail(d) {
   const textHtml = '<div class="mem-detail-text" id="mem-dtext">' +
     (masked ? '•••••• (secret)' : escapeHtml(d.text)) +
     (masked ? '<button class="mem-reveal" onclick="memReveal()">Reveal</button>' : '') + '</div>';
-  const badge = (cls, t) => '<span class="mem-badge ' + cls + '">' + escapeHtml(t) + '</span>';
+  const badge = (cls, t, tip) => '<span class="mem-badge ' + cls + '"' +
+    (tip ? ' title="' + escapeHtml(tip) + '"' : '') + '>' + escapeHtml(t) + '</span>';
+  const STATUS_TIPS = {
+    active: 'Status: retrievable — this memory can be recalled and injected into prompts.',
+    candidate: 'Status: proposed but not yet trusted. Not retrieved until you Activate it (or Reject it).',
+    superseded: 'Status: replaced by a newer correction; kept as history. Not retrieved.',
+    rejected: 'Status: forgotten — excluded from retrieval; a tombstone suppresses re-learning the same value.',
+    expired: 'Status: past its expiry timestamp. Not retrieved; can be reactivated.',
+  };
+  const SCOPE_TIPS = {
+    global: 'Scope: recallable in every chatroom and for every agent.',
+    room: 'Scope: recallable ONLY inside its own chatroom (named after the dot). Change via Scope… to widen.',
+    agent: 'Scope: recallable only for its owning agent, in any room.',
+    project: 'Scope: currently never retrieved — no project context exists yet.',
+  };
+  const SENS_TIPS = {
+    public: 'Sensitivity: no restrictions on recall or display.',
+    private: 'Sensitivity: recalled normally; treated as operator-private data.',
+    secret: 'Sensitivity: never injected into prompts unless secrets are explicitly included; masked in lists.',
+  };
   let badges = '<div class="mem-badges">' +
-    badge('status-' + d.status, d.status) +
-    badge('', d.scope + (d.room_name ? ' · ' + d.room_name : '')) +
-    badge('', d.kind) +
-    badge(d.sensitivity === 'secret' ? 'sens-secret' : '', d.sensitivity) +
-    badge('', 'conf ' + d.confidence) +
-    (d.stale ? badge('stale', 'stale (expired)') : '') +
-    (d.conflicts_with_uuid ? badge('conflict', 'conflict') : '') + '</div>';
+    badge('status-' + d.status, d.status, STATUS_TIPS[d.status]) +
+    badge('', d.scope + (d.room_name ? ' · ' + d.room_name : ''), SCOPE_TIPS[d.scope]) +
+    badge('', d.kind, 'Kind: what sort of memory this is (fact, preference, project_decision, procedure, episode_summary).') +
+    badge(d.sensitivity === 'secret' ? 'sens-secret' : '', d.sensitivity, SENS_TIPS[d.sensitivity]) +
+    badge('', 'conf ' + d.confidence, 'Confidence (0..1): how certain the system is about this memory; a ranking tie-breaker during retrieval.') +
+    (d.stale ? badge('stale', 'stale (expired)', 'The expiry timestamp has passed — this memory is due for cleanup and is not retrieved.') : '') +
+    (d.conflicts_with_uuid ? badge('conflict', 'conflict', 'Contradicts another claim — resolve it in the conflict section below.') : '') + '</div>';
 
   const ts = '<div class="mem-section"><div class="mem-section-label">Timestamps</div>' +
     '<div class="muted">created ' + fmt(d.created_at) + ' · updated ' + fmt(d.updated_at) +
@@ -282,6 +301,7 @@ function actionsHtml(d) {
   }
   if (d.status === 'active' || d.status === 'candidate') {
     btns.push(act('Sensitivity…', 'secondary', 'memOpenSens(\'' + d.uuid + '\')'));
+    btns.push(act('Scope…', 'secondary', 'memOpenScope(\'' + d.uuid + '\')'));
     btns.push(act('Expiry…', 'secondary', 'memOpenExpiry(\'' + d.uuid + '\')'));
   }
   return '<div class="mem-section"><div class="mem-section-label">Actions</div><div class="mem-actions">' +
@@ -465,6 +485,26 @@ async function memConfirmSens() {
   if (res) memCloseSens();
 }
 
+function memOpenScope(uuid) {
+  const c = claimByUuid(uuid);
+  modalState = {uuid};
+  const select = document.getElementById('mem-scope-input');
+  select.value = (c && c.scope) || 'global';
+  // Narrowing needs the matching key on the claim (the server refuses it too);
+  // a claim that never had a room/agent can only be global.
+  for (const opt of select.options) {
+    if (opt.value === 'room') opt.disabled = !(c && c.room_uuid);
+    if (opt.value === 'agent') opt.disabled = !(c && c.agent_uuid);
+  }
+  openBackdrop(); document.getElementById('mem-scope-modal').hidden = false;
+}
+function memCloseScope() { document.getElementById('mem-scope-modal').hidden = true; closeBackdrop(); modalState = {}; }
+async function memConfirmScope() {
+  const v = document.getElementById('mem-scope-input').value;
+  const res = await doAction(modalState.uuid, 'scope', {scope: v});
+  if (res) memCloseScope();
+}
+
 function memOpenExpiry(uuid) {
   modalState = {uuid};
   document.getElementById('mem-expiry-input').value = '';
@@ -498,6 +538,7 @@ async function memConfirmReject() {
 function closeOpenModal() {
   if (!document.getElementById('mem-correct-modal').hidden) memCloseCorrect();
   if (!document.getElementById('mem-sens-modal').hidden) memCloseSens();
+  if (!document.getElementById('mem-scope-modal').hidden) memCloseScope();
   if (!document.getElementById('mem-expiry-modal').hidden) memCloseExpiry();
   if (!document.getElementById('mem-reject-modal').hidden) memCloseReject();
 }
