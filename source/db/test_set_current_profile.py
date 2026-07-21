@@ -43,6 +43,23 @@ def _template_uuid(index: int = 0) -> str:
     return db.profile_templates_entries()[index]["uuid"]
 
 
+def _tree_without(*doomed: str) -> tuple[list, list]:
+    """The CURRENT user-owned tree minus the given profile uuids — so a test
+    can exercise the deletion path without wiping any pre-existing rows in
+    the shared test database (profile_save_tree deletes everything absent
+    from the payload)."""
+    tree = db.profile_load_tree()
+    folders = [{"id": f["id"], "name": f["name"],
+                "description": f.get("description", ""),
+                "parentId": f.get("parentId")}
+               for f in tree["folders"] if not f.get("builtin")]
+    profiles = [{"uuid": p["uuid"], "name": p["name"],
+                 "folderId": p.get("folderId")}
+                for p in tree["profiles"]
+                if not p.get("builtin") and p["uuid"] not in doomed]
+    return folders, profiles
+
+
 def _raw(key: str) -> str | None:
     row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
     return row.value if row is not None else None
@@ -146,13 +163,12 @@ def test_deleting_current_profile_clears_pointer_atomically(app_ctx):
         stamp_before = _raw("profile.current_changed_at")
 
         # Deleting an UNRELATED profile leaves the pointer alone.
-        db.profile_save_tree([], [{"uuid": str(pu), "name": "Doomed",
-                                   "folderId": None}])
+        db.profile_save_tree(*_tree_without(str(other)))
         assert db.get_setting("profile.current") == str(pu)
         assert _raw("profile.current_changed_at") == stamp_before
 
         # Deleting the ACTIVE profile clears the pointer and stamps.
-        db.profile_save_tree([], [])
+        db.profile_save_tree(*_tree_without(str(pu)))
         assert db.get_setting("profile.current") is None
         stamp_after = _raw("profile.current_changed_at")
         assert stamp_after and stamp_after != stamp_before
@@ -190,7 +206,7 @@ def test_concurrent_delete_and_switch_never_dangle(app_ctx):
             with app.app_context():
                 try:
                     barrier.wait(timeout=10)
-                    db.profile_save_tree([], [])          # deletes P
+                    db.profile_save_tree(*_tree_without(str(pu)))  # deletes P only
                 except Exception as exc:  # noqa: BLE001
                     errors.append(exc)
 

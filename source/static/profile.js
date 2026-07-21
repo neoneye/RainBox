@@ -1452,13 +1452,18 @@ async function profileCalPush(uuid){
     if (st.dirty){
       profileCalPush(uuid);      // a newer local edit wins; resend immediately
     } else {
-      // Adopt the canonical snapshot wholesale, but keep local topicless
-      // drafts and never steal focus mid-edit.
-      const drafts = st.rows.filter(r => !r.id && (r.topic || '').trim() === '');
-      st.rows = (d.topics || []).concat(drafts);
+      // Adopt the canonical snapshot ONLY when it is safe to re-render.
+      // While focus is inside the fieldset the live row objects must stay
+      // in state: the input listeners write into those objects, so swapping
+      // in the server's copies here would silently detach every keystroke
+      // typed after the ack (the Note field "forgetting" bug). The ids and
+      // stamps were already merged onto the live objects above, so keeping
+      // them loses nothing.
       const active = document.activeElement;
       const boxEl = document.getElementById('profile-cal-rows');
       if (profileFormUuid === uuid && (!active || !boxEl.contains(active))){
+        const drafts = st.rows.filter(r => !r.id && (r.topic || '').trim() === '');
+        st.rows = (d.topics || []).concat(drafts);
         profileCalRender();
       }
     }
