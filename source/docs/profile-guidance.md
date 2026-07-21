@@ -9,9 +9,12 @@ blocks, all rendered from one per-turn context snapshot:
 | `<formatting_guide>` | instructions | deterministic locale directives (`user_profile/formatting.py`) | **`assistant.formatting_guide`**, default off |
 | `<knowledge_calibration>` | context | self-declared topic rows as JSONL (`user_profile/calibration.py`) | **`assistant.knowledge_calibration`**, default off |
 
-The formatting guide compiles date/time/number/currency/unit/language fields
-into code-owned directives with examples (free-text profile values pass a
-strict prompt boundary or are omitted — they can never become instructions).
+The formatting guide compiles the locale fields — date format, first day of
+week, time format + timezone (with the current UTC offset), measurement
+system (metric / US customary / the UK hybrid), temperature (derived from
+the measurement system when unset), number format, currency, language — into
+code-owned directives with examples (free-text profile values pass a strict
+prompt boundary or are omitted — they can never become instructions).
 Knowledge calibration is the operator's per-topic declaration (level, stance,
 depth, note), edited on `/profile` and injected under a shared 2 700-char
 budget with an honest degrade-then-drop ladder. Explicit requests in the
@@ -65,12 +68,15 @@ the marker semantics, prompt assembly order, and every gate rule.
 Start the app, open `/profile`:
 
 - Open the **US** template → the *Knowledge calibration* fieldset shows the
-  two shipped fixture rows (Python, JavaScript), read-only.
-- **Duplicate** it → in the copy, add a topic row, pick a stance *before*
-  typing a topic (status must read `Not saved — a row needs a topic`), type
-  the topic (→ `Saving…` → `Saved ✓`), reorder with ↑/↓ (row stamps must NOT
-  change), enter a duplicate topic (a precise red validation message, no
-  retry loop), remove a row.
+  two shipped fixture rows (Python, JavaScript), read-only, under the
+  Topic / Level / Stance / Depth column headers.
+- **Duplicate** it → in the copy, add a topic row (its Level defaults to
+  `intermediate`; the Stance and Depth pickers read `Unspecified`, Level's
+  empty state reads `Choose…`), pick a stance *before* typing a topic
+  (status must read `Not saved — a row needs a topic`), type the topic
+  (→ `Saving…` → `Saved ✓`), reorder with ↑/↓ (row stamps must NOT change),
+  enter a duplicate topic (a precise red validation message, no retry
+  loop), remove a row.
 - The *Locale & formats* preview line shows the selected number format's
   sample.
 

@@ -42,9 +42,9 @@ fallback.
 - `/profile` — person profiles (folder tree, structured person fields,
   per-topic knowledge calibration). The profile selected by the
   `profile.current` setting drives the assistant's identity block, its
-  formatting defaults (dates, times, units, number/currency separators,
-  language), and its knowledge calibration; explicit requests in a message
-  always override the defaults. The formatting and calibration blocks sit
+  formatting defaults (dates, first day of week, times, measurement system,
+  temperature, number/currency separators, language), and its knowledge
+  calibration; explicit requests in a message always override the defaults. The formatting and calibration blocks sit
   behind the default-off `assistant.formatting_guide` and
   `assistant.knowledge_calibration` settings — enable each only after its
   live release gate passes. The full verification and enablement runbook

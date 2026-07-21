@@ -312,7 +312,9 @@ Example body for the Germany template:
 Use these defaults unless the current request or exact source notation says otherwise:
 - Dates: DD.MM.YYYY, for example 31.12.2026; do not use month-first dates.
 - Times: 24-hour clock, for example 23:59. Present local times in Europe/Berlin (currently UTC+02:00); name another zone when relevant.
-- Units: metric. Prefer km, kg, and °C; preserve a source value when precision matters and add the conversion.
+- Calendar: weeks start on Monday (ISO 8601; week numbers follow ISO).
+- Units: metric. Prefer km and kg; preserve a source value when precision matters and add the conversion.
+- Temperature: Celsius (°C).
 - Numbers: decimal comma with point grouping, for example 1.234.567,89.
 - Currency: use the ISO code EUR with the preferred number format, for example 1.234,56 EUR. Convert currencies only with a supplied or freshly retrieved rate.
 - Language: follow the language of the current message; otherwise prefer de, with en as fallback.

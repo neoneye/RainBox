@@ -156,7 +156,10 @@ values are removed; an all-blank row is dropped before validation, a row
 with content but no topic or level is an error; the canonical subtree
 serialized as UTF-8 JSON stays under 64 KiB. `updated_at` advances only when
 a row's semantic fields change — reordering restamps nothing. Row order is
-priority order (the editor reorders with up/down buttons, not drag-and-drop).
+priority order (the editor reorders with up/down buttons, not drag-and-drop;
+a Topic / Level / Stance / Depth header row names the axes, and each
+picker's empty option is labeled explicitly — `Unspecified` for the
+optional stance/depth axes, `Choose…` for the required level).
 
 Writes are **last-acknowledged-write-wins within the subtree** — the same
 call the flat fields and `/prompt` content already made; a single-operator
