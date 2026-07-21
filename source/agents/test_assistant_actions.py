@@ -106,12 +106,19 @@ def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
     assert "&lt;operator&gt;" not in prompt
     assert "&lt;assistant&gt;" not in prompt
     assert "-&gt;" not in prompt
-    assert "<assistant_turn>" in prompt
-    assert "<assistant_turn version=" not in prompt
+    # No <assistant_turn> root wrapper: the sections are top-level siblings
+    # (models don't need a single-rooted document, and the wrapper cost one
+    # level of indentation on every line). Each section is still valid,
+    # ElementTree-escaped XML — proven by parsing the whole prompt under a
+    # synthetic root.
+    assert "<assistant_turn" not in prompt
+    assert not prompt.startswith("  ")
     assert '<step index="1" action="memory_query" status="ok">' in prompt
     assert '<arguments format="json">{"query": "Simon demoscene"}</arguments>' in prompt
     assert prompt.count("<current_request ") == 1
-    assert ElementTree.fromstring(prompt).tag == "assistant_turn"
+    parsed = ElementTree.fromstring(f"<root>{prompt}</root>")
+    assert [s.tag for s in parsed][0] == "runtime_context"
+    assert parsed.find("current_request") is not None
 
 
 def test_source_priority_policy_is_in_system_prompt_only():

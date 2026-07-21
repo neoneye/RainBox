@@ -203,7 +203,9 @@ def test_hostile_note_stays_escaped_context(room, calibrated_profile):
     import xml.etree.ElementTree as ET
 
     prompt = _run_capture(room)["user_prompt"]
-    root = ET.fromstring(prompt)
+    # The sections are top-level siblings (no root wrapper); parse under a
+    # synthetic root to prove each section is still well-formed escaped XML.
+    root = ET.fromstring(f"<root>{prompt}</root>")
     node = root.find("knowledge_calibration")
     assert node is not None
     assert node.get("authority") == "context"

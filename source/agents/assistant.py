@@ -3093,8 +3093,18 @@ class AssistantAgent(ModelGroupAgent):
             "the current_request, choose reply now. Never repeat an identical "
             "successful or failed action."
         )
-        ET.indent(root, space="  ")
-        return ET.tostring(root, encoding="unicode", short_empty_elements=True)
+        # The sections are emitted as top-level siblings, NOT wrapped in a
+        # single root element: models recognize the start/end tags fine
+        # without a valid single-rooted document, and a wrapper would cost
+        # one level of indentation on every line of every step. The tree is
+        # still BUILT with ElementTree because its escaping is the security
+        # property — dynamic content cannot close or forge a section tag.
+        parts = []
+        for section in root:
+            ET.indent(section, space="  ")
+            parts.append(ET.tostring(section, encoding="unicode",
+                                     short_empty_elements=True))
+        return "\n".join(parts)
 
     @staticmethod
     def _message_role(message: dict[str, Any]) -> str:
