@@ -153,17 +153,22 @@ Add one enum to “Locale & formats”:
 
 ```python
 Field("number_format", "Locale & formats", kind="enum", label="Number format",
-      choices=("1,234.56", "1.234,56", "1 234,56", "1'234.56",
-               "12,34,567.89")),
+      choices=("1,234,567.89", "1.234.567,89", "1 234 567,89",
+               "1'234'567.89", "12,34,567.89")),
 ```
 
-The values double as previews. The Indian grouping option is required because
-India is already one of the shipped locale templates. The preview sample must
-contain at least seven integer digits (`1234567.89`), because `1234.56` renders
-identically under Western and Indian grouping and would make the fifth choice
-look redundant. A normal ASCII space is the stored value for the
-space-grouping variant; rendering may use a non-breaking space in prose, but
-storage and tests should not depend on an invisible Unicode distinction.
+The values double as previews, and every value renders the *same* sample,
+`1234567.89`. Seven integer digits are the minimum that disambiguates: a
+four-digit sample such as `1,234.56` is valid under both Western and Indian
+grouping, so shorter labels would make the fifth choice look redundant — and
+that observation applies to the labels, not only to the preview line beneath
+the form. One shared sample also keeps the dropdown comparable at a glance
+(five renderings of one number, differing only in separators) and gives the
+renderer a single fixed input from which every derived example is produced by
+lookup. The Indian grouping option is required because India is already one
+of the shipped locale templates. A normal ASCII space is the stored value for
+the space-grouping variant; rendering may use a non-breaking space in prose,
+but storage and tests should not depend on an invisible Unicode distinction.
 
 This is a deliberately finite preference enum, not a claim to cover every
 numbering system. Unsupported conventions can leave the field unset until the
@@ -194,7 +199,7 @@ Use these defaults unless the current request or exact source notation says othe
 - Dates: DD.MM.YYYY, for example 31.12.2026; do not use month-first dates.
 - Times: 24-hour clock, for example 23:59. Present local times in Europe/Berlin; name another zone when relevant.
 - Units: metric. Prefer km, kg, and °C; preserve a source value when precision matters and add the conversion.
-- Numbers: decimal comma with point grouping, for example 1.234,56.
+- Numbers: decimal comma with point grouping, for example 1.234.567,89.
 - Currency: use the ISO code EUR with the preferred number format, for example 1.234,56 EUR. Convert currencies only with a supplied or freshly retrieved rate.
 - Language: follow the language of the current message; otherwise prefer de, with en as fallback.
 ```
@@ -203,7 +208,10 @@ Rules:
 
 - Render a line only when its source value is usable. No lines means `""`.
 - Enum-derived wording and examples are fixed lookup-table output, never
-  free-typed templates.
+  free-typed templates. Two fixed samples feed the lookups: `1234567.89` for
+  the numbers line (grouping needs the digits to show) and `1234.56` for the
+  currency line (the decimal separator carries the risk there, and a
+  seven-digit price would read as noise).
 - A regioned English language tag may add a spelling preference (`en-GB` or
   `en-US`). Bare `en` adds none. Do not infer language from country.
 - Language means “current-message language first, profile fallback second.” It
@@ -377,15 +385,27 @@ containing a pipe, newline, quote, or bullet must remain one escaped string and
 cannot forge a second row. Truncate a note value before serializing its row,
 never cut an already serialized JSON line.
 
-The assistant interprets levels as follows:
+The assistant interprets the three axes as follows:
 
-- expert: omit routine fundamentals unless they are relevant to an error;
-- intermediate: normal technical depth, explain unusual parts;
-- beginner: define important terms and expose assumptions;
-- none: start with purpose and first principles;
-- avoid: do not choose the topic as the implementation basis unless the
-  operator asks or no reasonable alternative exists;
-- concise/standard/teach: desired explanation depth, not response correctness.
+- `level` — expert: omit routine fundamentals unless they are relevant to an
+  error; intermediate: normal technical depth, explain unusual parts;
+  beginner: define important terms and expose assumptions; none: start with
+  purpose and first principles.
+- `stance` — prefer: when several technologies or approaches would serve
+  equally, lean toward this one; avoid: do not choose the topic as the
+  implementation basis unless the operator asks or no reasonable alternative
+  exists; neutral or absent: no steering either way.
+- `depth` — concise/standard/teach: desired explanation depth, never response
+  correctness; absent: standard.
+
+These interpretations are code-owned policy and live in
+`ASSISTANT_SYSTEM_PROMPT`, next to the source-priority contract — not inside
+the per-turn block. The semantics are identical on every turn, so repeating
+them per turn would spend the guidance budget on boilerplate and churn the
+cacheable prompt prefix; and keeping them in one place means the block can
+never restate policy differently from the system prompt. The block itself
+carries only its two short header lines (a point-of-use reminder of the
+reading rules, cheap redundancy that helps small models) and the data rows.
 
 Notes are operator-authored **data**. Prompt assembly creates:
 
