@@ -525,6 +525,57 @@ def test_query_memory_claims_go_through_the_filter_too(app_ctx, monkeypatch):
     assert by_id[str(claim_noise)]["kept"]   # small set → kept despite noise
 
 
+def test_query_memory_records_recall_verdicts_with_fifo(app_ctx, monkeypatch):
+    """Live runs record one verdict per candidate — stage `used` (true
+    positive) or `rejected` (false positive) with the Likert scales in
+    metadata — and each stream is pruned to the recall FIFO capacity."""
+    from uuid import UUID as _UUID
+    import agents.query_filter_router as qfr
+    import db.settings as db_settings
+    import memory.retrieval as retrieval
+    from db import RetrievalEvent
+    from memory import seed_memory as qkb
+    from memory.retrieval import RetrievedMemory
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [])
+    claim_id = _UUID("88888888-8888-8888-8888-888888888888")
+    monkeypatch.setattr(retrieval, "retrieve_memories_hybrid", lambda *a, **k: [
+        RetrievedMemory(uuid=claim_id, text="a fifo test fact", kind="fact",
+                        scope="global", confidence=0.9, sensitivity="public",
+                        reason="fulltext"),
+    ])
+    real_get = db_settings.get_setting
+    monkeypatch.setattr(
+        db_settings, "get_setting",
+        lambda key: 3 if key == "memory.recall_fifo_capacity" else real_get(key))
+
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+        return (response_model(reasoning="noise", items=[
+            _score(str(claim_id)),   # 1/1/1 — but small set → kept... see below
+        ]), model_uuids[0])
+
+    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    try:
+        for _ in range(5):
+            _action_query_memory(_ctx(), {"query": "fifo probe"})
+        rows = (db.db.session.query(RetrievalEvent)
+                .filter_by(target_id=str(claim_id),
+                           source="memory_query.filter")
+                .order_by(RetrievalEvent.id.asc()).all())
+        # 1 candidate < 5 → keep-all → every verdict is `used`; FIFO capacity 3.
+        assert len(rows) == 3
+        assert all(r.stage == "used" for r in rows)
+        assert rows[-1].metadata_["direct"] == 1
+        assert rows[-1].metadata_["signals"] == "fulltext"
+        assert rows[-1].filter_label == "relevant"
+    finally:
+        db.db.session.query(RetrievalEvent).filter_by(
+            target_id=str(claim_id)).delete(synchronize_session=False)
+        db.db.session.commit()
+
+
 def test_query_memory_dropped_claim_leaves_the_observation(app_ctx, monkeypatch):
     """On a full candidate list, a noise-scored claim is dropped from the
     observation entirely."""

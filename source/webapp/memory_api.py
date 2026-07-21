@@ -119,6 +119,54 @@ def memory_list_claims() -> Response:
     })
 
 
+def _recall_kpis(cu: UUID) -> dict:
+    """The per-memory recall KPI block: the retained FIFO of `used` (true
+    positive) and `rejected` (false positive — surfaced but judged
+    irrelevant) recall-filter verdicts, newest first, capped by the
+    memory.recall_fifo_capacity setting. Each row carries the query that
+    triggered the verdict plus the Likert scales, so a false positive can be
+    diagnosed straight from the pane."""
+    from agents.assistant import RECALL_VERDICT_SOURCE
+    from db.settings import get_setting
+
+    capacity = int(get_setting("memory.recall_fifo_capacity") or 10)
+
+    def fetch(stage: str) -> list[dict]:
+        rows = (
+            db.db.session.query(db.RetrievalEvent)
+            .filter(db.RetrievalEvent.target_type == "memory_claim",
+                    db.RetrievalEvent.target_id == str(cu),
+                    db.RetrievalEvent.source == RECALL_VERDICT_SOURCE,
+                    db.RetrievalEvent.stage == stage)
+            .order_by(db.RetrievalEvent.id.desc())
+            .limit(capacity)
+            .all()
+        )
+        out = []
+        for r in rows:
+            md = r.metadata_ or {}
+            scales = (f"{md.get('direct', '?')}/{md.get('indirect', '?')}/"
+                      f"{md.get('relevancy', '?')}"
+                      if "direct" in md else None)
+            out.append({
+                "query": r.query,
+                "scales": scales,
+                "signals": md.get("signals"),
+                "created_at": _iso(r.created_at),
+            })
+        return out
+
+    used = fetch("used")
+    rejected = fetch("rejected")
+    return {
+        "capacity": capacity,
+        "used_count": len(used),
+        "rejected_count": len(rejected),
+        "last_used": used,
+        "last_rejected": rejected,
+    }
+
+
 @app.route("/memory/api/claims/<claim_uuid>")
 def memory_claim_detail(claim_uuid: str) -> tuple[Response, int] | Response:
     try:
@@ -161,6 +209,7 @@ def memory_claim_detail(claim_uuid: str) -> tuple[Response, int] | Response:
              "created_at": _iso(e.created_at)}
             for e in detail["evidence"]
         ],
+        "recall_kpis": _recall_kpis(cu),
         "retrieval": [
             {"stage": r.stage, "source": r.source, "query": r.query,
              "created_at": _iso(r.created_at)}

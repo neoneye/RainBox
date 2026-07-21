@@ -202,3 +202,41 @@ def test_list_retrieval_events_default_limit_is_1000(app_ctx, fresh_tag):
     import inspect
     sig = inspect.signature(db.list_retrieval_events)
     assert sig.parameters["limit"].default == 1000, sig.parameters["limit"]
+
+
+def test_prune_retrieval_fifo_keeps_newest_capacity_rows(app_ctx, fresh_tag):
+    """The recall-KPI FIFOs: pruning one (target, stage, source) stream keeps
+    only the newest N rows; other stages and sources are untouched."""
+    tid = f"{fresh_tag}.fifo"
+    try:
+        for i in range(12):
+            db.record_retrieval_event(
+                target_type="memory_claim", target_id=tid, stage="rejected",
+                query=f"q{i}", source="memory_query.filter", commit=False)
+        db.record_retrieval_event(   # different stage: must survive
+            target_type="memory_claim", target_id=tid, stage="used",
+            query="kept-one", source="memory_query.filter", commit=False)
+        db.record_retrieval_event(   # different source: must survive
+            target_type="memory_claim", target_id=tid, stage="rejected",
+            query="other-source", source="chat_memory_retrieval", commit=False)
+        db.db.session.commit()
+
+        deleted = db.prune_retrieval_fifo(
+            target_type="memory_claim", target_id=tid, stage="rejected",
+            source="memory_query.filter", capacity=10)
+        assert deleted == 2
+        rows = (db.db.session.query(RetrievalEvent)
+                .filter_by(target_id=tid, stage="rejected",
+                           source="memory_query.filter")
+                .order_by(RetrievalEvent.id.asc()).all())
+        assert len(rows) == 10
+        assert rows[0].query == "q2"      # oldest two (q0, q1) pruned
+        assert rows[-1].query == "q11"
+        others = (db.db.session.query(RetrievalEvent)
+                  .filter(RetrievalEvent.target_id == tid,
+                          (RetrievalEvent.stage == "used")
+                          | (RetrievalEvent.source == "chat_memory_retrieval"))
+                  .count())
+        assert others == 2
+    finally:
+        _cleanup(fresh_tag)

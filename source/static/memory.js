@@ -266,6 +266,8 @@ function renderDetail(d) {
   });
   evi += '</div>';
 
+  const kpis = recallKpisHtml(d);
+
   let ret = '<div class="mem-section"><div class="mem-section-label">Retrieval</div>';
   if (!d.retrieval.length) ret += '<div class="muted">no retrieval recorded</div>';
   d.retrieval.forEach(r => {
@@ -278,7 +280,33 @@ function renderDetail(d) {
 
   const conflictHtml = conflictSectionHtml(d);
   const tombstoneHtml = tombstoneHitsHtml(d);
-  el.innerHTML = textHtml + badges + actionsHtml(d) + conflictHtml + ts + lineage + emb + evi + ret + tombstoneHtml;
+  el.innerHTML = textHtml + badges + actionsHtml(d) + conflictHtml + ts + lineage + emb + kpis + evi + ret + tombstoneHtml;
+}
+
+// Recall KPIs: the recall filter's verdict FIFOs for this memory. A
+// "false positive" is a verdict where retrieval surfaced the memory but the
+// filter judged it irrelevant to the query — the starting point for
+// troubleshooting "why does this show up when it shouldn't".
+function recallKpisHtml(d) {
+  const k = d.recall_kpis;
+  if (!k) return '';
+  const total = k.used_count + k.rejected_count;
+  const fpRate = total ? Math.round(100 * k.rejected_count / total) : 0;
+  const row = (e) => '<div class="mem-ret-row">' +
+    (e.scales ? '<b title="direct/indirect/relevancy Likert scores">' + escapeHtml(e.scales) + '</b> · ' : '') +
+    escapeHtml(e.query || '(no query)') +
+    (e.signals ? ' · <span class="muted">' + escapeHtml(e.signals) + '</span>' : '') +
+    ' · <span class="muted">' + fmt(e.created_at) + '</span></div>';
+  let html = '<div class="mem-section"><div class="mem-section-label">Recall KPIs' +
+    ' <span class="mem-group-count">last ' + k.capacity + ' verdicts each · ' +
+    'false-positive rate ' + fpRate + '%</span></div>';
+  html += '<div class="mem-section-label" style="margin-top:6px">False positives — surfaced but judged irrelevant (' + k.rejected_count + ')</div>';
+  html += k.last_rejected.length ? k.last_rejected.map(row).join('')
+    : '<div class="muted">none recorded</div>';
+  html += '<div class="mem-section-label" style="margin-top:10px">True positives — recalled and used (' + k.used_count + ')</div>';
+  html += k.last_used.length ? k.last_used.map(row).join('')
+    : '<div class="muted">none recorded</div>';
+  return html + '</div>';
 }
 
 function actionsHtml(d) {

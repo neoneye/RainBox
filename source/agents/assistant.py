@@ -316,6 +316,7 @@ _FILTER_CLAIM_PREVIEW_CHARS: int = 300
 def _filter_recalled_candidates(
     query: str, *, qctx, agent_uuid: UUID, claim_candidates: list,
     top_k_vector: int | None = None, top_k_fulltext: int | None = None,
+    journal_id: UUID | None = None, record_telemetry: bool = False,
 ) -> tuple[list | None, list | None, dict[str, Any]]:
     """One LLM relevance filter over EVERYTHING memory_query recalls: the
     hybrid seed candidates (ungated top-K per signal) AND the memory claims
@@ -445,7 +446,71 @@ def _filter_recalled_candidates(
             score=cand.score,
             kind=kind,
         ))
+    if record_telemetry:
+        try:
+            _record_recall_verdicts(
+                query=query, qctx=qctx, agent_uuid=agent_uuid,
+                journal_id=journal_id, scored=scored, by_qa_id=by_qa_id,
+                claims_by_id=claims_by_id)
+        except Exception:
+            logger.warning(
+                "telemetry: failed to record recall-filter verdicts; "
+                "swallowing so the query is not blocked", exc_info=True)
+            db.db.session.rollback()
     return seeds, kept_claims, debug
+
+
+# RetrievalEvent source tag for the recall filter's per-candidate verdicts —
+# the streams the /memory recall KPIs read and the FIFO pruner bounds.
+RECALL_VERDICT_SOURCE: str = "memory_query.filter"
+
+
+def _record_recall_verdicts(
+    *, query: str, qctx, agent_uuid: UUID, journal_id: UUID | None,
+    scored, by_qa_id, claims_by_id,
+) -> None:
+    """One RetrievalEvent per scored candidate: stage `used` for kept (true
+    positive — it was injected into the observation) and `rejected` for
+    dropped (false positive — retrieval surfaced it, the filter judged it
+    irrelevant). Metadata carries the Likert scales and retrieval signals so
+    a false positive can be diagnosed from the event alone. Each candidate's
+    (target, stage) stream is then pruned to the memory.recall_fifo_capacity
+    setting. Batched into a single commit."""
+    from db.settings import get_setting
+
+    capacity = int(get_setting("memory.recall_fifo_capacity") or 10)
+    for rank, s in enumerate(scored):
+        cand = by_qa_id[s.qa_id]
+        target_type = ("memory_claim" if s.qa_id in claims_by_id
+                       else "qa_entry")
+        db.record_retrieval_event(
+            target_type=target_type,
+            target_id=s.qa_id,
+            stage="used" if s.kept else "rejected",
+            query=query,
+            room_uuid=qctx.room_uuid,
+            agent_uuid=agent_uuid,
+            journal_id=journal_id,
+            source=RECALL_VERDICT_SOURCE,
+            retrieval_rank=rank,
+            retrieval_score=float(cand.score),
+            filter_label="relevant" if s.kept else "irrelevant",
+            metadata={"direct": s.direct, "indirect": s.indirect,
+                      "relevancy": s.relevancy, "signals": cand.method},
+            commit=False,
+        )
+    db.db.session.commit()
+    for s in scored:
+        db.prune_retrieval_fifo(
+            target_type=("memory_claim" if s.qa_id in claims_by_id
+                         else "qa_entry"),
+            target_id=s.qa_id,
+            stage="used" if s.kept else "rejected",
+            source=RECALL_VERDICT_SOURCE,
+            capacity=capacity,
+            commit=False,
+        )
+    db.db.session.commit()
 
 
 # The scorer's reasoning rides along in the observation; cap it so a rambling
@@ -540,7 +605,8 @@ def _action_query_memory(
                 filtered, kept_claims, recall_filter_debug = _filter_recalled_candidates(
                     query, qctx=qctx, agent_uuid=ctx.agent_uuid,
                     claim_candidates=memories,
-                    top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext)
+                    top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext,
+                    journal_id=ctx.journal_id, record_telemetry=record_telemetry)
             except Exception:
                 logger.warning(
                     "assistant: recall LLM filter failed; falling back to "

@@ -126,6 +126,13 @@ SETTINGS: dict[str, Setting] = {
         "backup.git_push", "RAINBOX_BACKUP_GIT_PUSH", "bool", False,
         description="Commit+push each backup into the backup-repo git repo.",
     ),
+    "memory.recall_fifo_capacity": Setting(
+        "memory.recall_fifo_capacity", None, "int", 10,
+        description="Per-memory recall KPI FIFO: how many of the newest "
+                    "used (true positive) and rejected (false positive) "
+                    "filter verdicts are retained per memory; older ones are "
+                    "pruned when new verdicts are recorded.",
+    ),
     "cron.paused": Setting(
         "cron.paused", None, "bool", False,
         description="Global cron pause: while on, the scheduler fires nothing "

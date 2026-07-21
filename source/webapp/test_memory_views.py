@@ -57,6 +57,15 @@ def test_modals_present():
         assert 'id="' + el + '"' in body, el
 
 
+def test_recall_kpis_section_wired():
+    body = _body()
+    assert "recallKpisHtml" in body
+    assert "Recall KPIs" in body
+    assert "False positives" in body
+    assert "True positives" in body
+    assert "false-positive rate" in body
+
+
 def test_scope_action_and_badge_tooltips_wired():
     body = _body()
     assert "memOpenScope" in body                       # Scope… action

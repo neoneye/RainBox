@@ -217,6 +217,35 @@ def test_sensitivity_change(client):
         _cleanup(c.uuid)
 
 
+def test_detail_includes_recall_kpis(client):
+    c = _claim()
+    try:
+        db.record_retrieval_event(
+            target_type="memory_claim", target_id=str(c.uuid), stage="rejected",
+            query="unrelated probe", source="memory_query.filter",
+            metadata={"direct": 1, "indirect": 1, "relevancy": 2,
+                      "signals": "fulltext"})
+        db.record_retrieval_event(
+            target_type="memory_claim", target_id=str(c.uuid), stage="used",
+            query="matching probe", source="memory_query.filter",
+            metadata={"direct": 5, "indirect": 2, "relevancy": 5,
+                      "signals": "vector+fulltext"})
+        r = client.get(f"/memory/api/claims/{c.uuid}")
+        assert r.status_code == 200
+        k = r.get_json()["recall_kpis"]
+        assert k["capacity"] >= 1
+        assert k["rejected_count"] == 1 and k["used_count"] == 1
+        assert k["last_rejected"][0]["query"] == "unrelated probe"
+        assert k["last_rejected"][0]["scales"] == "1/1/2"
+        assert k["last_used"][0]["query"] == "matching probe"
+        assert k["last_used"][0]["signals"] == "vector+fulltext"
+    finally:
+        db.db.session.query(db.RetrievalEvent).filter_by(
+            target_id=str(c.uuid)).delete(synchronize_session=False)
+        db.db.session.commit()
+        _cleanup(c.uuid)
+
+
 def test_scope_change_room_to_global(client):
     from uuid import uuid4 as _uuid4
     c = db.create_memory_claim(

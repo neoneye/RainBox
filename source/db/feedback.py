@@ -241,6 +241,38 @@ def list_feedback_events(
     return q.order_by(FeedbackEvent.id.asc()).all()
 
 
+def prune_retrieval_fifo(
+    *,
+    target_type: str,
+    target_id: str,
+    stage: str,
+    source: str,
+    capacity: int,
+    commit: bool = True,
+) -> int:
+    """Keep only the newest `capacity` events of one (target, stage, source)
+    stream — the per-memory recall-KPI FIFOs (used = true positives,
+    rejected = false positives). The append-only rule for RetrievalEvent is
+    deliberately relaxed here: the operator bounds these streams via the
+    memory.recall_fifo_capacity setting. Returns the number of rows deleted."""
+    ids = [rid for (rid,) in (
+        db.session.query(RetrievalEvent.id)
+        .filter_by(target_type=target_type, target_id=target_id,
+                   stage=stage, source=source)
+        .order_by(RetrievalEvent.id.desc())
+        .offset(max(0, capacity))
+        .all()
+    )]
+    if not ids:
+        return 0
+    deleted = (db.session.query(RetrievalEvent)
+               .filter(RetrievalEvent.id.in_(ids))
+               .delete(synchronize_session=False))
+    if commit:
+        db.session.commit()
+    return deleted
+
+
 def record_retrieval_event(
     *,
     target_type: str,
