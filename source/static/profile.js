@@ -1278,10 +1278,14 @@ function profileCalAge(iso){
   return Math.floor(months / 12) + 'y ago';
 }
 function profileCalSelect(cls, options, value, blankLabel){
+  // The first option is the explicit unset state: "Unspecified" for the
+  // optional axes (absent stance/depth is a valid declaration), "Choose…"
+  // for required level. The column headers above the rows name the axes,
+  // so the blank label no longer doubles as a field name.
   const sel = document.createElement('select');
   sel.className = cls;
   const blank = document.createElement('option');
-  blank.value = ''; blank.textContent = blankLabel || '';
+  blank.value = ''; blank.textContent = blankLabel || 'Unspecified';
   sel.appendChild(blank);
   options.forEach(o => {
     const opt = document.createElement('option');
@@ -1304,6 +1308,17 @@ function profileCalRender(){
   // Editing is gated on a successful initial load: rows only exist in state
   // after the snapshot arrived, and the add button stays hidden until then.
   add.hidden = builtin || !st.loaded;
+  if (st.rows.length){
+    // One column-header row naming the axes, aligned to the row grid.
+    const head = document.createElement('div');
+    head.className = 'profile-cal-head';
+    ['Topic', 'Level', 'Stance', 'Depth'].forEach(t => {
+      const s = document.createElement('span');
+      s.textContent = t;
+      head.appendChild(s);
+    });
+    box.appendChild(head);
+  }
   st.rows.forEach((row, i) => {
     const wrap = document.createElement('div');
     wrap.className = 'profile-cal-row';
@@ -1313,11 +1328,11 @@ function profileCalRender(){
     topic.type = 'text'; topic.value = row.topic || '';
     topic.placeholder = 'Topic'; topic.setAttribute('list', 'profile-dl-topic');
     topic.addEventListener('input', () => { row.topic = topic.value; profileCalEdited(uuid); });
-    const level = profileCalSelect('cal-level', PROFILE_CAL_LEVELS, row.level, 'level');
+    const level = profileCalSelect('cal-level', PROFILE_CAL_LEVELS, row.level, 'Choose…');
     level.addEventListener('change', () => { row.level = level.value; profileCalEdited(uuid); });
-    const stance = profileCalSelect('cal-stance', PROFILE_CAL_STANCES, row.stance, 'stance');
+    const stance = profileCalSelect('cal-stance', PROFILE_CAL_STANCES, row.stance, 'Unspecified');
     stance.addEventListener('change', () => { row.stance = stance.value; profileCalEdited(uuid); });
-    const depth = profileCalSelect('cal-depth', PROFILE_CAL_DEPTHS, row.depth, 'depth');
+    const depth = profileCalSelect('cal-depth', PROFILE_CAL_DEPTHS, row.depth, 'Unspecified');
     depth.addEventListener('change', () => { row.depth = depth.value; profileCalEdited(uuid); });
     main.appendChild(topic); main.appendChild(level);
     main.appendChild(stance); main.appendChild(depth);

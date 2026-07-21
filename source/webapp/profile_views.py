@@ -169,6 +169,10 @@ PROFILE_TEMPLATE = """
      meta (age + reorder/remove pills) on the right. */
   .profile-cal-row{border:1px solid #eef2f7;border-radius:6px;padding:6px 8px;margin:6px 0}
   .profile-cal-main{display:grid;grid-template-columns:1fr 108px 92px 92px;gap:6px}
+  /* Column headers naming the axes, aligned to the row grid (card padding
+     8px + 1px border ≈ 9px). */
+  .profile-cal-head{display:grid;grid-template-columns:1fr 108px 92px 92px;gap:6px;
+    padding:0 9px;margin:8px 0 2px;font-size:0.75rem;font-weight:600;color:#374151}
   .profile-cal-note{margin-top:4px}
   .profile-cal-meta{display:flex;gap:6px;align-items:center;margin-top:4px}
   .profile-cal-age{color:#6b7280;font-size:0.75rem;margin-right:auto}

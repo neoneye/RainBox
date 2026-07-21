@@ -145,6 +145,11 @@ def test_calibration_js_markers():
     assert "profileCalHasIncomplete(st)" in b
     assert "a row needs a topic" in b
     assert "function profileCalIncompleteRow" in b
+    # Axis pickers carry an explicit unset label (never a bare blank), and a
+    # column-header row names the axes above the list.
+    assert "'Unspecified'" in b and "'Choose…'" in b
+    assert "profile-cal-head" in b
+    assert "['Topic', 'Level', 'Stance', 'Depth']" in b
 
 
 def test_no_backslash_escapes_in_template():
