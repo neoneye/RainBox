@@ -910,6 +910,7 @@ function profileInitDatalists(){
   profileFillDatalist('profile-dl-lang', PROFILE_DL_LANG);
   profileFillDatalist('profile-dl-currency', PROFILE_DL_CURRENCY);
   profileFillDatalist('profile-dl-country', PROFILE_DL_COUNTRY);
+  profileFillDatalist('profile-dl-topic', PROFILE_DL_TOPIC);
   let zones = [];
   // Without Intl.supportedValuesOf the timezone input stays free text over an
   // empty list — never blocked, just unassisted.
@@ -937,6 +938,9 @@ function profileRenderForm(){
     profileSetFormDisabled(true);   // until the data arrives (built-ins stay disabled)
     profileRenderDynamic(null);
     profileLoadData(p.uuid);
+    profileCalOnSelect(p);
+  } else {
+    profileCalRenderStatus();
   }
   profileRenderStatus();
 }
@@ -1144,10 +1148,17 @@ function profileRenderStatus(){
   else el.textContent = '';
 }
 function profileAnySavePending(){
-  return Object.keys(profileFormState).some(u => {
+  const flat = Object.keys(profileFormState).some(u => {
     const st = profileFormState[u];
     return st && (st.dirty || st.inFlight || st.failed || st.timer);
   });
+  // Calibration participates too: pending and failed-validation states must
+  // hold the unload guard until acknowledged.
+  const cal = Object.keys(profileCalState).some(u => {
+    const st = profileCalState[u];
+    return profileCalPending(st) || (st && st.invalid);
+  });
+  return flat || cal;
 }
 // The unload guard is active only while a save is pending or failed; it is
 // gone the moment the latest snapshot is acknowledged. Confirming the dialog
@@ -1181,6 +1192,276 @@ async function profileFlushData(uuid){
   return !st.failed;
 }
 
+// ---- knowledge calibration (own fieldset, own autosave state — mirrors the
+// flat form's debounce/in-flight/backoff pattern; no conflict dialogs). ----
+const PROFILE_CAL_DEBOUNCE_MS = 400;
+const PROFILE_CAL_RETRY_MAX_MS = 30000;
+const PROFILE_CAL_LEVELS = ['expert', 'intermediate', 'beginner', 'none'];
+const PROFILE_CAL_STANCES = ['prefer', 'neutral', 'avoid'];
+const PROFILE_CAL_DEPTHS = ['concise', 'standard', 'teach'];
+// Broad technical and non-technical topic suggestions; the input stays free text.
+const PROFILE_DL_TOPIC = ['Accounting', 'Carpentry', 'Cooking', 'Databases',
+  'DevOps', 'Electronics', 'Finance', 'Gardening', 'Git', 'Graphic design',
+  'History', 'JavaScript', 'Law', 'Linux', 'Machine learning', 'Mathematics',
+  'Music theory', 'Networking', 'Photography', 'PostgreSQL', 'Python', 'Rust',
+  'SQL', 'Statistics', 'Writing'];
+// uuid -> {rows, loaded, builtin, timer, retryTimer, retryDelay, inFlight,
+//          dirty, failed, invalid, error}
+let profileCalState = {};
+function profileCalStateFor(uuid){
+  if (!profileCalState[uuid]){
+    profileCalState[uuid] = {rows: [], loaded: false, builtin: false,
+                             timer: null, retryTimer: null, retryDelay: 1000,
+                             inFlight: false, dirty: false, failed: false,
+                             invalid: false, error: ''};
+  }
+  return profileCalState[uuid];
+}
+function profileCalPending(st){
+  return st && (st.dirty || st.inFlight || st.failed || st.timer);
+}
+function profileCalOnSelect(p){
+  const st = profileCalStateFor(p.uuid);
+  st.builtin = !!p.builtin;
+  profileCalRender();
+  if (!st.loaded && !profileCalPending(st)) profileCalLoad(p.uuid);
+}
+async function profileCalLoad(uuid){
+  let d = null;
+  try {
+    const r = await fetch('/profile/api/profiles/' + encodeURIComponent(uuid) + '/calibration');
+    d = await r.json();
+  } catch (e) { /* rendered as an empty, enabled list; a save will retry */ }
+  // Late GETs are keyed by uuid and never populate the wrong pane; a pending
+  // local edit outranks the fetched snapshot.
+  if (profileFormUuid !== uuid) return;
+  const st = profileCalStateFor(uuid);
+  if (profileCalPending(st)) return;
+  if (d && d.ok){
+    st.rows = d.topics || [];
+    st.builtin = !!d.builtin;
+    st.loaded = true;
+  }
+  profileCalRender();
+}
+function profileCalAge(iso){
+  if (!iso) return '';
+  const then = new Date(iso);
+  if (isNaN(then)) return '';
+  const days = Math.floor((Date.now() - then.getTime()) / 86400000);
+  if (days < 1) return 'today';
+  if (days < 31) return days + 'd ago';
+  const months = Math.floor(days / 30);
+  if (months < 12) return months + 'mo ago';
+  return Math.floor(months / 12) + 'y ago';
+}
+function profileCalSelect(cls, options, value, blankLabel){
+  const sel = document.createElement('select');
+  sel.className = cls;
+  const blank = document.createElement('option');
+  blank.value = ''; blank.textContent = blankLabel || '';
+  sel.appendChild(blank);
+  options.forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o; opt.textContent = o;
+    sel.appendChild(opt);
+  });
+  sel.value = options.includes(value) ? value : '';
+  return sel;
+}
+// Rebuild the row DOM from state. Structural ops re-render; plain typing only
+// updates state (no re-render, so focus is never stolen mid-word).
+function profileCalRender(){
+  const box = document.getElementById('profile-cal-rows');
+  const add = document.getElementById('profile-cal-add');
+  box.innerHTML = '';
+  const uuid = profileFormUuid;
+  const st = uuid ? profileCalState[uuid] : null;
+  if (!uuid || !st){ add.hidden = true; profileCalRenderStatus(); return; }
+  const builtin = st.builtin;
+  add.hidden = builtin;
+  st.rows.forEach((row, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'profile-cal-row';
+    const main = document.createElement('div');
+    main.className = 'profile-cal-main';
+    const topic = document.createElement('input');
+    topic.type = 'text'; topic.value = row.topic || '';
+    topic.placeholder = 'Topic'; topic.setAttribute('list', 'profile-dl-topic');
+    topic.addEventListener('input', () => { row.topic = topic.value; profileCalEdited(uuid); });
+    const level = profileCalSelect('cal-level', PROFILE_CAL_LEVELS, row.level, 'level');
+    level.addEventListener('change', () => { row.level = level.value; profileCalEdited(uuid); });
+    const stance = profileCalSelect('cal-stance', PROFILE_CAL_STANCES, row.stance, 'stance');
+    stance.addEventListener('change', () => { row.stance = stance.value; profileCalEdited(uuid); });
+    const depth = profileCalSelect('cal-depth', PROFILE_CAL_DEPTHS, row.depth, 'depth');
+    depth.addEventListener('change', () => { row.depth = depth.value; profileCalEdited(uuid); });
+    main.appendChild(topic); main.appendChild(level);
+    main.appendChild(stance); main.appendChild(depth);
+    wrap.appendChild(main);
+    const note = document.createElement('input');
+    note.type = 'text'; note.className = 'profile-cal-note';
+    note.placeholder = 'Note (optional nuance, e.g. "rusty since 2014")';
+    note.value = row.note || '';
+    note.addEventListener('input', () => { row.note = note.value; profileCalEdited(uuid); });
+    wrap.appendChild(note);
+    const meta = document.createElement('div');
+    meta.className = 'profile-cal-meta';
+    const age = document.createElement('span');
+    age.className = 'profile-cal-age';
+    // Built-in fixture rows carry a shipped stamp for schema consistency
+    // only; their age is meaningless and stays hidden.
+    age.textContent = builtin ? '' : profileCalAge(row.updated_at);
+    meta.appendChild(age);
+    if (!builtin){
+      const up = document.createElement('button');
+      up.type = 'button'; up.textContent = '↑'; up.title = 'Move up';
+      up.disabled = i === 0;
+      up.addEventListener('click', () => profileCalMove(uuid, i, -1));
+      const down = document.createElement('button');
+      down.type = 'button'; down.textContent = '↓'; down.title = 'Move down';
+      down.disabled = i === st.rows.length - 1;
+      down.addEventListener('click', () => profileCalMove(uuid, i, 1));
+      const rm = document.createElement('button');
+      rm.type = 'button'; rm.className = 'danger'; rm.textContent = 'Remove';
+      rm.addEventListener('click', () => profileCalRemove(uuid, i));
+      meta.appendChild(up); meta.appendChild(down); meta.appendChild(rm);
+    }
+    wrap.appendChild(meta);
+    [topic, level, stance, depth, note].forEach(el => { el.disabled = builtin; });
+    box.appendChild(wrap);
+  });
+  profileCalRenderStatus();
+}
+function profileCalMove(uuid, i, delta){
+  const st = profileCalStateFor(uuid);
+  const j = i + delta;
+  if (j < 0 || j >= st.rows.length) return;
+  const tmp = st.rows[i]; st.rows[i] = st.rows[j]; st.rows[j] = tmp;
+  profileCalRender();
+  profileCalEdited(uuid);
+}
+function profileCalRemove(uuid, i){
+  profileCalStateFor(uuid).rows.splice(i, 1);
+  profileCalRender();
+  profileCalEdited(uuid);
+}
+function profileCalAdd(){
+  const uuid = profileFormUuid;
+  if (!uuid) return;
+  const st = profileCalStateFor(uuid);
+  if (st.builtin) return;
+  // level defaults so the row turns valid the moment a topic is typed; a row
+  // with no topic stays a local draft (excluded from the payload below).
+  st.rows.push({topic: '', level: 'intermediate'});
+  profileCalRender();
+  const inputs = document.querySelectorAll('#profile-cal-rows input[list]');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+}
+function profileCalEdited(uuid){
+  const st = profileCalStateFor(uuid);
+  if (st.builtin) return;
+  st.dirty = true;
+  st.invalid = false;
+  st.error = '';
+  if (st.retryTimer){ clearTimeout(st.retryTimer); st.retryTimer = null; }
+  clearTimeout(st.timer);
+  st.timer = setTimeout(() => { st.timer = null; profileCalPush(uuid); },
+                        PROFILE_CAL_DEBOUNCE_MS);
+  profileCalRenderStatus();
+}
+function profileCalPayload(st){
+  // Complete snapshot: existing rows carry their id, new rows omit it,
+  // updated_at is server-owned and never sent. Topicless drafts stay local.
+  return st.rows
+    .filter(r => r.id || (r.topic || '').trim() !== ''
+                 || (r.note || '').trim() !== '')
+    .map(r => {
+      const out = {topic: r.topic || '', level: r.level || ''};
+      if (r.id) out.id = r.id;
+      if (r.stance) out.stance = r.stance;
+      if (r.depth) out.depth = r.depth;
+      if (r.note) out.note = r.note;
+      return out;
+    });
+}
+async function profileCalPush(uuid){
+  const st = profileCalStateFor(uuid);
+  if (st.timer){ clearTimeout(st.timer); st.timer = null; }
+  if (st.inFlight || !st.dirty) return;
+  st.inFlight = true;
+  st.dirty = false;      // a new edit mid-flight re-marks it
+  profileCalRenderStatus();
+  let status = 0, d = null;
+  try {
+    const r = await fetch('/profile/api/profiles/' + encodeURIComponent(uuid) + '/calibration', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({topics: profileCalPayload(st)}),
+    });
+    status = r.status;
+    d = await r.json().catch(() => null);
+  } catch (e) { /* status stays 0 → network class */ }
+  st.inFlight = false;
+  if (status === 200 && d && d.ok){
+    st.failed = false; st.invalid = false; st.error = '';
+    st.retryDelay = 1000;
+    st.loaded = true;
+    if (st.dirty){
+      profileCalPush(uuid);      // a newer local edit wins; resend immediately
+    } else {
+      // Adopt the canonical snapshot (server-assigned ids and stamps), but
+      // keep local topicless drafts and never steal focus mid-edit.
+      const drafts = st.rows.filter(r => !r.id && (r.topic || '').trim() === '');
+      st.rows = (d.topics || []).concat(drafts);
+      const active = document.activeElement;
+      const boxEl = document.getElementById('profile-cal-rows');
+      if (profileFormUuid === uuid && (!active || !boxEl.contains(active))){
+        profileCalRender();
+      }
+    }
+  } else if (status === 400){
+    // Server validation: show the message and wait for the next edit — an
+    // unchanged invalid snapshot is never retried forever.
+    st.failed = false; st.invalid = true; st.dirty = true;
+    st.error = (d && d.error) || 'validation failed';
+  } else {
+    // Network error or 5xx: retain the draft and retry with capped backoff.
+    st.dirty = true; st.failed = true;
+    st.retryTimer = setTimeout(() => { st.retryTimer = null; profileCalPush(uuid); },
+                               st.retryDelay);
+    st.retryDelay = Math.min(st.retryDelay * 2, PROFILE_CAL_RETRY_MAX_MS);
+  }
+  profileCalRenderStatus();
+}
+function profileCalRenderStatus(){
+  const el = document.getElementById('profile-cal-status');
+  const err = document.getElementById('profile-cal-error');
+  const st = profileFormUuid ? profileCalState[profileFormUuid] : null;
+  if (!st || st.builtin){ el.textContent = ''; err.textContent = ''; return; }
+  err.textContent = st.invalid ? st.error : '';
+  if (st.failed) el.textContent = 'Save failed — retrying';
+  else if (st.invalid) el.textContent = 'Not saved';
+  else if (st.inFlight || st.dirty || st.timer) el.textContent = 'Saving…';
+  else if (st.loaded) el.textContent = st.rows.length ? 'Saved ✓' : '';
+  else el.textContent = '';
+}
+// Cancel the debounce and await the newest calibration PUT; false if it
+// can't be saved (validation failure or the server is unreachable).
+async function profileCalFlush(uuid){
+  const st = profileCalState[uuid];
+  if (!st) return true;
+  if (st.timer){ clearTimeout(st.timer); st.timer = null; }
+  if (st.retryTimer){ clearTimeout(st.retryTimer); st.retryTimer = null; }
+  while (st.dirty || st.inFlight){
+    if (st.inFlight){
+      await new Promise(res => setTimeout(res, 50));
+    } else {
+      await profileCalPush(uuid);
+      if (st.failed || st.invalid) return false;
+    }
+  }
+  return !st.failed && !st.invalid;
+}
+
 // ---- duplicate (kebab) — the one-action way to mint a profile from an
 // archetype. No version lineage: duplication is a convenience, not ancestry. ----
 async function profileDuplicateUuid(uuid){
@@ -1195,9 +1476,11 @@ async function profileDuplicateUuid(uuid){
   }
   const p = profileByUuid(uuid);
   if (p && !p.builtin){
-    // An edit followed immediately by Duplicate must be part of the copy.
+    // An edit followed immediately by Duplicate must be part of the copy —
+    // the flat fields and the calibration rows both flush first.
     const flushed = await profileFlushData(uuid);
-    if (!flushed){
+    const calFlushed = await profileCalFlush(uuid);
+    if (!flushed || !calFlushed){
       profileToastMsg('Duplicate aborted — the latest edits could not be saved.');
       return;
     }
@@ -1257,6 +1540,7 @@ document.querySelectorAll('#profile-form [data-key]').forEach(el => {
   el.addEventListener('input', profileFieldEdited);
   el.addEventListener('change', profileFieldEdited);
 });
+document.getElementById('profile-cal-add').addEventListener('click', profileCalAdd);
 document.getElementById('profile-tz-mine').addEventListener('click', () => {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
   if (!zone) return;

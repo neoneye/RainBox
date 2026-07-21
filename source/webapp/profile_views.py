@@ -165,6 +165,23 @@ PROFILE_TEMPLATE = """
   .pf-inline button:hover{border-color:#2563eb;color:#2563eb}
   .pf-inline button:disabled{color:#9ca3af;border-color:#e5e7eb;cursor:default}
   .profile-dynamic-row{padding:2px 0}
+  /* Knowledge calibration rows: topic+enums on one grid line, note below,
+     meta (age + reorder/remove pills) on the right. */
+  .profile-cal-row{border:1px solid #eef2f7;border-radius:6px;padding:6px 8px;margin:6px 0}
+  .profile-cal-main{display:grid;grid-template-columns:1fr 108px 92px 92px;gap:6px}
+  .profile-cal-note{margin-top:4px}
+  .profile-cal-meta{display:flex;gap:6px;align-items:center;margin-top:4px}
+  .profile-cal-age{color:#6b7280;font-size:0.75rem;margin-right:auto}
+  .profile-cal-meta button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:0.1em 0.55em;font:inherit;font-size:0.75rem;cursor:pointer}
+  .profile-cal-meta button:hover{border-color:#2563eb;color:#2563eb}
+  .profile-cal-meta button:disabled{color:#9ca3af;border-color:#e5e7eb;cursor:default}
+  .profile-cal-meta button.danger{color:#b91c1c}
+  #profile-cal-add{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:0.25em 0.6em;font:inherit;font-size:0.78rem;cursor:pointer;margin-top:6px}
+  #profile-cal-add:hover{border-color:#2563eb;color:#2563eb}
+  #profile-cal-status{min-height:1.1em}
+  #profile-cal-error{color:#b91c1c;font-size:0.8rem;min-height:1em}
   /* Drag-only "move to top level" strip, sitting right under the tree (like /cron). */
   .profile-root-drop{display:none;margin-top:8px;padding:8px;border:1px dashed #93c5fd;border-radius:6px;color:#2563eb;font-size:0.82rem;text-align:center;-webkit-user-select:none;user-select:none}
   .profile-tree.profile-dragging-on .profile-root-drop{display:block}
@@ -214,6 +231,18 @@ PROFILE_TEMPLATE = """
       </div>
       <p id="profile-builtin-hint" class="muted" hidden>Built-in template &mdash; Duplicate to make an editable copy.</p>
       {{ form_fields }}
+      <fieldset class="profile-fieldset" id="profile-calibration">
+        <legend>Knowledge calibration</legend>
+        <p class="muted">Self-declared familiarity per topic: level (how much
+        they know), stance (prefer or avoid), depth (how much explanation
+        they want), and an optional note. Row order is priority order. The
+        assistant reads this as the operator's declaration &mdash; context,
+        not proof.</p>
+        <div id="profile-cal-status" class="muted"></div>
+        <div id="profile-cal-error"></div>
+        <div id="profile-cal-rows"></div>
+        <button type="button" id="profile-cal-add">+ Topic</button>
+      </fieldset>
       <fieldset class="profile-fieldset" id="profile-dynamic" hidden>
         <legend>Last seen</legend>
         <div id="profile-dynamic-rows"></div>
@@ -226,6 +255,7 @@ PROFILE_TEMPLATE = """
 <datalist id="profile-dl-lang"></datalist>
 <datalist id="profile-dl-currency"></datalist>
 <datalist id="profile-dl-country"></datalist>
+<datalist id="profile-dl-topic"></datalist>
 
 <div class="ui-modal-backdrop" id="ui-modal-backdrop" hidden></div>
 

@@ -117,6 +117,33 @@ def test_tree_rows_are_real_links():
     assert "text-decoration:none" in b
 
 
+def test_calibration_fieldset_present():
+    """The Knowledge calibration fieldset renders after Contact & location
+    with its own status line, error line, row container, and add button."""
+    body = _page()
+    assert "<legend>Knowledge calibration</legend>" in body
+    assert (body.index("<legend>Contact &amp; location</legend>")
+            < body.index("<legend>Knowledge calibration</legend>"))
+    for marker in ("profile-cal-status", "profile-cal-error",
+                   "profile-cal-rows", "profile-cal-add", "profile-dl-topic"):
+        assert marker in body, f"missing calibration marker: {marker}"
+
+
+def test_calibration_js_markers():
+    """profile.js carries the calibration editor: per-profile autosave state,
+    debounced single-in-flight PUT with per-class response handling, reorder
+    via up/down buttons (not drag-and-drop), and unload-guard participation."""
+    b = _body()
+    for marker in ["profileCalState", "profileCalPush", "profileCalEdited",
+                   "profileCalLoad", "profileCalRender", "profileCalMove",
+                   "profileCalFlush", "profileCalPayload",
+                   "/calibration", "PROFILE_CAL_DEBOUNCE_MS",
+                   "PROFILE_CAL_RETRY_MAX_MS", "status === 400"]:
+        assert marker in b, f"missing calibration JS marker: {marker}"
+    # The unload guard covers calibration pending/invalid states.
+    assert "profileCalPending(st) || (st && st.invalid)" in b
+
+
 def test_no_backslash_escapes_in_template():
     # The template is a non-raw Python string: a \n-style escape inside any
     # inline script would be eaten by Python and break the page silently.

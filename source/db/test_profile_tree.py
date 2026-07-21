@@ -207,10 +207,42 @@ def test_all_templates_validate(app_ctx):
     entries = db.profile_templates_entries()
     assert len(entries) == 21
     for e in entries:
-        canonical = db.validate_profile_data(e["data"])
-        assert canonical == e["data"]        # shipped data is already canonical (no "" values)
+        editable = {k: v for k, v in e["data"].items()
+                    if k not in db.SERVER_OWNED_SUBTREES}
+        canonical = db.validate_profile_data(editable)
+        assert canonical == editable         # shipped data is already canonical (no "" values)
         assert e["data"]["country"] == e["name"]
         assert "handle" not in e["data"] and "email" not in e["data"]
+
+
+def test_template_calibration_rows_are_canonical(app_ctx):
+    """The three shipped fixture rows (chosen to exercise all axes) live on
+    Germany and US, carry fixed ids/stamps for schema consistency, and pass
+    the calibration validator's shape rules."""
+    from uuid import UUID as _UUID
+
+    from db.profile_calibration import (
+        CALIBRATION_DEPTHS, CALIBRATION_LEVELS, CALIBRATION_STANCES,
+    )
+
+    seeded = {}
+    for e in db.profile_templates_entries():
+        rows = db.calibration_rows(e["data"])
+        if rows:
+            seeded[e["name"]] = rows
+    assert set(seeded) == {"Germany", "US"}
+    assert [r["topic"] for r in seeded["Germany"]] == ["Mathematics"]
+    assert [r["topic"] for r in seeded["US"]] == ["Python", "JavaScript"]
+    for rows in seeded.values():
+        for r in rows:
+            _UUID(r["id"])
+            assert r["level"] in CALIBRATION_LEVELS
+            assert r.get("stance") in CALIBRATION_STANCES
+            assert r.get("depth") in CALIBRATION_DEPTHS
+            assert r["updated_at"].endswith("Z")
+    us = {r["topic"]: r for r in seeded["US"]}
+    assert us["JavaScript"]["stance"] == "avoid"
+    assert us["Python"]["depth"] == "teach"
 
 
 def test_all_templates_carry_number_format(app_ctx):
@@ -279,7 +311,14 @@ def test_duplicate_builtin(app_ctx, empty_tree):
     dup = db.profile_duplicate(UUID(germany["uuid"]))
     assert dup["name"] == "Germany" and dup["folderId"] is None
     got = db.profile_get(UUID(dup["uuid"]))
-    assert got["builtin"] is False and got["data"] == germany["data"]   # real, editable row
+    assert got["builtin"] is False                 # real, editable row
+    strip = lambda d: {k: v for k, v in d.items() if k != "calibration"}  # noqa: E731
+    assert strip(got["data"]) == strip(germany["data"])
+    # Calibration copies semantics + order but mints fresh server identity.
+    src_rows = db.calibration_rows(germany["data"])
+    dup_rows = db.calibration_rows(got["data"])
+    assert [r["topic"] for r in dup_rows] == [r["topic"] for r in src_rows]
+    assert {r["id"] for r in dup_rows}.isdisjoint({r["id"] for r in src_rows})
     roots = [p for p in db.profile_load_tree()["profiles"]
              if not p.get("builtin") and p["folderId"] is None]
     assert roots[-1]["uuid"] == dup["uuid"]        # end of the user-owned top level

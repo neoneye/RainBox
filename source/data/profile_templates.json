@@ -22,7 +22,29 @@
         "language": "en-US",
         "currency": "USD",
         "country": "US",
-        "city": "Denver"
+        "city": "Denver",
+        "calibration": {
+          "topics": [
+            {
+              "id": "0cb3e81f-58eb-4bf4-a2ff-87fa28ed489f",
+              "topic": "Python",
+              "level": "beginner",
+              "stance": "prefer",
+              "depth": "teach",
+              "note": "Knows the concepts from other languages; wants idiomatic examples.",
+              "updated_at": "2026-07-21T00:00:00Z"
+            },
+            {
+              "id": "9d8c7b6a-5f4e-5d3c-8b2a-190807060504",
+              "topic": "JavaScript",
+              "level": "intermediate",
+              "stance": "avoid",
+              "depth": "standard",
+              "note": "Prefers server-rendered HTML.",
+              "updated_at": "2026-07-21T00:00:00Z"
+            }
+          ]
+        }
       }
     },
     {
@@ -147,7 +169,19 @@
         "language_2": "en",
         "currency": "EUR",
         "country": "Germany",
-        "city": "Berlin"
+        "city": "Berlin",
+        "calibration": {
+          "topics": [
+            {
+              "id": "7a1f2b3c-4d5e-5f60-8a1b-2c3d4e5f6071",
+              "topic": "Mathematics",
+              "level": "expert",
+              "stance": "prefer",
+              "depth": "concise",
+              "updated_at": "2026-07-21T00:00:00Z"
+            }
+          ]
+        }
       }
     },
     {
