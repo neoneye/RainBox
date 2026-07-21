@@ -14,6 +14,7 @@ from user_profile.formatting import (
     THREE_DECIMAL_CURRENCIES_V1,
     TIME_FORMATS,
     UNITS,
+    WEEK_STARTS,
     ZERO_DECIMAL_CURRENCIES_V1,
     _valid_currency,
     _valid_language,
@@ -39,6 +40,7 @@ def test_lookups_exhaustive_over_registry_enums():
     assert set(DATE_FORMATS) == set(fields["date_format"].choices)
     assert set(TIME_FORMATS) == set(fields["time_format"].choices)
     assert set(UNITS) == set(fields["units"].choices)
+    assert set(WEEK_STARTS) == set(fields["first_day_of_week"].choices)
     for wording, examples in NUMBER_FORMATS.values():
         assert wording
         assert set(examples) == {0, 2, 3}
@@ -51,6 +53,7 @@ def test_germany_renders_expected_body():
         units="metric", timezone="Europe/Berlin", date_format="DD.MM.YYYY",
         time_format="24h", language="de", language_2="en",
         currency="EUR", number_format="1.234.567,89",
+        first_day_of_week="monday",
     )
     body = format_formatting_guide(profile, now=SUMMER)
     assert body == (
@@ -58,6 +61,8 @@ def test_germany_renders_expected_body():
         "notation says otherwise:\n"
         "- Dates: DD.MM.YYYY, for example 31.12.2026; do not use month-first "
         "dates.\n"
+        "- Calendar: weeks start on Monday (ISO 8601; week numbers follow "
+        "ISO).\n"
         "- Times: 24-hour clock, for example 23:59. Present local times in "
         "Europe/Berlin (currently UTC+02:00); name another zone when "
         "relevant.\n"
@@ -131,6 +136,15 @@ def test_dst_boundary_changes_only_the_offset():
 def test_month_first_date_warns_against_day_first():
     body = format_formatting_guide(_profile(date_format="MM/DD/YYYY"))
     assert "- Dates: MM/DD/YYYY, for example 12/31/2026; do not use day-first dates." in body
+
+
+def test_first_day_of_week_line_is_independent():
+    sunday = format_formatting_guide(_profile(first_day_of_week="sunday"))
+    assert "- Calendar: weeks start on Sunday." in sunday
+    assert "ISO" not in sunday                      # ISO numbering is Monday's
+    saturday = format_formatting_guide(_profile(first_day_of_week="saturday"))
+    assert "- Calendar: weeks start on Saturday." in saturday
+    assert "Calendar" not in format_formatting_guide(_profile(units="metric"))
 
 
 # ---- currency minor-unit exceptions ---------------------------------------
@@ -234,6 +248,7 @@ def test_maximal_profile_stays_within_cap():
             date_format="MM/DD/YYYY", time_format="12h",
             language="zh-Hans-CN", language_2="en-GB",
             currency="BHD", currency_2="USD", number_format=number_format,
+            first_day_of_week="monday",
         ), now=SUMMER)
         assert 0 < len(body) <= MAX_FORMATTING_GUIDE_CHARS
 

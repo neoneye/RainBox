@@ -73,6 +73,15 @@ TIME_FORMATS: dict[str, str] = {
     "12h": "12-hour clock, for example 11:59 pm",
 }
 
+# stored value -> the calendar directive. Monday-start pairs with ISO 8601
+# week numbering; naming that removes the models' habitual Sunday-first
+# calendar layout (and week-number arithmetic) for European profiles.
+WEEK_STARTS: dict[str, str] = {
+    "monday": "weeks start on Monday (ISO 8601; week numbers follow ISO)",
+    "sunday": "weeks start on Sunday",
+    "saturday": "weeks start on Saturday",
+}
+
 # stored value -> unit-system wording with the preferred unit names
 UNITS: dict[str, str] = {
     "metric": "metric. Prefer km, kg, and °C",
@@ -191,6 +200,10 @@ def format_formatting_guide(profile: dict[str, Any],
         example, warning = date_entry
         lines.append(f"- Dates: {data['date_format'].strip()}, for example "
                      f"{example}; {warning}.")
+
+    week = WEEK_STARTS.get(str(data.get("first_day_of_week") or "").strip())
+    if week is not None:
+        lines.append(f"- Calendar: {week}.")
 
     clock = TIME_FORMATS.get(str(data.get("time_format") or "").strip())
     zone = _valid_timezone(data.get("timezone"))

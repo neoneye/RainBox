@@ -84,12 +84,14 @@ rendered as one `<fieldset>` each in registry order:
 
 - **Identity** — names (full, native-script, "address them as", internet
   handle), gender (enum), a multiline "About", birthday (date).
-- **Locale & formats** — units, date/time format, number format (enums),
-  timezone, primary + secondary language and currency (datalist-assisted
-  free text). The `number_format` enum's five values double as previews —
-  every choice renders the same `1234567.89` sample (seven integer digits
-  are what disambiguate Indian from Western grouping), differing only in
-  separators.
+- **Locale & formats** — units, date/time format, number format, first day
+  of week (enums), timezone, primary + secondary language and currency
+  (datalist-assisted free text). The `number_format` enum's five values
+  double as previews — every choice renders the same `1234567.89` sample
+  (seven integer digits are what disambiguate Indian from Western grouping),
+  differing only in separators. `first_day_of_week`
+  (`monday|sunday|saturday`) feeds the formatting guide's Calendar
+  directive; Monday additionally pins ISO 8601 week numbering.
 - **Contact & location** — country, city, address, email.
 
 Four kinds — `text`, `enum`, `date`, `email` — the complete set for v1.

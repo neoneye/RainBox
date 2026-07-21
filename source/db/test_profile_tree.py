@@ -24,7 +24,7 @@ def app_ctx():
 
 def test_registry_shape():
     keys = [f.key for f in profile_fields.PROFILE_FIELDS]
-    assert len(keys) == len(set(keys)) == 20
+    assert len(keys) == len(set(keys)) == 21
     assert keys[0] == "full_name"
     assert profile_fields.FIELD_GROUPS == [
         "Identity", "Locale & formats", "Contact & location"]
@@ -263,6 +263,24 @@ def test_all_templates_carry_number_format(app_ctx):
     for value, names in assigned.items():
         assert {n for n, d in by_name.items() if d["number_format"] == value} == names
     assert not any(d["number_format"] == "1'234'567.89" for d in by_name.values())
+
+
+def test_all_templates_carry_first_day_of_week(app_ctx):
+    """Every template declares an explicit first day of week per CLDR
+    weekData: Monday across Europe (with ISO 8601 week numbering), Sunday
+    for the Americas, Israel, and the shipped Asian/Pacific locales;
+    Saturday ships as an operator-selectable convention with no template."""
+    by_name = {e["name"]: e["data"] for e in db.profile_templates_entries()}
+    monday = {n for n, d in by_name.items()
+              if d.get("first_day_of_week") == "monday"}
+    sunday = {n for n, d in by_name.items()
+              if d.get("first_day_of_week") == "sunday"}
+    assert monday == {"UK", "France", "Germany", "Netherlands", "Spain",
+                      "Italy", "Denmark", "Sweden", "Norway", "Poland"}
+    assert sunday == {"US", "Canada", "Mexico", "Brazil", "Israel", "India",
+                      "China", "Japan", "South Korea", "Singapore",
+                      "Australia"}
+    assert monday | sunday == set(by_name)         # every template covered
 
 
 def test_update_data_merges_and_deletes(app_ctx, empty_tree):

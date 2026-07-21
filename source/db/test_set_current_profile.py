@@ -7,7 +7,7 @@ independent — plus the `internal` registry flag that keeps the stamp off the
 Hits the live local Postgres (rainbox_claude via conftest); the three touched
 settings are saved and restored around every test.
 """
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 

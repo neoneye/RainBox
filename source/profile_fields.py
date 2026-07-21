@@ -59,6 +59,12 @@ PROFILE_FIELDS = [
     Field("number_format",  "Locale & formats", kind="enum", label="Number format",
           choices=("1,234,567.89", "1.234.567,89", "1 234 567,89",
                    "1'234'567.89", "12,34,567.89")),
+    # Monday covers most of Europe (and ISO 8601), Sunday the US/Canada and
+    # much of Asia, Saturday parts of the Middle East — together virtually
+    # every calendar convention in use.
+    Field("first_day_of_week", "Locale & formats", kind="enum",
+          label="First day of week",
+          choices=("monday", "sunday", "saturday")),
     Field("language",       "Locale & formats", kind="text", label="Language (primary)",
           datalist="lang", hint="BCP-47, e.g. da, en-US, zh-Hans"),
     Field("language_2",     "Locale & formats", kind="text", label="Language (secondary)",
