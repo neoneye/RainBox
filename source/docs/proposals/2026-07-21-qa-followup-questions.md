@@ -244,6 +244,17 @@ Cap at three hints per kept source and six total, deduplicate normalized
 questions, and prefer source order. The assistant may issue a new
 `memory_query` using the question text. Do not expose gap or redundant items.
 
+### Hint adoption telemetry
+
+Whether hints are worth their prompt budget is measurable, not arguable: when
+a live `memory_query` arrives whose normalized query equals a hint shown in
+the same run's previous step, record an adoption event
+(`target_type="seed_followup"`, `source="memory_query.hints"`, target = the
+hint's source `qa_id` + ordinal). Per-hint adoption over time is the pruning
+signal (hints nobody follows stop earning their slot) and the phase-4
+go/no-go metric for keeping the hint block at all. Same FIFO-bounded
+retention as the recall-KPI streams.
+
 ### Developer inspection
 
 `/memory/developer` shows all classifications, target validity, source/target
@@ -259,6 +270,12 @@ lifetime frequency claim.
 
 Allow export of question text plus source Q&A ID, but require the same visibility
 checks as the page. Do not export source answers automatically.
+
+The answerable edges also form a directed graph over entries, which yields a
+second authoring signal for free: entries with **zero inbound edges** are
+unreachable by navigation (islands the assistant can only find by direct
+query), and entries with zero outbound follow-ups mark confirmed dead ends.
+One SQL pass over `target_refs`; show alongside the gap list.
 
 ### Chat route suggestions
 
@@ -319,12 +336,81 @@ hashing, zero-result persistence, and per-entry batching keep later runs small.
 - Failed and concurrent runs cannot replace a newer complete generation.
 - Gap-report probes and developer inspection do not write live recall telemetry.
 
+## Assessment: is this the right direction?
+
+Three candidate investments compete for the same goal — making the Q&A file
+answer more of what actually gets asked. This proposal is one of them; the
+honest ranking puts it last in delivery order, even though its machinery is
+worth building.
+
+### A. Telemetry-mined gaps (observed demand) — cheapest, highest signal
+
+The recall-verdict and router-filter telemetry already stores the *real*
+queries that flowed through retrieval, per candidate, with the filter's
+relevance verdicts. Queries where every candidate was rejected — or the
+observation came back "no relevant remembered facts" — are demand the KB
+demonstrably failed to meet. Mining them is a report over existing rows: no
+LLM calls, no new privacy flow (the queries were already processed), and the
+gaps are demand-*observed* rather than demand-*predicted*. A synthetic gap
+from self-play says "someone might ask this"; a mined gap says "the operator
+asked this and got nothing." When both exist, mined gaps outrank synthetic
+ones in the report.
+
+Limitation: it only sees questions someone already asked, and the verdict
+FIFOs retain a bounded recent window — it finds potholes on roads already
+driven. Synthetic follow-ups explore roads not yet taken. The two are
+complements, not substitutes.
+
+### B. Alias enrichment (generated question phrasings) — fixes observed misses
+
+The retrieval failures that motivated this whole line of work were phrasing
+mismatches: a natural question ("how is X related to hobby Y") embedding far
+from a terse registered phrasing ("Hobby Y / events"). Generating additional
+question *phrasings* per entry — validated by self-play (the new phrasing
+must retrieve its own entry decisively, and must not collide with a different
+entry's territory) and stored as derived pgvector nodes, never in the JSONL —
+raises recall of content the KB *already has*. It reuses this proposal's
+machinery nearly one-for-one: the same generation slots, runtime-hash
+freshness, privacy scopes, policy versioning, and self-play validation, with
+the classification inverted (a phrasing that retrieves a *different* entry is
+the failure case). Its consumer is the retrieval stack itself: no prompt
+budget, no new assistant behavior to validate, value delivered on the next
+query.
+
+### C. Follow-up edges and hints (this proposal) — unique but unproven consumer
+
+Navigation edges and synthetic gap discovery are things neither A nor B
+provides. But the hint block's marginal value over the assistant simply
+re-querying on its own is unproven — which is why hints sit behind developer
+inspection and adoption telemetry, with a go/no-go gate. The gap report half
+of C is safer value; the navigation half is the experiment.
+
+### Recommendation
+
+Build the shared generation machinery once (it serves B and C); ship value in
+the order the evidence supports: **A first** (days of work, zero model calls),
+**B second** (same machinery, fixes the observed failure class), **C's gap
+report third, C's hints last** behind their adoption metric.
+
+One structural tension to keep in view: the privacy-safe default scope
+(upstream static entries) covers the least valuable content — generic
+entries anyone could regenerate. The operator value of every variant above
+lives in the overlay, which is opt-in by design. The opt-in flow must
+therefore be genuinely easy with a pinned local model, or all three variants
+quietly under-deliver by only ever running on the content that matters least.
+
 ## Delivery sequence
 
-1. Tables, current/stale lookup helpers, `followup_generator` binding, generation
-   job, privacy-scoped `/settings` action, and tests.
-2. `/memory/developer` inspection and gap report.
-3. `memory_query` answerable-hint block with caps, sanitation, and telemetry.
-4. Evaluate quality on an anonymized fixture set; tune prompt and validation
-   thresholds through `policy_version`.
-5. Phase 2 experiment: route-reply suggestions in chat.
+1. Telemetry-mined gap report (variant A): a report over existing
+   RetrievalEvent rows on `/memory/developer`; no schema, no model calls.
+2. Tables, current/stale lookup helpers, `followup_generator` binding,
+   generation job, privacy-scoped `/settings` action, and tests — the shared
+   machinery, built once for B and C.
+3. Alias enrichment (variant B) on that machinery; measure recall improvement
+   on the mined-gap queries from step 1.
+4. Follow-up generation (variant C): `/memory/developer` inspection and the
+   combined gap report (mined + synthetic, mined ranked first).
+5. `memory_query` answerable-hint block with caps, sanitation, and adoption
+   telemetry; evaluate on an anonymized fixture set; tune thresholds through
+   `policy_version`; keep or drop the block on the adoption evidence.
+6. Phase 2 experiment: route-reply suggestions in chat.
