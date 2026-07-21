@@ -140,8 +140,11 @@ def test_calibration_js_markers():
                    "/calibration", "PROFILE_CAL_DEBOUNCE_MS",
                    "PROFILE_CAL_RETRY_MAX_MS", "status === 400"]:
         assert marker in b, f"missing calibration JS marker: {marker}"
-    # The unload guard covers calibration pending/invalid states.
-    assert "profileCalPending(st) || (st && st.invalid)" in b
+    # The unload guard covers calibration pending/invalid states AND
+    # touched-but-topicless rows, which also never read as "Saved".
+    assert "profileCalHasIncomplete(st)" in b
+    assert "a row needs a topic" in b
+    assert "function profileCalIncompleteRow" in b
 
 
 def test_no_backslash_escapes_in_template():

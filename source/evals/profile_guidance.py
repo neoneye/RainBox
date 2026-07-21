@@ -244,14 +244,27 @@ def _template_uuid(template_name: str) -> str:
     return entry["uuid"]
 
 
+# Bumped whenever a shipped case definition changes; seeded cases whose
+# rubric carries an older rev are updated in place (they are code-owned).
+SEED_REV = 2
+
+
 def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
     """Author the starter live cases for the Phase 0 case families, pinned to
     built-in template profiles (Germany: metric/EUR/point-grouping with a
     Mathematics expert row; US: imperial/USD/comma-grouping with Python
-    beginner + JavaScript avoid rows). Idempotent by case name; created as
-    `candidate` so the operator reviews and activates them in admin. The
-    hostile-note injection case carries an inline profile — no stored
-    profile ships an adversarial note."""
+    beginner + JavaScript avoid rows). New cases are created as `candidate`
+    so the operator reviews and activates them in admin. The hostile-note
+    injection case carries an inline profile — no stored profile ships an
+    adversarial note.
+
+    Seeded cases are CODE-OWNED: their rubric carries a seed marker and
+    SEED_REV, and re-seeding updates a case in place (status and split
+    preserved) whenever its stored rev is older — a database seeded before a
+    definition fix must not keep evaluating the release gate against the old
+    weak definition. An operator who wants to own a seeded case takes it over
+    by removing the `seed` marker (or renaming the case); such cases are
+    never touched again. Returns the cases created or updated."""
     germany = _template_uuid("Germany")
     us = _template_uuid("US")
     injection_profile = {
@@ -319,7 +332,11 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                               "20 euros to US dollars assuming a rate of "
                               "1 euro = 1.10 dollars.",
                    "profile_uuid": germany},
-         "expected": {"must_include": ["62", "22"]}},
+         # The labels are the point: "62 km and 22 EUR" ignored both
+         # overrides and must not score. Each group accepts either spelling.
+         "expected": {"must_include": ["62", "22"],
+                      "must_include_any": [["mile", " mi"],
+                                           ["USD", "US dollar", "$", "dollar"]]}},
         {"name": "pg exact-source: code snippet preserved",
          "family": "exact_source",
          "input": {"message": "Repeat this line exactly, unchanged: "
@@ -346,18 +363,28 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
          "expected": {"must_include": ["\"revenue was 1,234.56 million\""],
                       "must_not_include": ["revenue was 1.234,56"]},
          "rubric_extra": {"threshold": 1.0}},
+        # Calibration cases score the intended BEHAVIORAL difference, not
+        # mere factual correctness (a baseline answer already contains the
+        # topic words): teach depth demands an example and real explanation
+        # length; concise depth caps the length.
         {"name": "pg calibration: beginner Python teach depth",
          "family": "calibration",
          "input": {"message": "What is a Python decorator?",
                    "profile_uuid": us},
-         "expected": {"must_include": ["function"]}},
+         "expected": {"must_include": ["decorator", "function"],
+                      "must_include_any": [["for example", "For example",
+                                            "e.g.", "```"]],
+                      "min_words": 60}},
         {"name": "pg calibration: expert Mathematics concise depth",
          "family": "calibration",
          "input": {"message": "State the mean value theorem.",
                    "profile_uuid": germany},
-         "expected": {"must_include": ["continuous"]}},
+         "expected": {"must_include": ["continuous"],
+                      "max_words": 120}},
+        # Unchanged behavior on an unlisted topic is a REGRESSION check, not
+        # part of the calibration family's improvement mean.
         {"name": "pg calibration: unlisted topic answers normally",
-         "family": "calibration",
+         "family": "regression",
          "input": {"message": "How long should I boil an egg for a soft "
                               "yolk?",
                    "profile_uuid": us},
@@ -396,17 +423,29 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
          "expected": {"must_include": ["12/31/2026"],
                       "must_not_include": ["31.12.2026"]}},
     ]
-    existing = {c.name for c in db.list_eval_cases(case_type="chat_reply")}
-    created: list[db.EvalCase] = []
+    existing = {c.name: c for c in db.list_eval_cases(case_type="chat_reply")}
+    touched: list[db.EvalCase] = []
     for spec in specs:
-        if spec["name"] in existing:
+        rubric = {"seed": "profile_guidance", "seed_rev": SEED_REV,
+                  "family": spec["family"], **spec.get("rubric_extra", {})}
+        case = existing.get(spec["name"])
+        if case is None:
+            touched.append(db.create_eval_case(
+                name=spec["name"], case_type="chat_reply", split=split,
+                status="candidate", input=spec["input"],
+                expected=spec["expected"], rubric=rubric))
             continue
-        rubric = {"family": spec["family"], **spec.get("rubric_extra", {})}
-        created.append(db.create_eval_case(
-            name=spec["name"], case_type="chat_reply", split=split,
-            status="candidate", input=spec["input"],
-            expected=spec["expected"], rubric=rubric))
-    return created
+        stored = case.rubric or {}
+        if stored.get("seed") != "profile_guidance":
+            continue  # operator-owned now; never touch it
+        if int(stored.get("seed_rev") or 0) >= SEED_REV:
+            continue  # already current
+        case.input = spec["input"]
+        case.expected = spec["expected"]
+        case.rubric = rubric          # status and split stay as the operator set them
+        db.db.session.commit()
+        touched.append(case)
+    return touched
 
 
 # ---- CLI -------------------------------------------------------------------

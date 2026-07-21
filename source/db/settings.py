@@ -195,11 +195,11 @@ SETTINGS: dict[str, Setting] = {
     ),
     "profile.current_changed_at": Setting(
         "profile.current_changed_at", None, "string", None, internal=True,
-        description="Event stamp of the last actual profile.current change "
-                    "(written by set_current_profile, always equal to the "
-                    "qa.facts_invalidated_at stamp of the same transaction). "
-                    "The assistant's per-room context marker acknowledges it; "
-                    "not operator-facing.",
+        description="Event stamp of the last actual profile.current change, "
+                    "written by set_current_profile in the same transaction "
+                    "as the pointer and independent of "
+                    "qa.facts_invalidated_at. The assistant's per-room "
+                    "context marker acknowledges it; not operator-facing.",
     ),
 }
 

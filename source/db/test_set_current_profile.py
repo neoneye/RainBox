@@ -1,7 +1,8 @@
 """Tests for db.set_current_profile — the runtime write path for
-`profile.current` that stamps `qa.facts_invalidated_at` and
-`profile.current_changed_at` atomically on an actual change — plus the
-`internal` registry flag that keeps the stamp off the /settings page.
+`profile.current` that writes the pointer and `profile.current_changed_at`
+atomically on an actual change while leaving `qa.facts_invalidated_at`
+independent — plus the `internal` registry flag that keeps the stamp off the
+/settings page.
 
 Hits the live local Postgres (rainbox_claude via conftest); the three touched
 settings are saved and restored around every test.
@@ -101,7 +102,7 @@ def test_invalid_target_raises_and_changes_nothing(app_ctx):
 
 
 def test_failure_rolls_back_the_whole_transaction(app_ctx, monkeypatch):
-    """If any of the three row updates fails, none of them may stick."""
+    """If either of the two row updates fails, neither may stick."""
     db.set_current_profile(_template_uuid(0))
     before = {k: _raw(k) for k in KEYS}
 

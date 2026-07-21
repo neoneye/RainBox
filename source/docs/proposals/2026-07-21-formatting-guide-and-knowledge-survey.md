@@ -1097,7 +1097,7 @@ Notice: the active profile switched to Germany. Identity, formatting, and knowle
 ```
 
 Tests cover same-value no-op, profile A → B, profile → unset, atomic rollback
-on any of the three writes, one marker per room per pair of current stamps,
+on either of the two writes, one marker per room per pair of current stamps,
 safe label escaping, profile-then-Q&A and Q&A-then-profile before the room runs
 (one combined marker in either order), several switches before a room runs
 (latest profile only), a subsequent unrelated Q&A invalidation returning to

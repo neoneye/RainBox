@@ -1152,11 +1152,13 @@ function profileAnySavePending(){
     const st = profileFormState[u];
     return st && (st.dirty || st.inFlight || st.failed || st.timer);
   });
-  // Calibration participates too: pending and failed-validation states must
-  // hold the unload guard until acknowledged.
+  // Calibration participates too: pending, failed-validation, and
+  // incomplete-row (topicless but touched) states must hold the unload
+  // guard until acknowledged or resolved.
   const cal = Object.keys(profileCalState).some(u => {
     const st = profileCalState[u];
-    return profileCalPending(st) || (st && st.invalid);
+    return profileCalPending(st) || (st && st.invalid)
+      || profileCalHasIncomplete(st);
   });
   return flat || cal;
 }
@@ -1220,6 +1222,20 @@ function profileCalStateFor(uuid){
 }
 function profileCalPending(st){
   return st && (st.dirty || st.inFlight || st.failed || st.timer);
+}
+// A topicless row carrying operator-entered content cannot be sent (the
+// server requires a topic) but must never be acknowledged as saved either:
+// it holds the "Not saved" state and the unload guard until a topic exists.
+// A fresh add-row (only the seeded default level) carries no information and
+// stays a silent local draft.
+function profileCalIncompleteRow(r){
+  if ((r.topic || '').trim() !== '') return false;
+  return (r.stance || '') !== '' || (r.depth || '') !== ''
+    || (r.note || '').trim() !== ''
+    || ((r.level || '') !== '' && r.level !== 'intermediate');
+}
+function profileCalHasIncomplete(st){
+  return !!st && st.loaded && st.rows.some(profileCalIncompleteRow);
 }
 function profileCalOnSelect(p){
   const st = profileCalStateFor(p.uuid);
@@ -1488,6 +1504,7 @@ function profileCalRenderStatus(){
   if (st.failed) el.textContent = 'Save failed — retrying';
   else if (st.invalid) el.textContent = 'Not saved';
   else if (st.inFlight || st.dirty || st.timer) el.textContent = 'Saving…';
+  else if (profileCalHasIncomplete(st)) el.textContent = 'Not saved — a row needs a topic';
   else el.textContent = st.rows.length ? 'Saved ✓' : '';
 }
 // Cancel the debounce and await the newest calibration PUT; false if it
@@ -1505,7 +1522,9 @@ async function profileCalFlush(uuid){
       if (st.failed || st.invalid) return false;
     }
   }
-  return !st.failed && !st.invalid;
+  // A touched-but-topicless row cannot ride the flush; the caller (e.g.
+  // Duplicate) must not proceed as if everything was captured.
+  return !st.failed && !st.invalid && !profileCalHasIncomplete(st);
 }
 
 // ---- duplicate (kebab) — the one-action way to mint a profile from an

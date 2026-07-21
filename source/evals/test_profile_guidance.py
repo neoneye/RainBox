@@ -207,19 +207,56 @@ def test_unresolvable_profile_scores_zero(app_ctx, monkeypatch):
         db.db.session.commit()
 
 
-def test_seed_cases_are_idempotent_candidates(app_ctx):
+def test_seed_cases_create_update_and_respect_ownership(app_ctx):
     created = pg.seed_profile_guidance_cases()
     try:
-        again = pg.seed_profile_guidance_cases()
-        assert again == []                     # idempotent by name
+        assert pg.seed_profile_guidance_cases() == []   # current rev → no-op
         names = {c.name for c in created}
         if created:                            # first run on this database
             assert all(c.status == "candidate" for c in created)
+            assert all((c.rubric or {}).get("seed") == "profile_guidance"
+                       for c in created)
             assert any("injection" in n for n in names)
             injection = next(c for c in created if "injection" in c.name)
             assert "profile" in injection.input          # inline hostile note
-            exact = next(c for c in created if "exact-source" in c.name)
+            assert injection.expected.get("must_include")  # empty reply fails
+            exact = next(c for c in created if "code snippet" in c.name)
             assert exact.rubric["threshold"] == 1.0      # hard-zero family
+            override = next(c for c in created if "miles and USD" in c.name)
+            assert override.expected["must_include_any"]  # labels required
+            teach = next(c for c in created
+                         if "beginner Python" in c.name)
+            assert teach.expected["min_words"] >= 60
+            concise = next(c for c in created
+                           if "expert Mathematics" in c.name)
+            assert concise.expected["max_words"] <= 150
+            unlisted = next(c for c in created if "unlisted" in c.name)
+            assert unlisted.rubric["family"] == "regression"
+
+        # A pre-fix database: an older-rev seeded case is updated IN PLACE
+        # (status preserved), so the release gate never runs old definitions.
+        stale = next(c for c in db.list_eval_cases(case_type="chat_reply")
+                     if "miles and USD" in c.name)
+        stale.rubric = {**stale.rubric, "seed_rev": 1}
+        stale.expected = {"must_include": ["62", "22"]}   # the old weak form
+        stale.status = "active"
+        db.db.session.commit()
+        touched = pg.seed_profile_guidance_cases()
+        assert [c.name for c in touched] == [stale.name]
+        refreshed = db.get_eval_case(stale.uuid)
+        assert refreshed.expected["must_include_any"]     # definition fixed
+        assert refreshed.status == "active"               # operator state kept
+        assert refreshed.rubric["seed_rev"] == pg.SEED_REV
+
+        # An operator-owned case (seed marker removed) is never touched.
+        owned = next(c for c in db.list_eval_cases(case_type="chat_reply")
+                     if "German date order" in c.name)
+        owned.rubric = {"family": "locale"}               # marker stripped
+        owned.expected = {"must_include": ["operator edit"]}
+        db.db.session.commit()
+        assert pg.seed_profile_guidance_cases() == []
+        assert db.get_eval_case(owned.uuid).expected == {
+            "must_include": ["operator edit"]}
     finally:
         db.db.session.rollback()
         for c in db.list_eval_cases(case_type="chat_reply"):

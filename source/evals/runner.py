@@ -6,11 +6,17 @@ Deterministic-first: chat_reply cases use `case.input["actual_output"]`
 `memory.retrieval.retrieve_memories(...)`. LLM-as-judge lands in a
 later work package.
 
-Scoring policy: each configured criterion (must_include, must_not_include,
-expected_memories, forbidden_memories, requires_json) contributes a value
-in [0.0, 1.0]; the final score is their mean. A case with no configured
-criteria scores 1.0 with a `warnings` flag in details. Pass/fail uses
-`rubric.threshold` (default 0.7).
+Scoring policy: each configured criterion (must_include, must_include_any,
+must_not_include, expected_memories, forbidden_memories, requires_json,
+min_words, max_words) contributes a value in [0.0, 1.0]; the final score is
+their mean. A case with no configured criteria scores 1.0 with a `warnings`
+flag in details. Pass/fail uses `rubric.threshold` (default 0.7).
+
+`must_include_any` is a list of alternative groups — each group is satisfied
+by ANY of its substrings ("mi" or "miles"), so a case can require a unit or
+currency label without pinning one spelling. `min_words`/`max_words` are the
+deterministic proxy for explanation depth: a teach-depth answer must carry at
+least `min_words`, a concise answer at most `max_words`.
 """
 
 import argparse
@@ -42,6 +48,35 @@ def _score_must_include(output_text: str, items: list[str]) -> tuple[float, dict
         return 1.0, {"matched": 0, "total": 0, "skipped": True}
     matched = sum(1 for s in items if s in output_text)
     return matched / len(items), {"matched": matched, "total": len(items)}
+
+
+def _score_must_include_any(
+    output_text: str, groups: list[Any],
+) -> tuple[float, dict[str, Any]]:
+    """Each group is a list of alternative substrings; the group counts as
+    matched when ANY alternative is present. Score = matched groups / groups."""
+    valid = [g for g in groups if isinstance(g, list) and g]
+    if not valid:
+        return 1.0, {"matched": 0, "total": 0, "skipped": True}
+    matched = sum(1 for g in valid
+                  if any(str(alt) in output_text for alt in g))
+    return matched / len(valid), {"matched": matched, "total": len(valid)}
+
+
+def _score_word_bounds(
+    output_text: str, min_words: Any, max_words: Any,
+) -> tuple[float, dict[str, Any]]:
+    """Binary length criterion: 1.0 when the word count sits inside the
+    configured bounds (either side optional). The deterministic proxy for
+    explanation depth — teach answers must reach min_words, concise answers
+    must stay under max_words."""
+    if min_words is None and max_words is None:
+        return 1.0, {"skipped": True}
+    count = len(output_text.split())
+    ok = ((min_words is None or count >= int(min_words))
+          and (max_words is None or count <= int(max_words)))
+    return (1.0 if ok else 0.0), {
+        "words": count, "min_words": min_words, "max_words": max_words}
 
 
 def _score_must_not_include(output_text: str, items: list[str]) -> tuple[float, dict[str, Any]]:
@@ -121,8 +156,15 @@ def score_chat_reply_case(
     s, d = _score_must_include(text, list(expected.get("must_include") or []))
     parts.append((s, d)); detail["must_include"] = d
 
+    s, d = _score_must_include_any(text, list(expected.get("must_include_any") or []))
+    parts.append((s, d)); detail["must_include_any"] = d
+
     s, d = _score_must_not_include(text, list(expected.get("must_not_include") or []))
     parts.append((s, d)); detail["must_not_include"] = d
+
+    s, d = _score_word_bounds(text, expected.get("min_words"),
+                              expected.get("max_words"))
+    parts.append((s, d)); detail["word_bounds"] = d
 
     # `expected_memories` / `forbidden_memories` apply to chat_reply too:
     # the case can include retrieved snapshots if it carries the debug-memory
