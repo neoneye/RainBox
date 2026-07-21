@@ -77,6 +77,33 @@ this document and its follow-ups is always about *disclosure* — which
 audiences, surfaces, and prompts may see a thing — never about degrading or
 declining what is stored.
 
+## Implementation readiness
+
+The **core** (Phases 0–2) is close, but the two parts are not equally ready:
+
+| Work | Readiness | What remains |
+|---|---:|---|
+| Formatting guide | **90%** | Implement the fixed lookup tables, one-snapshot assembly, and live eval harness described below. |
+| Knowledge calibration | **80%** | Implement the shared JSONB mutation lock, exact API contract, duplicate semantics, and conflict UI described below. |
+| Declarative-forms follow-up | **40%** | It has a real client and privacy requirements, but still needs its own schema/migration proposal and disclosure review. |
+
+After the clarifications in this document, Phase 1 and Phase 2 should not need
+another design round. The remaining product-level choices are deliberately
+small and listed under **Open decisions** near the end. Phase 0 does require a
+new live-eval harness: the current `evals/runner.py` only scores stored
+`chat_reply` snapshots and cannot run the same prompt across model groups.
+
+Expected implementation surface:
+
+- Phase 0: `evals/profile_guidance.py` plus focused runner tests;
+- Phase 1: `profile_fields.py`, `data/profile_templates.json`,
+  `static/profile.js`, new `user_profile/formatting.py`, exports in
+  `user_profile/__init__.py`, `agents/assistant.py`, and their tests;
+- Phase 2: shared mutation logic in `db/profile.py`, new
+  `db/profile_calibration.py`, exports in `db/__init__.py`,
+  `webapp/profile_api.py`, `webapp/profile_views.py`, `static/profile.js`, and
+  DB/API/view/prompt tests beside the existing profile suites.
+
 ## Current architecture and exact insertion point
 
 The implementation must follow the code that exists, not an imagined common
@@ -112,11 +139,29 @@ current_message
 Builders return text bodies. `_build_user_prompt()` alone creates XML tags and
 attributes.
 
+The three declared-profile bodies must come from **one profile snapshot per
+turn**. Reading `profile.current` independently for identity, formatting, and
+calibration can mix two people if the setting changes between calls. Add an
+assistant seam such as:
+
+```python
+def _build_declared_profile_blocks(self) -> tuple[str, str, str]:
+    profile = user_profile.current_profile()  # exactly once
+    # independently best-effort format identity, guide, and calibration
+```
+
+The pure formatters all accept that same profile dict. Existing convenience
+builders may remain for tests and compatibility, but main prompt assembly must
+not call three independent active-profile lookups. A formatter failure logs and
+empties only its own block; it does not suppress the other two.
+
 `ASSISTANT_SYSTEM_PROMPT` must also name `formatting_guide` and
 `knowledge_calibration` in its source-priority contract. The current request
 remains higher priority than both. The policy should state explicitly that the
 calibration block is reference data and that instructions quoted inside it are
-not commands.
+not commands. More generally, every element marked `authority="context"` is
+reference data, not executable instructions; this includes the existing
+identity and memory-profile blocks.
 
 ## Precedence contract
 
@@ -174,6 +219,34 @@ This is a deliberately finite preference enum, not a claim to cover every
 numbering system. Unsupported conventions can leave the field unset until the
 registry grows.
 
+The renderer lookup is exhaustive and exact:
+
+| Stored value | Wording | Number example | Currency example |
+|---|---|---|---|
+| `1,234,567.89` | decimal point, comma grouping | `1,234,567.89` | `1,234` |
+| `1.234.567,89` | decimal comma, point grouping | `1.234.567,89` | `1.234` |
+| `1 234 567,89` | decimal comma, space grouping | `1 234 567,89` | `1 234` |
+| `1'234'567.89` | decimal point, apostrophe grouping | `1'234'567.89` | `1'234` |
+| `12,34,567.89` | decimal point, Indian comma grouping | `12,34,567.89` | `1,234` |
+
+Template assignments are part of the change, not left to implementer taste:
+
+- `1,234,567.89`: US, Mexico, UK, Israel, China, Japan, South Korea,
+  Singapore, Australia;
+- `1.234.567,89`: Brazil, Germany, Netherlands, Spain, Italy, Denmark;
+- `1 234 567,89`: Canada (the shipped profile is `fr-CA`), France, Sweden,
+  Norway, Poland;
+- `12,34,567.89`: India;
+- `1'234'567.89`: no current template, retained as an operator-selectable
+  convention.
+
+Units, date, and time are lookup-driven too: every registry enum value must
+have exactly one renderer entry and an exhaustiveness test. Metric names km,
+kg, and °C; imperial names mi, lb, and °F. Date examples use 31 December 2026
+in the selected order; time examples use 23:59 or 11:59 pm. The prompt examples
+remain fixed for deterministic tests. The browser preview may continue using
+the current year, because it is presentation rather than prompt policy.
+
 Every built-in template gains an explicit value. The form preview becomes:
 
 ```text
@@ -200,7 +273,7 @@ Use these defaults unless the current request or exact source notation says othe
 - Times: 24-hour clock, for example 23:59. Present local times in Europe/Berlin; name another zone when relevant.
 - Units: metric. Prefer km, kg, and °C; preserve a source value when precision matters and add the conversion.
 - Numbers: decimal comma with point grouping, for example 1.234.567,89.
-- Currency: use the ISO code EUR with the preferred number format, for example 1.234,56 EUR. Convert currencies only with a supplied or freshly retrieved rate.
+- Currency: use the ISO code EUR with the preferred number format, for example 1.234 EUR. Convert currencies only with a supplied or freshly retrieved rate.
 - Language: follow the language of the current message; otherwise prefer de, with en as fallback.
 ```
 
@@ -209,9 +282,9 @@ Rules:
 - Render a line only when its source value is usable. No lines means `""`.
 - Enum-derived wording and examples are fixed lookup-table output, never
   free-typed templates. Two fixed samples feed the lookups: `1234567.89` for
-  the numbers line (grouping needs the digits to show) and `1234.56` for the
-  currency line (the decimal separator carries the risk there, and a
-  seven-digit price would read as noise).
+  the numbers line (grouping needs the digits to show) and integer `1234` for
+  the currency line. The integer is deliberate: not every currency has minor
+  units, so a universal decimal example would render JPY and KRW incorrectly.
 - A regioned English language tag may add a spelling preference (`en-GB` or
   `en-US`). Bare `en` adds none. Do not infer language from country.
 - Language means “current-message language first, profile fallback second.” It
@@ -235,14 +308,20 @@ and currency values. Prompt instructions need a stricter boundary.
 - Emit timezone only when `zoneinfo.ZoneInfo` accepts it.
 - Emit currency only when it consists of exactly three ASCII letters, then
   canonicalize it to uppercase. This validates shape, not economic existence.
-- Emit language only when it passes a conservative BCP-47 shape check and its
-  length is bounded.
+- Emit language only after trimming and matching
+  `[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}` with a total length of at most 35.
+  Canonicalize the primary subtag to lowercase, a two-letter alphabetic region
+  to uppercase, and a four-letter alphabetic script to title case. This is a
+  deliberately safe subset, not a complete BCP-47 validator; a valid tag
+  outside it remains stored but is omitted from prompt instructions.
 - Omit and log unusable values; never splice arbitrary text into a directive.
 
 This rule prevents a profile value such as “ignore previous instructions” from
-becoming an instruction merely because it was stored in a locale field.
-`ElementTree` escaping is still required, but escaping syntax is not the same
-as establishing trust.
+being **elevated into the instruction-authority formatting guide** merely
+because it was stored in a locale field. The raw value may still appear in the
+existing identity JSON as context, which is why the system policy must treat
+all context-authority elements as non-executable. `ElementTree` escaping is
+still required, but escaping syntax is not the same as establishing trust.
 
 ### Injection
 
@@ -314,7 +393,26 @@ Validation limits:
 - topics are unique by trimmed Unicode casefolded value, with both conflicting
   row positions named in the error;
 - blank optional values are removed;
-- empty rows are dropped before validation.
+- a row whose editable values are all blank is dropped before validation; a
+  row with any content but no topic or level is an error.
+
+For duplicate detection, compute
+`re.sub(r"\s+", " ", unicodedata.normalize("NFKC", topic).strip()).casefold()`.
+Store the display topic trimmed with internal whitespace collapsed, but retain
+its case. This makes `" PostgreSQL "`, `"postgresql"`, and visually equivalent
+Unicode forms one topic without lowercasing what the operator sees.
+
+Revision and timestamp rules are exact:
+
+- an absent calibration subtree reads as revision `0` with no topics;
+- a successful semantic change increments revision once, regardless of how
+  many rows changed;
+- a canonical no-op PUT returns success without incrementing revision;
+- new rows receive UUIDv4 ids and the current UTC timestamp;
+- changes to topic, level, stance, depth, or note restamp that row;
+- order-only changes increment revision but do not restamp any row;
+- deleting rows increments revision;
+- `updated_at` serializes as RFC 3339 UTC with whole seconds and `Z`.
 
 The `topic` input remains free text with a broad technical and non-technical
 datalist. Row order is priority order and the editor provides up/down buttons,
@@ -338,10 +436,49 @@ Do not put calibration through the flat registry-field PUT.
 - Built-in profiles are read-only. Duplicating one copies its calibration data
   into the new editable profile.
 
-The compare-and-increment must be atomic: lock the profile row for the duration
-of the transaction or use a conditional update that succeeds only when the
-stored revision equals `base_revision`. “Read, compare, then commit” without a
-lock still loses concurrent writes when two requests observe the same base.
+Exact payloads:
+
+```jsonc
+// GET response and successful PUT response
+{"ok": true, "builtin": false, "revision": 7, "topics": [/* canonical rows */]}
+
+// PUT request; existing rows carry id, new rows omit it; updated_at is omitted
+{"base_revision": 7, "topics": [/* editable row fields */]}
+
+// conflict; client performs a fresh GET before replacing its draft
+{"ok": false, "error": "calibration changed elsewhere", "revision": 8}
+```
+
+Bad UUID → `400`; unknown profile → `404`; built-in PUT → `400`; validation
+error → `400`; stale revision → `409`. A successful PUT returns the complete
+canonical snapshot because the client needs server-assigned row ids and
+timestamps before its next edit.
+
+Duplication copies semantic fields and order, not concurrency identity. The new
+profile starts at revision `1`; every copied row receives a new UUIDv4 and the
+duplication timestamp. This applies whether the source is a user profile or a
+built-in template. Built-in example rows may carry fixed ids/timestamps in the
+shipped file for schema consistency, but the editor hides their age and
+duplication never preserves those server-owned values.
+
+For a user-owned source, duplication acquires the same profile row lock before
+reading `data`, so the copy is a coherent snapshot relative to flat-field and
+calibration autosaves. The browser still flushes its own pending edits first;
+the lock covers concurrent writers in other tabs/processes.
+
+The compare-and-increment must be atomic, but locking only this endpoint is not
+enough. Calibration, flat fields, and `dynamic` share one JSONB column. Add a
+single `profile_mutate_data(profile_uuid, mutator)` helper that selects the
+profile row `FOR UPDATE`, copies the current dict, applies one subtree mutation,
+assigns a new dict to `row.data`, and commits. The flat registry-field PUT and
+calibration PUT both use it; every future `dynamic` writer must use it too.
+Otherwise a flat autosave can read old calibration, race a calibration commit,
+and write the old subtree back. Built-in virtual profiles never enter this
+helper.
+
+The calibration mutator checks `base_revision` only after acquiring the row
+lock. “Read, compare, then commit” without a shared lock still loses concurrent
+writes when two requests observe the same base.
 
 The update belongs in `db/profile_calibration.py` or an equivalently narrow
 module. A generic `db/survey.py` is premature.
@@ -356,6 +493,23 @@ Autosave is tracked separately from flat fields and includes `base_revision`.
 On `409`, stop autosaving that fieldset, show a visible conflict notice, and
 offer reload; do not auto-merge silently. The same unload guard covers both
 save channels.
+
+Use a `profileCalibrationState[uuid]` state machine parallel to the current
+flat-form state, with its own 400 ms debounce and one in-flight PUT per profile.
+Response handling differs by class:
+
+- network error or `5xx`: retain the draft and retry with capped backoff;
+- `400`: show the server validation message and wait for the next edit; do not
+  retry an unchanged invalid snapshot forever;
+- `409`: retain the draft, stop retrying, and show **Reload server version**;
+- success: replace local rows/revision with the canonical response, unless a
+  newer local edit is queued, in which case retain that edit and immediately
+  resend it against the acknowledged revision.
+
+The fieldset has its own status line. Pending, failed-validation, and conflict
+states all participate in `beforeunload`. Switching profiles may leave a save
+running in the per-profile state map, matching the current flat-form behavior;
+late GET/PUT results must be keyed by UUID and never populate the wrong pane.
 
 The two existing example templates may contain a few fictional rows, but every
 template does not need calibration filler. Examples should teach the axes:
@@ -560,6 +714,40 @@ baseline is one generic answer scored against paired beginner/teach and
 expert/concise expectations; the same cases become profile counterfactuals
 after Phase 2.
 
+The existing eval runner cannot execute this phase: `chat_reply` reads
+`input["actual_output"]` and scores a snapshot. Add a narrow live runner in
+`evals/profile_guidance.py` rather than pretending the current runner is live.
+It reuses `score_chat_reply_case()` and the existing `EvalRun`/`EvalResult`
+tables, but executes hand-authored `chat_reply` cases whose input additionally
+contains `message` and `profile_uuid`. Requirements:
+
+- use the real `AssistantAgent` prompt-construction path and an isolated
+  temporary room only where a room UUID is required;
+- resolve `profile_uuid` to a profile dict and pass it through the one-snapshot
+  prompt seam as an eval-only override; never mutate the global
+  `profile.current` setting, because a concurrent real turn could observe the
+  temporary value even if it is later restored;
+- delete temporary room/messages in a `finally` block;
+- accept an explicit model-group UUID, defaulting to the assistant's current
+  binding, and record the actual fallback member used on every attempt;
+- run each case three times by default because generation is stochastic;
+- use only deterministic `must_include`/`must_not_include` scoring—no LLM judge;
+- persist one `EvalResult` per case with a `repetitions` array containing output
+  text, prompt hash, provider-reported input tokens when available,
+  model/group ids, and score for each repetition; store the mean as
+  `EvalResult.score`, but pass the case only when every repetition reaches the
+  case threshold;
+- never call `AssistantAgent.handle()` or dispatch an action. Refactor/expose a
+  prompt-construction seam shared with the real handle path, call
+  `_structured_completion` for exactly one decision, accept only `reply`, and
+  mark any other decision as a failed repetition. This tests the production
+  prompt without allowing an eval fixture to mutate production data.
+
+Phase 0 first records the baseline without guide/calibration injection. Phase
+3 runs the identical case UUIDs and repetitions after the feature, so the
+existing comparison rule about equal case sets remains meaningful. Live
+generation is opt-in and is not added to the default deterministic eval suite.
+
 Acceptance:
 
 - locale cases cover date, time, number, unit, and currency defaults;
@@ -568,7 +756,10 @@ Acceptance:
 - calibration cases compare beginner/teach with expert/concise;
 - an unlisted topic produces a normal answer without a mandatory clarification;
 - a **counterfactual profile-switch** case verifies that changing one profile
-  field changes only the corresponding output behavior.
+  field changes only the corresponding output behavior;
+- the live runner does not change settings and leaves no temporary chat data
+  after success or failure;
+- every recorded result identifies the model that actually produced it.
 
 ### Phase 1 — formatting guide
 
@@ -607,12 +798,13 @@ Acceptance:
 
 ### Phase 3 — evaluate and decide
 
-Run the Phase 0 suite across the supported local model groups and compare
-failure rates, prompt size, and unrelated-answer regressions.
+Run the Phase 0 suite on the assistant's currently bound model group and compare
+failure rates, prompt size, and unrelated-answer regressions. Additional model
+groups are an optional compatibility matrix, not a release prerequisite.
 
 Decision gates:
 
-- If formatting improves without meaningful regression, keep it.
+- If formatting meets the quantitative release gate selected below, keep it.
 - If knowledge calibration helps only large models, reduce the legend and row
   count before adding retrieval machinery.
 - If always-on calibration distracts models, first try a compact topic index;
@@ -649,18 +841,49 @@ behavior as a unit test.
    restamp, stale revision conflict, and missing profile/built-in behavior.
 6. **Merge safety:** flat data PUT preserves `dynamic` and `calibration` by
    deep equality; the general profile GET does not expose calibration
-   accidentally.
+   accidentally; a two-transaction race between flat and calibration writes
+   preserves both winners through the shared row lock.
 7. **Rendering:** stored order, JSONL escaping, note truncation before
    serialization and row dropping, exact omitted count, no ids/stamps, empty
    output, and global cap.
 8. **Prompt assembly:** identity → formatting → calibration → memory profile;
    tags created once; XML escaped; correct authority attributes; unset
-   `profile.current` emits none of the profile-derived blocks.
+   `profile.current` emits no identity, formatting, or calibration block while
+   leaving the independent memory-derived operator profile unchanged; all
+   three declared blocks in one turn come from the same profile snapshot.
 9. **Adversarial context:** locale fields and notes containing markup or prompt
    instructions cannot forge tags, change authority, or become guide policy.
 10. **Browser behavior:** add/remove/up/down, conflict notice, reload after
     `409`, independent save indicators, and unload guard verified in a real
     browser rather than by marker tests alone.
+
+## Open decisions before implementation
+
+Only two core product decisions remain. They should be answered before the
+first implementation PR; everything else above is an engineering contract.
+
+1. **Does switching `profile.current` create a conversation-history
+   boundary?** Today an existing room keeps messages from the previous person.
+   The new identity/guide/calibration outrank that history, but the old text is
+   still disclosed to the model and can bleed into an answer. **Recommended:**
+   record `profile.current_changed_at` on every actual setting change and omit
+   earlier conversation history from subsequent main-assistant prompts. Show a
+   visible boundary message in the room. Merely adding a reminder while still
+   sending the old history is not sufficient for a friend/demo profile. If
+   continuity is preferred instead, the document must say explicitly that a
+   profile switch is formatting/calibration only and is not an audience
+   boundary.
+2. **What is the quantitative live-eval release gate?** **Recommended:** the
+   assistant's currently bound model group is the required target; extra model
+   groups are informative. Run three repetitions. Explicit override and exact
+   source-preservation cases must pass every repetition. Locale and calibration
+   cases must not lose any previously passing regression case, and their mean
+   score must improve over baseline. If a stronger minimum improvement (for
+   example `+0.15`) is wanted, choose it before recording the baseline rather
+   than after seeing results.
+
+The declarative-forms follow-up has additional open schema/migration decisions,
+but they do not block Phases 0–2 and belong in its own proposal.
 
 ## Alternatives considered
 
@@ -689,12 +912,13 @@ behavior as a unit test.
   schema, but the wizard is UI-heavy and orthogonal to the formatting and
   calibration fixes, so it ships in the follow-up with the port as its
   acceptance test.
-- **Treat "private" as one property.** Rejected; it is three (publication,
-  audience, adversarial — see the sensitive-forms section). Customize-dir
-  placement genuinely delivers the first when the doctor check passes;
-  shields deliver only best-effort accident protection for the second;
-  nothing short of the auth work delivers the third. Collapsing them either
-  oversells shields or blocks the use case forever.
+- **Treat "private" as one property.** Rejected; it is four (repository
+  publication, data locality, audience, and adversarial privacy — see the
+  sensitive-forms section). Customize-dir placement addresses the first when
+  the doctor check passes; local database/backup policy addresses the second;
+  shields provide only best-effort accident protection for the third; nothing
+  short of the auth work delivers the fourth. Collapsing them either oversells
+  shields or blocks the use case forever.
 
 ## Novel follow-ups worth testing
 
