@@ -185,10 +185,13 @@ KNOWLEDGE_COLUMNS = [
 ```json
 "knowledge": [
   {"topic": "Mathematics", "level": "expert", "practice": "daily",
-   "note": "prefers rigorous definitions over analogies"},
+   "note": "prefers rigorous definitions over analogies",
+   "updated": "2026-03-02"},
   {"topic": "Python", "level": "beginner", "practice": "sometimes",
-   "note": "knows the concepts from other languages; wants idiomatic examples, not theory"},
-  {"topic": "Woodworking", "level": "intermediate", "practice": "rarely"}
+   "note": "knows the concepts from other languages; wants idiomatic examples, not theory",
+   "updated": "2026-07-21"},
+  {"topic": "Woodworking", "level": "intermediate", "practice": "rarely",
+   "updated": "2025-11-14"}
 ]
 ```
 
@@ -213,6 +216,14 @@ Design decisions baked in:
   gardening, personal finance, first aid) so the survey reads as "what do you
   know", not "which stacks do you use". An unlisted topic is one keystroke
   away, per the datalist convention.
+- **Topics are unique per profile** (case-insensitive, whitespace-trimmed):
+  a duplicate topic is a 400 naming both row indices. Two rows about the
+  same topic can only contradict each other, and uniqueness is what lets the
+  freshness stamping below key rows by topic.
+- **Each row carries a server-owned `updated` date.** Same ownership pattern
+  as `dynamic`: GET returns it, the human PUT rejects it if submitted, the
+  client strips it before saving. The server stamps it — see "A living
+  survey" below.
 - **Row order is priority order.** Rows render into the prompt in stored
   order and truncate from the end, so the operator's ordering *is* the
   drop order. The editor gets ↑/↓ buttons per row; no drag machinery.
@@ -238,11 +249,42 @@ the templates keep being the living documentation of a filled-in profile.
 All template details stay fictional per the no-real-PII policy; only the
 dead-namesake names are historical.
 
-A conversational alternative — the assistant interviewing the operator topic
-by topic and writing rows — is deliberately *not* part of v1, but the data
-model is designed for it: a future skill or write-intent flow fills the same
-`knowledge` list through the same validator. The survey is the contract; a
-wizard is sugar on top.
+### A living survey
+
+A survey answered once and never revisited quietly becomes wrong: knowledge
+grows, tools fall out of favour, a language someone was avoiding gets
+replaced by a newer one they now prefer. The design treats change as the
+normal case, not an afterthought, with three mechanisms in increasing order
+of activeness:
+
+- **Editing is the baseline, and it is cheap.** Every row is mutable in
+  place through the same form — change a level, rewrite a note, reorder,
+  delete — with autosave; updating one opinion costs one select change, not
+  a re-take of the survey. There is no versioned history and deliberately so:
+  the profile is current-state by contract (a superseded preference is not
+  worth preserving in the record that exists to describe *now*; the note can
+  say "switched from X in 2026" when the transition itself is signal).
+- **The server stamps freshness, so staleness is visible.** On each data
+  PUT the server diffs incoming rows against stored rows keyed by normalized
+  topic: a new topic or a row whose `level`/`practice`/`note` changed gets
+  `updated` = today; an untouched row keeps its stamp (reordering alone
+  restamps nothing — position is not content). Renaming a topic reads as
+  delete + add and starts a fresh stamp, which is honest: it *is* a new
+  answer. The editor renders the age unobtrusively per row ("updated
+  2026-07-21"), so a row that has not been touched in two years announces
+  itself when the operator scrolls past. Nothing nags; the stamp stays out
+  of the prompt block (budget, and the model needs the answer, not its
+  changelog).
+- **The assistant proposes updates when it hears drift.** Conversation is
+  where change surfaces first — "I've stopped using X, Y is faster" is a
+  survey edit spoken aloud. When the assistant notices a statement
+  contradicting or extending the survey, it proposes the row change through
+  the existing write-intent flow (proposed → operator confirms → applied
+  through the same validator, stamped like any edit). Same machinery covers
+  the interview wizard — the assistant asking topic by topic and filling
+  rows. Neither is built in v1; both are why the data model, uniqueness
+  rule, and validator are shaped so that *every* writer — form, wizard,
+  drift proposal — goes through one gate.
 
 ### The knowledge block
 
@@ -309,9 +351,10 @@ carries a fictional survey.
    the existing autosave, datalist seeding, template updates (number formats
    everywhere, example surveys on two).
    *Acceptance:* survey rows round-trip through the PUT; validator names the
-   offending row on bad input; row order survives save/reload; ↑/↓/✕ verified
-   in a real browser per the tree doc's §8 rule; templates validate at test
-   time.
+   offending row on bad input; row order survives save/reload; editing one
+   row restamps only that row and the editor shows the new age; ↑/↓/✕
+   verified in a real browser per the tree doc's §8 rule; templates validate
+   at test time.
 2. **Prompt blocks.** `user_profile/guide.py`, both builders, assistant
    injection after `<operator_identity>`, deterministic tests below.
    *Acceptance:* with the Germany template active, the assembled prompt
@@ -330,25 +373,32 @@ carries a fictional survey.
 
 1. **Validator:** `number_format` out-of-enum → 400; `knowledge` must be a
    list of objects; unknown row key → 400 naming it; missing `topic`/`level`
-   → 400 naming the row; blank optional values canonicalized away; all-blank
-   rows dropped; > `MAX_KNOWLEDGE_ROWS` → 400; existing flat-field behaviour
-   unchanged.
-2. **Formatting builder:** full profile → every directive present with
+   → 400 naming the row; duplicate topics (case-insensitive, trimmed) → 400
+   naming both rows; a submitted `updated` → 400 (server-owned); blank
+   optional values canonicalized away; all-blank rows dropped;
+   > `MAX_KNOWLEDGE_ROWS` → 400; existing flat-field behaviour unchanged.
+2. **Freshness stamping:** a new row gets today's `updated`; an edited
+   `level`/`practice`/`note` restamps that row and only that row; an
+   untouched row keeps its stamp across saves; pure reordering restamps
+   nothing; a renamed topic starts a fresh stamp; GET returns stamps and a
+   subsequent client snapshot (stamps stripped) round-trips them unchanged.
+3. **Formatting builder:** full profile → every directive present with
    examples derived from the actual enum values (`DD.MM.YYYY` + `24h` +
    `1.234,56` produce exactly those sample strings); sparse profile → only
    matching directives; `en-GB` adds the British-spelling clause, bare `en`
    does not; empty profile → `""`; block under its cap for the maximal
    profile.
-3. **Knowledge builder:** rows render in stored order; over-budget survey
+4. **Knowledge builder:** rows render in stored order; over-budget survey
    truncates from the end with the "(N more topics omitted)" line; empty
-   survey → `""`; legend appears exactly once.
-4. **Prompt assembly:** with a scripted fake model, the user prompt carries
+   survey → `""`; legend appears exactly once; `updated` stamps never appear
+   in the block.
+5. **Prompt assembly:** with a scripted fake model, the user prompt carries
    `operator_identity`, then `formatting_guide`, then `operator_knowledge`;
    unset `profile.current` → none of the three.
-5. **Templates:** every shipped template still passes
+6. **Templates:** every shipped template still passes
    `validate_profile_data`, including the new `number_format` values and
    example surveys (a release cannot ship a broken template).
-6. **Views:** marker tests for the Knowledge fieldset and the `topic`
+7. **Views:** marker tests for the Knowledge fieldset and the `topic`
    datalist (presence, not behaviour — §8 covers behaviour); any inline
    script in the non-raw Python template contains no bare `\n`-style escapes.
 
@@ -382,6 +432,18 @@ carries a fictional survey.
   form friction across all rows, and the note field carries the long tail at
   zero schema cost. Revisit only if notes are observed straining to encode
   the same structure repeatedly.
+- **Versioned survey history** (keep superseded rows, or an audit trail of
+  level changes) — rejected: the profile is a current-state record by
+  contract, and a history table for self-assessments is machinery without a
+  consumer. The `updated` stamp answers the one historical question that has
+  a consumer ("how stale is this answer?"); a transition worth remembering
+  belongs in the note or in memory claims, which already carry provenance.
+- **A periodic "re-take the survey" nudge** (cron reminder, working-context
+  line) — rejected for v1: cadence-based nagging assumes knowledge decays on
+  a schedule, which it doesn't. The visible per-row age plus
+  drift-triggered proposals (the assistant reacting to what the operator
+  actually says) target the rows that *are* stale instead of interrupting on
+  the ones that aren't.
 
 ## See also
 
