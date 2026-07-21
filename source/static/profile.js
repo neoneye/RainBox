@@ -1205,12 +1205,13 @@ const PROFILE_DL_TOPIC = ['Accounting', 'Carpentry', 'Cooking', 'Databases',
   'History', 'JavaScript', 'Law', 'Linux', 'Machine learning', 'Mathematics',
   'Music theory', 'Networking', 'Photography', 'PostgreSQL', 'Python', 'Rust',
   'SQL', 'Statistics', 'Writing'];
-// uuid -> {rows, loaded, builtin, timer, retryTimer, retryDelay, inFlight,
-//          dirty, failed, invalid, error}
+// uuid -> {rows, loaded, loadFailed, builtin, timer, retryTimer, retryDelay,
+//          inFlight, dirty, failed, invalid, error}
 let profileCalState = {};
 function profileCalStateFor(uuid){
   if (!profileCalState[uuid]){
-    profileCalState[uuid] = {rows: [], loaded: false, builtin: false,
+    profileCalState[uuid] = {rows: [], loaded: false, loadFailed: false,
+                             builtin: false,
                              timer: null, retryTimer: null, retryDelay: 1000,
                              inFlight: false, dirty: false, failed: false,
                              invalid: false, error: ''};
@@ -1231,16 +1232,21 @@ async function profileCalLoad(uuid){
   try {
     const r = await fetch('/profile/api/profiles/' + encodeURIComponent(uuid) + '/calibration');
     d = await r.json();
-  } catch (e) { /* rendered as an empty, enabled list; a save will retry */ }
+  } catch (e) { /* loadFailed below — editing stays gated, Retry re-fetches */ }
   // Late GETs are keyed by uuid and never populate the wrong pane; a pending
-  // local edit outranks the fetched snapshot.
+  // local edit outranks the fetched snapshot (only possible on a re-load —
+  // editing is disabled until the FIRST load succeeds, so autosave can never
+  // send an incomplete list as a complete snapshot and delete unseen rows).
   if (profileFormUuid !== uuid) return;
   const st = profileCalStateFor(uuid);
-  if (profileCalPending(st)) return;
+  if (st.loaded && profileCalPending(st)) return;
   if (d && d.ok){
     st.rows = d.topics || [];
     st.builtin = !!d.builtin;
     st.loaded = true;
+    st.loadFailed = false;
+  } else {
+    st.loadFailed = true;
   }
   profileCalRender();
 }
@@ -1279,7 +1285,9 @@ function profileCalRender(){
   const st = uuid ? profileCalState[uuid] : null;
   if (!uuid || !st){ add.hidden = true; profileCalRenderStatus(); return; }
   const builtin = st.builtin;
-  add.hidden = builtin;
+  // Editing is gated on a successful initial load: rows only exist in state
+  // after the snapshot arrived, and the add button stays hidden until then.
+  add.hidden = builtin || !st.loaded;
   st.rows.forEach((row, i) => {
     const wrap = document.createElement('div');
     wrap.className = 'profile-cal-row';
@@ -1349,7 +1357,7 @@ function profileCalAdd(){
   const uuid = profileFormUuid;
   if (!uuid) return;
   const st = profileCalStateFor(uuid);
-  if (st.builtin) return;
+  if (st.builtin || !st.loaded) return;
   // level defaults so the row turns valid the moment a topic is typed; a row
   // with no topic stays a local draft (excluded from the payload below).
   st.rows.push({topic: '', level: 'intermediate'});
@@ -1359,7 +1367,7 @@ function profileCalAdd(){
 }
 function profileCalEdited(uuid){
   const st = profileCalStateFor(uuid);
-  if (st.builtin) return;
+  if (st.builtin || !st.loaded) return;
   st.dirty = true;
   st.invalid = false;
   st.error = '';
@@ -1372,17 +1380,25 @@ function profileCalEdited(uuid){
 function profileCalPayload(st){
   // Complete snapshot: existing rows carry their id, new rows omit it,
   // updated_at is server-owned and never sent. Topicless drafts stay local.
-  return st.rows
-    .filter(r => r.id || (r.topic || '').trim() !== ''
-                 || (r.note || '').trim() !== '')
-    .map(r => {
-      const out = {topic: r.topic || '', level: r.level || ''};
-      if (r.id) out.id = r.id;
-      if (r.stance) out.stance = r.stance;
-      if (r.depth) out.depth = r.depth;
-      if (r.note) out.note = r.note;
-      return out;
-    });
+  // `sent` keeps the local row-object references the canonical response rows
+  // will correspond to (the server drops all-blank rows, mirrored here), so
+  // a success can write server-assigned ids back onto the very objects the
+  // operator may have kept editing.
+  const topics = [];
+  const sent = [];
+  st.rows.forEach(r => {
+    if (!(r.id || (r.topic || '').trim() !== '' || (r.note || '').trim() !== '')) return;
+    const out = {topic: r.topic || '', level: r.level || ''};
+    if (r.id) out.id = r.id;
+    if (r.stance) out.stance = r.stance;
+    if (r.depth) out.depth = r.depth;
+    if (r.note) out.note = r.note;
+    topics.push(out);
+    const keeps = ['topic', 'level', 'stance', 'depth', 'note']
+      .some(k => (out[k] || '').trim() !== '');
+    sent.push(keeps ? r : null);   // null = server will drop it as all-blank
+  });
+  return {topics: topics, sent: sent};
 }
 async function profileCalPush(uuid){
   const st = profileCalStateFor(uuid);
@@ -1391,11 +1407,12 @@ async function profileCalPush(uuid){
   st.inFlight = true;
   st.dirty = false;      // a new edit mid-flight re-marks it
   profileCalRenderStatus();
+  const payload = profileCalPayload(st);
   let status = 0, d = null;
   try {
     const r = await fetch('/profile/api/profiles/' + encodeURIComponent(uuid) + '/calibration', {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({topics: profileCalPayload(st)}),
+      body: JSON.stringify({topics: payload.topics}),
     });
     status = r.status;
     d = await r.json().catch(() => null);
@@ -1405,11 +1422,22 @@ async function profileCalPush(uuid){
     st.failed = false; st.invalid = false; st.error = '';
     st.retryDelay = 1000;
     st.loaded = true;
+    // Write server identity back onto the row objects that were sent, BEFORE
+    // any queued resend: a newly created row adopts its id/stamp even while
+    // the operator keeps typing, so the follow-up snapshot updates that row
+    // in place instead of deleting and recreating it under a fresh uuid.
+    const keptRefs = payload.sent.filter(r => r !== null);
+    (d.topics || []).forEach((canon, i) => {
+      const ref = keptRefs[i];
+      if (!ref) return;
+      if (!ref.id) ref.id = canon.id;
+      ref.updated_at = canon.updated_at;
+    });
     if (st.dirty){
       profileCalPush(uuid);      // a newer local edit wins; resend immediately
     } else {
-      // Adopt the canonical snapshot (server-assigned ids and stamps), but
-      // keep local topicless drafts and never steal focus mid-edit.
+      // Adopt the canonical snapshot wholesale, but keep local topicless
+      // drafts and never steal focus mid-edit.
       const drafts = st.rows.filter(r => !r.id && (r.topic || '').trim() === '');
       st.rows = (d.topics || []).concat(drafts);
       const active = document.activeElement;
@@ -1436,13 +1464,31 @@ function profileCalRenderStatus(){
   const el = document.getElementById('profile-cal-status');
   const err = document.getElementById('profile-cal-error');
   const st = profileFormUuid ? profileCalState[profileFormUuid] : null;
-  if (!st || st.builtin){ el.textContent = ''; err.textContent = ''; return; }
+  el.innerHTML = '';
+  if (!st || st.builtin){ err.textContent = ''; return; }
   err.textContent = st.invalid ? st.error : '';
+  if (!st.loaded){
+    // Editing is gated until this load succeeds; a failed load offers Retry.
+    if (st.loadFailed){
+      el.textContent = 'Could not load calibration — ';
+      const retry = document.createElement('a');
+      retry.href = '#'; retry.textContent = 'retry';
+      retry.addEventListener('click', e => {
+        e.preventDefault();
+        st.loadFailed = false;
+        profileCalRenderStatus();
+        profileCalLoad(profileFormUuid);
+      });
+      el.appendChild(retry);
+    } else {
+      el.textContent = 'Loading…';
+    }
+    return;
+  }
   if (st.failed) el.textContent = 'Save failed — retrying';
   else if (st.invalid) el.textContent = 'Not saved';
   else if (st.inFlight || st.dirty || st.timer) el.textContent = 'Saving…';
-  else if (st.loaded) el.textContent = st.rows.length ? 'Saved ✓' : '';
-  else el.textContent = '';
+  else el.textContent = st.rows.length ? 'Saved ✓' : '';
 }
 // Cancel the debounce and await the newest calibration PUT; false if it
 // can't be saved (validation failure or the server is unreachable).

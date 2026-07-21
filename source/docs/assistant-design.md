@@ -95,10 +95,14 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   acknowledged in this room, the assistant posts one visible notice: the
   generic re-check-facts text for a facts-only event, a tailored notice for
   a profile switch, or a combined notice when distinct events are both
-  pending. The marker's `meta` checkpoints both current stamps
-  (`context_invalidation`, `facts_invalidation`, `profile_context_changed`,
-  `profile_switch_uuid`), each acknowledged independently — several changes
-  before a room runs coalesce into one marker. Legacy markers carrying only
+  pending. The two stamps are written independently (`set_current_profile`
+  never touches the facts stamp — a switch changes the declared-profile
+  blocks, not the Q&A base), so a Q&A event followed by a switch still
+  surfaces as combined in either order. The marker's `meta` checkpoints both
+  current stamps (`context_invalidation`, `facts_invalidation`,
+  `profile_context_changed`, `profile_switch_uuid`), each acknowledged
+  independently — several changes before a room runs coalesce into one
+  marker. Legacy markers carrying only
   `facts_invalidation` stay recognized. The marker is operator-facing: it is
   demoted behind the operator's message and filtered from model history (the
   freshly assembled profile blocks are the model-side signal). Switching the

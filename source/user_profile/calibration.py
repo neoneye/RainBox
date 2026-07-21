@@ -54,47 +54,64 @@ def _omission_line(count: int) -> str:
 
 
 def _assemble(rows: list[dict[str, Any]], budget: int) -> tuple[str, int]:
-    """One greedy degrade-then-drop pass under `budget`. Returns (body,
+    """One degrade-then-drop pass under `budget`. Returns (body,
     omitted_count) WITHOUT the omission line — the caller reserves space for
-    it and appends the real one."""
-    lines = [_CALIBRATION_HEADER]
+    it and appends the real one.
+
+    Phase 1 admits full rows in operator priority order while they fit; every
+    later row starts in compact form. While the total still exceeds the
+    budget, cuts are taken in strict preference order: (1) drop the last
+    compact non-avoid row — later rows absorb cuts first; (2) with only
+    avoid rows left to drop, DEGRADE the last still-full row to compact
+    instead — shrinking an earlier row is always better than un-declaring an
+    operator's `avoid`; (3) only when nothing can shrink further, drop the
+    last avoid row. An avoid the model never sees is the worst truncation
+    outcome."""
     used = len(_CALIBRATION_HEADER)
     if used > budget:
         return "", len(rows)
-    # Phase 1: full rows in operator priority order while they fit; once one
-    # no longer fits, every later row degrades to compact form.
-    compact_mode = False
-    kept: list[tuple[int, str, bool]] = []  # (row index, line, is_avoid)
-    pending: list[tuple[int, str, bool]] = []
+    # entry: {index, full, compact, is_avoid, mode}
+    entries: list[dict[str, Any]] = []
+    full_mode = True
     for index, row in enumerate(rows):
-        is_avoid = str(row.get("stance") or "") == "avoid"
-        if not compact_mode:
-            line = _json_line(row, _FULL_KEYS)
-            if used + 1 + len(line) <= budget:
-                kept.append((index, line, is_avoid))
-                used += 1 + len(line)
-                continue
-            compact_mode = True
-        pending.append((index, _json_line(row, _COMPACT_KEYS), is_avoid))
-    # Phase 2: admit compact rows in order; when the remainder cannot hold
-    # them all, omit from the end — `stance: "avoid"` rows last of all (an
-    # avoid the model never sees is the worst truncation outcome).
-    candidates = list(pending)
-    total = used + sum(1 + len(line) for _, line, _ in candidates)
+        full_line = _json_line(row, _FULL_KEYS)
+        compact_line = _json_line(row, _COMPACT_KEYS)
+        if full_mode and used + 1 + len(full_line) <= budget:
+            mode = "full"
+            used += 1 + len(full_line)
+        else:
+            full_mode = False
+            mode = "compact"
+        entries.append({
+            "index": index, "full": full_line, "compact": compact_line,
+            "is_avoid": str(row.get("stance") or "") == "avoid",
+            "mode": mode,
+        })
+
+    def _line(entry: dict[str, Any]) -> str:
+        return entry["full"] if entry["mode"] == "full" else entry["compact"]
+
+    def _total() -> int:
+        return len(_CALIBRATION_HEADER) + sum(
+            1 + len(_line(e)) for e in entries)
+
     omitted = 0
-    while candidates and total > budget:
-        victim = None
-        for pos in range(len(candidates) - 1, -1, -1):
-            if not candidates[pos][2]:
-                victim = pos
-                break
-        if victim is None:
-            victim = len(candidates) - 1
-        total -= 1 + len(candidates[victim][1])
-        del candidates[victim]
+    while entries and _total() > budget:
+        compact_entries = [e for e in entries if e["mode"] == "compact"]
+        victim = next((e for e in reversed(compact_entries)
+                       if not e["is_avoid"]), None)
+        if victim is not None:
+            entries.remove(victim)
+            omitted += 1
+            continue
+        degradable = next((e for e in reversed(entries)
+                           if e["mode"] == "full"), None)
+        if degradable is not None:
+            degradable["mode"] = "compact"
+            continue
+        entries.pop()          # only avoid rows remain; drop from the end
         omitted += 1
-    merged = sorted(kept + candidates, key=lambda item: item[0])
-    lines.extend(line for _, line, _ in merged)
+    lines = [_CALIBRATION_HEADER, *(_line(e) for e in entries)]
     return "\n".join(lines), omitted
 
 
@@ -119,11 +136,15 @@ def format_calibration(profile: dict[str, Any],
     if not omitted:
         return body
     # Something was dropped: redo the pass with space reserved for the
-    # worst-case omission line, then disclose the exact count.
+    # worst-case omission line, then disclose the exact count. The smaller
+    # budget can degrade rows earlier and thereby fit MORE of them — when the
+    # second pass omits nothing after all, the disclosure line is not owed.
     reserve = 1 + len(_omission_line(len(rows)))
     body, omitted = _assemble(rows, max(0, max_chars - reserve))
     if not body:
         return ""
+    if not omitted:
+        return body
     return f"{body}\n{_omission_line(omitted)}"
 
 

@@ -1037,16 +1037,21 @@ Implementation contract for the marker:
 - add `db.set_current_profile(value)` and use it for runtime writes; it
   validates the target, compares the old/new effective UUID, and does nothing
   extra on a no-op;
-- on change, it writes `profile.current`, advances
-  `qa.facts_invalidated_at`, and stores that same stamp in
-  `profile.current_changed_at`. These three row updates are **one database
+- on change, it writes `profile.current` and stores the change stamp in
+  `profile.current_changed_at`. These two row updates are **one database
   transaction and one commit**: a concurrent assistant turn sees either the
-  complete old state or the complete new state, never a new profile with old
-  marker stamps. Extract the row-upsert part of `set_setting()` into a private
-  no-commit helper; ordinary `set_setting()` and `mark_facts_invalidated()`
-  retain their current commit-on-success public behavior, while
-  `set_current_profile()` composes the three row updates and rolls the whole
-  transaction back on failure;
+  complete old state or the complete new state, never a new profile with an
+  old marker stamp. `qa.facts_invalidated_at` is deliberately NOT advanced —
+  a switch changes the declared-profile blocks, not the Q&A knowledge base,
+  and coupling the stamps would let a switch silently absorb a
+  still-unacknowledged Q&A event, making the required Q&A-then-profile
+  combined marker impossible. (An earlier draft advanced both stamps
+  together; that mechanism contradicted this document's own combined-marker
+  test contract and lost.) Extract the row-upsert part of `set_setting()`
+  into a private no-commit helper; ordinary `set_setting()` and
+  `mark_facts_invalidated()` retain their current commit-on-success public
+  behavior, while `set_current_profile()` composes the two row updates and
+  rolls the whole transaction back on failure;
 - "omitted from the settings editor" needs a mechanism that does not exist
   yet: the `Setting` registry dataclass gains `internal: bool = False`, and
   `all_settings()` gains `include_internal=False` so the `/settings` page
@@ -1066,21 +1071,19 @@ Implementation contract for the marker:
   `_maybe_post_context_marker(room_uuid, context)`. It uses the UUID, label,
   and stamps from the turn's captured context, never rereads settings. For each
   room it treats the snapshot's non-empty `qa.facts_invalidated_at` and
-  `profile.current_changed_at` values as two independently acknowledged event
-  stamps. A cause is pending when no prior room marker carries its exact
-  current stamp. Do **not** infer the cause by requiring the two stamps to be
-  equal: a Q&A change after a profile switch legitimately advances only the
-  facts stamp;
+  `profile.current_changed_at` values as two independently written,
+  independently acknowledged event stamps. A cause is pending when no prior
+  room marker carries its exact current stamp;
 - when either cause is pending, post exactly one marker that checkpoints both
   current stamps. Its meta is
   `{"context_invalidation": true, "facts_invalidation": <stamp-or-null>,
   "profile_context_changed": <stamp-or-null>, "profile_switch_uuid":
   <uuid-or-null>}`. Keeping `facts_invalidation` preserves compatibility with
   existing markers and tooling. The text is the existing generic notice for a
-  facts-only event, the tailored profile notice for a switch (where the facts
-  stamp is the same event), or one combined notice when distinct facts and
-  profile events are both pending. Several changes before a room runs coalesce
-  to the latest state; a later change to either setting creates one new marker;
+  facts-only event, the tailored profile notice for a switch-only event, or
+  one combined notice when both causes are pending — in either order of
+  occurrence. Several changes before a room runs coalesce to the latest
+  state; a later change to either setting creates one new marker;
 - generalize trailing-marker demotion and prompt filtering to recognize
   `context_invalidation`, while continuing to recognize legacy markers that
   have only `facts_invalidation`. Progress restoration keeps the same

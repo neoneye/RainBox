@@ -47,17 +47,20 @@ def _raw(key: str) -> str | None:
     return row.value if row is not None else None
 
 
-def test_change_writes_all_three_in_one_stamp(app_ctx):
+def test_change_writes_pointer_and_stamp_but_not_facts(app_ctx):
     db.set_setting("profile.current", None)
-    db.set_setting("qa.facts_invalidated_at", None)
+    db.set_setting("qa.facts_invalidated_at", "2026-01-01T00:00:00+00:00")
     db.set_setting("profile.current_changed_at", None)
 
     target = _template_uuid(0)
     stamp = db.set_current_profile(target)
     assert stamp
     assert db.get_setting("profile.current") == target
-    assert db.get_setting("qa.facts_invalidated_at") == stamp
     assert db.get_setting("profile.current_changed_at") == stamp
+    # A switch changes the declared-profile blocks, not the Q&A base: the
+    # facts stamp stays independent so a still-unacknowledged Q&A event is
+    # never silently absorbed into the switch.
+    assert db.get_setting("qa.facts_invalidated_at") == "2026-01-01T00:00:00+00:00"
 
 
 def test_same_value_is_a_noop(app_ctx):
@@ -107,7 +110,7 @@ def test_failure_rolls_back_the_whole_transaction(app_ctx, monkeypatch):
 
     def failing(spec, value):
         calls["n"] += 1
-        if calls["n"] == 3:            # the last of the three staged writes
+        if calls["n"] == 2:            # the last of the two staged writes
             raise RuntimeError("boom")
         real(spec, value)
 
@@ -118,12 +121,10 @@ def test_failure_rolls_back_the_whole_transaction(app_ctx, monkeypatch):
 
 
 def test_plain_set_setting_stamps_nothing(app_ctx):
-    """The low-level seam still works but never advances the event stamps."""
+    """The low-level seam still works but never advances the event stamp."""
     db.set_current_profile(None)
-    facts_before = _raw("qa.facts_invalidated_at")
     changed_before = _raw("profile.current_changed_at")
     db.set_setting("profile.current", _template_uuid(0))
-    assert _raw("qa.facts_invalidated_at") == facts_before
     assert _raw("profile.current_changed_at") == changed_before
 
 
@@ -156,7 +157,7 @@ def test_settings_endpoint_routes_profile_current_through_helper(app_ctx):
     assert db.get_setting("profile.current") == target
     stamp = db.get_setting("profile.current_changed_at")
     assert stamp
-    assert db.get_setting("qa.facts_invalidated_at") == stamp
+    assert db.get_setting("qa.facts_invalidated_at") is None   # untouched
 
     # An unrelated setting write must not advance the profile stamp.
     resp = client.post("/settings/api/set",

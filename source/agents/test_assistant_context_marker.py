@@ -121,7 +121,7 @@ def test_profile_switch_posts_tailored_notice(room):
     assert f"switched to {_template_name(0)}" in marks[0]["text"]
     assert "room history is preserved" in marks[0]["text"]
     meta = marks[0]["meta"]
-    assert meta["facts_invalidation"] == stamp
+    assert meta["facts_invalidation"] is None      # a switch never stamps facts
     assert meta["profile_context_changed"] == stamp
     assert meta["profile_switch_uuid"] == _template_uuid(0)
     # The same pair of stamps never posts twice in this room.
@@ -189,16 +189,19 @@ def test_profile_then_qa_before_room_runs_posts_one_combined_marker(room):
 
 
 def test_qa_then_profile_before_room_runs_posts_one_combined_marker(room):
+    """A Q&A event followed by a switch must surface BOTH causes — the switch
+    never absorbs a still-unacknowledged facts invalidation."""
     agent = _agent()
-    db.mark_facts_invalidated()
+    stamp_facts = db.mark_facts_invalidated()
     db.set_current_profile(_template_uuid(1))
-    # set_current_profile advanced the facts stamp again, so the pending facts
-    # stamp equals the switch stamp: that is the switch event itself.
     assert _post(agent, room.uuid) is True
     marks = _markers(room.uuid)
     assert len(marks) == 1
-    assert f"switched to {_template_name(1)}" in marks[0]["text"]
-    assert _post(agent, room.uuid) is False
+    text = marks[0]["text"]
+    assert f"switched to {_template_name(1)}" in text
+    assert "stored facts or the Q&A knowledge base also changed" in text
+    assert marks[0]["meta"]["facts_invalidation"] == stamp_facts
+    assert _post(agent, room.uuid) is False        # both stamps checkpointed
 
 
 def test_qa_change_after_acknowledged_switch_returns_to_generic_notice(room):
@@ -235,7 +238,7 @@ def test_context_snapshot_reads_pointer_and_stamps_atomically(app_ctx):
     assert context.profile_uuid == UUID(_template_uuid(0))
     assert context.profile is not None
     assert context.profile["name"] == _template_name(0)
-    assert context.facts_invalidated_at == stamp
+    assert context.facts_invalidated_at is None    # a switch never stamps facts
     assert context.profile_changed_at == stamp
     db.set_current_profile(None)
     empty = user_profile.current_profile_context()

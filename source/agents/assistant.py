@@ -2905,18 +2905,18 @@ class AssistantAgent(ModelGroupAgent):
         yet been acknowledged in this room. Uses ONLY the uuid, label, and
         stamps from the turn's captured context, never a fresh settings read.
 
-        The snapshot's two non-empty stamps are independently acknowledged
-        events: a cause is pending when no prior room marker carries its exact
-        current stamp (the cause is NOT inferred by requiring the two stamps
-        to be equal — a Q&A change after a profile switch legitimately
-        advances only the facts stamp). One marker checkpoints both current
+        The snapshot's two non-empty stamps are independently written and
+        independently acknowledged events (set_current_profile never touches
+        the facts stamp): a cause is pending when no prior room marker
+        carries its exact current stamp. One marker checkpoints both current
         stamps, so several changes before a room runs coalesce to the latest
         state. The text is the generic facts notice for a facts-only event,
-        the tailored profile notice for a switch (whose facts stamp is the
-        same event), or one combined notice when distinct facts and profile
-        events are both pending. Returns True when a marker was posted (the
-        caller must then restore the progress bubble the terminal-kind post
-        just reaped). Best-effort: a failure here must never break the turn."""
+        the tailored profile notice for a switch-only event, or one combined
+        notice when both are pending — in either order of occurrence, an
+        unacknowledged Q&A event is never silently absorbed by a later
+        switch. Returns True when a marker was posted (the caller must then
+        restore the progress bubble the terminal-kind post just reaped).
+        Best-effort: a failure here must never break the turn."""
         try:
             facts = context.facts_invalidated_at
             changed = context.profile_changed_at
@@ -2934,10 +2934,7 @@ class AssistantAgent(ModelGroupAgent):
                 return False
 
             label = str((context.profile or {}).get("name") or "").strip() or None
-            # A pending facts stamp equal to the switch stamp IS the switch
-            # event; a different pending facts stamp is a distinct Q&A event.
-            distinct_facts_event = facts_pending and facts != changed
-            if profile_pending and distinct_facts_event:
+            if profile_pending and facts_pending:
                 text = _combined_context_notice(label)
             elif profile_pending:
                 text = _profile_switch_notice(label)

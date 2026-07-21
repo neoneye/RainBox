@@ -56,7 +56,9 @@ def _stub(reply_text, action=AssistantActionName.REPLY):
 
     def fake(self, *, system_prompt, user_prompt, response_model, validator=None):
         captured["prompts"].append((system_prompt, user_prompt))
-        self._last_usage = {"input_tokens": 321, "output_tokens": 12}
+        # The real ModelGroupAgent usage schema — {"input", "output", "ms"} —
+        # so this stub can't mask a key mismatch in the harness again.
+        self._last_usage = {"input": 321, "output": 12, "ms": 40}
         self._last_model_uuid = captured.setdefault("model_uuid", uuid4())
         return AssistantStepDecision(
             reason="eval", action=action, args={"message": reply_text})

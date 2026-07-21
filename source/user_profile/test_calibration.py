@@ -113,6 +113,36 @@ def test_omission_line_reserved_inside_budget():
                 int(body.splitlines()[-1].split()[1]))
 
 
+def test_omission_line_never_reports_zero():
+    """The second (reserved-space) pass can fit everything after degrading
+    earlier; the disclosure line must then be absent, never 'Omitted 0'."""
+    topics = [{"topic": f"T{i}", "level": "beginner", "note": "n" * 160}
+              for i in range(6)]
+    for budget in range(300, 1700, 7):
+        body = format_calibration(_profile(topics), max_chars=budget)
+        assert "Omitted 0 " not in body
+        if "Omitted" in body:
+            assert int(body.splitlines()[-1].split()[1]) > 0
+
+
+def test_full_rows_degrade_before_an_avoid_row_is_dropped():
+    """A full non-avoid row must not keep its note while a later avoid row is
+    omitted entirely: the ladder shrinks earlier rows to make room, and only
+    drops an avoid row when nothing is left to shrink or drop."""
+    for n in range(4, 24):
+        for note_len in range(150, 400, 10):
+            topics = [{"topic": f"Topic{i:02d}", "level": "beginner",
+                       "note": "n" * note_len} for i in range(n)]
+            topics[-1]["stance"] = "avoid"
+            body = format_calibration(_profile(topics), max_chars=1600)
+            avoid_name = f"Topic{n - 1:02d}"
+            if avoid_name not in body:
+                # The avoid row may only be missing when NO row kept a note —
+                # everything degraded to compact before the drop.
+                assert '"note"' not in body, (n, note_len)
+            assert len(body) <= 1600
+
+
 def test_default_budget_is_the_global_guidance_cap():
     topics = [{"topic": f"Topic{i:03d}", "level": "intermediate",
                "note": "x" * 300} for i in range(100)]

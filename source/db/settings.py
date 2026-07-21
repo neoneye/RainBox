@@ -308,10 +308,14 @@ def set_setting(key: str, value: object) -> None:
 def set_current_profile(value: object) -> str | None:
     """The runtime write path for `profile.current`: validate the target,
     compare against the currently effective value, and on an actual change
-    write `profile.current`, advance `qa.facts_invalidated_at`, and store that
-    same stamp in `profile.current_changed_at` as ONE transaction — a
-    concurrent assistant turn sees either the complete old state or the
-    complete new state, never a new profile with old marker stamps.
+    write `profile.current` and `profile.current_changed_at` as ONE
+    transaction — a concurrent assistant turn sees either the complete old
+    state or the complete new state, never a new profile with an old marker
+    stamp. `qa.facts_invalidated_at` is deliberately untouched: a profile
+    switch changes the declared-profile prompt blocks, not the Q&A knowledge
+    base, and keeping the two event stamps independent is what lets the
+    assistant's context marker report a still-unacknowledged Q&A event as a
+    combined notice instead of silently absorbing it into the switch.
 
     Returns the stamp when a change was committed, or None on a no-op (same
     effective value). A plain set_setting("profile.current", ...) still works
@@ -341,7 +345,6 @@ def set_current_profile(value: object) -> str | None:
     stamp = datetime.now(UTC).isoformat()
     try:
         _upsert_setting_row(spec, new_norm)
-        _upsert_setting_row(_registry("qa.facts_invalidated_at"), stamp)
         _upsert_setting_row(_registry("profile.current_changed_at"), stamp)
         db.session.commit()
     except Exception:
