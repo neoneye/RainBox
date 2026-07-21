@@ -41,8 +41,15 @@ PROFILE_FIELDS = [
                "modern day alchemist doing code”."),
     Field("birthday",       "Identity", kind="date",  label="Birthday"),
     # group "Locale & formats"
+    # "uk" is the hybrid macOS calls "Measurement System: UK": kilograms and
+    # Celsius, but road distances in miles. "imperial" is US customary.
     Field("units",          "Locale & formats", kind="enum", label="Units",
-          choices=("metric", "imperial")),
+          choices=("metric", "imperial", "uk")),
+    # Separate from `units` because the combinations are real (the UK is
+    # metric-leaning with Celsius; US customary pairs with Fahrenheit).
+    # Unset derives from units: metric/uk → celsius, imperial → fahrenheit.
+    Field("temperature",    "Locale & formats", kind="enum", label="Temperature",
+          choices=("celsius", "fahrenheit")),
     Field("timezone",       "Locale & formats", kind="text", label="Timezone",
           datalist="tz", hint="IANA name, e.g. Europe/Copenhagen"),
     Field("date_format",    "Locale & formats", kind="enum", label="Date format",

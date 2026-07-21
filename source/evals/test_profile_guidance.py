@@ -172,7 +172,7 @@ def test_inline_profile_override(app_ctx, monkeypatch):
         run = pg.run_profile_guidance_suite([c.uuid], variant="formatting_only",
                                             repetitions=1)
         assert db.list_eval_results_for_run(run.uuid)[0].score == 1.0
-        assert "mi, lb, and °F" in captured["prompts"][0][1]
+        assert "Prefer mi and lb" in captured["prompts"][0][1]
     finally:
         db.db.session.rollback()
         for run in db.db.session.query(db.EvalRun).all():

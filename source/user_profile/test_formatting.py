@@ -11,6 +11,7 @@ from user_profile.formatting import (
     ENGLISH_SPELLING,
     MAX_FORMATTING_GUIDE_CHARS,
     NUMBER_FORMATS,
+    TEMPERATURES,
     THREE_DECIMAL_CURRENCIES_V1,
     TIME_FORMATS,
     UNITS,
@@ -40,6 +41,7 @@ def test_lookups_exhaustive_over_registry_enums():
     assert set(DATE_FORMATS) == set(fields["date_format"].choices)
     assert set(TIME_FORMATS) == set(fields["time_format"].choices)
     assert set(UNITS) == set(fields["units"].choices)
+    assert set(TEMPERATURES) == set(fields["temperature"].choices)
     assert set(WEEK_STARTS) == set(fields["first_day_of_week"].choices)
     for wording, examples in NUMBER_FORMATS.values():
         assert wording
@@ -66,8 +68,9 @@ def test_germany_renders_expected_body():
         "- Times: 24-hour clock, for example 23:59. Present local times in "
         "Europe/Berlin (currently UTC+02:00); name another zone when "
         "relevant.\n"
-        "- Units: metric. Prefer km, kg, and °C; preserve a source value "
+        "- Units: metric. Prefer km and kg; preserve a source value "
         "when precision matters and add the conversion.\n"
+        "- Temperature: Celsius (°C).\n"
         "- Numbers: decimal comma with point grouping, for example "
         "1.234.567,89.\n"
         "- Currency: use the currency code EUR with the preferred number format, "
@@ -94,8 +97,28 @@ def test_india_renders_indian_grouping_and_half_hour_offset():
 def test_imperial_and_negative_offset():
     body = format_formatting_guide(
         _profile(units="imperial", timezone="America/Denver"), now=SUMMER)
-    assert "- Units: imperial. Prefer mi, lb, and °F" in body
+    assert "- Units: US customary. Prefer mi and lb" in body
+    assert "- Temperature: Fahrenheit (°F)." in body     # derived from units
     assert "America/Denver (currently UTC-06:00)" in body
+
+
+def test_uk_hybrid_units_and_temperature_override():
+    uk = format_formatting_guide(_profile(units="uk"))
+    assert ("- Units: metric with UK exceptions. Prefer kg, but miles for "
+            "road distances; preserve a source value" in uk)
+    assert "- Temperature: Celsius (°C)." in uk           # uk derives Celsius
+    # An explicit temperature always beats the units-implied default.
+    mixed = format_formatting_guide(
+        _profile(units="imperial", temperature="celsius"))
+    assert "- Units: US customary" in mixed
+    assert "- Temperature: Celsius (°C)." in mixed
+    assert "Fahrenheit" not in mixed
+    # Temperature alone renders without a units line; neither field → no line.
+    alone = format_formatting_guide(_profile(temperature="fahrenheit"))
+    assert "- Temperature: Fahrenheit (°F)." in alone
+    assert "- Units:" not in alone
+    assert "Temperature" not in format_formatting_guide(
+        _profile(date_format="YYYY-MM-DD"))
 
 
 # ---- sparse profiles: only usable directives render -----------------------
@@ -110,8 +133,9 @@ def test_sparse_profile_renders_only_available_lines():
     assert body.splitlines() == [
         "Use these defaults unless the current request or exact source "
         "notation says otherwise:",
-        "- Units: metric. Prefer km, kg, and °C; preserve a source value "
+        "- Units: metric. Prefer km and kg; preserve a source value "
         "when precision matters and add the conversion.",
+        "- Temperature: Celsius (°C).",   # derived from the units system
     ]
 
 
@@ -248,7 +272,7 @@ def test_maximal_profile_stays_within_cap():
             date_format="MM/DD/YYYY", time_format="12h",
             language="zh-Hans-CN", language_2="en-GB",
             currency="BHD", currency_2="USD", number_format=number_format,
-            first_day_of_week="monday",
+            first_day_of_week="monday", temperature="fahrenheit",
         ), now=SUMMER)
         assert 0 < len(body) <= MAX_FORMATTING_GUIDE_CHARS
 

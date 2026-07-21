@@ -82,10 +82,26 @@ WEEK_STARTS: dict[str, str] = {
     "saturday": "weeks start on Saturday",
 }
 
-# stored value -> unit-system wording with the preferred unit names
+# stored value -> unit-system wording with the preferred unit names.
+# Temperature is deliberately NOT here — it renders as its own line (the
+# `temperature` field, derived from units when unset), because the
+# combinations are real: UK metric-leaning + Celsius, US customary + °F.
 UNITS: dict[str, str] = {
-    "metric": "metric. Prefer km, kg, and °C",
-    "imperial": "imperial. Prefer mi, lb, and °F",
+    "metric": "metric. Prefer km and kg",
+    "imperial": "US customary. Prefer mi and lb",
+    "uk": "metric with UK exceptions. Prefer kg, but miles for road "
+          "distances",
+}
+
+# stored value -> the temperature directive; `_derived_temperature` supplies
+# the units-implied default when the field is unset.
+TEMPERATURES: dict[str, str] = {
+    "celsius": "Celsius (°C)",
+    "fahrenheit": "Fahrenheit (°F)",
+}
+
+_UNITS_DEFAULT_TEMPERATURE: dict[str, str] = {
+    "metric": "celsius", "uk": "celsius", "imperial": "fahrenheit",
 }
 
 # canonical language tag -> spelling clause (bare "en" adds none; only the
@@ -222,10 +238,17 @@ def format_formatting_guide(profile: dict[str, Any],
                            "zone when relevant.")
         lines.append("- Times: " + " ".join(clauses))
 
-    units = UNITS.get(str(data.get("units") or "").strip())
+    units_value = str(data.get("units") or "").strip()
+    units = UNITS.get(units_value)
     if units is not None:
         lines.append(f"- Units: {units}; preserve a source value when "
                      "precision matters and add the conversion.")
+
+    temperature_value = (str(data.get("temperature") or "").strip()
+                         or _UNITS_DEFAULT_TEMPERATURE.get(units_value, ""))
+    temperature = TEMPERATURES.get(temperature_value)
+    if temperature is not None:
+        lines.append(f"- Temperature: {temperature}.")
 
     number_entry = NUMBER_FORMATS.get(str(data.get("number_format") or "").strip())
     if number_entry is not None:

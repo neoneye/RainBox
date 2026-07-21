@@ -24,7 +24,7 @@ def app_ctx():
 
 def test_registry_shape():
     keys = [f.key for f in profile_fields.PROFILE_FIELDS]
-    assert len(keys) == len(set(keys)) == 21
+    assert len(keys) == len(set(keys)) == 22
     assert keys[0] == "full_name"
     assert profile_fields.FIELD_GROUPS == [
         "Identity", "Locale & formats", "Contact & location"]
@@ -281,6 +281,22 @@ def test_all_templates_carry_first_day_of_week(app_ctx):
                       "China", "Japan", "South Korea", "Singapore",
                       "Australia"}
     assert monday | sunday == set(by_name)         # every template covered
+
+
+def test_all_templates_carry_units_and_temperature(app_ctx):
+    """The US is the sole Fahrenheit template; the UK ships the hybrid
+    measurement system (kg + °C, miles on roads); everyone else is plain
+    metric Celsius."""
+    by_name = {e["name"]: e["data"] for e in db.profile_templates_entries()}
+    assert by_name["US"]["units"] == "imperial"
+    assert by_name["US"]["temperature"] == "fahrenheit"
+    assert by_name["UK"]["units"] == "uk"
+    assert by_name["UK"]["temperature"] == "celsius"
+    for name, data in by_name.items():
+        if name in ("US", "UK"):
+            continue
+        assert data["units"] == "metric", name
+        assert data["temperature"] == "celsius", name
 
 
 def test_update_data_merges_and_deletes(app_ctx, empty_tree):

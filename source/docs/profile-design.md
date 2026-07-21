@@ -84,9 +84,11 @@ rendered as one `<fieldset>` each in registry order:
 
 - **Identity** — names (full, native-script, "address them as", internet
   handle), gender (enum), a multiline "About", birthday (date).
-- **Locale & formats** — units, date/time format, number format, first day
-  of week (enums), timezone, primary + secondary language and currency
-  (datalist-assisted free text). The `number_format` enum's five values
+- **Locale & formats** — units (`metric|imperial|uk` — `uk` is the hybrid:
+  kg and °C but miles on roads; `imperial` is US customary), temperature
+  (`celsius|fahrenheit`, derived from units when unset), date/time format,
+  number format, first day of week (enums), timezone, primary + secondary
+  language and currency (datalist-assisted free text). The `number_format` enum's five values
   double as previews — every choice renders the same `1234567.89` sample
   (seven integer digits are what disambiguate Indian from Western grouping),
   differing only in separators. `first_day_of_week`
