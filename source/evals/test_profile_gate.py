@@ -1,10 +1,12 @@
 """Tests for the executable release gate (evals/profile_gate): the recorded
 contract — hard-zero exact-source, 2-of-3 with the 90% override rate,
 no-regression, family margins — plus the evidence validation each reported
-bypass targeted: repetition-count enforcement, run provenance and variant
-slots, bound-group and member-snapshot proof, per-case manifest equality,
-mandatory-family presence, the mandatory combined run, and invalid state
-withholding every decision."""
+bypass targeted: the complete current seed-manifest inventory (seed_rev and
+fingerprint enforced), defensive threshold/shape validation, repetition
+counts, run provenance and variant slots, current-membership model proof,
+per-repetition provenance, manifest equality, the mandatory combined run,
+and invalid state withholding every decision. Synthetic runs are built FROM
+the real code-owned manifest so these tests track the shipped inventory."""
 
 from uuid import UUID, uuid4
 
@@ -12,9 +14,16 @@ import pytest
 
 import db
 import evals.profile_gate as gate
+from evals.profile_guidance import SEED_REV, current_seed_manifest
 
 GROUP = str(uuid4())
 MEMBERS = sorted(str(uuid4()) for _ in range(2))
+
+# Family score defaults chosen so every case passes at baseline levels and
+# the formatting candidate clears its margins.
+BASELINE_SCORES = {"locale": 0.4, "calibration": 0.5, "exact_source": 1.0,
+                   "override": 1.0, "injection": 1.0, "counterfactual": 0.8,
+                   "regression": 0.8}
 
 
 class _FakeBinding:
@@ -27,9 +36,12 @@ def app_ctx(monkeypatch):
     db.init_db(app)
     ctx = app.app_context()
     ctx.push()
-    # The gate proves runs used the assistant's CURRENT binding; pin it.
+    # The gate proves runs used the assistant's CURRENT binding and the
+    # group's CURRENT membership; pin both.
     monkeypatch.setattr(gate.db, "get_agent_model_binding",
                         lambda _uuid: _FakeBinding())
+    monkeypatch.setattr(gate.db, "get_model_group_member_uuids",
+                        lambda _uuid: [UUID(m) for m in MEMBERS])
     created_runs = []
     orig_create = db.create_eval_run
 
@@ -56,68 +68,86 @@ def app_ctx(monkeypatch):
         ctx.pop()
 
 
-def _make_run(tracking_create, cases, *, variant, repetitions=3,
+@pytest.fixture
+def inventory(app_ctx):
+    """Real EvalCase rows for the COMPLETE current code-owned manifest,
+    keyed by seed id (EvalResult carries a FK to eval_case)."""
+    manifest = current_seed_manifest()
+    ids = {}
+    for sid in manifest:
+        case = db.create_eval_case(
+            name=f"pg-gate-test-{sid}-{uuid4().hex[:6]}",
+            case_type="chat_reply", status="active")
+        ids[sid] = case.uuid
+    return manifest, ids
+
+
+def _rows(manifest, ids, *, scores_by_family=None, overrides=None):
+    """{case_uuid: row spec} for every manifest entry, family-default scores
+    with per-seed-id overrides ({sid: reps} or {sid: (reps, extra)})."""
+    scores_by_family = {**BASELINE_SCORES, **(scores_by_family or {})}
+    out = {}
+    for sid, entry in manifest.items():
+        reps = [scores_by_family[entry["family"]]] * 3
+        extra = {}
+        if overrides and sid in overrides:
+            spec = overrides[sid]
+            reps, extra = spec if isinstance(spec, tuple) else (spec, {})
+        out[ids[sid]] = {
+            "family": extra.get("family", entry["family"]),
+            "threshold": extra.get("threshold", entry["threshold"]),
+            "fingerprint": extra.get("fingerprint", entry["fingerprint"]),
+            "seed_id": extra.get("seed_id", sid),
+            "seed_rev": extra.get("seed_rev", SEED_REV),
+            "reps": reps,
+        }
+    return out
+
+
+def _make_run(tracking_create, rows, *, variant, repetitions=3,
               group=GROUP, members=None, live=True, finish=True,
               agent_role="assistant"):
-    """cases: {case_uuid: (family, [rep dicts or scores], manifest_extra)}."""
     run = tracking_create(
         name=f"pg-test {variant}", agent_role=agent_role,
         config={"live": live, "variant": variant, "repetitions": repetitions,
                 "model_group_uuid": group,
                 "model_member_uuids": members if members is not None else MEMBERS,
-                "case_uuids": [str(cu) for cu in cases]})
-    for cu, spec in cases.items():
-        family, reps = spec[0], spec[1]
-        manifest = spec[2] if len(spec) > 2 else {}
-        reps = [r if isinstance(r, dict) else
-                {"score": r, "model_uuid": MEMBERS[0]} for r in reps]
-        scores = [float(r.get("score") or 0.0) for r in reps]
+                "case_uuids": [str(cu) for cu in rows]})
+    for cu, row in rows.items():
+        reps = [r if isinstance(r, (dict, str)) else
+                {"score": r, "model_uuid": MEMBERS[0],
+                 "model_group_uuid": group} for r in row["reps"]]
+        # The stored EvalResult.score column has a [0,1] constraint; clamp a
+        # sane aggregate even when the test plants malformed rep entries —
+        # the gate reads the per-repetition details, not this column.
+        numeric = [float(r["score"]) for r in reps
+                   if isinstance(r, dict)
+                   and isinstance(r.get("score"), (int, float))
+                   and 0.0 <= r["score"] <= 1.0]
         db.create_eval_result(
             eval_run_uuid=run.uuid, eval_case_uuid=cu,
-            score=sum(scores) / len(scores) if scores else 0.0,
-            passed=all(s >= 0.7 for s in scores),
-            details={"threshold": manifest.get("threshold", 0.7),
-                     "family": family, "variant": variant,
-                     "case_fingerprint": manifest.get("fingerprint",
-                                                      f"fp-{family}"),
-                     "seed_id": manifest.get("seed_id", f"sid-{family}"),
+            score=sum(numeric) / len(numeric) if numeric else 0.0,
+            passed=all(s >= 0.7 for s in numeric),
+            details={"threshold": row["threshold"], "family": row["family"],
+                     "variant": variant,
+                     "case_fingerprint": row["fingerprint"],
+                     "seed_id": row["seed_id"], "seed_rev": row["seed_rev"],
                      "repetitions": reps})
     if finish:
         db.finish_eval_run(run.uuid, summary={"variant": variant})
     return run
 
 
-def _case_set():
-    out = {}
-    for key in ("locale", "exact", "override", "calibration", "injection"):
-        case = db.create_eval_case(
-            name=f"pg-gate-test-{key}-{uuid4().hex[:8]}",
-            case_type="chat_reply", status="active")
-        out[key] = case.uuid
-    return out
+def _formatting_scores():
+    return {"locale": 0.9}
 
 
-def _baseline_cases(ids):
-    return {
-        ids["locale"]: ("locale", [0.4, 0.4, 0.4]),
-        ids["exact"]: ("exact_source", [1.0, 1.0, 1.0]),
-        ids["override"]: ("override", [1.0, 1.0, 1.0]),
-        ids["calibration"]: ("calibration", [0.5, 0.5, 0.5]),
-        ids["injection"]: ("injection", [1.0, 1.0, 1.0]),
-    }
-
-
-def _passing_formatting_cases(ids):
-    cases = _baseline_cases(ids)
-    cases[ids["locale"]] = ("locale", [0.9, 0.9, 0.9])
-    return cases
-
-
-def test_passing_formatting_gate(app_ctx):
+def test_passing_formatting_gate(app_ctx, inventory):
     _, create, _ = app_ctx
-    ids = _case_set()
-    base = _make_run(create, _baseline_cases(ids), variant="baseline")
-    cand = _make_run(create, _passing_formatting_cases(ids),
+    manifest, ids = inventory
+    base = _make_run(create, _rows(manifest, ids), variant="baseline")
+    cand = _make_run(create,
+                     _rows(manifest, ids, scores_by_family=_formatting_scores()),
                      variant="formatting_only")
     report = gate.evaluate_gate(baseline_uuid=base.uuid,
                                 formatting_uuid=cand.uuid)
@@ -125,20 +155,22 @@ def test_passing_formatting_gate(app_ctx):
     verdict = report["decisions"]["formatting"]
     assert verdict["passed"], verdict["reasons"]
     assert verdict["margins"]["locale"] == pytest.approx(0.5)
-    assert report["allowed_enablement"] == "formatting"
+    assert report["allowed_enablement"] == {
+        "formatting_alone": True, "calibration_alone": False, "both": False}
     gate_run = db.get_eval_run(UUID(report["gate_run_uuid"]))
     assert gate_run is not None and gate_run.summary["valid"] is True
 
 
-def test_margin_hard_zero_override_and_regression_rules(app_ctx):
+def test_margin_hard_zero_override_and_regression_rules(app_ctx, inventory):
     _, create, _ = app_ctx
-    ids = _case_set()
-    base = _make_run(create, _baseline_cases(ids), variant="baseline")
-    cand_cases = _passing_formatting_cases(ids)
-    cand_cases[ids["locale"]] = ("locale", [0.5, 0.5, 0.5])   # +0.10 only
-    cand_cases[ids["exact"]] = ("exact_source", [1.0, 1.0, 0.0])
-    cand_cases[ids["override"]] = ("override", [0.0, 0.0, 0.0])
-    cand = _make_run(create, cand_cases, variant="formatting_only")
+    manifest, ids = inventory
+    base = _make_run(create, _rows(manifest, ids), variant="baseline")
+    cand = _make_run(create, _rows(
+        manifest, ids,
+        scores_by_family={"locale": 0.5},              # +0.10 only
+        overrides={"exact_source.code": [1.0, 1.0, 0.0],
+                   "override.fahrenheit": [0.0, 0.0, 0.0]},
+    ), variant="formatting_only")
     verdict = gate.evaluate_gate(
         baseline_uuid=base.uuid,
         formatting_uuid=cand.uuid)["decisions"]["formatting"]
@@ -149,100 +181,161 @@ def test_margin_hard_zero_override_and_regression_rules(app_ctx):
     assert "regression" in joined
 
 
-def test_single_repetition_cannot_satisfy_two_of_three(app_ctx):
-    """One recorded passing repetition must not read as 100% — the gate
-    requires exactly three repetitions per case."""
+def test_stale_seed_rev_or_fingerprint_rejected(app_ctx, inventory):
+    """Obsolete weak definitions are not evidence about the code that would
+    ship: an older seed_rev, or a fingerprint differing from the current
+    code-owned definition, invalidates the run."""
     _, create, _ = app_ctx
-    ids = _case_set()
-    base = _make_run(create, _baseline_cases(ids), variant="baseline")
-    cand_cases = _passing_formatting_cases(ids)
-    cand_cases[ids["override"]] = ("override", [1.0])          # one rep only
-    cand = _make_run(create, cand_cases, variant="formatting_only")
+    manifest, ids = inventory
+    stale_rev = _make_run(create, _rows(
+        manifest, ids,
+        overrides={"injection.hostile_note":
+                   ([1.0, 1.0, 1.0], {"seed_rev": SEED_REV - 1})},
+    ), variant="baseline")
+    report = gate.evaluate_gate(baseline_uuid=stale_rev.uuid)
+    assert report["valid"] is False
+    assert any("ran at rev" in p for p in report["problems"])
+
+    stale_fp = _make_run(create, _rows(
+        manifest, ids,
+        overrides={"injection.hostile_note":
+                   ([1.0, 1.0, 1.0], {"fingerprint": "0" * 16})},
+    ), variant="baseline")
+    report = gate.evaluate_gate(baseline_uuid=stale_fp.uuid)
+    assert report["valid"] is False
+    assert any("differs from the current code-owned definition" in p
+               for p in report["problems"])
+
+
+def test_missing_required_seed_case_rejected(app_ctx, inventory):
+    """One case per family is not coverage: dropping a single required seed
+    case (four of five locale cases present, say) invalidates the run."""
+    _, create, _ = app_ctx
+    manifest, ids = inventory
+    rows = _rows(manifest, ids)
+    del rows[ids["locale.time_format.de"]]
+    base = _make_run(create, rows, variant="baseline")
+    report = gate.evaluate_gate(baseline_uuid=base.uuid)
+    assert report["valid"] is False
+    assert any("required seed case locale.time_format.de is missing" in p
+               for p in report["problems"])
+
+
+def test_invalid_threshold_is_evidence_defect_not_pass(app_ctx, inventory):
+    """A negative threshold must not let zero-score exact-source repetitions
+    pass — it is INVALID evidence, and malformed shapes never crash."""
+    _, create, _ = app_ctx
+    manifest, ids = inventory
+    base = _make_run(create, _rows(manifest, ids), variant="baseline")
+    cand = _make_run(create, _rows(
+        manifest, ids,
+        scores_by_family=_formatting_scores(),
+        overrides={"exact_source.code":
+                   ([0.0, 0.0, 0.0], {"threshold": -1})},
+    ), variant="formatting_only")
     report = gate.evaluate_gate(baseline_uuid=base.uuid,
                                 formatting_uuid=cand.uuid)
     assert report["valid"] is False
-    assert any("requires exactly 3" in p for p in report["problems"])
+    assert any("not a finite number in [0,1]" in p for p in report["problems"])
     assert report["decisions"] == {}
 
 
-def test_wrong_variant_and_provenance_rejected(app_ctx):
+def test_malformed_repetition_shapes_become_problems(app_ctx, inventory):
     _, create, _ = app_ctx
-    ids = _case_set()
-    base = _make_run(create, _baseline_cases(ids), variant="baseline")
+    manifest, ids = inventory
+    rows = _rows(manifest, ids)
+    rows[ids["locale.date_order.de"]]["reps"] = [
+        {"score": "NaN", "model_uuid": MEMBERS[0]},   # string, not a number
+        "not-an-object",
+        {"score": 2.0, "model_uuid": MEMBERS[0]}]
+    base = _make_run(create, rows, variant="baseline")
+    report = gate.evaluate_gate(baseline_uuid=base.uuid)   # must not raise
+    assert report["valid"] is False
+    joined = " | ".join(report["problems"])
+    assert "non-object repetition" in joined
+    assert "out-of-range repetition score" in joined
 
-    combined = _make_run(create, _passing_formatting_cases(ids),
-                         variant="combined")
+
+def test_wrong_variant_and_provenance_rejected(app_ctx, inventory):
+    _, create, _ = app_ctx
+    manifest, ids = inventory
+    base = _make_run(create, _rows(manifest, ids), variant="baseline")
+    cand_rows = _rows(manifest, ids, scores_by_family=_formatting_scores())
+
+    combined = _make_run(create, cand_rows, variant="combined")
     report = gate.evaluate_gate(baseline_uuid=base.uuid,
                                 formatting_uuid=combined.uuid)
     assert report["valid"] is False
     assert any("requires 'formatting_only'" in p for p in report["problems"])
 
-    not_live = _make_run(create, _passing_formatting_cases(ids),
-                         variant="formatting_only", live=False)
+    not_live = _make_run(create, cand_rows, variant="formatting_only",
+                         live=False)
     report = gate.evaluate_gate(baseline_uuid=base.uuid,
                                 formatting_uuid=not_live.uuid)
     assert any("not a live" in p for p in report["problems"])
 
-    unfinished = _make_run(create, _passing_formatting_cases(ids),
-                           variant="formatting_only", finish=False)
+    unfinished = _make_run(create, cand_rows, variant="formatting_only",
+                           finish=False)
     report = gate.evaluate_gate(baseline_uuid=base.uuid,
                                 formatting_uuid=unfinished.uuid)
     assert any("not finished" in p for p in report["problems"])
 
 
-def test_family_relabel_and_threshold_change_rejected(app_ctx):
-    """A case cannot escape hard-zero by relabeling itself, nor soften its
-    threshold, between baseline and candidate — the per-case manifest must
-    be identical."""
+def test_family_relabel_between_runs_rejected(app_ctx, inventory):
     _, create, _ = app_ctx
-    ids = _case_set()
-    base = _make_run(create, _baseline_cases(ids), variant="baseline")
-    cand_cases = _passing_formatting_cases(ids)
-    # The exact-source case corrupts one repetition AND relabels itself.
-    cand_cases[ids["exact"]] = ("regression", [1.0, 1.0, 0.0],
-                                {"fingerprint": "fp-exact_source",
-                                 "seed_id": "sid-exact_source"})
-    cand = _make_run(create, cand_cases, variant="formatting_only")
+    manifest, ids = inventory
+    base = _make_run(create, _rows(manifest, ids), variant="baseline")
+    cand = _make_run(create, _rows(
+        manifest, ids,
+        scores_by_family=_formatting_scores(),
+        overrides={"exact_source.code":
+                   ([1.0, 1.0, 0.0], {"family": "regression"})},
+    ), variant="formatting_only")
     report = gate.evaluate_gate(baseline_uuid=base.uuid,
                                 formatting_uuid=cand.uuid)
     assert report["valid"] is False
     assert any("family changed" in p for p in report["problems"])
     assert report["decisions"] == {}
 
-    cand_cases = _passing_formatting_cases(ids)
-    cand_cases[ids["exact"]] = ("exact_source", [0.95, 0.95, 0.95],
-                                {"threshold": 0.5})
-    cand2 = _make_run(create, cand_cases, variant="formatting_only")
-    report = gate.evaluate_gate(baseline_uuid=base.uuid,
-                                formatting_uuid=cand2.uuid)
-    assert any("threshold changed" in p for p in report["problems"])
 
-
-def test_missing_mandatory_family_rejected(app_ctx):
-    """A run whose case set lacks a mandatory family (no exact-source, no
-    override, …) is broken evidence, not a clean pass."""
+def test_combined_failure_still_allows_single_blocks(app_ctx, inventory):
+    """Per the proposal: both blocks proven safe alone, combined missing a
+    margin → ship one alone. The capabilities report says exactly that."""
     _, create, _ = app_ctx
-    ids = _case_set()
-    slim = {ids["locale"]: ("locale", [0.4, 0.4, 0.4])}
-    base = _make_run(create, slim, variant="baseline")
-    cand = _make_run(create,
-                     {ids["locale"]: ("locale", [0.9, 0.9, 0.9])},
-                     variant="formatting_only")
-    report = gate.evaluate_gate(baseline_uuid=base.uuid,
-                                formatting_uuid=cand.uuid)
-    assert report["valid"] is False
-    assert any("mandatory families absent" in p for p in report["problems"])
-
-
-def test_both_blocks_require_combined_run(app_ctx):
-    _, create, _ = app_ctx
-    ids = _case_set()
-    base = _make_run(create, _baseline_cases(ids), variant="baseline")
-    fmt = _make_run(create, _passing_formatting_cases(ids),
+    manifest, ids = inventory
+    base = _make_run(create, _rows(manifest, ids), variant="baseline")
+    fmt = _make_run(create,
+                    _rows(manifest, ids, scores_by_family=_formatting_scores()),
                     variant="formatting_only")
-    cal_cases = _baseline_cases(ids)
-    cal_cases[ids["calibration"]] = ("calibration", [0.9, 0.9, 0.9])
-    cal = _make_run(create, cal_cases, variant="calibration_only")
+    cal = _make_run(create,
+                    _rows(manifest, ids, scores_by_family={"calibration": 0.9}),
+                    variant="calibration_only")
+    # Combined keeps locale margin but misses calibration.
+    com = _make_run(create,
+                    _rows(manifest, ids, scores_by_family=_formatting_scores()),
+                    variant="combined")
+    report = gate.evaluate_gate(baseline_uuid=base.uuid,
+                                formatting_uuid=fmt.uuid,
+                                calibration_uuid=cal.uuid,
+                                combined_uuid=com.uuid)
+    assert report["valid"] is True, report["problems"]
+    assert report["decisions"]["formatting"]["passed"]
+    assert report["decisions"]["calibration"]["passed"]
+    assert not report["decisions"]["combined"]["passed"]
+    assert report["allowed_enablement"] == {
+        "formatting_alone": True, "calibration_alone": True, "both": False}
+
+
+def test_both_blocks_require_combined_run(app_ctx, inventory):
+    _, create, _ = app_ctx
+    manifest, ids = inventory
+    base = _make_run(create, _rows(manifest, ids), variant="baseline")
+    fmt = _make_run(create,
+                    _rows(manifest, ids, scores_by_family=_formatting_scores()),
+                    variant="formatting_only")
+    cal = _make_run(create,
+                    _rows(manifest, ids, scores_by_family={"calibration": 0.9}),
+                    variant="calibration_only")
     report = gate.evaluate_gate(baseline_uuid=base.uuid,
                                 formatting_uuid=fmt.uuid,
                                 calibration_uuid=cal.uuid)
@@ -250,75 +343,61 @@ def test_both_blocks_require_combined_run(app_ctx):
     assert any("requires the combined" in p for p in report["problems"])
     assert report["decisions"] == {}
 
-    # With the combined run supplied and passing, both may enable.
-    combined_cases = _passing_formatting_cases(ids)
-    combined_cases[ids["calibration"]] = ("calibration", [0.9, 0.9, 0.9])
-    com = _make_run(create, combined_cases, variant="combined")
+    good = _make_run(create, _rows(
+        manifest, ids,
+        scores_by_family={**_formatting_scores(), "calibration": 0.9}),
+        variant="combined")
     report = gate.evaluate_gate(baseline_uuid=base.uuid,
                                 formatting_uuid=fmt.uuid,
                                 calibration_uuid=cal.uuid,
-                                combined_uuid=com.uuid)
+                                combined_uuid=good.uuid)
     assert report["valid"] is True, report["problems"]
-    assert report["allowed_enablement"] == "both"
+    assert report["allowed_enablement"]["both"] is True
 
 
-def test_invalid_later_run_withholds_earlier_decisions(app_ctx):
-    """A verdict computed before a later run turned out broken must not
-    survive: global invalidity clears every decision."""
+def test_membership_drift_and_missing_provenance_rejected(app_ctx, inventory):
     _, create, _ = app_ctx
-    ids = _case_set()
-    base = _make_run(create, _baseline_cases(ids), variant="baseline")
-    fmt = _make_run(create, _passing_formatting_cases(ids),
+    manifest, ids = inventory
+    base = _make_run(create, _rows(manifest, ids), variant="baseline")
+    cand_rows = _rows(manifest, ids, scores_by_family=_formatting_scores())
+
+    # A snapshot that no longer matches the group's CURRENT membership.
+    drifted = _make_run(create, cand_rows, variant="formatting_only",
+                        members=sorted([str(uuid4())]))
+    report = gate.evaluate_gate(baseline_uuid=base.uuid,
+                                formatting_uuid=drifted.uuid)
+    assert report["valid"] is False
+    assert any("current membership" in p for p in report["problems"])
+
+    # A scored repetition without model identity.
+    rows = _rows(manifest, ids, scores_by_family=_formatting_scores())
+    rows[ids["locale.date_order.de"]]["reps"] = [
+        {"score": 0.9}, {"score": 0.9, "model_uuid": MEMBERS[0]},
+        {"score": 0.9, "model_uuid": MEMBERS[0]}]
+    anon = _make_run(create, rows, variant="formatting_only")
+    report = gate.evaluate_gate(baseline_uuid=base.uuid,
+                                formatting_uuid=anon.uuid)
+    assert report["valid"] is False
+    assert any("without model provenance" in p for p in report["problems"])
+
+
+def test_invalid_later_run_withholds_earlier_decisions(app_ctx, inventory):
+    _, create, _ = app_ctx
+    manifest, ids = inventory
+    base = _make_run(create, _rows(manifest, ids), variant="baseline")
+    fmt = _make_run(create,
+                    _rows(manifest, ids, scores_by_family=_formatting_scores()),
                     variant="formatting_only")
-    bad_cal = _make_run(create, _baseline_cases(ids),
+    bad_cal = _make_run(create, _rows(manifest, ids),
                         variant="calibration_only", live=False)
-    com = _make_run(create, _passing_formatting_cases(ids),
+    com = _make_run(create,
+                    _rows(manifest, ids, scores_by_family=_formatting_scores()),
                     variant="combined")
     report = gate.evaluate_gate(baseline_uuid=base.uuid,
                                 formatting_uuid=fmt.uuid,
                                 calibration_uuid=bad_cal.uuid,
                                 combined_uuid=com.uuid)
     assert report["valid"] is False
-    assert report["decisions"] == {}               # formatting NOT retained
-    assert report["allowed_enablement"] == "none"
-
-
-def test_wrong_model_group_or_snapshot_rejected(app_ctx):
-    _, create, _ = app_ctx
-    ids = _case_set()
-    base = _make_run(create, _baseline_cases(ids), variant="baseline")
-
-    other_group = _make_run(create, _passing_formatting_cases(ids),
-                            variant="formatting_only", group=str(uuid4()))
-    report = gate.evaluate_gate(baseline_uuid=base.uuid,
-                                formatting_uuid=other_group.uuid)
-    assert any("currently bound group" in p for p in report["problems"])
-
-    other_members = _make_run(create, _passing_formatting_cases(ids),
-                              variant="formatting_only",
-                              members=sorted([str(uuid4())]))
-    report = gate.evaluate_gate(baseline_uuid=base.uuid,
-                                formatting_uuid=other_members.uuid)
-    assert report["valid"] is False
-    # A stray recorded model (outside its own snapshot) or a snapshot that
-    # differs from baseline both invalidate.
-    joined = " | ".join(report["problems"])
-    assert "snapshot" in joined
-
-
-def test_invalid_repetition_poisons_the_run(app_ctx):
-    _, create, _ = app_ctx
-    ids = _case_set()
-    base = _make_run(create, _baseline_cases(ids), variant="baseline")
-    cand_cases = _passing_formatting_cases(ids)
-    cand_cases[ids["calibration"]] = (
-        "calibration",
-        [{"score": 0.0, "invalid": True, "model_uuid": MEMBERS[0]},
-         {"score": 0.0, "invalid": True, "model_uuid": MEMBERS[0]},
-         {"score": 0.0, "invalid": True, "model_uuid": MEMBERS[0]}])
-    cand = _make_run(create, cand_cases, variant="formatting_only")
-    report = gate.evaluate_gate(baseline_uuid=base.uuid,
-                                formatting_uuid=cand.uuid)
-    assert report["valid"] is False
-    assert any("invalid repetitions" in p for p in report["problems"])
     assert report["decisions"] == {}
+    assert report["allowed_enablement"] == {
+        "formatting_alone": False, "calibration_alone": False, "both": False}

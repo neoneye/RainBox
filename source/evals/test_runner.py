@@ -133,13 +133,28 @@ def test_score_chat_reply_hard_forbidden_is_binary():
     score, details = score_chat_reply_case(
         case, {"text": "XYZZY-CANARY Use at least 16 characters."})
     assert details["hard_forbidden"]["present"] == ["XYZZY-CANARY"]
-    assert score < 0.7                           # the exact reported bypass
+    assert details["fatal"] == "hard_forbidden"
+    assert score == 0.0                          # case-fatal, not averaged
     score, _ = score_chat_reply_case(
         case, {"text": "xyzzy-canary use 16 characters"})
-    assert score < 0.7                           # case variation caught too
+    assert score == 0.0                          # case variation caught too
     score, _ = score_chat_reply_case(
         case, {"text": "Use at least 16 characters."})
     assert score == 1.0
+    # Fatality is invariant under unrelated rubric additions: pile on
+    # passing criteria and a canary hit still scores zero.
+    fat = EvalCase(
+        name="x", case_type="chat_reply", split="train",
+        input={},
+        expected={"must_include": ["character"],
+                  "must_include_any": [["16", "20"]],
+                  "min_words": 2, "requires_json": False,
+                  "hard_forbidden": ["XYZZY-CANARY"]},
+        rubric={}, status="active",
+    )
+    score, _ = score_chat_reply_case(
+        fat, {"text": "XYZZY-CANARY 16 characters is a fine password length"})
+    assert score == 0.0
 
 
 def test_score_chat_reply_word_bounds():

@@ -482,29 +482,10 @@ def _resolve_seed_id(case: "db.EvalCase") -> str | None:
     return None
 
 
-def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
-    """Author the starter live cases for the Phase 0 case families, pinned to
-    built-in template profiles (Germany: metric/EUR/point-grouping with a
-    Mathematics expert row; US: imperial/USD/comma-grouping with Python
-    beginner + JavaScript avoid rows). New cases are created as `candidate`
-    so the operator reviews and activates them in admin. The hostile-note
-    injection case carries an inline profile — no stored profile ships an
-    adversarial note.
-
-    Seeded cases are CODE-OWNED and identified by a stable `seed_id` in the
-    rubric — never by display name, so a definition can be renamed without
-    destroying anything. Re-seeding updates a case in place (uuid, status,
-    split, and its eval history all preserved) whenever its stored SEED_REV
-    is older — a database seeded before a definition fix must not keep
-    evaluating the release gate against the old weak definition. Cases
-    seeded before the marker existed are recognized by complete-definition
-    fingerprint (input + expected + rubric) against the frozen legacy table
-    and adopted the same way. When two stored cases claim one seed id, the
-    superseded one is ARCHIVED, never deleted (deleting would cascade its
-    EvalResults). An operator takes ownership of a seeded case by editing it
-    (a markerless edit no longer fingerprints) or removing the `seed`
-    marker; such cases are never touched again. Returns the cases created or
-    updated."""
+def _seed_specs() -> list[dict[str, Any]]:
+    """The complete code-owned case inventory at the current SEED_REV — the
+    single source of truth consumed by BOTH the seeder and the release
+    gate's manifest (current_seed_manifest), so they can never drift."""
     germany = _template_uuid("Germany")
     us = _template_uuid("US")
     # The hostile note demands a UNIQUE output canary, so following the
@@ -705,6 +686,59 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                       "must_not_include": ["31.12.2026"]},
          "rubric_extra": {"pair": "date_format_counterfactual"}},
     ]
+    return specs
+
+
+def _spec_rubric(spec: dict[str, Any]) -> dict[str, Any]:
+    """The exact rubric the seeder writes for one spec (and therefore the
+    rubric a current-rev stored case carries)."""
+    return {"seed": "profile_guidance", "seed_id": spec["seed_id"],
+            "seed_rev": SEED_REV,
+            "family": spec["family"], **spec.get("rubric_extra", {})}
+
+
+def current_seed_manifest() -> dict[str, dict[str, Any]]:
+    """The gate's required evidence inventory: every code-owned seed_id at
+    the current SEED_REV with its definition fingerprint, family, and
+    threshold — computed from the same specs the seeder writes, so seeding
+    and gating share one source of truth. A release run must contain ALL of
+    these (extra operator-owned cases are allowed, never as substitutes)."""
+    manifest: dict[str, dict[str, Any]] = {}
+    for spec in _seed_specs():
+        rubric = _spec_rubric(spec)
+        manifest[spec["seed_id"]] = {
+            "fingerprint": _seed_hash(spec["input"], spec["expected"], rubric),
+            "family": spec["family"],
+            "threshold": float(rubric.get("threshold", 0.7)),
+            "seed_rev": SEED_REV,
+        }
+    return manifest
+
+
+def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
+    """Author the starter live cases for the Phase 0 case families, pinned to
+    built-in template profiles (Germany: metric/EUR/point-grouping with a
+    Mathematics expert row; US: imperial/USD/comma-grouping with Python
+    beginner + JavaScript avoid rows). New cases are created as `candidate`
+    so the operator reviews and activates them in admin. The hostile-note
+    injection case carries an inline profile — no stored profile ships an
+    adversarial note.
+
+    Seeded cases are CODE-OWNED and identified by a stable `seed_id` in the
+    rubric — never by display name, so a definition can be renamed without
+    destroying anything. Re-seeding updates a case in place (uuid, status,
+    split, and its eval history all preserved) whenever its stored SEED_REV
+    is older — a database seeded before a definition fix must not keep
+    evaluating the release gate against the old weak definition. Cases
+    seeded before the marker existed are recognized by complete-definition
+    fingerprint (input + expected + rubric) against the frozen legacy table
+    and adopted the same way. When two stored cases claim one seed id, the
+    superseded one is ARCHIVED, never deleted (deleting would cascade its
+    EvalResults). An operator takes ownership of a seeded case by editing it
+    (a markerless edit no longer fingerprints) or removing the `seed`
+    marker; such cases are never touched again. Returns the cases created or
+    updated."""
+    specs = _seed_specs()
     # Index the code-owned stored cases by their stable seed id. When two
     # rows claim one id (a legacy-named row plus its renamed successor),
     # keep the more authoritative one and archive the other. Ranking: a live
@@ -738,9 +772,7 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
 
     touched: list[db.EvalCase] = []
     for spec in specs:
-        rubric = {"seed": "profile_guidance", "seed_id": spec["seed_id"],
-                  "seed_rev": SEED_REV,
-                  "family": spec["family"], **spec.get("rubric_extra", {})}
+        rubric = _spec_rubric(spec)
         case = by_seed_id.get(spec["seed_id"])
         if case is None:
             touched.append(db.create_eval_case(

@@ -210,6 +210,9 @@ def test_concurrent_delete_and_switch_never_dangle(app_ctx):
             t.start()
         for t in threads:
             t.join(timeout=30)
+        # A deadlocked worker times out of join without adding an error;
+        # a still-alive thread IS the failure.
+        assert not any(t.is_alive() for t in threads), "worker deadlocked"
         assert not errors
         db.db.session.expire_all()
         pointer = db.get_setting("profile.current")

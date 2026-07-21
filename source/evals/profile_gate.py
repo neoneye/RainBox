@@ -67,40 +67,82 @@ _EXPECTED_VARIANT = {"baseline": "baseline", "formatting": "formatting_only",
 
 
 def _case_rows(run_uuid: UUID) -> tuple[dict[UUID, dict[str, Any]], list[str]]:
-    """Per-case gate-relevant data for one run plus its integrity problems:
-    duplicate results, wrong repetition counts, and out-of-range scores are
-    evidence defects, not model failures."""
+    """Per-case gate-relevant data for one run plus its integrity problems.
+    The COMPLETE evidence schema is validated defensively: duplicate results,
+    wrong repetition counts, malformed structures, out-of-range scores, and
+    invalid thresholds are recorded as evidence defects (→ INVALID verdict),
+    never a crash and never trusted numbers."""
     rows: dict[UUID, dict[str, Any]] = {}
     problems: list[str] = []
     for result in db.list_eval_results_for_run(run_uuid):
-        if result.eval_case_uuid in rows:
-            problems.append(
-                f"duplicate result rows for case {result.eval_case_uuid}")
+        cu = result.eval_case_uuid
+        if cu in rows:
+            problems.append(f"duplicate result rows for case {cu}")
             continue
-        details = result.details or {}
-        reps = details.get("repetitions") or []
+        details = result.details if isinstance(result.details, dict) else None
+        if details is None:
+            problems.append(f"case {cu} details is not an object")
+            rows[cu] = {"family": None, "threshold": 1.0, "fingerprint": None,
+                        "seed_id": None, "seed_rev": None, "scores": [],
+                        "invalid": True}
+            continue
+        reps = details.get("repetitions")
+        if not isinstance(reps, list):
+            problems.append(f"case {cu} repetitions is not a list")
+            reps = []
+        threshold = details.get("threshold")
+        if (not isinstance(threshold, (int, float))
+                or isinstance(threshold, bool)
+                or not math.isfinite(threshold)
+                or not 0.0 <= threshold <= 1.0):
+            problems.append(
+                f"case {cu} threshold is not a finite number in [0,1]: "
+                f"{threshold!r}")
+            threshold = 1.0  # placeholder; the run is already invalid
+        family = details.get("family")
+        if family is not None and not isinstance(family, str):
+            problems.append(f"case {cu} family has wrong type: {family!r}")
+            family = None
+        fingerprint = details.get("case_fingerprint")
+        if fingerprint is not None and not isinstance(fingerprint, str):
+            problems.append(f"case {cu} fingerprint has wrong type")
+            fingerprint = None
+        seed_id = details.get("seed_id")
+        if seed_id is not None and not isinstance(seed_id, str):
+            problems.append(f"case {cu} seed_id has wrong type")
+            seed_id = None
+        seed_rev = details.get("seed_rev")
+        if seed_rev is not None and (not isinstance(seed_rev, int)
+                                     or isinstance(seed_rev, bool)):
+            problems.append(f"case {cu} seed_rev has wrong type")
+            seed_rev = None
         scores = []
         for rep in reps:
+            if not isinstance(rep, dict):
+                problems.append(
+                    f"case {cu} contains a non-object repetition entry")
+                continue
             score = rep.get("score")
             if (not isinstance(score, (int, float)) or isinstance(score, bool)
                     or not math.isfinite(score) or not 0.0 <= score <= 1.0):
                 problems.append(
-                    f"case {result.eval_case_uuid} has a non-finite or "
-                    f"out-of-range repetition score: {score!r}")
+                    f"case {cu} has a non-finite or out-of-range repetition "
+                    f"score: {score!r}")
                 score = 0.0
             scores.append(float(score))
         if len(scores) != REQUIRED_REPETITIONS:
             problems.append(
-                f"case {result.eval_case_uuid} recorded {len(scores)} "
-                f"repetition(s); the gate requires exactly "
-                f"{REQUIRED_REPETITIONS}")
-        rows[result.eval_case_uuid] = {
-            "family": details.get("family"),
-            "threshold": float(details.get("threshold", 0.7)),
-            "fingerprint": details.get("case_fingerprint"),
-            "seed_id": details.get("seed_id"),
+                f"case {cu} recorded {len(scores)} repetition(s); the gate "
+                f"requires exactly {REQUIRED_REPETITIONS}")
+        rows[cu] = {
+            "family": family,
+            "threshold": float(threshold),
+            "fingerprint": fingerprint,
+            "seed_id": seed_id,
+            "seed_rev": seed_rev,
             "scores": scores,
-            "invalid": any(r.get("invalid") for r in reps),
+            "invalid": any(isinstance(r, dict) and r.get("invalid")
+                           for r in reps),
         }
     return rows, problems
 
@@ -154,11 +196,41 @@ def _validate_run(
             f"run model group {cfg.get('model_group_uuid')} is not the "
             f"assistant's currently bound group {bound_group}")
     member_snapshot = set(cfg.get("model_member_uuids") or [])
-    recorded_models = {
-        rep.get("model_uuid")
-        for result in db.list_eval_results_for_run(run.uuid)
-        for rep in (result.details or {}).get("repetitions") or []
-        if rep.get("model_uuid")}
+    if bound_group is not None:
+        # The snapshot must equal the group's CURRENT membership at gate
+        # time — members can change behind a stable group uuid, and a gate
+        # verdict must describe the production group as it is now.
+        try:
+            current_members = {
+                str(u) for u in db.get_model_group_member_uuids(
+                    UUID(bound_group))}
+        except Exception:  # noqa: BLE001 — unreadable membership is a defect
+            current_members = None
+        if current_members is not None and member_snapshot != current_members:
+            problems.append(
+                "run member snapshot no longer matches the bound group's "
+                "current membership — the group changed since the run")
+    recorded_models: set[str] = set()
+    for result in db.list_eval_results_for_run(run.uuid):
+        details = result.details if isinstance(result.details, dict) else {}
+        reps = details.get("repetitions")
+        for rep in reps if isinstance(reps, list) else []:
+            if not isinstance(rep, dict):
+                continue
+            if rep.get("error") or rep.get("invalid"):
+                continue  # a failed call legitimately has no model identity
+            model_uuid = rep.get("model_uuid")
+            if not model_uuid:
+                problems.append(
+                    f"case {result.eval_case_uuid} has a scored repetition "
+                    "without model provenance (model_uuid missing)")
+                continue
+            recorded_models.add(str(model_uuid))
+            rep_group = rep.get("model_group_uuid")
+            if rep_group and rep_group != cfg.get("model_group_uuid"):
+                problems.append(
+                    f"case {result.eval_case_uuid} repetition records group "
+                    f"{rep_group}, not the run's group")
     strays = recorded_models - member_snapshot
     if strays:
         problems.append(
@@ -247,11 +319,16 @@ def evaluate_gate(
     """Apply the release contract and persist the verdict as a durable
     `profile-gate` EvalRun. Returns the report:
     {"valid": bool, "problems": [...], "decisions": {block: verdict},
-    "allowed_enablement": "none"|"formatting"|"calibration"|"both"}.
-    `valid: False` means the inputs cannot support ANY decision — every
-    decision is withheld; never read it as a fail."""
+    "allowed_enablement": {"formatting_alone": bool, "calibration_alone":
+    bool, "both": bool}} — independent capabilities, so a combined-only
+    interaction failure still allows shipping ONE block alone, per the
+    proposal. `valid: False` means the inputs cannot support ANY decision —
+    every decision is withheld; never read it as a fail."""
     report: dict[str, Any] = {"valid": True, "problems": [], "decisions": {},
-                              "allowed_enablement": "none"}
+                              "allowed_enablement": {
+                                  "formatting_alone": False,
+                                  "calibration_alone": False,
+                                  "both": False}}
     binding = db.get_agent_model_binding(ASSISTANT_UUID)
     bound_group = (str(binding.model_group_uuid)
                    if binding is not None and binding.model_group_uuid
@@ -283,6 +360,36 @@ def evaluate_gate(
             problems.append(
                 f"mandatory families absent from the case set: "
                 f"{sorted(missing)}")
+        # The COMPLETE current code-owned inventory is required, at the
+        # current SEED_REV with the current definition fingerprints — one
+        # case per family is not coverage, and obsolete weak definitions
+        # (older rev, stale fingerprint) are not evidence about the code
+        # that would ship. Extra operator-owned cases are welcome; they are
+        # never substitutes.
+        from evals.profile_guidance import SEED_REV, current_seed_manifest
+
+        manifest = current_seed_manifest()
+        by_seed: dict[str, list[dict[str, Any]]] = {}
+        for row in baseline_rows.values():
+            if row["seed_id"]:
+                by_seed.setdefault(row["seed_id"], []).append(row)
+        for sid, required in manifest.items():
+            claimants = by_seed.get(sid, [])
+            if not claimants:
+                problems.append(f"required seed case {sid} is missing")
+                continue
+            if len(claimants) > 1:
+                problems.append(f"seed id {sid} appears on multiple cases")
+                continue
+            row = claimants[0]
+            if row["seed_rev"] != SEED_REV:
+                problems.append(
+                    f"seed case {sid} ran at rev {row['seed_rev']}, current "
+                    f"is {SEED_REV} — re-seed and re-run")
+            elif row["fingerprint"] != required["fingerprint"]:
+                problems.append(
+                    f"seed case {sid} definition differs from the current "
+                    "code-owned definition")
         if problems:
             report["valid"] = False
             report["problems"].extend(f"baseline: {p}" for p in problems)
@@ -322,12 +429,14 @@ def evaluate_gate(
         fmt_ok = decisions.get("formatting", {}).get("passed", False)
         cal_ok = decisions.get("calibration", {}).get("passed", False)
         com_ok = decisions.get("combined", {}).get("passed", False)
-        if fmt_ok and cal_ok and com_ok:
-            report["allowed_enablement"] = "both"
-        elif fmt_ok and not cal_ok:
-            report["allowed_enablement"] = "formatting"
-        elif cal_ok and not fmt_ok:
-            report["allowed_enablement"] = "calibration"
+        # Independent capabilities, per the proposal: each block that passed
+        # its own variant may ship ALONE even when the combined interaction
+        # failed — a combined failure only forbids simultaneous enablement.
+        report["allowed_enablement"] = {
+            "formatting_alone": fmt_ok,
+            "calibration_alone": cal_ok,
+            "both": fmt_ok and cal_ok and com_ok,
+        }
 
     gate_run = db.create_eval_run(
         name="profile-gate",

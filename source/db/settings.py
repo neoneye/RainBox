@@ -353,7 +353,12 @@ def set_current_profile(value: object) -> str | None:
     effective value). A plain set_setting("profile.current", ...) still works
     but stamps nothing — it is the low-level seam for tests and scripts; UI
     writes must route here (webapp/settings_views.py special-cases the key).
-    App context required."""
+
+    OWNS ITS TRANSACTION: it takes the profile.current row lock, then
+    commits or rolls back the whole session (a no-op rolls back to release
+    the lock). Never call it with unrelated uncommitted work pending on the
+    session — that work would be committed or discarded along with it. App
+    context required."""
     from uuid import UUID
 
     spec = _registry("profile.current")
