@@ -79,26 +79,31 @@ declining what is stored.
 
 ## Implementation readiness
 
-The **core** (Phases 0–2) is close, but the two parts are not equally ready:
+**Phases 0–2 are design-complete and ready to implement.** This is a statement
+about specification readiness, not implementation progress: the code described
+below has not been written yet.
 
-| Work | Readiness | What remains |
-|---|---:|---|
-| Formatting guide | **90%** | Implement the fixed lookup tables, one-snapshot assembly, and live eval harness described below. |
-| Knowledge calibration | **80%** | Implement the shared JSONB mutation lock, exact API contract, duplicate semantics, and conflict UI described below. |
-| Declarative-forms follow-up | **40%** | It has a real client and privacy requirements, but still needs its own schema/migration proposal and disclosure review. |
+| Work | Design status | First implementation result |
+|---|---|---|
+| Phase 0 — live baseline harness | **Ready** | Reproducible baseline `EvalRun`s for the fixed gate. |
+| Phase 1 — formatting guide | **Ready** | A separately gated formatting block in the main assistant. |
+| Phase 2 — knowledge calibration | **Ready** | Revisioned storage/editor plus a separately gated calibration block. |
+| Declarative-forms follow-up | **Needs its own proposal** | Schema/migration plan and completed disclosure review. |
 
-After the clarifications in this document, Phase 1 and Phase 2 should not need
-another design round. The two product-level choices that remained are decided
-under **Resolved decisions** near the end. Phase 0 does require a
+The two product-level choices are settled under **Resolved decisions** near the
+end. No further architecture round is required for Phases 0–2 unless
+implementation uncovers a contradiction with running code. Phase 0 does add a
 new live-eval harness: the current `evals/runner.py` only scores stored
-`chat_reply` snapshots and cannot run the same prompt across model groups.
+`chat_reply` snapshots and cannot execute the same prompt against a model.
 
 Expected implementation surface:
 
 - Phase 0: `evals/profile_guidance.py` plus focused runner tests;
 - Phase 1: `profile_fields.py`, `data/profile_templates.json`,
   `static/profile.js`, new `user_profile/formatting.py`, exports in
-  `user_profile/__init__.py`, `agents/assistant.py`, and their tests;
+  `user_profile/__init__.py`, `db/settings.py`, `webapp/settings_views.py`,
+  `agents/assistant.py`, `docs/operator-guide.md`, and their tests (including
+  the existing facts-marker suite);
 - Phase 2: shared mutation logic in `db/profile.py`, new
   `db/profile_calibration.py`, exports in `db/__init__.py`,
   `webapp/profile_api.py`, `webapp/profile_views.py`, `static/profile.js`, and
@@ -229,11 +234,12 @@ The renderer lookup is exhaustive and exact:
 | `1'234'567.89` | decimal point, apostrophe grouping | `1'234'567.89` | `1'234.56` |
 | `12,34,567.89` | decimal point, Indian comma grouping | `12,34,567.89` | `1,234.56` |
 
-The currency column is the default; a currency in the fixed zero-decimal set
-renders the integer sample `1234` under the same grouping instead (`1,234 JPY`,
-not `1,234.00 JPY`). The set is the ISO 4217 exponent-zero list relevant here —
-`JPY, KRW, VND, CLP, ISK` — hardcoded, with decimals as the default for
-everything unknown (almost every currency has two minor units). An
+The currency column is the default; a currency in
+`ZERO_DECIMAL_CURRENCIES_V1 = {"JPY", "KRW", "VND", "CLP", "ISK"}` renders
+the integer sample `1234` under the same grouping instead (`1,234 JPY`, not
+`1,234.00 JPY`). This small set governs prompt examples; it is not advertised
+as a complete ISO 4217 validator. Decimals are the v1 default for everything
+unknown. An
 integer-only example for *all* currencies would be wrong the other way: it
 deletes the decimal separator from the money context, which is precisely where
 misreading `1.234` as one-and-a-fraction instead of one thousand costs the
@@ -290,6 +296,19 @@ Use these defaults unless the current request or exact source notation says othe
 Rules:
 
 - Render a line only when its source value is usable. No lines means `""`.
+- Date renders when `date_format` is present. Time renders when either
+  `time_format` or timezone is present and includes only the available clauses.
+  Units and numbers each render from their own enum independently.
+- Currency renders when at least one valid currency exists. Primary is
+  preferred; if primary is absent/invalid and secondary is valid, secondary
+  becomes the preferred code rather than disappearing. A numeric currency
+  example renders only when `number_format` is also usable; otherwise the line
+  states the ISO code and conversion rule without inventing separators.
+- Language renders when at least one valid language exists. Current-message
+  language still wins. Primary is the profile fallback; if primary is
+  absent/invalid and secondary is valid, secondary becomes the fallback. A
+  second valid language is described as an available secondary, never as a
+  command to translate every reply.
 - Enum-derived wording and examples are fixed lookup-table output, never
   free-typed templates. Two fixed samples feed the lookups: `1234567.89` for
   the numbers line (grouping needs the digits to show) and `1234.56` for the
@@ -761,6 +780,21 @@ Phase 0 first records the baseline without guide/calibration injection. Phase
 existing comparison rule about equal case sets remains meaningful. Live
 generation is opt-in and is not added to the default deterministic eval suite.
 
+Independent gates require four named variants over the same cases:
+
+| Variant | Formatting | Calibration | Purpose |
+|---|---:|---:|---|
+| `baseline` | off | off | Existing identity-facts behavior. |
+| `formatting_only` | on | off | Gate the formatting block. |
+| `calibration_only` | off | on | Gate the calibration block. |
+| `combined` | on | on | Detect interactions before shipping both. |
+
+These are eval-runner overrides passed into prompt construction, not production
+settings or user-facing off-switches. Each individual variant is scored against
+baseline on its own case family and all regression cases. `combined` must pass
+both hard-zero families and the no-regression rule; its improvement margins are
+reported but do not need to add arithmetically.
+
 Acceptance:
 
 - locale cases cover date, time, number, unit, and currency defaults;
@@ -819,8 +853,9 @@ Decision gates:
 
 - If formatting meets the quantitative release gate in **Resolved
   decisions**, keep it.
-- If knowledge calibration helps only large models, reduce the legend and row
-  count before adding retrieval machinery.
+- If calibration meets its independent gate, keep it. If it misses the margin
+  or fails only in the combined interaction run, reduce the header/note budget
+  and row count before adding retrieval machinery.
 - If always-on calibration distracts models, first try a compact topic index;
   next try deterministic lexical selection using the current query; consider
   embeddings only after those cheaper options fail.
@@ -880,14 +915,43 @@ resolved here; everything else above is an engineering contract.
 ### 1. A profile switch is not a conversation-history boundary
 
 **Decision: continuity.** Switching `profile.current` keeps the room's
-existing history in subsequent prompts. On an actual value change the room
-receives the existing facts-invalidation notice plus a visible line naming the
-newly active profile — a soft, non-destructive signal, never redaction. The
-system prompt and operator guide state plainly: **switching `profile.current`
-changes identity, formatting, and calibration; it is not an audience
-boundary.** Handing the screen to another audience uses the honest recipe this
-repository already prescribes: a fresh room, the demo database, and — once the
-lens work lands — an operator lens with its ceiling and shields.
+existing history in subsequent prompts. On an actual value change, reuse the
+existing one-marker-per-room invalidation path; do not post two adjacent
+special messages. The single visible marker contains both facts: the active
+profile's label and the warning that profile-dependent assumptions may have
+changed. It is a soft, non-destructive signal, never redaction. The system
+prompt and operator guide state plainly: **switching `profile.current` changes
+identity, formatting, and calibration; it is not an audience boundary.**
+Handing the screen to another audience uses the honest recipe this repository
+already prescribes: a fresh room, the demo database, and — once the lens work
+lands — an operator lens with its ceiling and shields.
+
+Implementation contract for the marker:
+
+- add `db.set_current_profile(value)` and use it for runtime writes; it compares
+  the old/new effective UUID and does nothing extra on a no-op;
+- on change, it sets `profile.current`, calls `mark_facts_invalidated()`, and
+  stores the returned stamp in internal `profile.current_changed_at` (listed in
+  the registry for `get_setting`, but omitted from the normal settings editor);
+- `_maybe_post_facts_marker()` checks whether the current facts stamp equals
+  `profile.current_changed_at`; when it does, it resolves the current profile
+  label and, on each room's next main-assistant turn, posts one tailored message
+  with the existing
+  `facts_invalidation` meta plus `profile_switch_uuid` (or null when unset);
+- the existing deduplication, trailing-marker demotion, progress restoration,
+  and prompt filtering continue to apply unchanged. The marker is visible to
+  the operator but removed from model history; the freshly assembled profile
+  blocks are the model-side signal.
+
+Example marker text:
+
+```text
+Notice: the active profile switched to Germany. Identity, formatting, and knowledge calibration now follow that profile; room history is preserved. Re-check profile-dependent assumptions before relying on an earlier answer.
+```
+
+Tests cover same-value no-op, profile A → B, profile → unset, one marker per
+room per stamp, safe label escaping, and a subsequent unrelated Q&A invalidation
+returning to the generic notice.
 
 Why the redaction alternative loses, spelled out because the argument for it
 sounds safety-shaped:
@@ -935,6 +999,10 @@ cannot be chosen after seeing results:
   the identical case UUIDs and repetition counts as the baseline run.
 - The two blocks gate independently: the formatting guide may ship while
   calibration returns to Phase 3's fallback ladder, or vice versa.
+- Run all four variants defined in Phase 0. A block passes on its individual
+  variant; when both individual variants pass, the combined variant must also
+  satisfy every hard-zero and no-regression rule before both are enabled
+  together.
 
 The declarative-forms follow-up has additional open schema/migration decisions,
 but they do not block Phases 0–2 and belong in its own proposal.
