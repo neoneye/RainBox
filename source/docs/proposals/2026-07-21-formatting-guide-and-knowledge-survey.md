@@ -88,8 +88,8 @@ The **core** (Phases 0–2) is close, but the two parts are not equally ready:
 | Declarative-forms follow-up | **40%** | It has a real client and privacy requirements, but still needs its own schema/migration proposal and disclosure review. |
 
 After the clarifications in this document, Phase 1 and Phase 2 should not need
-another design round. The remaining product-level choices are deliberately
-small and listed under **Open decisions** near the end. Phase 0 does require a
+another design round. The two product-level choices that remained are decided
+under **Resolved decisions** near the end. Phase 0 does require a
 new live-eval harness: the current `evals/runner.py` only scores stored
 `chat_reply` snapshots and cannot run the same prompt across model groups.
 
@@ -223,11 +223,21 @@ The renderer lookup is exhaustive and exact:
 
 | Stored value | Wording | Number example | Currency example |
 |---|---|---|---|
-| `1,234,567.89` | decimal point, comma grouping | `1,234,567.89` | `1,234` |
-| `1.234.567,89` | decimal comma, point grouping | `1.234.567,89` | `1.234` |
-| `1 234 567,89` | decimal comma, space grouping | `1 234 567,89` | `1 234` |
-| `1'234'567.89` | decimal point, apostrophe grouping | `1'234'567.89` | `1'234` |
-| `12,34,567.89` | decimal point, Indian comma grouping | `12,34,567.89` | `1,234` |
+| `1,234,567.89` | decimal point, comma grouping | `1,234,567.89` | `1,234.56` |
+| `1.234.567,89` | decimal comma, point grouping | `1.234.567,89` | `1.234,56` |
+| `1 234 567,89` | decimal comma, space grouping | `1 234 567,89` | `1 234,56` |
+| `1'234'567.89` | decimal point, apostrophe grouping | `1'234'567.89` | `1'234.56` |
+| `12,34,567.89` | decimal point, Indian comma grouping | `12,34,567.89` | `1,234.56` |
+
+The currency column is the default; a currency in the fixed zero-decimal set
+renders the integer sample `1234` under the same grouping instead (`1,234 JPY`,
+not `1,234.00 JPY`). The set is the ISO 4217 exponent-zero list relevant here —
+`JPY, KRW, VND, CLP, ISK` — hardcoded, with decimals as the default for
+everything unknown (almost every currency has two minor units). An
+integer-only example for *all* currencies would be wrong the other way: it
+deletes the decimal separator from the money context, which is precisely where
+misreading `1.234` as one-and-a-fraction instead of one thousand costs the
+most, and money is the reason the separator enum exists.
 
 Template assignments are part of the change, not left to implementer taste:
 
@@ -273,7 +283,7 @@ Use these defaults unless the current request or exact source notation says othe
 - Times: 24-hour clock, for example 23:59. Present local times in Europe/Berlin; name another zone when relevant.
 - Units: metric. Prefer km, kg, and °C; preserve a source value when precision matters and add the conversion.
 - Numbers: decimal comma with point grouping, for example 1.234.567,89.
-- Currency: use the ISO code EUR with the preferred number format, for example 1.234 EUR. Convert currencies only with a supplied or freshly retrieved rate.
+- Currency: use the ISO code EUR with the preferred number format, for example 1.234,56 EUR. Convert currencies only with a supplied or freshly retrieved rate.
 - Language: follow the language of the current message; otherwise prefer de, with en as fallback.
 ```
 
@@ -282,9 +292,12 @@ Rules:
 - Render a line only when its source value is usable. No lines means `""`.
 - Enum-derived wording and examples are fixed lookup-table output, never
   free-typed templates. Two fixed samples feed the lookups: `1234567.89` for
-  the numbers line (grouping needs the digits to show) and integer `1234` for
-  the currency line. The integer is deliberate: not every currency has minor
-  units, so a universal decimal example would render JPY and KRW incorrectly.
+  the numbers line (grouping needs the digits to show) and `1234.56` for the
+  currency line, rendered per the number format — except that a currency in
+  the fixed zero-decimal set (`JPY, KRW, VND, CLP, ISK`) uses integer `1234`,
+  because those currencies have no minor units and `1,234.00 JPY` would be
+  wrong. Decimals stay the default: money is where a misread separator costs
+  the most, so the money example must demonstrate the separator.
 - A regioned English language tag may add a spelling preference (`en-GB` or
   `en-US`). Bare `en` adds none. Do not infer language from country.
 - Language means “current-message language first, profile fallback second.” It
@@ -804,7 +817,8 @@ groups are an optional compatibility matrix, not a release prerequisite.
 
 Decision gates:
 
-- If formatting meets the quantitative release gate selected below, keep it.
+- If formatting meets the quantitative release gate in **Resolved
+  decisions**, keep it.
 - If knowledge calibration helps only large models, reduce the legend and row
   count before adding retrieval machinery.
 - If always-on calibration distracts models, first try a compact topic index;
@@ -831,7 +845,8 @@ behavior as a unit test.
 1. **Profile registry:** all templates validate with `number_format`; every
    enum value has a rendering lookup and preview.
 2. **Formatting renderer:** full, sparse, empty, regioned-English, invalid
-   timezone/language/currency, Indian grouping, and maximal-cap cases.
+   timezone/language/currency, Indian grouping, zero-decimal currency
+   (`JPY` integer example, `EUR` decimal example), and maximal-cap cases.
 3. **Precedence fixtures:** prompt contains the explicit precedence sentence;
    model evals cover user overrides and exact-source preservation.
 4. **Calibration validation:** unknown keys, wrong types, missing topic/level,
@@ -857,30 +872,69 @@ behavior as a unit test.
     `409`, independent save indicators, and unload guard verified in a real
     browser rather than by marker tests alone.
 
-## Open decisions before implementation
+## Resolved decisions
 
-Only two core product decisions remain. They should be answered before the
-first implementation PR; everything else above is an engineering contract.
+The two product decisions that had to precede the first implementation PR are
+resolved here; everything else above is an engineering contract.
 
-1. **Does switching `profile.current` create a conversation-history
-   boundary?** Today an existing room keeps messages from the previous person.
-   The new identity/guide/calibration outrank that history, but the old text is
-   still disclosed to the model and can bleed into an answer. **Recommended:**
-   record `profile.current_changed_at` on every actual setting change and omit
-   earlier conversation history from subsequent main-assistant prompts. Show a
-   visible boundary message in the room. Merely adding a reminder while still
-   sending the old history is not sufficient for a friend/demo profile. If
-   continuity is preferred instead, the document must say explicitly that a
-   profile switch is formatting/calibration only and is not an audience
-   boundary.
-2. **What is the quantitative live-eval release gate?** **Recommended:** the
-   assistant's currently bound model group is the required target; extra model
-   groups are informative. Run three repetitions. Explicit override and exact
-   source-preservation cases must pass every repetition. Locale and calibration
-   cases must not lose any previously passing regression case, and their mean
-   score must improve over baseline. If a stronger minimum improvement (for
-   example `+0.15`) is wanted, choose it before recording the baseline rather
-   than after seeing results.
+### 1. A profile switch is not a conversation-history boundary
+
+**Decision: continuity.** Switching `profile.current` keeps the room's
+existing history in subsequent prompts. On an actual value change the room
+receives the existing facts-invalidation notice plus a visible line naming the
+newly active profile — a soft, non-destructive signal, never redaction. The
+system prompt and operator guide state plainly: **switching `profile.current`
+changes identity, formatting, and calibration; it is not an audience
+boundary.** Handing the screen to another audience uses the honest recipe this
+repository already prescribes: a fresh room, the demo database, and — once the
+lens work lands — an operator lens with its ceiling and shields.
+
+Why the redaction alternative loses, spelled out because the argument for it
+sounds safety-shaped:
+
+- **It solves the wrong case destructively.** The overwhelmingly common
+  `profile.current` change is the single operator switching between their own
+  profiles, correcting a mis-set value, or trying a template — mid-project,
+  mid-conversation. Cutting prompt history at that moment silently severs the
+  assistant from everything the conversation established, the failure mode
+  this repository's conventions explicitly reject: continuity is preserved;
+  soft signals are preferred over hard context wipes.
+- **As an audience boundary it is false safety, by this repository's own
+  prior ruling.** The operator-lens proposal already evaluated and rejected
+  per-profile chat-history filtering: history is a transcript, not a knowledge
+  base, and a filter that *usually* hides sensitive text is worse than a rule
+  everyone can reason about. Redaction-on-switch is that rejected filter with
+  a new trigger. The argument "a reminder while still sending old history is
+  not sufficient for a friend/demo profile" is correct — but it applies with
+  equal force to history redaction itself: the room list, kanban boards, git
+  page, journals, and memory retrieval all still expose the operator's life to
+  whoever holds the screen. When neither mechanism is sufficient for the
+  audience problem, the audience problem must not drive this setting's
+  semantics; it stays with the mechanisms designed for it.
+- **It couples an identity pointer to a disclosure policy.** `profile.current`
+  answers "whose declared record formats my replies." Disclosure is owned by
+  audience machinery (lenses, shields, ceilings, separate databases). Keeping
+  the two orthogonal is what lets a future account system bind them cleanly.
+
+### 2. The quantitative release gate, fixed before the baseline exists
+
+**Decision: adopt the live-eval gate as follows,** margins chosen now so they
+cannot be chosen after seeing results:
+
+- Target: the assistant's currently bound model group. Additional model groups
+  are an informative compatibility matrix, never the gate.
+- Three repetitions per case; a case passes only when every repetition passes.
+- **Hard-zero families:** explicit-override cases and exact-source-preservation
+  cases must pass every repetition. Any failure blocks release of the block
+  that caused it.
+- **No regressions:** no case that passed at baseline may fail after the
+  feature.
+- **Improvement margins:** the locale family's mean score must improve by at
+  least `+0.15` over baseline; the calibration family's by at least `+0.10`
+  (its behaviors are softer, so its margin is lower). Means are computed over
+  the identical case UUIDs and repetition counts as the baseline run.
+- The two blocks gate independently: the formatting guide may ship while
+  calibration returns to Phase 3's fallback ladder, or vice versa.
 
 The declarative-forms follow-up has additional open schema/migration decisions,
 but they do not block Phases 0–2 and belong in its own proposal.
