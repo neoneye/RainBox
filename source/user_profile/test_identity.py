@@ -70,6 +70,39 @@ def test_format_identity_block_renders_filled_fields_in_registry_order(profile_r
     ]
 
 
+def test_number_format_gets_a_code_owned_comment(app_ctx):
+    """The raw enum value is opaque in context JSON; a derived
+    "number_format.comment" spells the convention out, adjacent to the
+    value. Looked up from the validated enum only — an off-enum value gets
+    no comment (and would never render a guide directive either)."""
+    block = format_identity_block({"uuid": "x", "name": "P", "data": {
+        "number_format": "1234567.89"}})
+    payload = _parse_block(block)
+    assert payload["number_format"] == "1234567.89"
+    assert payload["number_format.comment"] == (
+        "Don't show thousand separators. Use DOT as decimal separator.")
+    keys = list(payload)
+    assert keys.index("number_format.comment") == keys.index("number_format") + 1
+
+    grouped = _parse_block(format_identity_block(
+        {"uuid": "x", "name": "P", "data": {"number_format": "1.234.567,89"}}))
+    assert grouped["number_format.comment"] == (
+        "Use DOT as thousands separator and COMMA as decimal separator.")
+
+    no_field = _parse_block(format_identity_block(
+        {"uuid": "x", "name": "P", "data": {"units": "metric"}}))
+    assert "number_format.comment" not in no_field
+
+
+def test_first_day_of_week_renders_next_to_datetime_fields(app_ctx):
+    block = format_identity_block({"uuid": "x", "name": "P", "data": {
+        "date_format": "YYYY-MM-DD", "time_format": "24h",
+        "first_day_of_week": "monday", "number_format": "1234567.89"}})
+    keys = list(_parse_block(block))
+    assert keys.index("first_day_of_week") == keys.index("time_format") + 1
+    assert keys.index("first_day_of_week") < keys.index("number_format")
+
+
 def test_format_identity_block_skips_blank_fields(app_ctx):
     payload = _parse_block(format_identity_block(
         {"name": "Sparse", "data": {"full_name": "  ", "city": "Copenhagen"}}))

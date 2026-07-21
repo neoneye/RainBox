@@ -61,6 +61,29 @@ NUMBER_FORMATS: dict[str, tuple[str, dict[int, str]]] = {
                    {2: "1234,56", 0: "1234", 3: "1234,567"}),
 }
 
+# stored value -> the code-owned comment the IDENTITY block attaches next to
+# the raw enum value ("number_format.comment"). The bare stored value is
+# opaque to a small model reading context JSON; this spells the convention
+# out even while the gated formatting guide is off. Derived from the
+# validated enum only — never operator text — so it is safe inside the
+# context-authority block.
+NUMBER_FORMAT_COMMENTS: dict[str, str] = {
+    "1,234,567.89": "Use COMMA as thousands separator and DOT as decimal "
+                    "separator.",
+    "1.234.567,89": "Use DOT as thousands separator and COMMA as decimal "
+                    "separator.",
+    "1 234 567,89": "Use SPACE as thousands separator and COMMA as decimal "
+                    "separator.",
+    "1'234'567.89": "Use APOSTROPHE as thousands separator and DOT as "
+                    "decimal separator.",
+    "12,34,567.89": "Use Indian digit grouping with COMMA separators and "
+                    "DOT as decimal separator.",
+    "1234567.89": "Don't show thousand separators. Use DOT as decimal "
+                  "separator.",
+    "1234567,89": "Don't show thousand separators. Use COMMA as decimal "
+                  "separator.",
+}
+
 # stored value -> (example: 31 December 2026 in the selected order, the
 # ambiguity warning for the opposite convention)
 DATE_FORMATS: dict[str, tuple[str, str]] = {

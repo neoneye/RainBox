@@ -57,6 +57,12 @@ PROFILE_FIELDS = [
                    "DD.MM.YYYY", "DD-MM-YYYY")),
     Field("time_format",    "Locale & formats", kind="enum", label="Time format",
           choices=("24h", "12h")),
+    # Monday covers most of Europe (and ISO 8601), Sunday the US/Canada and
+    # much of Asia, Saturday parts of the Middle East — together virtually
+    # every calendar convention in use. Sits with the other date/time fields.
+    Field("first_day_of_week", "Locale & formats", kind="enum",
+          label="First day of week",
+          choices=("monday", "sunday", "saturday")),
     # The values double as previews: every choice renders the SAME sample,
     # 1234567.89 — seven integer digits are the minimum that disambiguates
     # Indian grouping from Western grouping. A deliberately finite preference
@@ -69,12 +75,6 @@ PROFILE_FIELDS = [
                    # No-grouping variants — programmers often want digits
                    # unseparated (and unambiguous when pasted into code).
                    "1234567.89", "1234567,89")),
-    # Monday covers most of Europe (and ISO 8601), Sunday the US/Canada and
-    # much of Asia, Saturday parts of the Middle East — together virtually
-    # every calendar convention in use.
-    Field("first_day_of_week", "Locale & formats", kind="enum",
-          label="First day of week",
-          choices=("monday", "sunday", "saturday")),
     Field("language",       "Locale & formats", kind="text", label="Language (primary)",
           datalist="lang", hint="BCP-47, e.g. da, en-US, zh-Hans"),
     Field("language_2",     "Locale & formats", kind="text", label="Language (secondary)",

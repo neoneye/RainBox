@@ -38,6 +38,8 @@ def _profile(**data):
 def test_lookups_exhaustive_over_registry_enums():
     fields = profile_fields.FIELDS_BY_KEY
     assert set(NUMBER_FORMATS) == set(fields["number_format"].choices)
+    from user_profile.formatting import NUMBER_FORMAT_COMMENTS
+    assert set(NUMBER_FORMAT_COMMENTS) == set(fields["number_format"].choices)
     assert set(DATE_FORMATS) == set(fields["date_format"].choices)
     assert set(TIME_FORMATS) == set(fields["time_format"].choices)
     assert set(UNITS) == set(fields["units"].choices)
