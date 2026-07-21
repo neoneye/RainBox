@@ -293,8 +293,12 @@ format_formatting_guide(profile: dict) -> str
 build_formatting_guide() -> str
 ```
 
-The first is deterministic and easy to test. The second calls
-`current_profile()` and returns `""` when no profile is selected.
+The first is deterministic and easy to test; it is what the assistant's
+one-snapshot seam calls with `context.profile`. The second is the
+convenience wrapper for tests and ad-hoc callers — it calls
+`current_profile()` itself and returns `""` when no profile is selected —
+and must never be wired into the main handle path, which performs exactly
+one context lookup per turn.
 
 Example body for the Germany template:
 
@@ -598,8 +602,11 @@ historical names in those locale archetypes.
 
 ### Prompt rendering
 
-Add `user_profile/calibration.py` with pure formatting plus active-profile
-lookup. It returns a body only; prompt assembly creates the tag.
+Add `user_profile/calibration.py` with the same two-seam split as
+`formatting.py`: a pure `format_calibration(profile) -> str` used by the
+one-snapshot seam, plus a convenience wrapper that looks up the active
+profile itself for tests and ad-hoc callers only. Both return a body only;
+prompt assembly creates the tag.
 
 Example:
 
@@ -992,7 +999,9 @@ behavior as a unit test.
    tags created once; XML escaped; correct authority attributes; unset
    `profile.current` emits no identity, formatting, or calibration block while
    leaving the independent memory-derived operator profile unchanged; all
-   three declared blocks in one turn come from the same profile snapshot.
+   three declared blocks and the room's context marker in one turn come from
+   the same declared-profile context snapshot (profile dict plus both event
+   stamps), with no second settings lookup on the handle path.
 9. **Adversarial context:** locale fields and notes containing markup or prompt
    instructions cannot forge tags, change authority, or become guide policy.
 10. **Browser behavior:** add/remove/up/down, independent save indicators,
