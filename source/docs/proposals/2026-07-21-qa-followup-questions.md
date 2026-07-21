@@ -370,13 +370,18 @@ database or graph extension is required for the intended deployment scale.
 
 ### Chat suggested-question chips (payload-driven, no LLM)
 
-For the chat surface, hints should bypass the model entirely: when a reply
-used a seed entry, attach that entry's current answerable follow-ups to the
-chat API response metadata and let the frontend render them as clickable
-suggestion chips under the reply. Clicking a chip posts the question as the
-operator's next message and records `used`; including the chip in response
-metadata records the corresponding `considered` exposure. The event source
-distinguishes chat chips from assistant hints.
+For the chat surface, hints should bypass the model entirely. Chat has no
+request/response API to attach metadata to — replies arrive as posted room
+messages over SSE — so chips ride the same channel the router's debug data
+already uses: after posting a reply that used a seed entry, the agent posts a
+`kind="suggestions"` JSON row (like `kind="debug-filter"`) carrying the
+entry's current answerable follow-ups. Non-`message` kinds are already
+excluded from LLM transcripts, so the suggestions row can never echo into a
+model context. The chat frontend renders the row as clickable suggestion
+chips under the reply. Clicking a chip posts the question as the operator's
+next message and records `used`; posting the suggestions row records the
+corresponding `considered` exposure. The event source distinguishes chat
+chips from assistant hints.
 
 This is preferable to prompting the model to phrase follow-ups in every chat
 reply: rendering adds no model call or latency, is deterministic, and chip
@@ -510,6 +515,26 @@ here so the build does not stall on them:
 - **Adoption matching.** Hint-adoption comparison uses the alias normalizer
   (`_normalize_query`) on both sides — the same normalization the exact-alias
   table already relies on.
+- **The digest key.** `item_key`, `scope_fingerprint`, and the
+  `recall_query` target ids are keyed digests, and no such key exists in the
+  codebase today. The settings design makes secrets env-only (a `secret`
+  setting never holds a DB value), so: use an optional env-only secret
+  (`RAINBOX_TELEMETRY_DIGEST_KEY`); when unset, generate a random key once
+  and store it in a plain `telemetry.digest_key` setting. Be honest about
+  the threat model: a key living beside the digests in the same database
+  only blinds casual reading and stabilizes identifiers — it is not
+  protection against a database-level reader, which matches the wider
+  telemetry posture (RetrievalEvent stores raw queries for every other
+  producer).
+- **Policy storage.** The persistent generation policy is one registered
+  JSON setting (`qa.followup_generation_policy`) holding
+  `{provenance_scopes, shield_sets, generator_group_uuid,
+  validator_group_uuid}`, validated on save (named groups must exist and
+  require structured output). `scope_fingerprint` is derived from its
+  canonical form.
+- **Fixture set.** The phase-4/policy-calibration fixtures are EvalCase rows
+  in the existing evals framework (`docs/evals-design.md`) with fictional
+  entry content — not a new harness.
 - **Alias enrichment is sketched, not specified.** Before delivery step 3,
   variant B needs its own short spec: how derived question nodes are stored
   in the pgvector table (marking, shields, entry-hash freshness) and how they
