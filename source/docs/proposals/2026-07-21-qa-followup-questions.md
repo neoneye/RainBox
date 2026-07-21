@@ -335,6 +335,52 @@ hashing, zero-result persistence, and per-entry batching keep later runs small.
   context.
 - Failed and concurrent runs cannot replace a newer complete generation.
 - Gap-report probes and developer inspection do not write live recall telemetry.
+- A live recall keeping zero items records one `unanswered` event
+  (distinguishing zero-candidates from all-rejected); dev-page probes record
+  none; the per-query stream is FIFO-bounded.
+- The CHECK constraints accept the new stage/target values and still reject
+  unknown ones.
+
+## Implementation notes
+
+Decisions an implementer needs that the sections above leave open, settled
+here so the build does not stall on them:
+
+- **Unanswered-query events (prerequisite for the mined-gap report).** Today a
+  recall that keeps nothing writes no verdict rows — the "asked and got
+  nothing" case, the mined report's most important input, leaves no trace.
+  Add `target_type="recall_query"` and `stage="unanswered"` to the
+  RetrievalEvent vocabulary; on every live `memory_query` whose recall keeps
+  zero items, record one event with `target_id` = a short hash of the
+  normalized query, the raw query in `query`, and
+  `{"candidates_total": N, "rejected_total": M}` in metadata (distinguishing
+  "nothing retrieved" from "everything rejected"). FIFO-bounded per query
+  hash by the same capacity setting as the verdict streams.
+- **Schema changes are CHECK-constraint changes.** `stage` and `target_type`
+  are enforced by database CHECK constraints (unknown values raise
+  IntegrityError), so the new `recall_query`, `unanswered`, and
+  `seed_followup` values require a constraint migration, not just new Python
+  strings. The new tables follow the existing pattern: declared in
+  `db/models.py`, created by `init_db`.
+- **Validator identity.** Validation resolves its scorer exactly like live
+  recall (`resolve_filter_model_group` — the `memory_filter` binding first).
+  Overlay/shielded runs snapshot the resolved generator and validator groups
+  at approval time and abort if resolution changes mid-run; that is what
+  "pinned" means operationally.
+- **Run execution model.** The generation job runs as a single-flight
+  background run (the benchmark-runner pattern): `/settings` starts it,
+  polls a progress endpoint, and shows the last run's summary counts. One
+  run at a time; starting while one is active is refused.
+- **Per-entry locking.** The concurrent-run rule reuses the existing
+  `pg_advisory_xact_lock` pattern (`db/memory.py`) keyed on `qa_id`.
+- **Adoption matching.** Hint-adoption comparison uses the alias normalizer
+  (`_normalize_query`) on both sides — the same normalization the exact-alias
+  table already relies on.
+- **Alias enrichment is sketched, not specified.** Before delivery step 3,
+  variant B needs its own short spec: how derived question nodes are stored
+  in the pgvector table (marking, shields, entry-hash freshness) and how they
+  interact with `sync_kb`'s epoch/repopulate logic. Do not build it from
+  this document alone.
 
 ## Assessment: is this the right direction?
 
@@ -401,8 +447,9 @@ quietly under-deliver by only ever running on the content that matters least.
 
 ## Delivery sequence
 
-1. Telemetry-mined gap report (variant A): a report over existing
-   RetrievalEvent rows on `/memory/developer`; no schema, no model calls.
+1. Telemetry-mined gap report (variant A): the unanswered-query event
+   producer (small CHECK-constraint migration) plus a report over verdict and
+   unanswered rows on `/memory/developer`; no model calls.
 2. Tables, current/stale lookup helpers, `followup_generator` binding,
    generation job, privacy-scoped `/settings` action, and tests — the shared
    machinery, built once for B and C.
