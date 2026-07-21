@@ -2301,6 +2301,9 @@ class AssistantAgent(ModelGroupAgent):
         # The deterministic formatting guide compiled from the same profile,
         # injected (authority=instructions) right after the identity block.
         self._formatting_block: str = ""
+        # The self-declared knowledge-calibration rows (authority=context),
+        # injected after the formatting guide.
+        self._calibration_block: str = ""
         # Coarse current activity, surfaced in heartbeats so a slow run looks
         # different from a hung one.
         self._activity: str = "idle"
@@ -2379,7 +2382,7 @@ class AssistantAgent(ModelGroupAgent):
             # from the turn's context snapshot — no second settings lookup on
             # the handle path. Each formatter fails independently. The
             # memory-derived self-model digest is separate and unaffected.
-            self._identity_block, self._formatting_block = (
+            self._identity_block, self._formatting_block, self._calibration_block = (
                 self._build_declared_profile_blocks(context.profile)
             )
             self._profile_block = self._build_profile_block(journal_id, room_uuid)
@@ -2825,14 +2828,17 @@ class AssistantAgent(ModelGroupAgent):
 
     def _build_declared_profile_blocks(
         self, profile: dict[str, Any] | None
-    ) -> tuple[str, str]:
-        """(identity, formatting) bodies rendered from the turn's snapshot
-        profile. The formatters fail independently: a failure logs and empties
-        only its own block, never the others and never the turn."""
+    ) -> tuple[str, str, str]:
+        """(identity, formatting, calibration) bodies rendered from the turn's
+        snapshot profile. The formatters fail independently: a failure logs
+        and empties only its own block, never the others and never the turn.
+        Formatting and calibration share one global guidance budget —
+        formatting is admitted first, calibration uses the remainder."""
         if profile is None:
-            return "", ""
+            return "", "", ""
         identity = ""
         formatting = ""
+        calibration = ""
         try:
             identity = user_profile.format_identity_block(profile)
         except Exception:
@@ -2841,7 +2847,13 @@ class AssistantAgent(ModelGroupAgent):
             formatting = user_profile.format_formatting_guide(profile)
         except Exception:
             logger.warning("assistant: formatting guide failed", exc_info=True)
-        return identity, formatting
+        try:
+            remainder = user_profile.MAX_PROFILE_GUIDANCE_CHARS - len(formatting)
+            calibration = user_profile.format_calibration(
+                profile, max_chars=remainder)
+        except Exception:
+            logger.warning("assistant: calibration block failed", exc_info=True)
+        return identity, formatting, calibration
 
     def _build_profile_block(self, journal_id: UUID, room_uuid: UUID) -> str:
         """Render the operator self-model digest (active memory) for this turn.
@@ -2957,6 +2969,11 @@ class AssistantAgent(ModelGroupAgent):
                 root, "formatting_guide", {"authority": "instructions"}
             )
             formatting.text = self._formatting_block
+        if self._calibration_block:
+            calibration = ET.SubElement(
+                root, "knowledge_calibration", {"authority": "context"}
+            )
+            calibration.text = self._calibration_block
         if self._profile_block:
             profile = ET.SubElement(root, "operator_profile", {"authority": "context"})
             profile.text = self._profile_block
