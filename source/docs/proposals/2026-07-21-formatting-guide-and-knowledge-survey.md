@@ -1,7 +1,7 @@
 # Formatting guide and knowledge calibration
 
-**Status: revised proposal.** Ship two small profile-driven prompt features,
-not a general sensitive-survey platform:
+**Status: proposal.** Ship two small profile-driven prompt features first,
+then grow toward operator-authored forms on the measured result:
 
 1. A deterministic **formatting guide** compiles the active person profile's
    locale fields into code-owned directives with examples.
@@ -14,50 +14,14 @@ an LLM call, and both are injected by the main assistant next to
 `<operator_identity>`. Explicit instructions in the current message always
 win over profile defaults.
 
-This revision deliberately removes the questions-style wizard, conditional
-question language, arbitrary per-survey render modes, and claims that shields
-secure intimate data. Those ideas are not rejected forever; they are rejected
-from this delivery. They constitute a form platform, a retrieval capability,
-and an access-control project, none of which is required to fix reply
-formatting or explanation depth.
-
-## Review verdict
-
-The original proposal had a good diagnosis and an undisciplined solution.
-Formatting failures are real, and raw locale facts are a weak way to steer an
-instruction-tuned model. The knowledge problem is also real. But sharing a
-profile row and a prompt insertion point does not justify building a generic
-plugin system, interview wizard, sensitivity framework, freshness workflow,
-retrieval action, and two rendering engines in one proposal.
-
-The original design also contained correctness holes:
-
-- It showed builders returning `<formatting_guide>` and `<survey_...>` tags,
-  while the existing assistant creates the outer XML element itself. Following
-  that design literally would produce escaped or nested pseudo-tags.
-- `practice = daily | sometimes | rarely | avoiding` mixed frequency with
-  preference. An enum should describe one axis.
-- “Locked means invisible” ignored the existing profile-detail GET, which
-  returns the full `data` blob, plus raw admin, search, export, backup, and log
-  surfaces. Hiding one fieldset and one prompt block is not structural privacy.
-- The profile data endpoint currently preserves only `dynamic` during a flat
-  save. Adding `surveys` without changing that merge would delete survey data.
-- Complete-snapshot autosave had no response revision. Two tabs could silently
-  clobber one another.
-- A 1,500-character cap *per* always-injected survey left the total prompt cost
-  unbounded.
-- “Add an approximate EUR figure when useful” invited the model to invent or
-  reuse a stale exchange rate.
-- Free-text timezone, language, notes, legends, and labels were allowed to
-  become prompt instructions without a trust-boundary rule.
-- “Topics not listed: ask” would turn normal questions into a clarification
-  tax. Absence should mean “use the normal default,” not “interrupt.”
-- The measurement phase came last. It should establish the baseline first and
-  prevent a large UI/data build for a prompt intervention that has not proved
-  useful.
-
-The revised scope is intentionally less impressive and much more likely to
-ship correctly.
+The delivery is deliberately sequenced, not deliberately small. Fixing reply
+formatting and explanation depth requires no form platform, no retrieval
+capability, and no access-control work — so the core ships first, alone, and
+gets measured. The **declarative-forms follow-up** (see below) is a committed
+destination, not a maybe: a concrete operator-authored interview bank already
+exists outside rainbox and must eventually be editable inside it. What this
+document keeps out permanently is narrower: treating shields as an
+authorization boundary, and any design that only works if they were one.
 
 ## Problem
 
@@ -98,11 +62,20 @@ It is a preference signal, not an objective certification of ability.
 - Automatic foreign-exchange lookup.
 - Reformatting code, identifiers, URLs, quoted text, or exact source data.
 - Proving a person's expertise.
-- A general form builder or interview-bank language.
-- Storing health, relationship, sexual, legal, or similarly sensitive surveys
-  under an unauthenticated shield.
-- Making shields an authorization boundary.
+- A general form builder or interview-bank language *in this delivery* (the
+  declarative-forms follow-up is committed, but ships separately).
+- Making shields an authorization boundary, or presenting them as one.
 - Injecting these blocks into every agent type in the first delivery.
+
+One boundary deserves stating in both directions. Refusing to *store*
+sensitive material is not on the non-goals list, because refusing storage is
+not a privacy mechanism — it just pushes the operator's real data into
+unintegrated side systems (which is exactly where the existing private
+interview bank lives today). rainbox is the operator's own machine and their
+own database; it stores the operator's data at full fidelity. Privacy work in
+this document and its follow-ups is always about *disclosure* — which
+audiences, surfaces, and prompts may see a thing — never about degrading or
+declining what is stored.
 
 ## Current architecture and exact insertion point
 
@@ -301,9 +274,12 @@ The axes are deliberately orthogonal:
 - `depth`: `concise | standard | teach` (optional)
 - `note`: bounded nuance (optional)
 
-`stance` replaces the broken frequency/preference mixture. `depth` captures a
-fact the original schema missed: expertise and desired explanation style are
-not the same thing.
+`stance` keeps preference on its own axis, and `depth` keeps explanation
+style on its own axis — expertise and desired explanation style are not the
+same thing. Usage recency is real signal too ("uses it daily", "rusty since
+2014") but does not earn a fourth enum: it shades how to read `level` rather
+than switching assistant behaviour on its own, so it belongs in `note`, which
+the model reads verbatim.
 
 Server-owned stable row ids make rename, reorder, and diff behavior
 unambiguous. `updated_at` changes only when the row's semantic fields change;
@@ -411,14 +387,35 @@ number omitted. Empty calibration yields no tag.
 This is a storage cap and a prompt cap, not the fiction that all 100 stored rows
 fit in every turn.
 
-## What is deferred
+## The declarative-forms follow-up (committed, sequenced after the core)
 
-### Declarative custom surveys
+This section records the destination so the core cannot be mistaken for the
+whole journey, and so the follow-up's requirements are not re-litigated from
+scratch.
 
-A future proposal may add row-style custom definitions under
-`<customize.dir>/surveys/`, but call them **declarative forms**, not plugins:
-they do not execute code. That proposal must define versioning, size limits,
-cache invalidation, source namespaces, migrations, and total prompt budgeting.
+### Why it is committed, not hypothetical
+
+The operator already maintains a real interview-style question bank in a
+standalone private webapp outside rainbox: multiple themed areas, typed
+questions (single choice, multi choice, year, country, free text), a
+per-definition preference scale applied across item matrices, conditional
+follow-up questions, explicit "skipped" answers that must never be re-asked,
+per-user answer documents, and a validator and renderer. Its subject is
+private and irrelevant here; its *shape* is not. Any questions-style schema
+in the follow-up is derived from this working client, not invented — and
+"port the existing bank without code changes, answers included" is the
+follow-up's natural acceptance test. The requirement it must satisfy is
+equally concrete: the operator wants that bank **editable inside rainbox**
+while **never becoming public**. A design that cannot host it has not solved
+the problem this follow-up exists for.
+
+### Declarative custom forms
+
+Row-style custom definitions load from `<customize.dir>/surveys/`, and they
+are **declarative forms**, not plugins: they declare fields and never execute
+code. The follow-up proposal must define versioning, size limits, cache
+invalidation, source namespaces, migrations, and how custom forms share the
+one global prompt-guidance budget.
 
 Reserve shipped ids under `rainbox.*` and require operator definitions to use
 `local.*`. Namespace ownership prevents a future release from colliding with a
@@ -435,38 +432,64 @@ Do not derive XML element names from file ids.
 
 ### Questions-style wizard and conditional logic
 
-A fixed-question wizard, `show_if` expression language, matrix scales,
-explicit skips, progress calculation, deep links, and per-step autosave are a
-separate product. It should be proposed only with a concrete question bank and
-porting test. Designing a mini form language without its first real client is
-speculation.
+A fixed-question wizard — area-stepped UI, `show_if` conditionals, matrix
+scales, explicit skips, progress calculation, deep links, per-step autosave —
+is substantial UI work and stays out of the core delivery. But it is not
+speculative design awaiting a first client: the client exists (above), its
+bank already exercises every one of those features in production for one
+user, and the porting test is therefore writable on day one of the follow-up.
+The wizard is sequenced later because it is *independent of the formatting
+and calibration fixes*, not because its need is unproven.
 
-### Sensitive surveys and on-request retrieval
+### Sensitive forms: three different privacy problems
 
-Do not market `qa.unlocked_shields` as protection for intimate survey data.
-The setting is unauthenticated and protects against accidental display to a
-trusted audience, not a curious local caller.
+"Not something I would make public" decomposes into three requirements with
+three different owners, and conflating them either oversells shields or
+blocks the operator's actual use case indefinitely. The follow-up must treat
+them separately:
 
-Before sensitive surveys are permitted, the design must inventory and test
-every disclosure surface:
+1. **Publication privacy — the content never leaves the machine or enters a
+   repository.** This is the requirement the operator stated, and it is
+   satisfiable now, structurally: a private form's definition (its questions
+   are as revealing as any answer) lives only in `<customize.dir>/surveys/`,
+   is never shipped, and is never written under the repo. The location is a
+   real guarantee *of what rainbox does* — rainbox never copies it into
+   shipped data, templates, docs, or test fixtures. What the location cannot
+   guarantee is the operator's own configuration: `customize.dir` could
+   itself point inside a Git worktree or a broadly readable directory. So a
+   doctor check warns when the customize dir is inside a repository or has
+   loose permissions, and the documentation states plainly that this last
+   step is the operator's responsibility. That residual does not make the
+   guarantee "false"; it makes it a two-party contract, and both parties'
+   obligations are written down.
+2. **Audience privacy — people the operator hands the screen to do not see
+   it.** This is what shields honestly provide: best-effort suppression
+   against *accidents in front of a trusted audience*. `qa.unlocked_shields`
+   is unauthenticated and must never be marketed as more. Before any
+   sensitive form is unlockable, every disclosure surface must be
+   inventoried, gated, and tested under a locked shield:
+   - profile detail and tree APIs (the detail GET must project the subtree
+     out, not merely the editor hide it);
+   - the profile editor and deep links;
+   - Admin raw JSON views;
+   - UUID search and diagnostics;
+   - assistant prompt assembly and action choice lists;
+   - logs, traces, error payloads, exports, backups, and duplication;
+   - stale browser state after a shield or lens switch.
+3. **Adversarial privacy — a hostile local process or determined person at
+   the keyboard cannot extract it.** Out of scope until the security work's
+   authentication phases land. No shield, location, or projection rule
+   claims this; the recipe for a genuinely untrusted audience remains a
+   separate database.
 
-- profile detail and tree APIs;
-- the profile editor and deep links;
-- Admin raw JSON views;
-- UUID search and diagnostics;
-- assistant prompt assembly and action choice lists;
-- logs, traces, error payloads, exports, backups, and duplication;
-- stale browser state after a shield or lens switch.
+The sensitive-forms capability is gated on closing layer 2's inventory —
+a bounded, testable list — not on completing layer 3, which would defer the
+operator's stated need behind an unrelated multi-phase security project.
 
-The definition file's location is not a guarantee that it “never becomes
-public.” `customize.dir` can itself point inside a repository or a broadly
-readable directory. A future doctor check can warn when it is inside a Git
-worktree or has unsafe permissions, but the documentation must state the
-operator's responsibility plainly.
-
-An on-request `read_survey` action also needs a threat model and an action-level
-authorization check performed at execution time, not just a filtered choice
-list created earlier. It is deferred with the sensitive-data work.
+An on-request `read_survey` action additionally needs a threat model and an
+action-level authorization check performed at execution time, not just a
+filtered choice list created earlier. It is deferred with the
+sensitive-forms work.
 
 ## Phasing and acceptance
 
@@ -532,8 +555,10 @@ Decision gates:
 - If always-on calibration distracts models, first try a compact topic index;
   next try deterministic lexical selection using the current query; consider
   embeddings only after those cheaper options fail.
-- Do not start the generic survey proposal merely because Phase 2 shipped. It
-  needs a real custom survey and a separate security review.
+- Do not start the declarative-forms follow-up merely because Phase 2
+  shipped — start it when the core has measured well. Its porting client
+  already exists; what it still needs before any sensitive form is unlockable
+  is the audience-privacy surface review defined above.
 
 ### Phase 4 — chat-agent parity
 
@@ -589,11 +614,17 @@ instructions remain separate from fenced recalled memory.
   a dimension. `stance` and `depth` are more actionable.
 - **Treat row order as freshness.** Rejected. Priority and last semantic update
   answer different questions and should remain separate.
-- **Build questions-style surveys now.** Rejected until a real question bank
-  proves the need and tests the schema.
-- **Claim customize-dir + shields make sensitive surveys private.** Rejected as
-  false. Location reduces accidental publication only when configured safely;
-  shields without authentication are presentation controls.
+- **Build questions-style forms in the core delivery.** Rejected as
+  sequencing, not as need: the real question bank exists and defines the
+  schema, but the wizard is UI-heavy and orthogonal to the formatting and
+  calibration fixes, so it ships in the follow-up with the port as its
+  acceptance test.
+- **Treat "private" as one property.** Rejected; it is three (publication,
+  audience, adversarial — see the sensitive-forms section). Customize-dir
+  placement genuinely delivers the first when the doctor check passes;
+  shields deliver only best-effort accident protection for the second;
+  nothing short of the auth work delivers the third. Collapsing them either
+  oversells shields or blocks the use case forever.
 
 ## Novel follow-ups worth testing
 
