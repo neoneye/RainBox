@@ -186,6 +186,24 @@ def test_three_decimal_currency_renders_thousandths():
     assert "for example 1,234.567 BHD." in body
 
 
+def test_no_grouping_variants():
+    """Programmers can opt out of thousands separators entirely; the money
+    example still demonstrates the decimal separator."""
+    point = format_formatting_guide(_profile(
+        number_format="1234567.89", currency="EUR"))
+    assert ("- Numbers: decimal point without thousands separators, "
+            "for example 1234567.89." in point)
+    assert "for example 1234.56 EUR." in point
+    comma = format_formatting_guide(_profile(
+        number_format="1234567,89", currency="DKK"))
+    assert ("- Numbers: decimal comma without thousands separators, "
+            "for example 1234567,89." in comma)
+    assert "for example 1234,56 DKK." in comma
+    yen = format_formatting_guide(_profile(
+        number_format="1234567.89", currency="JPY"))
+    assert "for example 1234 JPY." in yen
+
+
 def test_currency_without_number_format_states_code_only():
     body = format_formatting_guide(_profile(currency="EUR"))
     assert ("- Currency: use the currency code EUR. Convert currencies only with "

@@ -262,7 +262,10 @@ def test_all_templates_carry_number_format(app_ctx):
     }
     for value, names in assigned.items():
         assert {n for n, d in by_name.items() if d["number_format"] == value} == names
-    assert not any(d["number_format"] == "1'234'567.89" for d in by_name.values())
+    # The apostrophe and the two no-grouping variants are operator-selectable
+    # conventions with no template.
+    unassigned = {"1'234'567.89", "1234567.89", "1234567,89"}
+    assert not any(d["number_format"] in unassigned for d in by_name.values())
 
 
 def test_all_templates_carry_first_day_of_week(app_ctx):

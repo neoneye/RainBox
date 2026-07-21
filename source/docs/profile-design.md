@@ -88,10 +88,12 @@ rendered as one `<fieldset>` each in registry order:
   kg and °C but miles on roads; `imperial` is US customary), temperature
   (`celsius|fahrenheit`, derived from units when unset), date/time format,
   number format, first day of week (enums), timezone, primary + secondary
-  language and currency (datalist-assisted free text). The `number_format` enum's five values
+  language and currency (datalist-assisted free text). The `number_format` enum's seven values
   double as previews — every choice renders the same `1234567.89` sample
   (seven integer digits are what disambiguate Indian from Western grouping),
-  differing only in separators. `first_day_of_week`
+  differing only in separators; two no-grouping variants (`1234567.89` /
+  `1234567,89`) serve programmers who want digits unseparated.
+  `first_day_of_week`
   (`monday|sunday|saturday`) feeds the formatting guide's Calendar
   directive; Monday additionally pins ISO 8601 week numbering.
 - **Contact & location** — country, city, address, email.

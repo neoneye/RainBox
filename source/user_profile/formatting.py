@@ -55,6 +55,10 @@ NUMBER_FORMATS: dict[str, tuple[str, dict[int, str]]] = {
                      {2: "1'234.56", 0: "1'234", 3: "1'234.567"}),
     "12,34,567.89": ("decimal point with Indian comma grouping",
                      {2: "1,234.56", 0: "1,234", 3: "1,234.567"}),
+    "1234567.89": ("decimal point without thousands separators",
+                   {2: "1234.56", 0: "1234", 3: "1234.567"}),
+    "1234567,89": ("decimal comma without thousands separators",
+                   {2: "1234,56", 0: "1234", 3: "1234,567"}),
 }
 
 # stored value -> (example: 31 December 2026 in the selected order, the

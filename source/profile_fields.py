@@ -65,7 +65,10 @@ PROFILE_FIELDS = [
     # a non-breaking space, storage does not).
     Field("number_format",  "Locale & formats", kind="enum", label="Number format",
           choices=("1,234,567.89", "1.234.567,89", "1 234 567,89",
-                   "1'234'567.89", "12,34,567.89")),
+                   "1'234'567.89", "12,34,567.89",
+                   # No-grouping variants — programmers often want digits
+                   # unseparated (and unambiguous when pasted into code).
+                   "1234567.89", "1234567,89")),
     # Monday covers most of Europe (and ISO 8601), Sunday the US/Canada and
     # much of Asia, Saturday parts of the Middle East — together virtually
     # every calendar convention in use.
