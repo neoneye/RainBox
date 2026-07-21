@@ -2869,6 +2869,34 @@ class AssistantAgent(ModelGroupAgent):
             logger.warning("assistant: profile retrieval failed", exc_info=True)
             return ""
 
+    def build_turn_prompts(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        profile: dict[str, Any] | None,
+        include_formatting: bool = True,
+        include_calibration: bool = True,
+    ) -> tuple[str, str]:
+        """The prompt-construction seam shared with the handle path, for the
+        live eval harness (evals/profile_guidance.py): renders the
+        declared-profile blocks from the GIVEN profile dict — an eval-only
+        override, so the global `profile.current` setting is never read or
+        mutated and a concurrent real turn can never observe a temporary
+        value — then assembles the same (system, user) prompt pair a real
+        step-0 decision would send. Posts nothing, dispatches nothing, and
+        touches no room state; the include flags are the eval variants'
+        prompt-construction overrides, not production settings."""
+        identity, formatting, calibration = (
+            self._build_declared_profile_blocks(profile))
+        self._identity_block = identity
+        self._formatting_block = formatting if include_formatting else ""
+        self._calibration_block = calibration if include_calibration else ""
+        self._profile_block = ""
+        self._skill_block = ""
+        user_prompt = self._build_user_prompt(
+            messages=messages, scratchpad=[], step_index=0)
+        return self._system_prompt(), user_prompt
+
     def _maybe_post_context_marker(
         self, room_uuid: UUID, context: "user_profile.ProfileContext"
     ) -> bool:
