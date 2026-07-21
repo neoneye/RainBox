@@ -58,8 +58,11 @@ scales are intentionally not comparable. Its top item or numeric score is
 therefore not an answerability verdict.
 
 For each generated question, hybrid retrieval supplies candidates and the
-existing `memory_filter` relevance policy validates them. Exact aliases may
-short-circuit this call. Validation can keep multiple targets.
+existing `memory_filter` relevance policy validates them. An exact alias match
+may short-circuit the validation call — but only when the alias belongs to a
+*different* visible entry (→ `answerable`); an alias registered on the source
+entry itself is a self-hit (→ `redundant`). Validation can keep multiple
+targets.
 
 ### Visibility is part of correctness
 
@@ -117,12 +120,14 @@ seed_followup
 - validation           compact JSONB diagnostics; no source/answer snapshots
 ```
 
-Primary key: `(generation_uuid, ordinal)`. Upsert the generation for a `qa_id`
-and replace its items in one transaction only after generation and validation
-succeed. A failed attempt updates only `last_attempt_*` and `last_error_code`;
-it must not replace the last successful generation or its items. When no
-successful generation exists yet, the slot contains attempt metadata but no
-`uuid` or items.
+Keying: `seed_followup_generation` is one slot per source entry — its primary
+key is `qa_id`, with `uuid` a *nullable reference* to the current successful
+generation (null until the first success; never a nullable primary key).
+`seed_followup` rows are keyed `(generation_uuid, ordinal)`. Upsert the
+generation for a `qa_id` and replace its items in one transaction only after
+generation and validation succeed. A failed attempt updates only
+`last_attempt_*` and `last_error_code`; it must not replace the last
+successful generation or its items.
 
 Consumers accept a generation only when `source_entry_sha` equals the source
 entry's current runtime hash and `prompt_version` equals the current policy
