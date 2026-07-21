@@ -2,7 +2,7 @@
 
 Extend the Q&A knowledge base so each entry can suggest a sensible next
 question. Answerable suggestions let the assistant navigate to related entries;
-unanswerable suggestions give the operator a concrete authoring backlog.
+suggestions with no validated target become candidate gaps for operator review.
 
 All examples in this proposal are fictional. No entry text from an operator
 overlay is reproduced here.
@@ -24,7 +24,7 @@ shield must not be interpreted as “contains no personal data.”
 ## Goals
 
 - Give the assistant short, validated directions for useful follow-up queries.
-- Identify plausible questions that the current KB cannot answer.
+- Identify plausible questions for which the current validator finds no target.
 - Regenerate only when relevant source or target content changes.
 - Preserve overlay ownership, shield isolation, and operator control over where
   private content is processed.
@@ -41,14 +41,14 @@ shield must not be interpreted as “contains no personal data.”
 
 ## Design principles
 
-### One derived-content engine, many products
+### Shared framework, product-specific results
 
-The generation machinery below (slots keyed by runtime content hash,
-generate → retrieve → validate → classify, privacy scopes, policy
-versioning) is deliberately consumer-agnostic: follow-up questions are its
-first product, alias enrichment (variant B in the assessment) its second.
-Nothing in the slot schema or the pipeline steps is follow-up-specific except
-the classification vocabulary. Build it once; do not fork it per product.
+Follow-up generation and alias enrichment can share orchestration, model-policy
+resolution, privacy scopes, runtime-hash freshness, and structured-call helpers.
+They must not share one output slot: their validation rules, lifecycle, and
+consumers differ. The `seed_followup_*` tables below belong only to follow-up
+generation. Alias enrichment needs its own short specification and persistence
+key (or an explicit product discriminator) before implementation.
 
 ### Follow-ups are derived data
 
@@ -66,23 +66,39 @@ re-embedded or regenerated.
 scales are intentionally not comparable. Its top item or numeric score is
 therefore not an answerability verdict.
 
-For each generated question, hybrid retrieval supplies candidates and the
-existing `memory_filter` scorer rates them. Follow-up validation must **not**
-reuse `apply_filter_scores`: the live recall policy intentionally keeps every
-candidate when the list is short, which is appropriate for conversational
-recall but would manufacture false “answerable” edges here. Instead, a
-follow-up-specific, absolute code policy accepts only candidates with
-`direct >= 4` and `relevancy >= 4`. The initial thresholds are named constants
-covered by `policy_version`; `indirect` alone never proves that the candidate
-can answer the question.
+For each generated question, hybrid retrieval supplies candidates. Validation
+uses the explicitly bound `memory_filter` model and the same anchored Likert
+dimensions, but a dedicated batch schema groups ratings by
+`candidate_question_id` and then `qa_id`. The existing flat `FilterDecision`
+schema cannot represent the same target appearing under multiple generated
+questions without ID collisions.
+
+```text
+FollowupValidationDecision
+- items[]
+  - candidate_question_id
+  - targets[]
+    - qa_id
+    - direct       1..5
+    - indirect     1..5
+    - relevancy    1..5
+```
+
+Follow-up validation must also **not** reuse `apply_filter_scores`: the live
+recall policy intentionally keeps every candidate when the list is short,
+which is appropriate for conversational recall but would manufacture false
+“answerable” edges here. Instead, a follow-up-specific, absolute code policy
+accepts only candidates with `direct >= 4` and `relevancy >= 4`. The initial
+thresholds are named constants covered by `policy_version`; `indirect` alone
+never proves that the candidate can answer the question.
 
 Absolute thresholds inherit the scorer model's calibration, and scorers get
 swapped (that is the point of the `memory_filter` binding). The defenses, in
 order: the scale definitions carry anchored endpoint descriptions (already
-the shared-schema convention); the phase-4 fixture set recalibrates
-thresholds per `policy_version` bump when the scorer changes; and if
-Likert-threshold validation proves unstable across scorer swaps, the fallback
-is a binary authoritative-answer schema (`answers_the_question: yes|no`, same
+the shared-schema convention); the fixture set is run before adopting a new
+scorer and any threshold change increments `policy_version`; and if Likert
+validation proves unstable across scorer swaps, the fallback is a binary
+authoritative-answer schema (`answers_the_question: yes|no`, same
 `policy_version` mechanics). A local cross-encoder reranker would be the
 numerically stablest validator; it stays a future swap because nothing in the
 current stack serves one.
@@ -102,8 +118,9 @@ stale, or locked entries.
 
 Generation sends an entry's questions and answer to a completion model, which
 is a materially different data flow from local embedding-only retrieval.
-Validation can also send candidate paths, questions, and static answers to a
-second completion model. Both calls are therefore inside the same privacy and
+Validation can also send candidate registered questions and static answers to
+a second completion model. It omits `path` and other metadata not needed for
+answerability. Both calls are therefore inside the same privacy and
 provider-consent boundary. Consequently:
 
 - The default generation scope is publishable upstream static entries only.
@@ -111,8 +128,10 @@ provider-consent boundary. Consequently:
   once on `/settings` rather than re-approved ceremony-by-ceremony per run:
   the policy names the allowed provenance classes (and, separately, shield
   sets) plus the pinned generator and validator model groups for that scope.
-  Runs display the active policy and reuse it; editing the policy changes the
-  `scope_fingerprint`, which invalidates results produced under the old one.
+  Runs display the active policy and reuse it. Changing its provenance or
+  shield scope changes `scope_fingerprint` and invalidates results produced
+  under the old scope; changing only a model group does not invalidate stored
+  results unless the operator requests regeneration.
   One-time setup, low-friction reruns — the friction lives where the decision
   is made, not where it is repeated. A trusted local model is the recommended
   default for both roles.
@@ -121,8 +140,8 @@ provider-consent boundary. Consequently:
 - Shielded entries require a separate explicit selection; a currently unlocked
   shield is not by itself consent to send its content to a generator.
 - Private generation never inherits the validator's normal agent-binding
-  fallback chain. Both generator and validator bindings must be explicitly
-  configured and pinned for the duration of the run.
+  fallback chain. Both generator and validator group UUIDs must be explicitly
+  configured in the persistent policy and pinned for the duration of the run.
 - Retrieval candidates are restricted by the approved data scope as well as by
   shield visibility. The default upstream-only run must not retrieve, send, or
   create edges to operator-overlay entries. An approved overlay run may target
@@ -153,67 +172,78 @@ seed_followup_generation
 - scope_fingerprint    approved provenance/shield scope used by the run
 - policy_version       prompt, input-limit, and validation-policy version
 - generated_at
-- last_attempt_sha     source hash used by the latest attempt
+- last_attempt_key     digest of source/policy/scope/model snapshot
 - last_attempt_at
 - last_error_code      sanitized; null after success
+- last_error_retryable boolean; null after success
 
 seed_followup
 - source_qa_id         parent source entry id
-- ordinal              stable order within the generated list
+- ordinal              display order within the current generated list
+- item_key             keyed digest of source_qa_id + normalized question
 - question             generated question
 - classification       answerable | gap | redundant
-- target_refs          JSONB list of {qa_id, entry_sha}; empty unless answerable
-- validation           numeric ratings and retrieval signals only
+- target_refs          JSONB list of {qa_id, basis_sha}; empty unless answerable
+- registry_sha         scoped target-registry fingerprint at validation time
+- validation           numeric ratings/scores + signal names; no prompt snapshots
 ```
 
 Keying: `seed_followup_generation` is one slot per source entry, keyed by
 `qa_id`. `seed_followup` rows are keyed `(source_qa_id, ordinal)` and reference
-that slot with `ON DELETE CASCADE`. No separate generation UUID is needed
-because only the current successful result is retained. Upsert the slot and
+that slot with `ON DELETE CASCADE`; `(source_qa_id, item_key)` is also unique.
+No separate generation UUID is needed because only the current successful
+result is retained. Upsert the slot and
 replace its items in one transaction only after generation and validation
-succeed. A failed attempt updates only `last_attempt_*` and `last_error_code`;
-it must not replace the last successful fields or items. Before the first
-success, the slot may contain attempt metadata while `source_entry_sha` and
-the successful-model fields remain null.
+succeed. A failed attempt updates only the attempt/error fields; it must not
+replace the last successful fields or items. Before the first success, the slot
+may contain attempt metadata while `source_entry_sha` and the successful-model
+fields remain null. A terminal error such as `input_too_large` is not retried
+for the same `last_attempt_key`; transient provider and retrieval failures are.
 
 Consumers accept a generation only when `source_entry_sha` equals the source
 entry's current runtime hash, `policy_version` equals the current policy
 version, and `scope_fingerprint` still matches the active approved scope.
 
-Target freshness is deliberately looser than source freshness, because a
-strict rule would make quality work self-defeating: fixing a typo in one
-popular target entry would instantly orphan every inbound edge and trigger a
-revalidation cascade. The stored `entry_sha` in `target_refs` is a
-*confidence* marker, not a serving gate:
+Target freshness uses a canonical `basis_sha` over the fields used to validate
+answerability: `kind`, normalized questions, and static answer or dynamic
+handler name. It excludes formatting and unrelated metadata such as `path`.
+Shield and provenance remain separate serving gates.
 
-- A hint is servable while its target merely **exists and is visible** —
-  correctness at follow time is enforced live anyway, because following a
-  hint runs a fresh `memory_query` through retrieval and the recall filter.
-  The stored target ref never short-circuits that.
-- A target-hash mismatch downgrades the edge to `stale` for graph analysis
-  and gap classification, and queues **item-level revalidation** at the next
-  batch run (one retrieval + one validator call for that question — never a
-  regeneration of the source's candidate list).
-- Only target **deletion or shield-locking** hides the hint immediately.
+A target-basis mismatch hides the item until cheap **item-level revalidation**
+reruns retrieval and validation for that question. It never regenerates the
+source's candidate list. This preserves the meaning of `answerable`: every
+advertised edge is current, while harmless formatting-only edits do not create
+revalidation work.
 
-Source-side freshness stays strict (a source edit invalidates its own
-generation): the questions were generated *from* that text. This division
-handles source edits, target edits, target deletion, overlay replacement,
-scope revocation, and policy upgrades without a foreign key to a Q&A table
-that does not exist.
+Source-side freshness remains keyed to the source row hash because the
+questions were generated from that complete row. Together these rules handle
+source edits, target edits, target deletion, overlay replacement, scope
+revocation, and policy upgrades without a foreign key to a Q&A table that does
+not exist.
 
-`scope_fingerprint` is a digest of a canonical scope description (allowed
-provenance classes and shield set), not a copy of potentially sensitive scope
-labels.
+`scope_fingerprint` is a keyed digest of a canonical scope description (allowed
+provenance classes and shield set), not a copy or plain guessable hash of
+potentially sensitive scope labels.
 
-The scorer schema requires a free-form calibration note, but the batch job
-discards it immediately. It stores only numeric ratings, retrieval signals, and
-model identifiers; validation diagnostics must not retain generated reasoning
-that could paraphrase source content.
+The dedicated batch schema emits no free-form reasoning. The job stores only
+numeric ratings, retrieval signals, and model identifiers; validation
+diagnostics must not retain generated prose that could paraphrase source
+content.
 
 `target_refs` is a list because a question may legitimately require more than
 one kept entry. The assistant does not need to see target IDs; they are for
 validation, inspection, and graph tooling.
+
+`item_key` is a keyed digest of source ID + normalized question. It is stable
+across reordering and regeneration when the question is unchanged. Telemetry
+uses it instead of `ordinal`, so regenerated lists do not attribute an old
+hint's exposures or adoptions to different text.
+
+`registry_sha` is a keyed digest of the visible, in-scope target IDs and their
+`basis_sha` values. Answerable items use their explicit target refs for normal
+freshness. Gap and redundant items have no sufficient target edge, so a changed
+registry fingerprint queues item-level revalidation: newly added or revised
+knowledge may now answer them.
 
 ## Generation and self-play pipeline
 
@@ -233,11 +263,11 @@ For each in-scope static entry missing a current, complete generation:
    visibility set derived from the source entry. This requires an explicit
    provenance filter in the batch path; shield filtering alone is insufficient.
    Do not resolve dynamic handlers during validation.
-4. **Score relevance.** Reuse the `memory_filter` scoring schema and explicitly
-   bound validator model, but apply the follow-up-specific absolute acceptance
-   policy described above. Batch the questions from one source entry into one
-   structured call where practical. Dynamic candidates expose registered
-   question metadata only; handlers are never invoked.
+4. **Score relevance.** Use the dedicated grouped batch schema with the
+   explicitly bound validator model, then apply the follow-up-specific absolute
+   acceptance policy described above. Batch the questions from one source entry
+   into one structured call. Dynamic candidates expose registered question
+   metadata only; handlers are never invoked.
 5. **Classify.** For each question:
    - only the source entry is kept -> `redundant`;
    - one or more different visible entries are kept -> `answerable`, storing all
@@ -247,13 +277,19 @@ For each in-scope static entry missing a current, complete generation:
 6. **Commit atomically.** Store the completed generation, including a completed
    row with zero items. Never publish partial results.
 
+`gap` means “no target passed the current validator under the current approved
+scope.” It is a review candidate, not proof that the KB is incapable of
+answering the question. The developer UI and exports must preserve that wording.
+
 Redundant items are useful on `/memory/developer` for prompt tuning but are not
 shown to the assistant or placed in the gap queue. A later retention policy may
 discard them.
 
 The generator is a binding-only `followup_generator` agent, parallel to
 `memory_filter`, so the operator can select its structured-output model on
-`/agentmodel`. The job resolves the binding directly; it does not enqueue normal
+`/agentmodel`. That binding may supply the upstream-only default. A broader
+generation policy stores explicit generator and validator group UUIDs rather
+than following either agent's fallback chain. The job does not enqueue normal
 agent journal work.
 
 The `/settings` action should:
@@ -291,19 +327,20 @@ questions, and prefer source order. The assistant may issue a new
 
 ### Hint adoption telemetry
 
-Whether hints are worth their prompt budget is measurable, not arguable: when
-a live `memory_query` arrives whose normalized query equals a hint shown in
-the same run's previous step, record an adoption event
-(`target_type="seed_followup"`, `source="memory_query.hints"`, target = the
-hint's source `qa_id` + ordinal). Per-hint adoption over time is the pruning
-signal (hints nobody follows stop earning their slot) and the phase-4
-go/no-go metric for keeping the hint block at all. Same FIFO-bounded
-retention as the recall-KPI streams.
+Whether hints are worth their prompt budget is measurable: record a
+`considered` exposure whenever a hint is included, then a `used` adoption when
+a live `memory_query` has the same normalized query as a hint shown in the same
+run's previous step. Both use `target_type="seed_followup"`,
+`source="memory_query.hints"`, and target = the stable `item_key`. Use
+`used / considered` only after a minimum exposure count; raw adoption totals
+alone unfairly penalize rarely shown entries. This is the pruning signal and
+the go/no-go metric for keeping the hint block. Retention is FIFO-bounded like
+the recall-KPI streams.
 
 ### Developer inspection
 
 `/memory/developer` shows all classifications, target validity, source/target
-staleness, model, prompt version, and sanitized validation diagnostics. Locked
+staleness, model, policy version, and sanitized validation diagnostics. Locked
 content remains hidden unless its shield is unlocked.
 
 ### Gap report
@@ -316,20 +353,20 @@ lifetime frequency claim.
 Allow export of question text plus source Q&A ID, but require the same visibility
 checks as the page. Do not export source answers automatically.
 
-Each gap and unanswered-query row also offers an **add-entry affordance**:
-export a prefilled overlay-entry skeleton (the question filled in, the answer
-left to write) as a JSON line the operator pastes into their overlay file.
-Authoring happens at the moment of observed failure, and the overlay file
-stays operator-owned — the app drafts, never writes it.
+Each candidate-gap or unanswered-query row whose question text is still
+available also offers an **add-entry affordance**: export a prefilled
+overlay-entry skeleton (the question filled in, the answer left to write) as a
+JSON line the operator pastes into their overlay file. Authoring happens at the
+moment of observed failure, and the overlay file stays operator-owned — the app
+drafts, never writes it.
 
 The answerable edges also form a directed graph over entries, which yields a
 second authoring signal for free: entries with **zero inbound edges** are
 unreachable by navigation (islands the assistant can only find by direct
-query), and entries with zero outbound follow-ups mark confirmed dead ends.
-The corpus is a few hundred nodes, so graph analyses (connectivity, and
-inbound-edge centrality to rank "core concept" entries) run in memory at
-report time over `target_refs` — plain Python; no graph database, no graph
-extension.
+query), and entries with zero outbound validated follow-ups are possible dead
+ends worth inspecting. Graph analyses such as connectivity and inbound-edge
+centrality can run in memory at report time over `target_refs`; no graph
+database or graph extension is required for the intended deployment scale.
 
 ### Chat suggested-question chips (payload-driven, no LLM)
 
@@ -337,14 +374,18 @@ For the chat surface, hints should bypass the model entirely: when a reply
 used a seed entry, attach that entry's current answerable follow-ups to the
 chat API response metadata and let the frontend render them as clickable
 suggestion chips under the reply. Clicking a chip posts the question as the
-operator's next message and records an adoption event.
+operator's next message and records `used`; including the chip in response
+metadata records the corresponding `considered` exposure. The event source
+distinguishes chat chips from assistant hints.
 
-This is strictly better than prompting the model to offer follow-ups in the
-chat path: zero token cost, zero added latency, zero prompt-injection surface
-(the generated text never enters a model context), deterministic rendering,
-and chip clicks are a far cleaner adoption signal than inferring whether the
-assistant "followed" a hint. The earlier phase-2 idea — letting the route LLM
-phrase "want to know about ...?" — is superseded by chips.
+This is preferable to prompting the model to phrase follow-ups in every chat
+reply: rendering adds no model call or latency, is deterministic, and chip
+clicks provide a cleaner adoption signal. It reduces the always-on prompt
+surface but does not eliminate it: after a click, the generated question enters
+the normal chat path as the operator's next message. Candidate validation,
+length/control-character checks, and ordinary chat safeguards still apply. The
+earlier idea — letting the route LLM phrase “want to know about ...?” — is
+superseded by chips.
 
 The assistant `memory_query` hint block above is the one place a prompt-side
 channel is justified at all: mid-ReAct-loop there is no UI to render chips
@@ -355,15 +396,19 @@ it stays the gated experiment while chips ship on plain evidence of clicks.
 
 - **Generator returns zero:** store a complete empty generation.
 - **Generator or validator fails:** keep the prior complete generation; record a
-  sanitized failure and retry later.
+  sanitized transient failure and retry later.
+- **Deterministic input/policy rejection:** record a terminal error and skip it
+  until the attempt key changes; do not retry it on every batch run.
 - **Source hash changes:** old generation is invisible immediately.
 - **Source disappears:** hide its generation immediately and prune the orphaned
   slot during the next successful batch run.
-- **Target hash changes (target still visible):** hint stays servable (live
-  retrieval re-validates at follow time); edge marked `stale` for
-  graph/classification; item-level revalidation at the next batch run.
+- **Target basis changes:** hide the affected item and queue item-level
+  revalidation; do not regenerate the source's candidate list.
 - **Target disappears or its shield locks:** hide that answerable item
   immediately.
+- **Scoped registry changes:** queue gap and redundant items whose
+  `registry_sha` is old for item-level revalidation; do not regenerate their
+  source questions.
 - **Shield changes:** visibility checks take effect immediately; regeneration is
   required because the raw-line hash also changes.
 - **Generation policy changes:** increment `policy_version`; older generations are
@@ -388,24 +433,30 @@ hashing, zero-result persistence, and per-entry batching keep later runs small.
 - A zero-question static entry can generate from its answer and stores an empty
   result successfully when the model proposes nothing.
 - Source edits and overlay overrides suppress hints before regeneration;
-  target *edits* downgrade edges to stale without suppressing (a followed
-  hint still passes through live retrieval + filter); target deletion or
-  shield-locking suppresses immediately.
-- A typo-level edit to a heavily-referenced target entry does not hide any
-  inbound hint and triggers only item-level revalidation, never source
-  regeneration.
+  target-basis edits, deletion, and shield-locking suppress affected items
+  immediately.
+- Formatting-only or unrelated-metadata target edits leave `basis_sha`
+  unchanged. Answerability-relevant target edits trigger only item-level
+  revalidation, never source regeneration.
+- Adding or revising an in-scope entry changes `registry_sha` and revalidates
+  gap/redundant items, allowing them to become answerable without regenerating
+  their question text.
 - A self-hit is redundant, not a gap.
 - Hybrid score order alone never marks an item answerable.
 - A short candidate list with weak absolute ratings produces a gap; the live
   filter's keep-all behavior is never applied.
 - Multiple validated targets are retained and all must be current and visible.
+- Batched validation keeps repeated target Q&A IDs isolated by candidate
+  question ID; ratings cannot collide across generated questions.
 - An upstream-only run cannot retrieve or expose an overlay entry as a target.
 - Unshielded sources cannot create edges to shielded targets.
 - Same-shield edges work only while that shield is unlocked; cross-shield edges
   are rejected.
 - Operator-overlay and shielded generation are excluded by default and require
-  explicit approved scope plus pinned generator and validator groups.
+  an explicit approved policy with pinned generator and validator group UUIDs.
 - Oversized inputs are skipped without partial generation or raw-text logging.
+- Terminal failures are not retried for the same attempt key; transient failures
+  remain retryable.
 - Dynamic source entries are skipped and validation never invokes handlers.
 - Generated text cannot forge fences or inject instructions into assistant
   context.
@@ -413,7 +464,10 @@ hashing, zero-result persistence, and per-entry batching keep later runs small.
 - Gap-report probes and developer inspection do not write live recall telemetry.
 - A live recall keeping zero items records one `unanswered` event
   (distinguishing zero-candidates from all-rejected); dev-page probes record
-  none; the per-query stream is FIFO-bounded.
+  none; `query` remains null, the keyed digest is stable, and the per-query
+  stream is FIFO-bounded.
+- Hint/chip exposure records `considered`, adoption records `used`, and both use
+  `item_key` so reordering cannot misattribute events.
 - The CHECK constraints accept the new stage/target values and still reject
   unknown ones.
 
@@ -427,22 +481,26 @@ here so the build does not stall on them:
   nothing" case, the mined report's most important input, leaves no trace.
   Add `target_type="recall_query"` and `stage="unanswered"` to the
   RetrievalEvent vocabulary; on every live `memory_query` whose recall keeps
-  zero items, record one event with `target_id` = a short hash of the
-  normalized query, the raw query in `query`, and
+  zero items, record one event with `target_id` = an HMAC-SHA256 of the
+  normalized query using the application telemetry key, `query=NULL`, the
+  existing `journal_id`, and
   `{"candidates_total": N, "rejected_total": M}` in metadata (distinguishing
-  "nothing retrieved" from "everything rejected"). FIFO-bounded per query
-  hash by the same capacity setting as the verdict streams.
+  "nothing retrieved" from "everything rejected"). The developer page may
+  resolve text from the already-authorized journal trace when it still exists;
+  otherwise it shows only the hash. Do not create a second raw-query copy merely
+  for this report. FIFO-bound events per query hash using the same capacity
+  setting as the verdict streams.
 - **Schema changes are CHECK-constraint changes.** `stage` and `target_type`
   are enforced by database CHECK constraints (unknown values raise
   IntegrityError), so the new `recall_query`, `unanswered`, and
   `seed_followup` values require a constraint migration, not just new Python
   strings. The new tables follow the existing pattern: declared in
   `db/models.py`, created by `init_db`.
-- **Validator identity.** Validation resolves its scorer exactly like live
-  recall (`resolve_filter_model_group` — the `memory_filter` binding first).
-  Overlay/shielded runs snapshot the resolved generator and validator groups
-  at approval time and abort if resolution changes mid-run; that is what
-  "pinned" means operationally.
+- **Validator identity.** The upstream-only default may resolve the normal
+  `memory_filter` binding. Overlay/shielded policies store explicit generator
+  and validator group UUIDs and never walk an agent fallback chain. Runs
+  snapshot both groups and their ordered members at start, then abort if either
+  changes mid-run; that is what “pinned” means operationally.
 - **Run execution model.** The generation job runs as a single-flight
   background run (the benchmark-runner pattern): `/settings` starts it,
   polls a progress endpoint, and shows the last run's summary counts. One
@@ -471,9 +529,11 @@ The recall-verdict and router-filter telemetry already stores the *real*
 queries that flowed through retrieval, per candidate, with the filter's
 relevance verdicts. Queries where every candidate was rejected — or the
 observation came back "no relevant remembered facts" — are demand the KB
-demonstrably failed to meet. Mining them is a report over existing rows: no
-LLM calls, no new privacy flow (the queries were already processed), and the
-gaps are demand-*observed* rather than demand-*predicted*. A synthetic gap
+demonstrably failed to meet. Mining them requires no LLM calls, but the report
+is a new presentation surface over potentially sensitive existing telemetry:
+it must apply the same room/operator authorization, avoid new raw-query copies,
+and make export an explicit operator action. These gaps are demand-*observed*
+rather than demand-*predicted*. A synthetic gap
 from self-play says "someone might ask this"; a mined gap says "the operator
 asked this and got nothing." When both exist, mined gaps outrank synthetic
 ones in the report.
@@ -491,13 +551,12 @@ from a terse registered phrasing ("Hobby Y / events"). Generating additional
 question *phrasings* per entry — validated by self-play (the new phrasing
 must retrieve its own entry decisively, and must not collide with a different
 entry's territory) and stored as derived pgvector nodes, never in the JSONL —
-raises recall of content the KB *already has*. It reuses this proposal's
-machinery nearly one-for-one: the same generation slots, runtime-hash
-freshness, privacy scopes, policy versioning, and self-play validation, with
-the classification inverted (a phrasing that retrieves a *different* entry is
-the failure case). Its consumer is the retrieval stack itself: no prompt
-budget, no new assistant behavior to validate, value delivered on the next
-query.
+raises recall of content the KB *already has*. It reuses the common framework —
+runtime-hash freshness, privacy scopes, policy versioning, job orchestration,
+and structured calls — but has product-specific storage and inverted
+validation (a phrasing that retrieves a *different* entry is the failure case).
+Its consumer is the retrieval stack itself: no prompt budget, no new assistant
+behavior to validate, value delivered on the next query.
 
 ### C. Follow-up edges and hints (this proposal) — unique but unproven consumer
 
@@ -509,10 +568,10 @@ of C is safer value; the navigation half is the experiment.
 
 ### Recommendation
 
-Build the shared generation machinery once (it serves B and C); ship value in
-the order the evidence supports: **A first** (days of work, zero model calls),
-**B second** (same machinery, fixes the observed failure class), **C's gap
-report third, C's hints last** behind their adoption metric.
+Build the shared framework once, with product-specific persistence and
+validation adapters for B and C. Ship value in the order the evidence supports:
+**A first** (zero model calls), **B second** (fixes the observed failure class),
+**C's gap report third, C's hints last** behind their adoption metric.
 
 One structural tension to keep in view: the privacy-safe default scope
 (upstream static entries) covers the least valuable content — generic
@@ -524,15 +583,15 @@ quietly under-deliver by only ever running on the content that matters least.
 ## Considered and declined
 
 - **Bandit-ranked hint selection** (contextual bandits / Thompson sampling
-  over hint click-through): needs traffic volume a single-operator system
-  does not have — adoption counts here are single digits, where a bandit is
-  noise-chasing. Plain adoption counts with FIFO retention are proportionate.
-  Revisit only if the system ever serves many users.
+  over hint click-through): needs substantially more traffic than this
+  deployment model is expected to produce, so it would chase noise. Plain
+  adoption counts with FIFO retention are proportionate. Revisit only if the
+  system later serves enough independent interactions for online ranking.
 - **Semantic-similarity freshness** (embedding distance between old and new
-  target text deciding edge survival): replaced by the simpler rule above —
-  serve while the target is visible, re-validate live at follow time,
-  revalidate item-level lazily. Adds an embedding call and a second magic
-  threshold for a problem the live re-query already solves.
+  target text deciding edge survival): replaced by the deterministic
+  `basis_sha` rule above. A changed basis temporarily hides the item and queues
+  item-level revalidation. Semantic freshness would add an embedding call and
+  a second magic threshold while weakening the `answerable` invariant.
 - **Negative generation** (out-of-scope questions embedded as negative
   examples to sharpen hybrid search): research-grade change to the retrieval
   stack; precision is currently owned by the recall filter, which sees every
@@ -547,14 +606,14 @@ quietly under-deliver by only ever running on the content that matters least.
 1. Telemetry-mined gap report (variant A): the unanswered-query event
    producer (small CHECK-constraint migration) plus a report over verdict and
    unanswered rows on `/memory/developer`; no model calls.
-2. Tables, current/stale lookup helpers, `followup_generator` binding,
-   generation job, the persistent generation policy on `/settings`, and
-   tests — the shared machinery, built once for B and C.
-3. Alias enrichment (variant B) on that machinery; measure recall improvement
-   on the mined-gap queries from step 1.
-4. Follow-up generation (variant C): `/memory/developer` inspection and the
-   combined gap report (mined + synthetic, mined ranked first) with the
-   add-entry affordance.
+2. Shared framework: persistent generation policy on `/settings`, pinned model
+   resolution, scoped batch runner, structured-call helpers, and tests.
+3. Specify and implement alias enrichment's product-specific storage and
+   validation adapter (variant B); measure recall improvement on the mined-gap
+   queries from step 1.
+4. Implement the `seed_followup_*` tables, follow-up generator/validator
+   adapter, `/memory/developer` inspection, and the combined gap report (mined
+   + synthetic, mined ranked first) with the add-entry affordance.
 5. Chat suggested-question chips (payload-driven; adoption = clicks).
 6. `memory_query` answerable-hint block with caps, sanitation, and adoption
    telemetry; evaluate on an anonymized fixture set; tune thresholds through
