@@ -371,6 +371,9 @@ def test_seed_migrates_markerless_legacy_cases(app_ctx):
         for c in db.list_eval_cases(case_type="chat_reply"):
             if c.name.startswith("pg "):
                 db.db.session.delete(c)
+        for r in db.db.session.query(db.EvalRun).filter(
+                db.EvalRun.name.in_(["history", "history2"])).all():
+            db.db.session.delete(r)      # the runs do not cascade with cases
         db.db.session.commit()
 
 
@@ -467,6 +470,121 @@ def test_pair_shares_baseline_generation(divergence_pair, monkeypatch):
     pg.run_profile_guidance_suite(
         [concise.uuid, teach.uuid], variant="calibration_only", repetitions=2)
     assert calls["n"] == 4             # two cases × two repetitions
+
+
+def test_pair_invariants_fail_closed(divergence_pair, monkeypatch):
+    """A solo pair member — or a pair whose prompts diverge with its block
+    off — must persist explicit invalid results, never quietly regenerate
+    the stochastic-baseline condition sharing exists to prevent."""
+    fake, _ = _stub("whatever")
+    monkeypatch.setattr(pg.AssistantAgent, "_structured_completion", fake)
+    concise, teach = divergence_pair
+
+    # Solo member under baseline: invalid, zero, no generation.
+    run = pg.run_profile_guidance_suite([teach.uuid], variant="baseline",
+                                        repetitions=2)
+    result = db.list_eval_results_for_run(run.uuid)[0]
+    assert result.score == 0.0 and not result.passed
+    rep = result.details["repetitions"][0]
+    assert rep["invalid"] is True and "incomplete" in rep["error"]
+
+    # Broken pair definition (diverged prompts with the block off): both
+    # members invalid. Divergence is simulated by giving one member a
+    # different profile field.
+    teach.input = {**teach.input,
+                   "profile": {**teach.input["profile"],
+                               "data": {**teach.input["profile"]["data"],
+                                        "units": "imperial"}}}
+    db.db.session.commit()
+    run = pg.run_profile_guidance_suite([concise.uuid, teach.uuid],
+                                        variant="baseline", repetitions=2)
+    results = db.list_eval_results_for_run(run.uuid)
+    assert len(results) == 2
+    for result in results:
+        assert result.score == 0.0
+        assert "diverged" in result.details["repetitions"][0]["error"]
+
+    # With the differentiating block ON, a solo member is a normal run.
+    run = pg.run_profile_guidance_suite([concise.uuid],
+                                        variant="calibration_only",
+                                        repetitions=1)
+    result = db.list_eval_results_for_run(run.uuid)[0]
+    assert "invalid" not in result.details["repetitions"][0]
+
+
+def test_date_format_pair_is_single_field_and_runs_independently(app_ctx, monkeypatch):
+    """The date-format counterfactual is a genuine single-field pair —
+    identical profiles (uuid and visible name included) except date_format —
+    but NOT a shared-generation pair: the differing field rides the
+    always-on identity block, so its prompts can never be byte-equal. It
+    runs independently in every variant, never invalid, with opposing
+    expectations deciding each side."""
+    pg.seed_profile_guidance_cases()
+    cases = sorted((c for c in db.list_eval_cases(case_type="chat_reply")
+                    if (c.rubric or {}).get("pair") == "date_format_counterfactual"),
+                   key=lambda c: c.name)
+    try:
+        assert len(cases) == 2
+        a, b = cases
+        assert all("pair_block" not in (c.rubric or {}) for c in cases)
+        pa, pb = a.input["profile"], b.input["profile"]
+        assert pa["uuid"] == pb["uuid"] and pa["name"] == pb["name"]
+        assert {k: v for k, v in pa["data"].items() if k != "date_format"} == \
+               {k: v for k, v in pb["data"].items() if k != "date_format"}
+        assert pa["data"]["date_format"] != pb["data"]["date_format"]
+
+        fake, _ = _stub("The date is 31.12.2026.")
+        monkeypatch.setattr(pg.AssistantAgent, "_structured_completion", fake)
+        for variant in pg.VARIANTS:
+            run = pg.run_profile_guidance_suite(
+                [a.uuid, b.uuid], variant=variant, repetitions=1)
+            results = {r.eval_case_uuid: r for r in
+                       db.list_eval_results_for_run(run.uuid)}
+            for result in results.values():
+                rep = result.details["repetitions"][0]
+                assert not rep.get("shared_generation")
+                assert not rep.get("invalid")
+            # One fixed answer satisfies exactly one side of the pair.
+            assert results[a.uuid].score == 1.0    # expects 31.12.2026
+            assert results[b.uuid].score < 0.7     # expects 12/31/2026
+    finally:
+        db.db.session.rollback()
+        for run in db.db.session.query(db.EvalRun).all():
+            if any(str(c.uuid) in (run.config or {}).get("case_uuids", [])
+                   for c in cases):
+                db.db.session.delete(run)
+        for c in db.list_eval_cases(case_type="chat_reply"):
+            if c.name.startswith("pg "):
+                db.db.session.delete(c)
+        db.db.session.commit()
+
+
+def test_duplicate_arbitration_never_prefers_archived(app_ctx):
+    """When two rows claim one seed id, a live row must win even against an
+    archived row that carries a newer revision — an archived claimant must
+    never dethrone the active case."""
+    sid = "locale.date_order.de"
+    archived = db.create_eval_case(
+        name="pg locale: German date order", case_type="chat_reply",
+        status="archived", input={"message": "old"}, expected={},
+        rubric={"seed": "profile_guidance", "seed_id": sid,
+                "seed_rev": pg.SEED_REV, "family": "locale"})
+    live = db.create_eval_case(
+        name="pg locale: German date order", case_type="chat_reply",
+        status="active", input={"message": "current"}, expected={},
+        rubric={"seed": "profile_guidance", "seed_id": sid,
+                "seed_rev": 1, "family": "locale"})
+    try:
+        pg.seed_profile_guidance_cases()
+        assert db.get_eval_case(live.uuid).status == "active"     # kept
+        assert db.get_eval_case(live.uuid).rubric["seed_rev"] == pg.SEED_REV
+        assert db.get_eval_case(archived.uuid).status == "archived"
+    finally:
+        db.db.session.rollback()
+        for c in db.list_eval_cases(case_type="chat_reply"):
+            if c.name.startswith("pg "):
+                db.db.session.delete(c)
+        db.db.session.commit()
 
 
 def test_unknown_variant_rejected(app_ctx):

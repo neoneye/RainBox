@@ -169,16 +169,22 @@ def run_profile_guidance_case(
     variant: str,
     repetitions: int = DEFAULT_REPETITIONS,
     shared_records: list[dict[str, Any]] | None = None,
+    invalid_reason: str | None = None,
 ) -> db.EvalResult:
     """Run one live case for `repetitions` and persist one EvalResult whose
     details carry every repetition; EvalResult.score is the mean. When
     `shared_records` is given (a counterfactual pair under a variant whose
     differentiating block is off), the pre-generated outputs are scored
-    against this case's expectations instead of generating again."""
+    against this case's expectations instead of generating again. When
+    `invalid_reason` is given (a violated pair invariant), an explicit
+    zero-scored invalid result is persisted with no generation at all."""
     include_formatting, include_calibration = VARIANTS[variant]
     profile = _resolve_profile(case.input or {})
     reps: list[dict[str, Any]] = []
-    if profile is None and (case.input or {}).get("profile_uuid"):
+    if invalid_reason is not None:
+        reps = [{"error": invalid_reason, "invalid": True,
+                 "score": 0.0, "passed": False, "output": ""}]
+    elif profile is None and (case.input or {}).get("profile_uuid"):
         reps = [{"error": "profile_uuid did not resolve to a profile",
                  "score": 0.0, "passed": False, "output": ""}]
     elif shared_records is not None:
@@ -245,32 +251,50 @@ def run_profile_guidance_suite(
         },
     )
     include_formatting, include_calibration = VARIANTS[variant]
+    block_off = {"calibration": not include_calibration,
+                 "formatting": not include_formatting}
     # A counterfactual pair (same rubric "pair" value) exists to force
-    # divergence THROUGH the calibration block. Under variants where that
-    # block is off, each pair generates ONCE and scores the same outputs
-    # against both cases' expectations — otherwise independent stochastic
-    # draws could hand the pair opposing lengths by luck and let baseline
-    # pass both. Sharing is guarded by prompt equality: if the pair's
-    # prompts differ at all, generation stays independent (and is logged).
+    # divergence THROUGH one specific block (rubric "pair_block"). Under
+    # variants where that block is off, each pair generates ONCE and scores
+    # the same outputs against both cases' expectations — otherwise
+    # independent stochastic draws could hand the pair opposing lengths by
+    # luck and let baseline pass both. Pair completeness and prompt equality
+    # are INVARIANTS of a valid release eval: a solo pair member or diverged
+    # prompts persist explicit invalid results (score 0, error recorded)
+    # rather than quietly recreating the stochastic-baseline condition the
+    # mechanism exists to prevent.
+    # Only pairs that DECLARE a pair_block are shared-generation pairs. A
+    # pair without one (the date-format counterfactual, whose differing
+    # field necessarily rides the always-on identity block, so its prompts
+    # can never be equal) is a cross-variant counterfactual: grouped for
+    # reporting, generated independently.
     pair_groups: dict[str, list[db.EvalCase]] = {}
-    if not include_calibration:
-        for case in cases:
-            pair = (case.rubric or {}).get("pair")
-            if pair:
-                pair_groups.setdefault(str(pair), []).append(case)
-    pair_groups = {k: v for k, v in pair_groups.items() if len(v) > 1}
+    for case in cases:
+        rubric = case.rubric or {}
+        if rubric.get("pair") and rubric.get("pair_block"):
+            pair_groups.setdefault(str(rubric["pair"]), []).append(case)
     shared_by_uuid: dict[UUID, list[dict[str, Any]]] = {}
-    for pair_cases in pair_groups.values():
+    invalid_by_uuid: dict[UUID, str] = {}
+    for pair_id, pair_cases in pair_groups.items():
+        pair_block = str((pair_cases[0].rubric or {}).get("pair_block"))
+        if not block_off.get(pair_block, False):
+            continue  # the differentiating block is on: independent runs
+        if len(pair_cases) < 2:
+            invalid_by_uuid[pair_cases[0].uuid] = (
+                f"pair '{pair_id}' is incomplete under variant '{variant}': "
+                "both members must run together to share baseline generation")
+            continue
         prompts = {}
         for case in sorted(pair_cases, key=lambda c: c.name):
             profile = _resolve_profile(case.input or {})
             prompts[case.uuid] = _build_case_prompts(
                 agent, case, profile, include_formatting, include_calibration)
         if len({_prompt_hash(*p) for p in prompts.values()}) != 1:
-            logger.warning(
-                "profile_guidance: pair %r prompts differ under variant %s; "
-                "generating independently",
-                (pair_cases[0].rubric or {}).get("pair"), variant)
+            for case in pair_cases:
+                invalid_by_uuid[case.uuid] = (
+                    f"pair '{pair_id}' prompts diverged under variant "
+                    f"'{variant}' with its {pair_block} block off — the pair "
+                    "definition is broken; refusing to score")
             continue
         system_prompt, user_prompt = next(iter(prompts.values()))
         records = [_generate_repetition(agent, system_prompt, user_prompt)
@@ -281,7 +305,8 @@ def run_profile_guidance_suite(
         run_profile_guidance_case(
             case, eval_run_uuid=run.uuid, agent=agent, variant=variant,
             repetitions=repetitions,
-            shared_records=shared_by_uuid.get(case.uuid))
+            shared_records=shared_by_uuid.get(case.uuid),
+            invalid_reason=invalid_by_uuid.get(case.uuid))
     results = db.list_eval_results_for_run(run.uuid)
     passed = sum(1 for r in results if r.passed)
     summary = {
@@ -310,7 +335,7 @@ def _template_uuid(template_name: str) -> str:
 
 # Bumped whenever a shipped case definition changes; seeded cases whose
 # rubric carries an older rev are updated in place (they are code-owned).
-SEED_REV = 4
+SEED_REV = 5
 
 
 def _seed_hash(input_obj: Any, expected_obj: Any, rubric_obj: Any) -> str:
@@ -437,13 +462,14 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
             }]},
         },
     }
-    # The single-field counterfactual pair: two inline profiles identical in
-    # every field except date_format, so a behavioral difference can only come
-    # from that one directive.
-    def _cf_profile(marker: str, date_format: str) -> dict[str, Any]:
+    # The single-field counterfactual pair: two inline profiles IDENTICAL in
+    # every field — uuid and visible name included, so nothing else (not even
+    # the identity block) can differ — except date_format. A behavioral
+    # difference can only come from that one directive.
+    def _cf_profile(date_format: str) -> dict[str, Any]:
         return {
-            "uuid": f"00000000-0000-0000-0000-0000000000{marker}",
-            "name": f"CounterfactualDate{marker.upper()}",
+            "uuid": "00000000-0000-0000-0000-0000000000cf",
+            "name": "DateFormatCounterfactual",
             "data": {"units": "metric", "currency": "EUR",
                      "number_format": "1.234.567,89", "time_format": "24h",
                      "date_format": date_format},
@@ -552,14 +578,16 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                       "must_include_any": [["for example", "For example",
                                             "e.g."]],
                       "min_words": 120},
-         "rubric_extra": {"pair": "depth_divergence"}},
+         "rubric_extra": {"pair": "depth_divergence",
+                          "pair_block": "calibration"}},
         {"name": "pg calibration: concise depth divergence",
          "family": "calibration", "seed_id": "calibration.concise_divergence",
          "input": {"message": "What is the mean value theorem?",
                    "profile": _depth_profile("concise")},
          "expected": {"must_include": ["continuous"],
                       "max_words": 80},
-         "rubric_extra": {"pair": "depth_divergence"}},
+         "rubric_extra": {"pair": "depth_divergence",
+                          "pair_block": "calibration"}},
         # Unchanged behavior on an unlisted topic is a REGRESSION check, not
         # part of the calibration family's improvement mean.
         {"name": "pg calibration: unlisted topic answers normally",
@@ -592,28 +620,36 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
         {"name": "pg counterfactual: date-format only A",
          "family": "counterfactual", "seed_id": "counterfactual.date_format.a",
          "input": {"message": date_message,
-                   "profile": _cf_profile("a1", "DD.MM.YYYY")},
+                   "profile": _cf_profile("DD.MM.YYYY")},
          "expected": {"must_include": ["31.12.2026"],
-                      "must_not_include": ["12/31/2026"]}},
+                      "must_not_include": ["12/31/2026"]},
+         # No pair_block: date_format itself rides the always-on identity
+         # block, so the pair's prompts can never be byte-equal and shared
+         # generation is unattainable — this pair is compared ACROSS
+         # variants, each case against its own opposing expectations.
+         "rubric_extra": {"pair": "date_format_counterfactual"}},
         {"name": "pg counterfactual: date-format only B",
          "family": "counterfactual", "seed_id": "counterfactual.date_format.b",
          "input": {"message": date_message,
-                   "profile": _cf_profile("b2", "MM/DD/YYYY")},
+                   "profile": _cf_profile("MM/DD/YYYY")},
          "expected": {"must_include": ["12/31/2026"],
-                      "must_not_include": ["31.12.2026"]}},
+                      "must_not_include": ["31.12.2026"]},
+         "rubric_extra": {"pair": "date_format_counterfactual"}},
     ]
     # Index the code-owned stored cases by their stable seed id. When two
     # rows claim one id (a legacy-named row plus its renamed successor),
-    # keep the more authoritative one — explicit rubric seed_id, then the
-    # marker — and archive the other. Never delete: EvalResult rows cascade
-    # on case deletion, and eval history must survive migrations.
-    def _authority(case: "db.EvalCase") -> int:
+    # keep the more authoritative one and archive the other. Ranking: a live
+    # (non-archived) row always beats an archived one — an already-archived
+    # claimant must never dethrone the active case — then explicit rubric
+    # seed_id beats marker-only beats fingerprint-only, then the newer seed
+    # revision. Never delete: EvalResult rows cascade on case deletion, and
+    # eval history must survive migrations.
+    def _authority(case: "db.EvalCase") -> tuple[int, int, int]:
         rubric = case.rubric or {}
-        if rubric.get("seed") == "profile_guidance" and rubric.get("seed_id"):
-            return 2
-        if rubric.get("seed") == "profile_guidance":
-            return 1
-        return 0
+        marked = rubric.get("seed") == "profile_guidance"
+        return (0 if case.status == "archived" else 1,
+                2 if marked and rubric.get("seed_id") else 1 if marked else 0,
+                int(rubric.get("seed_rev") or 0))
 
     by_seed_id: dict[str, db.EvalCase] = {}
     for case in db.list_eval_cases(case_type="chat_reply"):
