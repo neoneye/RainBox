@@ -46,10 +46,11 @@ def current_profile() -> dict[str, Any] | None:
 
 
 def format_identity_block(profile: dict[str, Any]) -> str:
-    """Render one profile as a prompt block: a one-line preamble plus a JSON
-    object — "profile" (the display name) followed by the filled-in fields
-    under their registry keys, in registry order. This is the single place to
-    experiment with identity prompt formatting.
+    """Render one profile as a prompt block: a JSON object — "profile" (the
+    display name) followed by the filled-in fields under their registry
+    keys, in registry order. No preamble line: the enclosing
+    <operator_identity format="json"> tag already names the content. This is
+    the single place to experiment with identity prompt formatting.
 
     A field whose raw value is opaque (number_format's sample string) gets a
     code-owned "<key>.comment" entry spelling the convention out — looked up
@@ -69,8 +70,7 @@ def format_identity_block(profile: dict[str, Any]) -> str:
         payload[field.key] = value
         if field.key == "number_format" and value in NUMBER_FORMAT_COMMENTS:
             payload["number_format.comment"] = NUMBER_FORMAT_COMMENTS[value]
-    body = json.dumps(payload, ensure_ascii=False, indent=2)
-    return "The operator's account profile:\n" + body
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def build_identity_block() -> str:

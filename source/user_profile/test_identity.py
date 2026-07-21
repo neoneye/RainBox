@@ -52,10 +52,9 @@ def profile_row(app_ctx):
 
 
 def _parse_block(block: str) -> dict:
-    """Split the block into (asserted) preamble + parsed JSON payload."""
-    preamble, _, body = block.partition("\n")
-    assert preamble == "The operator's account profile:"
-    return json.loads(body)
+    """The block is bare JSON — no preamble; the enclosing tag names it."""
+    assert block.startswith("{")
+    return json.loads(block)
 
 
 def test_format_identity_block_renders_filled_fields_in_registry_order(profile_row):
