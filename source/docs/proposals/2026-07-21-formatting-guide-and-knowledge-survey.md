@@ -105,7 +105,7 @@ Expected implementation surface:
   `static/profile.js`, new `user_profile/formatting.py`, exports in
   `user_profile/__init__.py`, `db/settings.py`, `webapp/settings_views.py`,
   `agents/assistant.py`, `docs/operator-guide.md`, and their tests (including
-  the existing facts-marker suite);
+  the existing marker suite, generalized from facts to profile context);
 - Phase 2: shared mutation logic in `db/profile.py`, new
   `db/profile_calibration.py`, exports in `db/__init__.py`,
   `webapp/profile_api.py`, `webapp/profile_views.py`, `static/profile.js`, and
@@ -146,21 +146,31 @@ current_message
 Builders return text bodies. `_build_user_prompt()` alone creates XML tags and
 attributes.
 
-The three declared-profile bodies must come from **one profile snapshot per
-turn**. Reading `profile.current` independently for identity, formatting, and
-calibration can mix two people if the setting changes between calls. Add an
-assistant seam such as:
+The three declared-profile bodies and the room's context marker must come from
+**one declared-profile context snapshot per turn**. Reading `profile.current`
+independently for identity, formatting, and calibration can mix two people if
+the setting changes between calls; reading marker stamps separately can also
+show the new profile without its switch notice. Add an assistant seam such as:
 
 ```python
-def _build_declared_profile_blocks(self) -> tuple[str, str, str]:
-    profile = user_profile.current_profile()  # exactly once
-    # independently best-effort format identity, guide, and calibration
+context = user_profile.current_profile_context()  # exactly once per handle()
+_maybe_post_context_marker(room_uuid, context)
+identity, formatting, calibration = _build_declared_profile_blocks(
+    context.profile
+)
+# The three formatters fail independently.
 ```
 
-The pure formatters all accept that same profile dict. Existing convenience
-builders may remain for tests and compatibility, but main prompt assembly must
-not call three independent active-profile lookups. A formatter failure logs and
-empties only its own block; it does not suppress the other two.
+`current_profile_context()` reads `profile.current`,
+`qa.facts_invalidated_at`, and `profile.current_changed_at` in one database
+statement, then resolves that UUID to one profile dict. Its immutable result
+carries the effective UUID, profile dict, and both stamps. A switch committed
+after capture applies on the next turn; a switch committed before capture
+applies to both marker and blocks on this turn. The pure formatters all accept
+that same profile dict. Existing convenience builders may remain for tests and
+compatibility, but the main handle path must not perform another active-profile
+or context-stamp lookup. A formatter failure logs and empties only its own
+block; it does not suppress the other two.
 
 `ASSISTANT_SYSTEM_PROMPT` must also name `formatting_guide` and
 `knowledge_calibration` in its source-priority contract. The current request
@@ -574,12 +584,17 @@ participate in `beforeunload`. Switching profiles may leave a save running in
 the per-profile state map, matching the current flat-form behavior; late
 GET/PUT results must be keyed by UUID and never populate the wrong pane.
 
-The two existing example templates may contain a few fictional rows, but every
-template does not need calibration filler. Examples should teach the axes:
+Seed exactly three fictional rows across two shipped templates; every template
+does not need calibration filler:
 
-- Mathematics: expert, prefer, concise.
-- Python: beginner, prefer, teach — concepts transfer from other languages.
-- JavaScript: intermediate, avoid, standard — prefer server-rendered HTML.
+- Germany: Mathematics — expert, prefer, concise.
+- US: Python — beginner, prefer, teach; note that concepts transfer from other
+  languages.
+- US: JavaScript — intermediate, avoid, standard; note the preference for
+  server-rendered HTML.
+
+This is fixture data chosen to exercise all axes, not a claim inferred from the
+historical names in those locale archetypes.
 
 ### Prompt rendering
 
@@ -642,11 +657,10 @@ never silently cancel a declared preference:
 
 1. rows render in full (all fields, note included) in operator priority
    order while they fit;
-2. once the remainder is exhausted, remaining rows render in **compact
-   form** — `topic`/`level`/`stance` only, notes and `depth` dropped — which
-   is a few dozen characters per row, so even a full 100-row store fits its
-   compact tail in practice;
-3. only if even compact rows overflow are rows dropped, from the end,
+2. once a full row no longer fits, later rows are considered in **compact
+   form** — `topic`/`level`/`stance` only, notes and `depth` dropped — admitting
+   as many additional rows as the remaining budget permits;
+3. compact rows that still do not fit are omitted, from the end,
    `stance: "avoid"` rows last of all — an `avoid` the model never sees is
    the worst truncation outcome, because the operator explicitly declared a
    negative and the system would silently un-declare it;
@@ -654,13 +668,15 @@ never silently cancel a declared preference:
    line before admitting the final row so the disclosure of truncation
    cannot itself break the cap.
 
-A silently dropped row would contradict the header's own promise that
-"unlisted topics carry no inference" — the operator listed the topic, the
-model treats it as unlisted, and the system has gaslit them both. The
-degrade ladder keeps every declared row *present* at reduced fidelity
-instead. Empty calibration yields no tag. Evals must also record the actual
-token count for each supported model tokenizer; a character cap is a
-deterministic guardrail, not a universal token estimate.
+A dropped row would contradict the header's own promise that "unlisted topics
+carry no inference" if the omission were hidden — the operator listed the
+topic, but the model must treat an unseen topic as unlisted. The exact omitted
+count makes that degradation explicit, and the compact pass keeps materially
+more declared rows present before omission becomes necessary. It does not make
+the impossible promise that all 100 maximum-length topics fit inside the
+2,700-character cap. Empty calibration yields no tag. Evals must also record
+the actual token count for each supported model tokenizer; a character cap is
+a deterministic guardrail, not a universal token estimate.
 
 This is a storage cap and a prompt cap, not the fiction that all 100 stored
 rows render at full fidelity in every turn.
@@ -853,8 +869,10 @@ Independent gates require four named variants over the same cases:
 These are eval-runner overrides passed into prompt construction, not production
 settings or user-facing off-switches. Each individual variant is scored against
 baseline on its own case family and all regression cases. `combined` must pass
-the hard-zero and override family rules and the no-regression rule; its improvement margins are
-reported but do not need to add arithmetically.
+the zero-tolerance source-preservation family, the explicit-override family,
+and the no-regression rule. It must also preserve each individually passing
+block's minimum improvement on that block's own family; the locale and
+calibration margins are evaluated separately and do not add arithmetically.
 
 Acceptance:
 
@@ -898,7 +916,8 @@ Acceptance:
 ### Phase 2 — knowledge vertical slice
 
 Add the calibration subtree, validator, API, fieldset, prompt renderer,
-total guidance budget, and two or three fictional template examples.
+total guidance budget, and the three fictional calibration rows assigned to
+Germany and US above.
 
 Acceptance:
 
@@ -988,23 +1007,34 @@ resolved here; everything else above is an engineering contract.
 ### 1. A profile switch is not a conversation-history boundary
 
 **Decision: continuity.** Switching `profile.current` keeps the room's
-existing history in subsequent prompts. On an actual value change, reuse the
-existing one-marker-per-room invalidation path; do not post two adjacent
+existing history in subsequent prompts. On an actual value change, generalize
+the existing one-marker-per-room invalidation path; do not post two adjacent
 special messages. The single visible marker contains both facts: the active
 profile's label and the warning that profile-dependent assumptions may have
-changed. It is a soft, non-destructive signal, never redaction. The system
-prompt and operator guide state plainly: **switching `profile.current` changes
-identity, formatting, and calibration; it is not an audience boundary.**
+changed. If a separate Q&A invalidation is also pending, the same marker
+acknowledges and describes both causes. It is a soft, non-destructive signal,
+never redaction. The system prompt and operator guide state plainly:
+**switching `profile.current` changes identity, formatting, and calibration;
+it is not an audience boundary.**
 Handing the screen to another audience uses the honest recipe this repository
 already prescribes: a fresh room, the demo database, and — once the lens work
 lands — an operator lens with its ceiling and shields.
 
 Implementation contract for the marker:
 
-- add `db.set_current_profile(value)` and use it for runtime writes; it compares
-  the old/new effective UUID and does nothing extra on a no-op;
-- on change, it sets `profile.current`, calls `mark_facts_invalidated()`, and
-  stores the returned stamp in `profile.current_changed_at`;
+- add `db.set_current_profile(value)` and use it for runtime writes; it
+  validates the target, compares the old/new effective UUID, and does nothing
+  extra on a no-op;
+- on change, it writes `profile.current`, advances
+  `qa.facts_invalidated_at`, and stores that same stamp in
+  `profile.current_changed_at`. These three row updates are **one database
+  transaction and one commit**: a concurrent assistant turn sees either the
+  complete old state or the complete new state, never a new profile with old
+  marker stamps. Extract the row-upsert part of `set_setting()` into a private
+  no-commit helper; ordinary `set_setting()` and `mark_facts_invalidated()`
+  retain their current commit-on-success public behavior, while
+  `set_current_profile()` composes the three row updates and rolls the whole
+  transaction back on failure;
 - "omitted from the settings editor" needs a mechanism that does not exist
   yet: the `Setting` registry dataclass gains `internal: bool = False`, and
   `all_settings()` gains `include_internal=False` so the `/settings` page
@@ -1020,15 +1050,30 @@ Implementation contract for the marker:
   works but stamps nothing — it is the low-level seam, reserved for tests
   and scripts, and the eval harness touches neither (it overrides the
   profile per-eval, never the setting);
-- `_maybe_post_facts_marker()` checks whether the current facts stamp equals
-  `profile.current_changed_at`; when it does, it resolves the current profile
-  label and, on each room's next main-assistant turn, posts one tailored message
-  with the existing
-  `facts_invalidation` meta plus `profile_switch_uuid` (or null when unset);
-- the existing deduplication, trailing-marker demotion, progress restoration,
-  and prompt filtering continue to apply unchanged. The marker is visible to
-  the operator but removed from model history; the freshly assembled profile
-  blocks are the model-side signal.
+- rename `_maybe_post_facts_marker()` to
+  `_maybe_post_context_marker(room_uuid, context)`. It uses the UUID, label,
+  and stamps from the turn's captured context, never rereads settings. For each
+  room it treats the snapshot's non-empty `qa.facts_invalidated_at` and
+  `profile.current_changed_at` values as two independently acknowledged event
+  stamps. A cause is pending when no prior room marker carries its exact
+  current stamp. Do **not** infer the cause by requiring the two stamps to be
+  equal: a Q&A change after a profile switch legitimately advances only the
+  facts stamp;
+- when either cause is pending, post exactly one marker that checkpoints both
+  current stamps. Its meta is
+  `{"context_invalidation": true, "facts_invalidation": <stamp-or-null>,
+  "profile_context_changed": <stamp-or-null>, "profile_switch_uuid":
+  <uuid-or-null>}`. Keeping `facts_invalidation` preserves compatibility with
+  existing markers and tooling. The text is the existing generic notice for a
+  facts-only event, the tailored profile notice for a switch (where the facts
+  stamp is the same event), or one combined notice when distinct facts and
+  profile events are both pending. Several changes before a room runs coalesce
+  to the latest state; a later change to either setting creates one new marker;
+- generalize trailing-marker demotion and prompt filtering to recognize
+  `context_invalidation`, while continuing to recognize legacy markers that
+  have only `facts_invalidation`. Progress restoration keeps the same
+  behavior. The marker is visible to the operator but removed from model
+  history; the freshly assembled profile blocks are the model-side signal.
 
 Example marker text:
 
@@ -1036,12 +1081,16 @@ Example marker text:
 Notice: the active profile switched to Germany. Identity, formatting, and knowledge calibration now follow that profile; room history is preserved. Re-check profile-dependent assumptions before relying on an earlier answer.
 ```
 
-Tests cover same-value no-op, profile A → B, profile → unset, one marker per
-room per stamp, safe label escaping, a subsequent unrelated Q&A invalidation
-returning to the generic notice, a settings-page write of `profile.current`
-firing the stamp (the endpoint routing, not just the helper), and internal
-settings absent from the default `all_settings()` listing while still
-readable via `get_setting`.
+Tests cover same-value no-op, profile A → B, profile → unset, atomic rollback
+on any of the three writes, one marker per room per pair of current stamps,
+safe label escaping, profile-then-Q&A and Q&A-then-profile before the room runs
+(one combined marker in either order), several switches before a room runs
+(latest profile only), a subsequent unrelated Q&A invalidation returning to
+the generic notice, legacy facts-marker demotion/filtering, a settings-page
+write of `profile.current` firing the stamp (the endpoint routing, not just the
+helper), an interleaved switch before versus after context capture (no turn may
+mix marker state or blocks), and internal settings absent from the default
+`all_settings()` listing while still readable via `get_setting`.
 
 Why the redaction alternative loses, spelled out because the argument for it
 sounds safety-shaped:
@@ -1079,6 +1128,11 @@ cannot be chosen after seeing results:
   are an informative compatibility matrix, never the gate.
 - Three repetitions per case, run at the assistant's production sampling
   settings (an artificially deterministic eval would not measure what ships).
+- A repetition passes when its recorded score meets that case's existing
+  `rubric.threshold` (default `0.7`). Unless a stricter family rule below says
+  otherwise, a case passes when at least 2 of 3 repetitions pass. “Passed at
+  baseline” and “fails after the feature” use these same definitions; they are
+  not judgments made from the three-output mean after the fact.
 - **Hard-zero family:** exact-source-preservation cases must pass every
   repetition. Corrupting quoted data, code, or identifiers is never
   acceptable at any frequency; any failure blocks release of the block that
@@ -1100,8 +1154,11 @@ cannot be chosen after seeing results:
   calibration returns to Phase 3's fallback ladder, or vice versa.
 - Run all four variants defined in Phase 0. A block passes on its individual
   variant; when both individual variants pass, the combined variant must also
-  satisfy the hard-zero, override-family, and no-regression rules before
-  both are enabled together.
+  satisfy the hard-zero, override-family, and no-regression rules **and** retain
+  at least `+0.15` on locale and `+0.10` on calibration versus baseline before
+  both are enabled together. If it misses only one family margin, ship the
+  other block alone and send the interacting block through Phase 3's fallback
+  ladder.
 
 The declarative-forms follow-up has additional open schema/migration decisions,
 but they do not block Phases 0–2 and belong in its own proposal.
