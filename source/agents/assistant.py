@@ -395,6 +395,10 @@ def _filter_recalled_candidates(
         claim = claims_by_id.get(s.qa_id)
         if claim is not None:
             path = f"claim · {claim.scope}"
+            room_key = getattr(claim, "room_uuid", None)
+            if claim.scope == "room" and room_key is not None:
+                room = db.get_chatroom(room_key)
+                path += f" · {room.name if room else room_key}"
             kind = claim.kind
             question = claim.text[:_FILTER_CLAIM_PREVIEW_CHARS]
         else:
@@ -466,6 +470,7 @@ def _action_query_memory(
     ctx: AssistantActionContext, args: dict[str, Any], *, _seed_retriever=None,
     record_telemetry: bool = True,
     top_k_vector: int | None = None, top_k_fulltext: int | None = None,
+    any_room: bool = False,
 ) -> AssistantObservation:
     """Hybrid retrieval over memory claims, curated static seed answers, AND
     live dynamic seed handlers (project status, git status, capabilities, model
@@ -483,7 +488,10 @@ def _action_query_memory(
     outside a real assistant run (the /memory/developer inspection page), whose
     probe queries must not pollute the relevance telemetry.
     `top_k_vector`/`top_k_fulltext` override the per-signal seed-candidate
-    budgets for the same page's tuning knobs."""
+    budgets for the same page's tuning knobs. `any_room=True` is the page's
+    "(all rooms)" operator-inspection view (room-scoped claims from every
+    room become candidates) — a Python-level kwarg only, never readable from
+    the model-supplied `args`, so a live run can't request it."""
     from memory.retrieval import fence_recalled_memory, format_memory_context, retrieve_memories_hybrid
     from memory import seed_memory as qkb
     from agents.query_handlers import QueryContext
@@ -502,7 +510,7 @@ def _action_query_memory(
     memories = retrieve_memories_hybrid(
         query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
         include_secret=False, journal_id=ctx.journal_id,
-        record_telemetry=record_telemetry,
+        record_telemetry=record_telemetry, any_room=any_room,
     )
     seeds = []
     recall_filter_debug: dict[str, Any] = {}

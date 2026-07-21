@@ -93,20 +93,23 @@ def test_signal_budgets_parse_defaults_and_clamp():
     assert _parse_signal_budgets({"top_k_vector": "junk"}) == (5, 5)
 
 
-def test_room_uuid_parses_and_tolerates_garbage():
+def test_room_uuid_parses_all_rooms_and_tolerates_garbage():
     from uuid import UUID
     from webapp.memory_developer_views import _parse_room_uuid
-    assert _parse_room_uuid({}) is None
-    assert _parse_room_uuid({"room_uuid": ""}) is None
-    assert _parse_room_uuid({"room_uuid": "not-a-uuid"}) is None
+    assert _parse_room_uuid({}) == (None, False)
+    assert _parse_room_uuid({"room_uuid": ""}) == (None, False)
+    assert _parse_room_uuid({"room_uuid": "*"}) == (None, True)
+    assert _parse_room_uuid({"room_uuid": "not-a-uuid"}) == (None, False)
     assert _parse_room_uuid(
-        {"room_uuid": "795ea3ee-9426-4e03-973a-5d6f6c814b46"}) == UUID(
-        "795ea3ee-9426-4e03-973a-5d6f6c814b46")
+        {"room_uuid": "795ea3ee-9426-4e03-973a-5d6f6c814b46"}) == (UUID(
+        "795ea3ee-9426-4e03-973a-5d6f6c814b46"), False)
 
 
 def test_page_has_room_selector_persisted_in_localstorage():
     body = _body()
     assert 'id="memdev-room"' in body
+    assert "(all rooms)" in body
+    assert 'value="*" selected' in body     # operator view is the default
     assert "(no room)" in body
     assert "memoryDeveloper.roomUuid" in body
     assert "/chat/api/rooms" in body

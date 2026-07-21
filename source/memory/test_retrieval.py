@@ -120,6 +120,32 @@ def test_room_scoped_memories_outrank_global(app_ctx, fresh_subject):
         _cleanup(fresh_subject)
 
 
+def test_any_room_inspection_reaches_every_rooms_claims(app_ctx, fresh_subject):
+    """`any_room=True` (the /memory/developer "(all rooms)" operator view)
+    admits room-scoped claims from every room; without it, a room-less probe
+    sees none of them. Project claims stay excluded either way."""
+    from memory.retrieval import hard_filtered_claims
+    try:
+        room_claim = db.create_memory_claim(
+            scope="room", kind="fact", text="room-fenced inspection fact",
+            confidence=0.9, status="active", sensitivity="public",
+            room_uuid=uuid4(), subject=fresh_subject,
+        )
+        project_claim = db.create_memory_claim(
+            scope="project", kind="fact", text="project inspection fact",
+            confidence=0.9, status="active", sensitivity="public",
+            subject=fresh_subject,
+        )
+        without = {c.uuid for c in hard_filtered_claims(False, None, None)}
+        assert room_claim.uuid not in without
+        with_all = {c.uuid for c in hard_filtered_claims(False, None, None,
+                                                         any_room=True)}
+        assert room_claim.uuid in with_all
+        assert project_claim.uuid not in with_all
+    finally:
+        _cleanup(fresh_subject)
+
+
 def test_retrieve_excludes_out_of_scope_room_agent_and_project(app_ctx, fresh_subject):
     """retrieve_memories must apply the same scope hard-filter as hybrid
     retrieval: a room/agent-scoped claim belonging to a *different* room/agent

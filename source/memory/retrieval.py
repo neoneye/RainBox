@@ -41,6 +41,9 @@ class RetrievedMemory:
     evidence_summary: list[str] = field(default_factory=list)
     # Merged hybrid score (0 for the legacy token-overlap path).
     score: float = 0.0
+    # The claim's room key (None for global/agent claims) — display metadata
+    # so inspection surfaces can say WHICH room a room-scoped claim belongs to.
+    room_uuid: UUID | None = None
 
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
@@ -193,13 +196,21 @@ def hard_filtered_claims(
     include_secret: bool,
     room_uuid: UUID | None,
     agent_uuid: UUID | None,
+    *,
+    any_room: bool = False,
 ) -> list[MemoryClaim]:
     """Active, allowed-sensitivity, non-expired, in-scope claims — applied
     BEFORE any ranking so forbidden claims never enter the candidate set.
 
     This is the single source of truth for the 'filter before rank' contract:
     both hybrid retrieval and the user-profile digest reuse it so forbidden
-    claims can't leak through a divergent copy of the filter."""
+    claims can't leak through a divergent copy of the filter.
+
+    `any_room=True` is the operator-inspection escape hatch (the
+    /memory/developer "(all rooms)" view): room-scoped claims from EVERY room
+    become candidates. Never set it on a live prompt path — it exists so the
+    operator can audit recall across rooms, not so agents can read across
+    them."""
     q = db.db.session.query(MemoryClaim).filter(MemoryClaim.status == "active")
     if not include_secret:
         q = q.filter(MemoryClaim.sensitivity != "secret")
@@ -217,7 +228,7 @@ def hard_filtered_claims(
     for c in candidates:
         if c.scope == "project":
             continue
-        if c.scope == "room" and c.room_uuid != room_uuid:
+        if c.scope == "room" and not any_room and c.room_uuid != room_uuid:
             continue
         if c.scope == "agent" and agent_uuid is not None and c.agent_uuid != agent_uuid:
             continue
@@ -316,6 +327,7 @@ def retrieve_memories_hybrid(
     journal_id: UUID | None = None,
     embed_fn: Callable[[str], list[float]] | None = None,
     record_telemetry: bool = True,
+    any_room: bool = False,
 ) -> list[RetrievedMemory]:
     """Multi-signal memory retrieval: hard filters first, then a weighted merge
     of vector similarity, Postgres full-text rank, and a structured
@@ -327,7 +339,8 @@ def retrieve_memories_hybrid(
     """
     if not query or not query.strip():
         return []
-    candidates = hard_filtered_claims(include_secret, room_uuid, agent_uuid)
+    candidates = hard_filtered_claims(include_secret, room_uuid, agent_uuid,
+                                      any_room=any_room)
     if not candidates:
         return []
 
@@ -369,7 +382,7 @@ def retrieve_memories_hybrid(
                 uuid=claim.uuid, text=claim.text, kind=claim.kind, scope=claim.scope,
                 confidence=float(claim.confidence), sensitivity=claim.sensitivity,
                 reason=reason, evidence_summary=_evidence_summary(claim.uuid),
-                score=round(score, 6),
+                score=round(score, 6), room_uuid=claim.room_uuid,
             )
         )
         if record_telemetry:
