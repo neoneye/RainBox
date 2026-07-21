@@ -1119,7 +1119,7 @@ but they do not block Phases 0–2 and belong in its own proposal.
   rules, or many more formats. The v1 enum is intentionally smaller.
 - **Use memory claims for skill level.** Rejected as the editable source of
   truth. Memory can suggest a change, but a confirmed write must pass the same
-  calibration validator and conflict rules as the form.
+  calibration validator and mutation helper as the form.
 - **Always inject every custom survey.** Rejected: total cost and distraction
   become unbounded.
 - **Embed topic rows in v1.** Rejected: a compact ordered block is simpler and
