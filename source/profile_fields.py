@@ -50,6 +50,15 @@ PROFILE_FIELDS = [
                    "DD.MM.YYYY", "DD-MM-YYYY")),
     Field("time_format",    "Locale & formats", kind="enum", label="Time format",
           choices=("24h", "12h")),
+    # The values double as previews: every choice renders the SAME sample,
+    # 1234567.89 — seven integer digits are the minimum that disambiguates
+    # Indian grouping from Western grouping. A deliberately finite preference
+    # enum, not full CLDR coverage; unsupported conventions stay unset. The
+    # space-grouping value stores a normal ASCII space (rendering may swap in
+    # a non-breaking space, storage does not).
+    Field("number_format",  "Locale & formats", kind="enum", label="Number format",
+          choices=("1,234,567.89", "1.234.567,89", "1 234 567,89",
+                   "1'234'567.89", "12,34,567.89")),
     Field("language",       "Locale & formats", kind="text", label="Language (primary)",
           datalist="lang", hint="BCP-47, e.g. da, en-US, zh-Hans"),
     Field("language_2",     "Locale & formats", kind="text", label="Language (secondary)",

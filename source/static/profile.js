@@ -1053,6 +1053,9 @@ function profileUpdatePreview(){
   const tz = profileFieldEl('timezone').value.trim();
   const dateFmt = profileFieldEl('date_format').value || 'YYYY-MM-DD';
   const hour12 = (profileFieldEl('time_format').value || '24h') === '12h';
+  // The number_format enum's stored value IS its own preview: every choice
+  // renders the same sample (1234567.89) differing only in separators.
+  const numberFmt = profileFieldEl('number_format').value;
   try {
     // The timezone's only job here is validation: an invalid or half-typed
     // zone throws and must never break the rest of the form.
@@ -1061,7 +1064,8 @@ function profileUpdatePreview(){
     // (so DD/MM vs MM/DD is readable) and 23:59 can only be a 24h clock.
     const parts = {year: String(new Date().getFullYear()), month: '12', day: '31'};
     const time = hour12 ? '11:59 pm' : '23:59';
-    el.textContent = 'Preview: ' + profileFormatDateParts(parts, dateFmt) + ' · ' + time;
+    el.textContent = 'Preview: ' + profileFormatDateParts(parts, dateFmt) + ' · ' + time
+      + (numberFmt ? ' · ' + numberFmt : '');
   } catch (e) {
     el.textContent = 'Preview unavailable — timezone not recognized';
   }

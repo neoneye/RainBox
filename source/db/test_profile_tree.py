@@ -24,7 +24,7 @@ def app_ctx():
 
 def test_registry_shape():
     keys = [f.key for f in profile_fields.PROFILE_FIELDS]
-    assert len(keys) == len(set(keys)) == 19
+    assert len(keys) == len(set(keys)) == 20
     assert keys[0] == "full_name"
     assert profile_fields.FIELD_GROUPS == [
         "Identity", "Locale & formats", "Contact & location"]
@@ -211,6 +211,26 @@ def test_all_templates_validate(app_ctx):
         assert canonical == e["data"]        # shipped data is already canonical (no "" values)
         assert e["data"]["country"] == e["name"]
         assert "handle" not in e["data"] and "email" not in e["data"]
+
+
+def test_all_templates_carry_number_format(app_ctx):
+    """Every built-in template declares an explicit number_format, and the
+    regional assignments match the shipped conventions (fr-CA Canada groups
+    with space, India uses Indian grouping, the apostrophe variant ships as
+    an operator-selectable convention with no template)."""
+    by_name = {e["name"]: e["data"] for e in db.profile_templates_entries()}
+    assert all("number_format" in d for d in by_name.values())
+    assigned = {
+        "1,234,567.89": {"US", "Mexico", "UK", "Israel", "China", "Japan",
+                         "South Korea", "Singapore", "Australia"},
+        "1.234.567,89": {"Brazil", "Germany", "Netherlands", "Spain",
+                         "Italy", "Denmark"},
+        "1 234 567,89": {"Canada", "France", "Sweden", "Norway", "Poland"},
+        "12,34,567.89": {"India"},
+    }
+    for value, names in assigned.items():
+        assert {n for n, d in by_name.items() if d["number_format"] == value} == names
+    assert not any(d["number_format"] == "1'234'567.89" for d in by_name.values())
 
 
 def test_update_data_merges_and_deletes(app_ctx, empty_tree):
