@@ -41,7 +41,12 @@ history); `proposals/` holds design-time intent and reviews.
   argv, 5 s timeout), deliberate non-goals.
 - [profile-design.md](profile-design.md) — person profiles: the
   field-registry-driven form + validator, sparse data JSONB, the
-  connector-owned `dynamic` subtree, built-in locale templates.
+  server-owned `dynamic` and `calibration` subtrees, built-in locale
+  templates.
+- [profile-guidance.md](profile-guidance.md) — the profile-driven prompt
+  blocks (formatting guide + knowledge calibration): architecture, the
+  default-off switches, and the verification/enablement runbook (tests →
+  browser → prompt inspection → live evals → release gate).
 - [conversation-design.md](conversation-design.md) — bounded
   persona-to-persona conversations: manager, CAS turn guards, pause/resume.
 - [direct-chat.md](direct-chat.md) — one-to-one operator↔model rooms:

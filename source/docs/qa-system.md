@@ -330,9 +330,13 @@ this:
   no-op button press posts no notice); a full rebuild always stamps.
 - The next time the assistant runs in a room, it posts a one-time visible notice
   telling the model that earlier answers may be out of date and to re-check via
-  `memory_query` (`_maybe_post_facts_marker`). It is deduped per invalidation via
-  the marker's `meta.facts_invalidation` timestamp, and does not remove any
-  history — the operator's message stays the current one.
+  `memory_query` (`_maybe_post_context_marker` — the generalized context
+  marker, which also announces `profile.current` switches via the independent
+  `profile.current_changed_at` stamp and posts one combined notice when both
+  causes are pending; see `assistant-design.md`). Each cause is deduped per
+  room via its exact stamp in the marker's `meta` (`facts_invalidation` /
+  `profile_context_changed`), and no history is removed — the operator's
+  message stays the current one.
 
 This is a **soft** signal by design, not a hard boundary: it nudges the model to
 re-query but leaves the earlier answer in history. A hard guarantee would mean

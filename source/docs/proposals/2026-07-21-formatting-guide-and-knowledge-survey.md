@@ -83,10 +83,13 @@ declining what is stored.
 ## Implementation readiness
 
 **Phases 0–2 are implemented.** The current-state documentation lives in
-`docs/profile-design.md`, `docs/assistant-design.md`,
-`docs/settings-design.md`, and `docs/eval-loop.md`; what remains open is
-running the Phase 0 baseline + Phase 3 variant comparison against the bound
-model group and applying the release gate below.
+`docs/profile-guidance.md` (feature overview + the verification/enablement
+runbook), `docs/profile-design.md`, `docs/assistant-design.md`,
+`docs/settings-design.md`, and `docs/eval-loop.md`. The formatting and
+calibration blocks ship behind independent default-off switches; what
+remains open is running the Phase 0 baseline + Phase 3 variant comparison
+against the bound model group and applying the release gate
+(`evals/profile_gate.py`) to flip them.
 
 | Work | Design status | First implementation result |
 |---|---|---|

@@ -71,7 +71,10 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   strict prompt-boundary validation), the **knowledge calibration** block
   (`authority="context"` — self-declared topic rows as JSONL from
   `user_profile/calibration.py`, sharing a 2 700-char guidance budget with
-  the formatting guide, formatting admitted first), the **user-profile
+  the formatting guide, formatting admitted first) — these two blocks sit
+  behind independent default-off switches (`assistant.formatting_guide`,
+  `assistant.knowledge_calibration`), flipped only after each block passes
+  its live release gate; see `profile-guidance.md` — the **user-profile
   block** (query-independent operator self-model — see
   `memory-architecture.md` §User Profile Block), the **skill block** (active
   procedural skills retrieved for the latest human message; candidates are
