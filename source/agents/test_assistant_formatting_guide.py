@@ -236,6 +236,41 @@ def test_calibration_budget_is_the_formatting_remainder(room, calibrated_profile
     assert "<knowledge_calibration" in prompt
 
 
+def test_steps_record_the_debug_log(room):
+    """Every step row carries the operator-facing debug log: the active
+    profile (uuid + name + page link) and the block switch states — and none
+    of it enters the model prompt."""
+    db.set_current_profile(_germany_uuid())
+    captured = _run_capture(room)
+    steps = (db.db.session.query(db.AssistantStep)
+             .join(db.AssistantRun,
+                   db.AssistantStep.run_uuid == db.AssistantRun.uuid)
+             .filter(db.AssistantRun.room_uuid == room.uuid).all())
+    assert steps
+    entry_labels = None
+    for step in steps:
+        assert step.log, f"step {step.step_index} has no log"
+        by_label = {e["label"]: e for e in step.log}
+        assert by_label["profile"]["text"] == "Germany"
+        assert by_label["profile"]["uuid"] == _germany_uuid()
+        assert by_label["profile"]["href"] == f"/profile?id={_germany_uuid()}"
+        assert by_label["formatting_guide"]["text"] == "on"
+        assert by_label["knowledge_calibration"]["text"] == "on"
+        entry_labels = list(by_label)
+    assert entry_labels == ["profile", "formatting_guide",
+                            "knowledge_calibration"]
+    # Debug context never leaks into the prompt.
+    assert "formatting_guide\": " not in captured["user_prompt"]
+    assert '"profile"' not in captured["user_prompt"]
+
+
+def test_identity_block_omits_the_tree_label(room):
+    db.set_current_profile(_germany_uuid())
+    prompt = _run_capture(room)["user_prompt"]
+    assert '"full_name": "Karl Weierstraß"' in prompt
+    assert '"profile":' not in prompt          # the tree label is debug info
+
+
 def test_profile_switch_field_changes_only_its_directive(room):
     """Counterfactual: switching Germany → US changes the formatting guide's
     directives, while the guide's code-owned frame stays identical."""

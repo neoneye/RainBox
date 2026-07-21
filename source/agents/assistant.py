@@ -2304,6 +2304,11 @@ class AssistantAgent(ModelGroupAgent):
         # The self-declared knowledge-calibration rows (authority=context),
         # injected after the formatting guide.
         self._calibration_block: str = ""
+        # Operator-facing debug entries recorded on every step row this turn
+        # (active profile, switch states, …) — the /assistant inspector's
+        # collapsed "log" block. Extensible: future per-step diagnostics
+        # append here.
+        self._turn_log: list[dict[str, Any]] = []
         # Coarse current activity, surfaced in heartbeats so a slow run looks
         # different from a hung one.
         self._activity: str = "idle"
@@ -2382,8 +2387,16 @@ class AssistantAgent(ModelGroupAgent):
             # from the turn's context snapshot — no second settings lookup on
             # the handle path. Each formatter fails independently. The
             # memory-derived self-model digest is separate and unaffected.
+            # The switches are read once here so the same values feed both
+            # the builders and the per-step debug log.
+            formatting_on, calibration_on = self._declared_block_switches()
+            self._turn_log = self._build_turn_log(
+                context, formatting_on, calibration_on)
             self._identity_block, self._formatting_block, self._calibration_block = (
-                self._build_declared_profile_blocks(context.profile)
+                self._build_declared_profile_blocks(
+                    context.profile,
+                    formatting_enabled=formatting_on,
+                    calibration_enabled=calibration_on)
             )
             self._profile_block = self._build_profile_block(journal_id, room_uuid)
             scratchpad: list[AssistantTurnEvent] = []
@@ -2814,6 +2827,50 @@ class AssistantAgent(ModelGroupAgent):
             logger.warning("assistant: identity block failed", exc_info=True)
             return ""
 
+    def _declared_block_switches(self) -> tuple[bool, bool]:
+        """(formatting_enabled, calibration_enabled) from the production
+        switches; best-effort — an unreadable switch reads as off."""
+        try:
+            formatting = bool(db.get_setting("assistant.formatting_guide"))
+        except Exception:
+            logger.warning("assistant: formatting switch read failed",
+                           exc_info=True)
+            formatting = False
+        try:
+            calibration = bool(
+                db.get_setting("assistant.knowledge_calibration"))
+        except Exception:
+            logger.warning("assistant: calibration switch read failed",
+                           exc_info=True)
+            calibration = False
+        return formatting, calibration
+
+    @staticmethod
+    def _build_turn_log(
+        context: "user_profile.ProfileContext",
+        formatting_enabled: bool, calibration_enabled: bool,
+    ) -> list[dict[str, Any]]:
+        """The operator-facing debug entries recorded on every step row this
+        turn: which profile drove the declared blocks (uuid + name + a link
+        to its page) and the block switch states — the first questions when
+        troubleshooting a weird reply."""
+        entries: list[dict[str, Any]] = []
+        if context.profile_uuid is not None and context.profile is not None:
+            entries.append({
+                "label": "profile",
+                "text": str(context.profile.get("name")
+                            or context.profile_uuid),
+                "uuid": str(context.profile_uuid),
+                "href": f"/profile?id={context.profile_uuid}",
+            })
+        else:
+            entries.append({"label": "profile", "text": "(none selected)"})
+        entries.append({"label": "formatting_guide",
+                        "text": "on" if formatting_enabled else "off"})
+        entries.append({"label": "knowledge_calibration",
+                        "text": "on" if calibration_enabled else "off"})
+        return entries
+
     def _capture_profile_context(self) -> "user_profile.ProfileContext":
         """The turn's one declared-profile context snapshot (profile pointer,
         resolved profile dict, both invalidation stamps). Best-effort: on
@@ -2846,22 +2903,12 @@ class AssistantAgent(ModelGroupAgent):
         never depend on production state. The identity block is not gated."""
         if profile is None:
             return "", "", ""
-        if formatting_enabled is None:
-            try:
-                formatting_enabled = bool(
-                    db.get_setting("assistant.formatting_guide"))
-            except Exception:
-                logger.warning("assistant: formatting switch read failed",
-                               exc_info=True)
-                formatting_enabled = False
-        if calibration_enabled is None:
-            try:
-                calibration_enabled = bool(
-                    db.get_setting("assistant.knowledge_calibration"))
-            except Exception:
-                logger.warning("assistant: calibration switch read failed",
-                               exc_info=True)
-                calibration_enabled = False
+        if formatting_enabled is None or calibration_enabled is None:
+            read_f, read_c = self._declared_block_switches()
+            if formatting_enabled is None:
+                formatting_enabled = read_f
+            if calibration_enabled is None:
+                calibration_enabled = read_c
         identity = ""
         formatting = ""
         calibration = ""
@@ -3443,6 +3490,7 @@ class AssistantAgent(ModelGroupAgent):
             args=decision.args,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            log=self._turn_log or None,
             reasoning=reasoning,
             model_response=model_response,
             requested_at=requested_at,
@@ -3522,6 +3570,7 @@ class AssistantAgent(ModelGroupAgent):
                 args=args,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                log=self._turn_log or None,
                 reasoning=reasoning,
                 model_response=model_response,
                 requested_at=requested_at,

@@ -209,6 +209,18 @@ ASSISTANT_TEMPLATE = """
   /* Timestamps and durations live inside io-meta; spacing comes from its gap. */
   .as-main .step .io-time, .as-main .step .io-dur { text-transform:none; font-weight:400;
                             color:#98a2b3; font-size:0.72rem; font-variant-numeric:tabular-nums; }
+  /* Per-step debug log: collapsed by default, placed before the model
+     request. Entries are {label, text, uuid?, href?} rows. */
+  .as-main .step .steplog { margin:0 0 0.3rem; }
+  .as-main .step .steplog > summary { font-size:0.64rem; text-transform:uppercase;
+                             letter-spacing:0.04em; color:#98a2b3; cursor:pointer;
+                             -webkit-user-select:none; user-select:none; }
+  .as-main .step .steplog-body { margin:0.2rem 0 0 0.4rem; font-size:0.78rem; }
+  .as-main .step .steplog-entry { padding:1px 0; }
+  .as-main .step .steplog-entry .k { color:#6b7280; font-weight:600;
+                             margin-right:0.35rem; }
+  .as-main .step .steplog-entry .u { color:#98a2b3; font-size:0.7rem;
+                             margin-left:0.35rem; }
   /* "model request" sub-parts: system and user prompt, each collapsed in a
      <details>. The summaries mirror .io-label but a notch smaller. */
   .as-main .step .prompt { margin:0.25rem 0 0; }
@@ -330,6 +342,19 @@ ASSISTANT_TEMPLATE = """
         {% if step.phase == 'control' %}
           {% if step.reason %}<div class="reason">{{ step.reason }}</div>{% endif %}
         {% else %}
+        {% if step.log %}
+        <details class="steplog">
+          <summary>log</summary>
+          <div class="steplog-body">
+          {% for entry in step.log %}
+            <div class="steplog-entry"><span class="k">{{ entry.label }}</span>
+              {%- if entry.href %} <a href="{{ entry.href }}">{{ entry.text }}</a>
+              {%- else %} {{ entry.text }}{% endif %}
+              {%- if entry.uuid %} <code class="u">{{ entry.uuid }}</code>{% endif %}</div>
+          {% endfor %}
+          </div>
+        </details>
+        {% endif %}
         {% if step.system_prompt or step.user_prompt %}
         <div class="io io-req">
           <div class="io-label">model request{% if step.requested_at %}<span class="io-meta"><span class="io-time" title="When this model request was made: {{ step.requested_at.replace(microsecond=0).isoformat() }}">{{ step.requested_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
@@ -756,6 +781,14 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -
             lines.append(step.reason)
             lines.append("")
         return lines
+    if step.log:
+        lines.append("**log**")
+        lines.append("")
+        for entry in step.log:
+            text = str(entry.get("text") or "")
+            suffix = f" `{entry['uuid']}`" if entry.get("uuid") else ""
+            lines.append(f"- {entry.get('label')}: {text}{suffix}")
+        lines.append("")
     if step.system_prompt or step.user_prompt:
         when = _hms(step.requested_at)
         lines.append("**model request**" + (f" · {when}" if when else ""))

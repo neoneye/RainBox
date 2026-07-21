@@ -421,6 +421,8 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("assistant_step", "user_prompt", "user_prompt TEXT")
         # Raw/partial provider response for successful and interrupted decides.
         _add_column_if_missing("assistant_step", "model_response", "model_response TEXT")
+        # Per-step operator-facing debug log (profile, switch states, …).
+        _add_column_if_missing("assistant_step", "log", "log JSONB")
         # The full AssistantObservation ({ok, text, data}) the action returned.
         _add_column_if_missing("assistant_step", "observation", "observation JSONB")
         # When the decide LLM request was sent — the "model request" time.

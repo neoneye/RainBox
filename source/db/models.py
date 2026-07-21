@@ -1126,6 +1126,12 @@ class AssistantStep(db.Model):
     # legacy rows that predate prompt capture.
     system_prompt: Mapped[str | None] = mapped_column(Text)
     user_prompt: Mapped[str | None] = mapped_column(Text)
+    # Operator-facing debug context for this step: a list of
+    # {label, text, uuid?, href?} entries (active profile, block switch
+    # states, …) rendered as the collapsed "log" block on /assistant.
+    # Extensible — future per-step diagnostics append here. NULL on control
+    # steps and rows that predate capture.
+    log: Mapped[list | None] = mapped_column(JSONB)
     observation_preview: Mapped[str | None] = mapped_column(Text)
     # The full AssistantObservation the action returned, as {ok, text, data} —
     # the authoritative "function result" record, so `ok` need not be inferred

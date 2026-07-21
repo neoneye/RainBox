@@ -46,10 +46,11 @@ def current_profile() -> dict[str, Any] | None:
 
 
 def format_identity_block(profile: dict[str, Any]) -> str:
-    """Render one profile as a prompt block: a JSON object — "profile" (the
-    display name) followed by the filled-in fields under their registry
-    keys, in registry order. No preamble line: the enclosing
-    <operator_identity format="json"> tag already names the content. This is
+    """Render one profile as a prompt block: a JSON object of the filled-in
+    fields under their registry keys, in registry order. No preamble line
+    and no profile display name: the enclosing <operator_identity
+    format="json"> tag names the content, and the tree label is operator
+    bookkeeping (it rides the per-step debug log, not the prompt). This is
     the single place to experiment with identity prompt formatting.
 
     A field whose raw value is opaque (number_format's sample string) gets a
@@ -60,9 +61,6 @@ def format_identity_block(profile: dict[str, Any]) -> str:
 
     data = profile.get("data") or {}
     payload: dict[str, str] = {}
-    name = str(profile.get("name") or "").strip()
-    if name:
-        payload["profile"] = name
     for field in PROFILE_FIELDS:
         value = str(data.get(field.key) or "").strip()
         if not value:
