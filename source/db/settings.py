@@ -50,6 +50,11 @@ class Setting:
     # (e.g. chat.default_model derives from the model_config table). Must be
     # cheap and app-context safe: it runs on every unset get_setting().
     dynamic_default: Callable[[], object] | None = None
+    # Machine-owned bookkeeping keys (event stamps) that the /settings page
+    # must not list. get_setting/set_setting treat them normally. Distinct
+    # from `secret`: secrets are redacted but still listed and env-managed;
+    # internal keys are ordinary DB values that are simply not operator-facing.
+    internal: bool = False
 
 
 def _validate_age_recipient(value: object) -> None:
@@ -188,6 +193,14 @@ SETTINGS: dict[str, Setting] = {
                     "posts a one-time 're-check facts' notice into a room the "
                     "next time it runs there after this changes.",
     ),
+    "profile.current_changed_at": Setting(
+        "profile.current_changed_at", None, "string", None, internal=True,
+        description="Event stamp of the last actual profile.current change "
+                    "(written by set_current_profile, always equal to the "
+                    "qa.facts_invalidated_at stamp of the same transaction). "
+                    "The assistant's per-room context marker acknowledges it; "
+                    "not operator-facing.",
+    ),
 }
 
 
@@ -252,22 +265,18 @@ def _to_text(spec: Setting, value: object) -> str:
     return str(value)
 
 
-def set_setting(key: str, value: object) -> None:
-    """Persist `value` for `key` (None clears it → NULL). Validates against the
-    registry; (re)stamps the row's metadata from the registry. App context
-    required.
-
-    Secrets are env-only: a `secret=True` setting must never hold a value in
-    `app_setting` (it would land in cleartext in Postgres and in every backup —
-    see the threat model in docs/backup.md). Clearing one (value=None) is fine."""
-    spec = _registry(key)
+def _upsert_setting_row(spec: Setting, value: object) -> None:
+    """Stage one setting row on the session WITHOUT committing, so a caller
+    can compose several row updates into a single transaction
+    (set_current_profile). Validates and stamps registry metadata exactly like
+    set_setting; the caller owns commit/rollback."""
     if spec.secret and value is not None:
         raise ValueError(
-            f"{key} is env-only and cannot be stored in app_setting"
+            f"{spec.key} is env-only and cannot be stored in app_setting"
         )
-    row = db.session.query(AppSetting).filter_by(key=key).one_or_none()
+    row = db.session.query(AppSetting).filter_by(key=spec.key).one_or_none()
     if row is None:
-        row = AppSetting(key=key)
+        row = AppSetting(key=spec.key)
         db.session.add(row)
 
     if value is None:
@@ -282,7 +291,63 @@ def set_setting(key: str, value: object) -> None:
     row.value_type = spec.type
     row.secret = spec.secret
     row.description = spec.description
+
+
+def set_setting(key: str, value: object) -> None:
+    """Persist `value` for `key` (None clears it → NULL). Validates against the
+    registry; (re)stamps the row's metadata from the registry. App context
+    required.
+
+    Secrets are env-only: a `secret=True` setting must never hold a value in
+    `app_setting` (it would land in cleartext in Postgres and in every backup —
+    see the threat model in docs/backup.md). Clearing one (value=None) is fine."""
+    _upsert_setting_row(_registry(key), value)
     db.session.commit()
+
+
+def set_current_profile(value: object) -> str | None:
+    """The runtime write path for `profile.current`: validate the target,
+    compare against the currently effective value, and on an actual change
+    write `profile.current`, advance `qa.facts_invalidated_at`, and store that
+    same stamp in `profile.current_changed_at` as ONE transaction — a
+    concurrent assistant turn sees either the complete old state or the
+    complete new state, never a new profile with old marker stamps.
+
+    Returns the stamp when a change was committed, or None on a no-op (same
+    effective value). A plain set_setting("profile.current", ...) still works
+    but stamps nothing — it is the low-level seam for tests and scripts; UI
+    writes must route here (webapp/settings_views.py special-cases the key).
+    App context required."""
+    from uuid import UUID
+
+    spec = _registry("profile.current")
+
+    def _norm(raw: object) -> str | None:
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            return str(UUID(str(raw).strip()))
+        except ValueError:
+            return None  # a corrupt stored value reads as unset
+
+    new_norm: str | None = None
+    if value is not None and str(value).strip() != "":
+        assert spec.validate is not None
+        spec.validate(value)  # bad uuid / unknown profile → ValueError
+        new_norm = str(UUID(str(value).strip()))
+    if _norm(get_setting("profile.current")) == new_norm:
+        return None
+
+    stamp = datetime.now(UTC).isoformat()
+    try:
+        _upsert_setting_row(spec, new_norm)
+        _upsert_setting_row(_registry("qa.facts_invalidated_at"), stamp)
+        _upsert_setting_row(_registry("profile.current_changed_at"), stamp)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    return stamp
 
 
 def mark_facts_invalidated() -> str:
@@ -306,13 +371,16 @@ def _source(spec: Setting) -> str:
     return "default"
 
 
-def all_settings() -> list[dict]:
+def all_settings(include_internal: bool = False) -> list[dict]:
     """Every registry setting with its effective value, type, secret flag,
-    description, and provenance (db/env/default). Secrets are redacted. Metadata
-    comes from the registry, never the row, so it can't drift. App context
-    required."""
+    description, and provenance (db/env/default). Secrets are redacted; internal
+    bookkeeping keys are omitted unless include_internal is set (the /settings
+    page never lists them). Metadata comes from the registry, never the row, so
+    it can't drift. App context required."""
     out = []
     for spec in SETTINGS.values():
+        if spec.internal and not include_internal:
+            continue
         value = get_setting(spec.key)
         out.append({
             "key": spec.key,

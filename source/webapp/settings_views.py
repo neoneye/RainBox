@@ -435,7 +435,13 @@ def settings_set_api() -> tuple[Response, int] | Response:
     # capture the prior value to detect a real change after the write.
     old_shields = db.get_setting(key) if key == "qa.unlocked_shields" else None
     try:
-        db.set_setting(key, data.get("value"))
+        if key == "profile.current":
+            # The runtime write path: on an actual change it also stamps
+            # qa.facts_invalidated_at + profile.current_changed_at in the same
+            # transaction, so the assistant's per-room context marker fires.
+            db.set_current_profile(data.get("value"))
+        else:
+            db.set_setting(key, data.get("value"))
     except db.UnknownSetting:
         return jsonify({"ok": False, "error": f"unknown setting: {key}"}), 400
     except (ValueError, TypeError) as exc:
