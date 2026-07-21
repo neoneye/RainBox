@@ -283,6 +283,19 @@ room/agent never enters the candidate set):
 4. Scope constraints (room/agent/global; project-scoped excluded until project
    context exists).
 
+`hard_filtered_claims` has one documented escape hatch: `any_room=True` admits
+room-scoped claims from every room. It exists solely for operator inspection
+(the `/memory/developer` "(all rooms)" view); in `memory_query` it is a
+Python-level kwarg the model-supplied action args can never reach, so live
+runs keep strict room isolation.
+
+In the assistant's `memory_query`, hybrid claim retrieval produces
+*candidates*, not the final injection set: the claims join the seed-KB
+candidates in one shared **recall filter** LLM call (Likert scoring on the
+`memory_filter` model binding; keep/drop decided in code — see
+`docs/qa-system.md`), and only kept claims are injected. When no scorer is
+bound or the call fails, claims pass through unfiltered.
+
 ### Prompt Injection
 
 The chat agents (`StructuredChatAgent` and `UnstructuredChatAgent`) retrieve
@@ -409,6 +422,14 @@ For assistant memory retrieval, `retrieve_memories_hybrid` writes:
 The assistant trace then records the action and observation that consumed those
 memories.
 
+The assistant's recall filter additionally records a **verdict per candidate**
+(`source="memory_query.filter"`, target `memory_claim` or `qa_entry`):
+`stage="used"` for kept-and-injected (true positive) and `stage="rejected"`
+for surfaced-but-judged-irrelevant (false positive), with the Likert scales
+and retrieval signals in metadata. Each memory's per-stage verdict stream is
+pruned to the newest N (the `memory.recall_fifo_capacity` setting) — the
+per-memory recall-KPI FIFOs the `/memory` detail pane displays.
+
 The query-filter router also emits retrieval telemetry for Q&A entries:
 
 - `retrieved`
@@ -492,8 +513,17 @@ The **`/memory` page** (`webapp/memory_views.py`, `static/memory.js`,
 `webapp/memory_api.py`) is the operator-facing memory inspector. The left panel
 groups claims by **status facets** (Active / Candidate / Superseded / Rejected /
 Expired — no folders, no drag-drop), with a text/scope/kind/sensitivity filter
-bar; the right pane shows a claim's text, badges, evidence timeline, supersession
-lineage, embedding freshness, and recent retrieval events.
+bar; the right pane shows a claim's text, badges (each with a tooltip
+explaining what the value means for retrieval), evidence timeline,
+supersession lineage, embedding freshness, recall KPIs, and recent retrieval
+events.
+
+The **Recall KPIs** section shows the recall filter's verdict FIFOs for the
+claim: false positives (surfaced but judged irrelevant — the starting point
+for "why does this show up when it shouldn't"), true positives (recalled and
+used), the false-positive rate over the retained window, and each verdict's
+triggering query, Likert scales, and retrieval signals. Retention per stream
+is the `memory.recall_fifo_capacity` setting.
 
 Provenance-safe lifecycle actions run from there:
 
@@ -504,6 +534,10 @@ Provenance-safe lifecycle actions run from there:
   `correct_belief` (the same governed path as the `correct that OLD -> NEW`
   command); keys and structured columns are derived from the new text
 - **sensitivity / expiry** — edit policy metadata without disturbing provenance
+- **scope** — widen or narrow where the claim is recallable (e.g. room →
+  global). Widening keeps the room/agent keys as provenance so narrowing back
+  stays possible; keyless narrowing and `project` are refused (a claim that
+  could never be retrieved is dead, not scoped)
 
 The review page also surfaces conflict candidates (claims with a
 `conflicts_with_uuid`) and tombstone hits (rejected values the model is still
@@ -536,6 +570,30 @@ changed underneath the operator. See
 A user-created **folder tree** (the full `docs/ui-left-panel-tree.md` pattern)
 is a possible future addition; the page's grouping layer is kept swappable so it
 can be added as an additional grouping mode without a rewrite.
+
+### Memory Developer Page
+
+The **`/memory/developer` page** (`webapp/memory_developer_views.py`,
+`static/memory_developer.js`) is the retrieval inspector: type a query and see
+what each pipeline returns for it, side by side —
+
+- **assistant · memory_query** — the real `_action_query_memory`, rendered as
+  the exact observation the assistant model would receive, plus the recall
+  filter's candidate table (source, per-signal scores, Likert scales,
+  kept/dropped) and its reasoning note.
+- **query_filter_router** — the chat route stage by stage: exact alias,
+  hybrid candidates, filter scores, resolved replies, route reply.
+
+Probes are read-only: nothing is posted, no RetrievalEvents are recorded, and
+memory commands are detected but never executed. Knobs (persisted in
+localStorage): per-signal candidate budgets (vector / fulltext, 0 disables a
+signal), and a **room selector** — "(all rooms)" is the operator-omniscient
+default (room-scoped claims from every room are candidates, labeled with
+their room; a reach no live turn has), a specific room mirrors recall inside
+that chatroom, "(no room)" mirrors what any fresh room recalls. A
+"models in play" table shows the embedding models, the resolved filter-scorer
+group per panel (with each member linked), and the route group — so
+comparisons are apples-to-apples.
 
 ## How This Relates To Existing Memory-Like Systems
 

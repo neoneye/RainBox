@@ -74,14 +74,34 @@ One JSON object per line:
 
 ## Retrieval
 
-Tuning constants (`memory/seed_memory.py`): `TOP_K = 5`, `MIN_SCORE = 0.60`,
-`MIN_MARGIN = 0.05`.
+Tuning constants (`memory/seed_memory.py`): `TOP_K_NODES = 50` (question
+*nodes* fetched from pgvector — entries carry many question alternates, so a
+small node budget collapses to very few unique entries after by-`qa_id`
+aggregation), `TOP_K_VECTOR = 5` / `TOP_K_FULLTEXT = 5` (per-signal candidate
+budgets for the filter pipelines), `MIN_SCORE = 0.60`, `MIN_MARGIN = 0.05`
+(gates for the legacy/gated paths only).
 
 - **Exact alias** (`_exact_match`) — normalize the query, look it up in
   `_alias_table`. No embedding call; deterministic.
-- **Semantic, ungated** (`_semantic_ranked`) — pgvector top-K, aggregated to the
-  max score per `qa_id`, returned ranked descending. No score gate — the caller
-  decides.
+- **Semantic, ungated** (`_semantic_ranked`) — pgvector top-`TOP_K_NODES`
+  nodes, aggregated to the max score per `qa_id`, returned ranked descending.
+  No score gate — the caller decides.
+- **Lexical full-text** (`_fulltext_ranked`) — IDF-weighted token overlap over
+  every entry's questions (double weight) AND answer text, scored in Python
+  against the in-memory registry (no embedding server needed). The signal
+  question embeddings miss: exact content words ("demoscene") and
+  answer-only tokens. `Match.score` is query *coverage* (1.0 only when every
+  query token matches in the questions; answer-only matches count half;
+  KB-unknown query tokens count against coverage). No stemming; English
+  stopwords only.
+- **Hybrid fusion** (`_hybrid_seed_ranked`) — the filter pipelines' candidate
+  set: the top `top_k_vector` entries by embedding similarity plus the top
+  `top_k_fulltext` by full-text, deduplicated, presented as a neutral
+  interleave (best vector, best full-text, second vector, ...). The signals
+  are deliberately NOT score-blended — the scales aren't commensurable, and a
+  weighted blend buried perfect rare-token matches; relevance judgment
+  belongs to the filter LLM. A budget of 0 disables its signal; degrades to
+  full-text-only when the embedding server is down.
 - **Semantic, gated top-1** (`_semantic_match`) — requires the best score
   `>= MIN_SCORE` and a margin `>= MIN_MARGIN` over the runner-up. Returns `None`
   when too weak or ambiguous — a clean "no" over a confident wrong answer.
@@ -141,14 +161,25 @@ action for facts. It:
 
 1. Loads the registry (`_load_kb`) and ensures the table is populated
    (`_ensure_populated`) — the assistant loop does not otherwise load the KB.
-2. Retrieves **static and dynamic** seed answers, top-N, gated at `MIN_SCORE`
-   (`retrieve_seed_answers`), resolving dynamic handlers on demand.
-3. Retrieves dynamic memory claims (`retrieve_memories_hybrid`).
-4. Tiers the result — user-overlay seed, then upstream seed, then dynamic
-   claims — and wraps it in a `<recalled_memory>` fence (untrusted-data
-   framing; angle brackets sanitized). The fence holds only bare fact lines
+2. Retrieves memory-claim candidates (`retrieve_memories_hybrid`) and seed
+   candidates (`_hybrid_seed_ranked`, ungated, per-signal budgets).
+3. Runs ONE shared **recall filter** call over both candidate kinds
+   (`_filter_recalled_candidates`): the scorer LLM (the `memory_filter`
+   binding) rates every candidate on the Likert scales, code keeps/drops via
+   `apply_filter_scores`, kept seed entries are resolved (dynamic handlers run
+   only for kept candidates), kept claims are injected. Live runs record one
+   RetrievalEvent verdict per candidate (see `relevance-telemetry.md`).
+   Fallback when no scorer group is bound or the LLM fails: `MIN_SCORE`-gated
+   `retrieve_seed_answers` plus unfiltered claims — recall degrades, never
+   dies with the scorer.
+4. Tiers the result — user-overlay seed, then upstream seed, then claims —
+   and wraps it in a `<recalled_memory>` fence (untrusted-data framing; angle
+   brackets sanitized). The fence holds only bare fact lines
    (`{uuid}, {tags}: {text}`); the format legend and the truncation note live
-   *outside* it (they are the assistant's own instructions, not recalled data).
+   *outside* it (they are the assistant's own instructions, not recalled
+   data). The scorer's think-before-scoring note is appended in its own
+   `<memory_filter_assessment>` fence — LLM output generated from stored
+   data, so it gets the same untrusted-data treatment.
 
 Seed fact tags are, in order: `seed/<source>` (`seed/user-overlay` or
 `seed/upstream`), `dynamic` for handler entries, the entry's `path` (omitted
@@ -196,10 +227,23 @@ in `agents/__main__.py`):
 - `query_router` — `QueryRouterAgent`: exact alias, then a single LLM call that
   both judges relevance and routes/answers.
 - `query_filter_router` — `QueryFilterRouterAgent`: exact alias, then a
-  two-stage LLM pipeline — a relevance **filter** over the ungated top-K
-  candidates (`_semantic_ranked(...)[:TOP_K_FILTER]`, `TOP_K_FILTER = 5`),
-  then a **route** call that produces the reply. Memory commands short-circuit
-  before any Q&A retrieval.
+  two-stage LLM pipeline over the hybrid candidates (`_hybrid_seed_ranked`,
+  5 vector + 5 full-text): the **filter** LLM scores every candidate on three
+  anchored Likert scales — writing a short `reasoning` self-calibration
+  *before* the score rows (schema field order = generation order) — and the
+  keep/drop decision is made in code (`apply_filter_scores`): fewer than
+  `TOP_K_FILTER` candidates → keep all; a full list → the top
+  `FILTER_KEEP_TOP_N` ranked survive on relative merit (unless pure 1/1/1
+  noise) plus anything with a scale at `FILTER_KEEP_THRESHOLD`. Then a
+  **route** call produces the reply from the kept candidates. Memory commands
+  short-circuit before any Q&A retrieval.
+
+The filter's scorer model resolves via `resolve_filter_model_group`: the
+dedicated **`memory_filter`** binding on `/agentmodel` when set (one scorer
+identity for every filter caller — the router, the assistant's `memory_query`,
+and the `/memory/developer` page), else per-caller fallbacks. Different model
+groups calibrate Likert scales very differently, so a shared scorer is what
+keeps the pipelines' keep/drop decisions comparable.
 
 All share the seed-memory matching functions; they differ in how much LLM
 judgment sits between retrieval and reply.
@@ -315,7 +359,8 @@ via `db.record_retrieval_event`; see `relevance-telemetry.md`.
 | Base data | `data/question_answer.jsonl` |
 | pgvector table | `data_seed_memory` |
 | Settings | `qa.unlocked_shields`, `customize.dir`, `qa.facts_invalidated_at` |
-| Constants | `TOP_K=5`, `MIN_SCORE=0.60`, `MIN_MARGIN=0.05`, `TOP_K_FILTER=5` |
+| Constants | `TOP_K_NODES=50`, `TOP_K_VECTOR=5`, `TOP_K_FULLTEXT=5`, `MIN_SCORE=0.60`, `MIN_MARGIN=0.05`, `TOP_K_FILTER=5`, `FILTER_KEEP_THRESHOLD=4`, `FILTER_KEEP_TOP_N=2`, `FILTER_KEEP_TOP_FLOOR=2` |
+| Inspection page | `/memory/developer` (`webapp/memory_developer_views.py`, `static/memory_developer.js`) |
 | Tests | `memory/test_seed_memory_errors.py`, `memory/test_seed_shields.py`, `memory/test_seed_documents.py`, `memory/test_seed_sync.py` |
 | Overlay schema proposals | `docs/proposals/2026-07-04-qa-overlay-person-schema.md`, `docs/proposals/2026-07-07-qa-overlay-first-person-voice.md` |
 | Security review | `docs/proposals/2026-06-25-security-review-mitigations.md` (Finding 8a: shields) |

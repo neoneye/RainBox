@@ -61,6 +61,26 @@ This records what the hybrid memory action surfaced. The assistant run/step
 trace records the action arguments and observation that consumed the returned
 memory context.
 
+### Assistant Recall-Filter Verdicts
+
+The recall filter inside `memory_query` (`_record_recall_verdicts` in
+`agents/assistant.py`) writes one verdict per scored candidate on live runs:
+
+- `target_type="memory_claim"` or `"qa_entry"`
+- `stage="used"` — kept by the filter and injected (true positive)
+- `stage="rejected"` — surfaced by retrieval, judged irrelevant to the query
+  (false positive)
+- `source="memory_query.filter"`
+- `filter_label="relevant"` / `"irrelevant"`
+- metadata: the Likert scales (`direct`/`indirect`/`relevancy`) and the
+  retrieval `signals` (`semantic`, `fulltext`, or both)
+
+These are the per-memory recall-KPI streams the `/memory` detail pane shows.
+Unlike every other producer, they are **FIFO-bounded**: after recording, each
+(target, stage) stream is pruned to the newest N via `prune_retrieval_fifo`,
+N being the `memory.recall_fifo_capacity` setting (default 10). Probes from
+`/memory/developer` pass `record_telemetry=False` and write nothing.
+
 ### Query Filter Router
 
 `QueryFilterRouterAgent` records Q&A retrieval decisions for
@@ -166,7 +186,10 @@ retrieval_event
 ```
 
 Events are append-only. Do not mutate old rows to "correct" a count. Add a new
-event or fix the producer.
+event or fix the producer. One deliberate exception: the
+`source="memory_query.filter"` verdict streams are FIFO-pruned to
+`memory.recall_fifo_capacity` rows per (target, stage) — bounded KPI storage
+the operator sizes, not history to mine. Never prune other sources.
 
 ## Rollups
 

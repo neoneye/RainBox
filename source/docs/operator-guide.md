@@ -30,7 +30,11 @@ fallback.
 
 - `/chat` — rooms, agents, SSE-streamed replies.
 - `/prompt` — versioned system prompts (folder tree, clone lineage, diff).
-- `/memory` — claim review: lifecycle actions, conflicts, tombstones.
+- `/memory` — claim review: lifecycle actions (including scope changes),
+  conflicts, tombstones, per-memory recall KPIs.
+- `/memory/developer` — retrieval inspector: probe a query through the
+  assistant's `memory_query` and the query_filter_router side by side, with
+  candidate budgets, a room selector, and the models each stage runs on.
 - `/cron` — the scheduler tree (System folder holds the seeded backup and
   memory-sync jobs).
 - `/kanban` — boards, folder tree, task execution.
@@ -97,6 +101,14 @@ which memories did you use?
 silently re-learn it; a `correct` whose new value conflicts with a different
 same-scope active claim is refused. Curate claims, resolve conflicts, and review
 suppressed re-assertions on the `/memory` page (see `docs/memory-commands.md`).
+
+When a memory doesn't surface where you expect it, check its **scope badge**
+first (a room-scoped claim is recallable only inside its own chatroom — widen
+it via the Scope… action), then its **Recall KPIs** (which queries pulled it
+in, and whether the recall filter judged it relevant), then probe the exact
+query on `/memory/developer`. The recall filter's scorer model is the
+`memory_filter` binding on `/agentmodel`; the KPI retention window is the
+`memory.recall_fifo_capacity` setting.
 
 Memory tables are inspectable in Flask-Admin under the Memory category:
 
