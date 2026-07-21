@@ -553,6 +553,12 @@ here so the build does not stall on them:
   scoped validation. Filtering only after top-K would be incorrect because
   disallowed overlay nodes could consume the candidate budget and create false
   gaps.
+  The `KB_SCHEMA_VERSION` bump folds into `KB_EPOCH`, so the next sync
+  re-embeds the entire KB once — a few hundred embedding calls, expected and
+  harmless. Live retrieval passes `allowed_sources=None` (no filter) and is
+  indifferent to nodes that predate the new metadata; the batch job is safe
+  by construction because its work order runs `sync_kb` before any filtered
+  retrieval, so it never filters against stale nodes lacking `_source`.
 - **Adoption matching.** Hint-adoption comparison uses the alias normalizer
   (`_normalize_query`) on both sides — the same normalization the exact-alias
   table already relies on.
