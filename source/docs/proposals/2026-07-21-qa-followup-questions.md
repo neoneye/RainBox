@@ -58,11 +58,19 @@ scales are intentionally not comparable. Its top item or numeric score is
 therefore not an answerability verdict.
 
 For each generated question, hybrid retrieval supplies candidates and the
-existing `memory_filter` relevance policy validates them. An exact alias match
-may short-circuit the validation call — but only when the alias belongs to a
-*different* visible entry (→ `answerable`); an alias registered on the source
-entry itself is a self-hit (→ `redundant`). Validation can keep multiple
-targets.
+existing `memory_filter` scorer rates them. Follow-up validation must **not**
+reuse `apply_filter_scores`: the live recall policy intentionally keeps every
+candidate when the list is short, which is appropriate for conversational
+recall but would manufacture false “answerable” edges here. Instead, a
+follow-up-specific, absolute code policy accepts only candidates with
+`direct >= 4` and `relevancy >= 4`. The initial thresholds are named constants
+covered by `policy_version`; `indirect` alone never proves that the candidate
+can answer the question.
+
+An exact alias match may short-circuit the scoring call — but only when the
+alias belongs to a *different* visible entry (→ `answerable`); an alias
+registered on the source entry itself is a self-hit (→ `redundant`). Validation
+can accept multiple targets.
 
 ### Visibility is part of correctness
 
@@ -74,14 +82,24 @@ stale, or locked entries.
 
 Generation sends an entry's questions and answer to a completion model, which
 is a materially different data flow from local embedding-only retrieval.
-Consequently:
+Validation can also send candidate paths, questions, and static answers to a
+second completion model. Both calls are therefore inside the same privacy and
+provider-consent boundary. Consequently:
 
 - The default generation scope is publishable upstream static entries only.
-- Operator-overlay generation is a separate, explicit opt-in that shows the
-  selected model group/provider before the run. A trusted local model is the
-  recommended default for this scope.
+- Operator-overlay generation is a separate, explicit opt-in. Before the run,
+  the UI shows the resolved generator and validator model groups, including
+  every fallback member and provider. A trusted local model is the recommended
+  default for both roles.
 - Shielded entries require a separate explicit selection; a currently unlocked
   shield is not by itself consent to send its content to a generator.
+- Private generation never inherits the validator's normal agent-binding
+  fallback chain. Both generator and validator bindings must be explicitly
+  configured and pinned for the duration of the run.
+- Retrieval candidates are restricted by the approved data scope as well as by
+  shield visibility. The default upstream-only run must not retrieve, send, or
+  create edges to operator-overlay entries. An approved overlay run may target
+  upstream entries and only the overlay scope approved for that run.
 - Prompts, errors, and application logs must not record raw entry text.
 - Generated questions inherit the source entry's shield and data lifecycle.
 - An unshielded source is validated only against unshielded targets. A source
@@ -101,40 +119,52 @@ forever.
 
 ```text
 seed_followup_generation
-- uuid                 current successful generation id
-- qa_id                source entry id (primary/current slot)
-- source_entry_sha     runtime _row_sha256 used for generation
-- model_name           resolved generator model
-- prompt_version       invalidates output when generation policy changes
+- qa_id                source entry id (primary key/current slot)
+- source_entry_sha     runtime _row_sha256 used by the current success; nullable
+- generator_model      resolved generator model used by the current success
+- validator_model      resolved validator model used by the current success
+- scope_fingerprint    approved provenance/shield scope used by the run
+- policy_version       prompt, input-limit, and validation-policy version
 - generated_at
 - last_attempt_sha     source hash used by the latest attempt
 - last_attempt_at
 - last_error_code      sanitized; null after success
 
 seed_followup
-- generation_uuid      parent generation
+- source_qa_id         parent source entry id
 - ordinal              stable order within the generated list
 - question             generated question
 - classification       answerable | gap | redundant
 - target_refs          JSONB list of {qa_id, entry_sha}; empty unless answerable
-- validation           compact JSONB diagnostics; no source/answer snapshots
+- validation           numeric ratings and retrieval signals only
 ```
 
-Keying: `seed_followup_generation` is one slot per source entry — its primary
-key is `qa_id`, with `uuid` a *nullable reference* to the current successful
-generation (null until the first success; never a nullable primary key).
-`seed_followup` rows are keyed `(generation_uuid, ordinal)`. Upsert the
-generation for a `qa_id` and replace its items in one transaction only after
-generation and validation succeed. A failed attempt updates only
-`last_attempt_*` and `last_error_code`; it must not replace the last
-successful generation or its items.
+Keying: `seed_followup_generation` is one slot per source entry, keyed by
+`qa_id`. `seed_followup` rows are keyed `(source_qa_id, ordinal)` and reference
+that slot with `ON DELETE CASCADE`. No separate generation UUID is needed
+because only the current successful result is retained. Upsert the slot and
+replace its items in one transaction only after generation and validation
+succeed. A failed attempt updates only `last_attempt_*` and `last_error_code`;
+it must not replace the last successful fields or items. Before the first
+success, the slot may contain attempt metadata while `source_entry_sha` and
+the successful-model fields remain null.
 
 Consumers accept a generation only when `source_entry_sha` equals the source
-entry's current runtime hash and `prompt_version` equals the current policy
-version. An answerable item is accepted only when every stored target hash also
-matches. This handles source edits, target edits, target deletion, overlay
-replacement, and prompt-policy upgrades without a foreign key to a Q&A table
-that does not exist.
+entry's current runtime hash, `policy_version` equals the current policy
+version, and `scope_fingerprint` still matches the active approved scope. An
+answerable item is accepted only when every stored target hash also matches.
+This handles source edits, target edits, target deletion, overlay replacement,
+scope revocation, and policy upgrades without a foreign key to a Q&A table that
+does not exist.
+
+`scope_fingerprint` is a digest of a canonical scope description (allowed
+provenance classes and shield set), not a copy of potentially sensitive scope
+labels.
+
+The scorer schema requires a free-form calibration note, but the batch job
+discards it immediately. It stores only numeric ratings, retrieval signals, and
+model identifiers; validation diagnostics must not retain generated reasoning
+that could paraphrase source content.
 
 `target_refs` is a list because a question may legitimately require more than
 one kept entry. The assistant does not need to see target IDs; they are for
@@ -144,24 +174,32 @@ validation, inspection, and graph tooling.
 
 For each in-scope static entry missing a current, complete generation:
 
-1. **Generate candidates.** Send its registered questions and bounded answer
-   text (at most 8,000 characters, preserving head and tail) to a
+1. **Check prompt size.** Build the entry-scoped prompt and enforce a fixed,
+   versioned application limit. If it is too large, record
+   `last_error_code=input_too_large` and skip the entry. Do not silently
+   truncate the answer: missing middle context can change which follow-ups are
+   sensible.
+2. **Generate candidates.** Send the registered questions and answer to a
    structured-output generator. Request 0..5 natural next questions. State
    explicitly that zero is valid. Reject empty, duplicate, and normalized
    aliases already registered on the source entry.
-2. **Retrieve candidates.** Run each remaining question through
-   `_hybrid_seed_ranked` with the visibility set derived from the source entry.
+3. **Retrieve candidates.** Run each remaining question through
+   `_hybrid_seed_ranked` with both the approved provenance scope and the shield
+   visibility set derived from the source entry. This requires an explicit
+   provenance filter in the batch path; shield filtering alone is insufficient.
    Do not resolve dynamic handlers during validation.
-3. **Validate relevance.** Apply the existing `memory_filter` scoring and
-   keep/drop policy to the retrieved candidates. Batch the questions from one
-   source entry into one structured call where practical.
-4. **Classify.** For each question:
+4. **Score relevance.** Reuse the `memory_filter` scoring schema and explicitly
+   bound validator model, but apply the follow-up-specific absolute acceptance
+   policy described above. Batch the questions from one source entry into one
+   structured call where practical. Dynamic candidates expose registered
+   question metadata only; handlers are never invoked.
+5. **Classify.** For each question:
    - only the source entry is kept -> `redundant`;
    - one or more different visible entries are kept -> `answerable`, storing all
      target IDs and current hashes;
    - no entry is kept -> `gap`;
    - retrieval or validation fails -> unresolved failure, not a gap.
-5. **Commit atomically.** Store the completed generation, including a completed
+6. **Commit atomically.** Store the completed generation, including a completed
    row with zero items. Never publish partial results.
 
 Redundant items are useful on `/memory/developer` for prompt tuning but are not
@@ -175,11 +213,13 @@ agent journal work.
 
 The `/settings` action should:
 
-1. show scope and provider before confirmation;
+1. show scope plus the complete resolved generator and validator provider chains
+   before confirmation;
 2. load and incrementally sync the merged Q&A registry;
 3. generate only missing/stale entries;
-4. report counts for complete, empty, answerable, gap, redundant, skipped-private,
-   and failed entries without logging their content.
+4. report counts for complete, empty, answerable, gap, redundant,
+   skipped-private, skipped-oversized, and failed entries without logging their
+   content.
 
 A later System cron job may run the same incremental operation, but it must use
 an already-approved scope and provider policy. Cron must not silently broaden
@@ -232,12 +272,16 @@ the assistant path.
 - **Generator or validator fails:** keep the prior complete generation; record a
   sanitized failure and retry later.
 - **Source hash changes:** old generation is invisible immediately.
+- **Source disappears:** hide its generation immediately and prune the orphaned
+  slot during the next successful batch run.
 - **Target hash changes or target disappears:** hide that answerable item until
   the source is revalidated.
 - **Shield changes:** visibility checks take effect immediately; regeneration is
   required because the raw-line hash also changes.
-- **Prompt policy changes:** increment `prompt_version`; older generations are
+- **Generation policy changes:** increment `policy_version`; older generations are
   stale even when entry text is unchanged.
+- **Approved scope changes:** update its fingerprint; results from a broader or
+  otherwise different scope become invisible immediately.
 - **Model changes:** do not force regeneration automatically. Provide an explicit
   “regenerate with selected model” option.
 - **Concurrent runs:** take a per-`qa_id` lock or use compare-and-swap on source
@@ -259,12 +303,16 @@ hashing, zero-result persistence, and per-entry batching keep later runs small.
   stale hints before regeneration.
 - A self-hit is redundant, not a gap.
 - Hybrid score order alone never marks an item answerable.
+- A short candidate list with weak absolute ratings produces a gap; the live
+  filter's keep-all behavior is never applied.
 - Multiple validated targets are retained and all must be current and visible.
+- An upstream-only run cannot retrieve or expose an overlay entry as a target.
 - Unshielded sources cannot create edges to shielded targets.
 - Same-shield edges work only while that shield is unlocked; cross-shield edges
   are rejected.
 - Operator-overlay and shielded generation are excluded by default and require
-  explicit approved scope.
+  explicit approved scope plus pinned generator and validator groups.
+- Oversized inputs are skipped without partial generation or raw-text logging.
 - Dynamic source entries are skipped and validation never invokes handlers.
 - Generated text cannot forge fences or inject instructions into assistant
   context.
@@ -278,5 +326,5 @@ hashing, zero-result persistence, and per-entry batching keep later runs small.
 2. `/memory/developer` inspection and gap report.
 3. `memory_query` answerable-hint block with caps, sanitation, and telemetry.
 4. Evaluate quality on an anonymized fixture set; tune prompt and validation
-   thresholds through `prompt_version`.
+   thresholds through `policy_version`.
 5. Phase 2 experiment: route-reply suggestions in chat.
