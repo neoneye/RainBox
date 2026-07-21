@@ -505,12 +505,14 @@ def test_pair_invariants_fail_closed(divergence_pair, monkeypatch):
         assert result.score == 0.0
         assert "diverged" in result.details["repetitions"][0]["error"]
 
-    # With the differentiating block ON, a solo member is a normal run.
+    # Cardinality holds under EVERY variant: a mis-selected solo member is a
+    # broken run definition even when the differentiating block is on.
     run = pg.run_profile_guidance_suite([concise.uuid],
                                         variant="calibration_only",
                                         repetitions=1)
     result = db.list_eval_results_for_run(run.uuid)[0]
-    assert "invalid" not in result.details["repetitions"][0]
+    rep = result.details["repetitions"][0]
+    assert rep["invalid"] is True and "exactly two cases" in rep["error"]
 
 
 def test_malformed_pair_metadata_fails_closed(divergence_pair, monkeypatch):

@@ -321,6 +321,22 @@ def set_setting(key: str, value: object) -> None:
     db.session.commit()
 
 
+def lock_setting_row(key: str) -> None:
+    """Take the row lock on one `app_setting` row for the rest of the current
+    transaction (SELECT ... FOR UPDATE; the reconciled registry guarantees
+    the row exists). The coordination point between `set_current_profile`
+    and profile deletion (db.profile.profile_save_tree): both take THIS lock
+    first, before validating or mutating, so a switch cannot validate a
+    profile that a concurrent tree save is about to delete and then write
+    the pointer after the delete commits — the classic re-dangling race.
+    App context required; the caller owns commit/rollback."""
+    import sqlalchemy as sa
+
+    db.session.execute(
+        sa.select(AppSetting).where(AppSetting.key == key).with_for_update()
+    ).one_or_none()
+
+
 def set_current_profile(value: object) -> str | None:
     """The runtime write path for `profile.current`: validate the target,
     compare against the currently effective value, and on an actual change
@@ -350,16 +366,21 @@ def set_current_profile(value: object) -> str | None:
         except ValueError:
             return None  # a corrupt stored value reads as unset
 
-    new_norm: str | None = None
-    if value is not None and str(value).strip() != "":
-        assert spec.validate is not None
-        spec.validate(value)  # bad uuid / unknown profile → ValueError
-        new_norm = str(UUID(str(value).strip()))
-    if _norm(get_setting("profile.current")) == new_norm:
-        return None
-
-    stamp = datetime.now(UTC).isoformat()
     try:
+        # Lock BEFORE validating: a concurrent tree save deleting the target
+        # profile holds this same lock across its deletion, so validation
+        # here cannot observe a profile that is mid-deletion and then write
+        # a dangling pointer after that delete commits.
+        lock_setting_row("profile.current")
+        new_norm: str | None = None
+        if value is not None and str(value).strip() != "":
+            assert spec.validate is not None
+            spec.validate(value)  # bad uuid / unknown profile → ValueError
+            new_norm = str(UUID(str(value).strip()))
+        if _norm(get_setting("profile.current")) == new_norm:
+            db.session.rollback()  # release the lock; nothing to write
+            return None
+        stamp = datetime.now(UTC).isoformat()
         _upsert_setting_row(spec, new_norm)
         _upsert_setting_row(_registry("profile.current_changed_at"), stamp)
         db.session.commit()

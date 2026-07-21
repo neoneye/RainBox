@@ -169,6 +169,59 @@ def test_deleting_current_profile_clears_pointer_atomically(app_ctx):
         db.db.session.commit()
 
 
+def test_concurrent_delete_and_switch_never_dangle(app_ctx):
+    """Deletion and switching coordinate through the same setting-row lock:
+    whichever commits second observes the other's outcome, so the pointer
+    can never end up referencing a deleted profile."""
+    import threading
+    from uuid import uuid4 as u4
+
+    for _ in range(3):
+        pu = u4()
+        db.db.session.add(db.Profile(uuid=pu, name="Racer", folder_uuid=None,
+                                     position=997))
+        db.db.session.commit()
+        db.set_current_profile(None)
+        barrier = threading.Barrier(2)
+        errors: list[Exception] = []
+        app = app_ctx
+
+        def deleter():
+            with app.app_context():
+                try:
+                    barrier.wait(timeout=10)
+                    db.profile_save_tree([], [])          # deletes P
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+        def switcher():
+            with app.app_context():
+                try:
+                    barrier.wait(timeout=10)
+                    db.set_current_profile(str(pu))
+                except ValueError:
+                    pass  # legitimate: the profile was already deleted
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=deleter),
+                   threading.Thread(target=switcher)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        assert not errors
+        db.db.session.expire_all()
+        pointer = db.get_setting("profile.current")
+        if pointer is not None:
+            # Only acceptable when it resolves — never a dangling uuid.
+            assert db.profile_get(UUID(str(pointer))) is not None
+            db.set_current_profile(None)
+        db.db.session.query(db.Profile).filter(
+            db.Profile.uuid == pu).delete()
+        db.db.session.commit()
+
+
 def test_internal_setting_hidden_from_listing_but_readable(app_ctx):
     keys_default = {s["key"] for s in db.all_settings()}
     assert "profile.current_changed_at" not in keys_default

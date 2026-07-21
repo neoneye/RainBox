@@ -334,17 +334,24 @@ def profile_save_tree(folders: list, profiles: list, *,
         row.folder_uuid = UUID(p["folderId"]) if p.get("folderId") else None
         row.position = i
     deleted_p = {pu for pu in existing_p if pu not in seen_p}
-    for pu in deleted_p:
-        db.session.delete(existing_p[pu])
     # Deleting the profile that `profile.current` points at must clear the
     # pointer and stamp the change IN THE SAME TRANSACTION — otherwise the
     # setting dangles: every declared-profile block silently disappears on
-    # the next turn and no context marker ever announces it. Staged through
-    # the settings module's no-commit helper so tree rows and settings rows
-    # commit (or roll back) together.
+    # the next turn and no context marker ever announces it. The setting row
+    # is LOCKED before the deletions (the same lock set_current_profile
+    # takes before validating), so a concurrent switch cannot validate a
+    # profile this transaction is deleting and re-dangle the pointer after
+    # the commit. Staged through the settings module's no-commit helper so
+    # tree rows and settings rows commit (or roll back) together.
     if deleted_p:
-        from db.settings import _registry, _upsert_setting_row, get_setting
+        from db.settings import (
+            _registry,
+            _upsert_setting_row,
+            get_setting,
+            lock_setting_row,
+        )
 
+        lock_setting_row("profile.current")
         current_raw = str(get_setting("profile.current") or "").strip()
         current_uuid = _to_uuid(current_raw) if current_raw else None
         if current_uuid is not None and current_uuid in deleted_p:
@@ -354,6 +361,8 @@ def profile_save_tree(folders: list, profiles: list, *,
             _upsert_setting_row(_registry("profile.current"), None)
             _upsert_setting_row(
                 _registry("profile.current_changed_at"), stamp)
+    for pu in deleted_p:
+        db.session.delete(existing_p[pu])
     db.session.commit()
 
 

@@ -98,13 +98,20 @@ bounds — the deterministic proxy for explanation depth), and
 `requires_json`.
 
 The profile-guidance release decision is executable: `evals/profile_gate.py`
-applies the recorded contract (hard-zero exact-source, 2-of-3 repetitions
-with a 90% override-family rate, no regression on baseline-passing cases,
-+0.15 locale / +0.10 calibration family margins, identical model group,
-cases, and repetitions) over recorded runs, persists the verdict as a
-durable `profile-gate` EvalRun, and exits 0 pass / 1 fail / 2 invalid — an
-invalid run (violated pair invariant, incompatible inputs) is never a
-decision. Each passing block is enabled by flipping its default-off switch
+applies the recorded contract (hard-zero exact-source, exactly three
+repetitions per case at 2-of-3 with a 90% override-family rate, no
+regression on baseline-passing cases, +0.15 locale / +0.10 calibration
+family margins) over recorded runs, and validates the evidence before
+trusting any number: finished live runs of the exact expected variant,
+produced against the assistant's currently bound model group with an
+identical member snapshot, per-case manifests (definition fingerprint,
+family, threshold, seed id) identical between baseline and candidate, all
+mandatory families present, and a combined run required whenever both
+individual candidates are judged. Any violation makes the verdict INVALID
+with every decision withheld. The verdict persists as a durable
+`profile-gate` EvalRun (including `allowed_enablement`: none / formatting /
+calibration / both) and the CLI exits 0 pass / 1 fail / 2 invalid. Each
+passing block is enabled by flipping its default-off switch
 (`assistant.formatting_guide` / `assistant.knowledge_calibration`).
 
 A separate opt-in **live** runner, `evals/profile_guidance.py`, executes
