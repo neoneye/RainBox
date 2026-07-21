@@ -414,7 +414,7 @@ MEMORY_DEVELOPER_TEMPLATE = """
   .memdev-models .memdev-table{margin-top:8px}
   @media (max-width:1000px){.memdev-cols{grid-template-columns:1fr}}
   .memdev-panel{border:1px solid #e5e7eb;border-radius:10px;background:#fbfbfb;
-    padding:14px 16px;min-width:0}
+    padding:14px 16px;min-width:0;overflow-x:auto}
   .memdev-panel h2{margin:0 0 2px;font-size:1.05rem}
   .memdev-panel .sub{margin:0 0 10px}
   .memdev-meta{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}

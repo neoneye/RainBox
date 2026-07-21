@@ -394,13 +394,16 @@ def _filter_recalled_candidates(
         cand = by_qa_id[s.qa_id]
         claim = claims_by_id.get(s.qa_id)
         if claim is not None:
-            path = f"claim · {claim.kind}/{claim.scope}"
+            path = f"claim · {claim.scope}"
+            kind = claim.kind
             question = claim.text[:_FILTER_CLAIM_PREVIEW_CHARS]
         else:
-            path = str((qkb.get_entry(s.qa_id) or {}).get("path", ""))
+            entry = qkb.get_entry(s.qa_id) or {}
+            path = str(entry.get("path", ""))
+            kind = str(entry.get("kind", ""))
             question = cand.matched_question
         return {
-            "qa_id": s.qa_id, "path": path,
+            "qa_id": s.qa_id, "path": path, "kind": kind,
             "score": qkb.score_permille(cand.score), "signals": cand.method,
             "matched_question": question,
             "direct": s.direct, "indirect": s.indirect,

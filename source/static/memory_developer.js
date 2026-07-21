@@ -159,11 +159,14 @@ function memdevCandidateTable(candidates, keptIds) {
     // absent until the filter stage has run.
     const dir = c.direct != null
       ? c.direct + ' / ' + c.indirect + ' / ' + c.relevancy : '';
+    // uuids eat table width — show the first 6 chars, full value on hover.
+    const shortId = '<code title="' + memdevEscape(c.qa_id) + '">' +
+      memdevEscape(String(c.qa_id).slice(0, 6)) + '</code>';
     return '<tr class="' + (kept.has(c.qa_id) ? 'kept' : '') + '">' +
       '<td class="num">' + memdevEscape(c.score) +
       (c.signals ? '<br><span class="muted">' + memdevEscape(c.signals) + '</span>' : '') +
       '</td>' +
-      '<td><code>' + memdevEscape(c.qa_id) + '</code>' +
+      '<td>' + shortId +
       (c.path ? '<br>' + memdevEscape(c.path) : '') + '</td>' +
       '<td>' + memdevEscape(c.kind) + '</td>' +
       '<td>' + memdevEscape(c.matched_question || '') + '<br>' +
