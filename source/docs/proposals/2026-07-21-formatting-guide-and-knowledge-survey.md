@@ -1,7 +1,9 @@
 # Formatting guide and knowledge calibration
 
-**Status: proposal.** Ship two small profile-driven prompt features first,
-then grow toward operator-authored forms on the measured result:
+**Status: proposal — design-complete and ready to implement for Phases 0–2;
+the declarative-forms follow-up needs its own proposal.** Ship two small
+profile-driven prompt features first, then grow toward operator-authored
+forms on the measured result:
 
 1. A deterministic **formatting guide** compiles the active person profile's
    locale fields into code-owned directives with examples.
@@ -931,8 +933,22 @@ Implementation contract for the marker:
 - add `db.set_current_profile(value)` and use it for runtime writes; it compares
   the old/new effective UUID and does nothing extra on a no-op;
 - on change, it sets `profile.current`, calls `mark_facts_invalidated()`, and
-  stores the returned stamp in internal `profile.current_changed_at` (listed in
-  the registry for `get_setting`, but omitted from the normal settings editor);
+  stores the returned stamp in `profile.current_changed_at`;
+- "omitted from the settings editor" needs a mechanism that does not exist
+  yet: the `Setting` registry dataclass gains `internal: bool = False`, and
+  `all_settings()` gains `include_internal=False` so the `/settings` page
+  never lists internal keys, while `get_setting`/`set_setting` treat them
+  normally. `profile.current_changed_at` registers as a string setting,
+  default `None`, `internal=True`. (The existing `secret` flag is wrong for
+  this: secrets are redacted but still listed, and this is a timestamp, not
+  a credential.)
+- the write must route, or the marker never fires: the settings web API
+  special-cases the `profile.current` key to call `db.set_current_profile`,
+  mirroring the key special-case the settings page already has for that
+  setting's dropdown. A direct `set_setting("profile.current", ...)` still
+  works but stamps nothing — it is the low-level seam, reserved for tests
+  and scripts, and the eval harness touches neither (it overrides the
+  profile per-eval, never the setting);
 - `_maybe_post_facts_marker()` checks whether the current facts stamp equals
   `profile.current_changed_at`; when it does, it resolves the current profile
   label and, on each room's next main-assistant turn, posts one tailored message
@@ -950,8 +966,11 @@ Notice: the active profile switched to Germany. Identity, formatting, and knowle
 ```
 
 Tests cover same-value no-op, profile A → B, profile → unset, one marker per
-room per stamp, safe label escaping, and a subsequent unrelated Q&A invalidation
-returning to the generic notice.
+room per stamp, safe label escaping, a subsequent unrelated Q&A invalidation
+returning to the generic notice, a settings-page write of `profile.current`
+firing the stamp (the endpoint routing, not just the helper), and internal
+settings absent from the default `all_settings()` listing while still
+readable via `get_setting`.
 
 Why the redaction alternative loses, spelled out because the argument for it
 sounds safety-shaped:
