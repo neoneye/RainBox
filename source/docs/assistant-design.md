@@ -62,21 +62,48 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   invent placeholder values, and never claim a write that didn't run
   (anti-fabrication).
 - **User prompt**, in order: the current **local time** (so relative reminders
-  resolve in the operator's zone, not UTC), the **user-profile block**
-  (query-independent operator self-model — see
+  resolve in the operator's zone, not UTC), the **operator identity**
+  (`profile.current`'s fields as JSON, `authority="context"`), the
+  **formatting guide** (`authority="instructions"` — deterministic
+  locale directives compiled by `user_profile/formatting.py`; the one
+  profile-derived block with instruction authority, justified because every
+  imperative sentence is code-owned and every interpolated value passed the
+  strict prompt-boundary validation), the **knowledge calibration** block
+  (`authority="context"` — self-declared topic rows as JSONL from
+  `user_profile/calibration.py`, sharing a 2 700-char guidance budget with
+  the formatting guide, formatting admitted first), the **user-profile
+  block** (query-independent operator self-model — see
   `memory-architecture.md` §User Profile Block), the **skill block** (active
   procedural skills retrieved for the latest human message; candidates are
   inert), the transcript (`kind == "message"` rows only, newest
   `MAX_RECENT_MESSAGES = 30`), the **scratchpad** of steps taken this turn
   (tail-capped at `MAX_SCRATCHPAD_CHARS = 5000`), and the step counter.
-  Profile and skill blocks are best-effort — a retrieval failure never breaks
-  the turn.
-- **Facts-invalidation marker.** Before the first step, if
-  `qa.facts_invalidated_at` changed since the last marker in this room (a
-  shield toggle or Q&A repopulate), the assistant posts a one-time visible
-  notice telling the model to re-check facts instead of reusing earlier
-  answers; dedup is by the exact timestamp in the marker's `meta`. See
-  `qa-system.md`.
+  All of these are best-effort — a retrieval or formatter failure empties
+  only its own block, never the turn.
+- **One declared-profile context snapshot per turn.**
+  `user_profile.current_profile_context()` reads `profile.current`,
+  `qa.facts_invalidated_at`, and `profile.current_changed_at` in one
+  statement and resolves the profile once; the room marker and all three
+  declared blocks render from that snapshot, and the handle path performs no
+  second settings lookup — a switch committed mid-turn applies wholly to the
+  next turn, never mixing two people or showing a new profile without its
+  switch notice. The live eval harness reuses the same construction through
+  `build_turn_prompts` with an eval-only profile override.
+- **Context-invalidation marker.** Before the first step, if either pending
+  cause — a facts/Q&A invalidation (`qa.facts_invalidated_at`) or a
+  `profile.current` switch (`profile.current_changed_at`) — has not been
+  acknowledged in this room, the assistant posts one visible notice: the
+  generic re-check-facts text for a facts-only event, a tailored notice for
+  a profile switch, or a combined notice when distinct events are both
+  pending. The marker's `meta` checkpoints both current stamps
+  (`context_invalidation`, `facts_invalidation`, `profile_context_changed`,
+  `profile_switch_uuid`), each acknowledged independently — several changes
+  before a room runs coalesce into one marker. Legacy markers carrying only
+  `facts_invalidation` stay recognized. The marker is operator-facing: it is
+  demoted behind the operator's message and filtered from model history (the
+  freshly assembled profile blocks are the model-side signal). Switching the
+  active profile preserves room history — it is a soft signal, never
+  redaction, and not an audience boundary. See `qa-system.md`.
 
 ## The capability registry
 

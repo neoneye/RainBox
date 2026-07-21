@@ -34,6 +34,7 @@ Setting(key, env, type, default,
 - **`validate`** — an optional callable run on write (e.g. age-recipient shape, model-uuid existence). A failing validator rejects the save.
 - **`dynamic_default`** — a computed fallback used *instead of* `default` when both DB and env are unset (e.g. `chat.default_model` derives from the `model_config` table). Runs on every unset `get_setting()`, so it must be cheap and app-context safe.
 - **`secret`** — a `secret=True` setting is **env-only**: `set_setting` refuses to store a value for it (it would land in cleartext in Postgres and in every backup — threat model in `docs/backup.md`), `all_settings()` redacts its value, and the page renders it read-only ("environment-managed"). No currently registered key is secret; the machinery is in place for when one is.
+- **`internal`** — machine-owned bookkeeping keys (event stamps) that `all_settings()` omits by default (`include_internal=True` lists them), so the `/settings` page never shows them; `get_setting`/`set_setting` treat them like any other key. Distinct from `secret`: secrets are redacted but still listed, internal keys are ordinary values that are simply not operator-facing.
 
 Unknown keys raise `UnknownSetting` — there is no ad-hoc key creation.
 
@@ -49,7 +50,9 @@ Unknown keys raise `UnknownSetting` — there is no ad-hoc key creation.
 | `chat.default_model` | string | dynamic: alphabetically earliest model-config override | — | Model a direct chat room talks to while the room has no model selected (a ModelConfig / ModelConfigOverride uuid; validated to exist). |
 | `customize.dir` | string | unset | `RAINBOX_CUSTOMIZE_DIR` | Directory with the operator's private customizations (PII / persona); its `question_answer.jsonl` overlays the base Q&A registry by id. |
 | `qa.unlocked_shields` | json | `[]` | — | Names of unlocked Q&A shields. A shielded Q&A entry reaches the LLM only when its shield is listed; empty keeps every shielded entry hidden. |
-| `qa.facts_invalidated_at` | string | unset | — | ISO timestamp of the last change that can stale prior facts (shield toggle or Q&A repopulate); the assistant posts a one-time "re-check facts" notice per room after it changes. |
+| `qa.facts_invalidated_at` | string | unset | — | ISO timestamp of the last change that can stale prior facts (shield toggle, Q&A repopulate, or profile switch); the assistant posts a one-time "re-check facts" notice per room after it changes. |
+| `profile.current` | string | unset | — | The `/profile` profile that IS the operator (validated to exist, built-ins allowed). Drives the assistant's identity, formatting-guide, and knowledge-calibration blocks; unset = none of them. The page edits it with a profile picker showing names, not uuids. |
+| `profile.current_changed_at` | string | unset | — | **Internal.** Event stamp of the last actual `profile.current` change, written by `set_current_profile` in the same transaction as the facts stamp; acknowledged per room by the assistant's context marker. Never listed on `/settings`. |
 
 Main consumers: `db/cron.py` (pause, backup destination/recipients/push), `agents/assistant.py` (disabled capabilities, facts stamp), `webapp/chat_api.py` + `agents/direct_chat.py` (default model), `memory/seed_memory.py` + `agents/mcp_config.py` + `skills/loader.py` (customize dir, shields).
 
@@ -71,6 +74,7 @@ Main consumers: `db/cron.py` (pause, backup destination/recipients/push), `agent
 - **`set_setting(key, value)`** — persists `value` as text (`_to_text`: json via `json.dumps`); `None` clears the row's value to `NULL`, dropping the DB layer so env/default apply again. Runs the validator (skipped for empty text), enforces the env-only rule for secrets, and re-stamps the row's cached metadata. Commits immediately.
 - **`all_settings() -> list[dict]`** — every registry key with effective value, `value_type`, `secret`, `description`, and `source`; secrets redacted (`REDACTED = "••••••"`). Metadata always comes from the registry, never the row, so it cannot drift.
 - **`mark_facts_invalidated() -> str`** — stamps `qa.facts_invalidated_at` with now (UTC ISO) and returns it.
+- **`set_current_profile(value) -> str | None`** — the runtime write path for `profile.current`: validates the target, no-ops on the same effective uuid (returns `None`), and on an actual change writes the pointer, advances `qa.facts_invalidated_at`, and stores that same stamp in `profile.current_changed_at` as **one transaction** (via the no-commit `_upsert_setting_row` helper, rolled back wholly on failure) — a concurrent assistant turn sees either the complete old state or the complete new state. A plain `set_setting("profile.current", ...)` still works but stamps nothing; it is the low-level seam for tests and scripts.
 - **`reconcile_app_settings()`** — idempotent, called from `init_db`: ensures a row exists per registry key (value left `NULL`) and re-stamps `value_type`/`secret`/`description` from the registry. The `AppSetting` columns beyond `key`/`value` are a **seeded cache** of the registry, never an independent source of truth.
 
 ## The /settings page
@@ -97,6 +101,7 @@ The modal shows the current *effective* value and its source, so an empty DB fie
 ## Settings with side effects
 
 - **`qa.unlocked_shields`** — a shield change can stale facts already answered in a conversation. The `set` endpoint captures the prior value, and if the write actually changed it, calls `mark_facts_invalidated()`; the assistant then posts a one-time re-check-facts notice per room (comparing the stamp against markers already in the room).
+- **`profile.current`** — the `set` endpoint special-cases this key to `db.set_current_profile` (mirroring the page's special-cased dropdown), so an actual switch fires both event stamps atomically and the assistant's per-room context marker announces the new profile. Switching changes identity, formatting, and calibration; it preserves room history and is not an audience boundary.
 - **`customize.dir`** — changing it (or editing the overlay files) does nothing by itself; the operator must press **Repopulate Q&A memory** to reconcile, which is why the buttons live on this card and the description says so.
 - **`cron.paused`** — read at the top of every scheduler tick; the `/cron` page's Pause/Resume buttons write it via `POST /cron/api/pause|resume`, so the same state is visible and editable on both pages.
 

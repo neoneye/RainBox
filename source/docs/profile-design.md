@@ -61,12 +61,19 @@ profile                           -- one person
 - **`data` is sparse.** Keys are the registry's field keys; an **absent key
   means unset — never `""`**. The validator canonicalizes: a submitted blank
   is dropped, so the stored object only ever contains real values.
-- **`data["dynamic"]` is the connector namespace.** Reserved for
-  machine-written observations (rendered read-only as a "Last seen" group).
-  It is not a registry field: `validate_profile_data` rejects it in a
-  human-facing PUT as read-only, and `profile_update_data` copies the current
-  row's `dynamic` into the incoming snapshot in the same transaction — a
-  stale form autosave can never overwrite a newer connector observation.
+- **`data["dynamic"]` and `data["calibration"]` are server-owned subtrees**
+  (`SERVER_OWNED_SUBTREES`). `dynamic` is the connector namespace
+  (machine-written observations, rendered read-only as "Last seen");
+  `calibration` holds the knowledge-calibration rows (own endpoint below).
+  Neither is a registry field: `validate_profile_data` rejects both in the
+  flat human-facing PUT, and `profile_update_data` carries the current row's
+  subtrees into the incoming snapshot in the same transaction.
+- **Every subtree write goes through `profile_mutate_data`.** All three
+  subtrees share one JSONB column, so a writer must never read-modify-write
+  race a different subtree's writer: the helper selects the profile row
+  `FOR UPDATE`, hands the mutator a copy of the current dict, assigns the
+  returned dict, and commits. The flat-field PUT and the calibration PUT
+  both use it; any future `dynamic` writer must too.
 
 ## The field registry
 
@@ -77,8 +84,12 @@ rendered as one `<fieldset>` each in registry order:
 
 - **Identity** — names (full, native-script, "address them as", internet
   handle), gender (enum), a multiline "About", birthday (date).
-- **Locale & formats** — units, date/time format (enums), timezone, primary +
-  secondary language and currency (datalist-assisted free text).
+- **Locale & formats** — units, date/time format, number format (enums),
+  timezone, primary + secondary language and currency (datalist-assisted
+  free text). The `number_format` enum's five values double as previews —
+  every choice renders the same `1234567.89` sample (seven integer digits
+  are what disambiguate Indian from Western grouping), differing only in
+  separators.
 - **Contact & location** — country, city, address, email.
 
 Four kinds — `text`, `enum`, `date`, `email` — the complete set for v1.
@@ -115,6 +126,47 @@ Templates folder is neither draggable, droppable, renamable, nor a valid home
 for user rows. **Duplicate is the only write that touches them** — it mints a
 real editable row (fresh uuid, deep-copied data, named after the template) at
 the end of the user-owned top level.
+
+## Knowledge calibration
+
+One server-owned subtree per profile, `data["calibration"]["topics"]`: the
+operator's self-declared per-topic calibration, edited in its own fieldset
+and injected into the assistant prompt as reference data
+(`user_profile/calibration.py` renders it; see `assistant-design.md`).
+
+Each row: `topic` (free text, 1–80 chars, display form trimmed with internal
+whitespace collapsed), `level` (`expert|intermediate|beginner|none`),
+optional `stance` (`prefer|neutral|avoid`), optional `depth`
+(`concise|standard|teach`), optional `note` (≤400 chars — nuance like usage
+recency belongs here, not in a fourth enum), plus two server-owned fields:
+a stable `id` (UUIDv4) and `updated_at` (RFC 3339 UTC, whole seconds, `Z`).
+The axes are deliberately orthogonal — expertise, preference, and desired
+explanation depth answer different questions.
+
+Validator rules (`db/profile_calibration.py`, error → 400 naming the row):
+at most 100 rows; duplicates detected by NFKC-normalized, whitespace-
+collapsed, casefolded topic key with both conflicting positions named;
+existing row ids round-trip, new rows omit `id`; client-supplied
+`updated_at`, unknown ids, and unknown keys are rejected; blank optional
+values are removed; an all-blank row is dropped before validation, a row
+with content but no topic or level is an error; the canonical subtree
+serialized as UTF-8 JSON stays under 64 KiB. `updated_at` advances only when
+a row's semantic fields change — reordering restamps nothing. Row order is
+priority order (the editor reorders with up/down buttons, not drag-and-drop).
+
+Writes are **last-acknowledged-write-wins within the subtree** — the same
+call the flat fields and `/prompt` content already made; a single-operator
+preference list does not pay a conflict-dialog tax. Cross-subtree safety is
+the row lock above, which is not optional: without it a flat autosave could
+write back a stale calibration copy, which is cross-feature data loss, not a
+lost keystroke. An empty snapshot removes the subtree (absent reads as no
+topics). Duplication copies semantic fields and order but mints fresh ids
+and the duplication timestamp — server identity never survives a copy — and
+locks a user-owned source row so the copy is a coherent snapshot.
+
+Germany and US ship three fictional fixture rows between them (chosen to
+exercise all axes, not inferred from the archetypes' namesakes); the editor
+hides built-in row ages since the shipped stamps are schema filler.
 
 ## Tree + persistence (the /prompt and /cron pattern)
 
@@ -156,9 +208,11 @@ JSON, same-origin, in `webapp/profile_api.py`. uuids are the identifiers.
 |----------|-----------|--------|
 | `GET /profile/api/tree` | `{folders, profiles, version}` — user rows + merged built-ins, each profile with its `summary`, no `data` | — |
 | `PUT /profile/api/tree` | guarded whole-tree save (structural only) | `version` (409), `deletes` (400), `validate_profile_tree` (400) |
-| `GET /profile/api/profiles/<uuid>` | one profile incl. the full `data` blob (built-ins served from the shipped file) | 404 unknown |
-| `PUT /profile/api/profiles/<uuid>` | `{data}` — the form's autosave: a **complete editable snapshot**, canonicalized + validated; answers the fresh `summary` | built-in → 400, `validate_profile_data` → 400, `dynamic` preserved server-side |
-| `POST /profile/api/profiles/<uuid>/duplicate` | copy the whole data blob (`dynamic` included) into a new row — "<name> copy" right after a user-owned source, a top-level editable row for a built-in | 404 unknown |
+| `GET /profile/api/profiles/<uuid>` | one profile's editable fields + `dynamic` projection (built-ins served from the shipped file); the `calibration` subtree is **projected out** — it has its own endpoint | 404 unknown |
+| `PUT /profile/api/profiles/<uuid>` | `{data}` — the form's autosave: a **complete editable snapshot**, canonicalized + validated; answers the fresh `summary` | built-in → 400, `validate_profile_data` → 400 (`calibration` rejected as read-only), `dynamic` + `calibration` preserved server-side |
+| `GET /profile/api/profiles/<uuid>/calibration` | `{ok, builtin, topics}` — the canonical calibration rows | 404 unknown |
+| `PUT /profile/api/profiles/<uuid>/calibration` | `{topics}` — a complete snapshot; answers the canonical rows (the client needs server-assigned ids/stamps before its next edit) | built-in → 400, validator → 400, 404 unknown |
+| `POST /profile/api/profiles/<uuid>/duplicate` | copy the whole data blob into a new row — "<name> copy" right after a user-owned source, a top-level editable row for a built-in; calibration rows get fresh ids + the duplication stamp | 404 unknown |
 
 ## The save flow
 
@@ -176,6 +230,17 @@ Two independent channels, mirroring the storage split:
   `beforeunload` guard warns while anything is pending; an `online` listener
   retries immediately. Status renders inline: `Saving…` / `Saved ✓` /
   `Save failed — retrying`.
+- **Calibration** (its own fieldset): the same autosave pattern with its own
+  per-profile state map and status line. Response handling is by class:
+  network error or 5xx retains the draft and retries with capped backoff; a
+  400 shows the server validation message and waits for the next edit (an
+  unchanged invalid snapshot is never retried forever); success adopts the
+  canonical response (server-assigned ids and stamps) unless a newer local
+  edit is queued, in which case that edit resends immediately. Adopting the
+  canonical snapshot never steals focus mid-edit; topicless drafts stay
+  local until a topic is typed. Pending and failed-validation states
+  participate in the `beforeunload` guard, and late GET/PUT results are
+  keyed by uuid so they never populate the wrong pane.
 
 **Duplicate** flushes both channels first (the pending tree save, then the
 source's pending data PUT) so the copy always includes the latest edit; either
@@ -221,12 +286,22 @@ duplication is a convenience, not ancestry (unlike /prompt's clone).
   stored completely; audience/visibility controls would be a presentation
   concern layered on later, not a reason to store less.
 
+## Prompt rendering
+
+The profile selected by `profile.current` feeds three assistant prompt
+blocks, all rendered from one per-turn context snapshot (see
+`assistant-design.md`): the identity JSON (`user_profile/identity.py`), the
+deterministic formatting guide (`user_profile/formatting.py` — lookup-driven
+directives with examples compiled from the locale fields, strict
+prompt-boundary validation so free-text values can never become
+instructions), and the knowledge-calibration block
+(`user_profile/calibration.py` — JSONL rows under a shared guidance budget).
+Switching `profile.current` changes identity, formatting, and calibration;
+it is **not an audience boundary** — handing the screen to another audience
+uses a fresh room and the demo database.
+
 ## Open questions
 
-- **Prompt rendering.** The registry docstring reserves "(later) prompt
-  rendering", but nothing injects `/profile` rows into any LLM prompt yet —
-  the assistant's "operator profile block" (`agents/chat_context.py`) comes
-  from the separate `user_profile` memory-preferences system.
 - **`dynamic` writers.** The namespace is reserved and defended, but no
   connector writes it yet; the "Last seen" group only renders for rows given
   such data by hand or by future connectors.

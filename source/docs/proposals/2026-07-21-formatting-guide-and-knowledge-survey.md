@@ -1,9 +1,10 @@
 # Formatting guide and knowledge calibration
 
-**Status: proposal — design-complete and ready to implement for Phases 0–2;
-the declarative-forms follow-up needs its own proposal.** Ship two small
-profile-driven prompt features first, then grow toward operator-authored
-forms on the measured result:
+**Status: Phases 0–2 implemented (harness, formatting guide, calibration —
+code, UI, and tests); Phase 3's live measurement run and decision are still
+open, and the declarative-forms follow-up needs its own proposal.** Ship two
+small profile-driven prompt features first, then grow toward
+operator-authored forms on the measured result:
 
 1. A deterministic **formatting guide** compiles the active person profile's
    locale fields into code-owned directives with examples.
@@ -81,9 +82,11 @@ declining what is stored.
 
 ## Implementation readiness
 
-**Phases 0–2 are design-complete and ready to implement.** This is a statement
-about specification readiness, not implementation progress: the code described
-below has not been written yet.
+**Phases 0–2 are implemented.** The current-state documentation lives in
+`docs/profile-design.md`, `docs/assistant-design.md`,
+`docs/settings-design.md`, and `docs/eval-loop.md`; what remains open is
+running the Phase 0 baseline + Phase 3 variant comparison against the bound
+model group and applying the release gate below.
 
 | Work | Design status | First implementation result |
 |---|---|---|

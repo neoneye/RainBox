@@ -39,7 +39,15 @@ fallback.
   memory-sync jobs).
 - `/kanban` — boards, folder tree, task execution.
 - `/git` — registered local repositories.
-- `/profile` — person profiles (folder tree, structured person fields).
+- `/profile` — person profiles (folder tree, structured person fields,
+  per-topic knowledge calibration). The profile selected by the
+  `profile.current` setting drives the assistant's identity block, its
+  formatting defaults (dates, times, units, number/currency separators,
+  language), and its knowledge calibration; explicit requests in a message
+  always override the defaults. Switching `profile.current` changes those
+  three blocks and posts a one-time notice into each room — room history is
+  preserved, and the switch is **not** an audience boundary: to hand the
+  screen to someone else, use a fresh room and the demo database.
 - `/assistant` — assistant run inspector (traces, steps, write intents).
 - `/conversations` — persona-to-persona conversation runs.
 - `/find` — paste a uuid (or a fragment, even typo'd) to learn what it is
