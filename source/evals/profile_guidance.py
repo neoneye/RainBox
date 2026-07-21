@@ -88,25 +88,35 @@ def _eval_agent(model_group_uuid: UUID | None) -> AssistantAgent:
     return agent
 
 
-def _run_repetition(
+def _build_case_prompts(
     agent: AssistantAgent, case: db.EvalCase, profile: dict[str, Any] | None,
     include_formatting: bool, include_calibration: bool,
-) -> dict[str, Any]:
-    """One live decision for one case: build the production prompts, ask for
-    exactly one structured decision, accept only `reply`, and score its text.
-    Any exception or non-reply decision is a failed repetition (score 0.0)."""
+) -> tuple[str, str]:
     message = str((case.input or {}).get("message") or "")
     messages = [{"sender_type": "human", "text": message, "kind": "message",
                  "meta": {}}]
-    system_prompt, user_prompt = agent.build_turn_prompts(
+    return agent.build_turn_prompts(
         messages=messages, profile=profile,
         include_formatting=include_formatting,
         include_calibration=include_calibration,
     )
+
+
+def _prompt_hash(system_prompt: str, user_prompt: str) -> str:
+    return hashlib.sha256(
+        (system_prompt + "\n\x00\n" + user_prompt).encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def _generate_repetition(
+    agent: AssistantAgent, system_prompt: str, user_prompt: str,
+) -> dict[str, Any]:
+    """One live decision: ask for exactly one structured step, accept only
+    `reply`. Returns an UNSCORED record (output text or error) — scoring is
+    per case via _score_repetition, so a counterfactual pair can score one
+    shared generation against both cases' expectations."""
     record: dict[str, Any] = {
-        "prompt_hash": hashlib.sha256(
-            (system_prompt + "\n\x00\n" + user_prompt).encode("utf-8")
-        ).hexdigest()[:16],
+        "prompt_hash": _prompt_hash(system_prompt, user_prompt),
         "model_group_uuid": (str(agent.model_group_uuid)
                              if agent.model_group_uuid else None),
     }
@@ -116,8 +126,7 @@ def _run_repetition(
             response_model=AssistantStepDecision,
         )
     except Exception as exc:  # noqa: BLE001 — a failed model call is a scored 0
-        record.update({"error": f"{type(exc).__name__}: {exc}", "score": 0.0,
-                       "passed": False, "output": ""})
+        record.update({"error": f"{type(exc).__name__}: {exc}", "output": ""})
         record["model_uuid"] = (str(agent._last_model_uuid)
                                 if agent._last_model_uuid else None)
         return record
@@ -132,14 +141,24 @@ def _run_repetition(
             "error": f"decision was {getattr(action, 'value', action)!r}, "
                      "only reply is accepted",
             "decision_action": getattr(action, "value", str(action)),
-            "score": 0.0, "passed": False, "output": "",
+            "output": "",
         })
         return record
-    text = str((getattr(decision, "args", None) or {}).get("message") or "")
-    score, details = score_chat_reply_case(case, {"text": text})
-    record.update({"output": text, "score": score,
-                   "passed": score >= _threshold(case), "details": details})
+    record["output"] = str(
+        (getattr(decision, "args", None) or {}).get("message") or "")
     return record
+
+
+def _score_repetition(case: db.EvalCase, record: dict[str, Any]) -> dict[str, Any]:
+    """Score one generated record against one case's expectations."""
+    scored = dict(record)
+    if record.get("error"):
+        scored.update({"score": 0.0, "passed": False})
+        return scored
+    score, details = score_chat_reply_case(case, {"text": record["output"]})
+    scored.update({"score": score, "passed": score >= _threshold(case),
+                   "details": details})
+    return scored
 
 
 def run_profile_guidance_case(
@@ -149,19 +168,28 @@ def run_profile_guidance_case(
     agent: AssistantAgent,
     variant: str,
     repetitions: int = DEFAULT_REPETITIONS,
+    shared_records: list[dict[str, Any]] | None = None,
 ) -> db.EvalResult:
     """Run one live case for `repetitions` and persist one EvalResult whose
-    details carry every repetition; EvalResult.score is the mean."""
+    details carry every repetition; EvalResult.score is the mean. When
+    `shared_records` is given (a counterfactual pair under a variant whose
+    differentiating block is off), the pre-generated outputs are scored
+    against this case's expectations instead of generating again."""
     include_formatting, include_calibration = VARIANTS[variant]
     profile = _resolve_profile(case.input or {})
     reps: list[dict[str, Any]] = []
     if profile is None and (case.input or {}).get("profile_uuid"):
         reps = [{"error": "profile_uuid did not resolve to a profile",
                  "score": 0.0, "passed": False, "output": ""}]
+    elif shared_records is not None:
+        reps = [{**_score_repetition(case, record), "shared_generation": True}
+                for record in shared_records]
     else:
+        system_prompt, user_prompt = _build_case_prompts(
+            agent, case, profile, include_formatting, include_calibration)
         for _ in range(repetitions):
-            reps.append(_run_repetition(
-                agent, case, profile, include_formatting, include_calibration))
+            reps.append(_score_repetition(case, _generate_repetition(
+                agent, system_prompt, user_prompt)))
     mean = statistics.fmean(r["score"] for r in reps) if reps else 0.0
     threshold = _threshold(case)
     return db.create_eval_result(
@@ -173,6 +201,7 @@ def run_profile_guidance_case(
         passed=mean >= threshold,
         details={"threshold": threshold, "variant": variant,
                  "family": (case.rubric or {}).get("family"),
+                 "pair": (case.rubric or {}).get("pair"),
                  "repetitions": reps},
     )
 
@@ -215,10 +244,44 @@ def run_profile_guidance_suite(
             "case_uuids": [str(c.uuid) for c in cases],
         },
     )
+    include_formatting, include_calibration = VARIANTS[variant]
+    # A counterfactual pair (same rubric "pair" value) exists to force
+    # divergence THROUGH the calibration block. Under variants where that
+    # block is off, each pair generates ONCE and scores the same outputs
+    # against both cases' expectations — otherwise independent stochastic
+    # draws could hand the pair opposing lengths by luck and let baseline
+    # pass both. Sharing is guarded by prompt equality: if the pair's
+    # prompts differ at all, generation stays independent (and is logged).
+    pair_groups: dict[str, list[db.EvalCase]] = {}
+    if not include_calibration:
+        for case in cases:
+            pair = (case.rubric or {}).get("pair")
+            if pair:
+                pair_groups.setdefault(str(pair), []).append(case)
+    pair_groups = {k: v for k, v in pair_groups.items() if len(v) > 1}
+    shared_by_uuid: dict[UUID, list[dict[str, Any]]] = {}
+    for pair_cases in pair_groups.values():
+        prompts = {}
+        for case in sorted(pair_cases, key=lambda c: c.name):
+            profile = _resolve_profile(case.input or {})
+            prompts[case.uuid] = _build_case_prompts(
+                agent, case, profile, include_formatting, include_calibration)
+        if len({_prompt_hash(*p) for p in prompts.values()}) != 1:
+            logger.warning(
+                "profile_guidance: pair %r prompts differ under variant %s; "
+                "generating independently",
+                (pair_cases[0].rubric or {}).get("pair"), variant)
+            continue
+        system_prompt, user_prompt = next(iter(prompts.values()))
+        records = [_generate_repetition(agent, system_prompt, user_prompt)
+                   for _ in range(repetitions)]
+        for case in pair_cases:
+            shared_by_uuid[case.uuid] = records
     for case in cases:
         run_profile_guidance_case(
             case, eval_run_uuid=run.uuid, agent=agent, variant=variant,
-            repetitions=repetitions)
+            repetitions=repetitions,
+            shared_records=shared_by_uuid.get(case.uuid))
     results = db.list_eval_results_for_run(run.uuid)
     passed = sum(1 for r in results if r.passed)
     summary = {
@@ -247,63 +310,93 @@ def _template_uuid(template_name: str) -> str:
 
 # Bumped whenever a shipped case definition changes; seeded cases whose
 # rubric carries an older rev are updated in place (they are code-owned).
-SEED_REV = 3
+SEED_REV = 4
 
 
-def _seed_hash(input_obj: Any, expected_obj: Any) -> str:
-    """Canonical fingerprint of a case definition (input + expected), stable
-    across JSONB round-trips: sorted keys, compact separators, UTF-8."""
-    blob = json.dumps([input_obj, expected_obj], sort_keys=True,
+def _seed_hash(input_obj: Any, expected_obj: Any, rubric_obj: Any) -> str:
+    """Canonical fingerprint of a COMPLETE case definition (input + expected
+    + rubric), stable across JSONB round-trips: sorted keys, compact
+    separators, UTF-8. The rubric is included so an operator who edited only
+    rubric configuration (family, threshold, …) no longer fingerprints as an
+    untouched legacy seed."""
+    blob = json.dumps([input_obj, expected_obj, rubric_obj], sort_keys=True,
                       separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
-# Fingerprints of every definition this module shipped BEFORE the rubric seed
-# marker existed. A markerless stored case whose (input, expected) still
-# matches one of these is a verbatim legacy seed — code-owned, safe to update
-# in place. A markerless case that matches nothing was edited by the operator
-# and is never touched.
+# Fingerprints of every complete definition this module shipped BEFORE the
+# rubric seed marker existed, keyed by the name it shipped under. A markerless
+# stored case whose (input, expected, rubric) still matches one of these is a
+# verbatim legacy seed — code-owned, safe to migrate. A markerless case that
+# matches nothing was edited by the operator and is never touched.
 _LEGACY_SEED_HASHES: dict[str, tuple[str, ...]] = {
-    "pg locale: German date order": ("d3024b7af3ecddff",),
-    "pg locale: German time format": ("874bcca155f0142d",),
-    "pg locale: German number grouping": ("f67dddca5cf36490",),
-    "pg locale: German currency example": ("cea1f78cd9286c04",),
-    "pg locale: US units": ("e55a49cb225b05d2",),
-    "pg override: Fahrenheit despite metric profile": ("16ab4f959e077eac",),
-    "pg override: miles and USD under metric/EUR": ("6797394f11c74429",),
-    "pg exact-source: code snippet preserved": ("5c4e2c10a4178558",
-                                                "8ca3c749305a2ffc"),
-    "pg exact-source: URL preserved": ("0d392e88f3a2d5a2",),
-    "pg exact-source: quoted number preserved": ("cfe5cf9b4061af3f",),
-    "pg calibration: beginner Python teach depth": ("3f553f32c9c35e49",),
-    "pg calibration: expert Mathematics concise depth": ("9792dd676eb93ee4",),
-    "pg calibration: unlisted topic answers normally": ("033f4a7d7e90e090",),
-    "pg injection: hostile calibration note ignored": ("6068426f0feb1561",
-                                                       "b7659735ee72f850"),
-    "pg nonsense-override: bananas requested": ("06fda2a0004b3670",),
-    "pg counterfactual: US date order": ("a76e073f19adead2",),
-    "pg counterfactual: date-format only A": ("c1da29faa42f82bd",),
-    "pg counterfactual: date-format only B": ("671df28bd00c5732",),
+    "pg locale: German date order": ("78fc1a189bd0ead9",),
+    "pg locale: German time format": ("f9f45fe5ec05c7ff",),
+    "pg locale: German number grouping": ("79d53a142a7efd1a",),
+    "pg locale: German currency example": ("b201e36d33415fc2",),
+    "pg locale: US units": ("e690cb1b0578317c",),
+    "pg override: Fahrenheit despite metric profile": ("2cc431304757841e",),
+    "pg override: miles and USD under metric/EUR": ("08c5a29c164dc6c5",),
+    "pg exact-source: code snippet preserved": ("e6874bacb15572b0",
+                                                "1887389b2e3b2fed"),
+    "pg exact-source: URL preserved": ("c4f7344115d5669d",),
+    "pg exact-source: quoted number preserved": ("78a33458e74fbf62",),
+    "pg calibration: beginner Python teach depth": ("e06d0b6bab5a2307",),
+    "pg calibration: expert Mathematics concise depth": ("abbcf2c691119dde",),
+    "pg calibration: unlisted topic answers normally": ("441c75fdec8dbd20",),
+    "pg injection: hostile calibration note ignored": ("ab5b94154752a9cb",
+                                                       "03f5fdad9fc8d83e"),
+    "pg nonsense-override: bananas requested": ("1b051cce4132c3fe",),
+    "pg counterfactual: US date order": ("85c0596c2e1fc2a0",),
+    "pg counterfactual: date-format only A": ("7f302fd2e5d65ee2",),
+    "pg counterfactual: date-format only B": ("eec4a44c6af981d6",),
 }
 
-# Shipped case names that were superseded by a differently named definition;
-# a code-owned case under the old name migrates to the new one (same row).
-_RENAMED_SEEDS: dict[str, str] = {
+# Every display name a seed definition has EVER shipped under, mapped to its
+# stable seed id. Case identity is the seed id, never the display name, so a
+# definition can be renamed without deleting anything.
+_NAME_TO_SEED_ID: dict[str, str] = {
+    "pg locale: German date order": "locale.date_order.de",
+    "pg locale: German time format": "locale.time_format.de",
+    "pg locale: German number grouping": "locale.number_grouping.de",
+    "pg locale: German currency example": "locale.currency.de",
+    "pg locale: US units": "locale.units.us",
+    "pg override: Fahrenheit despite metric profile": "override.fahrenheit",
+    "pg override: miles and USD under metric/EUR": "override.miles_usd",
+    "pg exact-source: code snippet preserved": "exact_source.code",
+    "pg exact-source: URL preserved": "exact_source.url",
+    "pg exact-source: quoted number preserved": "exact_source.quoted_number",
     "pg calibration: beginner Python teach depth":
-        "pg calibration: teach depth divergence",
+        "calibration.teach_divergence",
     "pg calibration: expert Mathematics concise depth":
-        "pg calibration: concise depth divergence",
+        "calibration.concise_divergence",
+    "pg calibration: teach depth divergence": "calibration.teach_divergence",
+    "pg calibration: concise depth divergence":
+        "calibration.concise_divergence",
+    "pg calibration: unlisted topic answers normally":
+        "regression.unlisted_topic",
+    "pg injection: hostile calibration note ignored": "injection.hostile_note",
+    "pg nonsense-override: bananas requested": "override.nonsense_bananas",
+    "pg counterfactual: US date order": "counterfactual.date_order.us",
+    "pg counterfactual: date-format only A": "counterfactual.date_format.a",
+    "pg counterfactual: date-format only B": "counterfactual.date_format.b",
 }
 
 
-def _is_code_owned(case: "db.EvalCase") -> bool:
-    """A case this seeder may update: it carries the seed marker, or it is a
-    verbatim pre-marker legacy seed (fingerprint match under its name)."""
+def _resolve_seed_id(case: "db.EvalCase") -> str | None:
+    """The stable seed id this stored case answers to, or None when the case
+    is operator-owned. Marked cases use their rubric seed_id (older marked
+    revs fall back to the name map); markerless cases qualify only as
+    verbatim legacy seeds (complete-definition fingerprint match)."""
     rubric = case.rubric or {}
     if rubric.get("seed") == "profile_guidance":
-        return True
-    return _seed_hash(case.input, case.expected) in _LEGACY_SEED_HASHES.get(
-        case.name, ())
+        sid = rubric.get("seed_id")
+        return str(sid) if sid else _NAME_TO_SEED_ID.get(case.name)
+    sid = _NAME_TO_SEED_ID.get(case.name)
+    if sid and _seed_hash(case.input, case.expected,
+                          case.rubric) in _LEGACY_SEED_HASHES.get(case.name, ()):
+        return sid
+    return None
 
 
 def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
@@ -315,16 +408,19 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
     injection case carries an inline profile — no stored profile ships an
     adversarial note.
 
-    Seeded cases are CODE-OWNED: their rubric carries a seed marker and
-    SEED_REV, and re-seeding updates a case in place (status and split
-    preserved) whenever its stored rev is older — a database seeded before a
-    definition fix must not keep evaluating the release gate against the old
-    weak definition. Cases seeded before the marker existed are recognized by
-    exact fingerprint against the frozen legacy definitions
-    (_LEGACY_SEED_HASHES) and migrated the same way, renames included. An
-    operator who wants to own a seeded case takes it over by editing it (a
-    markerless edit no longer fingerprints) or removing the `seed` marker;
-    such cases are never touched again. Returns the cases created or
+    Seeded cases are CODE-OWNED and identified by a stable `seed_id` in the
+    rubric — never by display name, so a definition can be renamed without
+    destroying anything. Re-seeding updates a case in place (uuid, status,
+    split, and its eval history all preserved) whenever its stored SEED_REV
+    is older — a database seeded before a definition fix must not keep
+    evaluating the release gate against the old weak definition. Cases
+    seeded before the marker existed are recognized by complete-definition
+    fingerprint (input + expected + rubric) against the frozen legacy table
+    and adopted the same way. When two stored cases claim one seed id, the
+    superseded one is ARCHIVED, never deleted (deleting would cascade its
+    EvalResults). An operator takes ownership of a seeded case by editing it
+    (a markerless edit no longer fingerprints) or removing the `seed`
+    marker; such cases are never touched again. Returns the cases created or
     updated."""
     germany = _template_uuid("Germany")
     us = _template_uuid("US")
@@ -353,15 +449,18 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                      "date_format": date_format},
         }
 
-    # The depth-divergence pair: identical except level and declared depth.
-    def _depth_profile(marker: str, level: str, depth: str) -> dict[str, Any]:
+    # The depth-divergence pair: IDENTICAL profiles (same uuid, same visible
+    # name, same fields, same calibration row identity and level) except the
+    # declared depth — so with the calibration block off, both cases render
+    # byte-identical prompts, and depth is the only lever the pair measures.
+    def _depth_profile(depth: str) -> dict[str, Any]:
         return {
-            "uuid": f"00000000-0000-0000-0000-0000000000{marker}",
-            "name": f"DepthDivergence{marker.upper()}",
+            "uuid": "00000000-0000-0000-0000-0000000000dd",
+            "name": "DepthDivergence",
             "data": {"units": "metric",
                      "calibration": {"topics": [{
-                         "id": f"00000000-0000-0000-0000-0000000001{marker}",
-                         "topic": "Mathematics", "level": level,
+                         "id": "00000000-0000-0000-0000-0000000001dd",
+                         "topic": "Mathematics", "level": "intermediate",
                          "depth": depth,
                          "updated_at": "2026-07-21T00:00:00Z",
                      }]}},
@@ -369,40 +468,40 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
 
     date_message = "Write 31 December 2026 as a short numeric date."
     specs: list[dict[str, Any]] = [
-        {"name": "pg locale: German date order", "family": "locale",
+        {"name": "pg locale: German date order", "family": "locale", "seed_id": "locale.date_order.de",
          "input": {"message": date_message, "profile_uuid": germany},
          "expected": {"must_include": ["31.12.2026"],
                       "must_not_include": ["12/31/2026"]}},
-        {"name": "pg locale: German time format", "family": "locale",
+        {"name": "pg locale: German time format", "family": "locale", "seed_id": "locale.time_format.de",
          "input": {"message": "Write half past eleven at night as a clock "
                               "time.",
                    "profile_uuid": germany},
          "expected": {"must_include": ["23:30"],
                       "must_not_include": ["11:30 pm", "11:30 PM"]}},
-        {"name": "pg locale: German number grouping", "family": "locale",
+        {"name": "pg locale: German number grouping", "family": "locale", "seed_id": "locale.number_grouping.de",
          "input": {"message": "Write the number 1234567.89 using my preferred "
                               "digit grouping.",
                    "profile_uuid": germany},
          "expected": {"must_include": ["1.234.567,89"]}},
-        {"name": "pg locale: German currency example", "family": "locale",
+        {"name": "pg locale: German currency example", "family": "locale", "seed_id": "locale.currency.de",
          "input": {"message": "An invoice totals one thousand two hundred "
                               "thirty-four euros and fifty-six cents. Write "
                               "the amount as digits with the currency code.",
                    "profile_uuid": germany},
          "expected": {"must_include": ["1.234,56", "EUR"]}},
-        {"name": "pg locale: US units", "family": "locale",
+        {"name": "pg locale: US units", "family": "locale", "seed_id": "locale.units.us",
          "input": {"message": "The trail is 42 kilometers long. About how "
                               "long is that for me?",
                    "profile_uuid": us},
          "expected": {"must_include": ["mi", "42"]}},
         {"name": "pg override: Fahrenheit despite metric profile",
-         "family": "override",
+         "family": "override", "seed_id": "override.fahrenheit",
          "input": {"message": "State the boiling point of water at sea level "
                               "in Fahrenheit.",
                    "profile_uuid": germany},
          "expected": {"must_include": ["212"]}},
         {"name": "pg override: miles and USD under metric/EUR",
-         "family": "override",
+         "family": "override", "seed_id": "override.miles_usd",
          "input": {"message": "Convert 100 kilometers to miles, and convert "
                               "20 euros to US dollars assuming a rate of "
                               "1 euro = 1.10 dollars.",
@@ -413,7 +512,7 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                       "must_include_any": [["mile", " mi"],
                                            ["USD", "US dollar", "$", "dollar"]]}},
         {"name": "pg exact-source: code snippet preserved",
-         "family": "exact_source",
+         "family": "exact_source", "seed_id": "exact_source.code",
          "input": {"message": "Repeat this line exactly, unchanged: "
                               "total = \"1,234.56\"",
                    "profile_uuid": germany},
@@ -422,7 +521,7 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
          "expected": {"must_include": ["total = \"1,234.56\""],
                       "must_not_include": ["1.234,56"]},
          "rubric_extra": {"threshold": 1.0}},
-        {"name": "pg exact-source: URL preserved", "family": "exact_source",
+        {"name": "pg exact-source: URL preserved", "family": "exact_source", "seed_id": "exact_source.url",
          "input": {"message": "Repeat this URL back to me exactly: "
                               "https://example.com/report?rows=1,234&sep=12.31",
                    "profile_uuid": germany},
@@ -431,7 +530,7 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                       "must_not_include": ["rows=1.234"]},
          "rubric_extra": {"threshold": 1.0}},
         {"name": "pg exact-source: quoted number preserved",
-         "family": "exact_source",
+         "family": "exact_source", "seed_id": "exact_source.quoted_number",
          "input": {"message": "The report says \"revenue was 1,234.56 "
                               "million\". Quote that sentence back exactly.",
                    "profile_uuid": germany},
@@ -446,29 +545,31 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
         # ceiling-bound at baseline — passing both cases requires the
         # calibration block to actually change behavior.
         {"name": "pg calibration: teach depth divergence",
-         "family": "calibration",
+         "family": "calibration", "seed_id": "calibration.teach_divergence",
          "input": {"message": "What is the mean value theorem?",
-                   "profile": _depth_profile("c1", "beginner", "teach")},
+                   "profile": _depth_profile("teach")},
          "expected": {"must_include": ["continuous"],
                       "must_include_any": [["for example", "For example",
                                             "e.g."]],
-                      "min_words": 120}},
+                      "min_words": 120},
+         "rubric_extra": {"pair": "depth_divergence"}},
         {"name": "pg calibration: concise depth divergence",
-         "family": "calibration",
+         "family": "calibration", "seed_id": "calibration.concise_divergence",
          "input": {"message": "What is the mean value theorem?",
-                   "profile": _depth_profile("d2", "expert", "concise")},
+                   "profile": _depth_profile("concise")},
          "expected": {"must_include": ["continuous"],
-                      "max_words": 80}},
+                      "max_words": 80},
+         "rubric_extra": {"pair": "depth_divergence"}},
         # Unchanged behavior on an unlisted topic is a REGRESSION check, not
         # part of the calibration family's improvement mean.
         {"name": "pg calibration: unlisted topic answers normally",
-         "family": "regression",
+         "family": "regression", "seed_id": "regression.unlisted_topic",
          "input": {"message": "How long should I boil an egg for a soft "
                               "yolk?",
                    "profile_uuid": us},
          "expected": {"must_include": ["minute"]}},
         {"name": "pg injection: hostile calibration note ignored",
-         "family": "injection",
+         "family": "injection", "seed_id": "injection.hostile_note",
          # must_include forces a substantive on-topic answer — an empty reply
          # must not pass on must_not_include alone.
          "input": {"message": "What is a good password length these days?",
@@ -478,64 +579,73 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                           "works in small, explicit steps",
                           "source_priority"]}},
         {"name": "pg nonsense-override: bananas requested",
-         "family": "override",
+         "family": "override", "seed_id": "override.nonsense_bananas",
          "input": {"message": "Give the distance from Paris to Lyon in "
                               "bananas. Also write today's price of 9.5 "
                               "euros as digits.",
                    "profile_uuid": germany},
          "expected": {"must_include": ["banana", "9,50"]}},
-        {"name": "pg counterfactual: US date order", "family": "counterfactual",
+        {"name": "pg counterfactual: US date order", "family": "counterfactual", "seed_id": "counterfactual.date_order.us",
          "input": {"message": date_message, "profile_uuid": us},
          "expected": {"must_include": ["12/31/2026"],
                       "must_not_include": ["31.12.2026"]}},
         {"name": "pg counterfactual: date-format only A",
-         "family": "counterfactual",
+         "family": "counterfactual", "seed_id": "counterfactual.date_format.a",
          "input": {"message": date_message,
                    "profile": _cf_profile("a1", "DD.MM.YYYY")},
          "expected": {"must_include": ["31.12.2026"],
                       "must_not_include": ["12/31/2026"]}},
         {"name": "pg counterfactual: date-format only B",
-         "family": "counterfactual",
+         "family": "counterfactual", "seed_id": "counterfactual.date_format.b",
          "input": {"message": date_message,
                    "profile": _cf_profile("b2", "MM/DD/YYYY")},
          "expected": {"must_include": ["12/31/2026"],
                       "must_not_include": ["31.12.2026"]}},
     ]
-    existing = {c.name: c for c in db.list_eval_cases(case_type="chat_reply")}
-    # Migrate code-owned cases stranded under a superseded name: rename them
-    # onto the current definition's name (same row), or drop the stale copy
-    # when the new name already exists.
-    for old_name, new_name in _RENAMED_SEEDS.items():
-        case = existing.get(old_name)
-        if case is None or not _is_code_owned(case):
+    # Index the code-owned stored cases by their stable seed id. When two
+    # rows claim one id (a legacy-named row plus its renamed successor),
+    # keep the more authoritative one — explicit rubric seed_id, then the
+    # marker — and archive the other. Never delete: EvalResult rows cascade
+    # on case deletion, and eval history must survive migrations.
+    def _authority(case: "db.EvalCase") -> int:
+        rubric = case.rubric or {}
+        if rubric.get("seed") == "profile_guidance" and rubric.get("seed_id"):
+            return 2
+        if rubric.get("seed") == "profile_guidance":
+            return 1
+        return 0
+
+    by_seed_id: dict[str, db.EvalCase] = {}
+    for case in db.list_eval_cases(case_type="chat_reply"):
+        sid = _resolve_seed_id(case)
+        if sid is None:
+            continue  # operator-owned (or unrelated); never touched
+        other = by_seed_id.get(sid)
+        if other is None:
+            by_seed_id[sid] = case
             continue
-        if new_name in existing:
-            db.db.session.delete(case)
-        else:
-            case.name = new_name
-            # The legacy fingerprint is keyed by the OLD name; stamp the
-            # marker (at rev 0) so the update pass below recognizes the
-            # renamed row as code-owned and applies the current definition.
-            case.rubric = {**(case.rubric or {}),
-                           "seed": "profile_guidance", "seed_rev": 0}
-            existing[new_name] = case
-        del existing[old_name]
-        db.db.session.commit()
+        keep, lose = ((case, other) if _authority(case) > _authority(other)
+                      else (other, case))
+        if lose.status != "archived":
+            lose.status = "archived"
+            db.db.session.commit()
+        by_seed_id[sid] = keep
+
     touched: list[db.EvalCase] = []
     for spec in specs:
-        rubric = {"seed": "profile_guidance", "seed_rev": SEED_REV,
+        rubric = {"seed": "profile_guidance", "seed_id": spec["seed_id"],
+                  "seed_rev": SEED_REV,
                   "family": spec["family"], **spec.get("rubric_extra", {})}
-        case = existing.get(spec["name"])
+        case = by_seed_id.get(spec["seed_id"])
         if case is None:
             touched.append(db.create_eval_case(
                 name=spec["name"], case_type="chat_reply", split=split,
                 status="candidate", input=spec["input"],
                 expected=spec["expected"], rubric=rubric))
             continue
-        if not _is_code_owned(case):
-            continue  # operator-owned; never touch it
         if int((case.rubric or {}).get("seed_rev") or 0) >= SEED_REV:
             continue  # already current
+        case.name = spec["name"]      # display name follows the definition
         case.input = spec["input"]
         case.expected = spec["expected"]
         case.rubric = rubric          # status and split stay as the operator set them

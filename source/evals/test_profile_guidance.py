@@ -233,10 +233,19 @@ def test_seed_cases_create_update_and_respect_ownership(app_ctx):
                            if "concise depth divergence" in c.name)
             assert teach.input["message"] == concise.input["message"]
             assert teach.expected["min_words"] > concise.expected["max_words"]
-            teach_row = teach.input["profile"]["data"]["calibration"]["topics"][0]
-            concise_row = concise.input["profile"]["data"]["calibration"]["topics"][0]
+            assert teach.rubric["pair"] == concise.rubric["pair"]
+            # The profiles are IDENTICAL except depth: same uuid, same
+            # visible name, same row identity and level — so the baseline
+            # prompts cannot differ through the identity block.
+            tp, cp = teach.input["profile"], concise.input["profile"]
+            assert tp["uuid"] == cp["uuid"] and tp["name"] == cp["name"]
+            teach_row = tp["data"]["calibration"]["topics"][0]
+            concise_row = cp["data"]["calibration"]["topics"][0]
+            assert teach_row["level"] == concise_row["level"]
             assert teach_row["depth"] == "teach"
             assert concise_row["depth"] == "concise"
+            assert {k: v for k, v in teach_row.items() if k != "depth"} == \
+                   {k: v for k, v in concise_row.items() if k != "depth"}
             unlisted = next(c for c in created if "unlisted" in c.name)
             assert unlisted.rubric["family"] == "regression"
 
@@ -256,15 +265,20 @@ def test_seed_cases_create_update_and_respect_ownership(app_ctx):
         assert refreshed.rubric["seed_rev"] == pg.SEED_REV
 
         # An operator-owned case (edited: no marker, no legacy fingerprint)
-        # is never touched.
+        # is never touched — taking ownership orphans its seed id, so the
+        # seeder recreates the canonical definition as a fresh candidate
+        # alongside it instead of overwriting the operator's version.
         owned = next(c for c in db.list_eval_cases(case_type="chat_reply")
                      if "German date order" in c.name)
         owned.rubric = {"family": "locale"}               # marker stripped
         owned.expected = {"must_include": ["operator edit"]}
         db.db.session.commit()
-        assert pg.seed_profile_guidance_cases() == []
+        recreated = pg.seed_profile_guidance_cases()
+        assert [c.rubric["seed_id"] for c in recreated] == ["locale.date_order.de"]
+        assert recreated[0].uuid != owned.uuid
+        assert recreated[0].status == "candidate"
         assert db.get_eval_case(owned.uuid).expected == {
-            "must_include": ["operator edit"]}
+            "must_include": ["operator edit"]}            # untouched
     finally:
         db.db.session.rollback()
         for c in db.list_eval_cases(case_type="chat_reply"):
@@ -275,58 +289,184 @@ def test_seed_cases_create_update_and_respect_ownership(app_ctx):
 
 def test_seed_migrates_markerless_legacy_cases(app_ctx):
     """Databases seeded before the rubric marker existed hold cases with only
-    {"family": ...}. A verbatim legacy definition (fingerprint match) is
-    code-owned and must be migrated — renames included — while a markerless
-    EDITED case is left alone."""
+    {"family": ...}. A verbatim legacy definition (complete-definition
+    fingerprint match) is code-owned and must be migrated onto its stable
+    seed id — renames included, history preserved — while a markerless case
+    whose input, expected, OR rubric was edited is left alone."""
     legacy_name = "pg calibration: beginner Python teach depth"
     new_name = "pg calibration: teach depth divergence"
     us = pg._template_uuid("US")
     legacy_input = {"message": "What is a Python decorator?",
                     "profile_uuid": us}
     legacy_expected = {"must_include": ["function"]}
-    assert pg._seed_hash(legacy_input, legacy_expected) in \
+    legacy_rubric = {"family": "calibration"}       # pre-marker shape
+    assert pg._seed_hash(legacy_input, legacy_expected, legacy_rubric) in \
         pg._LEGACY_SEED_HASHES[legacy_name]
 
-    def _make_legacy(expected):
+    def _make_legacy(expected=None, rubric=None):
         return db.create_eval_case(
             name=legacy_name, case_type="chat_reply", status="active",
-            input=legacy_input, expected=expected,
-            rubric={"family": "calibration"})       # pre-marker shape
+            input=legacy_input, expected=expected or legacy_expected,
+            rubric=rubric or dict(legacy_rubric))
 
     try:
-        # Scenario 1: fresh DB state — the legacy case is renamed onto the
-        # new definition in place (same row, status preserved).
-        legacy = _make_legacy(legacy_expected)
+        # Scenario 1: fresh DB state — the legacy case is adopted onto its
+        # seed id and renamed onto the new definition in place (same row,
+        # status preserved, eval history preserved).
+        legacy = _make_legacy()
+        run = db.create_eval_run(name="history", agent_role="assistant")
+        db.create_eval_result(eval_run_uuid=run.uuid,
+                              eval_case_uuid=legacy.uuid,
+                              score=0.5, passed=False, details={})
         touched = pg.seed_profile_guidance_cases()
         migrated = db.get_eval_case(legacy.uuid)
         assert migrated is not None
         assert migrated.name == new_name
         assert migrated.status == "active"
         assert migrated.expected["min_words"] > 0     # the new definition
+        assert migrated.rubric["seed_id"] == "calibration.teach_divergence"
         assert migrated.rubric["seed_rev"] == pg.SEED_REV
         assert any(c.uuid == legacy.uuid for c in touched)
+        assert len(db.list_eval_results_for_run(run.uuid)) == 1  # history kept
 
-        # Scenario 2: the new name already exists — a stale legacy copy under
-        # the old name is dropped, not duplicated.
-        stale = _make_legacy(legacy_expected)
+        # Scenario 2: a second claimant of the same seed id (a stale legacy
+        # copy) is ARCHIVED, never deleted — its results survive.
+        stale = _make_legacy()
+        run2 = db.create_eval_run(name="history2", agent_role="assistant")
+        db.create_eval_result(eval_run_uuid=run2.uuid,
+                              eval_case_uuid=stale.uuid,
+                              score=0.25, passed=False, details={})
         pg.seed_profile_guidance_cases()
-        assert db.get_eval_case(stale.uuid) is None
-        names = [c.name for c in db.list_eval_cases(case_type="chat_reply")]
-        assert names.count(new_name) == 1
+        archived = db.get_eval_case(stale.uuid)
+        assert archived is not None                   # NOT deleted
+        assert archived.status == "archived"
+        assert len(db.list_eval_results_for_run(run2.uuid)) == 1
+        active_names = [c.name for c in
+                        db.list_eval_cases(case_type="chat_reply",
+                                           status="active")]
+        assert active_names.count(new_name) == 1
 
-        # Scenario 3: a markerless case the operator EDITED does not
-        # fingerprint and is never touched, renamed, or deleted.
-        edited = _make_legacy({"must_include": ["my own criteria"]})
+        # Scenario 3: a markerless case with edited EXPECTED does not
+        # fingerprint and is never touched, renamed, or archived.
+        edited = _make_legacy(expected={"must_include": ["my own criteria"]})
         pg.seed_profile_guidance_cases()
         kept = db.get_eval_case(edited.uuid)
         assert kept is not None and kept.name == legacy_name
+        assert kept.status == "active"
         assert kept.expected == {"must_include": ["my own criteria"]}
+        db.db.session.delete(kept)
+        db.db.session.commit()
+
+        # Scenario 4: a markerless case with an edited RUBRIC (family swap,
+        # custom threshold) is operator-owned too — the fingerprint covers
+        # the complete definition.
+        rubric_edited = _make_legacy(
+            rubric={"family": "calibration", "threshold": 0.95})
+        pg.seed_profile_guidance_cases()
+        kept = db.get_eval_case(rubric_edited.uuid)
+        assert kept is not None and kept.name == legacy_name
+        assert kept.rubric == {"family": "calibration", "threshold": 0.95}
     finally:
         db.db.session.rollback()
         for c in db.list_eval_cases(case_type="chat_reply"):
             if c.name.startswith("pg "):
                 db.db.session.delete(c)
         db.db.session.commit()
+
+
+@pytest.fixture
+def divergence_pair(app_ctx):
+    pg.seed_profile_guidance_cases()
+    cases = sorted((c for c in db.list_eval_cases(case_type="chat_reply")
+                    if (c.rubric or {}).get("pair") == "depth_divergence"),
+                   key=lambda c: c.name)
+    assert len(cases) == 2
+    try:
+        yield cases
+    finally:
+        db.db.session.rollback()
+        for run in db.db.session.query(db.EvalRun).all():
+            if any(str(c.uuid) in (run.config or {}).get("case_uuids", [])
+                   for c in cases):
+                db.db.session.delete(run)
+        for c in db.list_eval_cases(case_type="chat_reply"):
+            if c.name.startswith("pg "):
+                db.db.session.delete(c)
+        db.db.session.commit()
+
+
+def test_pair_baseline_prompts_are_identical(divergence_pair):
+    """With the calibration block off there is nothing left to distinguish
+    the pair — identity blocks included — so the prompts hash equal; with it
+    on, the depth rows diverge them."""
+    from agents.assistant import AssistantAgent
+    from uuid import uuid4 as u4
+
+    agent = AssistantAgent(agent_uuid=u4(), name="x", send=lambda _: None)
+    concise, teach = divergence_pair
+    hashes_off = set()
+    hashes_on = set()
+    for case in (concise, teach):
+        profile = pg._resolve_profile(case.input)
+        off = pg._build_case_prompts(agent, case, profile,
+                                     include_formatting=False,
+                                     include_calibration=False)
+        on = pg._build_case_prompts(agent, case, profile,
+                                    include_formatting=False,
+                                    include_calibration=True)
+        hashes_off.add(pg._prompt_hash(*off))
+        hashes_on.add(pg._prompt_hash(*on))
+    assert len(hashes_off) == 1        # baseline: byte-identical prompts
+    assert len(hashes_on) == 2         # calibration on: depth diverges them
+
+
+def test_pair_shares_baseline_generation(divergence_pair, monkeypatch):
+    """Under variants without the calibration block, the pair generates ONCE
+    and both cases score the same outputs — independent stochastic draws
+    could otherwise hand the pair opposing lengths by luck and let baseline
+    pass both."""
+    # ~50 words including the anchor: satisfies concise (<=80), fails teach
+    # (needs >=120 and an example).
+    text = ("The mean value theorem says a function continuous on a closed "
+            "interval and differentiable on its interior attains, at some "
+            "interior point, an instantaneous rate of change equal to the "
+            "average rate of change across the whole interval, linking local "
+            "derivative behavior to global change concisely.")
+    calls = {"n": 0}
+
+    def fake(self, *, system_prompt, user_prompt, response_model, validator=None):
+        calls["n"] += 1
+        self._last_usage = {"input": 100, "output": 10, "ms": 5}
+        self._last_model_uuid = None
+        from agents.assistant import AssistantActionName, AssistantStepDecision
+        return AssistantStepDecision(
+            reason="eval", action=AssistantActionName.REPLY,
+            args={"message": text})
+
+    monkeypatch.setattr(pg.AssistantAgent, "_structured_completion", fake)
+    concise, teach = divergence_pair
+    run = pg.run_profile_guidance_suite(
+        [concise.uuid, teach.uuid], variant="baseline", repetitions=2)
+    assert calls["n"] == 2             # ONE generation per repetition, shared
+    results = {r.eval_case_uuid: r for r in
+               db.list_eval_results_for_run(run.uuid)}
+    concise_result = results[concise.uuid]
+    teach_result = results[teach.uuid]
+    for result in results.values():
+        assert all(rep["shared_generation"] for rep in
+                   result.details["repetitions"])
+        assert all(rep["output"] == text for rep in
+                   result.details["repetitions"])
+    # The shared output diverges the scores: at most one side of the pair
+    # can pass any single baseline answer.
+    assert concise_result.score == 1.0
+    assert teach_result.score < 0.7
+
+    # With the calibration block on, generation is independent again.
+    calls["n"] = 0
+    pg.run_profile_guidance_suite(
+        [concise.uuid, teach.uuid], variant="calibration_only", repetitions=2)
+    assert calls["n"] == 4             # two cases × two repetitions
 
 
 def test_unknown_variant_rejected(app_ctx):
