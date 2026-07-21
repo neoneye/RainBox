@@ -59,10 +59,14 @@ def _parse_uuid(raw: str) -> UUID | None:
 
 @app.route("/profile/api/profiles/<profile_uuid>", methods=["GET", "PUT"])
 def profile_detail(profile_uuid: str) -> tuple[Response, int] | Response:
-    """GET: one profile incl. its full data blob, for the form pane (built-ins
-    come from the shipped file). PUT {data}: the form's autosave — a complete
-    editable snapshot, canonicalized + validated against the registry, with
-    the server's `dynamic` subtree preserved; answers the fresh summary."""
+    """GET: one profile's editable registry fields plus the read-only
+    `dynamic` projection the form pane renders (built-ins come from the
+    shipped file). The server-owned `calibration` subtree is projected out —
+    it has its own GET/PUT below. PUT {data}: the form's autosave — a
+    complete editable snapshot, canonicalized + validated against the
+    registry (which rejects `calibration` as read-only), with the server's
+    `dynamic` and `calibration` subtrees preserved; answers the fresh
+    summary."""
     pu = _parse_uuid(profile_uuid)
     if pu is None:
         return jsonify({"ok": False, "error": "bad uuid"}), 400
@@ -81,6 +85,41 @@ def profile_detail(profile_uuid: str) -> tuple[Response, int] | Response:
             return jsonify({"ok": False, "error": "profile not found"}), 404
         return jsonify({"ok": True, "summary": summary})
     detail = db.profile_get(pu)
+    if detail is None:
+        return jsonify({"ok": False, "error": "profile not found"}), 404
+    detail["data"] = {k: v for k, v in (detail.get("data") or {}).items()
+                      if k != "calibration"}
+    return jsonify({"ok": True, **detail})
+
+
+@app.route("/profile/api/profiles/<profile_uuid>/calibration",
+           methods=["GET", "PUT"])
+def profile_calibration(profile_uuid: str) -> tuple[Response, int] | Response:
+    """The knowledge-calibration subtree's own endpoint (never part of the
+    flat registry-field PUT). GET: the canonical topic rows. PUT {topics}: a
+    complete snapshot — existing rows carry their id, new rows omit it,
+    `updated_at` is server-owned; last acknowledged write wins, matching the
+    flat fields and /prompt content. A successful PUT answers the complete
+    canonical snapshot because the client needs server-assigned ids and
+    stamps before its next edit."""
+    pu = _parse_uuid(profile_uuid)
+    if pu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    if request.method == "PUT":
+        if pu in db.profile_builtin_uuids():
+            return jsonify({"ok": False, "error": "read-only built-in"}), 400
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not isinstance(data.get("topics"), list):
+            return jsonify({"ok": False, "error":
+                            "request body must be a JSON object with list 'topics'"}), 400
+        try:
+            topics = db.calibration_put(pu, data["topics"])
+        except db.ProfileCalibrationError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        if topics is None:
+            return jsonify({"ok": False, "error": "profile not found"}), 404
+        return jsonify({"ok": True, "builtin": False, "topics": topics})
+    detail = db.calibration_get(pu)
     if detail is None:
         return jsonify({"ok": False, "error": "profile not found"}), 404
     return jsonify({"ok": True, **detail})

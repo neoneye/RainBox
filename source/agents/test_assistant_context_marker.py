@@ -159,15 +159,18 @@ def test_marker_label_with_special_characters_is_safe(room):
     agent = _agent()
     name = 'Böse <script>"& profile'
     profile_uuid = uuid4()
-    db.profile_save_tree([], [{"uuid": str(profile_uuid), "name": name,
-                               "folderId": None}])
+    row = db.Profile(uuid=profile_uuid, name=name, folder_uuid=None, position=0)
+    db.db.session.add(row)
+    db.db.session.commit()
     try:
         db.set_current_profile(str(profile_uuid))
         assert _post(agent, room.uuid) is True
         assert f"switched to {name}." in _markers(room.uuid)[0]["text"]
     finally:
         db.set_current_profile(None)
-        db.profile_save_tree([], [])
+        db.db.session.query(db.Profile).filter(
+            db.Profile.uuid == profile_uuid).delete()
+        db.db.session.commit()
 
 
 # ---- combined causes -------------------------------------------------------

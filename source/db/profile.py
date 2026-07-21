@@ -55,6 +55,10 @@ def validate_profile_data(data: Any) -> dict[str, Any]:
     for key, value in data.items():
         if key == "dynamic":
             raise ProfileDataError("field 'dynamic' is read-only (connector-owned)")
+        if key == "calibration":
+            raise ProfileDataError(
+                "field 'calibration' is read-only here (server-owned; use the "
+                "calibration endpoint)")
         field = FIELDS_BY_KEY.get(key)
         if field is None:
             raise ProfileDataError(f"unknown field: '{key}'")
@@ -373,51 +377,98 @@ def profile_get(profile_uuid: UUID) -> dict[str, Any] | None:
     }
 
 
+# The server-owned subtrees riding on the same JSONB column as the editable
+# registry fields. Every writer must go through profile_mutate_data so one
+# subtree's save can never read-modify-write-race another subtree's writer.
+SERVER_OWNED_SUBTREES = ("dynamic", "calibration")
+
+
+def profile_mutate_data(profile_uuid: UUID,
+                        mutator: Any) -> Profile | None:
+    """Apply one subtree mutation to a profile's `data` under the row lock.
+
+    Calibration, flat fields, and `dynamic` share one JSONB column, so a
+    subtree write must never be a read-modify-write race against a different
+    subtree's writer: this selects the row FOR UPDATE, hands `mutator` a copy
+    of the current dict, assigns the returned dict, and commits. Every future
+    `dynamic` writer must use it too. Built-in virtual profiles never enter
+    here (they have no row). Returns the row, or None if the uuid is unknown;
+    a mutator exception rolls back (releasing the lock) and re-raises."""
+    row = db.session.execute(
+        sa.select(Profile).where(Profile.uuid == profile_uuid).with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        db.session.rollback()  # release the transaction the SELECT opened
+        return None
+    try:
+        row.data = mutator(deepcopy(row.data or {}))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    return row
+
+
 def profile_update_data(profile_uuid: UUID, data: Any) -> dict[str, Any] | None:
     """Replace a profile's editable fields with the validated canonical
     snapshot (raises ProfileDataError), preserving the server-owned `dynamic`
-    subtree in the same transaction — a stale form autosave can never
-    overwrite a newer connector observation. Editable keys omitted from the
-    complete snapshot are deleted, not retained. Returns the row's new
-    summary projection, or None if the uuid is unknown. Rejecting built-in
-    uuids is the API layer's job (there is no row here to update anyway)."""
+    and `calibration` subtrees in the same transaction — a stale form autosave
+    can never overwrite a newer connector observation or calibration save.
+    Editable keys omitted from the complete snapshot are deleted, not
+    retained. Returns the row's new summary projection, or None if the uuid
+    is unknown. Rejecting built-in uuids is the API layer's job (there is no
+    row here to update anyway)."""
     canonical = validate_profile_data(data)
-    row = _profile_row(profile_uuid)
+
+    def _mutate(current: dict[str, Any]) -> dict[str, Any]:
+        for key in SERVER_OWNED_SUBTREES:
+            if key in current:
+                canonical[key] = current[key]
+        return canonical
+
+    row = profile_mutate_data(profile_uuid, _mutate)
     if row is None:
         return None
-    current = row.data or {}
-    if "dynamic" in current:
-        canonical["dynamic"] = current["dynamic"]
-    row.data = canonical
-    db.session.commit()
-    return profile_data_summary(canonical)
+    return profile_data_summary(row.data)
 
 
 def profile_duplicate(profile_uuid: UUID) -> dict[str, Any] | None:
-    """Copy a profile's whole data blob (dynamic included) into a new row —
-    the one-action way to mint a friend's profile from an archetype. A
-    user-owned source yields "<name> copy" in the same folder right after the
-    source; a built-in source yields a real editable row named after the
-    template at the end of the user-owned top level (the virtual Templates
-    folder can't hold user rows). No version lineage — duplication is a
-    convenience, not ancestry. Returns the new row in tree-list field names,
-    or None if the source uuid is unknown."""
+    """Copy a profile's whole data blob (dynamic and calibration included)
+    into a new row — the one-action way to mint a friend's profile from an
+    archetype. A user-owned source yields "<name> copy" in the same folder
+    right after the source; a built-in source yields a real editable row named
+    after the template at the end of the user-owned top level (the virtual
+    Templates folder can't hold user rows). No version lineage — duplication
+    is a convenience, not ancestry: calibration rows copy their semantic
+    fields and order but receive fresh ids and the duplication timestamp,
+    never the source's server-owned identity. Returns the new row in
+    tree-list field names, or None if the source uuid is unknown."""
+    from db.profile_calibration import refresh_calibration_identity
+
     builtin = profile_builtin_get(profile_uuid)
     if builtin is not None:
         max_pos = db.session.execute(
             sa.select(sa.func.max(Profile.position)).where(Profile.folder_uuid.is_(None))
         ).scalar()
         row = Profile(uuid=uuid4(), name=builtin["name"],
-                      data=deepcopy(builtin["data"]), folder_uuid=None,
+                      data=refresh_calibration_identity(deepcopy(builtin["data"])),
+                      folder_uuid=None,
                       position=(max_pos + 1) if max_pos is not None else 0)
         db.session.add(row)
         db.session.commit()
         return _profile_tree_row(row)
-    src = _profile_row(profile_uuid)
+    # Lock the source row so the copy is a coherent snapshot relative to
+    # flat-field and calibration autosaves in other tabs/processes (the
+    # browser flushes its own pending edits before duplicating).
+    src = db.session.execute(
+        sa.select(Profile).where(Profile.uuid == profile_uuid).with_for_update()
+    ).scalar_one_or_none()
     if src is None:
+        db.session.rollback()
         return None
     row = Profile(uuid=uuid4(), name=f"{src.name} copy",
-                  data=deepcopy(src.data or {}), folder_uuid=src.folder_uuid,
+                  data=refresh_calibration_identity(deepcopy(src.data or {})),
+                  folder_uuid=src.folder_uuid,
                   position=src.position + 1)
     # Shift later siblings so the copy's slot is unambiguous even before the
     # next whole-tree save rewrites all positions.
