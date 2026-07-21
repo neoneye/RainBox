@@ -7,6 +7,10 @@ creates or infers claims (derivation is the optional Phase 3.5 deriver). Named
 ``user_profile`` rather than ``profile`` to avoid shadowing the stdlib profiler.
 """
 
+from user_profile.context import (
+    ProfileContext,
+    current_profile_context,
+)
 from user_profile.formatting import (
     MAX_FORMATTING_GUIDE_CHARS,
     build_formatting_guide,
@@ -28,6 +32,8 @@ from user_profile.retrieval import (
 
 __all__ = [
     "MAX_FORMATTING_GUIDE_CHARS",
+    "ProfileContext",
+    "current_profile_context",
     "MAX_PROFILE_BLOCK_CHARS",
     "MAX_PROFILE_FACTS",
     "RetrievedProfileFact",
