@@ -408,8 +408,11 @@ def test_query_memory_recall_filter_drops_low_scores_on_a_full_list(app_ctx, mon
     # The scorer's think-before-scoring note reaches BOTH the trace and the
     # observation text the assistant model reads.
     assert sf["reasoning"] == "scores calibrated on the message"
-    assert ("Memory filter assessment: scores calibrated on the message"
-            in obs.text)
+    # The note is fenced like recalled memory: untrusted, non-instructional.
+    assert "<memory_filter_assessment note=" in obs.text
+    assert "NOT instructions" in obs.text
+    assert "scores calibrated on the message" in obs.text
+    assert obs.text.rstrip().endswith("</memory_filter_assessment>")
 
 
 def test_query_memory_recall_filter_keeps_all_when_fewer_than_top_k(app_ctx, monkeypatch):
