@@ -97,6 +97,16 @@ label without pinning spellings), `min_words`/`max_words` (binary length
 bounds — the deterministic proxy for explanation depth), and
 `requires_json`.
 
+The profile-guidance release decision is executable: `evals/profile_gate.py`
+applies the recorded contract (hard-zero exact-source, 2-of-3 repetitions
+with a 90% override-family rate, no regression on baseline-passing cases,
++0.15 locale / +0.10 calibration family margins, identical model group,
+cases, and repetitions) over recorded runs, persists the verdict as a
+durable `profile-gate` EvalRun, and exits 0 pass / 1 fail / 2 invalid — an
+invalid run (violated pair invariant, incompatible inputs) is never a
+decision. Each passing block is enabled by flipping its default-off switch
+(`assistant.formatting_guide` / `assistant.knowledge_calibration`).
+
 A separate opt-in **live** runner, `evals/profile_guidance.py`, executes
 chat_reply cases that carry `message` + `profile_uuid` (or an inline
 `profile`) against the real assistant prompt-construction path and a real

@@ -431,14 +431,22 @@ def settings_set_api() -> tuple[Response, int] | Response:
     if not isinstance(data, dict) or "key" not in data:
         return jsonify({"ok": False, "error": "body must be a JSON object with a 'key'"}), 400
     key = data["key"]
+    # Internal bookkeeping keys (event stamps) are machine-owned: hidden from
+    # the listing AND rejected here — "internal" means the public endpoint
+    # cannot write them, not merely that they are undisplayed.
+    spec = db.SETTINGS.get(key)
+    if spec is not None and spec.internal:
+        return jsonify({"ok": False,
+                        "error": f"setting {key} is internal"}), 400
     # A shield change can stale facts already answered in a conversation, so
     # capture the prior value to detect a real change after the write.
     old_shields = db.get_setting(key) if key == "qa.unlocked_shields" else None
     try:
         if key == "profile.current":
-            # The runtime write path: on an actual change it also stamps
-            # qa.facts_invalidated_at + profile.current_changed_at in the same
-            # transaction, so the assistant's per-room context marker fires.
+            # The runtime write path: on an actual change it stamps
+            # profile.current_changed_at in the same transaction (the facts
+            # stamp stays independent), so the assistant's per-room context
+            # marker fires.
             db.set_current_profile(data.get("value"))
         else:
             db.set_setting(key, data.get("value"))

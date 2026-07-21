@@ -228,12 +228,12 @@ def format_formatting_guide(profile: dict[str, Any],
             digits = (0 if currency in ZERO_DECIMAL_CURRENCIES_V1
                       else 3 if currency in THREE_DECIMAL_CURRENCIES_V1 else 2)
             example = currency_examples[digits]
-            head = (f"use the ISO code {currency} with the preferred number "
+            head = (f"use the currency code {currency} with the preferred number "
                     f"format, for example {example} {currency}.")
         else:
             # Without a usable number_format the line states the code and the
             # conversion rule without inventing separators.
-            head = f"use the ISO code {currency}."
+            head = f"use the currency code {currency}."
         secondary = (f" {currency_2} is a secondary option when the task "
                      "already involves it." if currency_2 else "")
         lines.append(f"- Currency: {head}{secondary} Convert currencies only "

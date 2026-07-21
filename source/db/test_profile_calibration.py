@@ -318,6 +318,21 @@ def test_profile_detail_get_excludes_calibration(profile, fixed_stamp):
     assert "calibration" not in body["data"]       # projected out, not just hidden
 
 
+def test_raw_request_limits_reject_before_traversal(profile):
+    """A huge list of blank rows must be refused up front — the canonical
+    100-row cap only counts survivors after full traversal."""
+    with pytest.raises(db.ProfileCalibrationError, match="at most 1000"):
+        db.calibration_put(profile, [{"topic": "", "level": ""}] * 1001)
+    client = webapp_core.app.test_client()
+    base = f"/profile/api/profiles/{profile}/calibration"
+    resp = client.put(base, json={"topics": [{"topic": "", "level": ""}] * 1001})
+    assert resp.status_code == 400
+    # The raw body-size cap fires before JSON parsing.
+    resp = client.put(base, data=b"x" * 1_000_001,
+                      headers={"Content-Type": "application/json"})
+    assert resp.status_code == 413
+
+
 def test_canonical_json_size_cap(profile):
     # The cap counts serialized UTF-8 bytes: 100 ASCII rows stay under it, so
     # multi-byte notes (4 bytes per char) are what can overflow 64 KiB.

@@ -12,7 +12,9 @@ import db
 from agents.assistant import AssistantActionName, AssistantAgent, AssistantStepDecision
 from agents.config import ASSISTANT_UUID
 
-KEYS = ("profile.current", "qa.facts_invalidated_at", "profile.current_changed_at")
+KEYS = ("profile.current", "qa.facts_invalidated_at",
+        "profile.current_changed_at",
+        "assistant.formatting_guide", "assistant.knowledge_calibration")
 
 
 @pytest.fixture
@@ -39,6 +41,10 @@ def app_ctx():
 
 @pytest.fixture
 def room(app_ctx):
+    # The blocks sit behind default-off production switches; these tests
+    # exercise the enabled behavior (default-off is tested separately).
+    db.set_setting("assistant.formatting_guide", True)
+    db.set_setting("assistant.knowledge_calibration", True)
     human = db.get_human_user()
     room = db.create_chatroom(f"fg-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
     db.post_chat_message(room.uuid, human.uuid, "how far is 100 km?")
@@ -87,6 +93,23 @@ def test_formatting_guide_injected_after_identity(room):
     assert prompt.index("<operator_identity") < prompt.index("<formatting_guide")
     # The switch marker itself is filtered from model history.
     assert "switched to Germany" not in prompt
+
+
+def test_blocks_default_off_until_gated(room):
+    """The formatting and calibration switches default OFF (each block ships
+    only after its release gate passes); the identity block is not gated.
+    The switches are independent."""
+    db.set_current_profile(_germany_uuid())
+    db.set_setting("assistant.formatting_guide", None)      # back to default
+    db.set_setting("assistant.knowledge_calibration", None)
+    prompt = _run_capture(room)["user_prompt"]
+    assert "<operator_identity" in prompt                   # never gated
+    assert "<formatting_guide" not in prompt
+    assert "<knowledge_calibration" not in prompt
+    db.set_setting("assistant.formatting_guide", True)      # one block alone
+    prompt = _run_capture(room)["user_prompt"]
+    assert "<formatting_guide" in prompt
+    assert "<knowledge_calibration" not in prompt
 
 
 def test_unset_profile_emits_neither_block(room):

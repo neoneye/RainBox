@@ -129,6 +129,46 @@ def test_plain_set_setting_stamps_nothing(app_ctx):
     assert _raw("profile.current_changed_at") == changed_before
 
 
+def test_deleting_current_profile_clears_pointer_atomically(app_ctx):
+    """A tree save that deletes the active profile must clear profile.current
+    and advance its change stamp in the SAME transaction — never leave a
+    dangling uuid that silently disables every declared-profile block."""
+    from uuid import uuid4 as u4
+
+    pu, other = u4(), u4()
+    db.db.session.add(db.Profile(uuid=pu, name="Doomed", folder_uuid=None,
+                                 position=998))
+    db.db.session.add(db.Profile(uuid=other, name="Kept", folder_uuid=None,
+                                 position=999))
+    db.db.session.commit()
+    try:
+        db.set_current_profile(str(pu))
+        stamp_before = _raw("profile.current_changed_at")
+
+        # Deleting an UNRELATED profile leaves the pointer alone.
+        db.profile_save_tree([], [{"uuid": str(pu), "name": "Doomed",
+                                   "folderId": None}])
+        assert db.get_setting("profile.current") == str(pu)
+        assert _raw("profile.current_changed_at") == stamp_before
+
+        # Deleting the ACTIVE profile clears the pointer and stamps.
+        db.profile_save_tree([], [])
+        assert db.get_setting("profile.current") is None
+        stamp_after = _raw("profile.current_changed_at")
+        assert stamp_after and stamp_after != stamp_before
+        # The next turn's snapshot sees a clean unset state, so the room
+        # marker announces the change instead of the blocks vanishing mutely.
+        import user_profile
+        context = user_profile.current_profile_context()
+        assert context.profile is None and context.profile_uuid is None
+        assert context.profile_changed_at == stamp_after
+    finally:
+        db.db.session.rollback()
+        db.db.session.query(db.Profile).filter(
+            db.Profile.uuid.in_([pu, other])).delete()
+        db.db.session.commit()
+
+
 def test_internal_setting_hidden_from_listing_but_readable(app_ctx):
     keys_default = {s["key"] for s in db.all_settings()}
     assert "profile.current_changed_at" not in keys_default
@@ -164,4 +204,13 @@ def test_settings_endpoint_routes_profile_current_through_helper(app_ctx):
     resp = client.post("/settings/api/set",
                        json={"key": "cron.paused", "value": None})
     assert resp.status_code == 200
+    assert db.get_setting("profile.current_changed_at") == stamp
+
+    # Internal keys are machine-owned: the public endpoint rejects writes,
+    # not merely hides them from the listing.
+    resp = client.post("/settings/api/set",
+                       json={"key": "profile.current_changed_at",
+                             "value": "2026-01-01T00:00:00+00:00"})
+    assert resp.status_code == 400
+    assert "internal" in resp.get_json()["error"]
     assert db.get_setting("profile.current_changed_at") == stamp

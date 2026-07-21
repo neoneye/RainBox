@@ -2827,15 +2827,41 @@ class AssistantAgent(ModelGroupAgent):
             return user_profile.ProfileContext()
 
     def _build_declared_profile_blocks(
-        self, profile: dict[str, Any] | None
+        self, profile: dict[str, Any] | None, *,
+        formatting_enabled: bool | None = None,
+        calibration_enabled: bool | None = None,
     ) -> tuple[str, str, str]:
         """(identity, formatting, calibration) bodies rendered from the turn's
         snapshot profile. The formatters fail independently: a failure logs
         and empties only its own block, never the others and never the turn.
         Formatting and calibration share one global guidance budget —
-        formatting is admitted first, calibration uses the remainder."""
+        formatting is admitted first, calibration uses the remainder.
+
+        The formatting and calibration blocks sit behind independent
+        production switches (`assistant.formatting_guide`,
+        `assistant.knowledge_calibration`), default OFF until each block
+        passes its live release gate (evals/profile_gate.py) — the blocks
+        gate and ship separately. `None` reads the settings (the handle
+        path); the eval harness passes explicit booleans so its variants
+        never depend on production state. The identity block is not gated."""
         if profile is None:
             return "", "", ""
+        if formatting_enabled is None:
+            try:
+                formatting_enabled = bool(
+                    db.get_setting("assistant.formatting_guide"))
+            except Exception:
+                logger.warning("assistant: formatting switch read failed",
+                               exc_info=True)
+                formatting_enabled = False
+        if calibration_enabled is None:
+            try:
+                calibration_enabled = bool(
+                    db.get_setting("assistant.knowledge_calibration"))
+            except Exception:
+                logger.warning("assistant: calibration switch read failed",
+                               exc_info=True)
+                calibration_enabled = False
         identity = ""
         formatting = ""
         calibration = ""
@@ -2843,16 +2869,21 @@ class AssistantAgent(ModelGroupAgent):
             identity = user_profile.format_identity_block(profile)
         except Exception:
             logger.warning("assistant: identity block failed", exc_info=True)
-        try:
-            formatting = user_profile.format_formatting_guide(profile)
-        except Exception:
-            logger.warning("assistant: formatting guide failed", exc_info=True)
-        try:
-            remainder = user_profile.MAX_PROFILE_GUIDANCE_CHARS - len(formatting)
-            calibration = user_profile.format_calibration(
-                profile, max_chars=remainder)
-        except Exception:
-            logger.warning("assistant: calibration block failed", exc_info=True)
+        if formatting_enabled:
+            try:
+                formatting = user_profile.format_formatting_guide(profile)
+            except Exception:
+                logger.warning("assistant: formatting guide failed",
+                               exc_info=True)
+        if calibration_enabled:
+            try:
+                remainder = (user_profile.MAX_PROFILE_GUIDANCE_CHARS
+                             - len(formatting))
+                calibration = user_profile.format_calibration(
+                    profile, max_chars=remainder)
+            except Exception:
+                logger.warning("assistant: calibration block failed",
+                               exc_info=True)
         return identity, formatting, calibration
 
     def _build_profile_block(self, journal_id: UUID, room_uuid: UUID) -> str:
@@ -2887,7 +2918,8 @@ class AssistantAgent(ModelGroupAgent):
         touches no room state; the include flags are the eval variants'
         prompt-construction overrides, not production settings."""
         identity, formatting, calibration = (
-            self._build_declared_profile_blocks(profile))
+            self._build_declared_profile_blocks(
+                profile, formatting_enabled=True, calibration_enabled=True))
         self._identity_block = identity
         self._formatting_block = formatting if include_formatting else ""
         self._calibration_block = calibration if include_calibration else ""

@@ -108,6 +108,13 @@ def profile_calibration(profile_uuid: str) -> tuple[Response, int] | Response:
     if request.method == "PUT":
         if pu in db.profile_builtin_uuids():
             return jsonify({"ok": False, "error": "read-only built-in"}), 400
+        # Cheap limits BEFORE parsing/iterating: the canonical 64 KiB cap is
+        # the semantic layer, but it only runs after the whole body has been
+        # parsed and traversed — a huge list of blank rows must be refused
+        # up front, not after consuming memory and CPU.
+        if (request.content_length or 0) > 1_000_000:
+            return jsonify({"ok": False, "error":
+                            "request body exceeds 1 MB"}), 413
         data = request.get_json(silent=True)
         if not isinstance(data, dict) or not isinstance(data.get("topics"), list):
             return jsonify({"ok": False, "error":

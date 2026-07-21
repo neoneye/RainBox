@@ -193,6 +193,22 @@ SETTINGS: dict[str, Setting] = {
                     "posts a one-time 're-check facts' notice into a room the "
                     "next time it runs there after this changes.",
     ),
+    "assistant.formatting_guide": Setting(
+        "assistant.formatting_guide", None, "bool", False,
+        description="Inject the active profile's deterministic formatting "
+                    "guide into assistant turns. Default off: enable after "
+                    "the formatting block passes its live release gate "
+                    "(evals/profile_gate.py). Independent of the "
+                    "calibration switch — the blocks gate separately.",
+    ),
+    "assistant.knowledge_calibration": Setting(
+        "assistant.knowledge_calibration", None, "bool", False,
+        description="Inject the active profile's knowledge-calibration rows "
+                    "into assistant turns. Default off: enable after the "
+                    "calibration block passes its live release gate "
+                    "(evals/profile_gate.py). Independent of the formatting "
+                    "switch — the blocks gate separately.",
+    ),
     "profile.current_changed_at": Setting(
         "profile.current_changed_at", None, "string", None, internal=True,
         description="Event stamp of the last actual profile.current change, "

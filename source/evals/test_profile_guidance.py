@@ -486,7 +486,8 @@ def test_pair_invariants_fail_closed(divergence_pair, monkeypatch):
     result = db.list_eval_results_for_run(run.uuid)[0]
     assert result.score == 0.0 and not result.passed
     rep = result.details["repetitions"][0]
-    assert rep["invalid"] is True and "incomplete" in rep["error"]
+    assert rep["invalid"] is True
+    assert "exactly two cases" in rep["error"]
 
     # Broken pair definition (diverged prompts with the block off): both
     # members invalid. Divergence is simulated by giving one member a
@@ -510,6 +511,38 @@ def test_pair_invariants_fail_closed(divergence_pair, monkeypatch):
                                         repetitions=1)
     result = db.list_eval_results_for_run(run.uuid)[0]
     assert "invalid" not in result.details["repetitions"][0]
+
+
+def test_malformed_pair_metadata_fails_closed(divergence_pair, monkeypatch):
+    """Unknown pair_block values and members that disagree about their block
+    are broken definitions: every member is invalidated before generation,
+    under every variant — never silently run independently."""
+    fake, _ = _stub("whatever")
+    monkeypatch.setattr(pg.AssistantAgent, "_structured_completion", fake)
+    concise, teach = divergence_pair
+
+    # Unknown / misspelled pair_block.
+    teach.rubric = {**teach.rubric, "pair_block": "calibraton"}
+    concise.rubric = {**concise.rubric, "pair_block": "calibraton"}
+    db.db.session.commit()
+    run = pg.run_profile_guidance_suite([concise.uuid, teach.uuid],
+                                        variant="calibration_only",
+                                        repetitions=1)
+    results = db.list_eval_results_for_run(run.uuid)
+    assert len(results) == 2
+    for result in results:
+        rep = result.details["repetitions"][0]
+        assert rep["invalid"] is True and "unknown pair_block" in rep["error"]
+    assert (db.get_eval_run(run.uuid).summary or {}).get("invalid")
+
+    # Members disagreeing about the block.
+    teach.rubric = {**teach.rubric, "pair_block": "calibration"}
+    db.db.session.commit()
+    run = pg.run_profile_guidance_suite([concise.uuid, teach.uuid],
+                                        variant="baseline", repetitions=1)
+    for result in db.list_eval_results_for_run(run.uuid):
+        rep = result.details["repetitions"][0]
+        assert rep["invalid"] is True and "disagree" in rep["error"]
 
 
 def test_date_format_pair_is_single_field_and_runs_independently(app_ctx, monkeypatch):

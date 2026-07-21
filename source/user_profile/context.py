@@ -7,8 +7,9 @@ people if the setting changes between calls, and reading the marker stamps
 separately can show the new profile without its switch notice. A switch
 committed after capture applies on the next turn; one committed before capture
 applies to both marker and blocks on this turn (db.set_current_profile writes
-the pointer and both stamps in a single transaction, so the snapshot can never
-see a new profile with old stamps).
+the pointer and `profile.current_changed_at` in a single transaction, so the
+snapshot can never see a new profile with an old change stamp;
+`qa.facts_invalidated_at` is a deliberately independent event stamp).
 """
 
 import logging

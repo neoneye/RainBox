@@ -65,7 +65,7 @@ def test_germany_renders_expected_body():
         "when precision matters and add the conversion.\n"
         "- Numbers: decimal comma with point grouping, for example "
         "1.234.567,89.\n"
-        "- Currency: use the ISO code EUR with the preferred number format, "
+        "- Currency: use the currency code EUR with the preferred number format, "
         "for example 1.234,56 EUR. Convert currencies only with a supplied "
         "or freshly retrieved rate.\n"
         "- Language: follow the language of the current message; otherwise "
@@ -150,7 +150,7 @@ def test_three_decimal_currency_renders_thousandths():
 
 def test_currency_without_number_format_states_code_only():
     body = format_formatting_guide(_profile(currency="EUR"))
-    assert ("- Currency: use the ISO code EUR. Convert currencies only with "
+    assert ("- Currency: use the currency code EUR. Convert currencies only with "
             "a supplied or freshly retrieved rate.") in body
     assert "for example" not in body.split("- Currency:")[1]
 
@@ -166,7 +166,7 @@ def test_invalid_primary_currency_promotes_secondary():
     body = format_formatting_guide(
         _profile(currency="not-a-code", currency_2="usd",
                  number_format="1,234,567.89"))
-    assert "use the ISO code USD" in body      # canonicalized to uppercase
+    assert "use the currency code USD" in body      # canonicalized to uppercase
     assert "not-a-code" not in body
 
 

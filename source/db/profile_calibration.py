@@ -89,6 +89,13 @@ def validate_calibration_topics(
     if not isinstance(topics, list):
         raise ProfileCalibrationError(
             f"'topics' must be a list, got {type(topics).__name__}")
+    # Raw-length guard BEFORE iterating: blank rows are dropped during
+    # validation, so the canonical 100-row cap alone would let an enormous
+    # list of blanks be traversed in full first.
+    if len(topics) > 10 * MAX_CALIBRATION_ROWS:
+        raise ProfileCalibrationError(
+            f"'topics' has {len(topics)} entries; at most "
+            f"{10 * MAX_CALIBRATION_ROWS} are accepted per request")
     existing_by_id = {str(row.get("id")): row for row in existing if row.get("id")}
     stamp = _now_stamp()
     canonical: list[dict[str, Any]] = []
