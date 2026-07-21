@@ -97,6 +97,38 @@ def test_score_chat_reply_must_include_partial():
     assert abs(score - 0.5) < 1e-9
 
 
+def test_score_chat_reply_must_include_any_is_binary():
+    """Every alternatives group must match; one satisfied override out of two
+    must NOT earn fractional credit that averages past the threshold."""
+    case = EvalCase(
+        name="x", case_type="chat_reply", split="train",
+        input={},
+        expected={"must_include": ["62", "22"],
+                  "must_include_any": [["mile", " mi"],
+                                       ["USD", "US dollar", "$", "dollar"]]},
+        rubric={}, status="active",
+    )
+    score, details = score_chat_reply_case(
+        case, {"text": "About 62 miles, costing 22 US dollars."})
+    assert score == 1.0
+    for text in ("62 mi and 22 EUR", "62 km and 22 USD"):
+        score, details = score_chat_reply_case(case, {"text": text})
+        assert details["must_include_any"]["matched"] == 1
+        assert score < 0.7, text          # fails the default threshold
+
+
+def test_score_chat_reply_word_bounds():
+    case = EvalCase(
+        name="x", case_type="chat_reply", split="train",
+        input={}, expected={"min_words": 3, "max_words": 5},
+        rubric={}, status="active",
+    )
+    assert score_chat_reply_case(case, {"text": "one two three four"})[0] == 1.0
+    assert score_chat_reply_case(case, {"text": "one two"})[0] == 0.0
+    assert score_chat_reply_case(
+        case, {"text": "one two three four five six"})[0] == 0.0
+
+
 def test_score_chat_reply_must_not_include_violation_lowers_score():
     case = EvalCase(
         name="x", case_type="chat_reply", split="train",

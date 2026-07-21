@@ -27,6 +27,7 @@ via this module's CLI and is not part of the default deterministic suite.
 
 import argparse
 import hashlib
+import json
 import logging
 import statistics
 import sys
@@ -246,7 +247,63 @@ def _template_uuid(template_name: str) -> str:
 
 # Bumped whenever a shipped case definition changes; seeded cases whose
 # rubric carries an older rev are updated in place (they are code-owned).
-SEED_REV = 2
+SEED_REV = 3
+
+
+def _seed_hash(input_obj: Any, expected_obj: Any) -> str:
+    """Canonical fingerprint of a case definition (input + expected), stable
+    across JSONB round-trips: sorted keys, compact separators, UTF-8."""
+    blob = json.dumps([input_obj, expected_obj], sort_keys=True,
+                      separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+# Fingerprints of every definition this module shipped BEFORE the rubric seed
+# marker existed. A markerless stored case whose (input, expected) still
+# matches one of these is a verbatim legacy seed — code-owned, safe to update
+# in place. A markerless case that matches nothing was edited by the operator
+# and is never touched.
+_LEGACY_SEED_HASHES: dict[str, tuple[str, ...]] = {
+    "pg locale: German date order": ("d3024b7af3ecddff",),
+    "pg locale: German time format": ("874bcca155f0142d",),
+    "pg locale: German number grouping": ("f67dddca5cf36490",),
+    "pg locale: German currency example": ("cea1f78cd9286c04",),
+    "pg locale: US units": ("e55a49cb225b05d2",),
+    "pg override: Fahrenheit despite metric profile": ("16ab4f959e077eac",),
+    "pg override: miles and USD under metric/EUR": ("6797394f11c74429",),
+    "pg exact-source: code snippet preserved": ("5c4e2c10a4178558",
+                                                "8ca3c749305a2ffc"),
+    "pg exact-source: URL preserved": ("0d392e88f3a2d5a2",),
+    "pg exact-source: quoted number preserved": ("cfe5cf9b4061af3f",),
+    "pg calibration: beginner Python teach depth": ("3f553f32c9c35e49",),
+    "pg calibration: expert Mathematics concise depth": ("9792dd676eb93ee4",),
+    "pg calibration: unlisted topic answers normally": ("033f4a7d7e90e090",),
+    "pg injection: hostile calibration note ignored": ("6068426f0feb1561",
+                                                       "b7659735ee72f850"),
+    "pg nonsense-override: bananas requested": ("06fda2a0004b3670",),
+    "pg counterfactual: US date order": ("a76e073f19adead2",),
+    "pg counterfactual: date-format only A": ("c1da29faa42f82bd",),
+    "pg counterfactual: date-format only B": ("671df28bd00c5732",),
+}
+
+# Shipped case names that were superseded by a differently named definition;
+# a code-owned case under the old name migrates to the new one (same row).
+_RENAMED_SEEDS: dict[str, str] = {
+    "pg calibration: beginner Python teach depth":
+        "pg calibration: teach depth divergence",
+    "pg calibration: expert Mathematics concise depth":
+        "pg calibration: concise depth divergence",
+}
+
+
+def _is_code_owned(case: "db.EvalCase") -> bool:
+    """A case this seeder may update: it carries the seed marker, or it is a
+    verbatim pre-marker legacy seed (fingerprint match under its name)."""
+    rubric = case.rubric or {}
+    if rubric.get("seed") == "profile_guidance":
+        return True
+    return _seed_hash(case.input, case.expected) in _LEGACY_SEED_HASHES.get(
+        case.name, ())
 
 
 def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
@@ -262,9 +319,13 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
     SEED_REV, and re-seeding updates a case in place (status and split
     preserved) whenever its stored rev is older — a database seeded before a
     definition fix must not keep evaluating the release gate against the old
-    weak definition. An operator who wants to own a seeded case takes it over
-    by removing the `seed` marker (or renaming the case); such cases are
-    never touched again. Returns the cases created or updated."""
+    weak definition. Cases seeded before the marker existed are recognized by
+    exact fingerprint against the frozen legacy definitions
+    (_LEGACY_SEED_HASHES) and migrated the same way, renames included. An
+    operator who wants to own a seeded case takes it over by editing it (a
+    markerless edit no longer fingerprints) or removing the `seed` marker;
+    such cases are never touched again. Returns the cases created or
+    updated."""
     germany = _template_uuid("Germany")
     us = _template_uuid("US")
     injection_profile = {
@@ -290,6 +351,20 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
             "data": {"units": "metric", "currency": "EUR",
                      "number_format": "1.234.567,89", "time_format": "24h",
                      "date_format": date_format},
+        }
+
+    # The depth-divergence pair: identical except level and declared depth.
+    def _depth_profile(marker: str, level: str, depth: str) -> dict[str, Any]:
+        return {
+            "uuid": f"00000000-0000-0000-0000-0000000000{marker}",
+            "name": f"DepthDivergence{marker.upper()}",
+            "data": {"units": "metric",
+                     "calibration": {"topics": [{
+                         "id": f"00000000-0000-0000-0000-0000000001{marker}",
+                         "topic": "Mathematics", "level": level,
+                         "depth": depth,
+                         "updated_at": "2026-07-21T00:00:00Z",
+                     }]}},
         }
 
     date_message = "Write 31 December 2026 as a short numeric date."
@@ -363,24 +438,27 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
          "expected": {"must_include": ["\"revenue was 1,234.56 million\""],
                       "must_not_include": ["revenue was 1.234,56"]},
          "rubric_extra": {"threshold": 1.0}},
-        # Calibration cases score the intended BEHAVIORAL difference, not
-        # mere factual correctness (a baseline answer already contains the
-        # topic words): teach depth demands an example and real explanation
-        # length; concise depth caps the length.
-        {"name": "pg calibration: beginner Python teach depth",
+        # The calibration family is a forced divergence: ONE neutral message
+        # (it requests no depth itself) under two inline profiles whose only
+        # meaningful difference is the declared depth, scored with OPPOSING
+        # length bounds. A single baseline answer of length L can satisfy at
+        # most one of (L >= 120, L <= 80), so the family cannot be
+        # ceiling-bound at baseline — passing both cases requires the
+        # calibration block to actually change behavior.
+        {"name": "pg calibration: teach depth divergence",
          "family": "calibration",
-         "input": {"message": "What is a Python decorator?",
-                   "profile_uuid": us},
-         "expected": {"must_include": ["decorator", "function"],
-                      "must_include_any": [["for example", "For example",
-                                            "e.g.", "```"]],
-                      "min_words": 60}},
-        {"name": "pg calibration: expert Mathematics concise depth",
-         "family": "calibration",
-         "input": {"message": "State the mean value theorem.",
-                   "profile_uuid": germany},
+         "input": {"message": "What is the mean value theorem?",
+                   "profile": _depth_profile("c1", "beginner", "teach")},
          "expected": {"must_include": ["continuous"],
-                      "max_words": 120}},
+                      "must_include_any": [["for example", "For example",
+                                            "e.g."]],
+                      "min_words": 120}},
+        {"name": "pg calibration: concise depth divergence",
+         "family": "calibration",
+         "input": {"message": "What is the mean value theorem?",
+                   "profile": _depth_profile("d2", "expert", "concise")},
+         "expected": {"must_include": ["continuous"],
+                      "max_words": 80}},
         # Unchanged behavior on an unlisted topic is a REGRESSION check, not
         # part of the calibration family's improvement mean.
         {"name": "pg calibration: unlisted topic answers normally",
@@ -424,6 +502,25 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                       "must_not_include": ["31.12.2026"]}},
     ]
     existing = {c.name: c for c in db.list_eval_cases(case_type="chat_reply")}
+    # Migrate code-owned cases stranded under a superseded name: rename them
+    # onto the current definition's name (same row), or drop the stale copy
+    # when the new name already exists.
+    for old_name, new_name in _RENAMED_SEEDS.items():
+        case = existing.get(old_name)
+        if case is None or not _is_code_owned(case):
+            continue
+        if new_name in existing:
+            db.db.session.delete(case)
+        else:
+            case.name = new_name
+            # The legacy fingerprint is keyed by the OLD name; stamp the
+            # marker (at rev 0) so the update pass below recognizes the
+            # renamed row as code-owned and applies the current definition.
+            case.rubric = {**(case.rubric or {}),
+                           "seed": "profile_guidance", "seed_rev": 0}
+            existing[new_name] = case
+        del existing[old_name]
+        db.db.session.commit()
     touched: list[db.EvalCase] = []
     for spec in specs:
         rubric = {"seed": "profile_guidance", "seed_rev": SEED_REV,
@@ -435,10 +532,9 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                 status="candidate", input=spec["input"],
                 expected=spec["expected"], rubric=rubric))
             continue
-        stored = case.rubric or {}
-        if stored.get("seed") != "profile_guidance":
-            continue  # operator-owned now; never touch it
-        if int(stored.get("seed_rev") or 0) >= SEED_REV:
+        if not _is_code_owned(case):
+            continue  # operator-owned; never touch it
+        if int((case.rubric or {}).get("seed_rev") or 0) >= SEED_REV:
             continue  # already current
         case.input = spec["input"]
         case.expected = spec["expected"]

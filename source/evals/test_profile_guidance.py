@@ -224,12 +224,19 @@ def test_seed_cases_create_update_and_respect_ownership(app_ctx):
             assert exact.rubric["threshold"] == 1.0      # hard-zero family
             override = next(c for c in created if "miles and USD" in c.name)
             assert override.expected["must_include_any"]  # labels required
+            # The calibration family is a forced divergence: one neutral
+            # message, two inline profiles, OPPOSING bounds — a single
+            # baseline answer can satisfy at most one of the pair.
             teach = next(c for c in created
-                         if "beginner Python" in c.name)
-            assert teach.expected["min_words"] >= 60
+                         if "teach depth divergence" in c.name)
             concise = next(c for c in created
-                           if "expert Mathematics" in c.name)
-            assert concise.expected["max_words"] <= 150
+                           if "concise depth divergence" in c.name)
+            assert teach.input["message"] == concise.input["message"]
+            assert teach.expected["min_words"] > concise.expected["max_words"]
+            teach_row = teach.input["profile"]["data"]["calibration"]["topics"][0]
+            concise_row = concise.input["profile"]["data"]["calibration"]["topics"][0]
+            assert teach_row["depth"] == "teach"
+            assert concise_row["depth"] == "concise"
             unlisted = next(c for c in created if "unlisted" in c.name)
             assert unlisted.rubric["family"] == "regression"
 
@@ -248,7 +255,8 @@ def test_seed_cases_create_update_and_respect_ownership(app_ctx):
         assert refreshed.status == "active"               # operator state kept
         assert refreshed.rubric["seed_rev"] == pg.SEED_REV
 
-        # An operator-owned case (seed marker removed) is never touched.
+        # An operator-owned case (edited: no marker, no legacy fingerprint)
+        # is never touched.
         owned = next(c for c in db.list_eval_cases(case_type="chat_reply")
                      if "German date order" in c.name)
         owned.rubric = {"family": "locale"}               # marker stripped
@@ -257,6 +265,62 @@ def test_seed_cases_create_update_and_respect_ownership(app_ctx):
         assert pg.seed_profile_guidance_cases() == []
         assert db.get_eval_case(owned.uuid).expected == {
             "must_include": ["operator edit"]}
+    finally:
+        db.db.session.rollback()
+        for c in db.list_eval_cases(case_type="chat_reply"):
+            if c.name.startswith("pg "):
+                db.db.session.delete(c)
+        db.db.session.commit()
+
+
+def test_seed_migrates_markerless_legacy_cases(app_ctx):
+    """Databases seeded before the rubric marker existed hold cases with only
+    {"family": ...}. A verbatim legacy definition (fingerprint match) is
+    code-owned and must be migrated — renames included — while a markerless
+    EDITED case is left alone."""
+    legacy_name = "pg calibration: beginner Python teach depth"
+    new_name = "pg calibration: teach depth divergence"
+    us = pg._template_uuid("US")
+    legacy_input = {"message": "What is a Python decorator?",
+                    "profile_uuid": us}
+    legacy_expected = {"must_include": ["function"]}
+    assert pg._seed_hash(legacy_input, legacy_expected) in \
+        pg._LEGACY_SEED_HASHES[legacy_name]
+
+    def _make_legacy(expected):
+        return db.create_eval_case(
+            name=legacy_name, case_type="chat_reply", status="active",
+            input=legacy_input, expected=expected,
+            rubric={"family": "calibration"})       # pre-marker shape
+
+    try:
+        # Scenario 1: fresh DB state — the legacy case is renamed onto the
+        # new definition in place (same row, status preserved).
+        legacy = _make_legacy(legacy_expected)
+        touched = pg.seed_profile_guidance_cases()
+        migrated = db.get_eval_case(legacy.uuid)
+        assert migrated is not None
+        assert migrated.name == new_name
+        assert migrated.status == "active"
+        assert migrated.expected["min_words"] > 0     # the new definition
+        assert migrated.rubric["seed_rev"] == pg.SEED_REV
+        assert any(c.uuid == legacy.uuid for c in touched)
+
+        # Scenario 2: the new name already exists — a stale legacy copy under
+        # the old name is dropped, not duplicated.
+        stale = _make_legacy(legacy_expected)
+        pg.seed_profile_guidance_cases()
+        assert db.get_eval_case(stale.uuid) is None
+        names = [c.name for c in db.list_eval_cases(case_type="chat_reply")]
+        assert names.count(new_name) == 1
+
+        # Scenario 3: a markerless case the operator EDITED does not
+        # fingerprint and is never touched, renamed, or deleted.
+        edited = _make_legacy({"must_include": ["my own criteria"]})
+        pg.seed_profile_guidance_cases()
+        kept = db.get_eval_case(edited.uuid)
+        assert kept is not None and kept.name == legacy_name
+        assert kept.expected == {"must_include": ["my own criteria"]}
     finally:
         db.db.session.rollback()
         for c in db.list_eval_cases(case_type="chat_reply"):

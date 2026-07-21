@@ -53,14 +53,18 @@ def _score_must_include(output_text: str, items: list[str]) -> tuple[float, dict
 def _score_must_include_any(
     output_text: str, groups: list[Any],
 ) -> tuple[float, dict[str, Any]]:
-    """Each group is a list of alternative substrings; the group counts as
-    matched when ANY alternative is present. Score = matched groups / groups."""
+    """Each group is a list of alternative substrings; a group counts as
+    matched when ANY alternative is present. BINARY: the criterion scores 1.0
+    only when EVERY group matched — a case demanding both a unit label and a
+    currency label must not pass with one of the two, and fractional credit
+    averaged into the mean would allow exactly that."""
     valid = [g for g in groups if isinstance(g, list) and g]
     if not valid:
         return 1.0, {"matched": 0, "total": 0, "skipped": True}
     matched = sum(1 for g in valid
                   if any(str(alt) in output_text for alt in g))
-    return matched / len(valid), {"matched": matched, "total": len(valid)}
+    return (1.0 if matched == len(valid) else 0.0), {
+        "matched": matched, "total": len(valid)}
 
 
 def _score_word_bounds(

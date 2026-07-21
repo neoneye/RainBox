@@ -90,6 +90,13 @@ Supported current case types:
 
 `query_answer` and `tool_output` exist in the schema but have no scorer yet.
 
+Chat-reply scoring criteria: `must_include`, `must_not_include` (fractional,
+per item), `must_include_any` (groups of alternative substrings — binary,
+every group must match, so a case can demand a unit label AND a currency
+label without pinning spellings), `min_words`/`max_words` (binary length
+bounds — the deterministic proxy for explanation depth), and
+`requires_json`.
+
 A separate opt-in **live** runner, `evals/profile_guidance.py`, executes
 chat_reply cases that carry `message` + `profile_uuid` (or an inline
 `profile`) against the real assistant prompt-construction path and a real
