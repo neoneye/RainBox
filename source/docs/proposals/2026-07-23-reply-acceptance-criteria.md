@@ -53,14 +53,24 @@ this request:
      "answer in Danish" in an English message wins.
    - Spelling follows the profile's English variant (en-US — American
      spelling, "color" not "colour").
-2. **What side effects the request demands** — a state change like
-   "kanban task X is in the DONE column" is the deliverable itself; the
-   reply is only the receipt (see Side-effectful requests below).
-3. **Which user preferences are relevant while processing the steps** —
+2. **Which user preferences are relevant while processing the steps** —
    e.g. the target unit for a conversion (metric → meters), the timezone
    for a reminder, the currency for a price.
-4. **Which user preferences are relevant when formatting the final
+3. **Which user preferences are relevant when formatting the final
    result** — separators, date format, temperature unit, spelling.
+
+## Scope: the reply contract first
+
+The criteria naturally split into two contracts: the **reply contract**
+(what the answer message must satisfy — language, content constraints
+like the target unit, formatting) and the **work contract** (what a
+mutating request does to the world — side effects, consequences, and
+everything that goes wrong when modifying stuff isn't the sunshine
+scenario). The work contract opens into a much larger toolkit — levers,
+scenarios, premise attack, premortem, the PlanExe-style risk apparatus —
+and deserves its own design. THIS proposal is deliberately scoped to the
+reply contract; the work contract is parked as a seed in
+`2026-07-23-work-contract.md`.
 
 For "convert 1053737172 feet" the step would establish, before any tool
 runs: *target = meters (user settings: metric); number format = dot
@@ -108,11 +118,6 @@ class AcceptanceCriteria(BaseModel):
         'en-US)". Mirror the language of the current message; the '
         "profile's preferred language applies only when the message "
         "explicitly asks for it; an explicit request always wins."))
-    side_effects: list[str] = Field(description=(
-        "State changes the request demands — the measurable outcome, "
-        "e.g. 'kanban task X is in the DONE column'. ONLY the named "
-        "changes: anything beyond them is out of scope for this "
-        "request. Empty for a pure question."))
     processing: list[str] = Field(description=(
         "User preferences that steer the WORK — e.g. 'target unit: "
         "meters (settings: metric)' for an ambiguous conversion, the "
@@ -121,95 +126,11 @@ class AcceptanceCriteria(BaseModel):
         "User preferences that steer the FINAL MESSAGE — separators, "
         "date format, temperature unit, spelling. Empty when none "
         "apply."))
-    consequences: list[str] = Field(description=(
-        "For each side effect: what could go wrong and what then — "
-        "reversibility (its write tier: log-and-undo is undoable, "
-        "confirm-tier waits for the operator), the blast radius of a "
-        "wrong target, and the failure stance: on a failed mutation the "
-        "reply reports the ACTUAL state, never the intended one. Empty "
-        "when side_effects is empty."))
     assumptions: list[str] = Field(description=(
         "Ambiguities in the request resolved by a settings-based "
         "assumption, stated so the operator can spot a wrong one — "
         "e.g. 'convert target not stated; assuming meters'."))
 ```
-
-### Two contracts in one
-
-The fields split into two distinct contracts:
-
-- **The reply contract** — `response_language`, `formatting`: how the
-  final message reads. This is the whole contract for a pure question.
-- **The work contract** — `side_effects`, `consequences`, `processing`,
-  `assumptions`: what happens to the world. Modifying stuff is rarely
-  the sunshine scenario, so this half is written as a pre-mortem, not a
-  plan: the criteria state up front what a failure or partial success
-  will mean, before the first mutation runs.
-
-The two halves meet at the audit: the message must satisfy the reply
-contract AND truthfully reflect how the work contract actually went —
-sunshine or not.
-
-### Side-effectful requests
-
-Not every deliverable is a formatted answer. For "move kanban task X to
-DONE" the deliverable IS the state change; the reply is only the
-receipt. `side_effects` names the measurable outcome up front, which
-buys three things:
-
-- **The audit gets a second dimension.** Beyond formatting, the
-  acceptance test becomes: does the message claim exactly the side
-  effects whose steps succeeded (`ok=True`)? This turns the existing
-  anti-fabrication rule ("never claim a write that didn't run") from a
-  general principle into a per-run, named checklist.
-- **Write tiers are visible in the criteria.** A confirm-tier effect
-  ends the run as a PROPOSAL, not a completed change — the criteria for
-  "delete board Y" would read "a confirm card for deleting board Y is
-  proposed", so the reply says "awaiting your confirmation", never
-  "deleted". The criteria call knows the capability tiers from a short
-  code-owned summary in its system prompt (not the full catalog).
-- **Scope is bounded.** "ONLY the named changes" gives the second
-  opinion and the summariser an explicit yardstick for
-  over-reach — moving task X must not also touch task Y.
-
-Example criteria for "move kanban task X to DONE":
-
-```json
-{"response_language": "en-US (mirrors the current message)",
- "side_effects": ["kanban task X is in the DONE column"],
- "consequences": [
-   "kanban_move is log-and-undo — reversible via the undo ledger",
-   "a wrong target task would misstate project status; resolve 'X' via find_uuid before moving",
-   "on failure: report the task's actual column; do not claim the move"],
- "processing": ["resolve 'X' to a task uuid before moving (find_uuid)"],
- "formatting": [],
- "assumptions": ["'DONE' matched to the board's Done column by name"]}
-```
-
-The consequences do not replace the existing safety machinery — the
-write tiers, undo ledger, duplicate-write blocks, and second-opinion
-gate keep enforcing mechanically. The criteria make the model (and the
-operator reading the trace) SEE those stakes before the first mutation,
-and give the audit the non-sunshine branch: a reply after a failed move
-passes the acceptance test only by reporting the failure.
-
-Mid-run revision applies here too: if a read reveals task X is already
-in DONE, the revised criteria record the no-op ("task X already in
-DONE; no move needed") so the reply reports the true state instead of
-claiming a move that never ran.
-
-The system prompt is code-owned and small (~40 lines): the language
-rules above (generalized — the profile's languages interpolated through
-the existing prompt-boundary validation in `user_profile/formatting.py`),
-plus "resolve ambiguity from the user settings and SAY SO in
-assumptions". Inputs: the current request, the last few conversation
-messages (language continuity needs history), `user_settings_json`, and
-the formatting guide. NOT the action catalog — this step plans
-constraints, not actions.
-
-Model binding: the assistant's own model group by default; a dedicated
-binding (like `SECOND_OPINION_UUID`) is a later option if a smaller or
-larger model proves better at it.
 
 ### Injection
 
@@ -319,10 +240,6 @@ House pattern — ship dark, gate, enable:
      exists): "change my preferred response language to en-US" → the
      confirmation reply is already en-US, and the trace shows two criteria
      steps (step 0 with the old language, the refresh with the new).
-   - a side-effect turn: "move task X to DONE" → `side_effects` names
-     the move; the reply claims it only after the kanban_move step
-     returned ok (scripted-seam test: a failed move must yield a reply
-     that does NOT claim completion).
    A/B the suite with the switch off/on; the criteria step must not regress the
    locale cases it doesn't touch.
 4. Flip the switch; watch traces for wrong `assumptions` — they are the
