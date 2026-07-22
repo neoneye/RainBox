@@ -254,6 +254,15 @@ def test_review_prompt_carries_all_artifacts_under_review(monkeypatch):
     assert "print(12 * 0.3048)" in user_prompt              # python_program
     assert "prefers metric units" in user_prompt            # operator_profile
     assert 'action="python_run"' in user_prompt
+    # Same section convention as the main prompt: the task leads (bare tag),
+    # supporting context follows, the local-time anchor closes.
+    assert "<current_request>" in user_prompt
+    assert (user_prompt.index("<current_request>")
+            < user_prompt.index("<proposed_step")
+            < user_prompt.index("<verdict_request>")
+            < user_prompt.index("<operator_identity")
+            < user_prompt.index("<operator_profile")
+            < user_prompt.index("<current_local_time>"))
     # The exact prompts ride in the review payload so the inspector can show
     # the review's model request verbatim.
     assert review["system_prompt"] == system_prompt

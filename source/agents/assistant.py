@@ -3350,30 +3350,17 @@ class AssistantAgent(ModelGroupAgent):
         reasoning: str | None,
         messages: list[dict[str, Any]],
     ) -> str:
-        """The reviewer's user prompt: who is asking (identity + profile),
-        what they asked, and the three artifacts under review — the stated
-        reason, the model's reasoning channel, and the program. Built with
-        ElementTree for the same escaping guarantee as the main prompt; leaf
+        """The reviewer's user prompt: what was asked, the three artifacts
+        under review — the stated reason, the model's reasoning channel, and
+        the program — then who is asking (identity + profile) and the local
+        time. Same section convention as the main prompt: the task leads (a
+        bare current_request tag), supporting context follows, the time anchor
+        closes. Built with ElementTree for the same escaping guarantee; leaf
         sections only, no conversation history (the current request is the
         contract the program is judged against)."""
-        now_local = datetime.now().astimezone()
         root = ET.Element("second_opinion_review")
-        ET.SubElement(root, "current_local_time").text = now_local.strftime(
-            "%Y-%m-%d %H:%M %Z"
-        )
-        if self._identity_block:
-            identity = ET.SubElement(
-                root, "operator_identity",
-                {"authority": "context", "format": "json"},
-            )
-            identity.text = self._identity_block
-        if self._profile_block:
-            profile = ET.SubElement(
-                root, "operator_profile", {"authority": "context"}
-            )
-            profile.text = self._profile_block
         current = messages[-1] if messages else None
-        request = ET.SubElement(root, "current_request", {"authority": "task"})
+        request = ET.SubElement(root, "current_request")
         request.text = str((current or {}).get("text") or "none")
         proposed = ET.SubElement(
             root, "proposed_step", {"action": decision.action.value}
@@ -3390,8 +3377,23 @@ class AssistantAgent(ModelGroupAgent):
         verdict_request = ET.SubElement(root, "verdict_request")
         verdict_request.text = (
             "Review the proposed_step against the current_request and the "
-            "operator context above. List real problems (or none), then set "
+            "operator context below. List real problems (or none), then set "
             "approved."
+        )
+        if self._identity_block:
+            identity = ET.SubElement(
+                root, "operator_identity",
+                {"authority": "context", "format": "json"},
+            )
+            identity.text = self._identity_block
+        if self._profile_block:
+            profile = ET.SubElement(
+                root, "operator_profile", {"authority": "context"}
+            )
+            profile.text = self._profile_block
+        now_local = datetime.now().astimezone()
+        ET.SubElement(root, "current_local_time").text = now_local.strftime(
+            "%Y-%m-%d %H:%M %Z"
         )
         parts = []
         for section in root:
