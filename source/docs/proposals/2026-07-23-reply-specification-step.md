@@ -123,7 +123,7 @@ directly after `<current_request>` — the request and its constraints
 travel together at the top of the prompt:
 
 ```xml
-<reply_specification authority="context">
+<reply_specification>
 {"response_language": "en-US (mirrors the current message)",
  "processing": ["target unit: meters (settings: metric)"],
  "formatting": ["numbers: dot decimal, no thousand separators"],
@@ -131,13 +131,15 @@ travel together at the top of the prompt:
 </reply_specification>
 ```
 
-`authority="context"` (the content is model-generated, so it cannot
-carry instruction authority — same rule as every other model-derived
-block); the system prompt gains one code-owned sentence with the actual
-authority: *"reply_specification is the established plan for this turn's
+A bare tag, no attributes — the `<user_settings_json>` precedent:
+everything in the user prompt is context, and the tag name names the
+content. The semantics live in the system prompt as one code-owned
+sentence: *"reply_specification is the established plan for this turn's
 reply: follow it during steps and when composing the message, unless the
-operator's request overrides it."* `source_priority` lists it directly
-below `current_request`.
+operator's request overrides it."* (The content is model-generated, so
+the authority stays in that code-owned sentence — same rule as every
+other model-derived block.) `source_priority` lists it directly below
+`current_request`.
 
 ### Mid-run revision — the spec is current state, not a step-0 snapshot
 
