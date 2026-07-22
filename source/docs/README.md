@@ -26,6 +26,9 @@ history); `proposals/` holds design-time intent and reviews.
 - [assistant-design.md](assistant-design.md) — the ReAct loop: capability
   registry, write tiers (log-and-undo / confirm), undo ledger, controls,
   trace, worker-failure recovery, chat notices, inspector.
+- [second-opinion-design.md](second-opinion-design.md) — the independent LLM
+  review that gates `python_run` before execution: verdict, prompts, model
+  binding, fail-open policy, inspector rendering.
 - [prompt-design.md](prompt-design.md) — versioned system prompts: folder
   tree, clone lineage + diff, explicit Edit → Save, direct-chat linking.
 - [cron-design.md](cron-design.md) — the scheduler: folder tree, action

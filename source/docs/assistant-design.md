@@ -222,41 +222,19 @@ only by `undo_write_intent`.
 
 Capabilities flagged `second_opinion=True` in the registry (currently only
 `python_run`) get an independent LLM review BEFORE dispatch — enforced by the
-loop, so the deciding model cannot skip it. The reviewer
-(`AssistantAgent._second_opinion`) sees the operator identity + profile, the
-current request, the decision's `reason`, the model's native reasoning channel
-(when present), and the program, and returns a structured
-`SecondOpinionVerdict` (`problems` first, then `approved`). The gate exists to
-catch reasoning that ignores who is asking — e.g. treating a European
-operator's unit question as a US-units question — as well as logic errors and
-programs that can't work in the sandbox, before compute is spent.
-
-- **Rejection** becomes the step's failed observation: the action never
-  executes, the problems list is fed back through the scratchpad, and the
-  action signature lands in `failed_actions`, so the model must revise the
-  program rather than resubmit it verbatim.
-- **Approval** dispatches normally; the verdict rides in
-  `observation.data["second_opinion"]` either way, so the trace always shows
-  what the reviewer said.
-- **Model binding**: the dedicated `second_opinion` binding-only agent
-  (`/agentmodel`) when set, else the assistant's own group — resolved via
-  `query_filter_router.resolve_model_uuids` (the generic binding-chain
-  resolver; deliberately NOT `resolve_filter_model_uuids`, which prepends the
-  `memory_filter` scorer binding) and called through `structured_llm_call`.
-- **Inspector**: the review renders as its own "second opinion" block in
-  chronological position — after the model response, before the action call —
-  in both the HTML step pane and the markdown export; the action-result data
-  no longer repeats it. The review payload carries the reviewer call's full
-  interaction — the exact system + user prompt, the reviewer model's native
-  reasoning channel (via `llm.capture_reasoning`, kept even when the call
-  fails), and its verbatim response (falling back to the parsed verdict's
-  JSON when the provider reports no content) — prompts and reasoning as
-  collapsed details, the response inline.
-- **Fails open**: the gated actions are side-effect-free compute, so when no
-  group is bound or the review call fails, the action runs and the review
-  payload records why the check was skipped (`skipped`/`error`). The gate is a
-  quality check, not a security boundary — write safety stays with the tier
-  system below.
+loop, not prompt discipline, so the deciding model cannot skip it. The
+reviewer judges the current request, the decision's `reason`, the deciding
+model's reasoning channel, and the program together; a rejection becomes the
+step's failed observation (the program never runs, the problems feed back
+through the scratchpad, and the exact resubmission is blocked via
+`failed_actions`), while an approval dispatches with the full review — verdict,
+prompts, the reviewer's reasoning and response — riding in
+`observation.data["second_opinion"]` for the trace. Reviewer model: the
+`second_opinion` binding on `/agentmodel`, else the assistant's own group.
+Fails open (`skipped`/`error` recorded): the gated actions are
+side-effect-free compute, so the gate is a quality check, not a security
+boundary — write safety stays with the tier system below. Full design:
+`second-opinion-design.md`.
 
 ## Write tiers
 
@@ -481,6 +459,9 @@ webapp `test_assistant_*` suites for the endpoints and pages.
   `memory_remember`/`memory_forget`/`memory_activate` and the profile block.
 - `kanban-design.md` — the kanban capability family and why it sits outside
   the worker authority model.
+- `second-opinion-design.md` — the pre-execution review gate on `python_run`:
+  the reviewer's prompts, verdict, model binding, fail-open policy, and
+  inspector rendering.
 - `qa-system.md` — the Q&A knowledge base behind `memory_query`.
 - `proposals/2026-06-25-security-review-mitigations.md` — Finding 4 (the
   unauthenticated confirm boundary).
