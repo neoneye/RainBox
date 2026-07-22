@@ -2,7 +2,7 @@
 fields into code-owned prompt directives with examples.
 
 Injected by the main assistant as `<formatting_guide authority="instructions">`
-next to `<operator_identity>`. That authority is justified only because every
+next to `<user_settings_json>`. That authority is justified only because every
 imperative sentence here is owned by code and every interpolated value passes
 the strict prompt-boundary validation below — the profile form deliberately
 accepts uncommon free-text timezone/language/currency values, and a value such

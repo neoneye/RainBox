@@ -3,7 +3,7 @@
 The `profile.current` setting points at one profile on the /profile page (a
 person profile — the operator's own "account"). This module renders that
 profile's filled-in fields into a compact prompt block the assistant injects
-as `<operator_identity>`, next to the memory-derived `<operator_profile>`
+as `<user_settings_json>`, next to the memory-derived `<operator_profile>`
 digest: identity is declared once by the operator, the digest accrues from
 remembered claims.
 
@@ -48,8 +48,8 @@ def current_profile() -> dict[str, Any] | None:
 def format_identity_block(profile: dict[str, Any]) -> str:
     """Render one profile as a prompt block: a JSON object of the filled-in
     fields under their registry keys, in registry order. No preamble line
-    and no profile display name: the enclosing <operator_identity
-    format="json"> tag names the content, and the tree label is operator
+    and no profile display name: the enclosing <user_settings_json> tag
+    names the content, and the tree label is operator
     bookkeeping (it rides the per-step debug log, not the prompt). This is
     the single place to experiment with identity prompt formatting.
 

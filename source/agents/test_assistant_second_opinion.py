@@ -260,7 +260,7 @@ def test_review_prompt_carries_all_artifacts_under_review(monkeypatch):
     assert (user_prompt.index("<current_request>")
             < user_prompt.index("<proposed_step")
             < user_prompt.index("<verdict_request>")
-            < user_prompt.index("<operator_identity")
+            < user_prompt.index("<user_settings_json")
             < user_prompt.index("<operator_profile")
             < user_prompt.index("<current_local_time>"))
     # The exact prompts ride in the review payload so the inspector can show

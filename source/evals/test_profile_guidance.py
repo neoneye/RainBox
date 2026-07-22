@@ -105,7 +105,7 @@ def test_variants_toggle_blocks_in_the_real_prompt(case, monkeypatch):
     assert "<formatting_guide" in seen["combined"]
     assert "<knowledge_calibration" in seen["combined"]
     # The identity block rides every variant (it is not gated).
-    assert all("<operator_identity" in p for p in seen.values())
+    assert all("<user_settings_json" in p for p in seen.values())
     # The case message is the current request in the production prompt shape.
     assert all("31 December 2026" in p for p in seen.values())
 

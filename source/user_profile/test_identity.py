@@ -1,6 +1,6 @@
 """Tests for the operator identity block: the profile.current setting selects
 a /profile person profile, and its filled-in fields render into the
-<operator_identity> prompt block as a preamble line plus a JSON object.
+<user_settings_json> prompt block as a bare JSON object.
 
 Deterministic and model-free: rendering is registry-driven text assembly.
 """

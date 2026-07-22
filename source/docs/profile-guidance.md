@@ -5,7 +5,7 @@ blocks, all rendered from one per-turn context snapshot:
 
 | Block | Authority | Source | Gated? |
 |---|---|---|---|
-| `<operator_identity>` | context | profile fields as JSON (`user_profile/identity.py`; opaque enums like `number_format` carry a code-owned `.comment` entry) | no — always on when a profile is selected |
+| `<user_settings_json>` | context (by system-prompt rule; the tag carries no attributes) | profile fields as JSON (`user_profile/identity.py`; opaque enums like `number_format` carry a code-owned `.comment` entry) | no — always on when a profile is selected |
 | `<formatting_guide>` | instructions | deterministic locale directives (`user_profile/formatting.py`) | **`assistant.formatting_guide`**, default off |
 | `<knowledge_calibration>` | context | self-declared topic rows as JSONL (`user_profile/calibration.py`) | **`assistant.knowledge_calibration`**, default off |
 
@@ -90,7 +90,7 @@ This is the direct proof the assistant actually carries the blocks:
    verifying — see step 6 for the gated rollout).
 2. In a chat room with the assistant, ask anything ("how far is 100 km?").
 3. Open `/assistant`, select the newest run, and inspect any step's **user
-   prompt**. It must contain, in order: `<operator_identity …>`,
+   prompt**. It must contain, in order: `<user_settings_json>`,
    `<formatting_guide authority="instructions">` with the profile's
    directives, `<knowledge_calibration authority="context">` with the JSONL
    rows (when the profile has calibration topics).
