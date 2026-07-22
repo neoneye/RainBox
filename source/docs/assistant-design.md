@@ -206,10 +206,42 @@ only by `undo_write_intent`.
   environment (sanitized `jsglobals`, nulled pyodide escape hatches, minimal
   env). The parent kills the job past 30s CPU (`RLIMIT_CPU`), 100 MB memory
   growth above the post-load baseline (RSS polling), or 60s wall clock.
-  Touches no operator data. Needs node + a one-time `npm install` in
+  Touches no operator data. Gated by the second-opinion review (next
+  section). Needs node + a one-time `npm install` in
   `tools/python_sandbox` (`tools.doctor` checks); otherwise the model sees a
   `blocked:` observation. Design spec:
   `docs/superpowers/specs/2026-07-19-python-sandbox-design.md` (repo root).
+
+## Second-opinion gate
+
+Capabilities flagged `second_opinion=True` in the registry (currently only
+`python_run`) get an independent LLM review BEFORE dispatch — enforced by the
+loop, so the deciding model cannot skip it. The reviewer
+(`AssistantAgent._second_opinion`) sees the operator identity + profile, the
+current request, the decision's `reason`, the model's native reasoning channel
+(when present), and the program, and returns a structured
+`SecondOpinionVerdict` (`problems` first, then `approved`). The gate exists to
+catch reasoning that ignores who is asking — e.g. treating a European
+operator's unit question as a US-units question — as well as logic errors and
+programs that can't work in the sandbox, before compute is spent.
+
+- **Rejection** becomes the step's failed observation: the action never
+  executes, the problems list is fed back through the scratchpad, and the
+  action signature lands in `failed_actions`, so the model must revise the
+  program rather than resubmit it verbatim.
+- **Approval** dispatches normally; the verdict rides in
+  `observation.data["second_opinion"]` either way, so the trace always shows
+  what the reviewer said.
+- **Model binding**: the dedicated `second_opinion` binding-only agent
+  (`/agentmodel`) when set, else the assistant's own group — same fallback
+  pattern as `memory_filter`, resolved via
+  `query_filter_router.resolve_filter_model_uuids` and called through
+  `structured_llm_call`.
+- **Fails open**: the gated actions are side-effect-free compute, so when no
+  group is bound or the review call fails, the action runs and the review
+  payload records why the check was skipped (`skipped`/`error`). The gate is a
+  quality check, not a security boundary — write safety stays with the tier
+  system below.
 
 ## Write tiers
 
