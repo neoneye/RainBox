@@ -562,3 +562,82 @@ def test_in_flight_model_call_card(app_ctx, client):
         assert "model call in progress" not in body
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def _second_opinion_step(run, *, approved: bool, problems=None):
+    """One settled python_run step whose observation data carries the
+    second-opinion review payload the loop stores."""
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="python_run",
+        reason="compute the conversion", args={"code": "print(12 * 0.3048)"})
+    review = {
+        "approved": approved, "problems": problems or [],
+        "group_from": "second_opinion", "model_uuid": str(uuid4()),
+    }
+    if approved:
+        db.settle_assistant_step(
+            step, phase="observed", observation_preview="3.6576",
+            observation={"ok": True, "text": "3.6576",
+                         "data": {"duration_seconds": 0.01,
+                                  "second_opinion": review}})
+    else:
+        text = "second_opinion rejected this python_run"
+        db.settle_assistant_step(
+            step, phase="failed", observation_preview=text,
+            observation={"ok": False, "text": text,
+                         "data": {"second_opinion": review}},
+            error=text)
+    return step
+
+
+def test_second_opinion_renders_before_the_action_call(app_ctx, client):
+    """Chronological order: the review ran before the program executed, so its
+    block sits between the model response and the action call — and the
+    action-result data no longer repeats the payload."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _second_opinion_step(run, approved=True)
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "second opinion" in body
+        assert body.index("second opinion") < body.index("action call")
+        assert "approved: true" in body
+        assert "group: second_opinion" in body
+        # Stripped from the action-result data pre; the rest of the data stays.
+        assert '"second_opinion"' not in body
+        assert '"duration_seconds": 0.01' in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_second_opinion_rejection_shows_problems(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _second_opinion_step(
+        run, approved=False,
+        problems=["the operator profile is metric; convert to meters"])
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "approved: false" in body
+        assert "- the operator profile is metric; convert to meters" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_markdown_export_mirrors_the_second_opinion_block(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _second_opinion_step(run, approved=True)
+    db.finish_run(run, "finished")
+    try:
+        md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
+        assert "**second opinion** · approved: true" in md
+        assert md.index("**second opinion**") < md.index("**action call**")
+        assert '"second_opinion"' not in md
+    finally:
+        _cleanup(run.uuid, room.uuid)

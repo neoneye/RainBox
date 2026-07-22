@@ -154,6 +154,24 @@ FILTER_KEEP_TOP_N: int = 2
 FILTER_KEEP_TOP_FLOOR: int = 2
 
 
+def resolve_model_group(
+    candidates: list[tuple[UUID, str]],
+) -> tuple[UUID, str] | tuple[None, None]:
+    """The generic binding-chain resolver: the first of `candidates`
+    (`(agent_uuid, label)` pairs, tried in order) with a non-empty bound model
+    group. Returns `(group_uuid, label)`, or `(None, None)` when nothing is
+    bound anywhere. Callers own their chain — the filter callers prepend the
+    memory_filter binding via `resolve_filter_model_group`; the assistant's
+    second_opinion review passes its own chain directly."""
+    for agent_uuid, label in candidates:
+        binding = db.get_agent_model_binding(agent_uuid)
+        if binding is None or binding.model_group_uuid is None:
+            continue
+        if db.get_model_group_member_uuids(binding.model_group_uuid):
+            return binding.model_group_uuid, label
+    return None, None
+
+
 def resolve_filter_model_group(
     fallbacks: list[tuple[UUID, str]],
 ) -> tuple[UUID, str] | tuple[None, None]:
@@ -161,18 +179,21 @@ def resolve_filter_model_group(
     every filter caller so keep/drop decisions come from ONE model identity:
     the dedicated `memory_filter` binding when the operator has set one on
     /agentmodel (the knob for experimenting with scorer models), else the
-    first of `fallbacks` (`(agent_uuid, label)` pairs, tried in order) with a
-    non-empty bound group. Returns `(group_uuid, label)`, or `(None, None)`
-    when nothing is bound anywhere."""
+    first of `fallbacks` with a non-empty bound group."""
     from agents.config import MEMORY_FILTER_UUID
 
-    for agent_uuid, label in [(MEMORY_FILTER_UUID, "memory_filter"), *fallbacks]:
-        binding = db.get_agent_model_binding(agent_uuid)
-        if binding is None or binding.model_group_uuid is None:
-            continue
-        if db.get_model_group_member_uuids(binding.model_group_uuid):
-            return binding.model_group_uuid, label
-    return None, None
+    return resolve_model_group([(MEMORY_FILTER_UUID, "memory_filter"), *fallbacks])
+
+
+def resolve_model_uuids(
+    candidates: list[tuple[UUID, str]],
+) -> tuple[list[UUID], str] | tuple[None, None]:
+    """`resolve_model_group`, unpacked to the group's priority-ordered member
+    uuids — what `structured_llm_call` consumes."""
+    group_uuid, label = resolve_model_group(candidates)
+    if group_uuid is None or label is None:
+        return None, None
+    return db.get_model_group_member_uuids(group_uuid), label
 
 
 def resolve_filter_model_uuids(

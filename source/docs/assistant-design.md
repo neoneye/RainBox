@@ -233,10 +233,14 @@ programs that can't work in the sandbox, before compute is spent.
   `observation.data["second_opinion"]` either way, so the trace always shows
   what the reviewer said.
 - **Model binding**: the dedicated `second_opinion` binding-only agent
-  (`/agentmodel`) when set, else the assistant's own group — same fallback
-  pattern as `memory_filter`, resolved via
-  `query_filter_router.resolve_filter_model_uuids` and called through
-  `structured_llm_call`.
+  (`/agentmodel`) when set, else the assistant's own group — resolved via
+  `query_filter_router.resolve_model_uuids` (the generic binding-chain
+  resolver; deliberately NOT `resolve_filter_model_uuids`, which prepends the
+  `memory_filter` scorer binding) and called through `structured_llm_call`.
+- **Inspector**: the review renders as its own "second opinion" block in
+  chronological position — after the model response, before the action call —
+  in both the HTML step pane and the markdown export; the action-result data
+  no longer repeats it.
 - **Fails open**: the gated actions are side-effect-free compute, so when no
   group is bound or the review call fails, the action runs and the review
   payload records why the check was skipped (`skipped`/`error`). The gate is a

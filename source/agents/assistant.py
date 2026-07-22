@@ -3285,10 +3285,10 @@ class AssistantAgent(ModelGroupAgent):
         reviewer outage would degrade the assistant for no safety gain."""
         from agents.config import SECOND_OPINION_UUID
         from agents.query_filter_router import (
-            resolve_filter_model_uuids, structured_llm_call,
+            resolve_model_uuids, structured_llm_call,
         )
 
-        model_uuids, group_from = resolve_filter_model_uuids(
+        model_uuids, group_from = resolve_model_uuids(
             [(SECOND_OPINION_UUID, "second_opinion"), (self.agent_uuid, "own")]
         )
         if model_uuids is None:

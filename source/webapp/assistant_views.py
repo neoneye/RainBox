@@ -189,7 +189,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .io { margin:0.4rem 0; }
   /* Extra space above these so the labels are easy to scan for. */
   .as-main .step .io-out, .as-main .step .io-call, .as-main .step .io-in,
-  .as-main .step .io-think { margin-top:1.4rem; }
+  .as-main .step .io-think, .as-main .step .io-so { margin-top:1.4rem; }
   .as-main .step .io-label { font-size:0.68rem; text-transform:uppercase;
                              letter-spacing:0.04em; color:#6b7280; margin-bottom:0.2rem;
                              display:flex; align-items:center; }
@@ -400,6 +400,23 @@ ASSISTANT_TEMPLATE = """
           </span>{% endif %}</div>
           <pre>{{ decision_text or step.model_response or '' }}</pre>
         </div>
+        {% set so = second_opinion.get(step.uuid|string) %}
+        {% if so %}
+        <div class="io io-so">
+          {# The independent pre-execution review of a gated action (currently
+             python_run). Chronologically it ran between the model response and
+             the action executing, so it renders before the action call; its
+             payload is stripped from the action-result data below. #}
+          <div class="io-label">second opinion{% if 'approved' in so %}<span class="fn-ok {{ 'ok-true' if so.approved else 'ok-false' }}" title="The reviewer's verdict: false means the action was blocked and never executed">approved: {{ 'true' if so.approved else 'false' }}</span>{% endif %}<span class="io-meta">
+            {% if so.model_uuid %}<a class="io-model" href="/model?id={{ so.model_uuid }}"
+                title="{{ model_names.get(so.model_uuid, so.model_uuid[:8]) }}">model ↗</a>{% endif %}
+            {% if so.group_from %}<span title="Which agent binding supplied the reviewer's model group (second_opinion on /agentmodel, else the assistant's own)">group: {{ so.group_from }}</span>{% endif %}
+          </span></div>
+          {% if so.problems_text %}<pre>{{ so.problems_text }}</pre>{% endif %}
+          {% if so.skipped %}<pre>review skipped: {{ so.skipped }}</pre>{% endif %}
+          {% if so.error %}<pre>review failed open: {{ so.error }}</pre>{% endif %}
+        </div>
+        {% endif %}
         {% if step.action %}
         <div class="io io-call">
           <div class="io-label">action call{% if step.created_at %}<span class="io-meta"><span class="io-time" title="When this action was called: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
@@ -408,15 +425,16 @@ ASSISTANT_TEMPLATE = """
         {% endif %}
         {% endif %}
         {% set obs = step.observation %}
-        {# The model request / action call / action result io-blocks below are
-           mirrored in Python by _step_md(); keep them aligned. #}
+        {# The model request / second opinion / action call / action result
+           io-blocks are mirrored in Python by _step_md(); keep them aligned. #}
         {% if obs is not none or step.observation_preview %}
         <div class="io io-in">
           <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at %}<span class="io-meta">{% if step.created_at %}<span class="io-dur" title="Duration: how long the action took to complete">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}<span class="io-time" title="When this action result was recorded: {{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
           {% if obs is not none %}
             {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
-            {% if obs.data %}
-              {% if 'qa_static' in obs.data %}
+            {% set odata = obs_data.get(step.uuid|string) %}
+            {% if odata %}
+              {% if 'qa_static' in odata %}
               <table class="io-data"><thead><tr>
                 <th title="number of QA static items">QA static</th>
                 <th title="number of QA dynamic items">QA dynamic</th>
@@ -424,13 +442,13 @@ ASSISTANT_TEMPLATE = """
                 <th title="number of facts shortened because they exceeded the 1200-char per-fact cap (tagged truncate1200); read one in full via memory_query with its uuid">truncated</th>
                 <th title="number of lower-ranked facts dropped because the whole block exceeded the 11000-char budget; narrow the query or fetch a fact by its uuid">omitted</th>
               </tr></thead><tbody><tr>
-                <td>{{ obs.data.qa_static }}</td>
-                <td>{{ obs.data.qa_dynamic }}</td>
-                <td>{{ obs.data.memory }}</td>
-                <td>{{ obs.data.truncated }}</td>
-                <td>{{ obs.data.omitted }}</td>
+                <td>{{ odata.qa_static }}</td>
+                <td>{{ odata.qa_dynamic }}</td>
+                <td>{{ odata.memory }}</td>
+                <td>{{ odata.truncated }}</td>
+                <td>{{ odata.omitted }}</td>
               </tr></tbody></table>
-              {% else %}<pre>{{ obs.data | tojson }}</pre>{% endif %}
+              {% else %}<pre>{{ odata | tojson }}</pre>{% endif %}
             {% endif %}
           {% elif step.observation_preview %}
             <pre>{{ step.observation_preview }}</pre>
@@ -769,6 +787,34 @@ def _intent_md(it) -> list[str]:
     return lines
 
 
+def _split_second_opinion(step) -> tuple[dict | None, dict]:
+    """A gated step's observation data carries the second-opinion review, but
+    chronologically the review ran BEFORE the action — so both renderers (HTML
+    and markdown) show it as its own block above the action call and strip it
+    from the action-result data. Returns (review_or_None, remaining_data)."""
+    obs = step.observation or {}
+    data = dict(obs.get("data") or {})
+    return data.pop("second_opinion", None), data
+
+
+def _second_opinion_md(so: dict) -> list[str]:
+    """The second-opinion block as Markdown: verdict on the label, then the
+    problems (or why the review was skipped / failed open) as bullets."""
+    label = "**second opinion**"
+    if "approved" in so:
+        label += f" · approved: {'true' if so.get('approved') else 'false'}"
+    lines = [label, ""]
+    for problem in so.get("problems") or []:
+        lines.append(f"- {problem}")
+    if so.get("skipped"):
+        lines.append(f"- review skipped: {so['skipped']}")
+    if so.get("error"):
+        lines.append(f"- review failed open: {so['error']}")
+    if lines[-1] != "":
+        lines.append("")
+    return lines
+
+
 def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -> list[str]:
     """A single timeline step's body: model request/response, action call/result
     and any error. Mirror of the template's per-step io-blocks (search
@@ -818,6 +864,9 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -
     if response_text:
         lines.append(_fence(response_text, "json" if decision else ""))
         lines.append("")
+    second_opinion, obs_data = _split_second_opinion(step)
+    if second_opinion is not None:
+        lines.extend(_second_opinion_md(second_opinion))
     if step.action:
         when = _hms(step.created_at)
         lines.append("**action call**" + (f" · {when}" if when else ""))
@@ -840,8 +889,8 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -
             if obs.get("text"):
                 lines.append(_fence(obs["text"]))
                 lines.append("")
-            if obs.get("data"):
-                data = obs["data"]
+            if obs_data:
+                data = obs_data
                 if "qa_static" in data:
                     lines.append("| QA static | QA dynamic | memory | truncated | omitted |")
                     lines.append("|---|---|---|---|---|")
@@ -996,16 +1045,38 @@ def _load_run_detail(selected) -> dict:
         for s in steps
         if s.phase != "control" and (s.action is not None or s.reason is not None)
     }
+    # The second-opinion review split out of each step's observation data, so
+    # the template renders it in chronological position (before the action
+    # call) and the action result shows only the remaining data.
+    second_opinion: dict[str, dict] = {}
+    obs_data: dict[str, dict] = {}
+    for s in steps:
+        so, data = _split_second_opinion(s)
+        if so is not None:
+            # problems_text is precomputed because ASSISTANT_TEMPLATE is a
+            # non-raw string: a '\n' inside a Jinja expression would be
+            # interpreted by Python before Jinja ever parses it.
+            so = dict(so)
+            so["problems_text"] = "\n".join(
+                f"- {p}" for p in so.get("problems") or [])
+            second_opinion[str(s.uuid)] = so
+        obs_data[str(s.uuid)] = data
     # The full final reply (the run stores only a truncated final_summary).
     reply = db.get_run_final_reply(selected)
     model_names: dict[str, str] = {}
-    for muid in {s.model_uuid for s in steps if s.model_uuid}:
+    reviewer_uuids = {
+        UUID(so["model_uuid"])
+        for so in second_opinion.values() if so.get("model_uuid")
+    }
+    for muid in {s.model_uuid for s in steps if s.model_uuid} | reviewer_uuids:
         mc = db.get_model_config(muid)
         if mc is not None:
             model_names[str(muid)] = mc.display_name or mc.model_name
     return {
         "timeline": timeline,
         "decision_json": decision_json,
+        "second_opinion": second_opinion,
+        "obs_data": obs_data,
         "unlinked": unlinked,
         "pending_controls": db.list_pending_controls(selected.uuid),
         "trigger": db.get_run_trigger_message(selected),
@@ -1042,6 +1113,8 @@ def assistant_page() -> str:
         trigger=ctx.get("trigger"),
         timeline=ctx.get("timeline", []),
         decision_json=ctx.get("decision_json", {}),
+        second_opinion=ctx.get("second_opinion", {}),
+        obs_data=ctx.get("obs_data", {}),
         action_descriptions=_ACTION_DESCRIPTIONS,
         unlinked=ctx.get("unlinked", []),
         pending_controls=ctx.get("pending_controls", []),

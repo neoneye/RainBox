@@ -219,7 +219,7 @@ def _review(monkeypatch, *, verdict=None, error=None, no_group=False):
     prompts: list[tuple[str, str]] = []
     resolved = (None, None) if no_group else ([uuid4()], "second_opinion")
     monkeypatch.setattr(
-        qfr, "resolve_filter_model_uuids", lambda fallbacks: resolved
+        qfr, "resolve_model_uuids", lambda candidates: resolved
     )
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt, model):
@@ -282,3 +282,28 @@ def test_no_model_group_anywhere_skips_the_review(monkeypatch):
     assert approved is True
     assert review == {"skipped": "no_model_group"}
     assert prompts == []
+
+
+def test_reviewer_chain_ignores_the_memory_filter_binding(monkeypatch):
+    """Regression: the reviewer once resolved through
+    resolve_filter_model_uuids, which prepends the memory_filter scorer
+    binding — so a bound memory_filter silently supplied the reviewer model
+    (seen live as group_from="memory_filter"). The reviewer consults only its
+    own chain; the filter callers keep their memory_filter-first behaviour."""
+    import agents.query_filter_router as qfr
+    from agents.config import MEMORY_FILTER_UUID, SECOND_OPINION_UUID
+
+    class Binding:
+        model_group_uuid = uuid4()
+
+    def only_memory_filter_bound(agent_uuid):
+        return Binding() if agent_uuid == MEMORY_FILTER_UUID else None
+
+    monkeypatch.setattr(qfr.db, "get_agent_model_binding", only_memory_filter_bound)
+    monkeypatch.setattr(
+        qfr.db, "get_model_group_member_uuids", lambda group_uuid: [uuid4()])
+    assert qfr.resolve_model_uuids(
+        [(SECOND_OPINION_UUID, "second_opinion"), (uuid4(), "own")]
+    ) == (None, None)
+    _uuids, label = qfr.resolve_filter_model_uuids([(uuid4(), "own")])
+    assert label == "memory_filter"
