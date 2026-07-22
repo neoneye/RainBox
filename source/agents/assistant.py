@@ -3635,6 +3635,17 @@ class AssistantAgent(ModelGroupAgent):
         if action is AssistantActionName.REPLY:
             prefix_keys = [k for k in args
                            if k in ("1_specification", "2_message", "3_audit")]
+            raw = self._last_response_text or ""
+            # Forensics: reversed replies have shipped live while every
+            # offline reproduction bounces — this line records exactly what
+            # the check saw so the next escape is diagnosable from the log.
+            logger.info(
+                "reply order check: dict=%s raw_positions=%s raw_len=%d",
+                prefix_keys,
+                [raw.find(f'"{k}"') for k in
+                 ("1_specification", "2_message", "3_audit")],
+                len(raw),
+            )
             if prefix_keys != sorted(prefix_keys):
                 return self.AUDIT_ORDER_ERROR
             return self._audit_order_error(self._last_response_text)
@@ -3682,6 +3693,14 @@ class AssistantAgent(ModelGroupAgent):
         formatting surface worth a bounced step."""
         if decision.action is not AssistantActionName.REPLY:
             return None
+        # Second enforcement layer for the prefix order, at the last gate
+        # before the message posts: validation's raw-text check has been
+        # escaped live in ways not yet reproduced offline, and this check
+        # depends only on the decision object itself.
+        prefix_keys = [k for k in decision.args
+                       if k in ("1_specification", "2_message", "3_audit")]
+        if prefix_keys != sorted(prefix_keys):
+            return AssistantAgent.AUDIT_ORDER_ERROR
         audit = str(decision.args.get("3_audit") or "").strip()
         # Literal check: the audit passes only as exactly "OK" (any case),
         # nothing more. A narration ending in OK ("checked separators. OK")
