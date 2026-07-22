@@ -2013,8 +2013,9 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
         description=('give your final answer to the user, formatted according '
-                     'to the user settings (user_settings_json); ends the '
-                     'turn. args: {"message": "..."}'),
+                     'to the user_settings_json; ends the '
+                     'turn. reason: "...", action: "reply", '
+                     'args: {"message": "..."}, audit: "..."'),
         summary="send the final answer to the user",
         required_args=("message",), terminal=True,
     ),
