@@ -1997,10 +1997,10 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      're-read args.1_message and check it against the user '
                      'settings (user_settings_json) and the formatting_guide '
                      '— decimal and thousand separators, date format, units, '
-                     'currency, language. Write exactly "OK" when the '
-                     'message complies. Otherwise write what is wrong: a '
-                     'reply whose 2_audit is not "OK" is NOT sent, and you '
-                     'get the step back to fix the message.'),
+                     'currency, language. Be skeptical: hunt for silly '
+                     'mistakes such as wrong thousand separators. Describe '
+                     'what is wrong, so a later step can fix the mistakes. '
+                     'Only if you found no flaws, write exactly "OK".'),
         summary="send the final answer to the user",
         required_args=("1_message", "2_audit"), terminal=True,
     ),

@@ -428,7 +428,8 @@ def test_numbered_reply_args_are_the_contract():
 def test_system_prompt_documents_the_audit_arg(room):
     system = _run_capture(room)["system_prompt"]
     assert '"2_audit"' in system
-    assert 'Write exactly "OK"' in system
+    assert "Be skeptical" in system
+    assert 'write exactly "OK"' in system
 
 
 def test_profile_switch_field_changes_only_its_directive(room):
