@@ -424,6 +424,13 @@ ASSISTANT_TEMPLATE = """
             <pre>{{ so.user_prompt }}</pre>
           </details>
           {% endif %}
+          {% if so.reasoning %}
+          <details class="prompt">
+            <summary>reasoning ({{ so.reasoning | length }} chars)</summary>
+            <pre>{{ so.reasoning }}</pre>
+          </details>
+          {% endif %}
+          {% if so.response %}<pre title="The reviewer model's verbatim response">{{ so.response }}</pre>{% endif %}
           {% if so.problems_text %}<pre>{{ so.problems_text }}</pre>{% endif %}
           {% if so.skipped %}<pre>review skipped: {{ so.skipped }}</pre>{% endif %}
           {% if so.error %}<pre>review failed open: {{ so.error }}</pre>{% endif %}
@@ -824,6 +831,14 @@ def _second_opinion_md(so: dict) -> list[str]:
     if so.get("user_prompt"):
         lines.append("_user prompt_")
         lines.append(_fence(so["user_prompt"]))
+        lines.append("")
+    if so.get("reasoning"):
+        lines.append("_reasoning_")
+        lines.append(_fence(so["reasoning"]))
+        lines.append("")
+    if so.get("response"):
+        lines.append("_response_")
+        lines.append(_fence(so["response"], "json"))
         lines.append("")
     for problem in so.get("problems") or []:
         lines.append(f"- {problem}")

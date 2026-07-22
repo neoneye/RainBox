@@ -575,6 +575,9 @@ def _second_opinion_step(run, *, approved: bool, problems=None):
         "group_from": "second_opinion", "model_uuid": str(uuid4()),
         "system_prompt": "You are a second-opinion reviewer.",
         "user_prompt": "<python_program>print(12 * 0.3048)</python_program>",
+        "reasoning": "The operator is metric; the conversion factor is right.",
+        "response": '{"problems": [], "approved": %s}' % (
+            "true" if approved else "false"),
     }
     if approved:
         db.settle_assistant_step(
@@ -610,6 +613,9 @@ def test_second_opinion_renders_before_the_action_call(app_ctx, client):
         # The reviewer's own model request, collapsed like the decide call's.
         assert "You are a second-opinion reviewer." in body
         assert "&lt;python_program&gt;print(12 * 0.3048)&lt;/python_program&gt;" in body
+        # Its reasoning channel (collapsed) and verbatim response.
+        assert "The operator is metric; the conversion factor is right." in body
+        assert "&#34;approved&#34;: true" in body or '"approved": true' in body
         # Stripped from the action-result data pre; the rest of the data stays.
         assert '"second_opinion"' not in body
         assert '"duration_seconds": 0.01' in body
@@ -645,6 +651,9 @@ def test_markdown_export_mirrors_the_second_opinion_block(app_ctx, client):
         assert md.index("**second opinion**") < md.index("**action call**")
         assert "You are a second-opinion reviewer." in md
         assert "<python_program>print(12 * 0.3048)</python_program>" in md
+        assert "_reasoning_" in md
+        assert "The operator is metric; the conversion factor is right." in md
+        assert "_response_" in md and '{"problems": [], "approved": true}' in md
         assert '"second_opinion"' not in md
     finally:
         _cleanup(run.uuid, room.uuid)

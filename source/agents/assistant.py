@@ -3303,17 +3303,29 @@ class AssistantAgent(ModelGroupAgent):
             "system_prompt": SECOND_OPINION_SYSTEM_PROMPT,
             "user_prompt": user_prompt,
         }
-        try:
-            verdict, model_uuid = structured_llm_call(
-                "assistant.second_opinion", model_uuids,
-                SECOND_OPINION_SYSTEM_PROMPT, user_prompt, SecondOpinionVerdict,
-            )
-        except Exception as e:
-            logger.warning("assistant second_opinion review failed open: %s", e)
-            return True, {
-                "error": f"{type(e).__name__}: {e}", "group_from": group_from,
-                **prompts,
-            }
+        # capture_reasoning also tallies the reviewer model's native thinking
+        # channel and its raw content — the structured wrapper drops both from
+        # the parsed verdict, and the tally keeps the streamed partials even
+        # when the call fails.
+        from llm import capture_reasoning
+
+        with capture_reasoning() as tally:
+            try:
+                verdict, model_uuid = structured_llm_call(
+                    "assistant.second_opinion", model_uuids,
+                    SECOND_OPINION_SYSTEM_PROMPT, user_prompt,
+                    SecondOpinionVerdict,
+                )
+            except Exception as e:
+                logger.warning(
+                    "assistant second_opinion review failed open: %s", e)
+                return True, {
+                    "error": f"{type(e).__name__}: {e}",
+                    "group_from": group_from,
+                    "reasoning": tally.reasoning_text or None,
+                    "response": tally.content_text or None,
+                    **prompts,
+                }
         verdict = cast(SecondOpinionVerdict, verdict)
         # An "approved with problems" verdict runs the program; the problems
         # stay in the trace as advisory notes. A rejection with no problems
@@ -3323,6 +3335,11 @@ class AssistantAgent(ModelGroupAgent):
             "problems": list(verdict.problems),
             "group_from": group_from,
             "model_uuid": str(model_uuid),
+            "reasoning": tally.reasoning_text or None,
+            # Providers that report no content through instrumentation still
+            # have the parsed verdict; dump it so the response pane is never
+            # empty.
+            "response": tally.content_text or verdict.model_dump_json(),
             **prompts,
         }
 

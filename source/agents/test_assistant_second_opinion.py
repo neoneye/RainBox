@@ -258,6 +258,10 @@ def test_review_prompt_carries_all_artifacts_under_review(monkeypatch):
     # the review's model request verbatim.
     assert review["system_prompt"] == system_prompt
     assert review["user_prompt"] == user_prompt
+    # No instrumentation events fire through the faked call, so the reasoning
+    # stays empty and the response falls back to the parsed verdict's JSON.
+    assert review["reasoning"] is None
+    assert review["response"] == SecondOpinionVerdict(approved=True).model_dump_json()
 
 
 def test_review_rejection_returns_the_problems(monkeypatch):

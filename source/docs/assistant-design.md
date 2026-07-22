@@ -246,9 +246,12 @@ programs that can't work in the sandbox, before compute is spent.
 - **Inspector**: the review renders as its own "second opinion" block in
   chronological position — after the model response, before the action call —
   in both the HTML step pane and the markdown export; the action-result data
-  no longer repeats it. The review payload carries the exact system + user
-  prompt the reviewer model was given (like the step row persists the decide
-  call's prompts), shown as collapsed details inside the block.
+  no longer repeats it. The review payload carries the reviewer call's full
+  interaction — the exact system + user prompt, the reviewer model's native
+  reasoning channel (via `llm.capture_reasoning`, kept even when the call
+  fails), and its verbatim response (falling back to the parsed verdict's
+  JSON when the provider reports no content) — prompts and reasoning as
+  collapsed details, the response inline.
 - **Fails open**: the gated actions are side-effect-free compute, so when no
   group is bound or the review call fails, the action runs and the review
   payload records why the check was skipped (`skipped`/`error`). The gate is a
