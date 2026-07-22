@@ -121,11 +121,34 @@ class AcceptanceCriteria(BaseModel):
         "User preferences that steer the FINAL MESSAGE — separators, "
         "date format, temperature unit, spelling. Empty when none "
         "apply."))
+    consequences: list[str] = Field(description=(
+        "For each side effect: what could go wrong and what then — "
+        "reversibility (its write tier: log-and-undo is undoable, "
+        "confirm-tier waits for the operator), the blast radius of a "
+        "wrong target, and the failure stance: on a failed mutation the "
+        "reply reports the ACTUAL state, never the intended one. Empty "
+        "when side_effects is empty."))
     assumptions: list[str] = Field(description=(
         "Ambiguities in the request resolved by a settings-based "
         "assumption, stated so the operator can spot a wrong one — "
         "e.g. 'convert target not stated; assuming meters'."))
 ```
+
+### Two contracts in one
+
+The fields split into two distinct contracts:
+
+- **The reply contract** — `response_language`, `formatting`: how the
+  final message reads. This is the whole contract for a pure question.
+- **The work contract** — `side_effects`, `consequences`, `processing`,
+  `assumptions`: what happens to the world. Modifying stuff is rarely
+  the sunshine scenario, so this half is written as a pre-mortem, not a
+  plan: the criteria state up front what a failure or partial success
+  will mean, before the first mutation runs.
+
+The two halves meet at the audit: the message must satisfy the reply
+contract AND truthfully reflect how the work contract actually went —
+sunshine or not.
 
 ### Side-effectful requests
 
@@ -154,10 +177,21 @@ Example criteria for "move kanban task X to DONE":
 ```json
 {"response_language": "en-US (mirrors the current message)",
  "side_effects": ["kanban task X is in the DONE column"],
+ "consequences": [
+   "kanban_move is log-and-undo — reversible via the undo ledger",
+   "a wrong target task would misstate project status; resolve 'X' via find_uuid before moving",
+   "on failure: report the task's actual column; do not claim the move"],
  "processing": ["resolve 'X' to a task uuid before moving (find_uuid)"],
  "formatting": [],
  "assumptions": ["'DONE' matched to the board's Done column by name"]}
 ```
+
+The consequences do not replace the existing safety machinery — the
+write tiers, undo ledger, duplicate-write blocks, and second-opinion
+gate keep enforcing mechanically. The criteria make the model (and the
+operator reading the trace) SEE those stakes before the first mutation,
+and give the audit the non-sunshine branch: a reply after a failed move
+passes the acceptance test only by reporting the failure.
 
 Mid-run revision applies here too: if a read reveals task X is already
 in DONE, the revised criteria record the no-op ("task X already in
