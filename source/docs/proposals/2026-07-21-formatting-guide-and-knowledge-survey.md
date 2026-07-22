@@ -139,7 +139,7 @@ than stuffing behavioral instructions inside the recalled-memory fence.
 The main assistant order becomes:
 
 ```text
-runtime_context
+current_local_time
 operator_identity       authority=context
 formatting_guide        authority=instructions
 knowledge_calibration   authority=context

@@ -117,7 +117,8 @@ def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
     assert '<arguments format="json">{"query": "Simon demoscene"}</arguments>' in prompt
     assert prompt.count("<current_request ") == 1
     parsed = ElementTree.fromstring(f"<root>{prompt}</root>")
-    assert [s.tag for s in parsed][0] == "runtime_context"
+    assert [s.tag for s in parsed][0] == "current_local_time"
+    assert "<runtime_context>" not in prompt      # wrapper dropped
     assert parsed.find("current_request") is not None
 
 
