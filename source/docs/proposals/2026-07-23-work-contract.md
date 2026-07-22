@@ -62,14 +62,31 @@ instruments earn their tokens in a personal-assistant loop, and whether
 they run per-request or only for confirm-tier writes — is its own design
 conversation.
 
+## The governing constraint: localhost latency
+
+Everything runs on localhost against a small local model, and a chat
+turn must answer in seconds — not 15 minutes. That constraint does most
+of the scoping by itself:
+
+- **In budget:** at most one extra small structured call in the loop. A
+  `side_effects` + `consequences` pair (a few short lines) fits; that is
+  the ceiling for anything that runs per-request.
+- **Out of budget:** the deep PlanExe instruments (scenarios, levers,
+  premise attack, full premortem) as loop steps. They are minutes of
+  model time each; they cannot live on the conversational path.
+- **The one latency-free slot:** a confirm-tier write already pauses the
+  run and waits for the operator — the conversation is stopped anyway.
+  If a deeper analysis ever earns its place, it runs asynchronously
+  while the confirm card is pending and attaches its findings to the
+  card; the operator reads them when deciding. Latency there costs
+  nothing, which makes the confirm card the only plausible home for
+  heavyweight risk analysis.
+
 ## Open questions for the full proposal
 
-- Does the work contract ride the same step-0 call as the reply
-  contract, or run only when the request implies a write (cheaper, but
-  needs a code-side trigger)?
-- Which PlanExe instruments transfer? A premortem line per effect is
-  cheap; scenario/lever analysis probably only pays off for confirm-tier
-  (irreversible) writes where the operator reads it on the confirm card.
+- Does the lightweight work contract ride the same step-0 call as the
+  reply contract, or run only when the request implies a write (cheaper,
+  but needs a code-side trigger)?
 - Should the confirm-card UI show the contract (side effects +
   consequences) so the operator approves against the same yardstick the
   audit uses?
