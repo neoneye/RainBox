@@ -84,7 +84,7 @@ def test_create_board_via_loop_and_undo(app_ctx):
                               action=AssistantActionName.KANBAN_BOARD_CREATE,
                               args={"title": name}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"1_message": "done", "2_audit": "OK"}))
+                              args={"1_specification": "en, metric", "2_message": "done", "3_audit": "OK"}))
     bu = None
     try:
         agent.handle(uuid4(), {"room_uuid": str(room.uuid)})

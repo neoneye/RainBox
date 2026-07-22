@@ -22,12 +22,17 @@ current message always override both. Switching `profile.current` changes all
 three blocks and posts a one-time context marker into each room; it preserves
 history and is **not an audience boundary**.
 
-The `reply` action carries a self-audit in its args:
-`{"1_message": ..., "2_audit": ...}`, both required. The number prefixes
-spell the writing order — the message first, then the audit as an
-introspection of a message that already exists — and keep that order even
-under alphabetical key normalization (`1_` < `2_`). The audit re-checks
-the message against `user_settings_json` and the formatting guide
+The `reply` action carries its contract in numbered args:
+`{"1_specification": ..., "2_message": ..., "3_audit": ...}`, all
+required. The number prefixes spell the writing order and survive
+alphabetical key normalization (`1_` < `2_` < `3_`). The specification is
+written BEFORE the message: it establishes the reply's constraints —
+first the response language (the language of the operator's current
+message; the profile's preferred language applies only on explicit
+request), then the applicable settings (units, separators, date format,
+currency). The message obeys the specification, and the audit — an
+introspection of a message that already exists — re-checks it against
+the specification, `user_settings_json` and the formatting guide
 (separators, dates, units, currency, language). The audit is a bare
 verdict: anything but exactly `OK` (any case, nothing else — an OK buried
 in a narration of the checks does not pass) bounces the reply back as a
@@ -113,7 +118,7 @@ This is the direct proof the assistant actually carries the blocks:
    directives, `<knowledge_calibration authority="context">` with the JSONL
    rows (when the profile has calibration topics).
 4. In the same run, inspect the final step's **model response**: the reply
-   args must show `1_message` followed by `2_audit` (in that order — an
+   args must show `1_specification`, `2_message`, `3_audit` (in that order — an
    audit written first is a rejected step, visible in the trace). A non-OK
    audit must appear as a rejected step followed by a corrected reply.
 5. Switch `profile.current` to another profile → the room's next turn is

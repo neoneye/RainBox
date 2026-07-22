@@ -90,7 +90,7 @@ def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
         AssistantStepDecision(reason="look it up", action=AssistantActionName.MEMORY_QUERY,
                               args={"query": "git status"}),
         AssistantStepDecision(reason="answer", action=AssistantActionName.REPLY,
-                              args={"1_message": "done", "2_audit": "OK"}),
+                              args={"1_specification": "en, metric", "2_message": "done", "3_audit": "OK"}),
     )
     try:
         result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})

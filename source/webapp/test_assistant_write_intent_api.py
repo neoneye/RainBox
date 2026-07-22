@@ -36,7 +36,7 @@ def _propose_activation(app):
             AssistantStepDecision(reason="propose", action=AssistantActionName.MEMORY_ACTIVATE,
                                   args={"memory_uuid": str(cand.uuid)}),
             AssistantStepDecision(reason="done", action=AssistantActionName.REPLY,
-                                  args={"1_message": "proposed", "2_audit": "OK"}),
+                                  args={"1_specification": "en, metric", "2_message": "proposed", "3_audit": "OK"}),
         )
         result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
         from db import AssistantWriteIntent

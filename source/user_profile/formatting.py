@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Construction is bounded; exceeding the cap raises (fail loudly in
 # development) rather than truncating a rule mid-directive.
-MAX_FORMATTING_GUIDE_CHARS = 1_100
+MAX_FORMATTING_GUIDE_CHARS = 1_200
 
 # Prompt-example minor-unit exceptions, not an ISO 4217 validator: zero-decimal
 # currencies render the integer sample (1,234 JPY — "1,234.00 JPY" is wrong),
@@ -308,15 +308,20 @@ def format_formatting_guide(profile: dict[str, Any],
     language, language_2 = _first_valid(
         [data.get("language"), data.get("language_2")], _valid_language)
     if language is not None:
-        fallback = (f"prefer {language}, with {language_2} as fallback"
-                    if language_2 else f"prefer {language}")
+        # The preferred language is NOT the output language: replies mirror
+        # the conversation. Small models read a bare "prefer da" as a
+        # directive to switch, so the rule is spelled out as absolute and
+        # the profile languages are demoted to explicit-request-only.
+        known = (f"{language} or {language_2}" if language_2 else language)
         spelling = ""
         for tag in (language, language_2):
             if tag in ENGLISH_SPELLING:
                 spelling = " " + ENGLISH_SPELLING[tag]
                 break
-        lines.append("- Language: follow the language of the current message; "
-                     f"otherwise {fallback}.{spelling}")
+        lines.append("- Language: reply in the language of the current "
+                     "message; never switch on your own. Use "
+                     f"{known} only when the message asks for it; an "
+                     f"explicit request always wins.{spelling}")
 
     if not lines:
         return ""

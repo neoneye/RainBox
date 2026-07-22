@@ -78,7 +78,7 @@ def _python_run(code: str) -> AssistantStepDecision:
 
 def _reply(message: str) -> AssistantStepDecision:
     return AssistantStepDecision(
-        reason="done", action=AssistantActionName.REPLY, args={"1_message": message, "2_audit": "OK"}
+        reason="done", action=AssistantActionName.REPLY, args={"1_specification": "en, metric", "2_message": message, "3_audit": "OK"}
     )
 
 

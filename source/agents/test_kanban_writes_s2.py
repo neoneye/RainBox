@@ -105,7 +105,7 @@ def test_complete_via_loop_then_undo_reopens(board):
         AssistantStepDecision(reason="done", action=AssistantActionName.KANBAN_TASK_COMPLETE,
                               args={"task_uuid": task["uuid"]}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"1_message": "done", "2_audit": "OK"}),
+                              args={"1_specification": "en, metric", "2_message": "done", "3_audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
@@ -149,7 +149,7 @@ def test_comment_undo_posts_retraction_keeps_original(board):
         AssistantStepDecision(reason="comment", action=AssistantActionName.KANBAN_TASK_COMMENT,
                               args={"task_uuid": task["uuid"], "text": "looks good"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"1_message": "commented", "2_audit": "OK"}),
+                              args={"1_specification": "en, metric", "2_message": "commented", "3_audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})

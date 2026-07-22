@@ -61,7 +61,7 @@ def _stub(reply_text, action=AssistantActionName.REPLY):
         self._last_usage = {"input": 321, "output": 12, "ms": 40}
         self._last_model_uuid = captured.setdefault("model_uuid", uuid4())
         if action is AssistantActionName.REPLY:
-            args = {"1_message": reply_text, "2_audit": "OK"}
+            args = {"1_specification": "en, metric", "2_message": reply_text, "3_audit": "OK"}
         else:
             args = {"message": reply_text}
         return AssistantStepDecision(reason="eval", action=action, args=args)
@@ -447,7 +447,7 @@ def test_pair_shares_baseline_generation(divergence_pair, monkeypatch):
         from agents.assistant import AssistantActionName, AssistantStepDecision
         return AssistantStepDecision(
             reason="eval", action=AssistantActionName.REPLY,
-            args={"1_message": text, "2_audit": "OK"})
+            args={"1_specification": "en, metric", "2_message": text, "3_audit": "OK"})
 
     monkeypatch.setattr(pg.AssistantAgent, "_structured_completion", fake)
     concise, teach = divergence_pair

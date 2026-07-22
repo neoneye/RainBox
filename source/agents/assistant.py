@@ -1989,16 +1989,23 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
         description=('give your final answer to the user; ends the turn. '
-                     'args: {"1_message": "...", "2_audit": "..."} — the '
-                     'number prefixes are the writing order. 1_message is '
-                     'the full answer text, formatted according to the '
-                     'user_settings_json and the formatting_guide. 2_audit '
-                     'is your self-review, written after the message: '
-                     're-read args.1_message and check it against the user '
-                     'settings (user_settings_json) and the formatting_guide '
-                     '— decimal and thousand separators, date format, units, '
-                     'currency, language. Be skeptical: hunt for silly '
-                     'mistakes such as wrong thousand separators. The audit '
+                     'args: {"1_specification": "...", "2_message": "...", '
+                     '"3_audit": "..."} — the number prefixes are the '
+                     'writing order. 1_specification: BEFORE writing '
+                     'anything, establish the constraints this reply must '
+                     'follow. First the response language: the language the '
+                     "operator's current message is written in — never "
+                     'switch language on your own; an explicit language '
+                     'request in the message wins. Then the applicable user '
+                     'settings: units, decimal and thousand separators, '
+                     'date format, currency. 2_message: the full answer '
+                     'text, obeying your 1_specification. 3_audit: your '
+                     'self-review, written after the message: re-read '
+                     'args.2_message and check it against your '
+                     '1_specification, the user settings '
+                     '(user_settings_json) and the formatting_guide. Be '
+                     'skeptical: hunt for silly mistakes such as wrong '
+                     'thousand separators or the wrong language. The audit '
                      'is a bare verdict, never a narration of the checks you '
                      'performed: if you found flaws, describe what is wrong '
                      'so a later step can fix it; if you found none, the '
@@ -2006,7 +2013,8 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'An audit that is not exactly "OK" is treated as a '
                      'rejection and the message is NOT sent.'),
         summary="send the final answer to the user",
-        required_args=("1_message", "2_audit"), terminal=True,
+        required_args=("1_specification", "2_message", "3_audit"),
+        terminal=True,
     ),
     AssistantActionName.ASK_CLARIFYING_QUESTION: Capability(
         name=AssistantActionName.ASK_CLARIFYING_QUESTION, family="conversation", read=False,
@@ -3597,10 +3605,15 @@ class AssistantAgent(ModelGroupAgent):
         for key in cap.required_args:
             value = args.get(key)
             if not isinstance(value, str) or not value.strip():
-                hint = (
-                    " — the full answer text goes in args.1_message"
-                    if key == "1_message" else ""
-                )
+                hints = {
+                    "1_specification": (
+                        " — state the reply's constraints first: response "
+                        "language (the language of the operator's current "
+                        "message), units, number and date format"
+                    ),
+                    "2_message": " — the full answer text goes in args.2_message",
+                }
+                hint = hints.get(key, "")
                 return (
                     f"action '{action.value}' requires a non-empty '{key}' "
                     f"argument. Resubmit {action.value} with "
@@ -3611,53 +3624,57 @@ class AssistantAgent(ModelGroupAgent):
         unknown = sorted(set(args) - allowed)
         if unknown:
             return f"action '{action.value}' got unknown argument(s): {', '.join(unknown)}"
-        # The audit must be WRITTEN after the message: an audit composed
-        # before the answer text exists is a reflex "OK", not a re-read.
+        # The reply args must be WRITTEN in prefix order: constraints
+        # established before the message exists, the audit composed after
+        # it — otherwise the spec is a rationalization and the audit a
+        # reflex "OK", not a re-read.
         if action is AssistantActionName.REPLY:
             return self._audit_order_error(self._last_response_text)
         return None
 
     AUDIT_ORDER_ERROR: str = (
-        'the audit must be written AFTER the message — the number prefixes '
-        'are the writing order: "1_message" first, then "2_audit", so the '
-        "audit is a re-read of the message you already wrote. Resubmit in "
-        "that order."
+        "the reply args must be written in prefix order — "
+        '"1_specification" (the constraints, before writing anything), '
+        'then "2_message", then "3_audit" (a re-read of the message you '
+        "already wrote). Resubmit in that order."
     )
 
     @classmethod
     def _audit_order_error(cls, raw_response: str | None) -> str | None:
-        """Reject a reply whose audit was written before its message.
+        """Reject a reply whose args were written out of prefix order.
         Checked on the provider's raw response text, not the parsed
         decision: the structured-output parser normalizes key order, so the
         raw text is the only reliable record of the order the model
-        actually wrote. No raw text (scripted fakes) or either key missing
-        skips the check — presence is validation's job, order is this one's."""
+        actually wrote. No raw text (scripted fakes) or a missing key
+        skips that comparison — presence is validation's job, order is
+        this one's."""
         if not raw_response:
             return None
-        message_at = raw_response.find('"1_message"')
-        audit_at = raw_response.find('"2_audit"')
-        if message_at >= 0 and 0 <= audit_at < message_at:
+        positions = [raw_response.find(f'"{key}"')
+                     for key in ("1_specification", "2_message", "3_audit")]
+        present = [p for p in positions if p >= 0]
+        if present != sorted(present):
             return cls.AUDIT_ORDER_ERROR
         return None
 
     def _terminal_text(self, decision: AssistantStepDecision) -> str:
         # Validation guarantees the required key is present and non-empty.
-        key = ("1_message" if decision.action is AssistantActionName.REPLY
+        key = ("2_message" if decision.action is AssistantActionName.REPLY
                else "question")
         return str(decision.args[key]).strip()
 
     @staticmethod
     def _audit_rejection(decision: AssistantStepDecision) -> str | None:
         """The self-audit gate on `reply`: corrective text when the model's
-        own `2_audit` argument says the message is wrong, else None (send
-        the reply). 2_audit is a required reply argument, so an empty one
+        own `3_audit` argument says the message is wrong, else None (send
+        the reply). 3_audit is a required reply argument, so an empty one
         has already been validation-rejected before this gate runs; one
         that still arrives empty passes (fail open) rather than burning the
         step limit. Only replies are gated — a clarifying question has no
         formatting surface worth a bounced step."""
         if decision.action is not AssistantActionName.REPLY:
             return None
-        audit = str(decision.args.get("2_audit") or "").strip()
+        audit = str(decision.args.get("3_audit") or "").strip()
         # Literal check: the audit passes only as exactly "OK" (any case),
         # nothing more. A narration ending in OK ("checked separators. OK")
         # is NOT a pass — the model must emit the bare verdict, so an OK
@@ -3667,9 +3684,10 @@ class AssistantAgent(ModelGroupAgent):
         return (
             f"Your own audit rejected this reply: {audit}\n"
             "The message was NOT sent. If the message truly complies with "
-            "user_settings_json and the formatting_guide, reply again with "
-            '2_audit set to exactly "OK" — two letters, nothing else, no '
-            "narration of the checks. Otherwise fix the message first."
+            "your 1_specification, user_settings_json and the "
+            'formatting_guide, reply again with 3_audit set to exactly "OK" '
+            "— two letters, nothing else, no narration of the checks. "
+            "Otherwise fix the message first."
         )
 
     @staticmethod

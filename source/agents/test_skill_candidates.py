@@ -91,7 +91,7 @@ def test_propose_via_loop_then_undo_deletes(overlay):
                               args={"skill_id": "loop-skill", "title": "Loop skill",
                                     "body": "do the thing"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"1_message": "proposed", "2_audit": "OK"})))
+                              args={"1_specification": "en, metric", "2_message": "proposed", "3_audit": "OK"})))
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         assert (overlay / "loop-skill.md").exists()
@@ -112,7 +112,7 @@ def test_activate_is_confirm_tier(overlay):
         AssistantStepDecision(reason="activate", action=AssistantActionName.ACTIVATE_SKILL,
                               args={"skill_id": "conf-skill"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"1_message": "proposed", "2_audit": "OK"})))
+                              args={"1_specification": "en, metric", "2_message": "proposed", "3_audit": "OK"})))
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         intent = db.db.session.query(AssistantWriteIntent).filter(
@@ -136,7 +136,7 @@ def test_undo_proposal_after_activation_does_not_delete_active_skill(overlay):
         AssistantStepDecision(reason="propose", action=AssistantActionName.PROPOSE_SKILL,
                               args={"skill_id": "act-undo", "title": "T", "body": "b"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"1_message": "ok", "2_audit": "OK"})))
+                              args={"1_specification": "en, metric", "2_message": "ok", "3_audit": "OK"})))
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         propose_intent = db.db.session.query(AssistantWriteIntent).filter(
@@ -160,7 +160,7 @@ def test_model_cannot_invoke_skill_delete(overlay):
         AssistantStepDecision(reason="del", action=AssistantActionName.SKILL_DELETE,
                               args={"skill_id": "keep-skill"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"1_message": "done", "2_audit": "OK"})))
+                              args={"1_specification": "en, metric", "2_message": "done", "3_audit": "OK"})))
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         assert (overlay / "keep-skill.md").exists()         # guard blocked the delete

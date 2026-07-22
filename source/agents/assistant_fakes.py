@@ -16,7 +16,7 @@ live model — monkeypatch `_decide_next_step` with `scripted_decisions(...)`.
                                   args={"query": "git status"}),
             AssistantStepDecision(reason="Have enough.",
                                   action=AssistantActionName.REPLY,
-                                  args={"1_message": "Working tree clean.", "2_audit": "OK"}),
+                                  args={"1_specification": "en, metric", "2_message": "Working tree clean.", "3_audit": "OK"}),
         ),
     )
 """

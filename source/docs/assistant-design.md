@@ -25,10 +25,13 @@ operator confirmation — is decided by code, never by prompt text.
    the schema's `required` list — a non-required field simply gets omitted by
    the model). `reason` is an operator-facing audit note shown in the trace,
    not hidden chain-of-thought. `reply` takes number-prefixed args —
-   `{"1_message": ..., "2_audit": ...}`, both required — where the prefixes
-   spell the writing order: the answer text first, then a skeptical
-   self-audit of that text against `user_settings_json` and the formatting
-   guide (see `profile-guidance.md`).
+   `{"1_specification": ..., "2_message": ..., "3_audit": ...}`, all
+   required — where the prefixes spell the writing order: first the
+   reply's constraints (response language mirrors the operator's message;
+   units, separators, date format), then the answer text obeying them,
+   then a skeptical self-audit of that text against the specification,
+   `user_settings_json` and the formatting guide (see
+   `profile-guidance.md`).
 3. **Validate** — `_validate_decision` checks the action against the effective
    capability set: unknown/disabled/non-prompt-exposed actions, missing
    required args, and unknown args are all rejected. A reply whose audit was
@@ -37,7 +40,7 @@ operator confirmation — is decided by code, never by prompt text.
    order. A rejection records a `failed` step and feeds the error back via
    the scratchpad; the loop continues.
 4. **Dispatch** — terminal actions (`reply`, `ask_clarifying_question`) post
-   the chat message and finish the run — except a `reply` whose `2_audit` is
+   the chat message and finish the run — except a `reply` whose `3_audit` is
    anything but `OK`: the self-audit gate bounces it as a rejected step (the
    audit text flows back through the scratchpad so the model fixes the
    message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a

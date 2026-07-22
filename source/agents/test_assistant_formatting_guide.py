@@ -76,7 +76,7 @@ def _run_capture(room):
         captured["user_prompt"] = user_prompt
         return AssistantStepDecision(
             reason="answer", action=AssistantActionName.REPLY,
-            args={"1_message": "ok", "2_audit": "OK"})
+            args={"1_specification": "en, metric", "2_message": "ok", "3_audit": "OK"})
 
     agent._structured_completion = fake_completion
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
@@ -282,7 +282,7 @@ def test_identity_block_omits_the_tree_label(room):
 def _reply(message, audit="OK"):
     return AssistantStepDecision(
         reason="answer", action=AssistantActionName.REPLY,
-        args={"1_message": message, "2_audit": audit})
+        args={"1_specification": "en, metric", "2_message": message, "3_audit": audit})
 
 
 def _run_scripted(room, decisions):
@@ -315,14 +315,28 @@ def test_reply_with_ok_audit_is_sent(room):
 
 
 def test_missing_audit_is_validation_rejected(room):
-    """2_audit is a required reply argument: a reply without one is
+    """3_audit is a required reply argument: a reply without one is
     rejected like any missing required arg, and the model resubmits."""
     bad = AssistantStepDecision(
         reason="answer", action=AssistantActionName.REPLY,
-        args={"1_message": "100 km is 100 km."})
+        args={"1_specification": "en, metric",
+              "2_message": "100 km is 100 km."})
     prompts = _run_scripted(room, [bad, _reply("100 km is 100 km.")])
     assert len(prompts) == 2
-    assert "requires a non-empty '2_audit' argument" in prompts[1]
+    assert "requires a non-empty '3_audit' argument" in prompts[1]
+    assert _posted_replies(room) == ["100 km is 100 km."]
+
+
+def test_missing_specification_is_validation_rejected(room):
+    """1_specification is required and the error explains what it is for:
+    the constraints (language first) are established before writing."""
+    bad = AssistantStepDecision(
+        reason="answer", action=AssistantActionName.REPLY,
+        args={"2_message": "100 km is 100 km.", "3_audit": "OK"})
+    prompts = _run_scripted(room, [bad, _reply("100 km is 100 km.")])
+    assert len(prompts) == 2
+    assert "requires a non-empty '1_specification' argument" in prompts[1]
+    assert "response language" in prompts[1]
     assert _posted_replies(room) == ["100 km is 100 km."]
 
 
@@ -352,22 +366,22 @@ def test_rejected_step_carries_the_full_decision_to_the_next_prompt(room):
     assert '<step index="1" action="reply" status="rejected">' in prompts[1]
     assert "<reason>conversion done, replying now</reason>" in prompts[1]
     assert '<arguments format="json">{}</arguments>' in prompts[1]
-    assert "requires a non-empty '1_message' argument" in prompts[1]
-    assert "args.1_message" in prompts[1]
+    assert "requires a non-empty '1_specification' argument" in prompts[1]
     assert _posted_replies(room) == ["62 miles"]
 
 
-def test_audit_before_message_in_raw_response_is_rejected(room):
+def test_out_of_prefix_order_raw_response_is_rejected(room):
     """The order the model actually wrote lives only in the raw response
-    text (the structured-output parser normalizes key order). An audit
-    emitted before the message — wherever it was spelled — bounces so the
-    model retries writing the message first."""
+    text (the structured-output parser normalizes key order). Args emitted
+    out of prefix order — the audit before the message here — bounce so
+    the model retries writing spec, then message, then audit."""
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant",
                            send=lambda _: None)
     prompts = []
     script = [
         ('{"reason": "r", "action": "reply", "args": '
-         '{"2_audit": "OK", "1_message": "100 km is 100 km."}}',
+         '{"1_specification": "en", "3_audit": "OK", '
+         '"2_message": "100 km is 100 km."}}',
          _reply("100 km is 100 km.")),        # parsed dict hides the order
         (None, _reply("100 km is 100 km.")),
     ]
@@ -381,7 +395,7 @@ def test_audit_before_message_in_raw_response_is_rejected(room):
     agent._structured_completion = fake_completion
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
     assert len(prompts) == 2
-    assert "the audit must be written AFTER the message" in prompts[1]
+    assert "must be written in prefix order" in prompts[1]
     assert _posted_replies(room) == ["100 km is 100 km."]
 
 
@@ -435,22 +449,25 @@ def test_clarifying_question_is_not_audit_gated(room):
 
 def test_numbered_reply_args_are_the_contract():
     """args must be schema-required (or the model omits it), and reply's
-    required args are the number-prefixed pair — the prefixes spell the
-    writing order and keep message before audit even under alphabetical
-    key normalization ("1_" < "2_")."""
+    required args are the number-prefixed trio — the prefixes spell the
+    writing order (constraints, then message, then audit) and keep it even
+    under alphabetical key normalization ("1_" < "2_" < "3_")."""
     from agents.assistant import CAPABILITIES
 
     schema = AssistantStepDecision.model_json_schema()
     assert "args" in schema["required"]
     assert "audit" not in schema["properties"]
     cap = CAPABILITIES[AssistantActionName.REPLY]
-    assert cap.required_args == ("1_message", "2_audit")
+    assert cap.required_args == ("1_specification", "2_message", "3_audit")
     assert sorted(cap.required_args) == list(cap.required_args)
 
 
-def test_system_prompt_documents_the_audit_arg(room):
+def test_system_prompt_documents_the_reply_args(room):
     system = _run_capture(room)["system_prompt"]
-    assert '"2_audit"' in system
+    assert '"1_specification"' in system
+    assert '"3_audit"' in system
+    assert "BEFORE writing anything" in system
+    assert "never switch language on your own" in system
     assert "Be skeptical" in system
     assert 'exactly "OK"' in system
     assert "never a narration" in system

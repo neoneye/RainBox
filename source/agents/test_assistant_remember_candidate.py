@@ -84,7 +84,7 @@ def test_handle_wires_message_uuid_into_evidence_source_id(app_ctx):
 
     def _decision(action, **args):
         if action is AssistantActionName.REPLY and "message" in args:
-            args = {"1_message": args.pop("message"), "2_audit": "OK", **args}
+            args = {"1_specification": "en, metric", "2_message": args.pop("message"), "3_audit": "OK", **args}
         return AssistantStepDecision(reason="step", action=action, args=args)
 
     human = db.get_human_user()

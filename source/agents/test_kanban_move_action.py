@@ -203,7 +203,7 @@ def test_move_via_loop_lands_completed_undo_ledger(board):
         AssistantStepDecision(reason="move", action=AssistantActionName.KANBAN_TASK_COLUMN,
                               args={"task_uuid": task["uuid"], "column_uuid": done}),
         AssistantStepDecision(reason="done", action=AssistantActionName.REPLY,
-                              args={"1_message": "moved", "2_audit": "OK"}),
+                              args={"1_specification": "en, metric", "2_message": "moved", "3_audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
