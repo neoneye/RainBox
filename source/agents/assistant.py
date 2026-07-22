@@ -1988,9 +1988,11 @@ class Capability:
 CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
-        description=('give your final answer to the user, formatted according '
-                     'to the user_settings_json; ends the turn. '
-                     'args: {"message": "...", "audit": "..."}. '
+        description=('give your final answer to the user; ends the turn. '
+                     'args: {"message": "...", "audit": "..."} — write the '
+                     'keys in exactly that order: message first, audit last. '
+                     'message is the full answer text, formatted according '
+                     'to the user_settings_json and the formatting_guide. '
                      'audit is your self-review, written after the message: '
                      're-read args.message and check it against the user '
                      'settings (user_settings_json) and the formatting_guide '
@@ -3605,6 +3607,18 @@ class AssistantAgent(ModelGroupAgent):
         unknown = sorted(set(args) - allowed)
         if unknown:
             return f"action '{action.value}' got unknown argument(s): {', '.join(unknown)}"
+        # The audit must be WRITTEN after the message (dicts preserve the
+        # model's emission order): an audit composed before the answer text
+        # exists is a reflex "OK", not a re-read of the message.
+        keys = list(args)
+        if ("message" in keys and "audit" in keys
+                and keys.index("audit") < keys.index("message")):
+            return (
+                "reply args must be written in this order: \"message\" "
+                "first, then \"audit\" — the audit is a re-read of the "
+                "message you already wrote. Resubmit with the keys in that "
+                "order."
+            )
         return None
 
     def _terminal_text(self, decision: AssistantStepDecision) -> str:

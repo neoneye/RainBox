@@ -356,6 +356,20 @@ def test_rejected_step_carries_the_full_decision_to_the_next_prompt(room):
     assert _posted_replies(room) == ["62 miles"]
 
 
+def test_audit_written_before_message_is_rejected(room):
+    """The audit must be composed AFTER the message (a re-read, not a reflex
+    "OK"); dicts preserve the model's emission order, so audit-first is
+    validation-rejected with the ordering rule."""
+    backwards = AssistantStepDecision(
+        reason="answer", action=AssistantActionName.REPLY,
+        args={"audit": "OK", "message": "100 km is 100 km."})
+    prompts = _run_scripted(
+        room, [backwards, _reply("100 km is 100 km.")])
+    assert len(prompts) == 2
+    assert 'must be written in this order: "message" first' in prompts[1]
+    assert _posted_replies(room) == ["100 km is 100 km."]
+
+
 def test_ok_with_trailing_punctuation_passes(room):
     prompts = _run_scripted(room, [_reply("fine", audit="ok.")])
     assert len(prompts) == 1
