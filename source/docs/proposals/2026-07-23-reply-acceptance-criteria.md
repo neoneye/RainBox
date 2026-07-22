@@ -139,23 +139,23 @@ directly after `<current_request>` — the request and its constraints
 travel together at the top of the prompt:
 
 ```xml
-<acceptance_criteria>
+<acceptance_criteria_json>
 {"response_language": "en-US (mirrors the current message)",
  "processing": ["target unit: meters (settings: metric)"],
  "formatting": ["numbers: dot decimal, no thousand separators"],
  "assumptions": ["convert target not stated; assuming meters"]}
-</acceptance_criteria>
+</acceptance_criteria_json>
 ```
 
-A bare tag, no attributes — the `<user_settings_json>` precedent:
-everything in the user prompt is context, and the tag name names the
-content. The semantics live in the system prompt as one code-owned
-sentence: *"acceptance_criteria is the established plan for this turn's
-reply: follow it during steps and when composing the message, unless the
-operator's request overrides it."* (The content is model-generated, so
-the authority stays in that code-owned sentence — same rule as every
-other model-derived block.) `source_priority` lists it directly below
-`current_request`.
+A bare tag, no attributes, `_json`-suffixed like `<user_settings_json>`:
+everything in the user prompt is context, and the tag name names both
+the content and its format. The semantics live in the system prompt as
+one code-owned sentence: *"acceptance_criteria_json is the established
+plan for this turn's reply: follow it during steps and when composing
+the message, unless the operator's request overrides it."* (The content
+is model-generated, so the authority stays in that code-owned sentence —
+same rule as every other model-derived block.) `source_priority` lists
+`acceptance_criteria_json` directly below `current_request`.
 
 ### Mid-run revision — the criteria are current state, not a step-0 snapshot
 
@@ -187,7 +187,7 @@ Two revision triggers, mirroring who can see the change:
   takes no args, re-runs the same specification call, and its observation
   is the new criteria. Read-tier, no undo needed — the criteria are derived state.
 
-Only the LATEST criteria are injected (`<acceptance_criteria>` is replaced,
+Only the LATEST criteria are injected (`<acceptance_criteria_json>` is replaced,
 never appended — two sets of criteria in one prompt is a contradiction machine);
 every criteria call remains in the trace as its own step, so the operator
 can see the revision history: what step 0 assumed, what changed, what
