@@ -101,17 +101,21 @@ This is the direct proof the assistant actually carries the blocks:
 1. On `/settings`: set `profile.current` to a profile (e.g. your duplicated
    copy), and set `assistant.formatting_guide` and
    `assistant.knowledge_calibration` to `true` (temporarily, if you are just
-   verifying — see step 6 for the gated rollout).
+   verifying — see section 6 for the gated rollout).
 2. In a chat room with the assistant, ask anything ("how far is 100 km?").
 3. Open `/assistant`, select the newest run, and inspect any step's **user
    prompt**. It must contain, in order: `<user_settings_json>`,
    `<formatting_guide authority="instructions">` with the profile's
    directives, `<knowledge_calibration authority="context">` with the JSONL
    rows (when the profile has calibration topics).
-4. Switch `profile.current` to another profile → the room's next turn is
+4. In the same run, inspect the final step's **model response**: the reply
+   args must show `1_message` followed by `2_audit` (in that order — an
+   audit written first is a rejected step, visible in the trace). A non-OK
+   audit must appear as a rejected step followed by a corrected reply.
+5. Switch `profile.current` to another profile → the room's next turn is
    preceded by a visible one-time notice ("the active profile switched to
    …"); the marker itself must NOT appear inside the model's prompt.
-5. Set both switches back to unset — the next run's prompt must carry the
+6. Set both switches back to unset — the next run's prompt must carry the
    identity block only.
 
 If a block is missing when expected, expand the step's collapsed **log**

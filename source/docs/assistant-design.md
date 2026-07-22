@@ -21,16 +21,29 @@ operator confirmation — is decided by code, never by prompt text.
 2. **Decide** — one grammar-constrained structured call
    (`_decide_next_step`, via the model-group fallback machinery of
    `ModelGroupAgent._structured_completion`) returns an
-   `AssistantStepDecision`: `{reason, action, args}`. `reason` is an
-   operator-facing audit note shown in the trace, not hidden chain-of-thought.
+   `AssistantStepDecision`: `{reason, action, args}` (`args` is forced into
+   the schema's `required` list — a non-required field simply gets omitted by
+   the model). `reason` is an operator-facing audit note shown in the trace,
+   not hidden chain-of-thought. `reply` takes number-prefixed args —
+   `{"1_message": ..., "2_audit": ...}`, both required — where the prefixes
+   spell the writing order: the answer text first, then a skeptical
+   self-audit of that text against `user_settings_json` and the formatting
+   guide (see `profile-guidance.md`).
 3. **Validate** — `_validate_decision` checks the action against the effective
    capability set: unknown/disabled/non-prompt-exposed actions, missing
-   required args, and unknown args are all rejected. A rejection records a
-   `failed` step and feeds the error back via the scratchpad; the loop
-   continues.
+   required args, and unknown args are all rejected. A reply whose audit was
+   emitted before its message is also rejected — checked on the provider's
+   raw response text, since the structured-output parser normalizes key
+   order. A rejection records a `failed` step and feeds the error back via
+   the scratchpad; the loop continues.
 4. **Dispatch** — terminal actions (`reply`, `ask_clarifying_question`) post
-   the chat message and finish the run. Reads and log-and-undo writes execute
-   immediately. Confirm-tier writes are **proposed**, never executed inline.
+   the chat message and finish the run — except a `reply` whose `2_audit` is
+   anything but `OK`: the self-audit gate bounces it as a rejected step (the
+   audit text flows back through the scratchpad so the model fixes the
+   message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
+   never-approving audit cannot burn the step limit. Reads and log-and-undo
+   writes execute immediately. Confirm-tier writes are **proposed**, never
+   executed inline.
 5. **Observe** — the action's `AssistantObservation{ok, text, data}` is capped
    (per-capability `output_cap_chars`), persisted on the step row, and appended
    to the scratchpad for the next decision.
@@ -72,11 +85,15 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   section order carries the emphasis and the time anchor is
   current_local_time at the end), the transcript (`kind == "message"` rows
   only, newest `MAX_RECENT_MESSAGES = 30`), the **scratchpad** of steps
-  taken this turn (tail-capped at `MAX_SCRATCHPAD_CHARS = 5000`), the step
-  counter (`decision_request`), the **operator identity**
-  (`profile.current`'s fields as JSON, `authority="context"`, no preamble
-  and no tree label; opaque enum values such as `number_format` carry a
-  code-owned `<key>.comment` entry spelling the convention out), the
+  taken this turn (each step renders its action, the decision's stated
+  reason, the args, and the observation — a rejected step reads as the full
+  decision it was, not an anonymous failure; tail-capped at
+  `MAX_SCRATCHPAD_CHARS = 5000`), the step
+  counter (`decision_request`), the **user settings**
+  (`<user_settings_json>` — `profile.current`'s fields as JSON, a bare tag
+  with no attributes (the system prompt declares it reference data), no
+  preamble and no tree label; opaque enum values such as `number_format`
+  carry a code-owned `<key>.comment` entry spelling the convention out), the
   **formatting guide** (`authority="instructions"` — deterministic
   locale directives compiled by `user_profile/formatting.py`; the one
   profile-derived block with instruction authority, justified because every
