@@ -3612,6 +3612,11 @@ class AssistantAgent(ModelGroupAgent):
                         "message), units, number and date format"
                     ),
                     "2_message": " — the full answer text goes in args.2_message",
+                    "3_audit": (
+                        " — the bare verdict on args.2_message: exactly "
+                        '"OK" if it complies with your 1_specification and '
+                        "the user settings, otherwise what is wrong"
+                    ),
                 }
                 hint = hints.get(key, "")
                 return (

@@ -324,6 +324,7 @@ def test_missing_audit_is_validation_rejected(room):
     prompts = _run_scripted(room, [bad, _reply("100 km is 100 km.")])
     assert len(prompts) == 2
     assert "requires a non-empty '3_audit' argument" in prompts[1]
+    assert "bare verdict" in prompts[1]           # the hint explains the field
     assert _posted_replies(room) == ["100 km is 100 km."]
 
 
