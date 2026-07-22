@@ -3627,8 +3627,16 @@ class AssistantAgent(ModelGroupAgent):
         # The reply args must be WRITTEN in prefix order: constraints
         # established before the message exists, the audit composed after
         # it — otherwise the spec is a rationalization and the audit a
-        # reflex "OK", not a re-read.
+        # reflex "OK", not a re-read. Checked in BOTH representations: the
+        # parsed dict preserves json insertion order when the parser is
+        # faithful, and the raw response text is the authority when it
+        # normalizes (a live reversed reply slipped through the raw check
+        # alone — the dict check has no plumbing to depend on).
         if action is AssistantActionName.REPLY:
+            prefix_keys = [k for k in args
+                           if k in ("1_specification", "2_message", "3_audit")]
+            if prefix_keys != sorted(prefix_keys):
+                return self.AUDIT_ORDER_ERROR
             return self._audit_order_error(self._last_response_text)
         return None
 

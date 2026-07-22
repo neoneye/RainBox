@@ -370,6 +370,21 @@ def test_rejected_step_carries_the_full_decision_to_the_next_prompt(room):
     assert _posted_replies(room) == ["62 miles"]
 
 
+def test_reversed_args_dict_is_rejected_without_raw_text(room):
+    """The live miss: a fully reversed reply (3_audit, 2_message,
+    1_specification) shipped when only the raw-text check guarded order.
+    The parsed dict preserves json insertion order, so the dict-side check
+    catches it with no dependency on the raw-text plumbing."""
+    reversed_args = AssistantStepDecision(
+        reason="answer", action=AssistantActionName.REPLY,
+        args={"3_audit": "OK", "2_message": "Fahrenheit is...",
+              "1_specification": "en"})
+    prompts = _run_scripted(room, [reversed_args, _reply("Fahrenheit is...")])
+    assert len(prompts) == 2
+    assert "must be written in prefix order" in prompts[1]
+    assert _posted_replies(room) == ["Fahrenheit is..."]
+
+
 def test_out_of_prefix_order_raw_response_is_rejected(room):
     """The order the model actually wrote lives only in the raw response
     text (the structured-output parser normalizes key order). Args emitted
