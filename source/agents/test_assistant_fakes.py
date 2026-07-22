@@ -14,7 +14,7 @@ from agents.assistant_fakes import scripted_decisions
 
 def _reply(message: str) -> AssistantStepDecision:
     return AssistantStepDecision(
-        reason="done", action=AssistantActionName.REPLY, args={"message": message, "audit": "OK"}
+        reason="done", action=AssistantActionName.REPLY, args={"1_message": message, "2_audit": "OK"}
     )
 
 
@@ -25,8 +25,8 @@ def test_scripted_decisions_returns_in_order():
     fake = scripted_decisions(_reply("one"), _reply("two"))
     first = fake(messages=[], scratchpad=[], step_index=0)
     second = fake(messages=[], scratchpad=[], step_index=1)
-    assert first.args["message"] == "one"
-    assert second.args["message"] == "two"
+    assert first.args["1_message"] == "one"
+    assert second.args["1_message"] == "two"
 
 
 def test_scripted_decisions_raises_when_over_consumed():

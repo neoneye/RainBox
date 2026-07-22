@@ -47,7 +47,7 @@ def test_enqueue_time_progress_survives_the_run_and_is_reaped(app_ctx):
         # By the time the model is consulted, the operator already has a signal.
         seen["progress_during_first_call"] = _progress_count(chatroom.uuid)
         return AssistantStepDecision(
-            reason="answer", action=AssistantActionName.REPLY, args={"message": "ok", "audit": "OK"})
+            reason="answer", action=AssistantActionName.REPLY, args={"1_message": "ok", "2_audit": "OK"})
 
     agent._decide_next_step = fake_decide
     try:
@@ -80,7 +80,7 @@ def test_facts_marker_does_not_leave_the_operator_without_a_progress_signal(app_
     def fake_decide(**_kwargs):
         seen["progress_during_first_call"] = _progress_count(chatroom.uuid)
         return AssistantStepDecision(
-            reason="answer", action=AssistantActionName.REPLY, args={"message": "ok", "audit": "OK"})
+            reason="answer", action=AssistantActionName.REPLY, args={"1_message": "ok", "2_audit": "OK"})
 
     agent._decide_next_step = fake_decide
     try:
@@ -119,7 +119,7 @@ def test_each_step_boundary_emits_immediate_liveness(app_ctx):
             reason="invalid first try", action=AssistantActionName.REPLY, args={}),
         AssistantStepDecision(
             reason="answer", action=AssistantActionName.REPLY,
-            args={"message": "done", "audit": "OK"}),
+            args={"1_message": "done", "2_audit": "OK"}),
     ])
     agent._decide_next_step = lambda **_kwargs: next(decisions)
     try:

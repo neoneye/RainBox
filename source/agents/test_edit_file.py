@@ -120,7 +120,7 @@ def test_propose_uses_diff_preview_then_confirm_writes(app_ctx, ws):
         AssistantStepDecision(reason="edit", action=AssistantActionName.EDIT_FILE,
                               args={"path": "doc.txt", "content": "after\n"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"message": "proposed", "audit": "OK"}),
+                              args={"1_message": "proposed", "2_audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
@@ -156,7 +156,7 @@ def test_confirm_refuses_if_file_changed_since_preview(app_ctx, ws):
         AssistantStepDecision(reason="edit", action=AssistantActionName.EDIT_FILE,
                               args={"path": "doc.txt", "content": "v2\n"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"message": "proposed", "audit": "OK"}),
+                              args={"1_message": "proposed", "2_audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})

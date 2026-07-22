@@ -22,19 +22,19 @@ current message always override both. Switching `profile.current` changes all
 three blocks and posts a one-time context marker into each room; it preserves
 history and is **not an audience boundary**.
 
-The step decision carries a self-audit: `audit` is a required top-level
-field declared after `args`, so grammar-constrained decoding makes the
-model write the reply message first and the audit after it — an
-introspection of a message that already exists. The audit re-checks the
-message against `user_settings_json` and the formatting guide (separators,
-dates, units, currency, language). Anything but `OK` bounces the reply
-back as a rejected step — the message is not posted, the audit text flows
-into the scratchpad, and the model fixes the message. Bounces are capped
-(`MAX_AUDIT_REJECTIONS`, 2 per run) so an audit that never approves cannot
-fail the turn. An audit emitted before the message in the raw response
-(key order inside the parsed decision is normalized, so the raw text is
-the authority) is validation-rejected with the ordering rule; an audit
-spelled inside the reply args is tolerated and feeds the same gate.
+The `reply` action carries a self-audit in its args:
+`{"1_message": ..., "2_audit": ...}`, both required. The number prefixes
+spell the writing order — the message first, then the audit as an
+introspection of a message that already exists — and keep that order even
+under alphabetical key normalization (`1_` < `2_`). The audit re-checks
+the message against `user_settings_json` and the formatting guide
+(separators, dates, units, currency, language). Anything but `OK` bounces
+the reply back as a rejected step — the message is not posted, the audit
+text flows into the scratchpad, and the model fixes the message. Bounces
+are capped (`MAX_AUDIT_REJECTIONS`, 2 per run) so an audit that never
+approves cannot fail the turn. An audit emitted before the message in the
+raw response text (the parsed decision normalizes key order, so the raw
+text is the authority) is validation-rejected with the ordering rule.
 
 The two gated blocks ship dark: each switch is flipped only after its block
 passes the live release gate below. Everything else on this page (the

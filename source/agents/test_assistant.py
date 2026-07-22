@@ -70,7 +70,7 @@ def _reply(message: str) -> AssistantStepDecision:
     return AssistantStepDecision(
         reason="ready to answer",
         action=AssistantActionName.REPLY,
-        args={"message": message, "audit": "OK"},
+        args={"1_message": message, "2_audit": "OK"},
     )
 
 
