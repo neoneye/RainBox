@@ -356,6 +356,19 @@ def test_clarifying_question_is_not_audit_gated(room):
     assert _posted_replies(room) == ["which unit?"]
 
 
+def test_audit_is_required_in_schema_and_last_in_property_order():
+    """The JSON schema drives the provider's grammar-constrained decoding:
+    `audit` must be in `required` (an optional field is simply omitted by the
+    model) and last in property order (the audit re-reads the already-written
+    args.message). Python-side construction keeps the default."""
+    schema = AssistantStepDecision.model_json_schema()
+    assert "audit" in schema["required"]
+    assert list(schema["properties"])[-1] == "audit"
+    assert AssistantStepDecision(
+        reason="r", action=AssistantActionName.REPLY, args={"message": "m"}
+    ).audit == ""
+
+
 def test_system_prompt_documents_the_audit_field(room):
     system = _run_capture(room)["system_prompt"]
     assert "audit" in system

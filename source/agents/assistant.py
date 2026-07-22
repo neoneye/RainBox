@@ -122,6 +122,21 @@ class AssistantStepDecision(BaseModel):
         ),
     )
 
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):  # type: ignore[override]
+        """Mark `audit` required in the JSON schema while keeping its Python
+        default. The schema drives the provider's grammar-constrained
+        decoding: without `required`, the model may (and does) simply omit
+        the field, and the self-audit gate never sees an audit. The Python
+        default stays so scripted fakes and rows stored before the field
+        existed still validate — an empty audit fails open in the gate."""
+        schema = handler(core_schema)
+        required = list(schema.get("required", []))
+        if "audit" not in required:
+            required.append("audit")
+        schema["required"] = required
+        return schema
+
 
 class SecondOpinionVerdict(BaseModel):
     """The second-opinion reviewer's structured verdict over one gated action
@@ -3589,8 +3604,9 @@ class AssistantAgent(ModelGroupAgent):
         audit field says the message is wrong, else None (send the reply).
         Only replies are gated — a clarifying question has no formatting
         surface worth a bounced step. An empty audit passes (fail open): the
-        field is optional in the schema, and a model that skips it must
-        degrade to the ungated behavior, not burn the step limit."""
+        schema requires the field, but anything that still arrives without
+        one (scripted fakes, pre-field data) must degrade to the ungated
+        behavior, not burn the step limit."""
         if decision.action is not AssistantActionName.REPLY:
             return None
         audit = decision.audit.strip()
