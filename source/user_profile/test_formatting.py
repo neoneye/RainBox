@@ -73,8 +73,8 @@ def test_germany_renders_expected_body():
         "- Units: metric. Prefer km and kg; preserve a source value "
         "when precision matters and add the conversion.\n"
         "- Temperature: Celsius (°C).\n"
-        "- Numbers: decimal comma with point grouping, for example "
-        "1.234.567,89.\n"
+        "- Numbers: decimal comma with point grouping, for example: "
+        "1.234.567,89\n"
         "- Currency: use the currency code EUR with the preferred number format, "
         "for example 1.234,56 EUR. Convert currencies only with a supplied "
         "or freshly retrieved rate.\n"
@@ -90,7 +90,7 @@ def test_india_renders_indian_grouping_and_half_hour_offset():
         currency="INR", number_format="12,34,567.89",
     )
     body = format_formatting_guide(profile, now=SUMMER)
-    assert "- Numbers: decimal point with Indian comma grouping, for example 12,34,567.89." in body
+    assert "- Numbers: decimal point with Indian comma grouping, for example: 12,34,567.89\n" in body
     assert "12-hour clock, for example 11:59 pm" in body
     assert "Asia/Kolkata (currently UTC+05:30)" in body
     assert "1,234.56 INR" in body        # Indian grouping of 1234.56 has no lakh
@@ -194,12 +194,12 @@ def test_no_grouping_variants():
     point = format_formatting_guide(_profile(
         number_format="1234567.89", currency="EUR"))
     assert ("- Numbers: decimal point without thousands separators, "
-            "for example 1234567.89." in point)
+            "for example: 1234567.89\n" in point)
     assert "for example 1234.56 EUR." in point
     comma = format_formatting_guide(_profile(
         number_format="1234567,89", currency="DKK"))
     assert ("- Numbers: decimal comma without thousands separators, "
-            "for example 1234567,89." in comma)
+            "for example: 1234567,89\n" in comma)
     assert "for example 1234,56 DKK." in comma
     yen = format_formatting_guide(_profile(
         number_format="1234567.89", currency="JPY"))

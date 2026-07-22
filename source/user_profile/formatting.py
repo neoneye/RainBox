@@ -280,8 +280,11 @@ def format_formatting_guide(profile: dict[str, Any],
     number_entry = NUMBER_FORMATS.get(str(data.get("number_format") or "").strip())
     if number_entry is not None:
         wording, _ = number_entry
-        lines.append(f"- Numbers: {wording}, for example "
-                     f"{data['number_format'].strip()}.")
+        # No sentence-ending period: the example IS separator punctuation,
+        # and a trailing dot right after the digits could read as part of
+        # the convention being demonstrated.
+        lines.append(f"- Numbers: {wording}, for example: "
+                     f"{data['number_format'].strip()}")
 
     currency, currency_2 = _first_valid(
         [data.get("currency"), data.get("currency_2")], _valid_currency)
