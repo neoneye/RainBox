@@ -41,18 +41,24 @@ thinking on). Three findings:
    structure is, on this stack, just another prompt instruction — and a
    more confusing one than prose.
 
-2. **The streaming parser corrupts structured objects** (found while
-   debugging a run that rejected its own python_run six times for a
-   missing `code` argument it had in fact written): llama-index's
+2. **The union's schema complexity broke the streaming parser** (found
+   while debugging a run that rejected its own python_run six times for
+   a missing `code` argument it had in fact written): llama-index's
    streaming partial-parser returned the final `.raw` with the free-form
    args dict emptied (`{}`) while the provider's true text carried the
    arguments, and a structured stream's `message.content` is a dump of
    the partially parsed object — so the corruption also masqueraded as
-   the model's output in the trace. **Fix kept on main**
-   (`ModelGroupAgent._settle_structured_result`): after the stream, the
-   provider's true text (the instrumentation capture) is re-validated
-   against the response model and wins whenever it parses. This protects
-   every structured call in the app, union or not.
+   the model's output in the trace. The trigger was the union itself
+   (RootModel anyOf with extra-forbidden branches): the flat classic
+   schema had streamed through the same parser for weeks without ever
+   emptying args. The **fix is kept on main anyway**
+   (`ModelGroupAgent._settle_structured_result`: re-validate the
+   provider's true text after the stream; it wins whenever it parses)
+   because the same parser was separately caught rewriting flat-schema
+   output too — it normalizes args key order, which is what silently
+   defeated the audit-order check earlier — and because the true-text
+   preference keeps the trace honest about what the model wrote. The
+   guard is fail-open and behavior-identical when the parser is healthy.
 
 3. **The union confuses smaller models.** With two shapes in play, a 4B
    model produced illegal hybrids, burned bounce caps, and finished runs
