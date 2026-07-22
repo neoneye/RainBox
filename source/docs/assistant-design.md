@@ -61,9 +61,15 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   a uuid escape hatch), fix reported errors rather than resubmitting, never
   invent placeholder values, and never claim a write that didn't run
   (anti-fabrication).
-- **User prompt**, in order: the current **local time** (so relative reminders
-  resolve in the operator's zone, not UTC), the **operator identity**
-  (`profile.current`'s fields as JSON, `authority="context"`), the
+- **User prompt** — the sections are emitted as top-level sibling tags (no
+  root wrapper: models recognize the start/end tags without a single-rooted
+  document, and a wrapper would cost one indentation level on every line;
+  each section is still individually ElementTree-escaped XML) — in order:
+  the current **local time** (so relative reminders resolve in the
+  operator's zone, not UTC), the **operator identity**
+  (`profile.current`'s fields as JSON, `authority="context"`, no preamble
+  and no tree label; opaque enum values such as `number_format` carry a
+  code-owned `<key>.comment` entry spelling the convention out), the
   **formatting guide** (`authority="instructions"` — deterministic
   locale directives compiled by `user_profile/formatting.py`; the one
   profile-derived block with instruction authority, justified because every
@@ -297,6 +303,13 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   most once per second), and failure when applicable. The checkpoint
   is removed only after the resulting step is durable. This covers the window
   where no `assistant_step` exists yet because the model has not returned.
+- Each step also stores an operator-facing debug **`log`** (JSONB list of
+  `{label, text, uuid?, href?}` entries): the active profile that drove the
+  declared blocks (name, uuid, `/profile` deep link) and both block switch
+  states — the first questions when troubleshooting a weird reply. The
+  inspector renders it as a collapsed "log" block placed before the model
+  request (mirrored in the markdown export); the list is extensible for
+  future per-step diagnostics. Debug context never enters the model prompt.
 - Each step also stores the model's native `reasoning` ("thinking") channel,
   captured via instrumentation while the structured output streams (the
   structured wrapper drops it from the parsed result). A reasoning model's

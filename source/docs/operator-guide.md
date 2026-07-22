@@ -53,7 +53,8 @@ fallback.
   three blocks and posts a one-time notice into each room — room history is
   preserved, and the switch is **not** an audience boundary: to hand the
   screen to someone else, use a fresh room and the demo database.
-- `/assistant` — assistant run inspector (traces, steps, write intents).
+- `/assistant` — assistant run inspector (traces, steps, write intents, and
+  each step's collapsed debug log: active profile + block switch states).
 - `/conversations` — persona-to-persona conversation runs.
 - `/find` — paste a uuid (or a fragment, even typo'd) to learn what it is
   and jump to it; also searches mentions in chats/logs and the Q&A registry.

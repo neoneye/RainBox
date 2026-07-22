@@ -5,7 +5,7 @@ blocks, all rendered from one per-turn context snapshot:
 
 | Block | Authority | Source | Gated? |
 |---|---|---|---|
-| `<operator_identity>` | context | profile fields as JSON (`user_profile/identity.py`) | no — always on when a profile is selected |
+| `<operator_identity>` | context | profile fields as JSON (`user_profile/identity.py`; opaque enums like `number_format` carry a code-owned `.comment` entry) | no — always on when a profile is selected |
 | `<formatting_guide>` | instructions | deterministic locale directives (`user_profile/formatting.py`) | **`assistant.formatting_guide`**, default off |
 | `<knowledge_calibration>` | context | self-declared topic rows as JSONL (`user_profile/calibration.py`) | **`assistant.knowledge_calibration`**, default off |
 
@@ -100,10 +100,13 @@ This is the direct proof the assistant actually carries the blocks:
 5. Set both switches back to unset — the next run's prompt must carry the
    identity block only.
 
-If a block is missing when expected, check in this order: is the switch on;
-is `profile.current` set (unset = no blocks at all); does the profile have
-the relevant fields/topics; and the supervisor log — a renderer failure logs
-a warning and empties only its own block, never the turn.
+If a block is missing when expected, expand the step's collapsed **log**
+(above the model request) first — it records the active profile (with a
+`/profile` deep link) and both switch states for that exact turn. Then
+check: is the switch on; is `profile.current` set (unset = no blocks at
+all); does the profile have the relevant fields/topics; and the supervisor
+log — a renderer failure logs a warning and empties only its own block,
+never the turn.
 
 ### 4. Live evals — the Phase 0/3 measurement (needs your bound model)
 

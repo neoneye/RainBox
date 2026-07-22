@@ -299,7 +299,9 @@ duplication is a convenience, not ancestry (unlike /prompt's clone).
 
 The profile selected by `profile.current` feeds three assistant prompt
 blocks, all rendered from one per-turn context snapshot (see
-`assistant-design.md`): the identity JSON (`user_profile/identity.py`), the
+`assistant-design.md`): the identity JSON (`user_profile/identity.py` —
+registry fields only, no tree label; opaque enums such as `number_format`
+carry a code-owned `.comment` entry spelling the convention out), the
 deterministic formatting guide (`user_profile/formatting.py` — lookup-driven
 directives with examples compiled from the locale fields, strict
 prompt-boundary validation so free-text values can never become
