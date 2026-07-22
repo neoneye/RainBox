@@ -34,19 +34,24 @@ operator confirmation — is decided by code, never by prompt text.
    `profile-guidance.md`).
 3. **Validate** — `_validate_decision` checks the action against the effective
    capability set: unknown/disabled/non-prompt-exposed actions, missing
-   required args, and unknown args are all rejected. A reply whose audit was
-   emitted before its message is also rejected — checked on the provider's
-   raw response text, since the structured-output parser normalizes key
-   order. A rejection records a `failed` step and feeds the error back via
-   the scratchpad; the loop continues.
+   required args, and unknown args are all rejected. Reply args written out
+   of prefix order are also rejected — checked in both representations:
+   the parsed args dict (json insertion order) and the provider's raw
+   response text (the authority when the structured-output parser
+   normalizes key order). Every reply logs a `reply order check:` line
+   (dict key order, raw-text key positions) so an order escape is
+   diagnosable from the app log. A rejection records a `failed` step and
+   feeds the error back via the scratchpad; the loop continues.
 4. **Dispatch** — terminal actions (`reply`, `ask_clarifying_question`) post
    the chat message and finish the run — except a `reply` whose `3_audit` is
    anything but `OK`: the self-audit gate bounces it as a rejected step (the
    audit text flows back through the scratchpad so the model fixes the
    message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
-   never-approving audit cannot burn the step limit. Reads and log-and-undo
-   writes execute immediately. Confirm-tier writes are **proposed**, never
-   executed inline.
+   never-approving audit cannot burn the step limit. The gate also
+   re-checks the prefix order from the decision's own args — a second,
+   plumbing-free enforcement layer at the last moment before the message
+   posts. Reads and log-and-undo writes execute immediately. Confirm-tier
+   writes are **proposed**, never executed inline.
 5. **Observe** — the action's `AssistantObservation{ok, text, data}` is capped
    (per-capability `output_cap_chars`), persisted on the step row, and appended
    to the scratchpad for the next decision.
@@ -340,7 +345,12 @@ Every run is durable in `assistant_run` / `assistant_step` (see
 - Each step stores the exact decide-call prompts (`system_prompt`,
   `user_prompt`), raw `model_response`, the model used, token counts,
   `duration_ms`, and the
-  `requested_at`/`created_at`/`settled_at` timestamps.
+  `requested_at`/`created_at`/`settled_at` timestamps. When reading key
+  ORDER from a step, trust only the text columns (`model_response`): the
+  JSONB columns (`args`, observations) are reordered by Postgres —
+  length-then-bytes, so reply args always display as
+  `3_audit, 2_message, 1_specification` regardless of what the model
+  actually wrote.
 - Before dispatching a decide call, the run's `metadata.active_call` checkpoint
   stores its step index, exact system/user prompts, request time, model group,
   and an attempt list. Each attempt adds the resolved model name/UUID,

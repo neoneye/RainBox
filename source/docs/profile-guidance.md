@@ -40,10 +40,13 @@ rejected step — the message is not posted, the audit text flows into the
 scratchpad, and the model fixes the message. Bounces are capped
 (`MAX_AUDIT_REJECTIONS`, 2 per run) so an audit that never approves cannot
 fail the turn: past the cap the reply ships anyway, and the run summariser
-typically flags the outcome Unresolved. An audit emitted before the
-message in the raw response text (the parsed decision normalizes key
-order, so the raw text is the authority) is validation-rejected with the
-ordering rule.
+typically flags the outcome Unresolved. The prefix order is enforced at
+two independent layers: validation checks the parsed args dict (json
+insertion order) AND the raw response text (the authority when the
+parser normalizes key order), and the audit gate re-checks the dict at
+the last moment before the message posts. Validation logs a
+`reply order check:` line (dict key order, raw-text key positions) for
+every reply, so an order escape is diagnosable from the app log.
 
 The two gated blocks ship dark: each switch is flipped only after its block
 passes the live release gate below. Everything else on this page (the
@@ -121,6 +124,11 @@ This is the direct proof the assistant actually carries the blocks:
    args must show `1_specification`, `2_message`, `3_audit` (in that order — an
    audit written first is a rejected step, visible in the trace). A non-OK
    audit must appear as a rejected step followed by a corrected reply.
+   Read the order from the **model response** block only — the **action
+   call** block is stored as Postgres JSONB, which reorders keys by
+   length-then-bytes, and for these key names that always displays as
+   `3_audit, 2_message, 1_specification` even when the model wrote the
+   correct order.
 5. Switch `profile.current` to another profile → the room's next turn is
    preceded by a visible one-time notice ("the active profile switched to
    …"); the marker itself must NOT appear inside the model's prompt.
