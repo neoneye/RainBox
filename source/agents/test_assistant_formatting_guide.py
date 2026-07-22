@@ -370,6 +370,34 @@ def test_audit_written_before_message_is_rejected(room):
     assert _posted_replies(room) == ["100 km is 100 km."]
 
 
+def test_audit_first_in_raw_response_is_rejected_despite_normalized_dict(room):
+    """The structured-output parser has been seen normalizing args key
+    order, hiding the model's real emission order. The raw response text is
+    the truth: audit-first there must bounce even when the parsed dict
+    arrives message-first."""
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant",
+                           send=lambda _: None)
+    prompts = []
+    script = [
+        ('{"reason": "r", "action": "reply", "args": '
+         '{"audit": "OK", "message": "100 km is 100 km."}}',
+         _reply("100 km is 100 km.")),          # dict normalized: message first
+        (None, _reply("100 km is 100 km.")),
+    ]
+
+    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None):
+        prompts.append(user_prompt)
+        raw, decision = script.pop(0)
+        agent._last_response_text = raw
+        return decision
+
+    agent._structured_completion = fake_completion
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    assert len(prompts) == 2
+    assert 'must be written in this order: "message" first' in prompts[1]
+    assert _posted_replies(room) == ["100 km is 100 km."]
+
+
 def test_ok_with_trailing_punctuation_passes(room):
     prompts = _run_scripted(room, [_reply("fine", audit="ok.")])
     assert len(prompts) == 1

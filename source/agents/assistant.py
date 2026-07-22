@@ -3607,18 +3607,40 @@ class AssistantAgent(ModelGroupAgent):
         unknown = sorted(set(args) - allowed)
         if unknown:
             return f"action '{action.value}' got unknown argument(s): {', '.join(unknown)}"
-        # The audit must be WRITTEN after the message (dicts preserve the
-        # model's emission order): an audit composed before the answer text
-        # exists is a reflex "OK", not a re-read of the message.
-        keys = list(args)
-        if ("message" in keys and "audit" in keys
-                and keys.index("audit") < keys.index("message")):
-            return (
-                "reply args must be written in this order: \"message\" "
-                "first, then \"audit\" — the audit is a re-read of the "
-                "message you already wrote. Resubmit with the keys in that "
-                "order."
-            )
+        # The audit must be WRITTEN after the message: an audit composed
+        # before the answer text exists is a reflex "OK", not a re-read.
+        return self._args_order_error(args, self._last_response_text)
+
+    ARGS_ORDER_ERROR: str = (
+        'reply args must be written in this order: "message" first, then '
+        '"audit" — the audit is a re-read of the message you already wrote. '
+        "Resubmit with the keys in that order."
+    )
+
+    @classmethod
+    def _args_order_error(
+        cls, args: dict[str, Any], raw_response: str | None
+    ) -> str | None:
+        """Reject an audit-written-before-message reply. Checked in BOTH
+        representations: the parsed args dict, and the provider's raw
+        response text — the structured-output parser has been seen
+        normalizing dict key order, so the raw text is the only reliable
+        record of the order the model actually wrote. Unparseable raw text
+        is skipped (the parsed dict already passed validation)."""
+        def audit_first(keys: list[str]) -> bool:
+            return ("message" in keys and "audit" in keys
+                    and keys.index("audit") < keys.index("message"))
+
+        if audit_first(list(args)):
+            return cls.ARGS_ORDER_ERROR
+        if raw_response:
+            try:
+                parsed = json.loads(raw_response)
+            except ValueError:
+                return None
+            raw_args = parsed.get("args") if isinstance(parsed, dict) else None
+            if isinstance(raw_args, dict) and audit_first(list(raw_args)):
+                return cls.ARGS_ORDER_ERROR
         return None
 
     def _terminal_text(self, decision: AssistantStepDecision) -> str:
