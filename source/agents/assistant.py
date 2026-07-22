@@ -1961,7 +1961,9 @@ class Capability:
 CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
-        description='give your final answer to the user; ends the turn. args: {"message": "..."}',
+        description=('give your final answer to the user, formatted according '
+                     'to the user settings (user_settings_json); ends the '
+                     'turn. args: {"message": "..."}'),
         summary="send the final answer to the user",
         required_args=("message",), terminal=True,
     ),
