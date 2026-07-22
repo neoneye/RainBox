@@ -254,6 +254,10 @@ def test_review_prompt_carries_all_artifacts_under_review(monkeypatch):
     assert "print(12 * 0.3048)" in user_prompt              # python_program
     assert "prefers metric units" in user_prompt            # operator_profile
     assert 'action="python_run"' in user_prompt
+    # The exact prompts ride in the review payload so the inspector can show
+    # the review's model request verbatim.
+    assert review["system_prompt"] == system_prompt
+    assert review["user_prompt"] == user_prompt
 
 
 def test_review_rejection_returns_the_problems(monkeypatch):
@@ -275,6 +279,8 @@ def test_review_failure_fails_open(monkeypatch):
     )
     assert approved is True
     assert "all models in the group failed" in review["error"]
+    # The prompts were built before the failed call; keep them for diagnosis.
+    assert "print(12 * 0.3048)" in review["user_prompt"]
 
 
 def test_no_model_group_anywhere_skips_the_review(monkeypatch):

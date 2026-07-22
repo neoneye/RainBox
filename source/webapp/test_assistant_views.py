@@ -573,6 +573,8 @@ def _second_opinion_step(run, *, approved: bool, problems=None):
     review = {
         "approved": approved, "problems": problems or [],
         "group_from": "second_opinion", "model_uuid": str(uuid4()),
+        "system_prompt": "You are a second-opinion reviewer.",
+        "user_prompt": "<python_program>print(12 * 0.3048)</python_program>",
     }
     if approved:
         db.settle_assistant_step(
@@ -605,6 +607,9 @@ def test_second_opinion_renders_before_the_action_call(app_ctx, client):
         assert body.index("second opinion") < body.index("action call")
         assert "approved: true" in body
         assert "group: second_opinion" in body
+        # The reviewer's own model request, collapsed like the decide call's.
+        assert "You are a second-opinion reviewer." in body
+        assert "&lt;python_program&gt;print(12 * 0.3048)&lt;/python_program&gt;" in body
         # Stripped from the action-result data pre; the rest of the data stays.
         assert '"second_opinion"' not in body
         assert '"duration_seconds": 0.01' in body
@@ -638,6 +643,8 @@ def test_markdown_export_mirrors_the_second_opinion_block(app_ctx, client):
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
         assert "**second opinion** · approved: true" in md
         assert md.index("**second opinion**") < md.index("**action call**")
+        assert "You are a second-opinion reviewer." in md
+        assert "<python_program>print(12 * 0.3048)</python_program>" in md
         assert '"second_opinion"' not in md
     finally:
         _cleanup(run.uuid, room.uuid)

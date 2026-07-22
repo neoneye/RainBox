@@ -3296,6 +3296,13 @@ class AssistantAgent(ModelGroupAgent):
         user_prompt = self._build_second_opinion_prompt(
             decision, reasoning=reasoning, messages=messages
         )
+        # The exact request the reviewer model was given rides in the review
+        # payload (like the step row persists the decide call's prompts), so
+        # the inspector can show the review's model request verbatim.
+        prompts = {
+            "system_prompt": SECOND_OPINION_SYSTEM_PROMPT,
+            "user_prompt": user_prompt,
+        }
         try:
             verdict, model_uuid = structured_llm_call(
                 "assistant.second_opinion", model_uuids,
@@ -3305,6 +3312,7 @@ class AssistantAgent(ModelGroupAgent):
             logger.warning("assistant second_opinion review failed open: %s", e)
             return True, {
                 "error": f"{type(e).__name__}: {e}", "group_from": group_from,
+                **prompts,
             }
         verdict = cast(SecondOpinionVerdict, verdict)
         # An "approved with problems" verdict runs the program; the problems
@@ -3315,6 +3323,7 @@ class AssistantAgent(ModelGroupAgent):
             "problems": list(verdict.problems),
             "group_from": group_from,
             "model_uuid": str(model_uuid),
+            **prompts,
         }
 
     def _build_second_opinion_prompt(

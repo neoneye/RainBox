@@ -412,6 +412,18 @@ ASSISTANT_TEMPLATE = """
                 title="{{ model_names.get(so.model_uuid, so.model_uuid[:8]) }}">model ↗</a>{% endif %}
             {% if so.group_from %}<span title="Which agent binding supplied the reviewer's model group (second_opinion on /agentmodel, else the assistant's own)">group: {{ so.group_from }}</span>{% endif %}
           </span></div>
+          {% if so.system_prompt %}
+          <details class="prompt">
+            <summary>system prompt</summary>
+            <pre>{{ so.system_prompt }}</pre>
+          </details>
+          {% endif %}
+          {% if so.user_prompt %}
+          <details class="prompt">
+            <summary>user prompt</summary>
+            <pre>{{ so.user_prompt }}</pre>
+          </details>
+          {% endif %}
           {% if so.problems_text %}<pre>{{ so.problems_text }}</pre>{% endif %}
           {% if so.skipped %}<pre>review skipped: {{ so.skipped }}</pre>{% endif %}
           {% if so.error %}<pre>review failed open: {{ so.error }}</pre>{% endif %}
@@ -798,12 +810,21 @@ def _split_second_opinion(step) -> tuple[dict | None, dict]:
 
 
 def _second_opinion_md(so: dict) -> list[str]:
-    """The second-opinion block as Markdown: verdict on the label, then the
-    problems (or why the review was skipped / failed open) as bullets."""
+    """The second-opinion block as Markdown: verdict on the label, the exact
+    prompts the reviewer model was given, then the problems (or why the review
+    was skipped / failed open) as bullets."""
     label = "**second opinion**"
     if "approved" in so:
         label += f" · approved: {'true' if so.get('approved') else 'false'}"
     lines = [label, ""]
+    if so.get("system_prompt"):
+        lines.append("_system prompt_")
+        lines.append(_fence(so["system_prompt"]))
+        lines.append("")
+    if so.get("user_prompt"):
+        lines.append("_user prompt_")
+        lines.append(_fence(so["user_prompt"]))
+        lines.append("")
     for problem in so.get("problems") or []:
         lines.append(f"- {problem}")
     if so.get("skipped"):
