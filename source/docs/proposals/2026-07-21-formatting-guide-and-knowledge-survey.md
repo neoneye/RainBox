@@ -1,8 +1,13 @@
 # Formatting guide and knowledge calibration
 
-**Status: Phases 0–2 implemented (harness, formatting guide, calibration —
-code, UI, and tests); Phase 3's live measurement run and decision are still
-open, and the declarative-forms follow-up needs its own proposal.** Ship two
+**Status (2026-07-22): Phases 0–2 implemented and merged — code, UI, tests,
+the live eval harness (`evals/profile_guidance.py`), and the executable
+release gate (`evals/profile_gate.py`). Phase 3 is tooled but not run: the
+operator-facing runbook is `docs/profile-guidance.md` (seed cases → four
+variants → gate → flip the default-off switches); no gate verdict exists
+yet. Phase 4 (chat-agent parity) is not started, and the declarative-forms
+follow-up proposal is not yet written. See "Implementation status" below for
+where the code has since diverged from this text.** Ship two
 small profile-driven prompt features first, then grow toward
 operator-authored forms on the measured result:
 
@@ -80,23 +85,41 @@ this document and its follow-ups is always about *disclosure* — which
 audiences, surfaces, and prompts may see a thing — never about degrading or
 declining what is stored.
 
-## Implementation readiness
+## Implementation status
 
 **Phases 0–2 are implemented.** The current-state documentation lives in
 `docs/profile-guidance.md` (feature overview + the verification/enablement
 runbook), `docs/profile-design.md`, `docs/assistant-design.md`,
-`docs/settings-design.md`, and `docs/eval-loop.md`. The formatting and
-calibration blocks ship behind independent default-off switches; what
-remains open is running the Phase 0 baseline + Phase 3 variant comparison
-against the bound model group and applying the release gate
-(`evals/profile_gate.py`) to flip them.
+`docs/settings-design.md`, and `docs/eval-loop.md`.
 
-| Work | Design status | First implementation result |
+| Work | Status | Result |
 |---|---|---|
-| Phase 0 — live baseline harness | **Ready** | Reproducible baseline `EvalRun`s for the fixed gate. |
-| Phase 1 — formatting guide | **Ready** | A separately gated formatting block in the main assistant. |
-| Phase 2 — knowledge calibration | **Ready** | Stamped last-write-wins storage/editor plus a separately gated calibration block. |
-| Declarative-forms follow-up | **Needs its own proposal** | Schema/migration plan and completed disclosure review. |
+| Phase 0 — live baseline harness | **Implemented** | `evals/profile_guidance.py`: seeded versioned case inventory, four variants, three repetitions at production sampling, per-repetition records for the gate. |
+| Phase 1 — formatting guide | **Implemented** | `user_profile/formatting.py` + `number_format`, injected behind `assistant.formatting_guide` (default off). |
+| Phase 2 — knowledge calibration | **Implemented** | `db/profile_calibration.py` storage/API, `/profile` fieldset editor, `user_profile/calibration.py` renderer with the degrade-then-drop ladder, behind `assistant.knowledge_calibration` (default off). |
+| Phase 3 — measure and decide | **Tooled, not run** | The gate (`evals/profile_gate.py`) enforces the Resolved-decisions contract and records a durable `profile-gate` verdict; no verdict has been produced yet. Runbook: `docs/profile-guidance.md` §4–5. |
+| Phase 4 — chat-agent parity | **Not started** | `agents/chat_context.py` still injects no identity/formatting/calibration; gated on a positive Phase 3 result. |
+| Declarative-forms follow-up | **Needs its own proposal** | Not yet written. Schema/migration plan and completed disclosure review. |
+
+Where the running code has diverged from this document as written (the
+design docs above are authoritative for current state):
+
+- **Prompt order.** The main assistant's user prompt was reordered on
+  2026-07-22 so the task leads: `current_request` (now a bare tag, no
+  authority/role/timestamp attributes) → `conversation_history` →
+  `current_turn_steps` → `decision_request` → the declared-profile blocks
+  (identity → formatting → calibration → memory profile → skills) →
+  `current_local_time` last. The order diagram under "Current architecture
+  and exact insertion point" below shows the layout as designed; the
+  relative order of the declared-profile blocks is unchanged.
+- **Formatting registry growth.** The measurement-system enum gained the UK
+  hybrid variant and a derived temperature field (2026-07-22), beyond the
+  metric/imperial pair specified here.
+- **Identity block.** The preamble line was dropped from the identity block
+  body; opaque enum values carry code-owned `.comment` entries instead.
+- **Per-step debug log.** Each assistant step's `log` column records the
+  active profile and both switch states for that exact turn — the runbook's
+  first diagnostic when a block is missing.
 
 The two product-level choices are settled under **Resolved decisions** near the
 end. No further architecture round is required for Phases 0–2 unless
