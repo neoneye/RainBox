@@ -60,8 +60,10 @@ def _stub(reply_text, action=AssistantActionName.REPLY):
         # so this stub can't mask a key mismatch in the harness again.
         self._last_usage = {"input": 321, "output": 12, "ms": 40}
         self._last_model_uuid = captured.setdefault("model_uuid", uuid4())
-        return AssistantStepDecision(
-            reason="eval", action=action, args={"message": reply_text})
+        args = {"message": reply_text}
+        if action is AssistantActionName.REPLY:
+            args["audit"] = "OK"
+        return AssistantStepDecision(reason="eval", action=action, args=args)
 
     return fake, captured
 
@@ -444,7 +446,7 @@ def test_pair_shares_baseline_generation(divergence_pair, monkeypatch):
         from agents.assistant import AssistantActionName, AssistantStepDecision
         return AssistantStepDecision(
             reason="eval", action=AssistantActionName.REPLY,
-            args={"message": text})
+            args={"message": text, "audit": "OK"})
 
     monkeypatch.setattr(pg.AssistantAgent, "_structured_completion", fake)
     concise, teach = divergence_pair

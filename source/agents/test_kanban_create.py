@@ -132,7 +132,7 @@ def test_create_via_loop_then_undo_deletes(board):
         AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_TASK_CREATE,
                               args={"board_uuid": bu, "column_uuid": col, "title": "Follow up"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"message": "created"}),
+                              args={"message": "created", "audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
@@ -167,7 +167,7 @@ def test_duplicate_create_in_same_run_is_blocked(board):
     agent._decide_next_step = scripted_decisions(
         AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_TASK_CREATE, args=dict(args)),
         AssistantStepDecision(reason="create again", action=AssistantActionName.KANBAN_TASK_CREATE, args=dict(args)),
-        AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY, args={"message": "created"}),
+        AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY, args={"message": "created", "audit": "OK"}),
     )
     try:
         result = agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
@@ -199,7 +199,7 @@ def test_reply_includes_clickable_task_link_after_create(board):
         AssistantStepDecision(reason="create", action=AssistantActionName.KANBAN_TASK_CREATE,
                               args={"board_uuid": bu, "title": "Bike checkup"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"message": "The task has been added."}),
+                              args={"message": "The task has been added.", "audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
@@ -231,7 +231,7 @@ def test_model_cannot_invoke_delete_task(board):
         AssistantStepDecision(reason="delete", action=AssistantActionName.KANBAN_TASK_DELETE,
                               args={"task_uuid": str(tu)}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"message": "done"}),
+                              args={"message": "done", "audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})

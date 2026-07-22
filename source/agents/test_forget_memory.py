@@ -147,7 +147,7 @@ def test_forget_via_loop_executes_inline_and_is_undoable(app_ctx):
         AssistantStepDecision(reason="forget", action=AssistantActionName.MEMORY_FORGET,
                               args={"text": text}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"message": "done"}),
+                              args={"message": "done", "audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})

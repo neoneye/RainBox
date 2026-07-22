@@ -22,14 +22,15 @@ current message always override both. Switching `profile.current` changes all
 three blocks and posts a one-time context marker into each room; it preserves
 history and is **not an audience boundary**.
 
-The step decision carries a self-audit: the model writes an `audit` field
-after the args, re-checking a `reply` message against `user_settings_json`
-and the formatting guide (separators, dates, units, currency, language).
-Anything but `OK` bounces the reply back as a rejected step — the message is
-not posted, the audit text flows into the scratchpad, and the model fixes
-the message. Bounces are capped (`MAX_AUDIT_REJECTIONS`, 2 per run) so an
-audit that never approves cannot fail the turn; an absent audit fails open
-and the reply ships ungated.
+The `reply` action carries a self-audit: `audit` is a required reply
+argument, written after the message, re-checking it against
+`user_settings_json` and the formatting guide (separators, dates, units,
+currency, language). Anything but `OK` bounces the reply back as a rejected
+step — the message is not posted, the audit text flows into the scratchpad,
+and the model fixes the message. Bounces are capped
+(`MAX_AUDIT_REJECTIONS`, 2 per run) so an audit that never approves cannot
+fail the turn; a reply missing the argument is validation-rejected like any
+missing required arg.
 
 The two gated blocks ship dark: each switch is flipped only after its block
 passes the live release gate below. Everything else on this page (the

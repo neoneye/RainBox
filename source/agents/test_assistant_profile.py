@@ -65,7 +65,7 @@ def test_profile_block_injected_before_skills(app_ctx, tmp_path, monkeypatch):
     def fake_completion(*, system_prompt, user_prompt, response_model, validator=None):
         captured["user_prompt"] = user_prompt
         return AssistantStepDecision(
-            reason="answer", action=AssistantActionName.REPLY, args={"message": "ok"}
+            reason="answer", action=AssistantActionName.REPLY, args={"message": "ok", "audit": "OK"}
         )
 
     agent._structured_completion = fake_completion

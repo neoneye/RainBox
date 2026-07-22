@@ -83,6 +83,8 @@ def test_handle_wires_message_uuid_into_evidence_source_id(app_ctx):
         return AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
 
     def _decision(action, **args):
+        if action is AssistantActionName.REPLY:
+            args.setdefault("audit", "OK")
         return AssistantStepDecision(reason="step", action=action, args=args)
 
     human = db.get_human_user()

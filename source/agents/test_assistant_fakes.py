@@ -14,7 +14,7 @@ from agents.assistant_fakes import scripted_decisions
 
 def _reply(message: str) -> AssistantStepDecision:
     return AssistantStepDecision(
-        reason="done", action=AssistantActionName.REPLY, args={"message": message}
+        reason="done", action=AssistantActionName.REPLY, args={"message": message, "audit": "OK"}
     )
 
 

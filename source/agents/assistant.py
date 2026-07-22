@@ -116,35 +116,18 @@ class AssistantStepDecision(BaseModel):
             "is rejected when that argument is missing or empty."
         ),
     )
-    # Declared last so the model writes it AFTER the args: for a reply, the
-    # audit is a re-read of the message it just composed.
-    audit: str = Field(
-        default="",
-        description=(
-            "Self-review of this step, written after args. For `reply`: "
-            "re-check args.message against user_settings_json and the "
-            "formatting_guide (decimal/thousand separators, date format, "
-            "units, currency, language) and write exactly \"OK\" when the "
-            "message complies, otherwise state what is wrong. For every "
-            "other action write \"OK\"."
-        ),
-    )
-
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema, handler):  # type: ignore[override]
-        """Mark the defaulted fields required in the JSON schema while
-        keeping their Python defaults. The schema drives the provider's
-        grammar-constrained decoding: a non-required field may (and does)
-        simply get omitted by the model — an omitted `audit` blinds the
-        self-audit gate, and an omitted `args` invites terminal actions
-        without their required arguments. The Python defaults stay so
-        scripted fakes and rows stored before these fields existed still
-        validate — an empty audit fails open in the gate."""
+        """Mark `args` required in the JSON schema while keeping its Python
+        default. The schema drives the provider's grammar-constrained
+        decoding: a non-required field may (and does) simply get omitted by
+        the model, inviting terminal actions without their required
+        arguments. The Python default stays so scripted fakes and stored
+        rows without an args dict still validate."""
         schema = handler(core_schema)
         required = list(schema.get("required", []))
-        for name in ("args", "audit"):
-            if name not in required:
-                required.append(name)
+        if "args" not in required:
+            required.append("args")
         schema["required"] = required
         return schema
 
@@ -213,13 +196,6 @@ Each step you emit exactly one decision as structured output with these fields:
   audit trace, so keep it brief and factual — it is not hidden scratch reasoning.
 - action: one of the available actions listed below.
 - args: the arguments for that action.
-- audit: your self-review of this step, written after the args. For `reply`:
-  re-read args.message and check it against the user settings
-  (user_settings_json) and the formatting_guide — decimal and thousand
-  separators, date format, units, currency, language. Write exactly "OK" when
-  the message complies. Otherwise write what is wrong: a reply whose audit is
-  not "OK" is NOT sent, and you get the step back to fix the message. For
-  every other action write "OK".
 
 Work one step at a time. When you have enough to answer, use `reply`. If the
 request is ambiguous or missing information, use `ask_clarifying_question`. Only
@@ -2013,11 +1989,18 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
         description=('give your final answer to the user, formatted according '
-                     'to the user_settings_json; ends the '
-                     'turn. reason: "...", action: "reply", '
-                     'args: {"message": "..."}, audit: "..."'),
+                     'to the user_settings_json; ends the turn. '
+                     'args: {"message": "...", "audit": "..."}. '
+                     'audit is your self-review, written after the message: '
+                     're-read args.message and check it against the user '
+                     'settings (user_settings_json) and the formatting_guide '
+                     '— decimal and thousand separators, date format, units, '
+                     'currency, language. Write exactly "OK" when the message '
+                     'complies. Otherwise write what is wrong: a reply whose '
+                     'audit is not "OK" is NOT sent, and you get the step '
+                     'back to fix the message.'),
         summary="send the final answer to the user",
-        required_args=("message",), terminal=True,
+        required_args=("message", "audit"), terminal=True,
     ),
     AssistantActionName.ASK_CLARIFYING_QUESTION: Capability(
         name=AssistantActionName.ASK_CLARIFYING_QUESTION, family="conversation", read=False,
@@ -3631,16 +3614,16 @@ class AssistantAgent(ModelGroupAgent):
 
     @staticmethod
     def _audit_rejection(decision: AssistantStepDecision) -> str | None:
-        """The self-audit gate on `reply`: corrective text when the model's own
-        audit field says the message is wrong, else None (send the reply).
-        Only replies are gated — a clarifying question has no formatting
-        surface worth a bounced step. An empty audit passes (fail open): the
-        schema requires the field, but anything that still arrives without
-        one (scripted fakes, pre-field data) must degrade to the ungated
-        behavior, not burn the step limit."""
+        """The self-audit gate on `reply`: corrective text when the model's
+        own `audit` argument says the message is wrong, else None (send the
+        reply). audit is a required reply argument, so an empty one has
+        already been validation-rejected before this gate runs; if one still
+        arrives empty it passes (fail open) rather than burning the step
+        limit. Only replies are gated — a clarifying question has no
+        formatting surface worth a bounced step."""
         if decision.action is not AssistantActionName.REPLY:
             return None
-        audit = decision.audit.strip()
+        audit = str(decision.args.get("audit") or "").strip()
         if not audit or audit.rstrip(".!").upper() == "OK":
             return None
         return (

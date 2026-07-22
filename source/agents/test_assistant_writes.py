@@ -62,6 +62,8 @@ def _agent() -> AssistantAgent:
 
 
 def _decision(action, **args):
+    if action is AssistantActionName.REPLY:
+        args.setdefault("audit", "OK")
     return AssistantStepDecision(reason="step", action=action, args=args)
 
 

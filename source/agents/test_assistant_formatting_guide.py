@@ -76,7 +76,7 @@ def _run_capture(room):
         captured["user_prompt"] = user_prompt
         return AssistantStepDecision(
             reason="answer", action=AssistantActionName.REPLY,
-            args={"message": "ok"})
+            args={"message": "ok", "audit": "OK"})
 
     agent._structured_completion = fake_completion
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
@@ -273,14 +273,15 @@ def test_identity_block_omits_the_tree_label(room):
 
 # --- reply self-audit gate -------------------------------------------------
 # The model audits its own reply message against user_settings_json /
-# formatting_guide in the decision's `audit` field; anything but "OK" bounces
-# the reply back as a rejected step instead of posting it.
+# formatting_guide in the required `audit` reply argument, written after the
+# message; anything but "OK" bounces the reply back as a rejected step
+# instead of posting it.
 
 
-def _reply(message, audit=""):
+def _reply(message, audit="OK"):
     return AssistantStepDecision(
         reason="answer", action=AssistantActionName.REPLY,
-        args={"message": message}, audit=audit)
+        args={"message": message, "audit": audit})
 
 
 def _run_scripted(room, decisions):
@@ -312,11 +313,15 @@ def test_reply_with_ok_audit_is_sent(room):
     assert _posted_replies(room) == ["100 km is 100 km."]
 
 
-def test_empty_audit_fails_open(room):
-    """A model that skips the optional audit field degrades to the ungated
-    behavior — the reply still ships on the first step."""
-    prompts = _run_scripted(room, [_reply("100 km is 100 km.")])
-    assert len(prompts) == 1
+def test_missing_audit_is_validation_rejected(room):
+    """audit is a required reply argument: a reply without one is rejected
+    like any missing required arg, and the model resubmits."""
+    bad = AssistantStepDecision(
+        reason="answer", action=AssistantActionName.REPLY,
+        args={"message": "100 km is 100 km."})
+    prompts = _run_scripted(room, [bad, _reply("100 km is 100 km.")])
+    assert len(prompts) == 2
+    assert "requires a non-empty 'audit' argument" in prompts[1]
     assert _posted_replies(room) == ["100 km is 100 km."]
 
 
@@ -367,31 +372,32 @@ def test_audit_rejections_are_capped(room):
 
 
 def test_clarifying_question_is_not_audit_gated(room):
+    """ask_clarifying_question requires no audit argument and is never
+    bounced by the gate."""
     question = AssistantStepDecision(
         reason="unclear", action=AssistantActionName.ASK_CLARIFYING_QUESTION,
-        args={"question": "which unit?"}, audit="not applicable")
+        args={"question": "which unit?"})
     prompts = _run_scripted(room, [question])
     assert len(prompts) == 1
     assert _posted_replies(room) == ["which unit?"]
 
 
-def test_audit_is_required_in_schema_and_last_in_property_order():
+def test_args_is_required_in_schema_and_audit_is_a_reply_arg():
     """The JSON schema drives the provider's grammar-constrained decoding:
-    `audit` must be in `required` (an optional field is simply omitted by the
-    model) and last in property order (the audit re-reads the already-written
-    args.message). Python-side construction keeps the default."""
+    `args` must be in `required` or the model simply omits it. The audit
+    lives inside the reply args (required_args), not as a decision field."""
+    from agents.assistant import CAPABILITIES
+
     schema = AssistantStepDecision.model_json_schema()
-    assert "audit" in schema["required"]
-    assert "args" in schema["required"]      # else the grammar lets the model
-    assert list(schema["properties"])[-1] == "audit"    # skip args entirely
-    assert AssistantStepDecision(
-        reason="r", action=AssistantActionName.REPLY, args={"message": "m"}
-    ).audit == ""
+    assert "args" in schema["required"]
+    assert "audit" not in schema["properties"]
+    assert CAPABILITIES[AssistantActionName.REPLY].required_args == (
+        "message", "audit")
 
 
-def test_system_prompt_documents_the_audit_field(room):
+def test_system_prompt_documents_the_audit_arg(room):
     system = _run_capture(room)["system_prompt"]
-    assert "audit" in system
+    assert '"audit"' in system
     assert 'Write exactly "OK"' in system
 
 

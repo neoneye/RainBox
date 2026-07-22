@@ -116,7 +116,7 @@ def test_propose_uses_dry_run_preview_and_does_not_schedule(app_ctx):
         AssistantStepDecision(reason="remind", action=AssistantActionName.SET_REMINDER,
                               args={"text": tag, "when": "2026-06-27T09:00"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"message": "proposed"}),
+                              args={"message": "proposed", "audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
@@ -200,7 +200,7 @@ def test_proposal_meta_attached_to_reply(app_ctx):
         AssistantStepDecision(reason="remind", action=AssistantActionName.SET_REMINDER,
                               args={"text": tag, "when": "2026-06-29T09:00"}),
         AssistantStepDecision(reason="reply", action=AssistantActionName.REPLY,
-                              args={"message": "awaits your confirmation"}),
+                              args={"message": "awaits your confirmation", "audit": "OK"}),
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
