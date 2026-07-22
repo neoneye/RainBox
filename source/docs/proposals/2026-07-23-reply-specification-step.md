@@ -68,13 +68,17 @@ Two ways to expose it:
   established, and no catalog entry or decision branching is added — no
   new constraint burden on the small model (the typed-reply lesson).
 
-This proposal is (b).
+This proposal is (b) for the initial spec — and (a) returns in a
+supporting role for mid-run revision (next section): code guarantees the
+spec exists, the model may ask to revise it when the situation changes
+in ways only it can see.
 
 ### The call
 
-One structured call per run, with its own purpose-built system prompt
-(like `SECOND_OPINION_SYSTEM_PROMPT` — a separate persona with a narrow
-job, not the assistant's 4-5k token working prompt):
+One structured call at the start of every run (plus mid-run revisions —
+see below), with its own purpose-built system prompt (like
+`SECOND_OPINION_SYSTEM_PROMPT` — a separate persona with a narrow job,
+not the assistant's 4-5k token working prompt):
 
 ```python
 class ReplySpecification(BaseModel):
@@ -135,12 +139,49 @@ reply: follow it during steps and when composing the message, unless the
 operator's request overrides it."* `source_priority` lists it directly
 below `current_request`.
 
+### Mid-run revision — the spec is current state, not a step-0 snapshot
+
+The situation can change halfway through the steps, and the spec must
+change with it. The sharpest case: the request itself mutates the
+preference the spec was built from —
+
+> "change my preferred response language to en-US"
+
+Step 0 reads the OLD settings (say en-GB) and specs a British reply. The
+assistant then executes the preference write. The confirmation reply must
+already be in en-US — replying "Certainly, colour noted" in British
+English about the switch to American English is exactly the class of
+mistake this feature exists to kill.
+
+Two revision triggers, mirroring who can see the change:
+
+- **Code-driven refresh** for changes code can see: `Capability` gains a
+  `revises_specification: bool` flag, set on any write that can mutate
+  preferences (today `memory_remember` of a preference-shaped fact;
+  future profile/settings write capabilities). After such a write
+  succeeds, the loop re-runs the specification call against the FRESH
+  settings snapshot and replaces the injected section for all subsequent
+  steps. Loop-enforced — the model cannot forget it.
+- **A `reply_specification` catalog action** for changes only the model
+  can see: an observation reveals something that invalidates an
+  assumption (a recalled fact says the operator wants altitude in feet;
+  the operator's message redefines the target mid-request). The action
+  takes no args, re-runs the same specification call, and its observation
+  is the new spec. Read-tier, no undo needed — the spec is derived state.
+
+Only the LATEST spec is injected (`<reply_specification>` is replaced,
+never appended — two specs in one prompt is a contradiction machine);
+every spec call remains in the trace as its own step, so the operator
+can see the revision history: what step 0 assumed, what changed, what
+the reply actually followed.
+
 ### Trace
 
-The call is recorded as a step row (`action="reply_specification"`,
-a code-driven phase like the context markers — not a model decision), so
-the inspector shows the spec, its prompts, and its latency like any other
-step, and the operator can spot a wrong assumption at a glance.
+Every specification call is recorded as a step row
+(`action="reply_specification"` — code-driven for step 0 and refreshes,
+a normal decision for model-requested revisions), so the inspector shows
+each spec, its prompts, and its latency like any other step, and the
+operator can spot a wrong assumption at a glance.
 
 ### Failure and cost
 
@@ -177,6 +218,10 @@ House pattern — ship dark, gate, enable:
    - "explain X" in English → English reply, no Danish.
    - "answer in danish: how far is 100 km?" → Danish reply (explicit
      request wins).
+   - a preference-mutating turn (once a preference write capability
+     exists): "change my preferred response language to en-US" → the
+     confirmation reply is already en-US, and the trace shows two spec
+     steps (step 0 with the old language, the refresh with the new).
    A/B the suite with the switch off/on; the spec must not regress the
    locale cases it doesn't touch.
 4. Flip the switch; watch traces for wrong `assumptions` — they are the
