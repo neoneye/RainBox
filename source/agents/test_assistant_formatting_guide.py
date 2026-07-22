@@ -271,6 +271,97 @@ def test_identity_block_omits_the_tree_label(room):
     assert '"profile":' not in prompt          # the tree label is debug info
 
 
+# --- reply self-audit gate -------------------------------------------------
+# The model audits its own reply message against user_settings_json /
+# formatting_guide in the decision's `audit` field; anything but "OK" bounces
+# the reply back as a rejected step instead of posting it.
+
+
+def _reply(message, audit=""):
+    return AssistantStepDecision(
+        reason="answer", action=AssistantActionName.REPLY,
+        args={"message": message}, audit=audit)
+
+
+def _run_scripted(room, decisions):
+    """Drive one handle() with a scripted decision per model call; returns the
+    captured user prompts (one per call)."""
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant",
+                           send=lambda _: None)
+    prompts = []
+    remaining = list(decisions)
+
+    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None):
+        prompts.append(user_prompt)
+        return remaining.pop(0)
+
+    agent._structured_completion = fake_completion
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    return prompts
+
+
+def _posted_replies(room):
+    return [m["text"] for m in db.list_room_messages(room.uuid)
+            if m.get("kind") == "message"
+            and str(m.get("sender_uuid")) == str(ASSISTANT_UUID)]
+
+
+def test_reply_with_ok_audit_is_sent(room):
+    prompts = _run_scripted(room, [_reply("100 km is 100 km.", audit="OK")])
+    assert len(prompts) == 1
+    assert _posted_replies(room) == ["100 km is 100 km."]
+
+
+def test_empty_audit_fails_open(room):
+    """A model that skips the optional audit field degrades to the ungated
+    behavior — the reply still ships on the first step."""
+    prompts = _run_scripted(room, [_reply("100 km is 100 km.")])
+    assert len(prompts) == 1
+    assert _posted_replies(room) == ["100 km is 100 km."]
+
+
+def test_non_ok_audit_bounces_the_reply_and_iterates(room):
+    bad = _reply("1,014,178,466.03 meters", audit="wrong thousand separators")
+    good = _reply("1.014.178.466,03 meters", audit="OK")
+    prompts = _run_scripted(room, [bad, good])
+    assert len(prompts) == 2
+    # The bounce flows back as a rejected step carrying the audit text.
+    assert "Your own audit rejected this reply" in prompts[1]
+    assert "wrong thousand separators" in prompts[1]
+    # Only the corrected message reaches the room.
+    assert _posted_replies(room) == ["1.014.178.466,03 meters"]
+
+
+def test_ok_with_trailing_punctuation_passes(room):
+    prompts = _run_scripted(room, [_reply("fine", audit="ok.")])
+    assert len(prompts) == 1
+    assert _posted_replies(room) == ["fine"]
+
+
+def test_audit_rejections_are_capped(room):
+    """An audit that never says OK must not burn the step limit: after
+    MAX_AUDIT_REJECTIONS bounces the reply ships despite the audit."""
+    decisions = [_reply(f"attempt {i}", audit="still wrong") for i in range(4)]
+    prompts = _run_scripted(room, decisions)
+    assert len(prompts) == AssistantAgent.MAX_AUDIT_REJECTIONS + 1
+    assert _posted_replies(room) == [f"attempt {AssistantAgent.MAX_AUDIT_REJECTIONS}"]
+
+
+def test_clarifying_question_is_not_audit_gated(room):
+    question = AssistantStepDecision(
+        reason="unclear", action=AssistantActionName.ASK_CLARIFYING_QUESTION,
+        args={"question": "which unit?"}, audit="not applicable")
+    prompts = _run_scripted(room, [question])
+    assert len(prompts) == 1
+    assert _posted_replies(room) == ["which unit?"]
+
+
+def test_system_prompt_documents_the_audit_field(room):
+    system = _run_capture(room)["system_prompt"]
+    assert "audit" in system
+    assert 'Write exactly "OK"' in system
+
+
 def test_profile_switch_field_changes_only_its_directive(room):
     """Counterfactual: switching Germany → US changes the formatting guide's
     directives, while the guide's code-owned frame stays identical."""

@@ -108,6 +108,19 @@ class AssistantStepDecision(BaseModel):
     )
     action: AssistantActionName
     args: dict[str, Any] = Field(default_factory=dict)
+    # Declared last so the model writes it AFTER the args: for a reply, the
+    # audit is a re-read of the message it just composed.
+    audit: str = Field(
+        default="",
+        description=(
+            "Self-review of this step, written after args. For `reply`: "
+            "re-check args.message against user_settings_json and the "
+            "formatting_guide (decimal/thousand separators, date format, "
+            "units, currency, language) and write exactly \"OK\" when the "
+            "message complies, otherwise state what is wrong. For every "
+            "other action write \"OK\"."
+        ),
+    )
 
 
 class SecondOpinionVerdict(BaseModel):
@@ -169,11 +182,18 @@ is itself grounds to reject."""
 ASSISTANT_SYSTEM_PROMPT: str = """\
 You are a personal assistant that works in small, explicit steps.
 
-Each step you emit exactly one decision as structured output with three fields:
+Each step you emit exactly one decision as structured output with these fields:
 - reason: a short operator-facing note explaining this step. It is shown in an
   audit trace, so keep it brief and factual — it is not hidden scratch reasoning.
 - action: one of the available actions listed below.
 - args: the arguments for that action.
+- audit: your self-review of this step, written after the args. For `reply`:
+  re-read args.message and check it against the user settings
+  (user_settings_json) and the formatting_guide — decimal and thousand
+  separators, date format, units, currency, language. Write exactly "OK" when
+  the message complies. Otherwise write what is wrong: a reply whose audit is
+  not "OK" is NOT sent, and you get the step back to fix the message. For
+  every other action write "OK".
 
 Work one step at a time. When you have enough to answer, use `reply`. If the
 request is ambiguous or missing information, use `ask_clarifying_question`. Only
@@ -2347,6 +2367,10 @@ class AssistantAgent(ModelGroupAgent):
     # it, not a 1200-char slice. (The raw action output is already capped by
     # output_cap_chars before this.)
     MAX_OBSERVATION_PREVIEW_CHARS: int = 12000
+    # How many replies the model's own self-audit may bounce per run before
+    # the reply ships anyway. Two retries out of STEP_LIMIT=6 leaves the loop
+    # room to work; an audit that never says "OK" must not fail the turn.
+    MAX_AUDIT_REJECTIONS: int = 2
 
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
@@ -2490,6 +2514,10 @@ class AssistantAgent(ModelGroupAgent):
             # The card payload for a confirm-tier write proposed this turn, attached
             # as `meta` on the terminal reply so chat can render confirm/reject.
             pending_proposal: dict[str, Any] | None = None
+            # Replies bounced by the model's own self-audit this run. Bounded so
+            # an audit that never says "OK" cannot burn the whole step limit and
+            # fail the turn: past the cap the reply ships despite the audit.
+            audit_rejections = 0
 
             for step_index in range(self.step_limit):
                 current_step = step_index
@@ -2547,6 +2575,33 @@ class AssistantAgent(ModelGroupAgent):
                     continue
 
                 if self._caps[decision.action].terminal:
+                    rejection = self._audit_rejection(decision)
+                    if rejection is not None:
+                        if audit_rejections >= self.MAX_AUDIT_REJECTIONS:
+                            logger.warning(
+                                "assistant run %s: audit still not OK after %d "
+                                "rejections; sending the reply anyway",
+                                run.uuid, audit_rejections,
+                            )
+                        else:
+                            audit_rejections += 1
+                            self._record_step(
+                                step_index=step_index, phase="failed",
+                                decision=decision, error=rejection, usage=usage,
+                                model_uuid=model_uuid,
+                                system_prompt=system_prompt,
+                                user_prompt=user_prompt, reasoning=reasoning,
+                                model_response=model_response,
+                                requested_at=requested_at,
+                            )
+                            scratchpad.append(AssistantTurnStep(
+                                step_index=step_index,
+                                action=decision.action.value,
+                                args=dict(decision.args),
+                                status="rejected",
+                                observation=rejection,
+                            ))
+                            continue
                     self._record_step(
                         step_index=step_index, phase="final", decision=decision,
                         usage=usage, model_uuid=model_uuid,
@@ -3527,6 +3582,27 @@ class AssistantAgent(ModelGroupAgent):
         # Validation guarantees the required key is present and non-empty.
         key = "message" if decision.action is AssistantActionName.REPLY else "question"
         return str(decision.args[key]).strip()
+
+    @staticmethod
+    def _audit_rejection(decision: AssistantStepDecision) -> str | None:
+        """The self-audit gate on `reply`: corrective text when the model's own
+        audit field says the message is wrong, else None (send the reply).
+        Only replies are gated — a clarifying question has no formatting
+        surface worth a bounced step. An empty audit passes (fail open): the
+        field is optional in the schema, and a model that skips it must
+        degrade to the ungated behavior, not burn the step limit."""
+        if decision.action is not AssistantActionName.REPLY:
+            return None
+        audit = decision.audit.strip()
+        if not audit or audit.rstrip(".!").upper() == "OK":
+            return None
+        return (
+            f"Your own audit rejected this reply: {audit}\n"
+            "The message was NOT sent. Fix the message so it follows "
+            "user_settings_json and the formatting_guide, then reply again "
+            'with the corrected message; write audit "OK" only when the '
+            "message complies."
+        )
 
     @staticmethod
     def _append_result_links(text: str, links: list[str]) -> str:
