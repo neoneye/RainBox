@@ -210,11 +210,9 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .io-time, .as-main .step .io-dur { text-transform:none; font-weight:400;
                             color:#98a2b3; font-size:0.72rem; font-variant-numeric:tabular-nums; }
   /* Per-step debug log: collapsed by default, placed before the model
-     request. Entries are {label, text, uuid?, href?} rows. */
+     request. Entries are {label, text, uuid?, href?} rows. Its summary
+     shares the .prompt > summary styling below (one rule, no drift). */
   .as-main .step .steplog { margin:0 0 0.3rem; }
-  .as-main .step .steplog > summary { font-size:0.64rem; text-transform:uppercase;
-                             letter-spacing:0.04em; color:#98a2b3; cursor:pointer;
-                             -webkit-user-select:none; user-select:none; }
   .as-main .step .steplog-body { margin:0.2rem 0 0 0.4rem; font-size:0.78rem; }
   .as-main .step .steplog-entry { padding:1px 0; }
   .as-main .step .steplog-entry .k { color:#6b7280; font-weight:600;
@@ -224,7 +222,8 @@ ASSISTANT_TEMPLATE = """
   /* "model request" sub-parts: system and user prompt, each collapsed in a
      <details>. The summaries mirror .io-label but a notch smaller. */
   .as-main .step .prompt { margin:0.25rem 0 0; }
-  .as-main .step .prompt > summary { font-size:0.64rem; text-transform:uppercase;
+  .as-main .step .prompt > summary,
+  .as-main .step .steplog > summary { font-size:0.64rem; text-transform:uppercase;
                              letter-spacing:0.04em; color:#6b7280; margin-bottom:0.15rem;
                              cursor:pointer; -webkit-user-select:none; user-select:none; }
   .as-main .err { color:#c0392b; }
