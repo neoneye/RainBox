@@ -64,9 +64,16 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
 - **User prompt** — the sections are emitted as top-level sibling tags (no
   root wrapper: models recognize the start/end tags without a single-rooted
   document, and a wrapper would cost one indentation level on every line;
-  each section is still individually ElementTree-escaped XML) — in order:
-  the current **local time** (so relative reminders resolve in the
-  operator's zone, not UTC), the **operator identity**
+  each section is still individually ElementTree-escaped XML). The task
+  leads the prompt — with the request buried at the bottom under a long
+  profile/history, weaker models answered the surrounding context instead of
+  the request — and the supporting context follows. In order: the
+  **current request** (a bare `<current_request>` tag, no attributes: the
+  section order carries the emphasis and the time anchor is
+  current_local_time at the end), the transcript (`kind == "message"` rows
+  only, newest `MAX_RECENT_MESSAGES = 30`), the **scratchpad** of steps
+  taken this turn (tail-capped at `MAX_SCRATCHPAD_CHARS = 5000`), the step
+  counter (`decision_request`), the **operator identity**
   (`profile.current`'s fields as JSON, `authority="context"`, no preamble
   and no tree label; opaque enum values such as `number_format` carry a
   code-owned `<key>.comment` entry spelling the convention out), the
@@ -84,9 +91,8 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   block** (query-independent operator self-model — see
   `memory-architecture.md` §User Profile Block), the **skill block** (active
   procedural skills retrieved for the latest human message; candidates are
-  inert), the transcript (`kind == "message"` rows only, newest
-  `MAX_RECENT_MESSAGES = 30`), the **scratchpad** of steps taken this turn
-  (tail-capped at `MAX_SCRATCHPAD_CHARS = 5000`), and the step counter.
+  inert), and the current **local time** (so relative reminders resolve in
+  the operator's zone, not UTC).
   All of these are best-effort — a retrieval or formatter failure empties
   only its own block, never the turn.
 - **One declared-profile context snapshot per turn.**

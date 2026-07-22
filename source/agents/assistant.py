@@ -3147,23 +3147,67 @@ class AssistantAgent(ModelGroupAgent):
         scratchpad: list[AssistantTurnEvent],
         step_index: int,
     ) -> str:
-        # The current local time is the operator's clock — the model's only other
-        # time anchor is the conversation's (UTC) message timestamps, which made
-        # relative reminders ("in 10 minutes") resolve in UTC. Stating local time
-        # explicitly lets set_reminder land in the operator's zone.
-        now_local = datetime.now().astimezone()
         root = ET.Element("assistant_turn")
-        # current_local_time stands alone — a runtime_context wrapper around a
-        # single element bought nothing but tokens.
-        ET.SubElement(root, "current_local_time").text = now_local.strftime(
-            "%Y-%m-%d %H:%M %Z"
+
+        # The task leads the prompt: with the request buried at the bottom
+        # under a long profile/history, weaker models answered the surrounding
+        # context instead of the request. The tag is bare — no authority/role/
+        # timestamp attributes — because the section order now carries the
+        # emphasis and the time anchor is current_local_time below.
+        # ElementTree escapes leaf text exactly once, so dynamic content
+        # cannot close or forge a prompt zone.
+        current = messages[-1] if messages else None
+        context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
+        current_request = ET.SubElement(root, "current_request")
+        current_request.text = str((current or {}).get("text") or "none")
+
+        has_fresh_read = any(
+            isinstance(event, AssistantTurnStep)
+            and event.is_read
+            and event.status == "ok"
+            for event in scratchpad
+        )
+        history_attrs = {
+            "authority": "context_only",
+            "facts_are_authoritative": "false",
+        }
+        if has_fresh_read:
+            history_attrs["assistant_messages"] = "omitted_after_fresh_read"
+            context = [m for m in context if self._message_role(m) == "operator"]
+        history = ET.SubElement(root, "conversation_history", history_attrs)
+        if context:
+            for message in context:
+                self._append_prompt_message(history, message)
+        else:
+            ET.SubElement(history, "none")
+
+        turn_steps = ET.SubElement(
+            root, "current_turn_steps", {"authority": "fresh_evidence"}
+        )
+        kept, omitted = self._bounded_turn_events(scratchpad)
+        if omitted:
+            ET.SubElement(turn_steps, "omitted", {"count": str(omitted)})
+        if kept:
+            for event in kept:
+                self._append_turn_event(turn_steps, event)
+        else:
+            ET.SubElement(turn_steps, "none")
+
+        decision_request = ET.SubElement(
+            root,
+            "decision_request",
+            {"step": str(step_index + 1), "max_steps": str(self.step_limit)},
+        )
+        decision_request.text = (
+            "Choose exactly one next action. If current_turn_steps already answer "
+            "the current_request, choose reply now. Never repeat an identical "
+            "successful or failed action."
         )
 
-        # Identity (who the operator is) before the formatting guide (how to
-        # format replies) before profile (what is remembered about them)
-        # before skills (how to do the task). ElementTree escapes leaf text
-        # exactly once, so dynamic content cannot close or forge a prompt
-        # zone. formatting_guide is the one profile-derived block with
+        # Supporting context after the decision request. Identity (who the
+        # operator is) before the formatting guide (how to format replies)
+        # before profile (what is remembered about them) before skills (how to
+        # do the task). formatting_guide is the one profile-derived block with
         # instruction authority — justified because every imperative sentence
         # in it is code-owned and every interpolated value passed the strict
         # prompt-boundary validation in user_profile.formatting.
@@ -3192,58 +3236,14 @@ class AssistantAgent(ModelGroupAgent):
             )
             active_skills.text = self._skill_block
 
-        current = messages[-1] if messages else None
-        context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
-        has_fresh_read = any(
-            isinstance(event, AssistantTurnStep)
-            and event.is_read
-            and event.status == "ok"
-            for event in scratchpad
-        )
-        history_attrs = {
-            "authority": "context_only",
-            "facts_are_authoritative": "false",
-        }
-        if has_fresh_read:
-            history_attrs["assistant_messages"] = "omitted_after_fresh_read"
-            context = [m for m in context if self._message_role(m) == "operator"]
-        history = ET.SubElement(root, "conversation_history", history_attrs)
-        if context:
-            for message in context:
-                self._append_prompt_message(history, message)
-        else:
-            ET.SubElement(history, "none")
-
-        request_attrs = {"authority": "task"}
-        if current is not None:
-            request_attrs["role"] = self._message_role(current)
-            timestamp = str(current.get("timestamp") or "").strip()
-            if timestamp:
-                request_attrs["timestamp"] = timestamp
-        current_request = ET.SubElement(root, "current_request", request_attrs)
-        current_request.text = str((current or {}).get("text") or "none")
-
-        turn_steps = ET.SubElement(
-            root, "current_turn_steps", {"authority": "fresh_evidence"}
-        )
-        kept, omitted = self._bounded_turn_events(scratchpad)
-        if omitted:
-            ET.SubElement(turn_steps, "omitted", {"count": str(omitted)})
-        if kept:
-            for event in kept:
-                self._append_turn_event(turn_steps, event)
-        else:
-            ET.SubElement(turn_steps, "none")
-
-        decision_request = ET.SubElement(
-            root,
-            "decision_request",
-            {"step": str(step_index + 1), "max_steps": str(self.step_limit)},
-        )
-        decision_request.text = (
-            "Choose exactly one next action. If current_turn_steps already answer "
-            "the current_request, choose reply now. Never repeat an identical "
-            "successful or failed action."
+        # The current local time is the operator's clock — the model's only
+        # other time anchor is the conversation's (UTC) message timestamps,
+        # which made relative reminders ("in 10 minutes") resolve in UTC.
+        # Stating local time explicitly lets set_reminder land in the
+        # operator's zone. Last section of the prompt.
+        now_local = datetime.now().astimezone()
+        ET.SubElement(root, "current_local_time").text = now_local.strftime(
+            "%Y-%m-%d %H:%M %Z"
         )
         # The sections are emitted as top-level siblings, NOT wrapped in a
         # single root element: models recognize the start/end tags fine
