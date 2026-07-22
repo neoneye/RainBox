@@ -28,13 +28,17 @@ spell the writing order — the message first, then the audit as an
 introspection of a message that already exists — and keep that order even
 under alphabetical key normalization (`1_` < `2_`). The audit re-checks
 the message against `user_settings_json` and the formatting guide
-(separators, dates, units, currency, language). Anything but `OK` bounces
-the reply back as a rejected step — the message is not posted, the audit
-text flows into the scratchpad, and the model fixes the message. Bounces
-are capped (`MAX_AUDIT_REJECTIONS`, 2 per run) so an audit that never
-approves cannot fail the turn. An audit emitted before the message in the
-raw response text (the parsed decision normalizes key order, so the raw
-text is the authority) is validation-rejected with the ordering rule.
+(separators, dates, units, currency, language). The audit is a bare
+verdict: anything but exactly `OK` (any case, nothing else — an OK buried
+in a narration of the checks does not pass) bounces the reply back as a
+rejected step — the message is not posted, the audit text flows into the
+scratchpad, and the model fixes the message. Bounces are capped
+(`MAX_AUDIT_REJECTIONS`, 2 per run) so an audit that never approves cannot
+fail the turn: past the cap the reply ships anyway, and the run summariser
+typically flags the outcome Unresolved. An audit emitted before the
+message in the raw response text (the parsed decision normalizes key
+order, so the raw text is the authority) is validation-rejected with the
+ordering rule.
 
 The two gated blocks ship dark: each switch is flipped only after its block
 passes the live release gate below. Everything else on this page (the

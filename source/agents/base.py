@@ -368,9 +368,14 @@ class ModelGroupAgent(Agent):
                 with capture_reasoning() as tally:
                     try:
                         for last in sllm.stream_chat(messages):
+                            # Prefer the instrumentation capture: it holds the
+                            # provider's true streamed text. A structured
+                            # stream's message.content is a dump of the
+                            # PARTIALLY PARSED object, which has been seen
+                            # dropping free-form dict contents (args: {}).
                             response_text = (
-                                getattr(getattr(last, "message", None), "content", None)
-                                or tally.content_text
+                                tally.content_text
+                                or getattr(getattr(last, "message", None), "content", None)
                                 or ""
                             )
                             self._last_reasoning = tally.reasoning_text.strip() or None
@@ -393,8 +398,15 @@ class ModelGroupAgent(Agent):
                 if last is None:
                     raise RuntimeError("structured stream produced no response")
                 # .raw is typed Any | None by LlamaIndex; on a successful
-                # structured call it's an instance of response_model.
-                result = cast(BaseModel, last.raw)
+                # structured call it's an instance of response_model — but the
+                # streaming partial-parser corrupts it (see
+                # _settle_structured_result), so the provider's true text is
+                # re-validated and wins when it parses.
+                result = self._settle_structured_result(
+                    response_model,
+                    cast(BaseModel, last.raw),
+                    self._last_response_text,
+                )
                 logger.info(
                     "agent %s: model %s responded in %.1fs",
                     self.name,
@@ -423,6 +435,33 @@ class ModelGroupAgent(Agent):
             f"agent {self.name}: all {len(self.candidate_model_uuids)} models "
             f"in the group failed; last error: {last_error}"
         )
+
+    @staticmethod
+    def _settle_structured_result(
+        response_model: type[BaseModel],
+        stream_parsed: BaseModel,
+        final_text: str | None,
+    ) -> BaseModel:
+        """Pick the final parsed object for a structured stream.
+
+        llama-index's streaming partial-parser has been caught corrupting
+        the final object (observed live during the typed-reply trial: a
+        free-form args dict came back `{}` in `last.raw` while the
+        provider's actual text carried the arguments — the assistant then
+        rejected its own python_run six times for a missing `code` it had
+        in fact written). The instrumentation capture holds the true
+        provider text, so re-validate that — it wins whenever it parses;
+        the stream's object is only the fallback for unparseable text."""
+        text = (final_text or "").strip()
+        if text:
+            try:
+                return response_model.model_validate_json(text)
+            except Exception:
+                logger.warning(
+                    "structured stream: final text did not re-validate; "
+                    "keeping the stream-parsed object"
+                )
+        return stream_parsed
 
 
 class StructuredLLMAgent(ModelGroupAgent):

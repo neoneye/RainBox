@@ -385,9 +385,32 @@ def test_audit_before_message_in_raw_response_is_rejected(room):
     assert _posted_replies(room) == ["100 km is 100 km."]
 
 
-def test_ok_with_trailing_punctuation_passes(room):
-    prompts = _run_scripted(room, [_reply("fine", audit="ok.")])
+def test_audit_is_a_literal_verdict(room):
+    """Only the bare "OK" (any case) passes; an OK buried in narration or
+    carrying punctuation is a rejection — the model must not slip a reply
+    through by describing its checks and appending OK."""
+    prompts = _run_scripted(room, [_reply("fine", audit="ok")])
     assert len(prompts) == 1
+    assert _posted_replies(room) == ["fine"]
+
+
+def test_ok_inside_narration_is_rejected(room):
+    narrated = _reply(
+        "357737172 feet er lig med 109038290.0256 meter.",
+        audit="Checked separators and language against the settings. OK")
+    fixed = _reply("357737172 feet er lig med 109038290.0256 meter.")
+    prompts = _run_scripted(room, [narrated, fixed])
+    assert len(prompts) == 2
+    assert "Your own audit rejected this reply" in prompts[1]
+    assert 'exactly "OK"' in prompts[1]
+    assert _posted_replies(room) == [
+        "357737172 feet er lig med 109038290.0256 meter."]
+
+
+def test_ok_with_trailing_punctuation_is_rejected(room):
+    prompts = _run_scripted(room, [_reply("fine", audit="OK."),
+                                   _reply("fine")])
+    assert len(prompts) == 2
     assert _posted_replies(room) == ["fine"]
 
 
@@ -429,7 +452,8 @@ def test_system_prompt_documents_the_audit_arg(room):
     system = _run_capture(room)["system_prompt"]
     assert '"2_audit"' in system
     assert "Be skeptical" in system
-    assert 'write exactly "OK"' in system
+    assert 'exactly "OK"' in system
+    assert "never a narration" in system
 
 
 def test_profile_switch_field_changes_only_its_directive(room):

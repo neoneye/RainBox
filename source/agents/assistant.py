@@ -1998,9 +1998,13 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'settings (user_settings_json) and the formatting_guide '
                      '— decimal and thousand separators, date format, units, '
                      'currency, language. Be skeptical: hunt for silly '
-                     'mistakes such as wrong thousand separators. Describe '
-                     'what is wrong, so a later step can fix the mistakes. '
-                     'Only if you found no flaws, write exactly "OK".'),
+                     'mistakes such as wrong thousand separators. The audit '
+                     'is a bare verdict, never a narration of the checks you '
+                     'performed: if you found flaws, describe what is wrong '
+                     'so a later step can fix it; if you found none, the '
+                     'audit is exactly "OK" — two letters, nothing else. '
+                     'An audit that is not exactly "OK" is treated as a '
+                     'rejection and the message is NOT sent.'),
         summary="send the final answer to the user",
         required_args=("1_message", "2_audit"), terminal=True,
     ),
@@ -3654,14 +3658,18 @@ class AssistantAgent(ModelGroupAgent):
         if decision.action is not AssistantActionName.REPLY:
             return None
         audit = str(decision.args.get("2_audit") or "").strip()
-        if not audit or audit.rstrip(".!").upper() == "OK":
+        # Literal check: the audit passes only as exactly "OK" (any case),
+        # nothing more. A narration ending in OK ("checked separators. OK")
+        # is NOT a pass — the model must emit the bare verdict, so an OK
+        # buried in prose can never slip a reply through.
+        if not audit or audit.upper() == "OK":
             return None
         return (
             f"Your own audit rejected this reply: {audit}\n"
-            "The message was NOT sent. Fix the message so it follows "
-            "user_settings_json and the formatting_guide, then reply again "
-            'with the corrected message; write 2_audit "OK" only when the '
-            "message complies."
+            "The message was NOT sent. If the message truly complies with "
+            "user_settings_json and the formatting_guide, reply again with "
+            '2_audit set to exactly "OK" — two letters, nothing else, no '
+            "narration of the checks. Otherwise fix the message first."
         )
 
     @staticmethod
