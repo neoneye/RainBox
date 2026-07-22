@@ -53,10 +53,13 @@ this request:
      "answer in Danish" in an English message wins.
    - Spelling follows the profile's English variant (en-US — American
      spelling, "color" not "colour").
-2. **Which user preferences are relevant while processing the steps** —
+2. **What side effects the request demands** — a state change like
+   "kanban task X is in the DONE column" is the deliverable itself; the
+   reply is only the receipt (see Side-effectful requests below).
+3. **Which user preferences are relevant while processing the steps** —
    e.g. the target unit for a conversion (metric → meters), the timezone
    for a reminder, the currency for a price.
-3. **Which user preferences are relevant when formatting the final
+4. **Which user preferences are relevant when formatting the final
    result** — separators, date format, temperature unit, spelling.
 
 For "convert 1053737172 feet" the step would establish, before any tool
@@ -105,6 +108,11 @@ class AcceptanceCriteria(BaseModel):
         'en-US)". Mirror the language of the current message; the '
         "profile's preferred language applies only when the message "
         "explicitly asks for it; an explicit request always wins."))
+    side_effects: list[str] = Field(description=(
+        "State changes the request demands — the measurable outcome, "
+        "e.g. 'kanban task X is in the DONE column'. ONLY the named "
+        "changes: anything beyond them is out of scope for this "
+        "request. Empty for a pure question."))
     processing: list[str] = Field(description=(
         "User preferences that steer the WORK — e.g. 'target unit: "
         "meters (settings: metric)' for an ambiguous conversion, the "
@@ -118,6 +126,43 @@ class AcceptanceCriteria(BaseModel):
         "assumption, stated so the operator can spot a wrong one — "
         "e.g. 'convert target not stated; assuming meters'."))
 ```
+
+### Side-effectful requests
+
+Not every deliverable is a formatted answer. For "move kanban task X to
+DONE" the deliverable IS the state change; the reply is only the
+receipt. `side_effects` names the measurable outcome up front, which
+buys three things:
+
+- **The audit gets a second dimension.** Beyond formatting, the
+  acceptance test becomes: does the message claim exactly the side
+  effects whose steps succeeded (`ok=True`)? This turns the existing
+  anti-fabrication rule ("never claim a write that didn't run") from a
+  general principle into a per-run, named checklist.
+- **Write tiers are visible in the criteria.** A confirm-tier effect
+  ends the run as a PROPOSAL, not a completed change — the criteria for
+  "delete board Y" would read "a confirm card for deleting board Y is
+  proposed", so the reply says "awaiting your confirmation", never
+  "deleted". The criteria call knows the capability tiers from a short
+  code-owned summary in its system prompt (not the full catalog).
+- **Scope is bounded.** "ONLY the named changes" gives the second
+  opinion and the summariser an explicit yardstick for
+  over-reach — moving task X must not also touch task Y.
+
+Example criteria for "move kanban task X to DONE":
+
+```json
+{"response_language": "en-US (mirrors the current message)",
+ "side_effects": ["kanban task X is in the DONE column"],
+ "processing": ["resolve 'X' to a task uuid before moving (find_uuid)"],
+ "formatting": [],
+ "assumptions": ["'DONE' matched to the board's Done column by name"]}
+```
+
+Mid-run revision applies here too: if a read reveals task X is already
+in DONE, the revised criteria record the no-op ("task X already in
+DONE; no move needed") so the reply reports the true state instead of
+claiming a move that never ran.
 
 The system prompt is code-owned and small (~40 lines): the language
 rules above (generalized — the profile's languages interpolated through
@@ -240,6 +285,10 @@ House pattern — ship dark, gate, enable:
      exists): "change my preferred response language to en-US" → the
      confirmation reply is already en-US, and the trace shows two criteria
      steps (step 0 with the old language, the refresh with the new).
+   - a side-effect turn: "move task X to DONE" → `side_effects` names
+     the move; the reply claims it only after the kanban_move step
+     returned ok (scripted-seam test: a failed move must yield a reply
+     that does NOT claim completion).
    A/B the suite with the switch off/on; the criteria step must not regress the
    locale cases it doesn't touch.
 4. Flip the switch; watch traces for wrong `assumptions` — they are the
