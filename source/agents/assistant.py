@@ -107,7 +107,15 @@ class AssistantStepDecision(BaseModel):
         )
     )
     action: AssistantActionName
-    args: dict[str, Any] = Field(default_factory=dict)
+    args: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "The chosen action's arguments, exactly as its listing documents "
+            "them — e.g. reply requires {\"message\": \"...\"} with the full "
+            "answer text. An action whose listing shows a required argument "
+            "is rejected when that argument is missing or empty."
+        ),
+    )
     # Declared last so the model writes it AFTER the args: for a reply, the
     # audit is a re-read of the message it just composed.
     audit: str = Field(
@@ -124,16 +132,19 @@ class AssistantStepDecision(BaseModel):
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema, handler):  # type: ignore[override]
-        """Mark `audit` required in the JSON schema while keeping its Python
-        default. The schema drives the provider's grammar-constrained
-        decoding: without `required`, the model may (and does) simply omit
-        the field, and the self-audit gate never sees an audit. The Python
-        default stays so scripted fakes and rows stored before the field
-        existed still validate — an empty audit fails open in the gate."""
+        """Mark the defaulted fields required in the JSON schema while
+        keeping their Python defaults. The schema drives the provider's
+        grammar-constrained decoding: a non-required field may (and does)
+        simply get omitted by the model — an omitted `audit` blinds the
+        self-audit gate, and an omitted `args` invites terminal actions
+        without their required arguments. The Python defaults stay so
+        scripted fakes and rows stored before these fields existed still
+        validate — an empty audit fails open in the gate."""
         schema = handler(core_schema)
         required = list(schema.get("required", []))
-        if "audit" not in required:
-            required.append("audit")
+        for name in ("args", "audit"):
+            if name not in required:
+                required.append(name)
         schema["required"] = required
         return schema
 
@@ -384,6 +395,11 @@ class AssistantTurnStep:
     observation: str
     guidance: str | None = None
     is_read: bool = False
+    # The decision's stated reason. Carried so a later step sees the full
+    # decision it made — action, args AND why — not just the outcome; without
+    # it, a rejected step reads as an anonymous failure and the model
+    # re-derives (or contradicts) its own earlier intent.
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -2586,6 +2602,7 @@ class AssistantAgent(ModelGroupAgent):
                         args=dict(decision.args),
                         status="rejected",
                         observation=error,
+                        reason=decision.reason,
                     ))
                     continue
 
@@ -2615,6 +2632,7 @@ class AssistantAgent(ModelGroupAgent):
                                 args=dict(decision.args),
                                 status="rejected",
                                 observation=rejection,
+                                reason=decision.reason,
                             ))
                             continue
                     self._record_step(
@@ -2783,6 +2801,7 @@ class AssistantAgent(ModelGroupAgent):
                     observation=preview,
                     guidance=guidance,
                     is_read=bool(read_sig is not None),
+                    reason=decision.reason,
                 ))
 
             # Ran out of steps without a terminal action. Link the run page so the
@@ -3513,6 +3532,7 @@ class AssistantAgent(ModelGroupAgent):
             + len(event.status)
             + len(event.observation)
             + len(event.guidance or "")
+            + len(event.reason)
             + 120
         )
 
@@ -3528,6 +3548,8 @@ class AssistantAgent(ModelGroupAgent):
             "action": event.action,
             "status": event.status,
         })
+        if event.reason:
+            ET.SubElement(step, "reason").text = event.reason
         arguments = ET.SubElement(step, "arguments", {"format": "json"})
         arguments.text = json.dumps(event.args, sort_keys=True, default=str)
         observation = ET.SubElement(step, "observation", {
@@ -3585,7 +3607,15 @@ class AssistantAgent(ModelGroupAgent):
         for key in cap.required_args:
             value = args.get(key)
             if not isinstance(value, str) or not value.strip():
-                return f"action '{action.value}' requires a non-empty '{key}' argument"
+                hint = (
+                    " — the full answer text goes in args.message"
+                    if key == "message" else ""
+                )
+                return (
+                    f"action '{action.value}' requires a non-empty '{key}' "
+                    f"argument. Resubmit {action.value} with "
+                    f'args {{"{key}": "..."}} filled in{hint}.'
+                )
         # Reject unknown args so an unsupported/typo'd read can't look successful.
         allowed = set(cap.required_args) | cap.optional_args
         unknown = sorted(set(args) - allowed)

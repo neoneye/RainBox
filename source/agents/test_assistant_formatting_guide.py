@@ -325,11 +325,30 @@ def test_non_ok_audit_bounces_the_reply_and_iterates(room):
     good = _reply("1.014.178.466,03 meters", audit="OK")
     prompts = _run_scripted(room, [bad, good])
     assert len(prompts) == 2
-    # The bounce flows back as a rejected step carrying the audit text.
+    # The bounce flows back as a rejected step carrying the audit text AND
+    # the decision's own reason — the full record of what was attempted.
     assert "Your own audit rejected this reply" in prompts[1]
     assert "wrong thousand separators" in prompts[1]
+    assert "<reason>answer</reason>" in prompts[1]
     # Only the corrected message reaches the room.
     assert _posted_replies(room) == ["1.014.178.466,03 meters"]
+
+
+def test_rejected_step_carries_the_full_decision_to_the_next_prompt(room):
+    """A reply with empty args is validation-rejected; the next prompt must
+    show the whole failed decision — its reason, its (empty) args, and an
+    error that says how to resubmit — not an anonymous failure."""
+    bad = AssistantStepDecision(
+        reason="conversion done, replying now",
+        action=AssistantActionName.REPLY, args={})
+    prompts = _run_scripted(room, [bad, _reply("62 miles", audit="OK")])
+    assert len(prompts) == 2
+    assert '<step index="1" action="reply" status="rejected">' in prompts[1]
+    assert "<reason>conversion done, replying now</reason>" in prompts[1]
+    assert '<arguments format="json">{}</arguments>' in prompts[1]
+    assert "requires a non-empty 'message' argument" in prompts[1]
+    assert "args.message" in prompts[1]
+    assert _posted_replies(room) == ["62 miles"]
 
 
 def test_ok_with_trailing_punctuation_passes(room):
@@ -363,7 +382,8 @@ def test_audit_is_required_in_schema_and_last_in_property_order():
     args.message). Python-side construction keeps the default."""
     schema = AssistantStepDecision.model_json_schema()
     assert "audit" in schema["required"]
-    assert list(schema["properties"])[-1] == "audit"
+    assert "args" in schema["required"]      # else the grammar lets the model
+    assert list(schema["properties"])[-1] == "audit"    # skip args entirely
     assert AssistantStepDecision(
         reason="r", action=AssistantActionName.REPLY, args={"message": "m"}
     ).audit == ""
