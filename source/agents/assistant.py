@@ -2093,31 +2093,26 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
         description=('give your final answer to the user; ends the turn. '
-                     'args: {"1_specification": "...", "2_message": "...", '
-                     '"3_audit": "..."} — the number prefixes are the '
-                     'writing order. 1_specification: BEFORE writing '
-                     'anything, establish the constraints this reply must '
-                     'follow. First the response language: the language the '
-                     "operator's current message is written in — never "
-                     'switch language on your own; an explicit language '
-                     'request in the message wins. Then the applicable user '
-                     'settings: units, decimal and thousand separators, '
-                     'date format, currency. 2_message: the full answer '
-                     'text, obeying your 1_specification. 3_audit: your '
-                     'self-review, written after the message: re-read '
-                     'args.2_message and check it against your '
-                     '1_specification, the user settings '
-                     '(user_settings_json) and the formatting_guide. Be '
-                     'skeptical: hunt for silly mistakes such as wrong '
-                     'thousand separators or the wrong language. The audit '
-                     'is a bare verdict, never a narration of the checks you '
-                     'performed: if you found flaws, describe what is wrong '
-                     'so a later step can fix it; if you found none, the '
-                     'audit is exactly "OK" — two letters, nothing else. '
-                     'An audit that is not exactly "OK" is treated as a '
-                     'rejection and the message is NOT sent.'),
+                     'args: {"1_message": "...", "2_audit": "..."} — the '
+                     'number prefixes are the writing order. 1_message: the '
+                     'full answer text, obeying acceptance_criteria_json '
+                     "(this turn's established reply plan — its language, "
+                     'units and formatting), the user settings and the '
+                     'formatting_guide. 2_audit: your self-review, written '
+                     'after the message: re-read args.1_message and check '
+                     'it against acceptance_criteria_json (when present), '
+                     'the user settings (user_settings_json) and the '
+                     'formatting_guide. Be skeptical: hunt for silly '
+                     'mistakes such as wrong thousand separators or the '
+                     'wrong language. The audit is a bare verdict, never a '
+                     'narration of the checks you performed: if you found '
+                     'flaws, describe what is wrong so a later step can fix '
+                     'it; if you found none, the audit is exactly "OK" — '
+                     'two letters, nothing else. An audit that is not '
+                     'exactly "OK" is treated as a rejection and the '
+                     'message is NOT sent.'),
         summary="send the final answer to the user",
-        required_args=("1_specification", "2_message", "3_audit"),
+        required_args=("1_message", "2_audit"),
         terminal=True,
     ),
     AssistantActionName.ASK_CLARIFYING_QUESTION: Capability(
@@ -4150,16 +4145,11 @@ class AssistantAgent(ModelGroupAgent):
             value = args.get(key)
             if not isinstance(value, str) or not value.strip():
                 hints = {
-                    "1_specification": (
-                        " — state the reply's constraints first: response "
-                        "language (the language of the operator's current "
-                        "message), units, number and date format"
-                    ),
-                    "2_message": " — the full answer text goes in args.2_message",
-                    "3_audit": (
-                        " — the bare verdict on args.2_message: exactly "
-                        '"OK" if it complies with your 1_specification and '
-                        "the user settings, otherwise what is wrong"
+                    "1_message": " — the full answer text goes in args.1_message",
+                    "2_audit": (
+                        " — the bare verdict on args.1_message: exactly "
+                        '"OK" if it complies with acceptance_criteria_json '
+                        "and the user settings, otherwise what is wrong"
                     ),
                 }
                 hint = hints.get(key, "")
@@ -4173,17 +4163,17 @@ class AssistantAgent(ModelGroupAgent):
         unknown = sorted(set(args) - allowed)
         if unknown:
             return f"action '{action.value}' got unknown argument(s): {', '.join(unknown)}"
-        # The reply args must be WRITTEN in prefix order: constraints
-        # established before the message exists, the audit composed after
-        # it — otherwise the spec is a rationalization and the audit a
-        # reflex "OK", not a re-read. Checked in BOTH representations: the
-        # parsed dict preserves json insertion order when the parser is
-        # faithful, and the raw response text is the authority when it
-        # normalizes (a live reversed reply slipped through the raw check
-        # alone — the dict check has no plumbing to depend on).
+        # The reply args must be WRITTEN in prefix order: the message before
+        # the audit — otherwise the audit is a reflex "OK" composed before
+        # the message existed, not a re-read. Checked in BOTH
+        # representations: the parsed dict preserves json insertion order
+        # when the parser is faithful, and the raw response text is the
+        # authority when it normalizes (a live reversed reply slipped
+        # through the raw check alone — the dict check has no plumbing to
+        # depend on).
         if action is AssistantActionName.REPLY:
             prefix_keys = [k for k in args
-                           if k in ("1_specification", "2_message", "3_audit")]
+                           if k in ("1_message", "2_audit")]
             raw = self._last_response_text or ""
             # Forensics: reversed replies have shipped live while every
             # offline reproduction bounces — this line records exactly what
@@ -4191,8 +4181,7 @@ class AssistantAgent(ModelGroupAgent):
             logger.info(
                 "reply order check: dict=%s raw_positions=%s raw_len=%d",
                 prefix_keys,
-                [raw.find(f'"{k}"') for k in
-                 ("1_specification", "2_message", "3_audit")],
+                [raw.find(f'"{k}"') for k in ("1_message", "2_audit")],
                 len(raw),
             )
             if prefix_keys != sorted(prefix_keys):
@@ -4202,9 +4191,8 @@ class AssistantAgent(ModelGroupAgent):
 
     AUDIT_ORDER_ERROR: str = (
         "the reply args must be written in prefix order — "
-        '"1_specification" (the constraints, before writing anything), '
-        'then "2_message", then "3_audit" (a re-read of the message you '
-        "already wrote). Resubmit in that order."
+        '"1_message" (the full answer text), then "2_audit" (a re-read of '
+        "the message you already wrote). Resubmit in that order."
     )
 
     @classmethod
@@ -4219,7 +4207,7 @@ class AssistantAgent(ModelGroupAgent):
         if not raw_response:
             return None
         positions = [raw_response.find(f'"{key}"')
-                     for key in ("1_specification", "2_message", "3_audit")]
+                     for key in ("1_message", "2_audit")]
         present = [p for p in positions if p >= 0]
         if present != sorted(present):
             return cls.AUDIT_ORDER_ERROR
@@ -4227,15 +4215,15 @@ class AssistantAgent(ModelGroupAgent):
 
     def _terminal_text(self, decision: AssistantStepDecision) -> str:
         # Validation guarantees the required key is present and non-empty.
-        key = ("2_message" if decision.action is AssistantActionName.REPLY
+        key = ("1_message" if decision.action is AssistantActionName.REPLY
                else "question")
         return str(decision.args[key]).strip()
 
     @staticmethod
     def _audit_rejection(decision: AssistantStepDecision) -> str | None:
         """The self-audit gate on `reply`: corrective text when the model's
-        own `3_audit` argument says the message is wrong, else None (send
-        the reply). 3_audit is a required reply argument, so an empty one
+        own `2_audit` argument says the message is wrong, else None (send
+        the reply). 2_audit is a required reply argument, so an empty one
         has already been validation-rejected before this gate runs; one
         that still arrives empty passes (fail open) rather than burning the
         step limit. Only replies are gated — a clarifying question has no
@@ -4247,10 +4235,10 @@ class AssistantAgent(ModelGroupAgent):
         # escaped live in ways not yet reproduced offline, and this check
         # depends only on the decision object itself.
         prefix_keys = [k for k in decision.args
-                       if k in ("1_specification", "2_message", "3_audit")]
+                       if k in ("1_message", "2_audit")]
         if prefix_keys != sorted(prefix_keys):
             return AssistantAgent.AUDIT_ORDER_ERROR
-        audit = str(decision.args.get("3_audit") or "").strip()
+        audit = str(decision.args.get("2_audit") or "").strip()
         # Literal check: the audit passes only as exactly "OK" (any case),
         # nothing more. A narration ending in OK ("checked separators. OK")
         # is NOT a pass — the model must emit the bare verdict, so an OK
@@ -4260,8 +4248,8 @@ class AssistantAgent(ModelGroupAgent):
         return (
             f"Your own audit rejected this reply: {audit}\n"
             "The message was NOT sent. If the message truly complies with "
-            "your 1_specification, user_settings_json and the "
-            'formatting_guide, reply again with 3_audit set to exactly "OK" '
+            "acceptance_criteria_json, user_settings_json and the "
+            'formatting_guide, reply again with 2_audit set to exactly "OK" '
             "— two letters, nothing else, no narration of the checks. "
             "Otherwise fix the message first."
         )

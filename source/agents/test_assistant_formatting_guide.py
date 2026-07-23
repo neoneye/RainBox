@@ -76,7 +76,7 @@ def _run_capture(room):
         captured["user_prompt"] = user_prompt
         return AssistantStepDecision(
             reason="answer", action=AssistantActionName.REPLY,
-            args={"1_specification": "en, metric", "2_message": "ok", "3_audit": "OK"})
+            args={"1_message": "ok", "2_audit": "OK"})
 
     agent._structured_completion = fake_completion
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
@@ -282,7 +282,7 @@ def test_identity_block_omits_the_tree_label(room):
 def _reply(message, audit="OK"):
     return AssistantStepDecision(
         reason="answer", action=AssistantActionName.REPLY,
-        args={"1_specification": "en, metric", "2_message": message, "3_audit": audit})
+        args={"1_message": message, "2_audit": audit})
 
 
 def _run_scripted(room, decisions):
@@ -315,29 +315,28 @@ def test_reply_with_ok_audit_is_sent(room):
 
 
 def test_missing_audit_is_validation_rejected(room):
-    """3_audit is a required reply argument: a reply without one is
+    """2_audit is a required reply argument: a reply without one is
     rejected like any missing required arg, and the model resubmits."""
     bad = AssistantStepDecision(
         reason="answer", action=AssistantActionName.REPLY,
-        args={"1_specification": "en, metric",
-              "2_message": "100 km is 100 km."})
+        args={"1_message": "100 km is 100 km."})
     prompts = _run_scripted(room, [bad, _reply("100 km is 100 km.")])
     assert len(prompts) == 2
-    assert "requires a non-empty '3_audit' argument" in prompts[1]
+    assert "requires a non-empty '2_audit' argument" in prompts[1]
     assert "bare verdict" in prompts[1]           # the hint explains the field
     assert _posted_replies(room) == ["100 km is 100 km."]
 
 
-def test_missing_specification_is_validation_rejected(room):
-    """1_specification is required and the error explains what it is for:
-    the constraints (language first) are established before writing."""
+def test_missing_message_is_validation_rejected(room):
+    """1_message is required and the error explains where the answer text
+    goes."""
     bad = AssistantStepDecision(
         reason="answer", action=AssistantActionName.REPLY,
-        args={"2_message": "100 km is 100 km.", "3_audit": "OK"})
+        args={"2_audit": "OK"})
     prompts = _run_scripted(room, [bad, _reply("100 km is 100 km.")])
     assert len(prompts) == 2
-    assert "requires a non-empty '1_specification' argument" in prompts[1]
-    assert "response language" in prompts[1]
+    assert "requires a non-empty '1_message' argument" in prompts[1]
+    assert "full answer text" in prompts[1]
     assert _posted_replies(room) == ["100 km is 100 km."]
 
 
@@ -367,19 +366,18 @@ def test_rejected_step_carries_the_full_decision_to_the_next_prompt(room):
     assert '<step index="1" action="reply" status="rejected">' in prompts[1]
     assert "<reason>conversion done, replying now</reason>" in prompts[1]
     assert '<arguments format="json">{}</arguments>' in prompts[1]
-    assert "requires a non-empty '1_specification' argument" in prompts[1]
+    assert "requires a non-empty '1_message' argument" in prompts[1]
     assert _posted_replies(room) == ["62 miles"]
 
 
 def test_reversed_args_dict_is_rejected_without_raw_text(room):
-    """The live miss: a fully reversed reply (3_audit, 2_message,
-    1_specification) shipped when only the raw-text check guarded order.
-    The parsed dict preserves json insertion order, so the dict-side check
-    catches it with no dependency on the raw-text plumbing."""
+    """The live miss: a reversed reply (2_audit before 1_message) shipped
+    when only the raw-text check guarded order. The parsed dict preserves
+    json insertion order, so the dict-side check catches it with no
+    dependency on the raw-text plumbing."""
     reversed_args = AssistantStepDecision(
         reason="answer", action=AssistantActionName.REPLY,
-        args={"3_audit": "OK", "2_message": "Fahrenheit is...",
-              "1_specification": "en"})
+        args={"2_audit": "OK", "1_message": "Fahrenheit is..."})
     prompts = _run_scripted(room, [reversed_args, _reply("Fahrenheit is...")])
     assert len(prompts) == 2
     assert "must be written in prefix order" in prompts[1]
@@ -396,8 +394,7 @@ def test_out_of_prefix_order_raw_response_is_rejected(room):
     prompts = []
     script = [
         ('{"reason": "r", "action": "reply", "args": '
-         '{"1_specification": "en", "3_audit": "OK", '
-         '"2_message": "100 km is 100 km."}}',
+         '{"2_audit": "OK", "1_message": "100 km is 100 km."}}',
          _reply("100 km is 100 km.")),        # parsed dict hides the order
         (None, _reply("100 km is 100 km.")),
     ]
@@ -465,25 +462,27 @@ def test_clarifying_question_is_not_audit_gated(room):
 
 def test_numbered_reply_args_are_the_contract():
     """args must be schema-required (or the model omits it), and reply's
-    required args are the number-prefixed trio — the prefixes spell the
-    writing order (constraints, then message, then audit) and keep it even
-    under alphabetical key normalization ("1_" < "2_" < "3_")."""
+    required args are the number-prefixed pair — the prefixes spell the
+    writing order (message, then audit — the audit re-reads a message that
+    already exists) and keep it even under alphabetical key normalization
+    ("1_" < "2_"). The reply-time constraints live in the run-level
+    acceptance criteria, established before any work, not in a reply arg
+    restated after it."""
     from agents.assistant import CAPABILITIES
 
     schema = AssistantStepDecision.model_json_schema()
     assert "args" in schema["required"]
     assert "audit" not in schema["properties"]
     cap = CAPABILITIES[AssistantActionName.REPLY]
-    assert cap.required_args == ("1_specification", "2_message", "3_audit")
+    assert cap.required_args == ("1_message", "2_audit")
     assert sorted(cap.required_args) == list(cap.required_args)
 
 
 def test_system_prompt_documents_the_reply_args(room):
     system = _run_capture(room)["system_prompt"]
-    assert '"1_specification"' in system
-    assert '"3_audit"' in system
-    assert "BEFORE writing anything" in system
-    assert "never switch language on your own" in system
+    assert '"1_message"' in system
+    assert '"2_audit"' in system
+    assert "acceptance_criteria_json" in system   # the audit's yardstick
     assert "Be skeptical" in system
     assert 'exactly "OK"' in system
     assert "never a narration" in system

@@ -29,11 +29,11 @@ none of the step limit. Each loop iteration:
    the schema's `required` list — a non-required field simply gets omitted by
    the model). `reason` is an operator-facing audit note shown in the trace,
    not hidden chain-of-thought. `reply` takes number-prefixed args —
-   `{"1_specification": ..., "2_message": ..., "3_audit": ...}`, all
-   required — where the prefixes spell the writing order: first the
-   reply's constraints (response language mirrors the operator's message;
-   units, separators, date format), then the answer text obeying them,
-   then a skeptical self-audit of that text against the specification,
+   `{"1_message": ..., "2_audit": ...}`, both required — where the
+   prefixes spell the writing order: the answer text (obeying the
+   run-level acceptance criteria established before any work — see
+   [Acceptance criteria](#acceptance-criteria)), then a skeptical
+   self-audit of that text against `acceptance_criteria_json`,
    `user_settings_json` and the formatting guide (see
    `profile-guidance.md`).
 3. **Validate** — `_validate_decision` checks the action against the effective
@@ -47,7 +47,7 @@ none of the step limit. Each loop iteration:
    diagnosable from the app log. A rejection records a `failed` step and
    feeds the error back via the scratchpad; the loop continues.
 4. **Dispatch** — terminal actions (`reply`, `ask_clarifying_question`) post
-   the chat message and finish the run — except a `reply` whose `3_audit` is
+   the chat message and finish the run — except a `reply` whose `2_audit` is
    anything but `OK`: the self-audit gate bounces it as a rejected step (the
    audit text flows back through the scratchpad so the model fixes the
    message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
@@ -425,8 +425,7 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   ORDER from a step, trust only the text columns (`model_response`): the
   JSONB columns (`args`, observations) are reordered by Postgres —
   length-then-bytes, so reply args always display as
-  `3_audit, 2_message, 1_specification` regardless of what the model
-  actually wrote.
+  `2_audit, 1_message` regardless of what the model actually wrote.
 - Before dispatching a decide call, the run's `metadata.active_call` checkpoint
   stores its step index, exact system/user prompts, request time, model group,
   and an attempt list. Each attempt adds the resolved model name/UUID,

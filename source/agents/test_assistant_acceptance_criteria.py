@@ -96,8 +96,8 @@ def _criteria(marker: str) -> AcceptanceCriteria:
 def _reply(message: str = "About 321179090 meters.") -> AssistantStepDecision:
     return AssistantStepDecision(
         reason="ready to answer", action=AssistantActionName.REPLY,
-        args={"1_specification": "en, metric", "2_message": message,
-              "3_audit": "OK"})
+        args={"1_message": message,
+              "2_audit": "OK"})
 
 
 def _probe(i: int) -> AssistantStepDecision:
@@ -173,9 +173,11 @@ def test_switch_defaults_off_no_call_no_section_no_catalog_entry(app_ctx):
         assert result["status"] == "finished"
         assert calls == []                                         # no criteria call
         assert "<acceptance_criteria_json>" not in prompts[0]["user"]
-        # Ship dark: with the switch off nothing in the prompts changes —
-        # the system prompt neither mentions nor prioritizes the section.
-        assert "acceptance_criteria_json" not in prompts[0]["system"]
+        # Ship dark: with the switch off the system prompt does not
+        # prioritize the section (the reply capability's description may
+        # still name it as the audit's yardstick).
+        assert ('<source rank="3">acceptance_criteria_json'
+                not in prompts[0]["system"])
         # The revision action is not offered while the switch is off.
         assert "- acceptance_criteria:" not in agent._action_catalog()
         assert AssistantActionName.ACCEPTANCE_CRITERIA not in agent._caps
