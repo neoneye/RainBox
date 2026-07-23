@@ -3896,9 +3896,8 @@ class AssistantAgent(ModelGroupAgent):
         self._criteria_json = json.dumps(criteria.model_dump(),
                                          ensure_ascii=False, indent=1)
 
-    @staticmethod
     def _ensure_language_variant_entry(
-        criteria: AcceptanceCriteria,
+        self, criteria: AcceptanceCriteria,
     ) -> AcceptanceCriteria:
         """Code-enforced variant statement: when response_language names a
         language variant we know (en-GB/en-US, Norwegian nb/nn, …) and no
@@ -3908,20 +3907,37 @@ class AssistantAgent(ModelGroupAgent):
         — this is a loop guarantee, not prompt discipline. Matching is
         token-based (whole tags, plus each token's primary subtag: nb-NO
         also names nb), so a two-letter tag like "nn" never fires on
-        letters inside an ordinary word. The examples are code-owned
-        constants, so nothing model-written gains authority."""
+        letters inside an ordinary word. A bare language name with no tag
+        at all ("english" — a live run emitted exactly that) resolves the
+        variant from the criteria snapshot profile, the same
+        settings-based default the rules point at. The examples are
+        code-owned constants, so nothing model-written gains authority."""
 
         def tokens(text: str) -> set[str]:
             raw = [t.lower() for t in re.findall(r"[A-Za-z0-9-]+", text)]
             return set(raw) | {t.split("-")[0] for t in raw}
 
+        named_tokens = tokens(criteria.response_language)
         by_lower = {tag.lower(): (tag, examples)
                     for tag, (_label, examples)
                     in LANGUAGE_VARIANT_RULES.items()}
-        named = sorted(tokens(criteria.response_language) & set(by_lower))
-        if not named:
-            return criteria
-        tag, examples = by_lower[named[0]]
+        named = sorted(named_tokens & set(by_lower))
+        if named:
+            tag, examples = by_lower[named[0]]
+        else:
+            tag = None
+            examples = ""
+            for candidate in user_profile.valid_profile_languages(
+                    self._criteria_profile or {}):
+                resolved = _resolve_language_variant(candidate)
+                if resolved is None:
+                    continue
+                candidate_tag, (label, candidate_examples) = resolved
+                if label.lower() in named_tokens:
+                    tag, examples = candidate_tag, candidate_examples
+                    break
+            if tag is None:
+                return criteria
         if any(tag.lower() in tokens(entry) for entry in criteria.formatting):
             return criteria
         return criteria.model_copy(update={"formatting": [

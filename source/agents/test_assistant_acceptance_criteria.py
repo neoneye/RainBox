@@ -318,6 +318,37 @@ def test_language_rules_render_profile_languages_through_prompt_boundary():
     assert "preferred language" not in bare
 
 
+def test_bare_language_name_falls_back_to_the_profile_variant():
+    """The rules demand the exact tag, but a live run still emitted a bare
+    "english" — and the token-based injection had no tag to match, so no
+    variant entry was injected. When response_language names only the bare
+    language, the variant resolves from the criteria snapshot profile (the
+    same settings-based default the rules point at)."""
+    agent = _agent()
+    agent._criteria_profile = {
+        "data": {"language": "da", "language_2": "en-GB"}}
+    bare = AcceptanceCriteria(
+        response_language="english (translation explicitly requested)",
+        processing=[], formatting=[], assumptions=[])
+    out = agent._ensure_language_variant_entry(bare)
+    assert len(out.formatting) == 1
+    assert out.formatting[0].startswith("language variant: en-GB")
+    assert "colour not color" in out.formatting[0]
+    # Norwegian: a bare "norwegian" with an nb-NO profile resolves to nb.
+    agent._criteria_profile = {"data": {"language": "nb-NO"}}
+    bokmal = AcceptanceCriteria(
+        response_language="norwegian (mirrors the current message)",
+        processing=[], formatting=[], assumptions=[])
+    out = agent._ensure_language_variant_entry(bokmal)
+    assert out.formatting and out.formatting[0].startswith(
+        "language variant: nb")
+    # A profile without a variant of the named language injects nothing —
+    # there is no settings-based default to state.
+    agent._criteria_profile = {"data": {"language": "da"}}
+    out = agent._ensure_language_variant_entry(bare)
+    assert out.formatting == []
+
+
 def test_language_variant_must_be_stated_never_a_bare_language_name():
     """A live translate-to-English run shipped American spelling past an
     en-GB profile: the criteria said response_language "english" (no
