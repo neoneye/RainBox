@@ -29,8 +29,7 @@ from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
 
 KEYS = ("profile.current", "qa.facts_invalidated_at",
-        "profile.current_changed_at", "assistant.acceptance_criteria",
-        "assistant.formatting_guide")
+        "profile.current_changed_at", "assistant.formatting_guide")
 
 
 @pytest.fixture
@@ -57,9 +56,7 @@ def app_ctx():
 
 @pytest.fixture
 def room(app_ctx):
-    """A chatroom with the assistant and one ambiguous conversion request.
-    The criteria switch is ON (default-off is tested separately)."""
-    db.set_setting("assistant.acceptance_criteria", True)
+    """A chatroom with the assistant and one ambiguous conversion request."""
     human = db.get_human_user()
     assert human is not None
     chatroom = db.create_chatroom(
@@ -79,8 +76,12 @@ def room(app_ctx):
 
 
 def _agent() -> AssistantAgent:
-    return AssistantAgent(
+    """A production-shaped agent: a bound model makes the criteria call
+    happen (an unbound agent skips it — tested separately)."""
+    agent = AssistantAgent(
         agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent.candidate_model_uuids = [uuid4()]
+    return agent
 
 
 def _criteria(marker: str) -> AcceptanceCriteria:
@@ -155,40 +156,27 @@ def _steps(run_uuid):
     )
 
 
-# --- the switch ---------------------------------------------------------------
+# --- unbound agents skip the call ---------------------------------------------
 
 
-def test_switch_defaults_off_no_call_no_section_no_catalog_entry(app_ctx):
-    db.set_setting("assistant.acceptance_criteria", None)  # back to default
-    human = db.get_human_user()
-    chatroom = db.create_chatroom(
-        f"ac-off-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
-    db.post_chat_message(chatroom.uuid, human.uuid, "convert 1053737172 feet")
-    agent = _agent()
+def test_unbound_agent_skips_the_criteria_call_silently(room):
+    """An agent with no bound model has nothing to call: the criteria step
+    is skipped with no trace row and no section — the run proceeds exactly
+    as before the feature (same precedent as the second-opinion gate's
+    no-model skip). This is also what keeps every scripted-loop test
+    deterministic: test agents are unbound, production agents are not."""
+    agent = AssistantAgent(
+        agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    assert not agent.candidate_model_uuids
     calls = []
     _stub_criteria_seam(agent, [], calls)
     prompts = _capture_decides(agent, [_reply()])
-    try:
-        result = agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
-        assert result["status"] == "finished"
-        assert calls == []                                         # no criteria call
-        assert "<acceptance_criteria_json>" not in prompts[0]["user"]
-        # Ship dark: with the switch off the system prompt does not
-        # prioritize the section (the reply capability's description may
-        # still name it as the audit's yardstick).
-        assert ('<source rank="3">acceptance_criteria_json'
-                not in prompts[0]["system"])
-        # The revision action is not offered while the switch is off.
-        assert "- acceptance_criteria:" not in agent._action_catalog()
-        assert AssistantActionName.ACCEPTANCE_CRITERIA not in agent._caps
-    finally:
-        db.db.session.query(db.AssistantRun).filter(
-            db.AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.ChatMessage).filter(
-            db.ChatMessage.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
-            db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+    result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    assert result["status"] == "finished"
+    assert calls == []                                         # no criteria call
+    assert "<acceptance_criteria_json>" not in prompts[0]["user"]
+    rows = _steps(result["assistant_run_uuid"])
+    assert [s for s in rows if s.action == "acceptance_criteria"] == []
 
 
 # --- step 0: one call, before the loop, outside the budget --------------------
@@ -234,14 +222,10 @@ def test_criteria_section_renders_directly_after_current_request(room):
             < prompt.index("<conversation_history"))
 
 
-def test_system_prompt_prioritizes_criteria_only_while_switch_on(room):
-    """With the switch on, the decide system prompt lists
-    acceptance_criteria_json directly below current_request and carries the
-    code-owned authority sentence. The module constant (the switch-off
-    baseline) mentions neither — the feature ships dark."""
-    from agents.assistant import ASSISTANT_SYSTEM_PROMPT
-
-    assert "acceptance_criteria_json" not in ASSISTANT_SYSTEM_PROMPT
+def test_system_prompt_prioritizes_criteria(room):
+    """The system prompt lists acceptance_criteria_json directly below
+    current_request and carries the code-owned authority sentence — the
+    criteria step is unconditional, so the priority lives in the constant."""
     agent = _agent()
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
@@ -250,7 +234,6 @@ def test_system_prompt_prioritizes_criteria_only_while_switch_on(room):
     assert ('<source rank="3">acceptance_criteria_json' in system)
     assert '<source rank="2">current_request</source>' in system
     assert "acceptance_criteria_json is the established plan" in system
-    # The other sources are still all ranked (shifted, not dropped).
     assert '<source rank="6">conversation_history (context only)</source>' in system
 
 
@@ -529,7 +512,7 @@ def test_revision_observation_records_the_inner_call_model_meta(room):
     assert data.get("response") == '{"response_language": "en-US (x)"}'
 
 
-def test_revision_action_offered_in_catalog_when_switch_on(room):
+def test_revision_action_offered_in_catalog(room):
     agent = _agent()
     _stub_criteria_seam(agent, [_criteria("step0")])
     _capture_decides(agent, [_reply()])

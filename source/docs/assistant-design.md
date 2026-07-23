@@ -14,11 +14,11 @@ operator confirmation — is decided by code, never by prompt text.
 
 ## The loop
 
-`handle()` runs a bounded loop (`STEP_LIMIT = 6`). With the
-`assistant.acceptance_criteria` switch on, a code-driven **step 0** precedes
-the loop: one structured call establishes the reply's constraints before any
-work happens (see [Acceptance criteria](#acceptance-criteria)); it consumes
-none of the step limit. Each loop iteration:
+`handle()` runs a bounded loop (`STEP_LIMIT = 6`). A code-driven **step 0**
+precedes the loop: one structured call establishes the reply's constraints
+before any work happens (see
+[Acceptance criteria](#acceptance-criteria)); it consumes none of the step
+limit. Each loop iteration:
 
 1. **Controls** — apply any pending operator `stop`/`redirect` at the step
    boundary (see [Controls](#controls-stop--redirect)).
@@ -97,9 +97,9 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   section order carries the emphasis and the time anchor is
   current_local_time at the end), the **acceptance criteria**
   (`<acceptance_criteria_json>`, directly after the request so the request
-  and its constraints travel together — present only when the
-  `assistant.acceptance_criteria` switch is on and the step-0 call
-  succeeded; see [Acceptance criteria](#acceptance-criteria)), the
+  and its constraints travel together — absent when the step-0 call failed
+  or was skipped on an unbound agent; see
+  [Acceptance criteria](#acceptance-criteria)), the
   transcript (`kind == "message"` rows
   only, newest `MAX_RECENT_MESSAGES = 30`), the **scratchpad** of steps
   taken this turn (each step renders its action, the decision's stated
@@ -160,10 +160,9 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
 
 ## Acceptance criteria
 
-Behind the `assistant.acceptance_criteria` switch (default off), a
-code-driven **step 0** establishes the reply's constraints before the decide
-loop starts — enforced by the loop, so the model cannot skip or forget it.
-One structured call returns an `AcceptanceCriteria`:
+A code-driven **step 0** establishes the reply's constraints before the
+decide loop starts — enforced by the loop, so the model cannot skip or
+forget it. One structured call returns an `AcceptanceCriteria`:
 
 - `response_language` — with the reason, e.g. `"en-US (mirrors the current
   message)"`. The operator's CURRENT message alone decides; the assistant's
@@ -192,11 +191,9 @@ the call plans constraints, not actions.
 
 The result renders as a bare `<acceptance_criteria_json>` section directly
 after `<current_request>` in every decide step. Its authority lives in one
-code-owned system-prompt sentence, and `_system_prompt()` swaps the
-source-priority block for a variant ranking `acceptance_criteria_json`
-directly below `current_request` — both only while the switch is on, so a
-switched-off run's prompts are byte-identical to the feature-less baseline.
-The second-opinion reviewer sees the same section next to its
+code-owned system-prompt sentence, and `source_priority` ranks
+`acceptance_criteria_json` directly below `current_request`. The
+second-opinion reviewer sees the same section next to its
 `current_request` (a program converting to yards should fail review when
 the criteria say meters).
 
@@ -209,8 +206,8 @@ the criteria say meters).
   one fresh `current_profile_context()` snapshot, and ALL settings-derived
   blocks plus the criteria re-render from it together.
 - **Model-requested**: the `acceptance_criteria` catalog action (loop-run
-  like the terminals, `action=None`; offered only while the switch is on)
-  revises for changes only the model can see. It costs a decide step — the
+  like the terminals, `action=None`) revises for changes only the model can
+  see. It costs a decide step — the
   right incentive against reflexive re-speccing — the revision call receives
   the prior criteria and the run's observations, and a revision reproducing
   the prior criteria is reported as the no-op it is.
@@ -221,8 +218,10 @@ section, never appends. Every code-driven call is its own trace row
 `step_limit`; a model-requested revision is an ordinary decision whose inner
 call — prompts, model, usage, raw response — rides in `observation.data`.
 Fail-open: a failed call logs, records a failed step row, injects nothing,
-and the run proceeds exactly as with the switch off. Design rationale and
-rollout plan: `proposals/2026-07-23-reply-acceptance-criteria.md`.
+and the run proceeds exactly as without the step; an agent with no bound
+model skips the call entirely (no row — nothing to call), which is also
+what keeps scripted-loop tests deterministic. Design rationale and rollout
+history: `proposals/2026-07-23-reply-acceptance-criteria.md`.
 
 ## The capability registry
 
@@ -250,7 +249,7 @@ only by `undo_write_intent`.
 | Capability | Family | Tier | Undo |
 |---|---|---|---|
 | `reply`, `ask_clarifying_question` | conversation | terminal | — |
-| `acceptance_criteria` | conversation | loop-run (switch-gated) | — (derived state) |
+| `acceptance_criteria` | conversation | loop-run | — (derived state) |
 | `memory_query` | memory | read | — |
 | `memory_remember` | memory | log-and-undo | `memory_reject_candidate` (internal) |
 | `memory_activate` | memory | **confirm** | — |

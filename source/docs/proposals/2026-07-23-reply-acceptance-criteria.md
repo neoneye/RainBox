@@ -1,9 +1,10 @@
 # acceptance_criteria — establish the reply's constraints before any work
 
-**Status:** Implemented behind the `assistant.acceptance_criteria` switch
-(default off). Rollout steps 3-4 (the eval-suite extension and the switch
-flip) are pending; the `1_specification` reply argument stays until the
-evals confirm the run-level criteria make it redundant.
+**Status:** Fully implemented and always on. The step was verified live by
+the operator, the rollout switch was removed, and the `1_specification`
+reply argument was retired — the reply contract is
+`{"1_message", "2_audit"}` with the audit checking against the run-level
+criteria. Current behavior: `assistant-design.md` §Acceptance criteria.
 **Date:** 2026-07-23
 
 ## Naming
