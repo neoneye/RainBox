@@ -29,7 +29,8 @@ from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
 
 KEYS = ("profile.current", "qa.facts_invalidated_at",
-        "profile.current_changed_at", "assistant.acceptance_criteria")
+        "profile.current_changed_at", "assistant.acceptance_criteria",
+        "assistant.formatting_guide")
 
 
 @pytest.fixture
@@ -130,14 +131,15 @@ def _stub_criteria_seam(agent, results, calls=None):
 
 def _capture_decides(agent, decisions):
     """Route decide steps through _structured_completion (so prompts are
-    built) and capture each decide user prompt."""
+    built) and capture each decide call's prompts as
+    {"system": ..., "user": ...}."""
     queue = list(decisions)
     prompts = []
 
     def fake_completion(*, system_prompt, user_prompt, response_model,
                         validator=None):
         assert queue, "more decide calls than scripted"
-        prompts.append(user_prompt)
+        prompts.append({"system": system_prompt, "user": user_prompt})
         return queue.pop(0)
 
     agent._structured_completion = fake_completion
@@ -169,8 +171,11 @@ def test_switch_defaults_off_no_call_no_section_no_catalog_entry(app_ctx):
     try:
         result = agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         assert result["status"] == "finished"
-        assert calls == []                                     # no criteria call
-        assert "<acceptance_criteria_json>" not in prompts[0]  # no section
+        assert calls == []                                         # no criteria call
+        assert "<acceptance_criteria_json>" not in prompts[0]["user"]
+        # Ship dark: with the switch off nothing in the prompts changes —
+        # the system prompt neither mentions nor prioritizes the section.
+        assert "acceptance_criteria_json" not in prompts[0]["system"]
         # The revision action is not offered while the switch is off.
         assert "- acceptance_criteria:" not in agent._action_catalog()
         assert AssistantActionName.ACCEPTANCE_CRITERIA not in agent._caps
@@ -219,12 +224,32 @@ def test_criteria_section_renders_directly_after_current_request(room):
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    prompt = prompts[0]
+    prompt = prompts[0]["user"]
     assert "<acceptance_criteria_json>" in prompt
     assert "target unit: meters (step0)" in prompt
     assert (prompt.index("</current_request>")
             < prompt.index("<acceptance_criteria_json>")
             < prompt.index("<conversation_history"))
+
+
+def test_system_prompt_prioritizes_criteria_only_while_switch_on(room):
+    """With the switch on, the decide system prompt lists
+    acceptance_criteria_json directly below current_request and carries the
+    code-owned authority sentence. The module constant (the switch-off
+    baseline) mentions neither — the feature ships dark."""
+    from agents.assistant import ASSISTANT_SYSTEM_PROMPT
+
+    assert "acceptance_criteria_json" not in ASSISTANT_SYSTEM_PROMPT
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0")])
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    system = prompts[0]["system"]
+    assert ('<source rank="3">acceptance_criteria_json' in system)
+    assert '<source rank="2">current_request</source>' in system
+    assert "acceptance_criteria_json is the established plan" in system
+    # The other sources are still all ranked (shifted, not dropped).
+    assert '<source rank="6">conversation_history (context only)</source>' in system
 
 
 def test_step0_consumes_none_of_the_step_limit(room):
@@ -250,6 +275,27 @@ def test_step0_consumes_none_of_the_step_limit(room):
         criteria_rows[0].user_prompt)
 
 
+def test_criteria_call_sees_formatting_guide_despite_gated_switch(room):
+    """The formatting guide is a declared INPUT of the criteria call, rendered
+    from the criteria snapshot profile regardless of the separate
+    assistant.formatting_guide switch (which only gates the decide-prompt
+    injection) — otherwise enabling the criteria alone loses the derived
+    defaults (metric -> Celsius, separators)."""
+    db.set_setting("assistant.formatting_guide", False)
+    germany = next(e for e in db.profile_templates_entries()
+                   if e["name"] == "Germany")["uuid"]
+    db.set_current_profile(germany)
+    agent = _agent()
+    calls = []
+    _stub_criteria_seam(agent, [_criteria("step0")], calls)
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    assert "Use these defaults unless the current request" in calls[0]["user_prompt"]
+    assert "- Temperature: Celsius" in calls[0]["user_prompt"]
+    # The decide prompt stays gated: no formatting_guide section there.
+    assert "<formatting_guide" not in prompts[0]["user"]
+
+
 # --- fail-open ----------------------------------------------------------------
 
 
@@ -258,8 +304,8 @@ def test_failed_criteria_call_is_fail_open(room):
     _stub_criteria_seam(agent, [RuntimeError("model exploded")])
     prompts = _capture_decides(agent, [_reply()])
     result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    assert result["status"] == "finished"                  # run proceeds
-    assert "<acceptance_criteria_json>" not in prompts[0]  # no section
+    assert result["status"] == "finished"                          # run proceeds
+    assert "<acceptance_criteria_json>" not in prompts[0]["user"]  # no section
     rows = _steps(result["assistant_run_uuid"])
     failed = [s for s in rows if s.action == "acceptance_criteria"]
     assert len(failed) == 1 and failed[0].phase == "failed"
@@ -345,9 +391,9 @@ def test_flagged_write_refreshes_criteria_and_replaces_the_section(room, monkeyp
 
     # The decide step AFTER the write sees only the refreshed criteria —
     # replaced, never appended.
-    assert "target unit: meters (refreshed)" in prompts[1]
-    assert "target unit: meters (step0)" not in prompts[1]
-    assert prompts[1].count("<acceptance_criteria_json>") == 1
+    assert "target unit: meters (refreshed)" in prompts[1]["user"]
+    assert "target unit: meters (step0)" not in prompts[1]["user"]
+    assert prompts[1]["user"].count("<acceptance_criteria_json>") == 1
     # Both criteria calls are in the trace as their own rows, with the
     # refresh anchored at the write step's index — outside the decide budget.
     rows = _steps(result["assistant_run_uuid"])
@@ -387,8 +433,67 @@ def test_model_requested_revision_costs_a_step_and_replaces_criteria(room):
     reply_row = next(s for s in rows if s.action == "reply")
     assert reply_row.step_index == 1
     # Subsequent prompts carry only the revised criteria.
-    assert "target unit: meters (revised)" in prompts[1]
-    assert "target unit: meters (step0)" not in prompts[1]
+    assert "target unit: meters (revised)" in prompts[1]["user"]
+    assert "target unit: meters (step0)" not in prompts[1]["user"]
+    # The inner revision call is fully traced on the step row's observation:
+    # its prompts (like the second-opinion payload) and the criteria it
+    # produced.
+    data = (revision_row.observation or {}).get("data") or {}
+    assert data.get("acceptance_criteria", {}).get("processing") == [
+        "target unit: meters (revised)"]
+    assert "<prior_acceptance_criteria" in data.get("user_prompt", "")
+    assert "You establish the acceptance criteria" in data.get(
+        "system_prompt", "")
+
+
+def test_identical_revision_is_reported_as_a_no_op(room):
+    """A revision that returns the same criteria as the prior set is the
+    no-op it would be — the observation says so, steering the model away
+    from spending further steps on reflexive re-speccing."""
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0"), _criteria("step0")])
+    revise = AssistantStepDecision(
+        reason="re-check the criteria",
+        action=AssistantActionName.ACCEPTANCE_CRITERIA, args={})
+    _capture_decides(agent, [revise, _reply()])
+    result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    assert result["status"] == "finished"
+    rows = _steps(result["assistant_run_uuid"])
+    revision_row = next(s for s in rows if s.action == "acceptance_criteria"
+                        and s.reason == "re-check the criteria")
+    assert revision_row.phase == "observed"  # a no-op is not a failure
+    observation = revision_row.observation or {}
+    assert "unchanged" in observation.get("text", "")
+
+
+def test_revision_observation_records_the_inner_call_model_meta(room):
+    """The model-requested revision's step row persists the DECIDE call's
+    prompts; the inner criteria call's model, usage, and raw response ride
+    in the observation payload (like the second-opinion review payload)."""
+    agent = _agent()
+    inner_model = uuid4()
+
+    def fake_criteria(*, system_prompt, user_prompt):
+        # what base.py's _structured_completion would set for this call
+        agent._last_usage = {"input": 300, "output": 60, "ms": 2500}
+        agent._last_model_uuid = inner_model
+        agent._last_response_text = '{"response_language": "en-US (x)"}'
+        return _criteria("revised")
+
+    agent._request_acceptance_criteria = fake_criteria
+    # Step 0 also goes through the seam; queue order: step0 then revision.
+    revise = AssistantStepDecision(
+        reason="revise", action=AssistantActionName.ACCEPTANCE_CRITERIA,
+        args={})
+    _capture_decides(agent, [revise, _reply()])
+    result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    rows = _steps(result["assistant_run_uuid"])
+    revision_row = next(s for s in rows if s.action == "acceptance_criteria"
+                        and s.reason == "revise")
+    data = (revision_row.observation or {}).get("data") or {}
+    assert data.get("model_uuid") == str(inner_model)
+    assert (data.get("usage") or {}).get("output") == 60
+    assert data.get("response") == '{"response_language": "en-US (x)"}'
 
 
 def test_revision_action_offered_in_catalog_when_switch_on(room):

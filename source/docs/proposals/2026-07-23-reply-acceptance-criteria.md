@@ -146,7 +146,11 @@ criteria step never institutionalizes guessing over asking.
 
 **Inputs** of the step-0 call: the current request, the last few
 conversation messages (language continuity needs history),
-`user_settings_json`, and the formatting guide. NOT the action catalog —
+`user_settings_json`, and the formatting guide (rendered for this call
+from the snapshot profile regardless of the separate
+`assistant.formatting_guide` switch, which gates only the decide-prompt
+injection — the criteria step needs the guide's derived defaults either
+way). NOT the action catalog —
 this step plans constraints, not actions. A **revision** call (see
 Mid-run revision) additionally receives the PRIOR criteria and the run's
 observations so far — without them, re-running the call reproduces the
@@ -187,7 +191,10 @@ plan for this turn's reply: follow it during steps and when composing
 the message, unless the operator's request overrides it."* (The content
 is model-generated, so the authority stays in that code-owned sentence —
 same rule as every other model-derived block.) `source_priority` lists
-`acceptance_criteria_json` directly below `current_request`.
+`acceptance_criteria_json` directly below `current_request`. Both the
+priority entry and the authority sentence enter the system prompt only
+while the switch is on — with it off, every prompt is byte-identical to
+the pre-feature baseline (ship dark means dark).
 
 ### Mid-run revision — the criteria are current state, not a step-0 snapshot
 

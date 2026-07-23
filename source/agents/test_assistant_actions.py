@@ -132,13 +132,13 @@ def test_source_priority_policy_is_in_system_prompt_only():
     assert '<source rank="1">successful current_turn_steps observations</source>' in (
         ASSISTANT_SYSTEM_PROMPT
     )
-    assert ('<source rank="3">acceptance_criteria_json '
-            "(this turn's established reply plan)</source>") in (
+    assert '<source rank="5">conversation_history (context only)</source>' in (
         ASSISTANT_SYSTEM_PROMPT
     )
-    assert '<source rank="6">conversation_history (context only)</source>' in (
-        ASSISTANT_SYSTEM_PROMPT
-    )
+    # Ship dark: the criteria section enters the system prompt only when the
+    # assistant.acceptance_criteria switch is on (_system_prompt swaps the
+    # priority block); the baseline constant never mentions it.
+    assert "acceptance_criteria_json" not in ASSISTANT_SYSTEM_PROMPT
 
 
 def test_turn_event_budget_drops_whole_old_events():
