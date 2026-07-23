@@ -343,8 +343,19 @@ fresh source of facts for this turn. Use that observation to `reply` once it
 answers the request. Do not repeat the same read with the same args unless the
 observation says a fact was shortened/omitted and you need to fetch that
 specific fact by uuid.
-Do not reuse an answer from an earlier message: stored facts may have changed
-or become restricted since, and live values change between turns.
+Do not reuse an answer from an earlier message — neither recalled facts nor
+your own derived work (a translation, a conversion, a computation). An
+earlier reply is never evidence that the same answer is right now:
+- The current message may differ from the one the old reply answered.
+  A near-duplicate is a different request — re-read current_request
+  word by word; every sentence of it must be answered.
+- The environment behind the old reply may have changed: a profile or
+  settings edit, a different acceptance_criteria_json (language, variant,
+  units), the clock. The old reply may even have been wrong under the
+  rules in force now.
+Redo the work fresh for this turn from current_request and
+acceptance_criteria_json. Stored facts may also have changed or become
+restricted since, and live values change between turns.
 A recalled fact tagged `truncateN` (e.g. `truncate1200`) is shortened to N
 characters, and an "omitted" note means lower-ranked facts were dropped to fit.
 When you need the full text of such a fact, call `memory_query` again with that
@@ -2094,11 +2105,17 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'units and formatting), the user settings and the '
                      'formatting_guide. 2_audit: your self-review, written '
                      'after the message: re-read args.1_message and check '
-                     'it against acceptance_criteria_json (when present), '
+                     "it first against the operator's current message — "
+                     'does it answer ALL of it, every sentence and '
+                     'sub-question, not an earlier similar request? — then '
+                     'against acceptance_criteria_json (when present), '
                      'the user settings (user_settings_json) and the '
                      'formatting_guide. Be skeptical: hunt for silly '
-                     'mistakes such as wrong thousand separators or the '
-                     'wrong language. The audit is a bare verdict, never a '
+                     'mistakes such as a dropped sentence, wrong thousand '
+                     'separators, the wrong language, or an answer copied '
+                     'from an earlier reply that no longer matches the '
+                     'current request or criteria. The audit is a bare '
+                     'verdict, never a '
                      'narration of the checks you performed: if you found '
                      'flaws, describe what is wrong so a later step can fix '
                      'it; if you found none, the audit is exactly "OK" — '

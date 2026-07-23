@@ -141,6 +141,30 @@ def test_source_priority_policy_is_in_system_prompt_only():
     )
 
 
+def test_system_prompt_forbids_reusing_earlier_derived_work():
+    """A live run reused an earlier translation verbatim: it dropped a
+    sentence newly added to the request and kept spelling the fresh
+    criteria had just changed. The prompt must say an earlier reply is
+    never evidence — the current message may differ (a near-duplicate is a
+    different request) and the environment behind the old reply (profile
+    settings, criteria, the clock) may have changed."""
+    assert "your own derived work" in ASSISTANT_SYSTEM_PROMPT
+    assert "never evidence" in ASSISTANT_SYSTEM_PROMPT
+    assert "A near-duplicate is a different request" in ASSISTANT_SYSTEM_PROMPT
+    assert "word by word" in ASSISTANT_SYSTEM_PROMPT
+
+
+def test_reply_audit_checks_completeness_against_the_current_message():
+    """The audit's first check is the current message itself: every
+    sentence answered, nothing inherited from an earlier similar
+    request."""
+    d = CAPABILITIES[AssistantActionName.REPLY].description
+    assert "ALL of it" in d
+    assert "every sentence" in d
+    assert "dropped sentence" in d
+    assert "copied from an earlier reply" in d
+
+
 def test_turn_event_budget_drops_whole_old_events():
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
     old = AssistantTurnStep(
