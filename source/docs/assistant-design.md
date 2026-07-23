@@ -14,7 +14,11 @@ operator confirmation — is decided by code, never by prompt text.
 
 ## The loop
 
-`handle()` runs a bounded loop (`STEP_LIMIT = 6`). Each iteration:
+`handle()` runs a bounded loop (`STEP_LIMIT = 6`). With the
+`assistant.acceptance_criteria` switch on, a code-driven **step 0** precedes
+the loop: one structured call establishes the reply's constraints before any
+work happens (see [Acceptance criteria](#acceptance-criteria)); it consumes
+none of the step limit. Each loop iteration:
 
 1. **Controls** — apply any pending operator `stop`/`redirect` at the step
    boundary (see [Controls](#controls-stop--redirect)).
@@ -91,7 +95,12 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   the request — and the supporting context follows. In order: the
   **current request** (a bare `<current_request>` tag, no attributes: the
   section order carries the emphasis and the time anchor is
-  current_local_time at the end), the transcript (`kind == "message"` rows
+  current_local_time at the end), the **acceptance criteria**
+  (`<acceptance_criteria_json>`, directly after the request so the request
+  and its constraints travel together — present only when the
+  `assistant.acceptance_criteria` switch is on and the step-0 call
+  succeeded; see [Acceptance criteria](#acceptance-criteria)), the
+  transcript (`kind == "message"` rows
   only, newest `MAX_RECENT_MESSAGES = 30`), the **scratchpad** of steps
   taken this turn (each step renders its action, the decision's stated
   reason, the args, and the observation — a rejected step reads as the full
@@ -149,6 +158,72 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   active profile preserves room history — it is a soft signal, never
   redaction, and not an audience boundary. See `qa-system.md`.
 
+## Acceptance criteria
+
+Behind the `assistant.acceptance_criteria` switch (default off), a
+code-driven **step 0** establishes the reply's constraints before the decide
+loop starts — enforced by the loop, so the model cannot skip or forget it.
+One structured call returns an `AcceptanceCriteria`:
+
+- `response_language` — with the reason, e.g. `"en-US (mirrors the current
+  message)"`. The operator's CURRENT message alone decides; the assistant's
+  own earlier replies are never a language reference (a prior reply in the
+  wrong language is an error to correct, not continuity to preserve).
+- `processing` — preferences that steer the WORK (the target unit for an
+  ambiguous conversion, the timezone for a reminder).
+- `formatting` — preferences that steer the FINAL message (separators, date
+  format, temperature unit, spelling).
+- `assumptions` — every ambiguity resolved by a settings-based assumption,
+  stated so the operator can spot a wrong one. Assumptions are made only
+  where the settings provide a default; otherwise the ambiguity is recorded
+  as unresolved and the normal `ask_clarifying_question` path handles it.
+
+The call has its own small persona prompt
+(`ACCEPTANCE_CRITERIA_SYSTEM_PROMPT`, not the assistant's working prompt);
+profile languages enter it only through the prompt-boundary validation in
+`user_profile/formatting.py`. Inputs: the current request, the last few
+**operator** messages (`ACCEPTANCE_CRITERIA_MAX_MESSAGES = 6`,
+`assistant_messages="omitted"` — operator messages carry the
+language-continuity signal, assistant replies are exactly the wrong anchor),
+`user_settings_json`, and the formatting guide rendered from the criteria
+snapshot profile regardless of the `assistant.formatting_guide` switch
+(which gates only the decide-prompt injection). NOT the action catalog —
+the call plans constraints, not actions.
+
+The result renders as a bare `<acceptance_criteria_json>` section directly
+after `<current_request>` in every decide step. Its authority lives in one
+code-owned system-prompt sentence, and `_system_prompt()` swaps the
+source-priority block for a variant ranking `acceptance_criteria_json`
+directly below `current_request` — both only while the switch is on, so a
+switched-off run's prompts are byte-identical to the feature-less baseline.
+The second-opinion reviewer sees the same section next to its
+`current_request` (a program converting to yards should fail review when
+the criteria say meters).
+
+**Revision — the criteria are current state, not a step-0 snapshot:**
+
+- **Code-driven refresh**: a write capability flagged
+  `revises_acceptance_criteria` (none today — `memory_remember` only creates
+  an inert candidate; the flag is claimed by future profile/settings write
+  capabilities) triggers a loop-enforced re-run after its write succeeds:
+  one fresh `current_profile_context()` snapshot, and ALL settings-derived
+  blocks plus the criteria re-render from it together.
+- **Model-requested**: the `acceptance_criteria` catalog action (loop-run
+  like the terminals, `action=None`; offered only while the switch is on)
+  revises for changes only the model can see. It costs a decide step — the
+  right incentive against reflexive re-speccing — the revision call receives
+  the prior criteria and the run's observations, and a revision reproducing
+  the prior criteria is reported as the no-op it is.
+
+Only the latest criteria render: a revision **replaces** the injected
+section, never appends. Every code-driven call is its own trace row
+(`action="acceptance_criteria"`, prompts and latency persisted) outside
+`step_limit`; a model-requested revision is an ordinary decision whose inner
+call — prompts, model, usage, raw response — rides in `observation.data`.
+Fail-open: a failed call logs, records a failed step row, injects nothing,
+and the run proceeds exactly as with the switch off. Design rationale and
+rollout plan: `proposals/2026-07-23-reply-acceptance-criteria.md`.
+
 ## The capability registry
 
 `CAPABILITIES` maps each `AssistantActionName` to a `Capability` record:
@@ -175,6 +250,7 @@ only by `undo_write_intent`.
 | Capability | Family | Tier | Undo |
 |---|---|---|---|
 | `reply`, `ask_clarifying_question` | conversation | terminal | — |
+| `acceptance_criteria` | conversation | loop-run (switch-gated) | — (derived state) |
 | `memory_query` | memory | read | — |
 | `memory_remember` | memory | log-and-undo | `memory_reject_candidate` (internal) |
 | `memory_activate` | memory | **confirm** | — |
@@ -493,5 +569,7 @@ webapp `test_assistant_*` suites for the endpoints and pages.
   the reviewer's prompts, verdict, model binding, fail-open policy, and
   inspector rendering.
 - `qa-system.md` — the Q&A knowledge base behind `memory_query`.
+- `proposals/2026-07-23-reply-acceptance-criteria.md` — the acceptance-criteria
+  step's design rationale and rollout plan.
 - `proposals/2026-06-25-security-review-mitigations.md` — Finding 4 (the
   unauthenticated confirm boundary).

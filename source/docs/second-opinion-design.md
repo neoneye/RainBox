@@ -79,11 +79,16 @@ ElementTree so dynamic content cannot close or forge a section tag:
 
 1. `<current_request>` — the operator message the program is judged against
    (bare tag, no attributes)
-2. `<proposed_step action="…">` — `<stated_reason>`, `<model_reasoning>`
+2. `<acceptance_criteria_json>` — this turn's established reply constraints
+   (present only when the `assistant.acceptance_criteria` switch is on and
+   the criteria call succeeded; see `assistant-design.md` §Acceptance
+   criteria). The criteria are part of what "serves the request" means: a
+   program converting to yards should fail review when they say meters.
+3. `<proposed_step action="…">` — `<stated_reason>`, `<model_reasoning>`
    (omitted for non-reasoning models), `<python_program>`
-3. `<verdict_request>` — list real problems (or none), then set approved
-4. `<user_settings_json>` / `<operator_profile>` — who is asking
-5. `<current_local_time>`
+4. `<verdict_request>` — list real problems (or none), then set approved
+5. `<user_settings_json>` / `<operator_profile>` — who is asking
+6. `<current_local_time>`
 
 Reasoning is capped at 4 000 chars and code at 8 000
 (`SECOND_OPINION_MAX_*_CHARS`), keeping the head in both cases — tail

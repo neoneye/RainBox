@@ -51,7 +51,12 @@ every reply, so an order escape is diagnosable from the app log.
 The two gated blocks ship dark: each switch is flipped only after its block
 passes the live release gate below. Everything else on this page (the
 `/profile` editor, calibration storage/API, the identity block) is active
-regardless of the switches.
+regardless of the switches. One consumer bypasses the formatting switch on
+purpose: the acceptance-criteria call (`assistant.acceptance_criteria`,
+see `assistant-design.md` §Acceptance criteria) always receives the
+formatting guide rendered from its snapshot profile — the switch gates only
+the decide-prompt injection, and the criteria step needs the guide's
+derived defaults (units → temperature, separators) either way.
 
 ## Where things live
 

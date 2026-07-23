@@ -55,6 +55,11 @@ fallback.
   screen to someone else, use a fresh room and the demo database.
 - `/assistant` — assistant run inspector (traces, steps, write intents, and
   each step's collapsed debug log: active profile + block switch states).
+  With the default-off `assistant.acceptance_criteria` setting on, every run
+  starts with an `acceptance_criteria` step establishing the reply's
+  constraints (language, target units, formatting, disclosed assumptions)
+  before any work — inspect its `assumptions` there to spot a wrong guess at
+  a glance; see `docs/assistant-design.md` §Acceptance criteria.
 - `/conversations` — persona-to-persona conversation runs.
 - `/find` — paste a uuid (or a fragment, even typo'd) to learn what it is
   and jump to it; also searches mentions in chats/logs and the Q&A registry.
