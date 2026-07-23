@@ -163,7 +163,23 @@ def test_reply_audit_checks_completeness_against_the_current_message():
     assert "every sentence" in d
     assert "dropped sentence" in d
     assert "copied from an earlier reply" in d
-    assert "mixed English variant" in d
+    assert "wrong or mixed English variant" in d
+
+
+def test_decision_request_warns_against_copying_earlier_replies():
+    """The far-away system-prompt rule was ignored live: a reply copied the
+    previous turn's answer after a settings change. The warning also lives
+    in <decision_request>, the element rendered at the decision point."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant",
+                           send=lambda _: None)
+    prompt = agent._build_user_prompt(
+        messages=[{"sender_type": "human", "text": "translate this"}],
+        scratchpad=[], step_index=0)
+    request = prompt[prompt.index("<decision_request"):]
+    request = request[:request.index("</decision_request>")]
+    assert "not a shortcut" in request
+    assert "acceptance_criteria_json" in request
+    assert "Redo the work" in request
 
 
 def test_turn_event_budget_drops_whole_old_events():

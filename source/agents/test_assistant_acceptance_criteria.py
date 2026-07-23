@@ -355,6 +355,43 @@ def test_english_variant_must_be_stated_never_a_bare_english():
     assert 'never a bare "english"' in desc
 
 
+def test_missing_variant_formatting_entry_is_injected_by_code(room):
+    """Live runs kept naming the variant in response_language while
+    dropping the formatting entry the rules demand. Code enforces it: when
+    response_language names a known English variant and no formatting entry
+    carries its tag, the entry is injected — loop-enforced, not prompt
+    discipline."""
+    agent = _agent()
+    bare = AcceptanceCriteria(
+        response_language="en-US (explicit request)",
+        processing=[], formatting=[], assumptions=[])
+    _stub_criteria_seam(agent, [bare])
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    assert '"english variant: en-US' in agent._criteria_json
+    assert "counterclockwise not anticlockwise" in agent._criteria_json
+    assert "english variant: en-US" in prompts[0]["user"]
+    # A non-English language injects nothing.
+    agent2 = _agent()
+    danish = AcceptanceCriteria(
+        response_language="da (mirrors the current message)",
+        processing=[], formatting=[], assumptions=[])
+    _stub_criteria_seam(agent2, [danish])
+    _capture_decides(agent2, [_reply()])
+    agent2.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    assert "english variant" not in agent2._criteria_json
+    # An entry the model already wrote is left alone — no duplicate.
+    agent3 = _agent()
+    stated = AcceptanceCriteria(
+        response_language="en-US (explicit request)",
+        processing=[], formatting=["english variant: en-US (color)"],
+        assumptions=[])
+    _stub_criteria_seam(agent3, [stated])
+    _capture_decides(agent3, [_reply()])
+    agent3.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    assert agent3._criteria_json.count("en-US (color") == 1
+
+
 def test_language_rules_anchor_on_the_operators_current_message():
     """The operator's CURRENT message alone decides the language. The rules
     must not contain continuity phrasing a small model can anchor on the

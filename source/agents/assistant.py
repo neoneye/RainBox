@@ -2117,10 +2117,12 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'the user settings (user_settings_json) and the '
                      'formatting_guide. Be skeptical: hunt for silly '
                      'mistakes such as a dropped sentence, wrong thousand '
-                     'separators, the wrong language, a mixed English '
-                     'variant (an American word like "counterclockwise" '
-                     'or "parking lot" in a British reply, or vice '
-                     'versa), or an answer copied from an earlier reply '
+                     'separators, the wrong language, the wrong or mixed '
+                     'English variant (an American word like '
+                     '"counterclockwise" or "parking lot" in a British '
+                     'reply, or vice versa — check every word against the '
+                     "criteria's english variant), or an answer copied "
+                     'from an earlier reply '
                      'that no longer matches the current request or '
                      'criteria. The audit is a bare '
                      'verdict, never a '
@@ -3475,7 +3477,11 @@ class AssistantAgent(ModelGroupAgent):
         decision_request.text = (
             "Choose exactly one next action. If current_turn_steps already answer "
             "the current_request, choose reply now. Never repeat an identical "
-            "successful or failed action."
+            "successful or failed action. An earlier assistant message that "
+            "appears to answer current_request is not a shortcut: the settings "
+            "and acceptance_criteria_json may have changed since it was "
+            "written, so it may be wrong now. Redo the work fresh and check "
+            "the result against acceptance_criteria_json before replying."
         )
 
         # Supporting context after the decision request. Identity (who the
@@ -3834,9 +3840,35 @@ class AssistantAgent(ModelGroupAgent):
         """REPLACE the injected criteria — never append: two sets of criteria
         in one prompt is a contradiction machine. The trace keeps the
         revision history as step rows."""
+        criteria = self._ensure_english_variant_entry(criteria)
         self._acceptance_criteria = criteria
         self._criteria_json = json.dumps(criteria.model_dump(),
                                          ensure_ascii=False, indent=1)
+
+    @staticmethod
+    def _ensure_english_variant_entry(
+        criteria: AcceptanceCriteria,
+    ) -> AcceptanceCriteria:
+        """Code-enforced variant statement: when response_language names a
+        known English variant and no formatting entry carries its tag, the
+        "english variant: <tag>" entry (with its spelling+vocabulary
+        examples) is injected. Live runs kept naming the tag while dropping
+        the entry the rules demand — this is a loop guarantee, not prompt
+        discipline. The examples are code-owned constants keyed by the
+        model's own validated-shaped tag, so nothing model-written gains
+        authority."""
+        lang = criteria.response_language.lower()
+        for tag, examples in ENGLISH_VARIANT_RULES.items():
+            if tag.lower() not in lang:
+                continue
+            if any(tag.lower() in entry.lower()
+                   for entry in criteria.formatting):
+                return criteria
+            return criteria.model_copy(update={"formatting": [
+                *criteria.formatting,
+                f"english variant: {tag} ({examples})",
+            ]})
+        return criteria
 
     def _run_acceptance_criteria_call(
         self,
@@ -4007,6 +4039,10 @@ class AssistantAgent(ModelGroupAgent):
             if self._run is not None:
                 db.clear_assistant_call_checkpoint(self._run)
         self._set_acceptance_criteria(criteria)
+        # Compare and report the normalized criteria (the code-injected
+        # variant entry included) — the raw seam result would read as a
+        # change whenever only the injection differs.
+        criteria = cast(AcceptanceCriteria, self._acceptance_criteria)
         data = {"acceptance_criteria": criteria.model_dump(), **prompts,
                 **self._criteria_call_meta()}
         if prior is not None and criteria == prior:
