@@ -166,6 +166,36 @@ def test_reply_audit_checks_completeness_against_the_current_message():
     assert "wrong or mixed English variant" in d
 
 
+def test_repeated_request_omits_assistant_messages_from_history():
+    """A verbatim-repeated request kept resurrecting the earlier reply at
+    emission time even when the reasoning had derived a fresh (correct)
+    answer — the old string in context is a decoding attractor. On a
+    repeat, the assistant's earlier replies are omitted from history
+    (code-enforced, like the fresh-read omission); a differing follow-up
+    keeps them."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant",
+                           send=lambda _: None)
+    repeat = [
+        {"sender_type": "human", "text": "translate to english: hej"},
+        {"sender_type": "agent", "text": "THE-OLD-ANSWER: hello"},
+        {"sender_type": "human", "text": "Translate to english:  hej"},
+    ]
+    prompt = agent._build_user_prompt(
+        messages=repeat, scratchpad=[], step_index=0)
+    assert 'assistant_messages="omitted_repeated_request"' in prompt
+    assert "THE-OLD-ANSWER" not in prompt
+    assert "translate to english: hej" in prompt  # operator history stays
+    follow_up = [
+        {"sender_type": "human", "text": "translate to english: hej"},
+        {"sender_type": "agent", "text": "THE-OLD-ANSWER: hello"},
+        {"sender_type": "human", "text": "make it shorter"},
+    ]
+    prompt = agent._build_user_prompt(
+        messages=follow_up, scratchpad=[], step_index=0)
+    assert "THE-OLD-ANSWER" in prompt
+    assert "omitted_repeated_request" not in prompt
+
+
 def test_decision_request_warns_against_copying_earlier_replies():
     """The far-away system-prompt rule was ignored live: a reply copied the
     previous turn's answer after a settings change. The warning also lives

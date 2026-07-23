@@ -235,10 +235,10 @@ def test_regioned_english_adds_spelling_and_bare_en_does_not():
     gb = format_formatting_guide(_profile(language="en-gb"))
     assert "Use en-GB only when the message asks" in gb   # canonicalized
     assert ("Write English in British English — spelling and vocabulary "
-            "(colour, anticlockwise, car park).") in gb
+            "(colour, anticlockwise, car park, etc.).") in gb
     us = format_formatting_guide(_profile(language="da", language_2="en-US"))
     assert ("Write English in American English — spelling and vocabulary "
-            "(color, counterclockwise, parking lot).") in us
+            "(color, counterclockwise, parking lot, etc.).") in us
     bare = format_formatting_guide(_profile(language="en"))
     assert "spelling" not in bare
 

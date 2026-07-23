@@ -137,9 +137,9 @@ _UNITS_DEFAULT_TEMPERATURE: dict[str, str] = {
 # "counter-clockwise" — the variant governs word choice too.
 ENGLISH_SPELLING: dict[str, str] = {
     "en-GB": "Write English in British English — spelling and vocabulary "
-             "(colour, anticlockwise, car park).",
+             "(colour, anticlockwise, car park, etc.).",
     "en-US": "Write English in American English — spelling and vocabulary "
-             "(color, counterclockwise, parking lot).",
+             "(color, counterclockwise, parking lot, etc.).",
 }
 
 # A deliberately safe BCP-47 subset, not a complete validator: a valid tag

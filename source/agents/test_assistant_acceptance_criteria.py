@@ -337,6 +337,9 @@ def test_english_variant_must_be_stated_never_a_bare_english():
     assert "colour not color" in gb
     assert "anticlockwise not counterclockwise" in gb
     assert "car park not parking lot" in gb
+    # The examples are explicitly non-exhaustive — without "etc." a model
+    # substitutes only the listed words and leaves the rest untouched.
+    assert "etc." in gb
     assert "spelling AND word choice" in gb
     assert '"english variant: en-GB"' in gb
     us = AssistantAgent._acceptance_criteria_system_prompt(
