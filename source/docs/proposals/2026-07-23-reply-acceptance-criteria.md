@@ -287,7 +287,15 @@ House pattern — ship dark, gate, enable:
 2. Unit tests: the criteria call is made once per run before step 0; the
    section renders after `current_request`; a failed call is fail-open;
    the language rules render the profile languages through the prompt
-   boundary.
+   boundary; a revision call's prompt carries the prior criteria and the
+   run's observations (and a scripted revision with identical inputs is
+   detectable as the no-op it would be); step 0 and code-driven
+   refreshes consume none of `step_limit` (a run can still take
+   `STEP_LIMIT` decide steps after them) and their step rows carry their
+   own indices; only the latest criteria render (a revision replaces the
+   `<acceptance_criteria_json>` section, never appends); the
+   second-opinion prompt carries the criteria section next to
+   `current_request`; a model-requested revision consumes a decide step.
 3. Extend `evals/profile_guidance.py` with ambiguity cases:
    - "convert 1053737172 feet" → expected: meters in the reply,
      `assumptions` names the metric default.
