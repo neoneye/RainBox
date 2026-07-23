@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import profile_fields
 from user_profile.formatting import (
     DATE_FORMATS,
-    ENGLISH_SPELLING,
+    LANGUAGE_VARIANT_CLAUSES,
     MAX_FORMATTING_GUIDE_CHARS,
     NUMBER_FORMATS,
     TEMPERATURES,
@@ -300,5 +300,12 @@ def test_maximal_profile_stays_within_cap():
         assert 0 < len(body) <= MAX_FORMATTING_GUIDE_CHARS
 
 
-def test_english_spelling_table_is_the_two_supported_tags():
-    assert set(ENGLISH_SPELLING) == {"en-GB", "en-US"}
+def test_variant_clause_table_covers_the_supported_variant_tags():
+    assert set(LANGUAGE_VARIANT_CLAUSES) == {"en-GB", "en-US", "nb", "nn"}
+
+
+def test_norwegian_variant_clause_renders():
+    nb = format_formatting_guide(_profile(language="nb"))
+    assert "Write Norwegian in Bokmål" in nb
+    nn = format_formatting_guide(_profile(language="da", language_2="nn"))
+    assert "Write Norwegian in Nynorsk" in nn

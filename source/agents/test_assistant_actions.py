@@ -163,7 +163,7 @@ def test_reply_audit_checks_completeness_against_the_current_message():
     assert "every sentence" in d
     assert "dropped sentence" in d
     assert "copied from an earlier reply" in d
-    assert "wrong or mixed English variant" in d
+    assert "wrong or mixed language variant" in d
 
 
 def test_repeated_request_omits_assistant_messages_from_history():

@@ -131,15 +131,21 @@ _UNITS_DEFAULT_TEMPERATURE: dict[str, str] = {
     "metric": "celsius", "uk": "celsius", "imperial": "fahrenheit",
 }
 
-# canonical language tag -> variant clause (bare "en" adds none; only the
-# two tags the profile can meaningfully disambiguate). Spelling AND
-# vocabulary: with a spelling-only clause a model writes "colours" next to
-# "counter-clockwise" — the variant governs word choice too.
-ENGLISH_SPELLING: dict[str, str] = {
+# canonical language tag -> variant clause, for languages with named
+# variants (a bare "en" or "no" adds none — only a tag that names the
+# variant can disambiguate). Spelling AND vocabulary: with a spelling-only
+# clause a model writes "colours" next to "counter-clockwise" — the
+# variant governs word choice too. Keys stay in lockstep with the
+# assistant's LANGUAGE_VARIANT_RULES (asserted in its tests).
+LANGUAGE_VARIANT_CLAUSES: dict[str, str] = {
     "en-GB": "Write English in British English — spelling and vocabulary "
              "(colour, anticlockwise, car park, etc.).",
     "en-US": "Write English in American English — spelling and vocabulary "
              "(color, counterclockwise, parking lot, etc.).",
+    "nb": "Write Norwegian in Bokmål — spelling and vocabulary "
+          "(ikke, jeg, hvordan, etc.).",
+    "nn": "Write Norwegian in Nynorsk — spelling and vocabulary "
+          "(ikkje, eg, korleis, etc.).",
 }
 
 # A deliberately safe BCP-47 subset, not a complete validator: a valid tag
@@ -329,8 +335,8 @@ def format_formatting_guide(profile: dict[str, Any],
         known = (f"{language} or {language_2}" if language_2 else language)
         spelling = ""
         for tag in (language, language_2):
-            if tag in ENGLISH_SPELLING:
-                spelling = " " + ENGLISH_SPELLING[tag]
+            if tag in LANGUAGE_VARIANT_CLAUSES:
+                spelling = " " + LANGUAGE_VARIANT_CLAUSES[tag]
                 break
         lines.append("- Language: reply in the language of the current "
                      "message; never switch on your own. Use "

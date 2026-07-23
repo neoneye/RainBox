@@ -15,6 +15,7 @@ deterministic fake via `agents/assistant_fakes.py`).
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -188,25 +189,52 @@ class AcceptanceCriteria(BaseModel):
         "e.g. 'convert target not stated; assuming meters'."))
 
 
-# How the criteria state an English variant: response_language names the
-# exact tag and `formatting` carries the variant with concrete examples.
-# A bare "english" drops the variant on the floor — a live
-# translate-to-English run shipped American spelling past an en-GB profile
-# that way. The examples deliberately contrast BOTH spelling and
-# vocabulary: with spelling-only examples, a live run wrote "colours"
-# next to "counter-clockwise" and "parking lot" — the variant governs
-# word choice too. Keys stay in lockstep with
-# user_profile.ENGLISH_SPELLING (asserted in tests).
-ENGLISH_VARIANT_RULES: dict[str, str] = {
-    "en-GB": ("British English throughout — e.g. colour not color, "
+# Languages with named variants: tag -> (language label, the variant's
+# statement with contrastive examples). The criteria must state the exact
+# tag in response_language and carry the variant in `formatting` — a bare
+# language name drops the variant on the floor (a live translate-to-English
+# run shipped American spelling past an en-GB profile that way). The
+# examples deliberately contrast BOTH spelling and vocabulary and are
+# explicitly non-exhaustive: with spelling-only examples a live run wrote
+# "colours" next to "counter-clockwise" — the variant governs word choice
+# too. Keys stay in lockstep with user_profile.LANGUAGE_VARIANT_CLAUSES
+# (asserted in tests).
+_VARIANT_SUFFIX = (", etc.; examples, not a substitution list — every "
+                   "word follows the variant")
+LANGUAGE_VARIANT_RULES: dict[str, tuple[str, str]] = {
+    "en-GB": ("English",
+              "British English throughout — e.g. colour not color, "
               "anticlockwise not counterclockwise, car park not parking "
-              "lot, etc.; examples, not a substitution list — every word "
-              "follows the variant"),
-    "en-US": ("American English throughout — e.g. color not colour, "
+              "lot" + _VARIANT_SUFFIX),
+    "en-US": ("English",
+              "American English throughout — e.g. color not colour, "
               "counterclockwise not anticlockwise, parking lot not car "
-              "park, etc.; examples, not a substitution list — every word "
-              "follows the variant"),
+              "park" + _VARIANT_SUFFIX),
+    "nb": ("Norwegian",
+           "Norwegian Bokmål throughout — e.g. ikke not ikkje, jeg not "
+           "eg, hvordan not korleis" + _VARIANT_SUFFIX),
+    "nn": ("Norwegian",
+           "Norwegian Nynorsk throughout — e.g. ikkje not ikke, eg not "
+           "jeg, korleis not hvordan" + _VARIANT_SUFFIX),
 }
+
+
+def _resolve_language_variant(
+    tag: str | None,
+) -> tuple[str, tuple[str, str]] | None:
+    """The variant entry for a validated language tag: exact match first,
+    else the primary subtag (nb-NO also names nb). None when the language
+    has no known variants."""
+    if not tag:
+        return None
+    entry = LANGUAGE_VARIANT_RULES.get(tag)
+    if entry is not None:
+        return tag, entry
+    primary = tag.split("-")[0]
+    entry = LANGUAGE_VARIANT_RULES.get(primary)
+    if entry is not None:
+        return primary, entry
+    return None
 
 
 # The acceptance-criteria call's persona prompt (like the second-opinion
@@ -2123,11 +2151,11 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'formatting_guide. Be skeptical: hunt for silly '
                      'mistakes such as a dropped sentence, wrong thousand '
                      'separators, the wrong language, the wrong or mixed '
-                     'English variant (an American word like '
-                     '"counterclockwise" or "parking lot" in a British '
-                     'reply, or vice versa — check every word against the '
-                     "criteria's english variant), or an answer copied "
-                     'from an earlier reply '
+                     'language variant (an American word like '
+                     '"counterclockwise" in a British reply, Nynorsk in a '
+                     'Bokmål reply, or vice versa — check every word '
+                     "against the criteria's language variant), or an "
+                     'answer copied from an earlier reply '
                      'that no longer matches the current request or '
                      'criteria. The audit is a bare '
                      'verdict, never a '
@@ -3741,17 +3769,19 @@ class AssistantAgent(ModelGroupAgent):
                 f"- The operator's preferred language is {known} — use it "
                 "only when the current message explicitly asks for it.")
         for tag in (language, language_2):
-            spelling = ENGLISH_VARIANT_RULES.get(tag or "")
-            if spelling:
+            resolved = _resolve_language_variant(tag)
+            if resolved is not None:
+                variant_tag, (label, examples) = resolved
                 rules.append(
-                    "- A reply in English is written in the profile's "
-                    f"English variant, {tag} ({spelling}), unless the "
+                    f"- A reply in {label} is written in the profile's "
+                    f"variant, {variant_tag} ({examples}), unless the "
                     "message explicitly asks for another variant. The "
                     "variant governs spelling AND word choice — never mix "
                     "variants in one reply. STATE it: response_language "
-                    'names the exact tag — never a bare "english" — and '
-                    f'`formatting` carries the entry "english variant: '
-                    f'{tag}" with its examples ({spelling}).')
+                    f'names the exact tag — never a bare "{label.lower()}" '
+                    '— and `formatting` carries the entry "language '
+                    f'variant: {variant_tag}" with its examples '
+                    f"({examples}).")
                 break
         return ACCEPTANCE_CRITERIA_SYSTEM_PROMPT.format(
             language_rules="\n".join(rules))
@@ -3861,35 +3891,43 @@ class AssistantAgent(ModelGroupAgent):
         """REPLACE the injected criteria — never append: two sets of criteria
         in one prompt is a contradiction machine. The trace keeps the
         revision history as step rows."""
-        criteria = self._ensure_english_variant_entry(criteria)
+        criteria = self._ensure_language_variant_entry(criteria)
         self._acceptance_criteria = criteria
         self._criteria_json = json.dumps(criteria.model_dump(),
                                          ensure_ascii=False, indent=1)
 
     @staticmethod
-    def _ensure_english_variant_entry(
+    def _ensure_language_variant_entry(
         criteria: AcceptanceCriteria,
     ) -> AcceptanceCriteria:
         """Code-enforced variant statement: when response_language names a
-        known English variant and no formatting entry carries its tag, the
-        "english variant: <tag>" entry (with its spelling+vocabulary
-        examples) is injected. Live runs kept naming the tag while dropping
-        the entry the rules demand — this is a loop guarantee, not prompt
-        discipline. The examples are code-owned constants keyed by the
-        model's own validated-shaped tag, so nothing model-written gains
-        authority."""
-        lang = criteria.response_language.lower()
-        for tag, examples in ENGLISH_VARIANT_RULES.items():
-            if tag.lower() not in lang:
-                continue
-            if any(tag.lower() in entry.lower()
-                   for entry in criteria.formatting):
-                return criteria
-            return criteria.model_copy(update={"formatting": [
-                *criteria.formatting,
-                f"english variant: {tag} ({examples})",
-            ]})
-        return criteria
+        language variant we know (en-GB/en-US, Norwegian nb/nn, …) and no
+        formatting entry carries its tag, the "language variant: <tag>"
+        entry (with its spelling+vocabulary examples) is injected. Live
+        runs kept naming the tag while dropping the entry the rules demand
+        — this is a loop guarantee, not prompt discipline. Matching is
+        token-based (whole tags, plus each token's primary subtag: nb-NO
+        also names nb), so a two-letter tag like "nn" never fires on
+        letters inside an ordinary word. The examples are code-owned
+        constants, so nothing model-written gains authority."""
+
+        def tokens(text: str) -> set[str]:
+            raw = [t.lower() for t in re.findall(r"[A-Za-z0-9-]+", text)]
+            return set(raw) | {t.split("-")[0] for t in raw}
+
+        by_lower = {tag.lower(): (tag, examples)
+                    for tag, (_label, examples)
+                    in LANGUAGE_VARIANT_RULES.items()}
+        named = sorted(tokens(criteria.response_language) & set(by_lower))
+        if not named:
+            return criteria
+        tag, examples = by_lower[named[0]]
+        if any(tag.lower() in tokens(entry) for entry in criteria.formatting):
+            return criteria
+        return criteria.model_copy(update={"formatting": [
+            *criteria.formatting,
+            f"language variant: {tag} ({examples})",
+        ]})
 
     def _run_acceptance_criteria_call(
         self,

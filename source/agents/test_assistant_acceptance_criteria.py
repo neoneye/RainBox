@@ -318,15 +318,16 @@ def test_language_rules_render_profile_languages_through_prompt_boundary():
     assert "preferred language" not in bare
 
 
-def test_english_variant_must_be_stated_never_a_bare_english():
+def test_language_variant_must_be_stated_never_a_bare_language_name():
     """A live translate-to-English run shipped American spelling past an
     en-GB profile: the criteria said response_language "english" (no
     variant) and formatting was empty, so nothing downstream could catch
-    "colors". When the profile declares an English variant, the rules must
-    require the exact tag in response_language and the spelling (with a
-    concrete example) in formatting."""
+    "colors". When the profile declares a language variant, the rules must
+    require the exact tag in response_language and the variant (with
+    concrete examples) in formatting. Not English-specific: Norwegian has
+    the same split (Bokmål nb / Nynorsk nn)."""
     import user_profile
-    from agents.assistant import ENGLISH_VARIANT_RULES, AcceptanceCriteria
+    from agents.assistant import LANGUAGE_VARIANT_RULES, AcceptanceCriteria
 
     gb = AssistantAgent._acceptance_criteria_system_prompt(
         {"data": {"language": "da", "language_2": "en-GB"}})
@@ -341,17 +342,24 @@ def test_english_variant_must_be_stated_never_a_bare_english():
     # substitutes only the listed words and leaves the rest untouched.
     assert "etc." in gb
     assert "spelling AND word choice" in gb
-    assert '"english variant: en-GB"' in gb
+    assert '"language variant: en-GB"' in gb
     us = AssistantAgent._acceptance_criteria_system_prompt(
         {"data": {"language": "en-US"}})
     assert "color not colour" in us
     assert "counterclockwise not anticlockwise" in us
-    # No English variant in the profile -> no variant rule to state.
+    nb = AssistantAgent._acceptance_criteria_system_prompt(
+        {"data": {"language": "nb"}})
+    assert 'never a bare "norwegian"' in nb
+    assert "ikke not ikkje" in nb
+    assert '"language variant: nb"' in nb
+    # No variant-carrying language in the profile -> no variant rule.
     bare = AssistantAgent._acceptance_criteria_system_prompt(
         {"data": {"language": "da"}})
     assert "never a bare" not in bare
-    # The variant table stays in lockstep with the canonical spelling table.
-    assert set(ENGLISH_VARIANT_RULES) == set(user_profile.ENGLISH_SPELLING)
+    # The variant table stays in lockstep with the formatting guide's
+    # variant-clause table.
+    assert set(LANGUAGE_VARIANT_RULES) == set(
+        user_profile.LANGUAGE_VARIANT_CLAUSES)
     # The schema itself demands the exact tag, so the requirement holds
     # even for a model that skims the rules.
     desc = AcceptanceCriteria.model_fields["response_language"].description
@@ -361,9 +369,10 @@ def test_english_variant_must_be_stated_never_a_bare_english():
 def test_missing_variant_formatting_entry_is_injected_by_code(room):
     """Live runs kept naming the variant in response_language while
     dropping the formatting entry the rules demand. Code enforces it: when
-    response_language names a known English variant and no formatting entry
-    carries its tag, the entry is injected — loop-enforced, not prompt
-    discipline."""
+    response_language names a known language variant and no formatting
+    entry carries its tag, the entry is injected — loop-enforced, not
+    prompt discipline. Tag matching is token-based, so a two-letter tag
+    like "nn" never fires on letters inside an ordinary word."""
     agent = _agent()
     bare = AcceptanceCriteria(
         response_language="en-US (explicit request)",
@@ -371,23 +380,36 @@ def test_missing_variant_formatting_entry_is_injected_by_code(room):
     _stub_criteria_seam(agent, [bare])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    assert '"english variant: en-US' in agent._criteria_json
+    assert '"language variant: en-US' in agent._criteria_json
     assert "counterclockwise not anticlockwise" in agent._criteria_json
-    assert "english variant: en-US" in prompts[0]["user"]
-    # A non-English language injects nothing.
+    assert "language variant: en-US" in prompts[0]["user"]
+    # Norwegian Bokmål injects its variant the same way, including from a
+    # region-qualified tag (nb-NO -> the nb entry).
+    agent_nb = _agent()
+    bokmal = AcceptanceCriteria(
+        response_language="nb-NO (mirrors the current message)",
+        processing=[], formatting=[], assumptions=[])
+    _stub_criteria_seam(agent_nb, [bokmal])
+    _capture_decides(agent_nb, [_reply()])
+    agent_nb.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    assert '"language variant: nb' in agent_nb._criteria_json
+    assert "ikke not ikkje" in agent_nb._criteria_json
+    # A language with no known variants injects nothing — and letters
+    # inside words never count as a tag ("kan ikke annonseres" contains
+    # the letters "nn").
     agent2 = _agent()
     danish = AcceptanceCriteria(
-        response_language="da (mirrors the current message)",
+        response_language="da (kan ikke annonseres på nynorsk her)",
         processing=[], formatting=[], assumptions=[])
     _stub_criteria_seam(agent2, [danish])
     _capture_decides(agent2, [_reply()])
     agent2.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    assert "english variant" not in agent2._criteria_json
+    assert "language variant" not in agent2._criteria_json
     # An entry the model already wrote is left alone — no duplicate.
     agent3 = _agent()
     stated = AcceptanceCriteria(
         response_language="en-US (explicit request)",
-        processing=[], formatting=["english variant: en-US (color)"],
+        processing=[], formatting=["language variant: en-US (color)"],
         assumptions=[])
     _stub_criteria_seam(agent3, [stated])
     _capture_decides(agent3, [_reply()])
