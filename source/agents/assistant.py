@@ -168,9 +168,10 @@ class AcceptanceCriteria(BaseModel):
     indistinguishable from a considered "none apply"."""
 
     response_language: str = Field(description=(
-        "The language the reply will be written in, with the reason — "
-        'e.g. "en-US (mirrors the current message; profile spelling '
-        "en-US)\". The operator's CURRENT message alone decides; the "
+        "The language the reply will be written in, as the exact tag "
+        'with its variant — never a bare "english"; e.g. "en-GB (the '
+        "message asks for English; profile variant en-GB)\". The "
+        "operator's CURRENT message alone decides the language; the "
         "profile's preferred language applies only when the message "
         "explicitly asks for it; an explicit request always wins."))
     processing: list[str] = Field(description=(
@@ -185,6 +186,18 @@ class AcceptanceCriteria(BaseModel):
         "Ambiguities in the request resolved by a settings-based "
         "assumption, stated so the operator can spot a wrong one — "
         "e.g. 'convert target not stated; assuming meters'."))
+
+
+# How the criteria state an English variant: response_language names the
+# exact tag and `formatting` carries the spelling with a concrete example.
+# A bare "english" drops the variant on the floor — a live
+# translate-to-English run shipped American spelling past an en-GB profile
+# that way. Keys stay in lockstep with user_profile.ENGLISH_SPELLING
+# (asserted in tests).
+ENGLISH_VARIANT_RULES: dict[str, str] = {
+    "en-GB": "British spelling: colour, not color",
+    "en-US": "American spelling: color, not colour",
+}
 
 
 # The acceptance-criteria call's persona prompt (like the second-opinion
@@ -3676,8 +3689,16 @@ class AssistantAgent(ModelGroupAgent):
                 f"- The operator's preferred language is {known} — use it "
                 "only when the current message explicitly asks for it.")
         for tag in (language, language_2):
-            if tag in user_profile.ENGLISH_SPELLING:
-                rules.append(f"- {user_profile.ENGLISH_SPELLING[tag]}")
+            spelling = ENGLISH_VARIANT_RULES.get(tag or "")
+            if spelling:
+                rules.append(
+                    "- A reply in English is written in the profile's "
+                    f"English variant, {tag} ({spelling}), unless the "
+                    "message explicitly asks for another variant. STATE "
+                    "the variant: response_language names the exact tag — "
+                    'never a bare "english" — and `formatting` carries '
+                    f'the entry "spelling: {tag}" with its example '
+                    f"({spelling}).")
                 break
         return ACCEPTANCE_CRITERIA_SYSTEM_PROMPT.format(
             language_rules="\n".join(rules))
