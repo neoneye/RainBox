@@ -225,6 +225,16 @@ def _first_valid(values: list[Any], validator: Any) -> tuple[str | None, str | N
     return preferred, secondary
 
 
+def valid_profile_languages(profile: dict[str, Any]) -> tuple[str | None, str | None]:
+    """(preferred, secondary): the profile's language fields passed through
+    the prompt-boundary validation above — the only way a profile language
+    may enter a code-owned prompt sentence (an unusable free-text value is
+    omitted and logged, never spliced)."""
+    data = (profile or {}).get("data") or {}
+    return _first_valid(
+        [data.get("language"), data.get("language_2")], _valid_language)
+
+
 # ---- the renderer --------------------------------------------------------
 
 def format_formatting_guide(profile: dict[str, Any],

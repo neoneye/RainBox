@@ -209,6 +209,16 @@ SETTINGS: dict[str, Setting] = {
                     "(evals/profile_gate.py). Independent of the formatting "
                     "switch — the blocks gate separately.",
     ),
+    "assistant.acceptance_criteria": Setting(
+        "assistant.acceptance_criteria", None, "bool", False,
+        description="Run the acceptance-criteria call before the assistant's "
+                    "decide loop (a code-driven step 0) and inject its result "
+                    "as <acceptance_criteria_json> into every step, so the "
+                    "reply's constraints — language, target units, formatting "
+                    "— are established before any work happens. Default off: "
+                    "enable after the criteria step passes its eval gate "
+                    "(evals/profile_guidance.py).",
+    ),
     "profile.current_changed_at": Setting(
         "profile.current_changed_at", None, "string", None, internal=True,
         description="Event stamp of the last actual profile.current change, "

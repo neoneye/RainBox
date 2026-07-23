@@ -258,7 +258,7 @@ def test_steps_record_the_debug_log(room):
         assert by_label["knowledge_calibration"]["text"] == "on"
         entry_labels = list(by_label)
     assert entry_labels == ["profile", "formatting_guide",
-                            "knowledge_calibration"]
+                            "knowledge_calibration", "acceptance_criteria"]
     # Debug context never leaks into the prompt.
     assert "formatting_guide\": " not in captured["user_prompt"]
     assert '"profile"' not in captured["user_prompt"]

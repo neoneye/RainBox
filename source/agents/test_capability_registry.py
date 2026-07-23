@@ -50,8 +50,11 @@ def test_registry_covers_every_action():
     for name, cap in CAPABILITIES.items():
         assert isinstance(cap, Capability)
         assert cap.name is name
-        if cap.terminal:
-            assert cap.action is None  # terminal actions are posted by the loop
+        if cap.terminal or name is AssistantActionName.ACCEPTANCE_CRITERIA:
+            # Terminal actions are posted by the loop; the criteria revision
+            # is run by the loop too (it needs the run's prior criteria and
+            # observations, which no registry dispatcher can reach).
+            assert cap.action is None
         else:
             assert cap.action is not None  # read actions have a dispatcher
 

@@ -1,6 +1,9 @@
 # acceptance_criteria — establish the reply's constraints before any work
 
-**Status:** Proposal, not implemented.
+**Status:** Implemented behind the `assistant.acceptance_criteria` switch
+(default off). Rollout steps 3-4 (the eval-suite extension and the switch
+flip) are pending; the `1_specification` reply argument stays until the
+evals confirm the run-level criteria make it redundant.
 **Date:** 2026-07-23
 
 ## Naming
