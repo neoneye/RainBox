@@ -145,7 +145,10 @@ assistant's normal `ask_clarifying_question` path handles it — the
 criteria step never institutionalizes guessing over asking.
 
 **Inputs** of the step-0 call: the current request, the last few
-conversation messages (language continuity needs history),
+conversation messages from the OPERATOR only (their messages carry the
+language-continuity signal; the assistant's earlier replies are excluded
+— a prior reply in the wrong language must not become "continuity" the
+criteria preserve),
 `user_settings_json`, and the formatting guide (rendered for this call
 from the snapshot profile regardless of the separate
 `assistant.formatting_guide` switch, which gates only the decide-prompt

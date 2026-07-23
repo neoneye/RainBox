@@ -331,7 +331,38 @@ def test_language_rules_render_profile_languages_through_prompt_boundary():
     # language line at all.
     bare = AssistantAgent._acceptance_criteria_system_prompt({"data": {}})
     assert "preferred language" not in bare
-    assert "Mirror the conversation" in bare
+
+
+def test_language_rules_anchor_on_the_operators_current_message():
+    """The operator's CURRENT message alone decides the language. The rules
+    must not contain continuity phrasing a small model can anchor on the
+    assistant's own earlier reply (a prior wrong-language reply read as
+    'never switch mid-conversation' produced a Danish criteria verdict for
+    an English request), and must name a wrong-language earlier reply as an
+    error to correct."""
+    prompt = AssistantAgent._acceptance_criteria_system_prompt({"data": {}})
+    assert "operator's CURRENT message" in prompt
+    assert "that message alone decides" in prompt
+    assert "error to correct, not continuity to preserve" in prompt
+    assert "Never switch language mid-conversation" not in prompt
+
+
+def test_criteria_history_carries_operator_messages_only(room):
+    """The criteria call's conversation history keeps operator messages only:
+    they carry the language-continuity signal, while the assistant's earlier
+    replies are exactly the wrong anchor — a reply in the wrong language must
+    not become 'continuity' the criteria preserve."""
+    agent = _agent()
+    messages = [
+        {"sender_type": "human", "text": "convert 10537337172 feet"},
+        {"sender_type": "agent",
+         "text": "10537337172 feet er lig med 3211780370 meter."},
+        {"sender_type": "human", "text": "convert 105373337172 feet"},
+    ]
+    prompt = agent._build_acceptance_criteria_prompt(messages)
+    assert "convert 10537337172 feet" in prompt          # operator history kept
+    assert "er lig med" not in prompt                    # assistant reply gone
+    assert 'assistant_messages="omitted"' in prompt
 
 
 # --- revision prompts ---------------------------------------------------------

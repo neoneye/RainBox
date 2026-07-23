@@ -170,7 +170,7 @@ class AcceptanceCriteria(BaseModel):
     response_language: str = Field(description=(
         "The language the reply will be written in, with the reason — "
         'e.g. "en-US (mirrors the current message; profile spelling '
-        'en-US)". Mirror the language of the current message; the '
+        "en-US)\". The operator's CURRENT message alone decides; the "
         "profile's preferred language applies only when the message "
         "explicitly asks for it; an explicit request always wins."))
     processing: list[str] = Field(description=(
@@ -3702,11 +3702,19 @@ class AssistantAgent(ModelGroupAgent):
         profile languages admitted only through the prompt-boundary
         validation (an unusable free-text value is omitted, never spliced —
         same contract as the formatting guide)."""
+        # No "never switch mid-conversation" phrasing here on purpose: a
+        # small model anchors it on the assistant's own earlier reply, so a
+        # prior wrong-language reply becomes "continuity" and reproduces
+        # itself. The operator's current message is the only anchor.
         rules = [
-            "- Mirror the conversation: the reply's language is the language "
-            "of the operator's current message. Ask in Danish -> answer in "
-            "Danish; ask in English -> answer in English. Never switch "
-            "language mid-conversation on your own.",
+            "- The reply's language is the language of the operator's "
+            "CURRENT message — that message alone decides. Ask in Danish "
+            "-> answer in Danish; ask in English -> answer in English.",
+            "- Earlier operator messages matter only when the current "
+            'message is too short to tell (e.g. "ok"). The assistant\'s '
+            "own earlier replies are never a language reference: an "
+            "earlier reply in the wrong language is an error to correct, "
+            "not continuity to preserve.",
             "- An explicit language request in the current message always "
             "wins.",
         ]
@@ -3742,10 +3750,16 @@ class AssistantAgent(ModelGroupAgent):
         current = messages[-1] if messages else None
         request = ET.SubElement(root, "current_request")
         request.text = str((current or {}).get("text") or "none")
-        context = (messages[:-1][-self.ACCEPTANCE_CRITERIA_MAX_MESSAGES:]
-                   if messages else [])
+        # Operator messages only: they carry the language-continuity signal,
+        # while the assistant's earlier replies are exactly the wrong anchor
+        # — a prior reply in the wrong language must not become "continuity"
+        # the criteria preserve.
+        context = [m for m in (messages[:-1] if messages else [])
+                   if self._message_role(m) == "operator"
+                   ][-self.ACCEPTANCE_CRITERIA_MAX_MESSAGES:]
         history = ET.SubElement(root, "conversation_history",
-                                {"authority": "context_only"})
+                                {"authority": "context_only",
+                                 "assistant_messages": "omitted"})
         if context:
             for message in context:
                 self._append_prompt_message(history, message)
