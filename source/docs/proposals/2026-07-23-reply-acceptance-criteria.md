@@ -132,6 +132,35 @@ class AcceptanceCriteria(BaseModel):
         "e.g. 'convert target not stated; assuming meters'."))
 ```
 
+The system prompt is code-owned and small (~40 lines): the language
+rules above (generalized — the profile's languages interpolated through
+the existing prompt-boundary validation in `user_profile/formatting.py`),
+plus "resolve ambiguity from the user settings and SAY SO in
+assumptions". Assume only where a settings-based default exists; when
+none does, the criteria record the ambiguity as unresolved and the
+assistant's normal `ask_clarifying_question` path handles it — the
+criteria step never institutionalizes guessing over asking.
+
+**Inputs** of the step-0 call: the current request, the last few
+conversation messages (language continuity needs history),
+`user_settings_json`, and the formatting guide. NOT the action catalog —
+this step plans constraints, not actions. A **revision** call (see
+Mid-run revision) additionally receives the PRIOR criteria and the run's
+observations so far — without them, re-running the call reproduces the
+same criteria deterministically and the revision is a no-op; the
+revision prompt asks specifically "what changed, and which criteria does
+it invalidate?".
+
+**Model binding:** the assistant's own model group by default; a
+dedicated binding (like `SECOND_OPINION_UUID`) is a later option if a
+smaller or larger model proves better at it.
+
+**Note on `assumptions` vs `processing`:** an ambiguity resolved from
+settings appears in both on purpose — `processing` steers the work
+("target unit: meters"), `assumptions` discloses that it was a choice
+("target not stated; assuming meters") so the operator can spot a wrong
+one in the trace.
+
 ### Injection
 
 The result renders as a prompt section for EVERY decide step, placed
@@ -174,18 +203,34 @@ mistake this feature exists to kill.
 Two revision triggers, mirroring who can see the change:
 
 - **Code-driven refresh** for changes code can see: `Capability` gains a
-  `revises_acceptance_criteria: bool` flag, set on any write that can mutate
-  preferences (today `memory_remember` of a preference-shaped fact;
-  future profile/settings write capabilities). After such a write
-  succeeds, the loop re-runs the specification call against the FRESH
-  settings snapshot and replaces the injected section for all subsequent
-  steps. Loop-enforced — the model cannot forget it.
-- **A `acceptance_criteria` catalog action** for changes only the model
+  `revises_acceptance_criteria: bool` flag; after a flagged write
+  succeeds, the loop re-runs the criteria call and replaces the injected
+  section for all subsequent steps. Loop-enforced — the model cannot
+  forget it. The mechanism ships with ZERO flags set: no capability that
+  exists today mutates effective preferences (`memory_remember` only
+  creates a candidate — activation is a separate confirm-tier action —
+  and "preference-shaped" is a content property a static per-capability
+  boolean cannot express). The flag is claimed by future profile/settings
+  write capabilities, which is also when the en-US example above becomes
+  live end-to-end.
+- **An `acceptance_criteria` catalog action** for changes only the model
   can see: an observation reveals something that invalidates an
   assumption (a recalled fact says the operator wants altitude in feet;
   the operator's message redefines the target mid-request). The action
-  takes no args, re-runs the same specification call, and its observation
-  is the new criteria. Read-tier, no undo needed — the criteria are derived state.
+  takes no args; the revision call receives the prior criteria plus the
+  run's observations (see Inputs above) and its observation is the new
+  criteria. Read-tier, no undo needed — the criteria are derived state.
+
+The code-driven refresh deliberately performs a SECOND context capture
+mid-run. That brushes against the one-snapshot-per-turn invariant in
+`handle()` ("all declared blocks render from one capture — a switch
+between reads could mix two people"): the refresh honors the invariant's
+mechanism while moving its boundary — it goes through the same
+`current_profile_context()` seam as the turn capture (one atomic
+snapshot, never piecemeal setting reads), and ALL settings-derived
+blocks plus the criteria re-render from the new snapshot together. A
+mid-run `profile.current` switch still posts its context marker on the
+next turn exactly as today.
 
 Only the LATEST criteria are injected (`<acceptance_criteria_json>` is replaced,
 never appended — two sets of criteria in one prompt is a contradiction machine);
@@ -193,13 +238,27 @@ every criteria call remains in the trace as its own step, so the operator
 can see the revision history: what step 0 assumed, what changed, what
 the reply actually followed.
 
-### Trace
+### Trace and step budget
 
-Every specification call is recorded as a step row
+Every criteria call is recorded as a step row
 (`action="acceptance_criteria"` — code-driven for step 0 and refreshes,
 a normal decision for model-requested revisions), so the inspector shows
 each criteria call, its prompts, and its latency like any other step, and the
 operator can spot a wrong assumption at a glance.
+
+Budget accounting: step 0 and code-driven refreshes happen OUTSIDE the
+decide loop, so they consume none of `step_limit` and are not numbered
+in `decision_request`'s "step N of max_steps" — they get step rows with
+their own indices, like the existing control rows. A model-requested
+revision is an ordinary catalog decision and costs a step like any
+other action — the model spends budget to revise, which is the right
+incentive against reflexive re-speccing.
+
+The second-opinion reviewer's prompt gains the current criteria next to
+its `current_request` section: the reviewer judges whether a program
+serves the request, and the criteria are part of what "serves" means
+(a python_run converting to yards should fail review when the criteria
+say meters).
 
 ### Failure and cost
 
