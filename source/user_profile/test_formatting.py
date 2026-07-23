@@ -234,9 +234,11 @@ def test_invalid_primary_currency_promotes_secondary():
 def test_regioned_english_adds_spelling_and_bare_en_does_not():
     gb = format_formatting_guide(_profile(language="en-gb"))
     assert "Use en-GB only when the message asks" in gb   # canonicalized
-    assert "Use British English spelling when writing English." in gb
+    assert ("Write English in British English — spelling and vocabulary "
+            "(colour, anticlockwise, car park).") in gb
     us = format_formatting_guide(_profile(language="da", language_2="en-US"))
-    assert "Use American English spelling when writing English." in us
+    assert ("Write English in American English — spelling and vocabulary "
+            "(color, counterclockwise, parking lot).") in us
     bare = format_formatting_guide(_profile(language="en"))
     assert "spelling" not in bare
 

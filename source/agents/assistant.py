@@ -189,14 +189,19 @@ class AcceptanceCriteria(BaseModel):
 
 
 # How the criteria state an English variant: response_language names the
-# exact tag and `formatting` carries the spelling with a concrete example.
+# exact tag and `formatting` carries the variant with concrete examples.
 # A bare "english" drops the variant on the floor — a live
 # translate-to-English run shipped American spelling past an en-GB profile
-# that way. Keys stay in lockstep with user_profile.ENGLISH_SPELLING
-# (asserted in tests).
+# that way. The examples deliberately contrast BOTH spelling and
+# vocabulary: with spelling-only examples, a live run wrote "colours"
+# next to "counter-clockwise" and "parking lot" — the variant governs
+# word choice too. Keys stay in lockstep with
+# user_profile.ENGLISH_SPELLING (asserted in tests).
 ENGLISH_VARIANT_RULES: dict[str, str] = {
-    "en-GB": "British spelling: colour, not color",
-    "en-US": "American spelling: color, not colour",
+    "en-GB": ("British English: colour not color, anticlockwise not "
+              "counterclockwise, car park not parking lot"),
+    "en-US": ("American English: color not colour, counterclockwise not "
+              "anticlockwise, parking lot not car park"),
 }
 
 
@@ -2112,9 +2117,12 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'the user settings (user_settings_json) and the '
                      'formatting_guide. Be skeptical: hunt for silly '
                      'mistakes such as a dropped sentence, wrong thousand '
-                     'separators, the wrong language, or an answer copied '
-                     'from an earlier reply that no longer matches the '
-                     'current request or criteria. The audit is a bare '
+                     'separators, the wrong language, a mixed English '
+                     'variant (an American word like "counterclockwise" '
+                     'or "parking lot" in a British reply, or vice '
+                     'versa), or an answer copied from an earlier reply '
+                     'that no longer matches the current request or '
+                     'criteria. The audit is a bare '
                      'verdict, never a '
                      'narration of the checks you performed: if you found '
                      'flaws, describe what is wrong so a later step can fix '
@@ -3711,11 +3719,12 @@ class AssistantAgent(ModelGroupAgent):
                 rules.append(
                     "- A reply in English is written in the profile's "
                     f"English variant, {tag} ({spelling}), unless the "
-                    "message explicitly asks for another variant. STATE "
-                    "the variant: response_language names the exact tag — "
-                    'never a bare "english" — and `formatting` carries '
-                    f'the entry "spelling: {tag}" with its example '
-                    f"({spelling}).")
+                    "message explicitly asks for another variant. The "
+                    "variant governs spelling AND word choice — never mix "
+                    "variants in one reply. STATE it: response_language "
+                    'names the exact tag — never a bare "english" — and '
+                    f'`formatting` carries the entry "english variant: '
+                    f'{tag}" with its examples ({spelling}).')
                 break
         return ACCEPTANCE_CRITERIA_SYSTEM_PROMPT.format(
             language_rules="\n".join(rules))

@@ -163,6 +163,7 @@ def test_reply_audit_checks_completeness_against_the_current_message():
     assert "every sentence" in d
     assert "dropped sentence" in d
     assert "copied from an earlier reply" in d
+    assert "mixed English variant" in d
 
 
 def test_turn_event_budget_drops_whole_old_events():

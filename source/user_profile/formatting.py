@@ -131,11 +131,15 @@ _UNITS_DEFAULT_TEMPERATURE: dict[str, str] = {
     "metric": "celsius", "uk": "celsius", "imperial": "fahrenheit",
 }
 
-# canonical language tag -> spelling clause (bare "en" adds none; only the
-# two tags the profile can meaningfully disambiguate).
+# canonical language tag -> variant clause (bare "en" adds none; only the
+# two tags the profile can meaningfully disambiguate). Spelling AND
+# vocabulary: with a spelling-only clause a model writes "colours" next to
+# "counter-clockwise" — the variant governs word choice too.
 ENGLISH_SPELLING: dict[str, str] = {
-    "en-GB": "Use British English spelling when writing English.",
-    "en-US": "Use American English spelling when writing English.",
+    "en-GB": "Write English in British English — spelling and vocabulary "
+             "(colour, anticlockwise, car park).",
+    "en-US": "Write English in American English — spelling and vocabulary "
+             "(color, counterclockwise, parking lot).",
 }
 
 # A deliberately safe BCP-47 subset, not a complete validator: a valid tag
