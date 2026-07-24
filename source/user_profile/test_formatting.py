@@ -253,6 +253,25 @@ def test_script_subtag_canonicalized_to_title_case():
     assert "Use zh-Hans only when the message asks" in body
 
 
+def test_language_rows_are_authoritative_and_preferred_row_renders_first():
+    body = format_formatting_guide(_profile(
+        language="fr", language_2="de",
+        languages={"rows": [
+            {"tag": "da", "level": "native", "stance": "neutral"},
+            {"tag": "en-gb", "level": "fluent", "stance": "prefer"},
+        ]},
+    ))
+    assert "Use en-GB or da only when the message asks" in body
+    assert "Use British English spelling when writing English." in body
+    assert "fr" not in body and " de " not in body
+
+
+def test_explicit_empty_language_rows_do_not_fall_back_to_legacy_fields():
+    body = format_formatting_guide(_profile(
+        language="da", language_2="en", languages={"rows": []}))
+    assert body == ""
+
+
 # ---- prompt-boundary validation --------------------------------------------
 
 def test_validators_reject_arbitrary_text():

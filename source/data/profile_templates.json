@@ -46,6 +46,16 @@
               "updated_at": "2026-07-21T00:00:00Z"
             }
           ]
+        },
+        "languages": {
+          "rows": [
+            {
+              "tag": "en-US",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            }
+          ]
         }
       }
     },
@@ -69,7 +79,23 @@
         "language_2": "en-CA",
         "currency": "CAD",
         "country": "Canada",
-        "city": "Montreal"
+        "city": "Montreal",
+        "languages": {
+          "rows": [
+            {
+              "tag": "fr-CA",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en-CA",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -92,7 +118,23 @@
         "language_2": "en",
         "currency": "MXN",
         "country": "Mexico",
-        "city": "Mexico City"
+        "city": "Mexico City",
+        "languages": {
+          "rows": [
+            {
+              "tag": "es-MX",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -115,7 +157,23 @@
         "language_2": "en",
         "currency": "BRL",
         "country": "Brazil",
-        "city": "São Paulo"
+        "city": "São Paulo",
+        "languages": {
+          "rows": [
+            {
+              "tag": "pt-BR",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -137,7 +195,17 @@
         "language": "en-GB",
         "currency": "GBP",
         "country": "UK",
-        "city": "London"
+        "city": "London",
+        "languages": {
+          "rows": [
+            {
+              "tag": "en-GB",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -160,7 +228,23 @@
         "language_2": "en",
         "currency": "EUR",
         "country": "France",
-        "city": "Paris"
+        "city": "Paris",
+        "languages": {
+          "rows": [
+            {
+              "tag": "fr",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -195,6 +279,22 @@
               "updated_at": "2026-07-21T00:00:00Z"
             }
           ]
+        },
+        "languages": {
+          "rows": [
+            {
+              "tag": "de",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
         }
       }
     },
@@ -218,7 +318,23 @@
         "language_2": "en",
         "currency": "EUR",
         "country": "Netherlands",
-        "city": "Amsterdam"
+        "city": "Amsterdam",
+        "languages": {
+          "rows": [
+            {
+              "tag": "nl",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -241,7 +357,23 @@
         "language_2": "en",
         "currency": "EUR",
         "country": "Spain",
-        "city": "Madrid"
+        "city": "Madrid",
+        "languages": {
+          "rows": [
+            {
+              "tag": "es",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -264,7 +396,23 @@
         "language_2": "en",
         "currency": "EUR",
         "country": "Italy",
-        "city": "Milan"
+        "city": "Milan",
+        "languages": {
+          "rows": [
+            {
+              "tag": "it",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -287,7 +435,23 @@
         "language_2": "en",
         "currency": "DKK",
         "country": "Denmark",
-        "city": "Copenhagen"
+        "city": "Copenhagen",
+        "languages": {
+          "rows": [
+            {
+              "tag": "da",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -310,7 +474,23 @@
         "language_2": "en",
         "currency": "SEK",
         "country": "Sweden",
-        "city": "Stockholm"
+        "city": "Stockholm",
+        "languages": {
+          "rows": [
+            {
+              "tag": "sv",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -333,7 +513,23 @@
         "language_2": "en",
         "currency": "NOK",
         "country": "Norway",
-        "city": "Oslo"
+        "city": "Oslo",
+        "languages": {
+          "rows": [
+            {
+              "tag": "nb",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -356,7 +552,23 @@
         "language_2": "en",
         "currency": "PLN",
         "country": "Poland",
-        "city": "Warsaw"
+        "city": "Warsaw",
+        "languages": {
+          "rows": [
+            {
+              "tag": "pl",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -380,7 +592,23 @@
         "language_2": "en",
         "currency": "ILS",
         "country": "Israel",
-        "city": "Tel Aviv"
+        "city": "Tel Aviv",
+        "languages": {
+          "rows": [
+            {
+              "tag": "he",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -404,7 +632,23 @@
         "language_2": "te",
         "currency": "INR",
         "country": "India",
-        "city": "Bengaluru"
+        "city": "Bengaluru",
+        "languages": {
+          "rows": [
+            {
+              "tag": "en-IN",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "te",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -428,7 +672,23 @@
         "language_2": "en",
         "currency": "CNY",
         "country": "China",
-        "city": "Shanghai"
+        "city": "Shanghai",
+        "languages": {
+          "rows": [
+            {
+              "tag": "zh-Hans",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -452,7 +712,23 @@
         "language_2": "en",
         "currency": "JPY",
         "country": "Japan",
-        "city": "Tokyo"
+        "city": "Tokyo",
+        "languages": {
+          "rows": [
+            {
+              "tag": "ja",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -476,7 +752,23 @@
         "language_2": "en",
         "currency": "KRW",
         "country": "South Korea",
-        "city": "Seoul"
+        "city": "Seoul",
+        "languages": {
+          "rows": [
+            {
+              "tag": "ko",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "en",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -500,7 +792,23 @@
         "language_2": "zh",
         "currency": "SGD",
         "country": "Singapore",
-        "city": "Singapore"
+        "city": "Singapore",
+        "languages": {
+          "rows": [
+            {
+              "tag": "en-SG",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            },
+            {
+              "tag": "zh",
+              "level": "intermediate",
+              "stance": "neutral",
+              "note": "Migrated from legacy secondary language; review level and stance."
+            }
+          ]
+        }
       }
     },
     {
@@ -522,7 +830,17 @@
         "language": "en-AU",
         "currency": "AUD",
         "country": "Australia",
-        "city": "Melbourne"
+        "city": "Melbourne",
+        "languages": {
+          "rows": [
+            {
+              "tag": "en-AU",
+              "level": "native",
+              "stance": "neutral",
+              "note": "Migrated from legacy primary language; review level and stance."
+            }
+          ]
+        }
       }
     }
   ]

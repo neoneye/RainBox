@@ -30,9 +30,11 @@ def test_form_fieldsets_from_registry():
         assert f"<legend>{legend}</legend>" in body
     for key in ("full_name", "native_name", "preferred_name", "handle", "gender",
                 "about", "birthday", "units", "timezone", "date_format",
-                "time_format", "language", "language_2", "currency", "currency_2",
+                "time_format", "currency", "currency_2",
                 "country", "city", "address", "email"):
         assert f'data-key="{key}"' in body, f"missing field {key}"
+    assert 'data-key="language"' not in body
+    assert 'data-key="language_2"' not in body
     for dl in ("profile-dl-tz", "profile-dl-lang", "profile-dl-currency",
                "profile-dl-country"):
         assert f'id="{dl}"' in body
@@ -45,17 +47,15 @@ def test_form_fieldsets_from_registry():
 def test_soft_validation_affordances():
     """Datalist-backed fields carry visible placeholders and an advisory
     warning line; timezone gets a one-click browser fill. Advisory only —
-    the server deliberately stays soft on IANA/BCP-47/4217 membership."""
+    the flat-field server deliberately stays soft on IANA/4217 membership."""
     body = _page()
-    for key in ("timezone", "language", "language_2", "currency", "currency_2",
-                "country"):
+    for key in ("timezone", "currency", "currency_2", "country"):
         assert f'id="pf-warn-{key}"' in body, f"missing warning line for {key}"
     assert 'placeholder="IANA name, e.g. Europe/Copenhagen"' in body
     assert 'id="profile-tz-mine"' in body
     b = _body()
     for marker in ("profileUpdateWarnings", "profileCheckTimezone",
-                   "profileCheckLanguage", "profileCheckCurrency",
-                   "resolvedOptions().timeZone"):
+                   "profileCheckCurrency", "resolvedOptions().timeZone"):
         assert marker in b, f"missing JS marker: {marker}"
 
 
@@ -127,6 +127,35 @@ def test_calibration_fieldset_present():
     for marker in ("profile-cal-status", "profile-cal-error",
                    "profile-cal-rows", "profile-cal-add", "profile-dl-topic"):
         assert marker in body, f"missing calibration marker: {marker}"
+
+
+def test_languages_fieldset_present():
+    """The row editor replaces the two flat language inputs."""
+    body = _page()
+    assert "<legend>Languages</legend>" in body
+    assert (body.index("<legend>Contact &amp; location</legend>")
+            < body.index("<legend>Languages</legend>")
+            < body.index("<legend>Knowledge calibration</legend>"))
+    for marker in ("profile-lang-status", "profile-lang-error",
+                   "profile-lang-rows", "profile-lang-add",
+                   "profile-dl-lang"):
+        assert marker in body, f"missing language marker: {marker}"
+
+
+def test_languages_js_markers():
+    """Languages have independent load/save/reorder/flush and unload state."""
+    body = _body()
+    for marker in [
+        "profileLangState", "profileLangPush", "profileLangEdited",
+        "profileLangLoad", "profileLangRender", "profileLangMove",
+        "profileLangFlush", "profileLangPayload", "/languages",
+        "PROFILE_LANG_DEBOUNCE_MS", "PROFILE_LANG_RETRY_MAX_MS",
+        "PROFILE_LANG_LEVELS", "PROFILE_LANG_STANCES",
+    ]:
+        assert marker in body, f"missing language JS marker: {marker}"
+    assert "profileLangHasIncomplete(st)" in body
+    assert "a row needs a language tag" in body
+    assert "['Language tag', 'Level', 'Stance']" in body
 
 
 def test_calibration_js_markers():

@@ -18,10 +18,11 @@ this module's examples are pinned (31 December 2026, 23:59).
 """
 
 import logging
-import re
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from language_tags import canonical_language_tag, effective_language_rows
 
 logger = logging.getLogger(__name__)
 
@@ -138,11 +139,6 @@ ENGLISH_SPELLING: dict[str, str] = {
     "en-US": "Use American English spelling when writing English.",
 }
 
-# A deliberately safe BCP-47 subset, not a complete validator: a valid tag
-# outside it stays stored but is omitted from prompt instructions.
-_LANGUAGE_RE = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}")
-_MAX_LANGUAGE_LEN = 35
-
 _GUIDE_HEADER = ("Use these defaults unless the current request or exact "
                  "source notation says otherwise:")
 
@@ -165,30 +161,19 @@ def _valid_currency(raw: Any) -> str | None:
     """Exactly three ASCII letters, canonicalized to uppercase. Validates
     shape, not economic existence."""
     text = str(raw or "").strip()
-    if not re.fullmatch(r"[A-Za-z]{3}", text):
+    if len(text) != 3 or not text.isascii() or not text.isalpha():
         return None
     return text.upper()
 
 
 def _valid_language(raw: Any) -> str | None:
-    """The canonicalized tag when it matches the safe BCP-47 subset, else
-    None. Primary subtag lowercase, two-letter alphabetic region uppercase,
-    four-letter alphabetic script title case, other subtags lowercase."""
-    text = str(raw or "").strip()
-    if not text or len(text) > _MAX_LANGUAGE_LEN:
-        return None
-    if not _LANGUAGE_RE.fullmatch(text):
-        return None
-    parts = text.split("-")
-    out = [parts[0].lower()]
-    for sub in parts[1:]:
-        if len(sub) == 2 and sub.isalpha():
-            out.append(sub.upper())
-        elif len(sub) == 4 and sub.isalpha():
-            out.append(sub.title())
-        else:
-            out.append(sub.lower())
-    return "-".join(out)
+    """Compatibility wrapper around the shared prompt/storage boundary."""
+    return canonical_language_tag(raw)
+
+
+def valid_language_tag(raw: Any) -> str | None:
+    """Public language-tag boundary used by model-output resolution."""
+    return canonical_language_tag(raw)
 
 
 def _utc_offset(zone: str, now: datetime) -> str | None:
@@ -226,13 +211,19 @@ def _first_valid(values: list[Any], validator: Any) -> tuple[str | None, str | N
 
 
 def valid_profile_languages(profile: dict[str, Any]) -> tuple[str | None, str | None]:
-    """(preferred, secondary): the profile's language fields passed through
-    the prompt-boundary validation above — the only way a profile language
-    may enter a code-owned prompt sentence (an unusable free-text value is
-    omitted and logged, never spliced)."""
+    """The first two declared languages through the shared prompt boundary.
+
+    A ``prefer`` row sorts first; declaration order settles the remainder.
+    Legacy flat fields are consulted only before the subtree migration.
+    """
     data = (profile or {}).get("data") or {}
+    rows = effective_language_rows(data)
+    ordered = sorted(
+        enumerate(rows),
+        key=lambda item: (0 if item[1].get("stance") == "prefer" else 1,
+                          item[0]))
     return _first_valid(
-        [data.get("language"), data.get("language_2")], _valid_language)
+        [row.get("tag") for _, row in ordered], _valid_language)
 
 
 # ---- the renderer --------------------------------------------------------
@@ -315,8 +306,7 @@ def format_formatting_guide(profile: dict[str, Any],
         lines.append(f"- Currency: {head}{secondary} Convert currencies only "
                      "with a supplied or freshly retrieved rate.")
 
-    language, language_2 = _first_valid(
-        [data.get("language"), data.get("language_2")], _valid_language)
+    language, language_2 = valid_profile_languages(profile)
     if language is not None:
         # The preferred language is NOT the output language: replies mirror
         # the conversation. Small models read a bare "prefer da" as a

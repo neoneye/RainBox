@@ -415,6 +415,17 @@ task-scoped locale, with evals showing that it improves that exact case.
 
 ### Recommended implementation sequence
 
+**Implementation status (2026-07-24):** step 1 is implemented. The profile
+now has an independently validated and autosaved `languages.rows` editor,
+startup migration, template coverage, prompt-boundary reads, and fresh
+server identities on duplication. The migration is deliberately additive:
+`language` and `language_2` are hidden from current APIs and editors but
+preserved unchanged in storage. An explicit empty `languages.rows` is
+authoritative, so clearing the new editor cannot accidentally reactivate the
+legacy values. Removing the legacy pair is a later cleanup after the rollback
+window, not part of this cutover. Response-language intent resolution remains
+out of scope for step 1.
+
 1. Add `languages.rows`, validation, editor support and migration from
    `language` / `language_2`. Preserve the legacy fields only long enough for a
    reversible migration.

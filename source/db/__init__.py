@@ -30,6 +30,7 @@ from db.git import *  # noqa: F401,F403  re-export git tree ops + repo inspectio
 from db.prompt import *  # noqa: F401,F403  re-export system-prompt tree + version-lineage ops
 from db.profile import *  # noqa: F401,F403  re-export person-profile tree + data ops
 from db.profile_calibration import *  # noqa: F401,F403  re-export knowledge-calibration subtree ops
+from db.profile_languages import *  # noqa: F401,F403  re-export multilingual profile subtree ops
 from db.settings import *  # noqa: F401,F403  re-export app_setting registry/accessors
 from db.find_uuid import *  # noqa: F401,F403  re-export the cross-table fuzzy uuid lookup
 
@@ -506,6 +507,7 @@ def init_db(app: Flask) -> None:
         db.session.commit()
         _migrate_ollama_native_args()
         _migrate_cron_message_targets()
+        migrate_profile_languages()
         # Seed an (unassigned) model binding for each code-defined agent.
         from agents.config import agent_config
 

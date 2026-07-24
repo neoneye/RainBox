@@ -137,8 +137,16 @@ def profile_data_summary(data: dict[str, Any] | None) -> dict[str, Any]:
     """The read-only projection riding on tree rows: just enough of `data`
     for the folder detail table (Name / Person / Language / Units / Time /
     Country) without an N-request detail-fetch fan-out."""
+    from language_tags import effective_language_rows
+
     data = data or {}
-    return {k: data.get(k, "") for k in SUMMARY_KEYS}
+    summary = {k: data.get(k, "") for k in SUMMARY_KEYS}
+    rows = effective_language_rows(data)
+    preferred = next(
+        (row for row in rows if row.get("stance") == "prefer"), None)
+    summary["language"] = str((preferred or (rows[0] if rows else {})).get(
+        "tag") or "")
+    return summary
 
 
 def profile_tree_version() -> str:
@@ -404,23 +412,29 @@ def profile_get(profile_uuid: UUID) -> dict[str, Any] | None:
     }
 
 
-# The server-owned subtrees riding on the same JSONB column as the editable
+# Independently-written subtrees riding on the same JSONB column as the flat
 # registry fields. Every writer must go through profile_mutate_data so one
 # subtree's save can never read-modify-write-race another subtree's writer.
-SERVER_OWNED_SUBTREES = ("dynamic", "calibration")
+SERVER_OWNED_SUBTREES = ("dynamic", "calibration", "languages")
+
+# Kept byte-for-byte during the reversible migration window. They are absent
+# from PROFILE_FIELDS, hidden from the editor, and never read when the
+# authoritative languages subtree exists.
+LEGACY_PRESERVED_FIELDS = ("language", "language_2")
 
 
 def profile_mutate_data(profile_uuid: UUID,
                         mutator: Any) -> Profile | None:
     """Apply one subtree mutation to a profile's `data` under the row lock.
 
-    Calibration, flat fields, and `dynamic` share one JSONB column, so a
-    subtree write must never be a read-modify-write race against a different
-    subtree's writer: this selects the row FOR UPDATE, hands `mutator` a copy
-    of the current dict, assigns the returned dict, and commits. Every future
-    `dynamic` writer must use it too. Built-in virtual profiles never enter
-    here (they have no row). Returns the row, or None if the uuid is unknown;
-    a mutator exception rolls back (releasing the lock) and re-raises."""
+    Languages, calibration, flat fields, and `dynamic` share one JSONB column,
+    so a subtree write must never be a read-modify-write race against a
+    different subtree's writer: this selects the row FOR UPDATE, hands
+    `mutator` a copy of the current dict, assigns the returned dict, and
+    commits. Every future `dynamic` writer must use it too. Built-in virtual
+    profiles never enter here (they have no row). Returns the row, or None if
+    the uuid is unknown; a mutator exception rolls back (releasing the lock)
+    and re-raises."""
     row = db.session.execute(
         sa.select(Profile).where(Profile.uuid == profile_uuid).with_for_update()
     ).scalar_one_or_none()
@@ -438,9 +452,9 @@ def profile_mutate_data(profile_uuid: UUID,
 
 def profile_update_data(profile_uuid: UUID, data: Any) -> dict[str, Any] | None:
     """Replace a profile's editable fields with the validated canonical
-    snapshot (raises ProfileDataError), preserving the server-owned `dynamic`
-    and `calibration` subtrees in the same transaction — a stale form autosave
-    can never overwrite a newer connector observation or calibration save.
+    snapshot (raises ProfileDataError), preserving `dynamic`, `languages`,
+    `calibration`, and the legacy language rollback fields in the same
+    transaction — a stale form autosave can never overwrite another editor.
     Editable keys omitted from the complete snapshot are deleted, not
     retained. Returns the row's new summary projection, or None if the uuid
     is unknown. Rejecting built-in uuids is the API layer's job (there is no
@@ -448,7 +462,7 @@ def profile_update_data(profile_uuid: UUID, data: Any) -> dict[str, Any] | None:
     canonical = validate_profile_data(data)
 
     def _mutate(current: dict[str, Any]) -> dict[str, Any]:
-        for key in SERVER_OWNED_SUBTREES:
+        for key in (*SERVER_OWNED_SUBTREES, *LEGACY_PRESERVED_FIELDS):
             if key in current:
                 canonical[key] = current[key]
         return canonical
@@ -460,17 +474,28 @@ def profile_update_data(profile_uuid: UUID, data: Any) -> dict[str, Any] | None:
 
 
 def profile_duplicate(profile_uuid: UUID) -> dict[str, Any] | None:
-    """Copy a profile's whole data blob (dynamic and calibration included)
+    """Copy a profile's whole data blob (dynamic and nested editors included)
     into a new row — the one-action way to mint a friend's profile from an
     archetype. A user-owned source yields "<name> copy" in the same folder
     right after the source; a built-in source yields a real editable row named
     after the template at the end of the user-owned top level (the virtual
     Templates folder can't hold user rows). No version lineage — duplication
-    is a convenience, not ancestry: calibration rows copy their semantic
-    fields and order but receive fresh ids and the duplication timestamp,
-    never the source's server-owned identity. Returns the new row in
+    is a convenience, not ancestry: calibration and language rows copy their
+    semantic fields and order but receive fresh ids and the duplication
+    timestamp, never the source's server-owned identity. Returns the new row in
     tree-list field names, or None if the source uuid is unknown."""
     from db.profile_calibration import refresh_calibration_identity
+    from db.profile_languages import (
+        migrate_legacy_languages_data,
+        refresh_language_identity,
+    )
+
+    def copied_data(data: dict[str, Any]) -> dict[str, Any]:
+        copied = deepcopy(data)
+        migrate_legacy_languages_data(copied)
+        refresh_calibration_identity(copied)
+        refresh_language_identity(copied)
+        return copied
 
     builtin = profile_builtin_get(profile_uuid)
     if builtin is not None:
@@ -478,7 +503,7 @@ def profile_duplicate(profile_uuid: UUID) -> dict[str, Any] | None:
             sa.select(sa.func.max(Profile.position)).where(Profile.folder_uuid.is_(None))
         ).scalar()
         row = Profile(uuid=uuid4(), name=builtin["name"],
-                      data=refresh_calibration_identity(deepcopy(builtin["data"])),
+                      data=copied_data(builtin["data"]),
                       folder_uuid=None,
                       position=(max_pos + 1) if max_pos is not None else 0)
         db.session.add(row)
@@ -494,7 +519,7 @@ def profile_duplicate(profile_uuid: UUID) -> dict[str, Any] | None:
         db.session.rollback()
         return None
     row = Profile(uuid=uuid4(), name=f"{src.name} copy",
-                  data=refresh_calibration_identity(deepcopy(src.data or {})),
+                  data=copied_data(src.data or {}),
                   folder_uuid=src.folder_uuid,
                   position=src.position + 1)
     # Shift later siblings so the copy's slot is unambiguous even before the

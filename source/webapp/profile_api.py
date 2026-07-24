@@ -61,12 +61,11 @@ def _parse_uuid(raw: str) -> UUID | None:
 def profile_detail(profile_uuid: str) -> tuple[Response, int] | Response:
     """GET: one profile's editable registry fields plus the read-only
     `dynamic` projection the form pane renders (built-ins come from the
-    shipped file). The server-owned `calibration` subtree is projected out —
-    it has its own GET/PUT below. PUT {data}: the form's autosave — a
-    complete editable snapshot, canonicalized + validated against the
-    registry (which rejects `calibration` as read-only), with the server's
-    `dynamic` and `calibration` subtrees preserved; answers the fresh
-    summary."""
+    shipped file). The `languages` and `calibration` subtrees are projected
+    out — each has its own GET/PUT below — as are the retained legacy language
+    rollback fields. PUT {data}: the flat form's complete autosave snapshot,
+    canonicalized and validated against the registry, with independently
+    written subtrees preserved; answers the fresh summary."""
     pu = _parse_uuid(profile_uuid)
     if pu is None:
         return jsonify({"ok": False, "error": "bad uuid"}), 400
@@ -87,8 +86,45 @@ def profile_detail(profile_uuid: str) -> tuple[Response, int] | Response:
     detail = db.profile_get(pu)
     if detail is None:
         return jsonify({"ok": False, "error": "profile not found"}), 404
-    detail["data"] = {k: v for k, v in (detail.get("data") or {}).items()
-                      if k != "calibration"}
+    detail["data"] = {
+        k: v for k, v in (detail.get("data") or {}).items()
+        if k not in ("calibration", "languages", "language", "language_2")
+    }
+    return jsonify({"ok": True, **detail})
+
+
+@app.route("/profile/api/profiles/<profile_uuid>/languages",
+           methods=["GET", "PUT"])
+def profile_languages(profile_uuid: str) -> tuple[Response, int] | Response:
+    """The multilingual ``languages.rows`` subtree's own endpoint.
+
+    GET returns the complete canonical row list. PUT replaces that list;
+    existing rows carry their id, new rows omit it, and ``updated_at`` is
+    server-owned. The legacy flat fields are neither exposed nor mutated.
+    """
+    pu = _parse_uuid(profile_uuid)
+    if pu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    if request.method == "PUT":
+        if pu in db.profile_builtin_uuids():
+            return jsonify({"ok": False, "error": "read-only built-in"}), 400
+        if (request.content_length or 0) > 1_000_000:
+            return jsonify({"ok": False, "error":
+                            "request body exceeds 1 MB"}), 413
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+            return jsonify({"ok": False, "error":
+                            "request body must be a JSON object with list 'rows'"}), 400
+        try:
+            rows = db.languages_put(pu, data["rows"])
+        except db.ProfileLanguagesError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        if rows is None:
+            return jsonify({"ok": False, "error": "profile not found"}), 404
+        return jsonify({"ok": True, "builtin": False, "rows": rows})
+    detail = db.languages_get(pu)
+    if detail is None:
+        return jsonify({"ok": False, "error": "profile not found"}), 404
     return jsonify({"ok": True, **detail})
 
 

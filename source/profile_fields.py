@@ -75,10 +75,6 @@ PROFILE_FIELDS = [
                    # No-grouping variants — programmers often want digits
                    # unseparated (and unambiguous when pasted into code).
                    "1234567.89", "1234567,89")),
-    Field("language",       "Locale & formats", kind="text", label="Language (primary)",
-          datalist="lang", hint="BCP-47, e.g. da, en-US, zh-Hans"),
-    Field("language_2",     "Locale & formats", kind="text", label="Language (secondary)",
-          datalist="lang"),
     Field("currency",       "Locale & formats", kind="text", label="Currency (primary)",
           datalist="currency", hint="ISO 4217, e.g. DKK, USD"),
     Field("currency_2",     "Locale & formats", kind="text", label="Currency (secondary)",
@@ -98,5 +94,6 @@ FIELDS_BY_KEY = {f.key: f for f in PROFILE_FIELDS}
 FIELD_GROUPS = list(dict.fromkeys(f.group for f in PROFILE_FIELDS))
 
 # Keys projected onto tree rows as the read-only `summary`, sized for the
-# folder detail table (Name / Person / Language / Units / Time / Country).
+# folder detail table. ``language`` is derived from ``languages.rows`` rather
+# than read as a flat registry key.
 SUMMARY_KEYS = ("full_name", "language", "units", "time_format", "country")

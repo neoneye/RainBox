@@ -21,6 +21,7 @@ from user_profile.formatting import (
     MAX_FORMATTING_GUIDE_CHARS,
     build_formatting_guide,
     format_formatting_guide,
+    valid_language_tag,
     valid_profile_languages,
 )
 from user_profile.identity import (
@@ -56,5 +57,6 @@ __all__ = [
     "format_identity_block",
     "format_profile_context",
     "select_profile_facts",
+    "valid_language_tag",
     "valid_profile_languages",
 ]

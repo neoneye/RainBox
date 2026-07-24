@@ -165,6 +165,25 @@ PROFILE_TEMPLATE = """
   .pf-inline button:hover{border-color:#2563eb;color:#2563eb}
   .pf-inline button:disabled{color:#9ca3af;border-color:#e5e7eb;cursor:default}
   .profile-dynamic-row{padding:2px 0}
+  /* Language rows: tag + the two orthogonal axes, optional note below,
+     server timestamp and reorder/remove controls on the right. */
+  .profile-lang-row{border:1px solid #eef2f7;border-radius:6px;padding:6px 8px;margin:6px 0}
+  .profile-lang-main{display:grid;grid-template-columns:1fr 120px 100px;gap:6px}
+  .profile-lang-head{display:grid;grid-template-columns:1fr 120px 100px;gap:6px;
+    padding:0 9px;margin:8px 0 2px;font-size:0.75rem;font-weight:600;color:#374151}
+  .profile-lang-note{margin-top:4px}
+  .profile-lang-meta{display:flex;gap:6px;align-items:center;margin-top:4px}
+  .profile-lang-age{color:#6b7280;font-size:0.75rem;margin-right:auto}
+  .profile-lang-meta button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:0.1em 0.55em;font:inherit;font-size:0.75rem;cursor:pointer}
+  .profile-lang-meta button:hover{border-color:#2563eb;color:#2563eb}
+  .profile-lang-meta button:disabled{color:#9ca3af;border-color:#e5e7eb;cursor:default}
+  .profile-lang-meta button.danger{color:#b91c1c}
+  #profile-lang-add{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+    padding:0.25em 0.6em;font:inherit;font-size:0.78rem;cursor:pointer;margin-top:6px}
+  #profile-lang-add:hover{border-color:#2563eb;color:#2563eb}
+  #profile-lang-status{min-height:1.1em}
+  #profile-lang-error{color:#b91c1c;font-size:0.8rem;min-height:1em}
   /* Knowledge calibration rows: topic+enums on one grid line, note below,
      meta (age + reorder/remove pills) on the right. */
   .profile-cal-row{border:1px solid #eef2f7;border-radius:6px;padding:6px 8px;margin:6px 0}
@@ -235,6 +254,17 @@ PROFILE_TEMPLATE = """
       </div>
       <p id="profile-builtin-hint" class="muted" hidden>Built-in template &mdash; Duplicate to make an editable copy.</p>
       {{ form_fields }}
+      <fieldset class="profile-fieldset" id="profile-languages">
+        <legend>Languages</legend>
+        <p class="muted">Languages the operator knows and whether replies are
+        preferred, neutral, or normally avoided. Competence controls register;
+        stance controls routing. At most one language can be preferred.
+        Explicit requests always win. Row order breaks ties.</p>
+        <div id="profile-lang-status" class="muted"></div>
+        <div id="profile-lang-error"></div>
+        <div id="profile-lang-rows"></div>
+        <button type="button" id="profile-lang-add">+ Language</button>
+      </fieldset>
       <fieldset class="profile-fieldset" id="profile-calibration">
         <legend>Knowledge calibration</legend>
         <p class="muted">Self-declared familiarity per topic: level (how much

@@ -2,9 +2,10 @@
 
 The `/profile` page persists a folder tree of person profiles to Postgres;
 each profile's person fields live in a sparse JSONB validated against a
-code-side field registry, and 21 read-only locale templates ship in `data/`
-and merge virtually into the tree. Desktop-first, same as the other tree
-pages.
+code-side field registry. Languages and knowledge calibration are validated
+server-owned row subtrees in that same JSONB, and 21 read-only locale
+templates ship in `data/` and merge virtually into the tree. Desktop-first,
+same as the other tree pages.
 
 ## The idea
 
@@ -30,11 +31,12 @@ built-in templates (read-only) and the connector-owned `dynamic` subtree
 | Field registry (the schema) | `profile_fields.py` |
 | Tables (`ProfileFolder`, `Profile`) | `db/models.py` |
 | Tree load/validate/save, data validation, data read/write, duplication | `db/profile.py` (re-exported from the `db` facade) |
+| Language rows, migration and validation | `language_tags.py`, `db/profile_languages.py` |
 | Built-in templates (shipped data, not DB rows) | `data/profile_templates.json` |
 | HTTP endpoints | `webapp/profile_api.py` |
 | Page shell + CSS + server-rendered form fieldsets | `webapp/profile_views.py` |
 | Page logic | `static/profile.js`, served with an mtime `?v=` cache-buster |
-| Tests | `db/test_profile_tree.py`, `webapp/test_profile_api.py`, `webapp/test_profile_views.py` |
+| Tests | `db/test_profile_tree.py`, `db/test_profile_languages.py`, `webapp/test_profile_api.py`, `webapp/test_profile_views.py` |
 
 ## Data model
 
@@ -61,19 +63,27 @@ profile                           -- one person
 - **`data` is sparse.** Keys are the registry's field keys; an **absent key
   means unset — never `""`**. The validator canonicalizes: a submitted blank
   is dropped, so the stored object only ever contains real values.
-- **`data["dynamic"]` and `data["calibration"]` are server-owned subtrees**
+- **`data["dynamic"]`, `data["languages"]`, and `data["calibration"]` are
+  server-owned subtrees**
   (`SERVER_OWNED_SUBTREES`). `dynamic` is the connector namespace
   (machine-written observations, rendered read-only as "Last seen");
+  `languages` holds the operator's language competence and reply stances;
   `calibration` holds the knowledge-calibration rows (own endpoint below).
-  Neither is a registry field: `validate_profile_data` rejects both in the
+  None is a registry field: `validate_profile_data` rejects them in the
   flat human-facing PUT, and `profile_update_data` carries the current row's
   subtrees into the incoming snapshot in the same transaction.
+- **`data["language"]` and `data["language_2"]` are migration-only legacy
+  fields.** They are no longer returned by or accepted through the flat
+  editor. Flat and language writes preserve their existing values byte for
+  byte so a rollback remains possible during the cutover window. New code
+  reads `languages.rows`; it falls back to the legacy pair only when the
+  subtree is absent.
 - **Every subtree write goes through `profile_mutate_data`.** All three
   subtrees share one JSONB column, so a writer must never read-modify-write
   race a different subtree's writer: the helper selects the profile row
   `FOR UPDATE`, hands the mutator a copy of the current dict, assigns the
-  returned dict, and commits. The flat-field PUT and the calibration PUT
-  both use it; any future `dynamic` writer must too.
+  returned dict, and commits. The flat-field PUT plus the language and
+  calibration PUTs all use it; any future `dynamic` writer must too.
 
 ## The field registry
 
@@ -88,7 +98,8 @@ rendered as one `<fieldset>` each in registry order:
   kg and °C but miles on roads; `imperial` is US customary), temperature
   (`celsius|fahrenheit`, derived from units when unset), date/time format,
   number format, first day of week (enums), timezone, primary + secondary
-  language and currency (datalist-assisted free text). The `number_format` enum's seven values
+  currency (datalist-assisted free text). Languages have their own row
+  editor described below. The `number_format` enum's seven values
   double as previews — every choice renders the same `1234567.89` sample
   (seven integer digits are what disambiguate Indian from Western grouping),
   differing only in separators; two no-grouping variants (`1234567.89` /
@@ -103,16 +114,17 @@ Validation (`validate_profile_data`) is **strict on shape, soft on
 membership**: unknown keys and non-strings are rejected, enum values must be
 in `choices`, dates must be real ISO calendar dates (regex pins the extended
 `YYYY-MM-DD` shape, `date.fromisoformat` rejects impossible dates) — but
-IANA/BCP-47/ISO-4217 membership is deliberately *not* enforced, so an
-uncommon-yet-valid timezone/language/currency is never blocked. `email` is an
-input type, not a server check. The client adds **advisory** warnings
+IANA/ISO-4217 membership is deliberately *not* enforced, so an
+uncommon-yet-valid timezone/currency is never blocked. `email` is an input
+type, not a server check. The client adds **advisory** warnings
 (`static/profile.js` `PROFILE_SOFT_CHECKS`) under the datalist-backed fields
 when a value is provably invalid — amber text, never blocking a save.
 
-`SUMMARY_KEYS` (`full_name`, `language`, `units`, `time_format`, `country`)
-project onto every tree row as the read-only `summary`, sizing the folder
-detail table without a per-profile fetch fan-out. The derived `summary` must
-never ride a tree save — the validator rejects it.
+`SUMMARY_KEYS` (`full_name`, derived `language`, `units`, `time_format`,
+`country`) project onto every tree row as the read-only `summary`, sizing the
+folder detail table without a per-profile fetch fan-out. The language summary
+is the one `prefer` row, otherwise the first declared row. The derived
+`summary` must never ride a tree save — the validator rejects it.
 
 ## Built-in templates
 
@@ -132,6 +144,38 @@ Templates folder is neither draggable, droppable, renamable, nor a valid home
 for user rows. **Duplicate is the only write that touches them** — it mints a
 real editable row (fresh uuid, deep-copied data, named after the template) at
 the end of the user-owned top level.
+
+## Languages
+
+One server-owned subtree per profile, `data["languages"]["rows"]`, separates
+language competence from response preference. Each ordered row contains:
+`tag` (a canonicalized BCP-47 tag), `level`
+(`native|fluent|intermediate|beginner`), `stance`
+(`prefer|neutral|avoid`), optional `note` (≤400 chars), and the server-owned
+`id` (UUIDv4) and `updated_at` (RFC 3339 UTC) fields. At most one row may use
+`prefer`; row order breaks ties when no preference is declared.
+
+Validation lives in `db/profile_languages.py`: at most 100 rows, no duplicate
+canonical tags, required level and stance, no unknown keys or client-authored
+timestamps, known ids only on updates, and a 64 KiB canonical subtree cap.
+All-blank drafts are dropped. Reordering retains timestamps; a semantic edit
+advances only that row's stamp. An explicit empty snapshot is stored as
+`{"rows":[]}` rather than removing the subtree, because absence means "legacy
+fallback is still active" during migration.
+
+Startup migration is additive and idempotent. If a profile has no languages
+subtree, `language` becomes a `native` / `neutral` row and `language_2`
+becomes an `intermediate` / `neutral` row, each with a review note. Migration
+does not infer `prefer`: the old ordering does not prove response-language
+intent. The two legacy fields remain unchanged for rollback and are omitted
+from all current editor/API projections. Once the cutover has survived its
+rollback window, a separate cleanup migration may remove them.
+
+The editor is a dedicated fieldset with tag, level, stance, note, add/remove,
+and order controls. Selecting `prefer` demotes any previous preferred row to
+`neutral` before autosave. Built-in templates carry both the new semantic
+rows and the legacy pair during the same compatibility window; duplication
+mints fresh row ids and stamps.
 
 ## Knowledge calibration
 
@@ -217,15 +261,17 @@ JSON, same-origin, in `webapp/profile_api.py`. uuids are the identifiers.
 |----------|-----------|--------|
 | `GET /profile/api/tree` | `{folders, profiles, version}` — user rows + merged built-ins, each profile with its `summary`, no `data` | — |
 | `PUT /profile/api/tree` | guarded whole-tree save (structural only) | `version` (409), `deletes` (400), `validate_profile_tree` (400) |
-| `GET /profile/api/profiles/<uuid>` | one profile's editable fields + `dynamic` projection (built-ins served from the shipped file); the `calibration` subtree is **projected out** — it has its own endpoint | 404 unknown |
-| `PUT /profile/api/profiles/<uuid>` | `{data}` — the form's autosave: a **complete editable snapshot**, canonicalized + validated; answers the fresh `summary` | built-in → 400, `validate_profile_data` → 400 (`calibration` rejected as read-only), `dynamic` + `calibration` preserved server-side |
+| `GET /profile/api/profiles/<uuid>` | one profile's editable fields + `dynamic` projection (built-ins served from the shipped file); `languages`, `calibration`, and the legacy language pair are **projected out** | 404 unknown |
+| `PUT /profile/api/profiles/<uuid>` | `{data}` — the form's autosave: a **complete editable snapshot**, canonicalized + validated; answers the fresh `summary` | built-in → 400, `validate_profile_data` → 400 (server subtrees rejected), server subtrees + legacy language pair preserved |
+| `GET /profile/api/profiles/<uuid>/languages` | `{ok, builtin, rows}` — canonical rows, with legacy fallback only when the subtree is absent | 404 unknown |
+| `PUT /profile/api/profiles/<uuid>/languages` | `{rows}` — a complete authoritative snapshot; answers canonical rows with server ids/stamps | built-in → 400, validator → 400, 404 unknown |
 | `GET /profile/api/profiles/<uuid>/calibration` | `{ok, builtin, topics}` — the canonical calibration rows | 404 unknown |
 | `PUT /profile/api/profiles/<uuid>/calibration` | `{topics}` — a complete snapshot; answers the canonical rows (the client needs server-assigned ids/stamps before its next edit) | built-in → 400, validator → 400, 404 unknown |
-| `POST /profile/api/profiles/<uuid>/duplicate` | copy the whole data blob into a new row — "<name> copy" right after a user-owned source, a top-level editable row for a built-in; calibration rows get fresh ids + the duplication stamp | 404 unknown |
+| `POST /profile/api/profiles/<uuid>/duplicate` | copy the whole data blob into a new row — "<name> copy" right after a user-owned source, a top-level editable row for a built-in; language and calibration rows get fresh ids + the duplication stamp | 404 unknown |
 
 ## The save flow
 
-Two independent channels, mirroring the storage split:
+Four independent channels, mirroring the storage split:
 
 - **Tree** (structure, names, descriptions): every mutation funnels into the
   debounced whole-tree PUT above; the browser projects its state back to
@@ -239,6 +285,12 @@ Two independent channels, mirroring the storage split:
   `beforeunload` guard warns while anything is pending; an `online` listener
   retries immediately. Status renders inline: `Saving…` / `Saved ✓` /
   `Save failed — retrying`.
+- **Languages** (its own fieldset): the same canonical-snapshot autosave and
+  retry model as calibration, with a separate per-profile state map. A 400
+  leaves the draft visible and waits for the next edit; successful responses
+  merge server ids/stamps without stealing focus. Untouched tagless drafts
+  remain local. Pending, invalid, and incomplete states participate in the
+  `beforeunload` guard.
 - **Calibration** (its own fieldset): the same autosave pattern with its own
   per-profile state map and status line. Response handling is by class:
   network error or 5xx retains the draft and retries with capped backoff; a
@@ -251,10 +303,11 @@ Two independent channels, mirroring the storage split:
   participate in the `beforeunload` guard, and late GET/PUT results are
   keyed by uuid so they never populate the wrong pane.
 
-**Duplicate** flushes both channels first (the pending tree save, then the
-source's pending data PUT) so the copy always includes the latest edit; either
-flush failing aborts with a toast. No version lineage is recorded —
-duplication is a convenience, not ancestry (unlike /prompt's clone).
+**Duplicate** flushes all writable channels first (the pending tree save,
+then the source's flat data, languages, and calibration PUTs) so the copy
+always includes the latest edit; any failed flush aborts with a toast. No
+version lineage is recorded — duplication is a convenience, not ancestry
+(unlike /prompt's clone).
 
 ## Frontend details
 
@@ -266,7 +319,8 @@ duplication is a convenience, not ancestry (unlike /prompt's clone).
   (`webapp/profile_views.py` `_form_fields_html`), inputs keyed by
   `data-key`; enum selects get a leading blank option (blank = unset).
   Datalists assist timezone (from `Intl.supportedValuesOf('timeZone')` — no
-  list to maintain), language, currency, and country (small static arrays).
+  list to maintain), language tags in the dedicated row editor, currency,
+  and country (small static arrays).
   A **"Use my timezone"** button fills the browser's zone; a live datetime
   preview documents the format enums; the read-only **Last seen** fieldset
   renders `data["dynamic"]` when present.
@@ -279,12 +333,15 @@ duplication is a convenience, not ancestry (unlike /prompt's clone).
 
 ## Deliberate tradeoffs
 
-- **One sparse JSONB, not columns.** The registry is the schema; adding a
-  field is one dataclass row, no migration. The validator keeps the blob
-  honest (unknown keys rejected, blanks dropped).
+- **One sparse JSONB, not columns.** The registry is the schema for flat
+  fields; adding one is a dataclass row, not a SQL migration. Structured
+  repeatable concepts use separately validated subtrees in the same blob.
+  The validators keep both forms honest (unknown keys rejected, blanks
+  dropped).
 - **Strict shape, soft membership.** Enums and dates are checked hard; open
-  vocabularies (IANA, BCP-47, ISO 4217) are advisory-only warnings — a valid
-  but uncommon value must never be blocked.
+  flat vocabularies (IANA and ISO 4217) are advisory-only warnings. Language
+  rows use a strict safe BCP-47 subset because their tags become
+  instruction-bearing routing data.
 - **Data PUT is last-write-wins.** A single-operator form autosaving complete
   snapshots doesn't need a per-profile version token; the one real hazard —
   clobbering connector writes — is closed by the server-side `dynamic` merge.
@@ -303,8 +360,8 @@ blocks, all rendered from one per-turn context snapshot (see
 registry fields only, no tree label; opaque enums such as `number_format`
 carry a code-owned `.comment` entry spelling the convention out), the
 deterministic formatting guide (`user_profile/formatting.py` — lookup-driven
-directives with examples compiled from the locale fields, strict
-prompt-boundary validation so free-text values can never become
+directives with examples compiled from locale fields and effective language
+rows, strict prompt-boundary validation so free-text values can never become
 instructions), and the knowledge-calibration block
 (`user_profile/calibration.py` — JSONL rows under a shared guidance budget).
 Switching `profile.current` changes identity, formatting, and calibration;

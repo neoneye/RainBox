@@ -24,7 +24,7 @@ def app_ctx():
 
 def test_registry_shape():
     keys = [f.key for f in profile_fields.PROFILE_FIELDS]
-    assert len(keys) == len(set(keys)) == 22
+    assert len(keys) == len(set(keys)) == 20
     assert keys[0] == "full_name"
     assert profile_fields.FIELD_GROUPS == [
         "Identity", "Locale & formats", "Contact & location"]
@@ -35,7 +35,7 @@ def test_registry_shape():
         else:
             assert f.choices == ()
     for k in profile_fields.SUMMARY_KEYS:
-        assert k in profile_fields.FIELDS_BY_KEY
+        assert k == "language" or k in profile_fields.FIELDS_BY_KEY
 
 
 def test_profile_models_round_trip(app_ctx):
@@ -208,7 +208,8 @@ def test_all_templates_validate(app_ctx):
     assert len(entries) == 21
     for e in entries:
         editable = {k: v for k, v in e["data"].items()
-                    if k not in db.SERVER_OWNED_SUBTREES}
+                    if k not in (*db.SERVER_OWNED_SUBTREES,
+                                 *db.LEGACY_PRESERVED_FIELDS)}
         canonical = db.validate_profile_data(editable)
         assert canonical == editable         # shipped data is already canonical (no "" values)
         assert e["data"]["country"] == e["name"]
@@ -349,7 +350,8 @@ def test_duplicate_builtin(app_ctx, empty_tree):
     assert dup["name"] == "Germany" and dup["folderId"] is None
     got = db.profile_get(UUID(dup["uuid"]))
     assert got["builtin"] is False                 # real, editable row
-    strip = lambda d: {k: v for k, v in d.items() if k != "calibration"}  # noqa: E731
+    strip = lambda d: {k: v for k, v in d.items()  # noqa: E731
+                       if k not in db.SERVER_OWNED_SUBTREES}
     assert strip(got["data"]) == strip(germany["data"])
     # Calibration copies semantics + order but mints fresh server identity.
     src_rows = db.calibration_rows(germany["data"])

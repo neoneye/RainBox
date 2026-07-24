@@ -938,8 +938,10 @@ function profileRenderForm(){
     profileSetFormDisabled(true);   // until the data arrives (built-ins stay disabled)
     profileRenderDynamic(null);
     profileLoadData(p.uuid);
+    profileLangOnSelect(p);
     profileCalOnSelect(p);
   } else {
+    profileLangRenderStatus();
     profileCalRenderStatus();
   }
   profileRenderStatus();
@@ -999,17 +1001,11 @@ function profileCheckTimezone(v){
   try { new Intl.DateTimeFormat('en', {timeZone: v}); return null; }
   catch (e) { return 'Not a known timezone — pick one from the list, e.g. Europe/Copenhagen.'; }
 }
-function profileCheckLanguage(v){
-  try { Intl.getCanonicalLocales(v); return null; }
-  catch (e) { return 'Not a valid language tag — e.g. da, en-US, zh-Hans.'; }
-}
 function profileCheckCurrency(v){
   return /^[A-Za-z]{3}$/.test(v) ? null : 'Currency codes are three letters — e.g. DKK, USD, EUR.';
 }
 const PROFILE_SOFT_CHECKS = {
   timezone: profileCheckTimezone,
-  language: profileCheckLanguage,
-  language_2: profileCheckLanguage,
   currency: profileCheckCurrency,
   currency_2: profileCheckCurrency,
 };
@@ -1160,7 +1156,12 @@ function profileAnySavePending(){
     return profileCalPending(st) || (st && st.invalid)
       || profileCalHasIncomplete(st);
   });
-  return flat || cal;
+  const languages = Object.keys(profileLangState).some(u => {
+    const st = profileLangState[u];
+    return profileLangPending(st) || (st && st.invalid)
+      || profileLangHasIncomplete(st);
+  });
+  return flat || languages || cal;
 }
 // The unload guard is active only while a save is pending or failed; it is
 // gone the moment the latest snapshot is acknowledged. Confirming the dialog
@@ -1174,6 +1175,13 @@ window.addEventListener('online', () => {
     if (st && st.failed && !st.inFlight){
       if (st.retryTimer){ clearTimeout(st.retryTimer); st.retryTimer = null; }
       profileDataPush(u);
+    }
+  });
+  Object.keys(profileLangState).forEach(u => {
+    const st = profileLangState[u];
+    if (st && st.failed && !st.inFlight){
+      if (st.retryTimer){ clearTimeout(st.retryTimer); st.retryTimer = null; }
+      profileLangPush(u);
     }
   });
 });
@@ -1192,6 +1200,347 @@ async function profileFlushData(uuid){
     }
   }
   return !st.failed;
+}
+
+// ---- languages (own validated subtree + autosave state) --------------------
+const PROFILE_LANG_DEBOUNCE_MS = 400;
+const PROFILE_LANG_RETRY_MAX_MS = 30000;
+const PROFILE_LANG_LEVELS = ['native', 'fluent', 'intermediate', 'beginner'];
+const PROFILE_LANG_STANCES = ['prefer', 'neutral', 'avoid'];
+// uuid -> {rows, loaded, loadFailed, builtin, timer, retryTimer, retryDelay,
+//          inFlight, dirty, failed, invalid, error}
+let profileLangState = {};
+function profileLangStateFor(uuid){
+  if (!profileLangState[uuid]){
+    profileLangState[uuid] = {rows: [], loaded: false, loadFailed: false,
+                              builtin: false,
+                              timer: null, retryTimer: null, retryDelay: 1000,
+                              inFlight: false, dirty: false, failed: false,
+                              invalid: false, error: ''};
+  }
+  return profileLangState[uuid];
+}
+function profileLangPending(st){
+  return st && (st.dirty || st.inFlight || st.failed || st.timer);
+}
+// A newly-added row with only its seeded defaults is a harmless local draft.
+// Once any other content is entered, a missing tag is unsaved information and
+// participates in the unload guard.
+function profileLangIncompleteRow(row){
+  if ((row.tag || '').trim() !== '') return false;
+  return (row.level || '') !== 'intermediate'
+    || (row.stance || '') !== 'neutral'
+    || (row.note || '').trim() !== '';
+}
+function profileLangHasIncomplete(st){
+  return !!st && st.loaded && st.rows.some(profileLangIncompleteRow);
+}
+function profileLangOnSelect(profile){
+  const st = profileLangStateFor(profile.uuid);
+  st.builtin = !!profile.builtin;
+  profileLangRender();
+  if (!st.loaded && !profileLangPending(st)) profileLangLoad(profile.uuid);
+}
+async function profileLangLoad(uuid){
+  let data = null;
+  try {
+    const response = await fetch(
+      '/profile/api/profiles/' + encodeURIComponent(uuid) + '/languages');
+    data = await response.json();
+  } catch (e) { /* load failure is rendered below */ }
+  if (profileFormUuid !== uuid) return;
+  const st = profileLangStateFor(uuid);
+  if (st.loaded && profileLangPending(st)) return;
+  if (data && data.ok){
+    st.rows = data.rows || [];
+    st.builtin = !!data.builtin;
+    st.loaded = true;
+    st.loadFailed = false;
+  } else {
+    st.loadFailed = true;
+  }
+  profileLangRender();
+}
+function profileLangSelect(options, value){
+  const select = document.createElement('select');
+  options.forEach(optionValue => {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = optionValue;
+    select.appendChild(option);
+  });
+  select.value = options.includes(value) ? value : options[0];
+  return select;
+}
+function profileLangRender(){
+  const box = document.getElementById('profile-lang-rows');
+  const add = document.getElementById('profile-lang-add');
+  box.innerHTML = '';
+  const uuid = profileFormUuid;
+  const st = uuid ? profileLangState[uuid] : null;
+  if (!uuid || !st){ add.hidden = true; profileLangRenderStatus(); return; }
+  const builtin = st.builtin;
+  add.hidden = builtin || !st.loaded;
+  if (st.rows.length){
+    const head = document.createElement('div');
+    head.className = 'profile-lang-head';
+    ['Language tag', 'Level', 'Stance'].forEach(text => {
+      const span = document.createElement('span');
+      span.textContent = text;
+      head.appendChild(span);
+    });
+    box.appendChild(head);
+  }
+  st.rows.forEach((row, index) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'profile-lang-row';
+    const main = document.createElement('div');
+    main.className = 'profile-lang-main';
+
+    const tag = document.createElement('input');
+    tag.type = 'text';
+    tag.value = row.tag || '';
+    tag.placeholder = 'BCP-47, e.g. da, en-US, zh-Hans';
+    tag.setAttribute('list', 'profile-dl-lang');
+    tag.addEventListener('input', () => {
+      row.tag = tag.value;
+      profileLangEdited(uuid);
+    });
+    const level = profileLangSelect(PROFILE_LANG_LEVELS, row.level);
+    level.addEventListener('change', () => {
+      row.level = level.value;
+      profileLangEdited(uuid);
+    });
+    const stance = profileLangSelect(PROFILE_LANG_STANCES, row.stance);
+    stance.addEventListener('change', () => {
+      row.stance = stance.value;
+      if (stance.value === 'prefer'){
+        st.rows.forEach((other, otherIndex) => {
+          if (otherIndex !== index && other.stance === 'prefer'){
+            other.stance = 'neutral';
+          }
+        });
+        profileLangRender();
+      }
+      profileLangEdited(uuid);
+    });
+    main.appendChild(tag);
+    main.appendChild(level);
+    main.appendChild(stance);
+    wrap.appendChild(main);
+
+    const note = document.createElement('input');
+    note.type = 'text';
+    note.className = 'profile-lang-note';
+    note.placeholder = 'Note (optional, e.g. primary response language)';
+    note.value = row.note || '';
+    note.addEventListener('input', () => {
+      row.note = note.value;
+      profileLangEdited(uuid);
+    });
+    wrap.appendChild(note);
+
+    const meta = document.createElement('div');
+    meta.className = 'profile-lang-meta';
+    const age = document.createElement('span');
+    age.className = 'profile-lang-age';
+    age.textContent = builtin ? '' : profileCalAge(row.updated_at);
+    meta.appendChild(age);
+    if (!builtin){
+      const up = document.createElement('button');
+      up.type = 'button'; up.textContent = '↑'; up.title = 'Move up';
+      up.disabled = index === 0;
+      up.addEventListener('click', () => profileLangMove(uuid, index, -1));
+      const down = document.createElement('button');
+      down.type = 'button'; down.textContent = '↓'; down.title = 'Move down';
+      down.disabled = index === st.rows.length - 1;
+      down.addEventListener('click', () => profileLangMove(uuid, index, 1));
+      const remove = document.createElement('button');
+      remove.type = 'button'; remove.className = 'danger';
+      remove.textContent = 'Remove';
+      remove.addEventListener('click', () => profileLangRemove(uuid, index));
+      meta.appendChild(up);
+      meta.appendChild(down);
+      meta.appendChild(remove);
+    }
+    wrap.appendChild(meta);
+    [tag, level, stance, note].forEach(input => { input.disabled = builtin; });
+    box.appendChild(wrap);
+  });
+  profileLangRenderStatus();
+}
+function profileLangMove(uuid, index, delta){
+  const st = profileLangStateFor(uuid);
+  const target = index + delta;
+  if (target < 0 || target >= st.rows.length) return;
+  const row = st.rows[index];
+  st.rows[index] = st.rows[target];
+  st.rows[target] = row;
+  profileLangRender();
+  profileLangEdited(uuid);
+}
+function profileLangRemove(uuid, index){
+  profileLangStateFor(uuid).rows.splice(index, 1);
+  profileLangRender();
+  profileLangEdited(uuid);
+}
+function profileLangAdd(){
+  const uuid = profileFormUuid;
+  if (!uuid) return;
+  const st = profileLangStateFor(uuid);
+  if (st.builtin || !st.loaded) return;
+  st.rows.push({tag: '', level: 'intermediate', stance: 'neutral'});
+  profileLangRender();
+  const inputs = document.querySelectorAll('#profile-lang-rows input[list]');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+}
+function profileLangEdited(uuid){
+  const st = profileLangStateFor(uuid);
+  if (st.builtin || !st.loaded) return;
+  st.dirty = true;
+  st.invalid = false;
+  st.error = '';
+  if (st.retryTimer){ clearTimeout(st.retryTimer); st.retryTimer = null; }
+  clearTimeout(st.timer);
+  st.timer = setTimeout(() => {
+    st.timer = null;
+    profileLangPush(uuid);
+  }, PROFILE_LANG_DEBOUNCE_MS);
+  profileLangRenderStatus();
+}
+function profileLangPayload(st){
+  const rows = [];
+  const sent = [];
+  st.rows.forEach(row => {
+    if (!(row.id || (row.tag || '').trim() !== ''
+          || (row.note || '').trim() !== '')) return;
+    const out = {
+      tag: row.tag || '',
+      level: row.level || '',
+      stance: row.stance || '',
+    };
+    if (row.id) out.id = row.id;
+    if (row.note) out.note = row.note;
+    rows.push(out);
+    sent.push(row);
+  });
+  return {rows: rows, sent: sent};
+}
+async function profileLangPush(uuid){
+  const st = profileLangStateFor(uuid);
+  if (st.timer){ clearTimeout(st.timer); st.timer = null; }
+  if (st.inFlight || !st.dirty) return;
+  st.inFlight = true;
+  st.dirty = false;
+  profileLangRenderStatus();
+  const payload = profileLangPayload(st);
+  let status = 0;
+  let data = null;
+  try {
+    const response = await fetch(
+      '/profile/api/profiles/' + encodeURIComponent(uuid) + '/languages',
+      {method: 'PUT', headers: {'Content-Type': 'application/json'},
+       body: JSON.stringify({rows: payload.rows})});
+    status = response.status;
+    data = await response.json().catch(() => null);
+  } catch (e) { /* network class below */ }
+  st.inFlight = false;
+  if (status === 200 && data && data.ok){
+    st.failed = false;
+    st.invalid = false;
+    st.error = '';
+    st.retryDelay = 1000;
+    st.loaded = true;
+    (data.rows || []).forEach((canonical, index) => {
+      const ref = payload.sent[index];
+      if (!ref) return;
+      if (!ref.id) ref.id = canonical.id;
+      ref.updated_at = canonical.updated_at;
+    });
+    const treeRow = profileByUuid(uuid);
+    if (treeRow){
+      const preferred = (data.rows || []).find(row => row.stance === 'prefer');
+      const first = preferred || (data.rows || [])[0] || {};
+      treeRow.summary = treeRow.summary || {};
+      treeRow.summary.language = first.tag || '';
+    }
+    if (st.dirty){
+      profileLangPush(uuid);
+    } else {
+      const active = document.activeElement;
+      const box = document.getElementById('profile-lang-rows');
+      if (profileFormUuid === uuid && (!active || !box.contains(active))){
+        const drafts = st.rows.filter(
+          row => !row.id && (row.tag || '').trim() === '');
+        st.rows = (data.rows || []).concat(drafts);
+        profileLangRender();
+      }
+    }
+  } else if (status === 400){
+    st.failed = false;
+    st.invalid = true;
+    st.dirty = true;
+    st.error = (data && data.error) || 'validation failed';
+  } else {
+    st.dirty = true;
+    st.failed = true;
+    st.retryTimer = setTimeout(() => {
+      st.retryTimer = null;
+      profileLangPush(uuid);
+    }, st.retryDelay);
+    st.retryDelay = Math.min(
+      st.retryDelay * 2, PROFILE_LANG_RETRY_MAX_MS);
+  }
+  profileLangRenderStatus();
+}
+function profileLangRenderStatus(){
+  const status = document.getElementById('profile-lang-status');
+  const error = document.getElementById('profile-lang-error');
+  const st = profileFormUuid ? profileLangState[profileFormUuid] : null;
+  status.innerHTML = '';
+  if (!st || st.builtin){ error.textContent = ''; return; }
+  error.textContent = st.invalid ? st.error : '';
+  if (!st.loaded){
+    if (st.loadFailed){
+      status.textContent = 'Could not load languages — ';
+      const retry = document.createElement('a');
+      retry.href = '#';
+      retry.textContent = 'retry';
+      retry.addEventListener('click', event => {
+        event.preventDefault();
+        st.loadFailed = false;
+        profileLangRenderStatus();
+        profileLangLoad(profileFormUuid);
+      });
+      status.appendChild(retry);
+    } else {
+      status.textContent = 'Loading…';
+    }
+    return;
+  }
+  if (st.failed) status.textContent = 'Save failed — retrying';
+  else if (st.invalid) status.textContent = 'Not saved';
+  else if (st.inFlight || st.dirty || st.timer) status.textContent = 'Saving…';
+  else if (profileLangHasIncomplete(st)){
+    status.textContent = 'Not saved — a row needs a language tag';
+  } else {
+    status.textContent = st.rows.length ? 'Saved ✓' : '';
+  }
+}
+async function profileLangFlush(uuid){
+  const st = profileLangState[uuid];
+  if (!st) return true;
+  if (st.timer){ clearTimeout(st.timer); st.timer = null; }
+  if (st.retryTimer){ clearTimeout(st.retryTimer); st.retryTimer = null; }
+  while (st.dirty || st.inFlight){
+    if (st.inFlight){
+      await new Promise(resolve => setTimeout(resolve, 50));
+    } else {
+      await profileLangPush(uuid);
+      if (st.failed || st.invalid) return false;
+    }
+  }
+  return !st.failed && !st.invalid && !profileLangHasIncomplete(st);
 }
 
 // ---- knowledge calibration (own fieldset, own autosave state — mirrors the
@@ -1562,10 +1911,11 @@ async function profileDuplicateUuid(uuid){
   const p = profileByUuid(uuid);
   if (p && !p.builtin){
     // An edit followed immediately by Duplicate must be part of the copy —
-    // the flat fields and the calibration rows both flush first.
+    // flat fields and both nested editors flush first.
     const flushed = await profileFlushData(uuid);
+    const languagesFlushed = await profileLangFlush(uuid);
     const calFlushed = await profileCalFlush(uuid);
-    if (!flushed || !calFlushed){
+    if (!flushed || !languagesFlushed || !calFlushed){
       profileToastMsg('Duplicate aborted — the latest edits could not be saved.');
       return;
     }
@@ -1625,6 +1975,7 @@ document.querySelectorAll('#profile-form [data-key]').forEach(el => {
   el.addEventListener('input', profileFieldEdited);
   el.addEventListener('change', profileFieldEdited);
 });
+document.getElementById('profile-lang-add').addEventListener('click', profileLangAdd);
 document.getElementById('profile-cal-add').addEventListener('click', profileCalAdd);
 document.getElementById('profile-tz-mine').addEventListener('click', () => {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
