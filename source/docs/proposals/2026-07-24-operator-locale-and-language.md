@@ -7,6 +7,25 @@ starts from evidence instead of from scratch.
 **Supersedes:** `2026-07-24-step0-language-findings.md` and
 `2026-07-24-modelling-language-preferences.md` (folded in here).
 
+## The Problem
+
+I often encounter that LLMs assume `inch` instead of metric, prefers AM/PM over 24 hour.
+Making the LLM understand that I'm not an american, that's my struggle.
+
+I'm the developer of RainBox. Most of the text I read/write is american english.
+I'm danish. A minority of the text I write daily is in danish. So I use the metric system. 
+I live in Copenhagen. I use DKK and EUR. I use 24 hour system.
+The code that I'm writing is en american english. I feels cringy seeing code written in danish.
+Danish is rarely a supported language in apps, so I prefer to use english, otherwise I see an inconsistent mess of danish/english non-sense.
+I don't want thousand separators in numbers, since that makes a mess when I copy paste it into my code.
+
+If I type something in one language, then I expect a reply in the same language.
+If I type something in danish, then I expect a reply in danish.
+
+For now my focus is on identifying what language that the assistant is supposed to respond in.
+Later focus can be on figuring out what other user settings are relevant for the task.
+
+
 ## The goal, stated plainly
 
 An assistant that knows the operator is European and multilingual — so it
