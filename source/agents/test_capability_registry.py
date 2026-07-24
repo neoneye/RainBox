@@ -46,7 +46,10 @@ def _agent() -> AssistantAgent:
 
 
 def test_registry_covers_every_action():
-    assert set(CAPABILITIES) == set(AssistantActionName)
+    # reply_language is trace-rows-only by design: no Capability entry, so
+    # it can never be cataloged or dispatched.
+    trace_only = {AssistantActionName.REPLY_LANGUAGE}
+    assert set(CAPABILITIES) == set(AssistantActionName) - trace_only
     for name, cap in CAPABILITIES.items():
         assert isinstance(cap, Capability)
         assert cap.name is name
