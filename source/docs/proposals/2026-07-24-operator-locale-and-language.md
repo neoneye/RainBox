@@ -281,3 +281,157 @@ on locale questions).
    the sole measured lever on whether a chosen dialect survives to the page.
 3. Only then decide whether a criteria step exists at all, and if it does,
    scope it to precedence level 2 — task-scoped locale — and nothing else.
+
+## Part 8 — independent assessment: the actual problems and solutions
+
+This section is an independent reading of the problem after reviewing the
+proposal and both parked implementation attempts. It does not replace the
+measurements above; it turns them into an implementation contract.
+
+### Problem 1 — "European" is an identity, not an executable locale
+
+Europe is not one language, currency, date format or set of spelling rules.
+The useful fact is not merely that the operator is European, but that this
+operator has concrete and independent defaults:
+
+- metric units and Celsius;
+- a 24-hour clock and `Europe/Copenhagen`;
+- ISO dates;
+- DKK, with EUR relevant when the task involves it;
+- decimal points without thousands separators;
+- English, normally American English, as the primary working and response
+  language;
+- Danish when the operator writes or explicitly asks in Danish.
+
+These choices do not have to resemble a national preset. In particular,
+`en-US` describes a language variant; it does **not** mean the operator is
+American and must never select feet, Fahrenheit, USD, month-first dates or
+AM/PM. Conversely, a European locale does not imply `en-GB`.
+
+**Solution:** keep language, language variant, units, temperature, clock, date,
+number format, currency and timezone as orthogonal settings. Treat country or
+"European" as context, never as a shortcut that silently overwrites those
+settings. Add a cross-product test proving that an `en-US` reply retains the
+operator's metric/Copenhagen/DKK/ISO/no-grouping defaults.
+
+### Problem 2 — the decision is response-language intent, not text detection
+
+"What language are most of these tokens?" is not the question Rainbox needs to
+answer. The question is "what language should the assistant use for this
+turn?" Those differ in ordinary requests:
+
+- `translate to English: <Danish text>` contains mostly Danish but asks for an
+  English result;
+- `answer in Danish: what is ...` explicitly overrides an English profile;
+- `ok`, a URL, a stack trace or a code block may contain too little natural
+  language to classify;
+- an earlier assistant reply may be in the wrong language and must not become
+  evidence for continuing the mistake.
+
+This is an intent-resolution problem. A statistical language detector alone
+will confidently answer the wrong question.
+
+**Solution:** use one narrow model decision that returns a typed
+`language_tag` plus a short `reason`. Do not ask that call to plan units,
+formatting or general acceptance criteria. Re-validate its structured result,
+canonicalize the BCP-47 tag in code, and compose the directive in code. The
+free-text `reason` is retained as a pressure valve and an audit explanation;
+it never becomes the value code must parse.
+
+The response-language precedence should be deterministic:
+
+1. An explicit response or translation language in the current request.
+2. An explicit language established by the current document or project.
+3. The language intent of the current operator message.
+4. For language-poor messages, recent **operator** language and then the
+   profile's preferred response language.
+5. The system fallback.
+
+Assistant-authored history is never a language authority.
+
+### Problem 3 — language knowledge and reply preference are different facts
+
+The two flat fields cannot express "native Danish, fluent Swedish, usually
+work in English, but do not answer me in Swedish." Declaration order cannot
+reliably mean both competence and preference.
+
+**Solution:** use the proposed `languages.rows` model with independent `level`
+and `stance` axes. After the model identifies the response-language intent,
+code applies the profile:
+
+- `prefer` supplies the default for language-poor messages;
+- `neutral` permits normal mirroring;
+- `avoid` redirects an implicit choice to the preferred language;
+- an explicit request overrides `avoid`;
+- `level` changes register, never routing;
+- a bare tag resolves to a declared variant deterministically;
+- a variant-bearing explicit tag wins as written.
+
+If code redirects an `avoid` language, the final directive should disclose the
+redirect so the operator can see why the response does not mirror the input.
+A bare `en` row must remain a first-class choice for plain international
+English rather than being silently upgraded to `en-US` or `en-GB`.
+
+### Problem 4 — operator defaults and task-local reality can conflict
+
+The operator's defaults are correct for an underspecified task, but not for a
+task whose subject already establishes another frame. Replacing a Texas
+building's square feet and USD with metric and DKK destroys source meaning.
+Likewise, converting `350°F` before reasoning about an American recipe can
+change the task rather than help with it.
+
+**Solution:** represent task-scoped locale separately from the persistent
+profile and use the precedence ladder in Part 6. Preserve explicit source
+notation and add conversions when useful; do not substitute the operator's
+defaults for the task's facts. If a model-driven criteria step is retained,
+this is its one justified job: identify explicit project/document locale that
+the deterministic profile guide cannot know.
+
+### Problem 5 — choosing a dialect and delivering it are separate failures
+
+The experiments show that a classifier can select the correct tag while the
+reply model still mixes dialects. More instructions cannot create linguistic
+competence that the reply model does not have. Example vocabulary in prompts
+also contaminates unrelated output.
+
+**Solution:** keep one example-free, code-owned variant table; name dialects
+without listing marker words; keep marker words only in tests. Select the reply
+model using a dialect-and-translation canary. Language classification accuracy
+and reply-language fidelity must be reported as separate metrics.
+
+### Problem 6 — the acceptance-criteria mechanism became broader than the gap
+
+The two-call v2 pipeline paid for language classification and then paid again
+for a work-criteria call that repeated deterministic profile settings, often
+returned empty lists, and could outrank the guide that already held the right
+answer. This added latency and a second authority surface without a measured
+benefit.
+
+**Solution:** keep the narrow language-intent call and remove the general
+work-criteria call from this feature. Do not inject an empty high-priority
+criteria block. Locale defaults continue to come from the deterministic guide
+on every reasoning step. Revisit a model-driven criteria call only for
+task-scoped locale, with evals showing that it improves that exact case.
+
+### Recommended implementation sequence
+
+1. Add `languages.rows`, validation, editor support and migration from
+   `language` / `language_2`. Preserve the legacy fields only long enough for a
+   reversible migration.
+2. Port the branch-independent reliability fixes listed in Part 7.
+3. Implement one typed response-language-intent call and a deterministic
+   resolver. Inject its code-composed directive before the first reasoning
+   step so language is execution context, not a final rewrite.
+4. Keep the existing deterministic locale guide unchanged and add the
+   language-versus-locale cross-product tests.
+5. Run classification, translation-intent, dialect, short-message,
+   repeated-request and avoided-language evals independently.
+6. Choose the reply-model order from the dialect canary.
+7. Address task-scoped locale as a separate follow-up only after the language
+   path is stable.
+
+The minimal successful outcome is not "the assistant knows the operator is
+European." It is that an English request receives the requested English
+variant while reasoning in metric/Celsius/Copenhagen/DKK/ISO conventions, a
+Danish request receives Danish, explicit task notation remains authoritative,
+and none of those decisions silently changes another axis.
