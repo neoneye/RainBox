@@ -3726,8 +3726,11 @@ class AssistantAgent(ModelGroupAgent):
                 f"- The operator's preferred language is {known} — use it "
                 "only when the current message explicitly asks for it.")
         for tag in (language, language_2):
-            if tag in user_profile.ENGLISH_SPELLING:
-                rules.append(f"- {user_profile.ENGLISH_SPELLING[tag]}")
+            entry = user_profile.LANGUAGE_VARIANTS.get(tag or "")
+            if entry is not None:
+                lang_name, variant, contrast = entry
+                rules.append(f"- Write {lang_name} in {variant} — spelling "
+                             f"and vocabulary; never {contrast}.")
                 break
         return ACCEPTANCE_CRITERIA_SYSTEM_PROMPT.format(
             language_rules="\n".join(rules))

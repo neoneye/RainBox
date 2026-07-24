@@ -131,11 +131,19 @@ _UNITS_DEFAULT_TEMPERATURE: dict[str, str] = {
     "metric": "celsius", "uk": "celsius", "imperial": "fahrenheit",
 }
 
-# canonical language tag -> spelling clause (bare "en" adds none; only the
-# two tags the profile can meaningfully disambiguate).
-ENGLISH_SPELLING: dict[str, str] = {
-    "en-GB": "Use British English spelling when writing English.",
-    "en-US": "Use American English spelling when writing English.",
+# tag -> (language name, variant name, contrasting variant name), for
+# languages with named variants; a bare primary tag ("en", "no") cannot
+# disambiguate and adds no clause. Names only, never example words: a
+# contrastive example list in a prompt gets parroted into replies (live
+# runs emitted the sample words in unrelated answers), so the sample
+# words live exclusively in tests and evals as output markers. This
+# table is the single owner of variant knowledge — the formatting guide
+# and the assistant's language directive both render from it.
+LANGUAGE_VARIANTS: dict[str, tuple[str, str, str]] = {
+    "en-GB": ("English", "British English", "American English"),
+    "en-US": ("English", "American English", "British English"),
+    "nb": ("Norwegian", "Norwegian Bokmål", "Norwegian Nynorsk"),
+    "nn": ("Norwegian", "Norwegian Nynorsk", "Norwegian Bokmål"),
 }
 
 # A deliberately safe BCP-47 subset, not a complete validator: a valid tag
@@ -223,6 +231,15 @@ def _first_valid(values: list[Any], validator: Any) -> tuple[str | None, str | N
     preferred = valid[0] if valid else None
     secondary = valid[1] if len(valid) > 1 else None
     return preferred, secondary
+
+
+def valid_language_tag(raw: Any) -> str | None:
+    """Public prompt-boundary validation for a single language tag: the
+    canonicalized tag when it matches the safe BCP-47 subset, else None.
+    The assistant validates model-emitted tags through this exact gate —
+    a model tag enters composed prompt text the same way a profile tag
+    does, or not at all."""
+    return _valid_language(raw)
 
 
 def valid_profile_languages(profile: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -323,15 +340,19 @@ def format_formatting_guide(profile: dict[str, Any],
         # directive to switch, so the rule is spelled out as absolute and
         # the profile languages are demoted to explicit-request-only.
         known = (f"{language} or {language_2}" if language_2 else language)
-        spelling = ""
+        variant_clause = ""
         for tag in (language, language_2):
-            if tag in ENGLISH_SPELLING:
-                spelling = " " + ENGLISH_SPELLING[tag]
+            entry = LANGUAGE_VARIANTS.get(tag or "")
+            if entry is not None:
+                lang_name, variant, contrast = entry
+                variant_clause = (f" Write {lang_name} in {variant} — "
+                                  "spelling and vocabulary; never "
+                                  f"{contrast}.")
                 break
         lines.append("- Language: reply in the language of the current "
                      "message; never switch on your own. Use "
                      f"{known} only when the message asks for it; an "
-                     f"explicit request always wins.{spelling}")
+                     f"explicit request always wins.{variant_clause}")
 
     if not lines:
         return ""

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import profile_fields
 from user_profile.formatting import (
     DATE_FORMATS,
-    ENGLISH_SPELLING,
+    LANGUAGE_VARIANTS,
     MAX_FORMATTING_GUIDE_CHARS,
     NUMBER_FORMATS,
     TEMPERATURES,
@@ -21,6 +21,7 @@ from user_profile.formatting import (
     _valid_language,
     _valid_timezone,
     format_formatting_guide,
+    valid_language_tag,
 )
 
 # A summer instant: Berlin is UTC+02:00, Kolkata UTC+05:30, Denver UTC-06:00.
@@ -231,14 +232,26 @@ def test_invalid_primary_currency_promotes_secondary():
 
 # ---- language line ---------------------------------------------------------
 
-def test_regioned_english_adds_spelling_and_bare_en_does_not():
+def test_regioned_english_adds_variant_clause_and_bare_en_does_not():
     gb = format_formatting_guide(_profile(language="en-gb"))
     assert "Use en-GB only when the message asks" in gb   # canonicalized
-    assert "Use British English spelling when writing English." in gb
+    assert ("Write English in British English — spelling and vocabulary; "
+            "never American English." in gb)
     us = format_formatting_guide(_profile(language="da", language_2="en-US"))
-    assert "Use American English spelling when writing English." in us
+    assert ("Write English in American English — spelling and vocabulary; "
+            "never British English." in us)
     bare = format_formatting_guide(_profile(language="en"))
     assert "spelling" not in bare
+
+
+def test_variant_clause_names_dialects_without_example_words():
+    # Contrastive example words in a prompt get parroted into replies
+    # (live runs emitted the sample words in unrelated answers), so the
+    # clause names the dialect and nothing else. The sample words exist
+    # only here, as markers.
+    guide = format_formatting_guide(_profile(language="en-GB"))
+    for word in ("colour", "color", "anticlockwise", "counterclockwise"):
+        assert word not in guide.lower()
 
 
 def test_invalid_primary_language_promotes_secondary():
@@ -298,5 +311,15 @@ def test_maximal_profile_stays_within_cap():
         assert 0 < len(body) <= MAX_FORMATTING_GUIDE_CHARS
 
 
-def test_english_spelling_table_is_the_two_supported_tags():
-    assert set(ENGLISH_SPELLING) == {"en-GB", "en-US"}
+def test_variant_table_rows_are_complete():
+    assert {"en-GB", "en-US"} <= set(LANGUAGE_VARIANTS)
+    for tag, (language, variant, contrast) in LANGUAGE_VARIANTS.items():
+        assert valid_language_tag(tag) == tag
+        assert language and variant and contrast and variant != contrast
+
+
+def test_valid_language_tag_canonicalizes():
+    assert valid_language_tag("EN-gb") == "en-GB"
+    assert valid_language_tag("da") == "da"
+    assert valid_language_tag("not a tag!") is None
+    assert valid_language_tag("") is None
