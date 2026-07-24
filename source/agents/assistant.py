@@ -3367,6 +3367,7 @@ class AssistantAgent(ModelGroupAgent):
         profile: dict[str, Any] | None,
         include_formatting: bool = True,
         include_calibration: bool = True,
+        include_criteria: bool = False,
     ) -> tuple[str, str]:
         """The prompt-construction seam shared with the handle path, for the
         live eval harness (evals/profile_guidance.py): renders the
@@ -3375,8 +3376,12 @@ class AssistantAgent(ModelGroupAgent):
         mutated and a concurrent real turn can never observe a temporary
         value — then assembles the same (system, user) prompt pair a real
         step-0 decision would send. Posts nothing, dispatches nothing, and
-        touches no room state; the include flags are the eval variants'
-        prompt-construction overrides, not production settings."""
+        touches no room state (self._run is None, so the criteria calls
+        checkpoint and persist nothing); the include flags are the eval
+        variants' prompt-construction overrides, not production settings.
+        include_criteria runs the LIVE step-0 criteria calls (language +
+        work) against the agent's bound models before assembling the
+        prompts — the closest the harness gets to a production turn."""
         identity, formatting, calibration = (
             self._build_declared_profile_blocks(
                 profile, formatting_enabled=True, calibration_enabled=True))
@@ -3385,6 +3390,14 @@ class AssistantAgent(ModelGroupAgent):
         self._calibration_block = calibration if include_calibration else ""
         self._profile_block = ""
         self._skill_block = ""
+        self._reply_language_directive = ""
+        self._work_criteria = None
+        self._criteria_json = ""
+        self._criteria_profile = profile
+        if include_criteria:
+            self._run_acceptance_criteria_calls(
+                step_index=0, messages=messages,
+                reason="eval criteria stage (code-driven)", language=True)
         user_prompt = self._build_user_prompt(
             messages=messages, scratchpad=[], step_index=0)
         return self._system_prompt(), user_prompt

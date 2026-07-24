@@ -48,13 +48,17 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REPETITIONS = 3
 
-# The four gate variants over the same cases: prompt-construction overrides
-# passed into build_turn_prompts, never production settings.
-VARIANTS: dict[str, tuple[bool, bool]] = {
-    "baseline": (False, False),
-    "formatting_only": (True, False),
-    "calibration_only": (False, True),
-    "combined": (True, True),
+# The gate variants over the same cases: (formatting, calibration,
+# criteria) prompt-construction overrides passed into build_turn_prompts,
+# never production settings. "criteria" additionally runs the live step-0
+# acceptance-criteria calls (language + work) before the decide prompt —
+# the closest the harness gets to a production turn.
+VARIANTS: dict[str, tuple[bool, bool, bool]] = {
+    "baseline": (False, False, False),
+    "formatting_only": (True, False, False),
+    "calibration_only": (False, True, False),
+    "combined": (True, True, False),
+    "criteria": (True, True, True),
 }
 
 
@@ -92,6 +96,7 @@ def _eval_agent(model_group_uuid: UUID | None) -> AssistantAgent:
 def _build_case_prompts(
     agent: AssistantAgent, case: db.EvalCase, profile: dict[str, Any] | None,
     include_formatting: bool, include_calibration: bool,
+    include_criteria: bool = False,
 ) -> tuple[str, str]:
     message = str((case.input or {}).get("message") or "")
     messages = [{"sender_type": "human", "text": message, "kind": "message",
@@ -100,6 +105,7 @@ def _build_case_prompts(
         messages=messages, profile=profile,
         include_formatting=include_formatting,
         include_calibration=include_calibration,
+        include_criteria=include_criteria,
     )
 
 
@@ -194,7 +200,8 @@ def run_profile_guidance_case(
     against this case's expectations instead of generating again. When
     `invalid_reason` is given (a violated pair invariant), an explicit
     zero-scored invalid result is persisted with no generation at all."""
-    include_formatting, include_calibration = VARIANTS[variant]
+    include_formatting, include_calibration, include_criteria = (
+        VARIANTS[variant])
     profile = _resolve_profile(case.input or {})
     reps: list[dict[str, Any]] = []
     if invalid_reason is not None:
@@ -208,7 +215,8 @@ def run_profile_guidance_case(
                 for record in shared_records]
     else:
         system_prompt, user_prompt = _build_case_prompts(
-            agent, case, profile, include_formatting, include_calibration)
+            agent, case, profile, include_formatting, include_calibration,
+            include_criteria)
         for _ in range(repetitions):
             reps.append(_score_repetition(case, _generate_repetition(
                 agent, system_prompt, user_prompt)))
@@ -280,7 +288,8 @@ def run_profile_guidance_suite(
             "case_uuids": [str(c.uuid) for c in cases],
         },
     )
-    include_formatting, include_calibration = VARIANTS[variant]
+    include_formatting, include_calibration, _include_criteria = (
+        VARIANTS[variant])
     block_off = {"calibration": not include_calibration,
                  "formatting": not include_formatting}
     # A counterfactual pair (same rubric "pair" value) exists to force
@@ -393,7 +402,7 @@ def _template_uuid(template_name: str) -> str:
 
 # Bumped whenever a shipped case definition changes; seeded cases whose
 # rubric carries an older rev are updated in place (they are code-owned).
-SEED_REV = 7
+SEED_REV = 8
 
 
 def _seed_hash(input_obj: Any, expected_obj: Any, rubric_obj: Any) -> str:
@@ -537,6 +546,20 @@ def _seed_specs() -> list[dict[str, Any]]:
                          "updated_at": "2026-07-21T00:00:00Z",
                      }]}},
         }
+
+    # The language fixtures: metric units with a Danish-preferring profile
+    # (language da is explicit-request-only; en-US resolves the English
+    # variant) and an en-GB profile for the vocabulary case.
+    _language_profile = {
+        "uuid": "00000000-0000-0000-0000-00000000ab01",
+        "name": "LanguageFixture",
+        "data": {"units": "metric", "language": "da", "language_2": "en-US"},
+    }
+    _gb_profile = {
+        "uuid": "00000000-0000-0000-0000-00000000ab02",
+        "name": "BritishFixture",
+        "data": {"units": "metric", "language": "en-GB"},
+    }
 
     date_message = "Write 31 December 2026 as a short numeric date."
     specs: list[dict[str, Any]] = [
@@ -685,6 +708,50 @@ def _seed_specs() -> list[dict[str, Any]]:
          "expected": {"must_include": ["12/31/2026"],
                       "must_not_include": ["31.12.2026"]},
          "rubric_extra": {"pair": "date_format_counterfactual"}},
+        # The language family: mirroring, explicit-request-wins, and variant
+        # vocabulary — the acceptance-criteria ambiguity cases. Marker words
+        # (Danish function words, lift/elevator) belong HERE, in scoring
+        # data, never in prompts: a prompt example gets parroted into
+        # replies.
+        {"name": "pg language: ambiguous conversion uses metric default",
+         "family": "language", "seed_id": "language.metric_default",
+         "input": {"message": "Convert 1053737172 feet.",
+                   "profile": _language_profile},
+         # Either spelling: the variant is en-US here, but the marker only
+         # checks the metric target was chosen over yards/miles.
+         "expected": {"must_include_any": [["meter", "metre"]],
+                      "must_not_include": ["yard"]}},
+        {"name": "pg language: Danish question gets a Danish reply",
+         "family": "language", "seed_id": "language.mirror_danish",
+         "input": {"message": "Hvor mange meter er der på en kilometer?",
+                   "profile": _language_profile},
+         "expected": {"must_include": ["1000", "meter"],
+                      "must_not_include": ["There are", "there are"]}},
+        {"name": "pg language: English question gets no Danish",
+         "family": "language", "seed_id": "language.no_unrequested_danish",
+         "input": {"message": "How many meters are there in a kilometer?",
+                   "profile": _language_profile},
+         # " er " with spaces: the Danish copula as a whole word — the
+         # telltale of an unrequested language switch to the profile's da.
+         "expected": {"must_include": ["1000"],
+                      "must_not_include": [" er ", "Der er"]}},
+        {"name": "pg language: explicit Danish request wins over English",
+         "family": "language", "seed_id": "language.explicit_wins",
+         "input": {"message": "Answer in Danish: how many meters are there "
+                              "in a kilometer?",
+                   "profile": _language_profile},
+         "expected": {"must_include": ["1000"],
+                      "must_include_any": [["Der er", "der er", "meter på",
+                                            "en kilometer er"]]}},
+        {"name": "pg language: British vocabulary, not just spelling",
+         "family": "language", "seed_id": "language.variant_vocabulary",
+         "input": {"message": "Translate to English: 'Fahrstuhl'.",
+                   "profile": _gb_profile},
+         # Vocabulary, not spelling: an en-GB profile must yield the British
+         # word — "elevator" is the exact live failure (American vocabulary
+         # under a British variant).
+         "expected": {"must_include_any": [["lift", "Lift"]],
+                      "must_not_include": ["elevator", "Elevator"]}},
     ]
     return specs
 

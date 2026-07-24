@@ -23,7 +23,7 @@ MEMBERS = sorted(str(uuid4()) for _ in range(2))
 # the formatting candidate clears its margins.
 BASELINE_SCORES = {"locale": 0.4, "calibration": 0.5, "exact_source": 1.0,
                    "override": 1.0, "injection": 1.0, "counterfactual": 0.8,
-                   "regression": 0.8}
+                   "regression": 0.8, "language": 0.8}
 
 
 class _FakeBinding:
