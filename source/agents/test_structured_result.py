@@ -37,3 +37,31 @@ def test_empty_text_falls_back_to_the_stream_object():
         AssistantStepDecision, CORRUPTED, None
     )
     assert result is CORRUPTED
+
+
+def test_fence_remnant_text_is_recovered_not_discarded():
+    """The live miss (run 8b82ba60): the provider text was the valid object
+    prefixed with a markdown-fence remnant ('json\\n{...}'), so re-validation
+    failed and the corrupt stream object won — a required str field arrived
+    as None. The payload between the first '{' and the last '}' re-validates
+    and must win."""
+    result = ModelGroupAgent._settle_structured_result(
+        AssistantStepDecision, CORRUPTED, "json\n" + TRUE_TEXT
+    )
+    assert isinstance(result, AssistantStepDecision)
+    assert result.args == {"code": "print(357737172 * 0.3048)"}
+
+
+def test_full_markdown_fence_is_recovered():
+    result = ModelGroupAgent._settle_structured_result(
+        AssistantStepDecision, CORRUPTED, f"```json\n{TRUE_TEXT}\n```"
+    )
+    assert result.args == {"code": "print(357737172 * 0.3048)"}
+
+
+def test_prose_wrapped_object_is_recovered():
+    result = ModelGroupAgent._settle_structured_result(
+        AssistantStepDecision, CORRUPTED,
+        f"Here is the decision:\n{TRUE_TEXT}\nLet me know."
+    )
+    assert result.args == {"code": "print(357737172 * 0.3048)"}

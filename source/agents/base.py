@@ -451,16 +451,30 @@ class ModelGroupAgent(Agent):
         rejected its own python_run six times for a missing `code` it had
         in fact written). The instrumentation capture holds the true
         provider text, so re-validate that — it wins whenever it parses;
-        the stream's object is only the fallback for unparseable text."""
+        the stream's object is only the fallback for unparseable text.
+
+        The text is tried verbatim first, then as the slice between its
+        first '{' and last '}': providers wrap the object in markdown-fence
+        remnants ("json\\n{...}" — a live run lost its reply-language call
+        to exactly that) or prose, and discarding an otherwise valid
+        payload hands the win to the corruptible stream object."""
         text = (final_text or "").strip()
-        if text:
+        candidates = [text] if text else []
+        start, end = text.find("{"), text.rfind("}")
+        if 0 <= start < end:
+            sliced = text[start:end + 1]
+            if sliced != text:
+                candidates.append(sliced)
+        for candidate in candidates:
             try:
-                return response_model.model_validate_json(text)
+                return response_model.model_validate_json(candidate)
             except Exception:
-                logger.warning(
-                    "structured stream: final text did not re-validate; "
-                    "keeping the stream-parsed object"
-                )
+                continue
+        if text:
+            logger.warning(
+                "structured stream: final text did not re-validate; "
+                "keeping the stream-parsed object"
+            )
         return stream_parsed
 
 
