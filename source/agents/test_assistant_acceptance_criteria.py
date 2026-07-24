@@ -736,3 +736,20 @@ def test_no_variant_example_words_in_any_prompt_surface():
         # of other words).
         import re
         assert not re.search(r"\bcolou?r\b", low), surface[:80]
+
+
+def test_language_prompt_states_fields_as_bullets_not_a_parenthetical_template():
+    """The live failure (run db704a1f): the prompt described the fields as
+    "language_tag (the BCP-47 tag) and reason (one short sentence …)", and
+    the model MIRRORED that surface form — emitting the prose
+    "english (The user explicitly requests …)" instead of JSON, 3 times in
+    4. Same class as the example-words hazard: a small model copies the
+    shape of the prompt. State the fields as bullets; never as
+    `name (description)`."""
+    import re
+
+    prompt = AssistantAgent._reply_language_system_prompt({"data": {}})
+    assert "- language_tag:" in prompt
+    assert "- reason:" in prompt
+    # No "<field> (<description>)" template anywhere in the prompt.
+    assert not re.search(r"\b(language_tag|reason)\s*\(", prompt)

@@ -253,8 +253,9 @@ def compose_language_directive(tag: str, reason: str) -> str:
 REPLY_LANGUAGE_SYSTEM_PROMPT: str = """\
 You classify the language a personal assistant's reply must be written in.
 You do not answer the request and you do not plan the reply; you only emit
-the language decision as structured output: language_tag (the BCP-47 tag)
-and reason (one short sentence naming what decided it).
+the language decision as structured output with two fields:
+- language_tag: the BCP-47 tag, and nothing else
+- reason: one short sentence naming what decided it
 
 Rules:
 {language_rules}

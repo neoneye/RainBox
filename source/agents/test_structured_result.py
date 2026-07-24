@@ -65,3 +65,22 @@ def test_prose_wrapped_object_is_recovered():
         f"Here is the decision:\n{TRUE_TEXT}\nLet me know."
     )
     assert result.args == {"code": "print(357737172 * 0.3048)"}
+
+
+def test_schema_violating_stream_object_is_rejected_not_returned():
+    """llama-index's partial parser builds the object WITHOUT validation, so
+    `.raw` can carry a required field as None — pydantic would never produce
+    that. Returning it hands every caller a schema-violating "parsed"
+    object; a live run then died deep in the criteria code with "unusable
+    language tag None" instead of an honest parse failure here. When neither
+    the text nor the stream object validates, raise: the model-group loop
+    then falls through to the next candidate."""
+    import pytest
+
+    corrupt = AssistantStepDecision.model_construct(
+        reason=None, action=None, args=None
+    )
+    with pytest.raises(ValueError, match="did not return a valid"):
+        ModelGroupAgent._settle_structured_result(
+            AssistantStepDecision, corrupt, "not json at all"
+        )

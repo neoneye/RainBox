@@ -473,9 +473,25 @@ class ModelGroupAgent(Agent):
         if text:
             logger.warning(
                 "structured stream: final text did not re-validate; "
-                "keeping the stream-parsed object"
+                "falling back to the stream-parsed object"
             )
-        return stream_parsed
+        # The stream object is the fallback, but only when it actually
+        # satisfies the schema: the partial parser BUILDS IT WITHOUT
+        # VALIDATION, so a required field can arrive as None — pydantic
+        # would never produce that. Returning it hands the caller a
+        # schema-violating "parsed" object, and the failure then surfaces
+        # far away as nonsense (a live run died on "unusable language tag
+        # None" inside the criteria code). Failing here is honest: the
+        # model-group loop falls through to the next candidate.
+        try:
+            response_model.model_validate(stream_parsed.model_dump(warnings=False))
+            return stream_parsed
+        except Exception as e:
+            raise ValueError(
+                f"model did not return a valid {response_model.__name__}: "
+                f"the response text did not parse and the streamed object "
+                f"violates the schema ({e})"
+            ) from e
 
 
 class StructuredLLMAgent(ModelGroupAgent):
