@@ -18,6 +18,7 @@ this module's examples are pinned (31 December 2026, 23:59).
 """
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -161,7 +162,7 @@ def _valid_currency(raw: Any) -> str | None:
     """Exactly three ASCII letters, canonicalized to uppercase. Validates
     shape, not economic existence."""
     text = str(raw or "").strip()
-    if len(text) != 3 or not text.isascii() or not text.isalpha():
+    if not re.fullmatch(r"[A-Za-z]{3}", text):
         return None
     return text.upper()
 

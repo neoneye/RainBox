@@ -73,11 +73,13 @@ profile                           -- one person
   flat human-facing PUT, and `profile_update_data` carries the current row's
   subtrees into the incoming snapshot in the same transaction.
 - **`data["language"]` and `data["language_2"]` are migration-only legacy
-  fields.** They are no longer returned by or accepted through the flat
-  editor. Flat and language writes preserve their existing values byte for
-  byte so a rollback remains possible during the cutover window. New code
-  reads `languages.rows`; it falls back to the legacy pair only when the
-  subtree is absent.
+  fields.** They are no longer returned by the flat editor. The flat
+  validator silently ignores them when a stale pre-cutover tab submits them,
+  allowing the rest of that snapshot to save; the writer restores their
+  existing stored values byte for byte under the row lock. Language writes
+  also leave them untouched, so a rollback remains possible during the
+  cutover window. New code reads `languages.rows`; it falls back to the legacy
+  pair only when the subtree is absent.
 - **Every subtree write goes through `profile_mutate_data`.** All three
   subtrees share one JSONB column, so a writer must never read-modify-write
   race a different subtree's writer: the helper selects the profile row
@@ -173,9 +175,11 @@ rollback window, a separate cleanup migration may remove them.
 
 The editor is a dedicated fieldset with tag, level, stance, note, add/remove,
 and order controls. Selecting `prefer` demotes any previous preferred row to
-`neutral` before autosave. Built-in templates carry both the new semantic
-rows and the legacy pair during the same compatibility window; duplication
-mints fresh row ids and stamps.
+`neutral` before autosave. Built-in templates carry clean, illustrative
+semantic rows (no migration-provenance notes) and the legacy pair during the
+same compatibility window; the UI tells operators to review the example
+levels and stances after duplication. Duplication mints fresh row ids and
+stamps.
 
 ## Knowledge calibration
 
@@ -262,7 +266,7 @@ JSON, same-origin, in `webapp/profile_api.py`. uuids are the identifiers.
 | `GET /profile/api/tree` | `{folders, profiles, version}` — user rows + merged built-ins, each profile with its `summary`, no `data` | — |
 | `PUT /profile/api/tree` | guarded whole-tree save (structural only) | `version` (409), `deletes` (400), `validate_profile_tree` (400) |
 | `GET /profile/api/profiles/<uuid>` | one profile's editable fields + `dynamic` projection (built-ins served from the shipped file); `languages`, `calibration`, and the legacy language pair are **projected out** | 404 unknown |
-| `PUT /profile/api/profiles/<uuid>` | `{data}` — the form's autosave: a **complete editable snapshot**, canonicalized + validated; answers the fresh `summary` | built-in → 400, `validate_profile_data` → 400 (server subtrees rejected), server subtrees + legacy language pair preserved |
+| `PUT /profile/api/profiles/<uuid>` | `{data}` — the form's autosave: a **complete editable snapshot**, canonicalized + validated; answers the fresh `summary` | built-in → 400, server subtrees rejected with endpoint hints, stale legacy language keys ignored, server subtrees + stored legacy pair preserved |
 | `GET /profile/api/profiles/<uuid>/languages` | `{ok, builtin, rows}` — canonical rows, with legacy fallback only when the subtree is absent | 404 unknown |
 | `PUT /profile/api/profiles/<uuid>/languages` | `{rows}` — a complete authoritative snapshot; answers canonical rows with server ids/stamps | built-in → 400, validator → 400, 404 unknown |
 | `GET /profile/api/profiles/<uuid>/calibration` | `{ok, builtin, topics}` — the canonical calibration rows | 404 unknown |

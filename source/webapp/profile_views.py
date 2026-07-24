@@ -260,6 +260,9 @@ PROFILE_TEMPLATE = """
         preferred, neutral, or normally avoided. Competence controls register;
         stance controls routing. At most one language can be preferred.
         Explicit requests always win. Row order breaks ties.</p>
+        <p class="muted" id="profile-lang-builtin-hint" hidden>Template
+        language levels and stances are illustrative defaults. Review them
+        after duplicating the profile.</p>
         <div id="profile-lang-status" class="muted"></div>
         <div id="profile-lang-error"></div>
         <div id="profile-lang-rows"></div>

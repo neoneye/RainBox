@@ -261,9 +261,11 @@ def test_language_rows_are_authoritative_and_preferred_row_renders_first():
             {"tag": "en-gb", "level": "fluent", "stance": "prefer"},
         ]},
     ))
-    assert "Use en-GB or da only when the message asks" in body
-    assert "Use British English spelling when writing English." in body
-    assert "fr" not in body and " de " not in body
+    language_line = next(
+        line for line in body.splitlines() if line.startswith("- Language:"))
+    assert "Use en-GB or da only when the message asks" in language_line
+    assert "Use British English spelling when writing English." in language_line
+    assert "fr" not in language_line and " de " not in language_line
 
 
 def test_explicit_empty_language_rows_do_not_fall_back_to_legacy_fields():

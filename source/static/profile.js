@@ -1228,6 +1228,7 @@ function profileLangPending(st){
 // participates in the unload guard.
 function profileLangIncompleteRow(row){
   if ((row.tag || '').trim() !== '') return false;
+  if (row.id) return true;
   return (row.level || '') !== 'intermediate'
     || (row.stance || '') !== 'neutral'
     || (row.note || '').trim() !== '';
@@ -1275,12 +1276,19 @@ function profileLangSelect(options, value){
 function profileLangRender(){
   const box = document.getElementById('profile-lang-rows');
   const add = document.getElementById('profile-lang-add');
+  const builtinHint = document.getElementById('profile-lang-builtin-hint');
   box.innerHTML = '';
   const uuid = profileFormUuid;
   const st = uuid ? profileLangState[uuid] : null;
-  if (!uuid || !st){ add.hidden = true; profileLangRenderStatus(); return; }
+  if (!uuid || !st){
+    add.hidden = true;
+    builtinHint.hidden = true;
+    profileLangRenderStatus();
+    return;
+  }
   const builtin = st.builtin;
   add.hidden = builtin || !st.loaded;
+  builtinHint.hidden = !builtin;
   if (st.rows.length){
     const head = document.createElement('div');
     head.className = 'profile-lang-head';
@@ -1422,7 +1430,9 @@ function profileLangPayload(st){
     if (row.id) out.id = row.id;
     if (row.note) out.note = row.note;
     rows.push(out);
-    sent.push(row);
+    const keeps = ['tag', 'level', 'stance', 'note']
+      .some(key => (out[key] || '').trim() !== '');
+    sent.push(keeps ? row : null);   // null = server drops an all-blank row
   });
   return {rows: rows, sent: sent};
 }

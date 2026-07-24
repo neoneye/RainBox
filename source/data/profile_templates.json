@@ -52,8 +52,7 @@
             {
               "tag": "en-US",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -85,14 +84,12 @@
             {
               "tag": "fr-CA",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en-CA",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -124,14 +121,12 @@
             {
               "tag": "es-MX",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -163,14 +158,12 @@
             {
               "tag": "pt-BR",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -201,8 +194,7 @@
             {
               "tag": "en-GB",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -234,14 +226,12 @@
             {
               "tag": "fr",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -285,14 +275,12 @@
             {
               "tag": "de",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -324,14 +312,12 @@
             {
               "tag": "nl",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -363,14 +349,12 @@
             {
               "tag": "es",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -402,14 +386,12 @@
             {
               "tag": "it",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -441,14 +423,12 @@
             {
               "tag": "da",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -480,14 +460,12 @@
             {
               "tag": "sv",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -519,14 +497,12 @@
             {
               "tag": "nb",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -558,14 +534,12 @@
             {
               "tag": "pl",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -598,14 +572,12 @@
             {
               "tag": "he",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -638,14 +610,12 @@
             {
               "tag": "en-IN",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "te",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -678,14 +648,12 @@
             {
               "tag": "zh-Hans",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -718,14 +686,12 @@
             {
               "tag": "ja",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -758,14 +724,12 @@
             {
               "tag": "ko",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "en",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -798,14 +762,12 @@
             {
               "tag": "en-SG",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             },
             {
               "tag": "zh",
               "level": "intermediate",
-              "stance": "neutral",
-              "note": "Migrated from legacy secondary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }
@@ -836,8 +798,7 @@
             {
               "tag": "en-AU",
               "level": "native",
-              "stance": "neutral",
-              "note": "Migrated from legacy primary language; review level and stance."
+              "stance": "neutral"
             }
           ]
         }

@@ -170,7 +170,11 @@ def test_flat_save_preserves_languages_and_legacy_fields(profile, fixed_stamp):
     db.migrate_profile_languages()
     before = db.profile_get(profile)["data"]["languages"]
 
-    db.profile_update_data(profile, {"full_name": "Keeper"})
+    # A tab hydrated before cutover still submits the removed flat language
+    # inputs. The snapshot must save its current fields without overwriting the
+    # retained rollback values or the authoritative subtree.
+    db.profile_update_data(profile, {
+        "full_name": "Keeper", "language": "fr", "language_2": "de"})
     after = db.profile_get(profile)["data"]
     assert after["languages"] == before
     assert after["language"] == "da" and after["language_2"] == "en-US"
@@ -247,6 +251,16 @@ def test_languages_api_round_trip_and_profile_projection(profile, fixed_stamp):
     assert response.status_code == 400
     assert "only one language" in response.get_json()["error"]
 
+    # A pre-cutover tab can finish saving its other flat fields after deploy.
+    response = client.put(
+        f"/profile/api/profiles/{profile}",
+        json={"data": {
+            "full_name": "Stale tab", "language": "fr", "language_2": "de",
+        }},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["summary"]["full_name"] == "Stale tab"
+
     detail = client.get(f"/profile/api/profiles/{profile}").get_json()
     assert "languages" not in detail["data"]
     assert "language" not in detail["data"]
@@ -277,6 +291,7 @@ def test_all_templates_have_rows_and_keep_legacy_rollback(app_ctx):
         assert data["languages"]["rows"]
         assert data["languages"]["rows"][0]["tag"] == data["language"]
         assert data["languages"]["rows"][0]["stance"] == "neutral"
+        assert all("note" not in row for row in data["languages"]["rows"])
         if data.get("language_2"):
             assert data["languages"]["rows"][1]["tag"] == data["language_2"]
 

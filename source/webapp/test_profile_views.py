@@ -138,8 +138,9 @@ def test_languages_fieldset_present():
             < body.index("<legend>Knowledge calibration</legend>"))
     for marker in ("profile-lang-status", "profile-lang-error",
                    "profile-lang-rows", "profile-lang-add",
-                   "profile-dl-lang"):
+                   "profile-lang-builtin-hint", "profile-dl-lang"):
         assert marker in body, f"missing language marker: {marker}"
+    assert "illustrative defaults" in body
 
 
 def test_languages_js_markers():
@@ -154,6 +155,8 @@ def test_languages_js_markers():
     ]:
         assert marker in body, f"missing language JS marker: {marker}"
     assert "profileLangHasIncomplete(st)" in body
+    assert "if (row.id) return true" in body
+    assert "sent.push(keeps ? row : null)" in body
     assert "a row needs a language tag" in body
     assert "['Language tag', 'Level', 'Stance']" in body
 

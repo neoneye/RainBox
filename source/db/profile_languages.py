@@ -37,6 +37,21 @@ _SEMANTIC_KEYS = ("tag", "level", "stance", "note")
 _ALLOWED_KEYS = frozenset(("id", *_SEMANTIC_KEYS))
 _LEGACY_KEYS = ("language", "language_2")
 
+__all__ = [
+    "LANGUAGE_LEVELS",
+    "LANGUAGE_STANCES",
+    "MAX_LANGUAGE_NOTE_CHARS",
+    "MAX_LANGUAGE_ROWS",
+    "MAX_LANGUAGES_BYTES",
+    "ProfileLanguagesError",
+    "languages_get",
+    "languages_put",
+    "migrate_legacy_languages_data",
+    "migrate_profile_languages",
+    "refresh_language_identity",
+    "validate_language_rows",
+]
+
 
 class ProfileLanguagesError(ValueError):
     """A languages snapshot failed row, enum, uniqueness, or size validation."""
@@ -45,17 +60,6 @@ class ProfileLanguagesError(ValueError):
 def _now_stamp() -> str:
     """RFC 3339 UTC with whole seconds and Z."""
     return datetime.now(UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def language_rows(data: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Return stored language rows. An absent or malformed subtree is empty."""
-    subtree = (data or {}).get("languages")
-    if not isinstance(subtree, dict):
-        return []
-    rows = subtree.get("rows")
-    if not isinstance(rows, list):
-        return []
-    return [row for row in rows if isinstance(row, dict)]
 
 
 def validate_language_rows(
@@ -259,7 +263,7 @@ def migrate_profile_languages() -> int:
 
 def refresh_language_identity(data: dict[str, Any]) -> dict[str, Any]:
     """Give copied language rows fresh concurrency identities."""
-    rows = language_rows(data)
+    rows = effective_language_rows(data)
     if "languages" not in data:
         return data
     stamp = _now_stamp()

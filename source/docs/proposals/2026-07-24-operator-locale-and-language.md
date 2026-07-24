@@ -424,7 +424,12 @@ preserved unchanged in storage. An explicit empty `languages.rows` is
 authoritative, so clearing the new editor cannot accidentally reactivate the
 legacy values. Removing the legacy pair is a later cleanup after the rollback
 window, not part of this cutover. Response-language intent resolution remains
-out of scope for step 1.
+out of scope for step 1. The legacy mapping necessarily seeds provisional
+competence (`language` → `native`, `language_2` → `intermediate`) because the
+new schema has no unknown level; the migration note marks that uncertainty.
+Before step 3 lets `level` affect register, migrated rows must be reviewed or
+the schema must gain an explicit unconfirmed state. Guessed migration data
+must not silently become a prompt directive.
 
 1. Add `languages.rows`, validation, editor support and migration from
    `language` / `language_2`. Preserve the legacy fields only long enough for a

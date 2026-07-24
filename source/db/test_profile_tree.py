@@ -66,6 +66,9 @@ def test_validate_data_canonical_and_errors():
                   "birthday": "1987-08-30", "address": "Line one\nLine two",
                   "email": "x@example.com"}          # "" canonicalized away
     assert db.validate_profile_data({}) == {}        # sparse blob valid
+    assert db.validate_profile_data({
+        "full_name": "Stale tab", "language": "da", "language_2": "en-US",
+    }) == {"full_name": "Stale tab"}  # pre-cutover fields are ignored
     with pytest.raises(db.ProfileDataError, match="no_such"):
         db.validate_profile_data({"no_such": "x"})
     with pytest.raises(db.ProfileDataError, match="no_such"):
@@ -78,6 +81,10 @@ def test_validate_data_canonical_and_errors():
         db.validate_profile_data({"birthday": "07/14/2026"})
     with pytest.raises(db.ProfileDataError, match="dynamic"):
         db.validate_profile_data({"dynamic": {}})    # connector-owned, read-only
+    with pytest.raises(db.ProfileDataError, match="use the calibration endpoint"):
+        db.validate_profile_data({"calibration": {}})
+    with pytest.raises(db.ProfileDataError, match="use the languages endpoint"):
+        db.validate_profile_data({"languages": {"rows": []}})
     with pytest.raises(db.ProfileDataError, match="full_name"):
         db.validate_profile_data({"full_name": 5})
     with pytest.raises(db.ProfileDataError):

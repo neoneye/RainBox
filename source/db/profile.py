@@ -41,24 +41,41 @@ class ProfileDataError(ValueError):
     with the offending field named."""
 
 
+# Independently-written subtrees riding on the same JSONB column as the flat
+# registry fields. Every writer must go through profile_mutate_data so one
+# subtree's save can never read-modify-write-race another subtree's writer.
+SERVER_OWNED_SUBTREES = ("dynamic", "calibration", "languages")
+
+# Kept byte-for-byte during the reversible migration window. They are absent
+# from PROFILE_FIELDS and hidden from the current editor. A stale pre-cutover
+# browser may still submit them, so the flat validator ignores them and the
+# writer restores the authoritative stored values under the row lock.
+LEGACY_PRESERVED_FIELDS = ("language", "language_2")
+
+
 def validate_profile_data(data: Any) -> dict[str, Any]:
     """Validate a complete editable snapshot against the registry and return
     the canonical sparse object: known editable keys only, "" values removed
     before validation, string kinds checked strictly (enum membership, ISO
     calendar date). Deliberately soft on IANA/BCP-47/ISO-4217 membership —
-    an uncommon-yet-valid value is never blocked. `dynamic` is
-    connector-owned and rejected as read-only. Raises ProfileDataError
-    naming the offending field."""
+    an uncommon-yet-valid value is never blocked. Independently-written
+    subtrees are rejected with a targeted endpoint hint. Migration-only
+    legacy language keys are silently ignored so a stale pre-cutover browser
+    cannot make the entire flat snapshot fail. Raises ProfileDataError naming
+    the offending field."""
     if not isinstance(data, dict):
         raise ProfileDataError(f"'data' must be an object, got {type(data).__name__}")
     canonical: dict[str, Any] = {}
     for key, value in data.items():
-        if key == "dynamic":
-            raise ProfileDataError("field 'dynamic' is read-only (connector-owned)")
-        if key == "calibration":
+        if key in LEGACY_PRESERVED_FIELDS:
+            continue
+        if key in SERVER_OWNED_SUBTREES:
+            if key == "dynamic":
+                raise ProfileDataError(
+                    "field 'dynamic' is read-only (connector-owned)")
             raise ProfileDataError(
-                "field 'calibration' is read-only here (server-owned; use the "
-                "calibration endpoint)")
+                f"field '{key}' is read-only here (server-owned; use the "
+                f"{key} endpoint)")
         field = FIELDS_BY_KEY.get(key)
         if field is None:
             raise ProfileDataError(f"unknown field: '{key}'")
@@ -410,17 +427,6 @@ def profile_get(profile_uuid: UUID) -> dict[str, Any] | None:
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
-
-
-# Independently-written subtrees riding on the same JSONB column as the flat
-# registry fields. Every writer must go through profile_mutate_data so one
-# subtree's save can never read-modify-write-race another subtree's writer.
-SERVER_OWNED_SUBTREES = ("dynamic", "calibration", "languages")
-
-# Kept byte-for-byte during the reversible migration window. They are absent
-# from PROFILE_FIELDS, hidden from the editor, and never read when the
-# authoritative languages subtree exists.
-LEGACY_PRESERVED_FIELDS = ("language", "language_2")
 
 
 def profile_mutate_data(profile_uuid: UUID,
