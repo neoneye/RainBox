@@ -1,9 +1,14 @@
 # acceptance_criteria — establish the reply's constraints before any work
 
-**Status:** Implemented behind the `assistant.acceptance_criteria` switch
-(default off). Rollout steps 3-4 (the eval-suite extension and the switch
-flip) are pending; the `1_specification` reply argument stays until the
-evals confirm the run-level criteria make it redundant.
+**Status:** Implemented and always on. Step 0 is TWO narrow calls — the
+reply-language classification (a typed BCP-47 tag that code validates,
+resolves against the profile, and renders into an example-free directive),
+then the work-criteria planning with the directive as data. The
+`1_specification` reply argument is retired (`{"1_message", "2_audit"}`),
+the rollout switch is gone, and the eval suite carries the language
+ambiguity cases. The authoritative mechanics live in
+`assistant-design.md` §Acceptance criteria; this document keeps the
+rationale.
 **Date:** 2026-07-23
 
 ## Naming
@@ -82,6 +87,29 @@ decimal, no thousand separators; response language = American English
 because the criteria say so, and the reply formats accordingly.
 
 ## Design
+
+### Two calls, not one
+
+One call doing both jobs — classify the reply language AND plan the
+work/formatting constraints — was the shape that kept failing: the
+language decision drowned in the constraint planning, and prompts grew
+contrastive example words (colour/color, anticlockwise) that models
+parroted into unrelated replies. The implementation splits step 0:
+
+1. **Reply language** (`ReplyLanguage`: `language_tag` + `reason`): the
+   model's ONLY language output is a typed tag. Code validates it through
+   the same prompt boundary a profile tag crosses, upgrades a bare
+   primary tag from the profile (explicit variant tags win), and composes
+   the `response_language` directive from the single
+   `user_profile.LANGUAGE_VARIANTS` table — dialect NAMES, never example
+   words; sample words exist only in tests and evals as output markers.
+2. **Work criteria** (`WorkCriteria`: `processing` / `formatting` /
+   `assumptions`): the constraint planning, with the established language
+   directive as data it may not change or restate.
+
+The injected `<acceptance_criteria_json>` is composed by code from
+whichever calls succeeded (fail-open per call); no code ever parses model
+prose.
 
 ### A code-driven step 0, not a model-chosen tool
 
@@ -194,10 +222,9 @@ plan for this turn's reply: follow it during steps and when composing
 the message, unless the operator's request overrides it."* (The content
 is model-generated, so the authority stays in that code-owned sentence —
 same rule as every other model-derived block.) `source_priority` lists
-`acceptance_criteria_json` directly below `current_request`. Both the
-priority entry and the authority sentence enter the system prompt only
-while the switch is on — with it off, every prompt is byte-identical to
-the pre-feature baseline (ship dark means dark).
+`acceptance_criteria_json` directly below `current_request`; the priority
+entry and the authority sentence live directly in the assistant's system
+prompt.
 
 ### Mid-run revision — the criteria are current state, not a step-0 snapshot
 
@@ -293,10 +320,11 @@ one invented in the same response).
 
 ## Rollout
 
-House pattern — ship dark, gate, enable:
+House pattern — shipped dark, gated, then enabled; the switch was removed
+once the feature went always-on. The original steps, for the record:
 
 1. `assistant.acceptance_criteria` switch (default off) in
-   `db/settings.py`.
+   `db/settings.py` — since removed.
 2. Unit tests: the criteria call is made once per run before step 0; the
    section renders after `current_request`; a failed call is fail-open;
    the language rules render the profile languages through the prompt

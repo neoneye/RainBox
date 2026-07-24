@@ -14,11 +14,12 @@ operator confirmation — is decided by code, never by prompt text.
 
 ## The loop
 
-`handle()` runs a bounded loop (`STEP_LIMIT = 6`). With the
-`assistant.acceptance_criteria` switch on, a code-driven **step 0** precedes
-the loop: one structured call establishes the reply's constraints before any
-work happens (see [Acceptance criteria](#acceptance-criteria)); it consumes
-none of the step limit. Each loop iteration:
+`handle()` runs a bounded loop (`STEP_LIMIT = 6`). A code-driven **step 0**
+precedes the loop on every model-bound turn: two structured calls — the
+reply-language classification, then the work-criteria planning — establish
+the reply's constraints before any work happens (see
+[Acceptance criteria](#acceptance-criteria)); they consume none of the step
+limit. Each loop iteration:
 
 1. **Controls** — apply any pending operator `stop`/`redirect` at the step
    boundary (see [Controls](#controls-stop--redirect)).
@@ -29,12 +30,12 @@ none of the step limit. Each loop iteration:
    the schema's `required` list — a non-required field simply gets omitted by
    the model). `reason` is an operator-facing audit note shown in the trace,
    not hidden chain-of-thought. `reply` takes number-prefixed args —
-   `{"1_specification": ..., "2_message": ..., "3_audit": ...}`, all
-   required — where the prefixes spell the writing order: first the
-   reply's constraints (response language mirrors the operator's message;
-   units, separators, date format), then the answer text obeying them,
-   then a skeptical self-audit of that text against the specification,
-   `user_settings_json` and the formatting guide (see
+   `{"1_message": ..., "2_audit": ...}`, both required — where the
+   prefixes spell the writing order: the answer text obeying
+   `acceptance_criteria_json` (the run-level constraints established at
+   step 0), then a skeptical self-audit of that text first against the
+   operator's current message (every sentence answered), then against the
+   criteria, `user_settings_json` and the formatting guide (see
    `profile-guidance.md`).
 3. **Validate** — `_validate_decision` checks the action against the effective
    capability set: unknown/disabled/non-prompt-exposed actions, missing
@@ -47,7 +48,7 @@ none of the step limit. Each loop iteration:
    diagnosable from the app log. A rejection records a `failed` step and
    feeds the error back via the scratchpad; the loop continues.
 4. **Dispatch** — terminal actions (`reply`, `ask_clarifying_question`) post
-   the chat message and finish the run — except a `reply` whose `3_audit` is
+   the chat message and finish the run — except a `reply` whose `2_audit` is
    anything but `OK`: the self-audit gate bounces it as a rejected step (the
    audit text flows back through the scratchpad so the model fixes the
    message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
@@ -97,9 +98,8 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   section order carries the emphasis and the time anchor is
   current_local_time at the end), the **acceptance criteria**
   (`<acceptance_criteria_json>`, directly after the request so the request
-  and its constraints travel together — present only when the
-  `assistant.acceptance_criteria` switch is on and the step-0 call
-  succeeded; see [Acceptance criteria](#acceptance-criteria)), the
+  and its constraints travel together — present when at least one step-0
+  call succeeded; see [Acceptance criteria](#acceptance-criteria)), the
   transcript (`kind == "message"` rows
   only, newest `MAX_RECENT_MESSAGES = 30`), the **scratchpad** of steps
   taken this turn (each step renders its action, the decision's stated
@@ -160,43 +160,62 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
 
 ## Acceptance criteria
 
-Behind the `assistant.acceptance_criteria` switch (default off), a
-code-driven **step 0** establishes the reply's constraints before the decide
-loop starts — enforced by the loop, so the model cannot skip or forget it.
-One structured call returns an `AcceptanceCriteria`:
+A code-driven **step 0** establishes the reply's constraints before the
+decide loop starts — enforced by the loop, so the model cannot skip or
+forget it (an agent with no bound models skips the step entirely: no rows,
+no section). It is TWO narrow structured calls, because one call doing both
+jobs let the language decision drown in the constraint planning:
 
-- `response_language` — with the reason, e.g. `"en-US (mirrors the current
-  message)"`. The operator's CURRENT message alone decides; the assistant's
+- **Step 0a — the reply-language call** (`REPLY_LANGUAGE_SYSTEM_PROMPT`)
+  returns a `ReplyLanguage`: a typed BCP-47 `language_tag` plus a one-line
+  `reason`. The operator's CURRENT message alone decides; the assistant's
   own earlier replies are never a language reference (a prior reply in the
   wrong language is an error to correct, not continuity to preserve).
-- `processing` — preferences that steer the WORK (the target unit for an
-  ambiguous conversion, the timezone for a reminder).
-- `formatting` — preferences that steer the FINAL message (separators, date
-  format, temperature unit, spelling).
-- `assumptions` — every ambiguity resolved by a settings-based assumption,
-  stated so the operator can spot a wrong one. Assumptions are made only
-  where the settings provide a default; otherwise the ambiguity is recorded
-  as unresolved and the normal `ask_clarifying_question` path handles it.
+  **Code composes everything downstream**: the tag passes the same
+  prompt-boundary validation as a profile tag
+  (`user_profile.valid_language_tag`), a bare primary tag ("en") is
+  upgraded to the profile language sharing its primary subtag while an
+  explicit variant tag wins, and `compose_language_directive` renders the
+  directive from the single `user_profile.LANGUAGE_VARIANTS` table — e.g.
+  "The reply must be in en-GB: British English spelling and vocabulary
+  throughout; never American English words or phrasing." Dialects are
+  NAMED, never exemplified: contrastive sample words in a prompt get
+  parroted into unrelated replies, so they exist only in tests and evals.
+  An unresolvable tag is a failed call (no directive), never a patch job
+  on model prose.
+- **Step 0b — the work-criteria call** (`WORK_CRITERIA_SYSTEM_PROMPT`)
+  returns a `WorkCriteria`:
+  - `processing` — preferences that steer the WORK (the target unit for an
+    ambiguous conversion, the timezone for a reminder).
+  - `formatting` — preferences that steer the FINAL message (separators,
+    date format, temperature unit).
+  - `assumptions` — every ambiguity resolved by a settings-based
+    assumption, stated so the operator can spot a wrong one. Assumptions
+    are made only where the settings provide a default; otherwise the
+    ambiguity is recorded as unresolved and the normal
+    `ask_clarifying_question` path handles it.
 
-The call has its own small persona prompt
-(`ACCEPTANCE_CRITERIA_SYSTEM_PROMPT`, not the assistant's working prompt);
-profile languages enter it only through the prompt-boundary validation in
-`user_profile/formatting.py`. Inputs: the current request, the last few
-**operator** messages (`ACCEPTANCE_CRITERIA_MAX_MESSAGES = 6`,
-`assistant_messages="omitted"` — operator messages carry the
-language-continuity signal, assistant replies are exactly the wrong anchor),
-`user_settings_json`, and the formatting guide rendered from the criteria
-snapshot profile regardless of the `assistant.formatting_guide` switch
-(which gates only the decide-prompt injection). NOT the action catalog —
-the call plans constraints, not actions.
+  The established language directive arrives as data (`<reply_language>`)
+  and is not the call's to change or restate.
 
-The result renders as a bare `<acceptance_criteria_json>` section directly
-after `<current_request>` in every decide step. Its authority lives in one
-code-owned system-prompt sentence, and `_system_prompt()` swaps the
-source-priority block for a variant ranking `acceptance_criteria_json`
-directly below `current_request` — both only while the switch is on, so a
-switched-off run's prompts are byte-identical to the feature-less baseline.
-The second-opinion reviewer sees the same section next to its
+Both calls share the operator-only history tail
+(`ACCEPTANCE_CRITERIA_MAX_MESSAGES = 6`, `assistant_messages="omitted"` —
+operator messages carry the language-continuity signal, assistant replies
+are exactly the wrong anchor) and neither sees the action catalog. The
+work call additionally receives `user_settings_json` and the formatting
+guide rendered from the criteria snapshot profile regardless of the
+`assistant.formatting_guide` switch (which gates only the decide-prompt
+injection); the language call needs neither — its profile languages enter
+its system prompt as validated tags.
+
+The injected `<acceptance_criteria_json>` body is **composed by code** from
+whichever calls succeeded — `response_language` is the code-rendered
+directive, the three lists come from the work call; fail-open is per call,
+and only when both fail is there no section at all. It renders directly
+after `<current_request>` in every decide step; its authority lives in one
+code-owned system-prompt sentence, and the source-priority block ranks
+`acceptance_criteria_json` directly below `current_request`. The
+second-opinion reviewer sees the same section next to its
 `current_request` (a program converting to yards should fail review when
 the criteria say meters).
 
@@ -205,24 +224,28 @@ the criteria say meters).
 - **Code-driven refresh**: a write capability flagged
   `revises_acceptance_criteria` (none today — `memory_remember` only creates
   an inert candidate; the flag is claimed by future profile/settings write
-  capabilities) triggers a loop-enforced re-run after its write succeeds:
-  one fresh `current_profile_context()` snapshot, and ALL settings-derived
-  blocks plus the criteria re-render from it together.
+  capabilities) triggers a loop-enforced re-run of BOTH calls after its
+  write succeeds — a settings write is exactly what can change the reply
+  language: one fresh `current_profile_context()` snapshot, and ALL
+  settings-derived blocks plus the criteria re-render from it together.
 - **Model-requested**: the `acceptance_criteria` catalog action (loop-run
-  like the terminals, `action=None`; offered only while the switch is on)
-  revises for changes only the model can see. It costs a decide step — the
-  right incentive against reflexive re-speccing — the revision call receives
-  the prior criteria and the run's observations, and a revision reproducing
-  the prior criteria is reported as the no-op it is.
+  like the terminals, `action=None`) revises for changes only the model can
+  see. It re-runs ONLY the work call — the language rules anchor on the
+  operator's current message, which cannot change mid-run. It costs a
+  decide step — the right incentive against reflexive re-speccing — the
+  revision call receives the prior criteria, the language directive, and
+  the run's observations, and a revision reproducing the prior criteria is
+  reported as the no-op it is.
 
 Only the latest criteria render: a revision **replaces** the injected
-section, never appends. Every code-driven call is its own trace row
-(`action="acceptance_criteria"`, prompts and latency persisted) outside
-`step_limit`; a model-requested revision is an ordinary decision whose inner
-call — prompts, model, usage, raw response — rides in `observation.data`.
-Fail-open: a failed call logs, records a failed step row, injects nothing,
-and the run proceeds exactly as with the switch off. Design rationale and
-rollout plan: `proposals/2026-07-23-reply-acceptance-criteria.md`.
+section, never appends. Every code-driven call is its own trace row —
+`action="reply_language"` for 0a (a trace-only enum member with no
+`Capability` entry: never cataloged, never dispatchable) and
+`action="acceptance_criteria"` for 0b — with prompts and latency
+persisted, outside `step_limit`; a model-requested revision is an ordinary
+decision whose inner call — prompts, model, usage, raw response — rides in
+`observation.data`. Design rationale:
+`proposals/2026-07-23-reply-acceptance-criteria.md`.
 
 ## The capability registry
 
@@ -250,7 +273,7 @@ only by `undo_write_intent`.
 | Capability | Family | Tier | Undo |
 |---|---|---|---|
 | `reply`, `ask_clarifying_question` | conversation | terminal | — |
-| `acceptance_criteria` | conversation | loop-run (switch-gated) | — (derived state) |
+| `acceptance_criteria` | conversation | loop-run | — (derived state) |
 | `memory_query` | memory | read | — |
 | `memory_remember` | memory | log-and-undo | `memory_reject_candidate` (internal) |
 | `memory_activate` | memory | **confirm** | — |
@@ -424,9 +447,8 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   `requested_at`/`created_at`/`settled_at` timestamps. When reading key
   ORDER from a step, trust only the text columns (`model_response`): the
   JSONB columns (`args`, observations) are reordered by Postgres —
-  length-then-bytes, so reply args always display as
-  `3_audit, 2_message, 1_specification` regardless of what the model
-  actually wrote.
+  length-then-bytes, so reply args can display as
+  `2_audit, 1_message` regardless of what the model actually wrote.
 - Before dispatching a decide call, the run's `metadata.active_call` checkpoint
   stores its step index, exact system/user prompts, request time, model group,
   and an attempt list. Each attempt adds the resolved model name/UUID,

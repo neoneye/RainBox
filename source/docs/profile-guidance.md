@@ -23,16 +23,15 @@ three blocks and posts a one-time context marker into each room; it preserves
 history and is **not an audience boundary**.
 
 The `reply` action carries its contract in numbered args:
-`{"1_specification": ..., "2_message": ..., "3_audit": ...}`, all
-required. The number prefixes spell the writing order and survive
-alphabetical key normalization (`1_` < `2_` < `3_`). The specification is
-written BEFORE the message: it establishes the reply's constraints —
-first the response language (the language of the operator's current
-message; the profile's preferred language applies only on explicit
-request), then the applicable settings (units, separators, date format,
-currency). The message obeys the specification, and the audit — an
-introspection of a message that already exists — re-checks it against
-the specification, `user_settings_json` and the formatting guide
+`{"1_message": ..., "2_audit": ...}`, both required. The number prefixes
+spell the writing order and survive alphabetical key normalization
+(`1_` < `2_`). The reply's constraints are established BEFORE any work by
+the step-0 acceptance-criteria calls (see `assistant-design.md`
+§Acceptance criteria); the message obeys `acceptance_criteria_json`, and
+the audit — an introspection of a message that already exists — re-checks
+it first against the operator's current message (every sentence
+answered), then against the criteria, `user_settings_json` and the
+formatting guide
 (separators, dates, units, currency, language). The audit is a bare
 verdict: anything but exactly `OK` (any case, nothing else — an OK buried
 in a narration of the checks does not pass) bounces the reply back as a
@@ -52,11 +51,11 @@ The two gated blocks ship dark: each switch is flipped only after its block
 passes the live release gate below. Everything else on this page (the
 `/profile` editor, calibration storage/API, the identity block) is active
 regardless of the switches. One consumer bypasses the formatting switch on
-purpose: the acceptance-criteria call (`assistant.acceptance_criteria`,
-see `assistant-design.md` §Acceptance criteria) always receives the
-formatting guide rendered from its snapshot profile — the switch gates only
-the decide-prompt injection, and the criteria step needs the guide's
-derived defaults (units → temperature, separators) either way.
+purpose: the always-on acceptance-criteria step (see
+`assistant-design.md` §Acceptance criteria) receives the formatting guide
+rendered from its snapshot profile — the switch gates only the
+decide-prompt injection, and the criteria step needs the guide's derived
+defaults (units → temperature, separators) either way.
 
 ## Where things live
 
@@ -69,7 +68,7 @@ derived defaults (units → temperature, separators) either way.
 | Row-lock mutation helper (cross-subtree safety) | `db/profile.py` `profile_mutate_data` |
 | Switch + pointer settings | `db/settings.py` (`assistant.formatting_guide`, `assistant.knowledge_calibration`, `profile.current`, internal `profile.current_changed_at`) |
 | Assistant injection + context marker | `agents/assistant.py` |
-| Live eval runner (four variants, seeded case inventory) | `evals/profile_guidance.py` |
+| Live eval runner (five variants, seeded case inventory) | `evals/profile_guidance.py` |
 | Executable release gate | `evals/profile_gate.py` |
 
 ## Verifying that things work
@@ -126,14 +125,12 @@ This is the direct proof the assistant actually carries the blocks:
    directives, `<knowledge_calibration authority="context">` with the JSONL
    rows (when the profile has calibration topics).
 4. In the same run, inspect the final step's **model response**: the reply
-   args must show `1_specification`, `2_message`, `3_audit` (in that order — an
-   audit written first is a rejected step, visible in the trace). A non-OK
-   audit must appear as a rejected step followed by a corrected reply.
-   Read the order from the **model response** block only — the **action
-   call** block is stored as Postgres JSONB, which reorders keys by
-   length-then-bytes, and for these key names that always displays as
-   `3_audit, 2_message, 1_specification` even when the model wrote the
-   correct order.
+   args must show `1_message`, `2_audit` (in that order — an audit written
+   first is a rejected step, visible in the trace). A non-OK audit must
+   appear as a rejected step followed by a corrected reply. Read the order
+   from the **model response** block only — the **action call** block is
+   stored as Postgres JSONB, which reorders keys by length-then-bytes and
+   can display them out of writing order.
 5. Switch `profile.current` to another profile → the room's next turn is
    preceded by a visible one-time notice ("the active profile switched to
    …"); the marker itself must NOT appear inside the model's prompt.
@@ -159,7 +156,7 @@ This creates/updates the code-owned candidate cases (idempotent and
 versioned: re-running after a definition fix updates cases in place;
 operator-edited cases are never touched). Review them in Flask-Admin
 (`/admin` → EvalCase, names start with `pg `) and flip the ones you accept
-to `active`. Then run the four variants — three repetitions per case at
+to `active`. Then run the variants — three repetitions per case at
 production sampling, so expect model traffic:
 
 ```bash
@@ -167,6 +164,7 @@ venv/bin/python -m evals.profile_guidance --variant baseline
 venv/bin/python -m evals.profile_guidance --variant formatting_only
 venv/bin/python -m evals.profile_guidance --variant calibration_only
 venv/bin/python -m evals.profile_guidance --variant combined
+venv/bin/python -m evals.profile_guidance --variant criteria  # + live step-0 criteria calls
 ```
 
 Each prints its EvalRun uuid and summary. Exit code 2 means invalid case
