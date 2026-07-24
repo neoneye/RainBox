@@ -207,6 +207,40 @@ def test_successful_read_removes_old_assistant_answers_but_keeps_operator_contex
     assert 'assistant_messages="omitted_after_fresh_read"' in prompt
 
 
+def test_repeated_request_removes_old_assistant_answers():
+    """A verbatim-repeated request (modulo whitespace/case): the assistant's
+    earlier replies are a decoding attractor — live runs re-emitted the old
+    answer string even after correctly reasoning out a fresh one. Omit
+    them, code-enforced like the fresh-read omission; operator messages
+    stay."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    messages = [
+        {"sender_type": "human", "text": "Translate to English:  hyggelig"},
+        {"sender_type": "agent", "text": "the old translation answer"},
+        {"sender_type": "human", "text": "translate to english: hyggelig"},
+    ]
+    prompt = agent._build_user_prompt(
+        messages=messages, scratchpad=[], step_index=0)
+    assert "the old translation answer" not in prompt
+    assert 'assistant_messages="omitted_repeated_request"' in prompt
+    assert "Translate to English:  hyggelig" in prompt   # operator history stays
+
+
+def test_differing_followup_keeps_assistant_replies():
+    """A follow-up that differs ('make it shorter') keeps the replies it
+    refers to — only a verbatim repeat triggers the omission."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    messages = [
+        {"sender_type": "human", "text": "translate to english: hyggelig"},
+        {"sender_type": "agent", "text": "the old translation answer"},
+        {"sender_type": "human", "text": "make it shorter"},
+    ]
+    prompt = agent._build_user_prompt(
+        messages=messages, scratchpad=[], step_index=0)
+    assert "the old translation answer" in prompt
+    assert "omitted_repeated_request" not in prompt
+
+
 def test_system_prompt_forbids_claiming_unperformed_writes():
     """Run 19: the model read a task then replied 'successfully moved' with no
     kanban_task_column step. The prompt must forbid claiming a write it didn't perform."""
