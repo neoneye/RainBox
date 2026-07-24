@@ -753,3 +753,22 @@ def test_language_prompt_states_fields_as_bullets_not_a_parenthetical_template()
     assert "- reason:" in prompt
     # No "<field> (<description>)" template anywhere in the prompt.
     assert not re.search(r"\b(language_tag|reason)\s*\(", prompt)
+
+
+def test_step0_prompts_carry_no_restated_ask():
+    """The user prompt never restates the job: the system prompt's opening
+    sentence says it and the response schema carries the shape, so a
+    "classify the language" / "establish the criteria" line is duplication
+    billed on every turn. Only a REVISION keeps an ask — it names what the
+    system prompt cannot: which prior criteria the steps invalidate."""
+    agent = _agent()
+    messages = [{"sender_type": "human", "text": "translate to english: hej"}]
+    language = agent._build_reply_language_prompt(messages)
+    assert "<language_request>" not in language
+    assert "Classify the language" not in language
+    establish = agent._build_work_criteria_prompt(messages)
+    assert "<criteria_request>" not in establish
+    revision = agent._build_work_criteria_prompt(
+        messages, prior_criteria=_work("prior"), scratchpad=[])
+    assert "<criteria_request>" in revision
+    assert "invalidate" in revision

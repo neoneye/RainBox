@@ -3839,19 +3839,19 @@ class AssistantAgent(ModelGroupAgent):
     def _build_reply_language_prompt(
         self, messages: list[dict[str, Any]],
     ) -> str:
-        """The language call's user prompt: the request, the operator-only
-        history tail, and the ask — nothing else. No settings block and no
-        formatting guide: the profile languages this call may use are
-        already in its system prompt as validated tags. Same ElementTree
-        escaping guarantee as the other prompt builders."""
+        """The language call's user prompt: the request and the
+        operator-only history tail — nothing else. No settings block and no
+        formatting guide (the profile languages this call may use are
+        already in its system prompt as validated tags), and no restated
+        ask: the job is the system prompt's opening sentence and the shape
+        is the response schema, so a "classify the language" line in the
+        user prompt is duplication the operator pays for every turn. Same
+        ElementTree escaping guarantee as the other prompt builders."""
         root = ET.Element("reply_language_call")
         current = messages[-1] if messages else None
         request = ET.SubElement(root, "current_request")
         request.text = str((current or {}).get("text") or "none")
         self._append_operator_history(root, messages)
-        ask = ET.SubElement(root, "language_request")
-        ask.text = ("Classify the language the reply to current_request "
-                    "must be written in.")
         return self._prompt_sections(root)
 
     def _build_work_criteria_prompt(
@@ -3893,16 +3893,17 @@ class AssistantAgent(ModelGroupAgent):
                     self._append_turn_event(steps, event)
             else:
                 ET.SubElement(steps, "none")
-        ask = ET.SubElement(root, "criteria_request")
-        ask.text = (
-            "Revise the acceptance criteria: compare the prior criteria "
-            "with the steps so far — what changed, and which criteria does "
-            "it invalidate? Emit the full revised criteria; keep everything "
-            "the change does not touch."
-            if revising else
-            "Establish the acceptance criteria the reply to current_request "
-            "must satisfy."
-        )
+            # Only a revision carries an ask: it names the job the system
+            # prompt cannot state on its own — which prior criteria the
+            # steps invalidate. Establishing needs no line here; that job is
+            # the system prompt's opening sentence and the response schema.
+            ask = ET.SubElement(root, "criteria_request")
+            ask.text = (
+                "Revise the acceptance criteria: compare the prior criteria "
+                "with the steps so far — what changed, and which criteria "
+                "does it invalidate? Emit the full revised criteria; keep "
+                "everything the change does not touch."
+            )
         if self._identity_block:
             identity = ET.SubElement(root, "user_settings_json")
             identity.text = self._identity_block
