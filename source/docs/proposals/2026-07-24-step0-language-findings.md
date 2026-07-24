@@ -126,7 +126,59 @@ mediocre ("Source unit provided: km (100)"; "assuming metric units (km, kg)"
 for a feet conversion), so the field that justifies the call is also its
 weakest output.
 
-## Part 4 — the profile cannot say what the operator means
+## Part 4 — does step 0 actually make the assistant European?
+
+This is the original goal: the assistant assumed feet, USD, AM/PM and
+mm/dd/yyyy, and the criteria step exists so the loop knows "I have to convert
+to metric" before it starts working. Measured A/B on the operator's real
+profile and live settings (`assistant.formatting_guide` **on**, calibration
+off), catalog restricted to `reply`, 4 replies per condition.
+
+| Case | Baseline (guide only) | With step-0 criteria |
+|---|---|---|
+| Half past eleven at night → 23:30 | **4/4** | **2/4** (two led with "11:30 PM, or 23:30") |
+| Last day of the year → 2026-12-31 | 3/4 | 3/4 |
+| Ambiguous `convert 1053737172 feet` → metric | **4/4** | **4/4** |
+| Price with a currency code → DKK | pass | pass |
+
+### Finding D — the formatting guide is what makes the assistant European
+
+Every locale expectation the operator listed is already carried
+deterministically by `user_profile/formatting.py`, rendered from the profile,
+and it is enabled. The guide alone answers in 24-hour time, ISO dates, DKK and
+metric. There is no measured case where the criteria step rescued a locale
+answer the guide had missed.
+
+### Finding E — on locale-only questions the criteria step returns nothing
+
+For "write half past eleven at night as a clock time" the 10.5s work call
+produced:
+
+```json
+{"response_language": "The reply must be in en-US: …",
+ "processing": [], "formatting": [], "assumptions": []}
+```
+
+Empty lists — no "times: 24-hour clock", which is exactly the criterion the
+request needed. The section still occupies rank 3 in `source_priority`, above
+the formatting guide at rank 4. In the same sample the time case dropped from
+4/4 to 2/4. With N=4 that is not conclusive on its own, but the mechanism is
+plausible: an empty high-priority block displacing the block that holds the
+actual answer.
+
+### Finding F — on its motivating case it works, and changes nothing
+
+For the ambiguous `convert 1053737172 feet` the criteria were exactly right —
+`processing: ["target unit: meters (settings: metric)"]`, `assumptions:
+["convert target not stated; assuming meters"]`. Both conditions answered in
+metres 4/4, because the guide's "Units: metric" had already settled it. The
+feature produced correct output and no measurable improvement.
+
+(Arithmetic was wrong in every reply of this case, in both conditions — a
+side effect of restricting the catalog to `reply`, which is precisely what
+`python_run` exists to prevent. Not a locale finding.)
+
+## Part 5 — the profile cannot say what the operator means
 
 Separate from cost and compliance. The operator's stated situation: **en-US**
 preferred for responses, not fluent in it; **Danish** native but unwanted for
@@ -169,28 +221,55 @@ Out of scope: per-person languages for family and friends — that needs a
 contacts model, and operator-level `avoid` rows already cover pasted foreign
 text.
 
+## What the problem turned out to be
+
+The goal — an assistant that knows the operator is European and multilingual —
+splits into three problems with different owners, and only one of them is the
+one the criteria step was built to solve.
+
+1. **"Understands I'm European" is already solved, deterministically.** The
+   formatting guide holds metric, DKK, 24-hour, ISO dates and Copenhagen time,
+   renders from the profile with no model involved, and is switched on. It
+   scores 4/4, 3/4 and 4/4 on the locale probes above. Nothing needs building
+   here; if a European expectation is missed, the guide is where to look.
+2. **"I don't speak only one language" is not solved, and it is the part that
+   genuinely needs a model** — which language a given message should be
+   answered in, plus a profile able to hold four or five languages with skill
+   levels. The language call does the first half correctly today
+   (12/12, 8/8); the second half is unbuilt (Part 5).
+3. **The dialect reaching the page is a model-capability problem** (Part 2),
+   not a decision or a prompt problem.
+
+The work-criteria half of step 0 fits none of these: it restates the guide,
+returns empty lists on locale questions, costs 10.5s per turn, and outranks
+the guide in the prompt while doing so.
+
 ## Open questions
 
-1. **Reply model binding.** Given Finding B, should the assistant's group lead
-   with a 9B (`ornith` or `qwen3.5`) rather than `gemma4:e4b`? That is the only
-   measured lever on dialect fidelity. Cost: 10-18s per decide step vs 8s.
-2. **Does the audit catch mixed dialect?** The `2_audit` reply argument is
-   supposed to. Unmeasured — worth testing, because if it catches "cart" in a
-   British reply the small model becomes usable via one bounce.
-3. **Step-0 shape.** Merge to one call (~halves step 0, no measured accuracy
-   loss, reverses the requested split); or keep the split.
-4. **Whether the work-criteria call earns 10.5s**, given that most of its
-   output restates the formatting guide.
-5. **Whether to build the `languages` subtree**, and whether the flat
-   `language`/`language_2` fields migrate into it (one source of truth, needs
-   the country templates migrated) or sit alongside it (cheaper, two sources
-   of truth — the shape that broke the first attempt).
+1. **Should the work-criteria call exist?** It has no measured benefit. The
+   options: drop it (step 0 becomes the language call alone, ~4s, and the
+   guide keeps doing the locale work); keep only `assumptions` (the one output
+   the guide cannot produce); or merge it into the language call (~7s).
+2. **Reply model binding.** Should the group lead with a 9B (`ornith` or
+   `qwen3.5`) instead of `gemma4:e4b`? It is the only measured lever on
+   dialect fidelity. Cost: 10-18s per decide step against ~8s.
+3. **Does the audit catch a mixed dialect?** Unmeasured. If `2_audit` catches
+   "cart" in a British reply, one bounce makes the small model viable.
+4. **Build the `languages` subtree?** And do the flat `language`/`language_2`
+   fields migrate into it (one source of truth, needs the country templates
+   migrated) or sit alongside it (cheaper, two sources of truth — the shape
+   that broke the first attempt).
+5. **Does an empty criteria block hurt?** N=4 suggests the time case dropped
+   from 4/4 to 2/4. Worth a proper eval run before acting on it.
 
 ## Recommendation
 
-Spend the effort on the reply model, not on the language decision. The
-decision is already correct and nearly free; the loss happens when a 4B model
-writes the message. Bind a 9B for the assistant and re-run the canary; then
-measure whether the audit can catch a mixed dialect, since that would make
-smaller models viable. The step-0 merge is worth doing for latency but will
-not change a single dialect outcome.
+Stop investing in the work-criteria call and start with the two things that
+have evidence behind them: build the `languages` subtree, so the profile can
+finally state that the operator wants American English replies, is Danish, and
+has beginner German and Portuguese; and re-run the dialect canary against a 9B
+to decide the group order. Keep the language classification — it is cheap,
+correct, and the only part of step 0 doing work the deterministic guide
+cannot. Before removing the work call, run the locale eval family under the
+`criteria` variant to confirm Finding E on a larger sample than four
+repetitions.
