@@ -3718,14 +3718,16 @@ class AssistantAgent(ModelGroupAgent):
             "- An explicit language request in the current message always "
             "wins.",
         ]
-        language, language_2 = user_profile.valid_profile_languages(
+        language, secondary_language = user_profile.valid_profile_languages(
             profile or {})
         if language is not None:
-            known = f"{language} or {language_2}" if language_2 else language
+            known = (
+                f"{language} or {secondary_language}"
+                if secondary_language else language)
             rules.append(
                 f"- The operator's preferred language is {known} — use it "
                 "only when the current message explicitly asks for it.")
-        for tag in (language, language_2):
+        for tag in (language, secondary_language):
             if tag in user_profile.ENGLISH_SPELLING:
                 rules.append(f"- {user_profile.ENGLISH_SPELLING[tag]}")
                 break

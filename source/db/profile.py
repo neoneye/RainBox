@@ -46,12 +46,6 @@ class ProfileDataError(ValueError):
 # subtree's save can never read-modify-write-race another subtree's writer.
 SERVER_OWNED_SUBTREES = ("dynamic", "calibration", "languages")
 
-# Kept byte-for-byte during the reversible migration window. They are absent
-# from PROFILE_FIELDS and hidden from the current editor. A stale pre-cutover
-# browser may still submit them, so the flat validator ignores them and the
-# writer restores the authoritative stored values under the row lock.
-LEGACY_PRESERVED_FIELDS = ("language", "language_2")
-
 
 def validate_profile_data(data: Any) -> dict[str, Any]:
     """Validate a complete editable snapshot against the registry and return
@@ -59,16 +53,12 @@ def validate_profile_data(data: Any) -> dict[str, Any]:
     before validation, string kinds checked strictly (enum membership, ISO
     calendar date). Deliberately soft on IANA/BCP-47/ISO-4217 membership —
     an uncommon-yet-valid value is never blocked. Independently-written
-    subtrees are rejected with a targeted endpoint hint. Migration-only
-    legacy language keys are silently ignored so a stale pre-cutover browser
-    cannot make the entire flat snapshot fail. Raises ProfileDataError naming
-    the offending field."""
+    subtrees are rejected with a targeted endpoint hint. Raises
+    ProfileDataError naming the offending field."""
     if not isinstance(data, dict):
         raise ProfileDataError(f"'data' must be an object, got {type(data).__name__}")
     canonical: dict[str, Any] = {}
     for key, value in data.items():
-        if key in LEGACY_PRESERVED_FIELDS:
-            continue
         if key in SERVER_OWNED_SUBTREES:
             if key == "dynamic":
                 raise ProfileDataError(
@@ -459,8 +449,8 @@ def profile_mutate_data(profile_uuid: UUID,
 def profile_update_data(profile_uuid: UUID, data: Any) -> dict[str, Any] | None:
     """Replace a profile's editable fields with the validated canonical
     snapshot (raises ProfileDataError), preserving `dynamic`, `languages`,
-    `calibration`, and the legacy language rollback fields in the same
-    transaction — a stale form autosave can never overwrite another editor.
+    and `calibration` in the same transaction — a stale form autosave can
+    never overwrite another editor.
     Editable keys omitted from the complete snapshot are deleted, not
     retained. Returns the row's new summary projection, or None if the uuid
     is unknown. Rejecting built-in uuids is the API layer's job (there is no
@@ -468,7 +458,7 @@ def profile_update_data(profile_uuid: UUID, data: Any) -> dict[str, Any] | None:
     canonical = validate_profile_data(data)
 
     def _mutate(current: dict[str, Any]) -> dict[str, Any]:
-        for key in (*SERVER_OWNED_SUBTREES, *LEGACY_PRESERVED_FIELDS):
+        for key in SERVER_OWNED_SUBTREES:
             if key in current:
                 canonical[key] = current[key]
         return canonical
@@ -491,14 +481,10 @@ def profile_duplicate(profile_uuid: UUID) -> dict[str, Any] | None:
     timestamp, never the source's server-owned identity. Returns the new row in
     tree-list field names, or None if the source uuid is unknown."""
     from db.profile_calibration import refresh_calibration_identity
-    from db.profile_languages import (
-        migrate_legacy_languages_data,
-        refresh_language_identity,
-    )
+    from db.profile_languages import refresh_language_identity
 
     def copied_data(data: dict[str, Any]) -> dict[str, Any]:
         copied = deepcopy(data)
-        migrate_legacy_languages_data(copied)
         refresh_calibration_identity(copied)
         refresh_language_identity(copied)
         return copied

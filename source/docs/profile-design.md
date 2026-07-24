@@ -72,14 +72,6 @@ profile                           -- one person
   None is a registry field: `validate_profile_data` rejects them in the
   flat human-facing PUT, and `profile_update_data` carries the current row's
   subtrees into the incoming snapshot in the same transaction.
-- **`data["language"]` and `data["language_2"]` are migration-only legacy
-  fields.** They are no longer returned by the flat editor. The flat
-  validator silently ignores them when a stale pre-cutover tab submits them,
-  allowing the rest of that snapshot to save; the writer restores their
-  existing stored values byte for byte under the row lock. Language writes
-  also leave them untouched, so a rollback remains possible during the
-  cutover window. New code reads `languages.rows`; it falls back to the legacy
-  pair only when the subtree is absent.
 - **Every subtree write goes through `profile_mutate_data`.** All three
   subtrees share one JSONB column, so a writer must never read-modify-write
   race a different subtree's writer: the helper selects the profile row
@@ -162,24 +154,14 @@ canonical tags, required level and stance, no unknown keys or client-authored
 timestamps, known ids only on updates, and a 64 KiB canonical subtree cap.
 All-blank drafts are dropped. Reordering retains timestamps; a semantic edit
 advances only that row's stamp. An explicit empty snapshot is stored as
-`{"rows":[]}` rather than removing the subtree, because absence means "legacy
-fallback is still active" during migration.
-
-Startup migration is additive and idempotent. If a profile has no languages
-subtree, `language` becomes a `native` / `neutral` row and `language_2`
-becomes an `intermediate` / `neutral` row, each with a review note. Migration
-does not infer `prefer`: the old ordering does not prove response-language
-intent. The two legacy fields remain unchanged for rollback and are omitted
-from all current editor/API projections. Once the cutover has survived its
-rollback window, a separate cleanup migration may remove them.
+`{"rows":[]}`. There is no flat-field fallback or startup migration:
+`languages.rows` is the sole source.
 
 The editor is a dedicated fieldset with tag, level, stance, note, add/remove,
 and order controls. Selecting `prefer` demotes any previous preferred row to
 `neutral` before autosave. Built-in templates carry clean, illustrative
-semantic rows (no migration-provenance notes) and the legacy pair during the
-same compatibility window; the UI tells operators to review the example
-levels and stances after duplication. Duplication mints fresh row ids and
-stamps.
+semantic rows, and the UI tells operators to review the example levels and
+stances after duplication. Duplication mints fresh row ids and stamps.
 
 ## Knowledge calibration
 
@@ -265,9 +247,9 @@ JSON, same-origin, in `webapp/profile_api.py`. uuids are the identifiers.
 |----------|-----------|--------|
 | `GET /profile/api/tree` | `{folders, profiles, version}` — user rows + merged built-ins, each profile with its `summary`, no `data` | — |
 | `PUT /profile/api/tree` | guarded whole-tree save (structural only) | `version` (409), `deletes` (400), `validate_profile_tree` (400) |
-| `GET /profile/api/profiles/<uuid>` | one profile's editable fields + `dynamic` projection (built-ins served from the shipped file); `languages`, `calibration`, and the legacy language pair are **projected out** | 404 unknown |
-| `PUT /profile/api/profiles/<uuid>` | `{data}` — the form's autosave: a **complete editable snapshot**, canonicalized + validated; answers the fresh `summary` | built-in → 400, server subtrees rejected with endpoint hints, stale legacy language keys ignored, server subtrees + stored legacy pair preserved |
-| `GET /profile/api/profiles/<uuid>/languages` | `{ok, builtin, rows}` — canonical rows, with legacy fallback only when the subtree is absent | 404 unknown |
+| `GET /profile/api/profiles/<uuid>` | one profile's editable registry fields + `dynamic` projection (built-ins served from the shipped file); `languages` and `calibration` are **projected out** | 404 unknown |
+| `PUT /profile/api/profiles/<uuid>` | `{data}` — the form's autosave: a **complete editable snapshot**, canonicalized + validated; answers the fresh `summary` | built-in → 400, unknown fields rejected, server subtrees rejected with endpoint hints and preserved |
+| `GET /profile/api/profiles/<uuid>/languages` | `{ok, builtin, rows}` — canonical language rows | 404 unknown |
 | `PUT /profile/api/profiles/<uuid>/languages` | `{rows}` — a complete authoritative snapshot; answers canonical rows with server ids/stamps | built-in → 400, validator → 400, 404 unknown |
 | `GET /profile/api/profiles/<uuid>/calibration` | `{ok, builtin, topics}` — the canonical calibration rows | 404 unknown |
 | `PUT /profile/api/profiles/<uuid>/calibration` | `{topics}` — a complete snapshot; answers the canonical rows (the client needs server-assigned ids/stamps before its next edit) | built-in → 400, validator → 400, 404 unknown |

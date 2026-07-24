@@ -215,7 +215,6 @@ def valid_profile_languages(profile: dict[str, Any]) -> tuple[str | None, str | 
     """The first two declared languages through the shared prompt boundary.
 
     A ``prefer`` row sorts first; declaration order settles the remainder.
-    Legacy flat fields are consulted only before the subtree migration.
     """
     data = (profile or {}).get("data") or {}
     rows = effective_language_rows(data)
@@ -307,15 +306,17 @@ def format_formatting_guide(profile: dict[str, Any],
         lines.append(f"- Currency: {head}{secondary} Convert currencies only "
                      "with a supplied or freshly retrieved rate.")
 
-    language, language_2 = valid_profile_languages(profile)
+    language, secondary_language = valid_profile_languages(profile)
     if language is not None:
         # The preferred language is NOT the output language: replies mirror
         # the conversation. Small models read a bare "prefer da" as a
         # directive to switch, so the rule is spelled out as absolute and
         # the profile languages are demoted to explicit-request-only.
-        known = (f"{language} or {language_2}" if language_2 else language)
+        known = (
+            f"{language} or {secondary_language}"
+            if secondary_language else language)
         spelling = ""
-        for tag in (language, language_2):
+        for tag in (language, secondary_language):
             if tag in ENGLISH_SPELLING:
                 spelling = " " + ENGLISH_SPELLING[tag]
                 break

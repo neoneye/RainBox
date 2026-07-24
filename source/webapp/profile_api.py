@@ -17,6 +17,7 @@ from uuid import UUID
 from flask import Response, jsonify, request
 
 import db
+from profile_fields import FIELDS_BY_KEY
 
 from .core import app
 
@@ -62,10 +63,9 @@ def profile_detail(profile_uuid: str) -> tuple[Response, int] | Response:
     """GET: one profile's editable registry fields plus the read-only
     `dynamic` projection the form pane renders (built-ins come from the
     shipped file). The `languages` and `calibration` subtrees are projected
-    out — each has its own GET/PUT below — as are the retained legacy language
-    rollback fields. PUT {data}: the flat form's complete autosave snapshot,
-    canonicalized and validated against the registry, with independently
-    written subtrees preserved; answers the fresh summary."""
+    out — each has its own GET/PUT below. PUT {data}: the flat form's complete
+    autosave snapshot, canonicalized and validated against the registry, with
+    independently written subtrees preserved; answers the fresh summary."""
     pu = _parse_uuid(profile_uuid)
     if pu is None:
         return jsonify({"ok": False, "error": "bad uuid"}), 400
@@ -88,7 +88,7 @@ def profile_detail(profile_uuid: str) -> tuple[Response, int] | Response:
         return jsonify({"ok": False, "error": "profile not found"}), 404
     detail["data"] = {
         k: v for k, v in (detail.get("data") or {}).items()
-        if k not in ("calibration", "languages", "language", "language_2")
+        if k in FIELDS_BY_KEY or k == "dynamic"
     }
     return jsonify({"ok": True, **detail})
 
@@ -100,7 +100,7 @@ def profile_languages(profile_uuid: str) -> tuple[Response, int] | Response:
 
     GET returns the complete canonical row list. PUT replaces that list;
     existing rows carry their id, new rows omit it, and ``updated_at`` is
-    server-owned. The legacy flat fields are neither exposed nor mutated.
+    server-owned.
     """
     pu = _parse_uuid(profile_uuid)
     if pu is None:

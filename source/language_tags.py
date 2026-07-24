@@ -37,44 +37,15 @@ def canonical_language_tag(raw: Any) -> str | None:
     return "-".join(out)
 
 
-def legacy_language_rows(
-    data: dict[str, Any] | None,
-) -> list[dict[str, str]]:
-    """Best-effort row projection from the two legacy flat fields.
-
-    Their order is preserved, but neither becomes ``prefer`` because the old
-    fields never separated language knowledge from response preference.
-    """
-    data = data or {}
-    specs = (
-        ("language", "native",
-         "Migrated from legacy primary language; review level and stance."),
-        ("language_2", "intermediate",
-         "Migrated from legacy secondary language; review level and stance."),
-    )
-    rows: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for key, level, note in specs:
-        tag = canonical_language_tag(data.get(key))
-        if tag is None or tag.casefold() in seen:
-            continue
-        seen.add(tag.casefold())
-        rows.append(
-            {"tag": tag, "level": level, "stance": "neutral", "note": note})
-    return rows
-
-
 def effective_language_rows(
     data: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Read authoritative rows, falling back only for pre-migration blobs."""
+    """Read the authoritative ``languages.rows`` snapshot."""
     data = data or {}
-    if "languages" in data:
-        subtree = data.get("languages")
-        if not isinstance(subtree, dict):
-            return []
-        rows = subtree.get("rows")
-        if not isinstance(rows, list):
-            return []
-        return [row for row in rows if isinstance(row, dict)]
-    return legacy_language_rows(data)
+    subtree = data.get("languages")
+    if not isinstance(subtree, dict):
+        return []
+    rows = subtree.get("rows")
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]

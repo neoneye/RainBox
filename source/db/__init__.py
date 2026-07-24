@@ -507,7 +507,6 @@ def init_db(app: Flask) -> None:
         db.session.commit()
         _migrate_ollama_native_args()
         _migrate_cron_message_targets()
-        migrate_profile_languages()
         # Seed an (unassigned) model binding for each code-defined agent.
         from agents.config import agent_config
 

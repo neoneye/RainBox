@@ -4,26 +4,20 @@ Language competence (``level``) and reply preference (``stance``) are
 orthogonal. Rows carry server-owned stable ids and semantic-change timestamps,
 matching the calibration editor's concurrency and autosave contract.
 
-The legacy flat ``language`` / ``language_2`` values are migrated once into
-the subtree but deliberately retained unchanged as a rollback snapshot. They
-are no longer editable or authoritative after the subtree exists.
+There is no flat-field fallback: this subtree is the sole language source.
 """
 
 import json
 import re
-from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-import sqlalchemy as sa
-
-from db.models import Profile, db
+from db.models import db
 from language_tags import (
     MAX_LANGUAGE_TAG_CHARS,
     canonical_language_tag,
     effective_language_rows,
-    legacy_language_rows,
 )
 
 MAX_LANGUAGE_ROWS = 100
@@ -35,7 +29,6 @@ LANGUAGE_STANCES = ("prefer", "neutral", "avoid")
 
 _SEMANTIC_KEYS = ("tag", "level", "stance", "note")
 _ALLOWED_KEYS = frozenset(("id", *_SEMANTIC_KEYS))
-_LEGACY_KEYS = ("language", "language_2")
 
 __all__ = [
     "LANGUAGE_LEVELS",
@@ -46,8 +39,6 @@ __all__ = [
     "ProfileLanguagesError",
     "languages_get",
     "languages_put",
-    "migrate_legacy_languages_data",
-    "migrate_profile_languages",
     "refresh_language_identity",
     "validate_language_rows",
 ]
@@ -210,8 +201,7 @@ def languages_put(
     """Replace one profile's authoritative languages snapshot under the
     shared profile row lock.
 
-    An empty snapshot is stored as ``{"rows": []}`` rather than removed;
-    otherwise preserved legacy fields would reappear through fallback reads.
+    An empty snapshot is stored as ``{"rows": []}``.
     """
     from db.profile import profile_mutate_data
 
@@ -228,37 +218,6 @@ def languages_put(
     if row is None:
         return None
     return result["rows"]
-
-
-def migrate_legacy_languages_data(data: dict[str, Any]) -> bool:
-    """Add ``languages.rows`` to one legacy blob in place.
-
-    Returns whether the blob changed. Flat fields remain untouched as the
-    reversible rollback snapshot. Presence of any legacy key records a
-    migration even when its value is invalid, preventing repeated attempts.
-    """
-    if "languages" in data or not any(key in data for key in _LEGACY_KEYS):
-        return False
-    data["languages"] = {
-        "rows": validate_language_rows(legacy_language_rows(data), existing=[])}
-    return True
-
-
-def migrate_profile_languages() -> int:
-    """Idempotently migrate every user-owned profile JSONB blob.
-
-    Returns the number of changed rows; used at startup and directly by tests.
-    """
-    changed = 0
-    for row in db.session.execute(
-        sa.select(Profile).with_for_update()
-    ).scalars():
-        data = deepcopy(row.data or {})
-        if migrate_legacy_languages_data(data):
-            row.data = data
-            changed += 1
-    db.session.commit()  # also releases the migration scan's row locks
-    return changed
 
 
 def refresh_language_identity(data: dict[str, Any]) -> dict[str, Any]:

@@ -415,25 +415,17 @@ task-scoped locale, with evals showing that it improves that exact case.
 
 ### Recommended implementation sequence
 
-**Implementation status (2026-07-24):** step 1 is implemented. The profile
-now has an independently validated and autosaved `languages.rows` editor,
-startup migration, template coverage, prompt-boundary reads, and fresh
-server identities on duplication. The migration is deliberately additive:
-`language` and `language_2` are hidden from current APIs and editors but
-preserved unchanged in storage. An explicit empty `languages.rows` is
-authoritative, so clearing the new editor cannot accidentally reactivate the
-legacy values. Removing the legacy pair is a later cleanup after the rollback
-window, not part of this cutover. Response-language intent resolution remains
-out of scope for step 1. The legacy mapping necessarily seeds provisional
-competence (`language` → `native`, `language_2` → `intermediate`) because the
-new schema has no unknown level; the migration note marks that uncertainty.
-Before step 3 lets `level` affect register, migrated rows must be reviewed or
-the schema must gain an explicit unconfirmed state. Guessed migration data
-must not silently become a prompt directive.
+**Implementation status (2026-07-25):** step 1 is implemented as a clean
+single-operator cutover. The profile now has an independently validated and
+autosaved `languages.rows` editor, template coverage, prompt-boundary reads,
+and fresh server identities on duplication. `language` and `language_2` have
+been removed from templates, APIs, validation, persistence behavior, and
+prompt reads; there is no startup migration or fallback. Existing profiles
+must declare their rows in the new editor. Response-language intent resolution
+remains out of scope for step 1.
 
-1. Add `languages.rows`, validation, editor support and migration from
-   `language` / `language_2`. Preserve the legacy fields only long enough for a
-   reversible migration.
+1. Add `languages.rows`, validation and editor support; remove the two flat
+   language fields in the same cutover.
 2. Port the branch-independent reliability fixes listed in Part 7.
 3. Implement one typed response-language-intent call and a deterministic
    resolver. Inject its code-composed directive before the first reasoning

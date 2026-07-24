@@ -66,9 +66,6 @@ def test_validate_data_canonical_and_errors():
                   "birthday": "1987-08-30", "address": "Line one\nLine two",
                   "email": "x@example.com"}          # "" canonicalized away
     assert db.validate_profile_data({}) == {}        # sparse blob valid
-    assert db.validate_profile_data({
-        "full_name": "Stale tab", "language": "da", "language_2": "en-US",
-    }) == {"full_name": "Stale tab"}  # pre-cutover fields are ignored
     with pytest.raises(db.ProfileDataError, match="no_such"):
         db.validate_profile_data({"no_such": "x"})
     with pytest.raises(db.ProfileDataError, match="no_such"):
@@ -85,6 +82,10 @@ def test_validate_data_canonical_and_errors():
         db.validate_profile_data({"calibration": {}})
     with pytest.raises(db.ProfileDataError, match="use the languages endpoint"):
         db.validate_profile_data({"languages": {"rows": []}})
+    with pytest.raises(db.ProfileDataError, match="unknown field: 'language'"):
+        db.validate_profile_data({"language": "da"})
+    with pytest.raises(db.ProfileDataError, match="unknown field: 'language_2'"):
+        db.validate_profile_data({"language_2": "en-US"})
     with pytest.raises(db.ProfileDataError, match="full_name"):
         db.validate_profile_data({"full_name": 5})
     with pytest.raises(db.ProfileDataError):
@@ -215,8 +216,7 @@ def test_all_templates_validate(app_ctx):
     assert len(entries) == 21
     for e in entries:
         editable = {k: v for k, v in e["data"].items()
-                    if k not in (*db.SERVER_OWNED_SUBTREES,
-                                 *db.LEGACY_PRESERVED_FIELDS)}
+                    if k not in db.SERVER_OWNED_SUBTREES}
         canonical = db.validate_profile_data(editable)
         assert canonical == editable         # shipped data is already canonical (no "" values)
         assert e["data"]["country"] == e["name"]

@@ -122,62 +122,24 @@ def test_server_fields_unknown_fields_and_unknown_ids_rejected(profile):
         db.languages_put(profile, [{**_row(), "id": str(uuid4())}])
 
 
-def test_empty_snapshot_is_authoritative_and_keeps_legacy_rollback(
-    profile, fixed_stamp,
-):
-    stored = db.db.session.execute(
-        db.db.select(Profile).where(Profile.uuid == profile)).scalar_one()
-    stored.data = {"language": "da", "language_2": "en-US"}
-    db.db.session.commit()
-
+def test_empty_snapshot_is_authoritative(profile, fixed_stamp):
+    db.languages_put(profile, [_row("da", "native", "neutral")])
     assert db.languages_put(profile, []) == []
     data = db.profile_get(profile)["data"]
     assert data["languages"] == {"rows": []}
-    assert data["language"] == "da" and data["language_2"] == "en-US"
     assert db.languages_get(profile)["rows"] == []
 
 
-def test_startup_migration_is_reversible_and_idempotent(app_ctx, fixed_stamp):
-    pu = uuid4()
-    row = Profile(
-        uuid=pu, name="Legacy", folder_uuid=None, position=999,
-        data={"language": "DA", "language_2": "en-us", "city": "Copenhagen"})
-    db.db.session.add(row)
-    db.db.session.commit()
-    try:
-        assert db.migrate_profile_languages() == 1
-        assert db.migrate_profile_languages() == 0
-        data = db.profile_get(pu)["data"]
-        assert data["language"] == "DA"
-        assert data["language_2"] == "en-us"
-        assert data["city"] == "Copenhagen"
-        rows = data["languages"]["rows"]
-        assert [(r["tag"], r["level"], r["stance"]) for r in rows] == [
-            ("da", "native", "neutral"),
-            ("en-US", "intermediate", "neutral"),
-        ]
-        assert all("review level and stance" in r["note"] for r in rows)
-    finally:
-        db.db.session.query(Profile).filter(Profile.uuid == pu).delete()
-        db.db.session.commit()
-
-
-def test_flat_save_preserves_languages_and_legacy_fields(profile, fixed_stamp):
-    row = db.db.session.execute(
-        db.db.select(Profile).where(Profile.uuid == profile)).scalar_one()
-    row.data = {"language": "da", "language_2": "en-US"}
-    db.db.session.commit()
-    db.migrate_profile_languages()
+def test_flat_save_preserves_languages(profile, fixed_stamp):
+    db.languages_put(profile, [
+        _row("da", "native", "neutral"),
+        _row("en-US", "fluent", "prefer"),
+    ])
     before = db.profile_get(profile)["data"]["languages"]
 
-    # A tab hydrated before cutover still submits the removed flat language
-    # inputs. The snapshot must save its current fields without overwriting the
-    # retained rollback values or the authoritative subtree.
-    db.profile_update_data(profile, {
-        "full_name": "Keeper", "language": "fr", "language_2": "de"})
+    db.profile_update_data(profile, {"full_name": "Keeper"})
     after = db.profile_get(profile)["data"]
     assert after["languages"] == before
-    assert after["language"] == "da" and after["language_2"] == "en-US"
     assert after["full_name"] == "Keeper"
 
 
@@ -251,20 +213,15 @@ def test_languages_api_round_trip_and_profile_projection(profile, fixed_stamp):
     assert response.status_code == 400
     assert "only one language" in response.get_json()["error"]
 
-    # A pre-cutover tab can finish saving its other flat fields after deploy.
     response = client.put(
         f"/profile/api/profiles/{profile}",
-        json={"data": {
-            "full_name": "Stale tab", "language": "fr", "language_2": "de",
-        }},
+        json={"data": {"full_name": "Old schema", "language": "fr"}},
     )
-    assert response.status_code == 200
-    assert response.get_json()["summary"]["full_name"] == "Stale tab"
+    assert response.status_code == 400
+    assert "unknown field: 'language'" in response.get_json()["error"]
 
     detail = client.get(f"/profile/api/profiles/{profile}").get_json()
     assert "languages" not in detail["data"]
-    assert "language" not in detail["data"]
-    assert "language_2" not in detail["data"]
 
 
 def test_languages_api_errors_and_builtin_readonly(app_ctx):
@@ -285,15 +242,13 @@ def test_languages_api_errors_and_builtin_readonly(app_ctx):
     assert "read-only built-in" in response.get_json()["error"]
 
 
-def test_all_templates_have_rows_and_keep_legacy_rollback(app_ctx):
+def test_all_templates_have_only_language_rows(app_ctx):
     for entry in db.profile_templates_entries():
         data = entry["data"]
         assert data["languages"]["rows"]
-        assert data["languages"]["rows"][0]["tag"] == data["language"]
+        assert "language" not in data and "language_2" not in data
         assert data["languages"]["rows"][0]["stance"] == "neutral"
         assert all("note" not in row for row in data["languages"]["rows"])
-        if data.get("language_2"):
-            assert data["languages"]["rows"][1]["tag"] == data["language_2"]
 
 
 def test_request_and_serialized_size_caps(profile):
