@@ -107,8 +107,7 @@ def _work(marker: str) -> WorkCriteria:
 def _reply(message: str = "About 321179090 meters.") -> AssistantStepDecision:
     return AssistantStepDecision(
         reason="ready to answer", action=AssistantActionName.REPLY,
-        args={"1_specification": "en, metric", "2_message": message,
-              "3_audit": "OK"})
+        args={"1_message": message, "2_audit": "OK"})
 
 
 def _probe(i: int) -> AssistantStepDecision:
