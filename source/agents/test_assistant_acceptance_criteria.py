@@ -700,3 +700,39 @@ def test_reply_language_action_is_trace_only():
     assert AssistantActionName.REPLY_LANGUAGE.value == "reply_language"
     from agents.assistant import CAPABILITIES
     assert AssistantActionName.REPLY_LANGUAGE not in CAPABILITIES
+
+
+# --- no example words in any prompt surface -----------------------------------
+
+
+MARKER_WORDS = ("colour", "anticlockwise", "counterclockwise",
+                "car park", "parking lot", "ikkje", "korleis")
+
+
+def test_no_variant_example_words_in_any_prompt_surface():
+    """Contrastive example words in a prompt get parroted into replies
+    (observed live: sample words in unrelated answers). The dialect is
+    always NAMED, never exemplified; the marker words exist only in tests
+    and evals. "color" is excluded from the marker list only because the
+    catalog legitimately mentions formatting concepts — the spelled-out
+    dialect names carry the contrast instead."""
+    import user_profile
+
+    profile = {"data": {"language": "en-GB", "language_2": "nn"}}
+    surfaces = [
+        AssistantAgent._reply_language_system_prompt(profile),
+        AssistantAgent._work_criteria_system_prompt(),
+        assistant_module.ASSISTANT_SYSTEM_PROMPT,
+        user_profile.format_formatting_guide(profile),
+        assistant_module.compose_language_directive("en-GB", ""),
+        assistant_module.compose_language_directive("nn", ""),
+        *(c.description for c in assistant_module.CAPABILITIES.values()),
+    ]
+    for surface in surfaces:
+        low = surface.lower()
+        for word in MARKER_WORDS:
+            assert word not in low, (word, surface[:80])
+        # "color"/"colour" both banned as standalone words (not substrings
+        # of other words).
+        import re
+        assert not re.search(r"\bcolou?r\b", low), surface[:80]
