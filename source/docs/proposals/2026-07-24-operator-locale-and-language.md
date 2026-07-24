@@ -1,9 +1,10 @@
 # Operator locale and language — execution semantics, not output formatting
 
-**Status:** Groundwork for a fresh attempt. The `acceptance-criteria-v2`
-branch is **parked**; this document is what it learned, so the next attempt
-starts from evidence instead of from scratch.
+**Status:** Partially implemented on `main`. The multilingual profile model
+and editor are complete; response-language intent resolution is the next
+unsolved stage. The `acceptance-criteria-v2` branch remains **parked**.
 **Date:** 2026-07-24
+**Last updated:** 2026-07-25
 **Supersedes:** `2026-07-24-step0-language-findings.md` and
 `2026-07-24-modelling-language-preferences.md` (folded in here).
 
@@ -34,6 +35,26 @@ answers in the language and dialect the operator actually wants. The
 requirement is that these settings apply **while the assistant reasons**, not
 as a cosmetic pass over the final message. A step that estimates in miles and
 gets converted afterwards has already made the wrong decision.
+
+## Implementation status — 2026-07-25
+
+| Area | Status | What that means |
+|---|---|---|
+| Deterministic locale guide | **Implemented** | Metric/Celsius, clock, date, timezone, number and currency directives are code-rendered and available at every reasoning step behind the existing release switch. |
+| `languages.rows` storage and editor | **Implemented on `main`** | Ordered BCP-47 rows, `level`, `stance`, notes, validation, autosave, duplication identities, summaries and built-in templates are complete. |
+| Flat `language` / `language_2` fields | **Removed** | Clean single-operator cutover: no templates, migration, fallback, API compatibility or prompt reads remain. Existing profiles use only `languages.rows`. |
+| Current prompt bridge | **Implemented, intentionally limited** | Prompt-boundary code reads the new rows and places the one `prefer` row first. Existing formatting/criteria wording still mirrors the current message and names at most two declared tags. |
+| `level` and `stance` execution semantics | **Not implemented** | `prefer` helps order the current compatibility wording, but `avoid` does not redirect replies and `level` does not yet change register. |
+| Response-language intent classifier + resolver | **Not implemented** | There is no narrow typed per-turn decision, no deterministic precedence resolver and no code-composed response-language directive before reasoning. This is the next core stage. |
+| English/dialect resolution | **Partial** | `valid_language_tag()` and the existing en-US/en-GB spelling clauses are present. A single general variant table, bare-`en` international-English wording and non-English variant resolution are pending. |
+| Structured-result hardening | **Implemented** | The shared structured-call path re-validates final provider text and has dedicated tests. |
+| General acceptance-criteria step | **Implemented but default-off; not the chosen language solution** | The broad step-0 mechanism still exists behind `assistant.acceptance_criteria`. Measurements in this proposal do not justify enabling it for language/locale routing. |
+| Task-scoped locale | **Not implemented** | Explicit project/document locale still needs a separate design after the response-language path is stable. |
+| Post-cutover evals and reply-model selection | **Pending** | Earlier measurements remain useful, but classification, translation-intent, short-message, avoided-language and dialect delivery must be rerun against the final resolver. |
+
+The profile slice is merged on local `main` through commit `1385d93`.
+Verification at merge: 185 profile/assistant integration tests, Python/JS
+syntax checks, template JSON validation and a rendered browser check passed.
 
 ## Part 1 — what is already solved (do not rebuild it)
 
@@ -75,12 +96,11 @@ A fresh attempt that rebuilds this will spend its effort on a solved problem.
 
 ## Part 2 — what is not solved
 
-1. **The profile cannot describe a multilingual operator.** Two ordered
-   free-text fields (`language`, `language_2`) cannot hold four or five
-   languages, cannot record competence, and cannot separate *what you speak*
-   from *what you want back*. The field labelled "primary" held `da` while the
-   operator's primary response language is en-US.
-2. **Dialect fidelity is bounded by the reply model, not by the design.**
+1. **Stored language declarations do not yet drive a per-turn resolver.**
+   The profile can now describe a multilingual operator, but `avoid` does not
+   redirect an implicit choice, `level` does not alter register, and no narrow
+   classifier determines response-language intent before reasoning.
+2. **Dialect fidelity is bounded by the reply model, not only by the design.**
 3. **Task-scoped locale is unrepresented.** A "2,000 sq ft office in Texas"
    should stay in square feet and USD; nothing in the current model can say
    that the *task* has a locale different from the operator's.
@@ -164,9 +184,14 @@ These are failure patterns, not bugs. Each was observed live.
 
 ## Part 5 — the model to build
 
-A `languages` subtree replacing the two flat fields, mirroring the existing
-calibration subtree (`data["calibration"]["topics"]`) in shape, validation and
-editor pattern.
+**Status:** the schema, validator, editor, APIs, templates and prompt-boundary
+reader described in this section are implemented. The deterministic resolver
+described below is not. Until that resolver lands, rows are durable operator
+declarations rather than complete reply-routing behavior.
+
+The implemented `languages` subtree replaces the two flat fields and mirrors
+the existing calibration subtree (`data["calibration"]["topics"]`) in shape,
+validation and editor pattern.
 
 ```
 data["languages"]["rows"] = [
@@ -258,29 +283,36 @@ Good eval cases for it: `Bake at 350°F` stays Fahrenheit; `budget is USD
 
 Independent of any architecture, and worth keeping:
 
-- **`agents/base.py` — the structured-result fix.** Re-validates before
+- **Implemented — `agents/base.py` structured-result fix.** Re-validates before
   returning and recovers a payload wrapped in fence remnants or prose. This is
   a general reliability fix for every structured call.
-- **`user_profile.LANGUAGE_VARIANTS` + `valid_language_tag()`** — one
-  example-free table of dialect names, and a public BCP-47 boundary.
-- **The no-example-words guard test**, which pins trap 1.
-- **The repeated-request history omission** — a verbatim-repeated message drops
-  the assistant's earlier replies, which are otherwise a decoding attractor.
-- **Reply args `{1_message, 2_audit}`** — the pre-work specification argument
-  was a rationalization written after the fact.
+- **Partial — language variant ownership.** Public `valid_language_tag()` is
+  implemented. The single example-free `user_profile.LANGUAGE_VARIANTS` table
+  is not.
+- **Pending — the no-example-words guard test**, which pins trap 1.
+- **Pending — repeated-request history omission.** A verbatim-repeated message
+  should drop the assistant's earlier replies, which are otherwise a decoding
+  attractor.
+- **Implemented — reply args `{1_message, 2_audit}`.** The pre-work
+  specification argument was a rationalization written after the fact.
 
 What to reconsider rather than port: the two-call step 0 (no measured benefit,
 ~14.4s), and the work-criteria call in its current form (returns empty lists
 on locale questions).
 
-## Where to start
+## Where to continue
 
-1. Build the `languages` subtree — it is the only unsolved piece the operator
-   actually asked for, and it needs no model call.
-2. Re-run the dialect canary against a 9B and decide the group order. That is
-   the sole measured lever on whether a chosen dialect survives to the page.
-3. Only then decide whether a criteria step exists at all, and if it does,
-   scope it to precedence level 2 — task-scoped locale — and nothing else.
+1. Finish the branch-independent language primitives: one example-free
+   variant table, bare-`en` international-English wording and the
+   no-example-words guard.
+2. Implement the narrow typed response-language-intent call and deterministic
+   resolver. Inject the resulting code-composed directive before the first
+   reasoning step; do not route it through the broad acceptance-criteria call.
+3. Run the classification, translation-intent, short-message,
+   avoided-language and dialect-delivery evals, then choose the reply-model
+   order from evidence.
+4. Revisit task-scoped locale only after the language path is stable, and
+   scope any model-driven criteria step to precedence level 2.
 
 ## Part 8 — independent assessment: the actual problems and solutions
 
@@ -415,28 +447,23 @@ task-scoped locale, with evals showing that it improves that exact case.
 
 ### Recommended implementation sequence
 
-**Implementation status (2026-07-25):** step 1 is implemented as a clean
-single-operator cutover. The profile now has an independently validated and
-autosaved `languages.rows` editor, template coverage, prompt-boundary reads,
-and fresh server identities on duplication. `language` and `language_2` have
-been removed from templates, APIs, validation, persistence behavior, and
-prompt reads; there is no startup migration or fallback. Existing profiles
-must declare their rows in the new editor. Response-language intent resolution
-remains out of scope for step 1.
-
-1. Add `languages.rows`, validation and editor support; remove the two flat
-   language fields in the same cutover.
-2. Port the branch-independent reliability fixes listed in Part 7.
-3. Implement one typed response-language-intent call and a deterministic
-   resolver. Inject its code-composed directive before the first reasoning
-   step so language is execution context, not a final rewrite.
-4. Keep the existing deterministic locale guide unchanged and add the
-   language-versus-locale cross-product tests.
-5. Run classification, translation-intent, dialect, short-message,
-   repeated-request and avoided-language evals independently.
-6. Choose the reply-model order from the dialect canary.
-7. Address task-scoped locale as a separate follow-up only after the language
-   path is stable.
+- [x] Add `languages.rows`, validation, editor support, templates and
+  prompt-boundary reads; remove the two flat language fields in the same
+  clean cutover.
+- [ ] **Partial:** port the branch-independent reliability fixes listed in
+  Part 7. Structured-result re-validation, `valid_language_tag()` and reply
+  audit arguments are present; the shared variant table, no-example guard and
+  repeated-request omission remain.
+- [ ] Implement one typed response-language-intent call and a deterministic
+  resolver. Inject its code-composed directive before the first reasoning
+  step so language is execution context, not a final rewrite.
+- [ ] Add the language-versus-locale cross-product tests while keeping the
+  existing deterministic locale guide unchanged.
+- [ ] Run classification, translation-intent, dialect, short-message,
+  repeated-request and avoided-language evals independently.
+- [ ] Choose the reply-model order from the dialect canary.
+- [ ] Address task-scoped locale as a separate follow-up only after the
+  language path is stable.
 
 The minimal successful outcome is not "the assistant knows the operator is
 European." It is that an English request receives the requested English
