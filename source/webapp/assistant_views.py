@@ -26,6 +26,14 @@ from .core import app
 _ACTION_DESCRIPTIONS = {
     n.value: (c.summary or c.description) for n, c in CAPABILITIES.items()
 }
+# Code-driven trace rows are not model-selectable capabilities, so they do not
+# belong in CAPABILITIES. Give them the same compact timeline description via
+# this companion registry.
+_ACTION_DESCRIPTIONS.update({
+    "response_language_classifier": (
+        "determine which language(s) the reply should use"
+    ),
+})
 
 ASSISTANT_TEMPLATE = """
 <!doctype html>

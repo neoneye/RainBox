@@ -160,7 +160,8 @@ def test_prompt_scores_all_profile_rows_and_omits_assistant_history():
     assert "Je vais répondre en français." not in prompt
     assert '"code": "en-GB"' in prompt
     assert '"code": "da"' in prompt
-    assert "Score every declared profile-language candidate" in prompt
+    assert "copy every declared profile-language code exactly" in prompt
+    assert "compatible preferred profile variant" in prompt
     assert 'assistant_messages="omitted"' in prompt
 
 
@@ -172,8 +173,77 @@ def test_system_prompt_uses_planexe_likert_and_distinguishes_content_language():
     assert "4 = weak positive" in prompt
     assert "5 = strong positive" in prompt
     assert "quoted examples are content rather than reply" in prompt
-    assert "do not guess a region or dialect" not in prompt
-    assert "use a regional or dialect tag" in prompt
+    assert "A broad explicit target selects the LANGUAGE FAMILY" in prompt
+    assert "copy its `code` byte-for-byte" in prompt
+    assert "Never shorten, broaden, translate" in prompt
+    assert "Use a broad language code when the evidence supports only" not in prompt
+
+
+def test_preferred_profile_variant_refines_broad_model_output_and_flags_audit():
+    """Regression for the live trace where reasoning selected en-GB but the
+    structured answer collapsed it to en."""
+    agent = _agent()
+    profile = {
+        "data": {
+            "languages": {
+                "rows": [
+                    {
+                        "tag": "en-GB",
+                        "level": "intermediate",
+                        "stance": "prefer",
+                        "note": "primary response language",
+                    },
+                    {
+                        "tag": "da",
+                        "level": "native",
+                        "stance": "neutral",
+                        "note": "",
+                    },
+                ]
+            }
+        }
+    }
+    broad = ResponseLanguageClassification(
+        reason="The explicit translation target is English.",
+        languages=[
+            ResponseLanguageItem(code="en", score=5),
+            ResponseLanguageItem(code="da", score=1),
+        ],
+        audit="OK",
+    )
+    result = agent._reconcile_response_language_profile_variants(
+        broad, profile)
+    assert [(item.code, item.score) for item in result.languages] == [
+        ("en-GB", 5),
+        ("da", 1),
+    ]
+    assert result.audit != "OK"
+    assert "normalized it to declared profile variant 'en-GB'" in result.audit
+
+
+def test_broad_code_stays_broad_without_unambiguous_profile_variant():
+    agent = _agent()
+    profile = {
+        "data": {
+            "languages": {
+                "rows": [
+                    {"tag": "en-GB", "level": "fluent",
+                     "stance": "neutral", "note": ""},
+                    {"tag": "en-US", "level": "fluent",
+                     "stance": "neutral", "note": ""},
+                ]
+            }
+        }
+    }
+    broad = ResponseLanguageClassification(
+        reason="English target.",
+        languages=[ResponseLanguageItem(code="en", score=5)],
+        audit="uncertain variant",
+    )
+    result = agent._reconcile_response_language_profile_variants(
+        broad, profile)
+    assert result.languages[0].code == "en"
+    assert "omitted declared profile code(s): en-GB, en-US" in result.audit
 
 
 def test_classifier_is_first_observed_step_and_does_not_consume_budget(room):

@@ -96,6 +96,27 @@ def test_timeline_shows_step_with_inline_intent_and_undo(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_response_language_classifier_has_action_description(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid,
+        step_index=0,
+        phase="observed",
+        action="response_language_classifier",
+        reason="English request; preferred British variant.",
+        observation_preview='{"languages":[{"code":"en-GB","score":5}],"audit":"OK"}',
+    )
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "response_language_classifier" in body
+        assert "determine which language(s) the reply should use" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_step_is_anchored_and_has_permalink(app_ctx, client):
     room = _room()
     run = db.start_assistant_run(

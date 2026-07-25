@@ -179,7 +179,19 @@ Assistant history is omitted so an earlier wrong-language reply cannot become
 a continuity signal. The prompt explicitly separates the language of the
 reply's narration from languages appearing as quoted examples: a request for
 multilingual phrases with English explanations remains an English reply unless
-the operator asks for a genuinely multilingual answer.
+the operator asks for a genuinely multilingual answer. A broad requested
+language selects the family, while a compatible `prefer` profile row supplies
+the exact variant: “translate to English” with preferred `en-GB` is classified
+as `en-GB`, not broadened to `en`. Every declared code must be copied and
+scored exactly.
+
+The output boundary performs one narrow, observable repair for scorer models
+that reason about the correct variant but still emit its broad parent tag: it
+refines that tag to the single compatible preferred variant (or sole compatible
+non-avoid variant) and changes `audit` from `OK` to a description of the
+repair. It never invents a score for an omitted row; omissions are instead
+listed in `audit`. This keeps the useful classification exact without hiding
+upstream model-quality failures.
 
 This stage is intentionally **observation-only**. Its output is persisted as a
 `response_language_classifier` trace row with the prompts, model response,
