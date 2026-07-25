@@ -45,7 +45,8 @@ gets converted afterwards has already made the wrong decision.
 | Flat `language` / `language_2` fields | **Removed** | Clean single-operator cutover: no templates, migration, fallback, API compatibility or prompt reads remain. Existing profiles use only `languages.rows`. |
 | Current prompt bridge | **Implemented, intentionally limited** | Prompt-boundary code reads the new rows and places the one `prefer` row first. Existing formatting/criteria wording still mirrors the current message and names at most two declared tags. |
 | `level` and `stance` execution semantics | **Not implemented** | `prefer` helps order the current compatibility wording, but `avoid` does not redirect replies and `level` does not yet change register. |
-| Response-language intent classifier + resolver | **Not implemented** | There is no narrow typed per-turn decision, no deterministic precedence resolver and no code-composed response-language directive before reasoning. This is the next core stage. |
+| Response-language intent classifier | **Experimental on `codex/response-language-classifier`** | The assistant's first model-facing activity is now a narrow typed call returning `reason`, BCP-47 candidates with 1–5 Likert confidence, and `audit`. It scores every `languages.rows` candidate plus explicit request languages, omits assistant history, persists a trace row and fails open. The result is observation-only: it is deliberately not injected into reasoning or used to change the reply. |
+| Deterministic resolver + response-language directive | **Not implemented** | No score threshold, precedence resolver or code-composed directive exists yet. This separation is intentional while classifier quality is measured. |
 | English/dialect resolution | **Partial** | `valid_language_tag()` and the existing en-US/en-GB spelling clauses are present. A single general variant table, bare-`en` international-English wording and non-English variant resolution are pending. |
 | Structured-result hardening | **Implemented** | The shared structured-call path re-validates final provider text and has dedicated tests. |
 | General acceptance-criteria step | **Implemented but default-off; not the chosen language solution** | The broad step-0 mechanism still exists behind `assistant.acceptance_criteria`. Measurements in this proposal do not justify enabling it for language/locale routing. |
@@ -55,6 +56,14 @@ gets converted afterwards has already made the wrong decision.
 The profile slice is merged on local `main` through commit `1385d93`.
 Verification at merge: 185 profile/assistant integration tests, Python/JS
 syntax checks, template JSON validation and a rendered browser check passed.
+
+The observation-only classifier experiment lives on
+`codex/response-language-classifier`. It has its own binding-only
+`response_language_classifier` role on `/agentmodel`, falling back to the
+assistant's model group when unbound. Its trace action is
+`response_language_classifier`; the stored model request, response, concise
+reason, score list, audit, model identity and duration make model comparisons
+inspectable without letting an unproven classifier steer production replies.
 
 ## Part 1 — what is already solved (do not rebuild it)
 
@@ -454,9 +463,16 @@ task-scoped locale, with evals showing that it improves that exact case.
   Part 7. Structured-result re-validation, `valid_language_tag()` and reply
   audit arguments are present; the shared variant table, no-example guard and
   repeated-request omission remain.
-- [ ] Implement one typed response-language-intent call and a deterministic
-  resolver. Inject its code-composed directive before the first reasoning
-  step so language is execution context, not a final rewrite.
+- [x] Implement one typed, observation-only response-language-intent call as
+  the assistant's first model-facing activity. Persist the prompt, model,
+  reason, per-language Likert scores and audit; do not steer downstream work
+  while classifier quality is unknown.
+- [ ] Build a classifier eval corpus and measure explicit-language,
+  multilingual-content, translation-intent, dialect, short-message,
+  repeated-request and avoided-language cases.
+- [ ] Only if the classifier is sufficiently reliable, implement a
+  deterministic resolver and inject its code-composed directive before the
+  first reasoning step so language is execution context, not a final rewrite.
 - [ ] Add the language-versus-locale cross-product tests while keeping the
   existing deterministic locale guide unchanged.
 - [ ] Run classification, translation-intent, dialect, short-message,

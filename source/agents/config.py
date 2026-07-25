@@ -97,6 +97,8 @@ QUERY_ROUTER_UUID: UUID = UUID("c973bca3-aa92-4a12-af20-d3f1087cac5e")
 QUERY_FILTER_ROUTER_UUID: UUID = UUID("218bb954-da6b-4712-9206-4f0f72eafcc0")
 MEMORY_FILTER_UUID: UUID = UUID("b4809a3f-12d6-4725-ab23-4808cec2d5d7")
 SECOND_OPINION_UUID: UUID = UUID("7a1d4c3e-5b2f-4e8a-9c6d-0f3b8a51e274")
+RESPONSE_LANGUAGE_CLASSIFIER_UUID: UUID = UUID(
+    "6d4ef68c-8b63-4f55-b704-b3a2b416d9a7")
 EDIT_DOCUMENT_V1_UUID: UUID = UUID("9f3b1a8e-2c5d-4d7a-9e3b-5f8a1c2d4e7b")
 EDIT_DOCUMENT_V2_UUID: UUID = UUID("d2a7c5e1-6b3f-4e9a-9c1d-7e4b8f2a3c5d")
 EDIT_DOCUMENT_V3_UUID: UUID = UUID("8f4d9b2a-7e3c-4a5b-9c8d-1f6e7d2c4b3a")
@@ -196,6 +198,12 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": SECOND_OPINION_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model that REVIEWS a gated assistant action (currently python_run) before it executes — checks the stated reason, the model's reasoning, and the program against the request and operator profile; unbound, the assistant's own group reviews. Never receives journal work.",
+        "next": None,
+    },
+    "response_language_classifier": {
+        "uuid": RESPONSE_LANGUAGE_CLASSIFIER_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: narrow scorer that predicts which language(s) the assistant's next reply should use before step 0; records reason, per-language Likert confidence and audit but does not steer the reply. Unbound, the assistant's own group classifies. Never receives journal work.",
         "next": None,
     },
     "edit_document_v1": {

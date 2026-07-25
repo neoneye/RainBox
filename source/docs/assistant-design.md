@@ -14,11 +14,14 @@ operator confirmation — is decided by code, never by prompt text.
 
 ## The loop
 
-`handle()` runs a bounded loop (`STEP_LIMIT = 6`). With the
-`assistant.acceptance_criteria` switch on, a code-driven **step 0** precedes
-the loop: one structured call establishes the reply's constraints before any
-work happens (see [Acceptance criteria](#acceptance-criteria)); it consumes
-none of the step limit. Each loop iteration:
+`handle()` runs a bounded loop (`STEP_LIMIT = 6`). Its first model-facing
+activity is the observation-only
+[`response_language_classifier`](#response-language-classifier-experiment).
+With the `assistant.acceptance_criteria` switch on, a separate code-driven
+**step 0** then precedes the loop: one structured call establishes the reply's
+constraints before any work happens (see
+[Acceptance criteria](#acceptance-criteria)); neither preliminary call
+consumes the step limit. Each loop iteration:
 
 1. **Controls** — apply any pending operator `stop`/`redirect` at the step
    boundary (see [Controls](#controls-stop--redirect)).
@@ -157,6 +160,36 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   freshly assembled profile blocks are the model-side signal). Switching the
   active profile preserves room history — it is a soft signal, never
   redaction, and not an audience boundary. See `qa-system.md`.
+
+## Response-language classifier experiment
+
+Before skill retrieval, acceptance criteria and the decide loop, the assistant
+runs one narrow structured classifier. It returns:
+
+- `reason`: a short operator-facing explanation of the evidence;
+- `languages`: BCP-47 `{code, score}` rows, where score uses PlanExe's
+  `1=strong negative, 2=weak negative, 3=neutral, 4=weak positive,
+  5=strong positive` scale;
+- `audit`: exactly `OK` when the classifier trusts that it captured the
+  situation, otherwise a description of likely mistakes or omissions.
+
+The request includes the current operator message, up to six earlier operator
+messages and every validated `languages.rows` entry (tag, level, stance, note).
+Assistant history is omitted so an earlier wrong-language reply cannot become
+a continuity signal. The prompt explicitly separates the language of the
+reply's narration from languages appearing as quoted examples: a request for
+multilingual phrases with English explanations remains an English reply unless
+the operator asks for a genuinely multilingual answer.
+
+This stage is intentionally **observation-only**. Its output is persisted as a
+`response_language_classifier` trace row with the prompts, model response,
+scores, audit, model identity and duration, but it is not added to the decide
+prompt and cannot change the reply. The dedicated binding-only
+`response_language_classifier` role allows scorer-model comparisons on
+`/agentmodel`; when unbound it falls back to the assistant's group. No usable
+group skips the experiment, and call failures are traced and fail open. A
+resolver and downstream directive should be added only after evals show that
+the upstream classification is reliable.
 
 ## Acceptance criteria
 
