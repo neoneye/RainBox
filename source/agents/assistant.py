@@ -184,7 +184,12 @@ class ResponseLanguageItem(BaseModel):
 
 
 class ResponseLanguageClassification(BaseModel):
-    """Prediction of the language(s) the reply should use."""
+    """Prediction of the language(s) the reply should use.
+
+    Keep this schema narrower than AcceptanceCriteria. Language routing must
+    remain independently measurable and must not ask the classifier to repeat
+    deterministic locale, formatting, or work-planning decisions.
+    """
 
     reason: str = Field(
         min_length=1,
@@ -2782,8 +2787,12 @@ class AssistantAgent(ModelGroupAgent):
             # and the freshly assembled profile blocks are the model-side signal.
             messages = [m for m in messages if not _is_context_marker(m)]
             # First model-facing activity: independently predict the reply
-            # language(s), persist the structured result for inspection, then
-            # expose its score-free Markdown rendering to all later calls.
+            # language(s). This intentionally does not use the broader
+            # acceptance-criteria call: separating classification from reply
+            # planning keeps latency, accuracy, and dialect failures
+            # attributable to the correct boundary. Persist the scored result
+            # for evaluation, then expose a score-free Markdown projection to
+            # all later calls.
             self._response_language_classification = None
             self._reply_language_markdown = ""
             self._response_language_classifier_meta = {}
@@ -3974,6 +3983,11 @@ class AssistantAgent(ModelGroupAgent):
         scores retain the classifier's original ordering. Free-text fields
         are collapsed to one line so model output cannot forge Markdown
         headings or list items; language tags already passed BCP-47 validation.
+
+        This is intentionally only a projection. The scored structured result
+        remains the evaluation authority, and no threshold is silently applied
+        here; whether low-scoring rows need a downstream cutoff is an eval
+        question rather than a formatting decision.
         """
         ranked = sorted(
             enumerate(classification.languages),

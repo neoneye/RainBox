@@ -1,10 +1,12 @@
 # Operator locale and language — execution semantics, not output formatting
 
-**Status:** Partially implemented on `main`. The multilingual profile model
-and editor are complete; response-language intent resolution is the next
-unsolved stage. The `acceptance-criteria-v2` branch remains **parked**.
+**Status:** Partially implemented. The multilingual profile model and editor
+are complete on `main`; the narrow response-language classifier and its
+downstream Markdown bridge are implemented on
+`codex/response-language-classifier`. The `acceptance-criteria-v2` and
+`acceptance-criteria-cutover` approaches are superseded for language routing.
 **Date:** 2026-07-24
-**Last updated:** 2026-07-25
+**Last updated:** 2026-07-26
 **Supersedes:** `2026-07-24-step0-language-findings.md` and
 `2026-07-24-modelling-language-preferences.md` (folded in here).
 
@@ -101,6 +103,47 @@ repeatable edge-case corpus, confirm that ranked Markdown produces reliable
 downstream language delivery, and decide whether a score threshold is needed
 for genuinely multilingual replies.
 
+### Why this is better than the earlier acceptance-criteria branches
+
+The earlier branches were useful experiments, but they put language selection
+inside a broad acceptance-criteria decision. That call also planned processing,
+formatting and assumptions, repeated settings already supplied by the
+deterministic locale guide, added latency, and introduced another authority
+surface without a measured locale improvement. Dialect handling also evolved
+through prompt vocabulary examples, which risked leaking those example words
+into unrelated replies.
+
+The current design keeps the useful result and removes those couplings:
+
+- one narrow call answers only which language or languages the next reply
+  should use;
+- typed `{code, score}` rows support multiple exact BCP-47 variants instead of
+  hiding the decision and its confidence inside one prose field;
+- `reason` and `audit` make uncertainty, omissions and deterministic repairs
+  inspectable;
+- profile variants refine broad request intent without implying locale
+  settings or injecting dialect marker vocabulary;
+- assistant-authored history is excluded, so a previous wrong-language reply
+  cannot perpetuate itself;
+- numeric scores remain in the durable trace for evaluation, while every later
+  assistant call receives a compact, stable, score-free Markdown projection;
+- the dedicated model binding and fail-open boundary allow classifier quality
+  to be measured independently of the reply model.
+
+This is therefore the preferred architecture for **language identification**.
+It does not claim to solve every locale problem. Task-scoped locale remains a
+separate concern, and a correct classification such as `en-GB` cannot by
+itself make a reply model consistently deliver British English. Classification
+accuracy and final reply-language fidelity must remain separate metrics.
+
+The architectural judgment is stronger than the current empirical claim:
+manual results are excellent, but the repeatable corpus is still required.
+That corpus must test ties, genuinely multilingual replies, short messages,
+avoided languages, translation intent and dialect conflicts. Because the
+downstream Markdown intentionally omits scores and currently has no threshold,
+it must also verify that low-confidence candidates are not mistaken for
+languages that all need to appear in the reply.
+
 ## Part 1 — what is already solved (do not rebuild it)
 
 Verified by dumping a **mid-loop** prompt (step 3, two tool steps already
@@ -141,10 +184,12 @@ A fresh attempt that rebuilds this will spend its effort on a solved problem.
 
 ## Part 2 — what is not solved
 
-1. **Stored language declarations do not yet drive a per-turn resolver.**
-   The profile can now describe a multilingual operator, but `avoid` does not
-   redirect an implicit choice, `level` does not alter register, and no narrow
-   classifier determines response-language intent before reasoning.
+1. **Stored language declarations only partially drive per-turn execution.**
+   The narrow classifier now determines response-language intent before
+   reasoning, and `prefer` refines a compatible broad target to an exact
+   profile variant. However, `avoid` does not redirect an implicit choice,
+   `level` does not alter register, and the downstream ranked list has no
+   deterministic inclusion threshold.
 2. **Dialect fidelity is bounded by the reply model, not only by the design.**
 3. **Task-scoped locale is unrepresented.** A "2,000 sq ft office in Texas"
    should stay in square feet and USD; nothing in the current model can say

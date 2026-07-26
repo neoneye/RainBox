@@ -231,6 +231,23 @@ edge-case corpus and confirmation that the ranked Markdown reliably controls
 downstream language delivery; further prompt redesign is not currently
 indicated.
 
+This deliberately supersedes using the broad acceptance-criteria call for
+language routing. The classifier has one responsibility, a typed multilingual
+result, a dedicated model binding and an independently inspectable trace. It
+does not repeat deterministic locale settings or inject example dialect
+vocabulary. The acceptance-criteria experiments remain useful evidence: they
+showed that broad planning added latency and another authority surface without
+a measured locale improvement. A correct classification and faithful delivery
+by the reply model are separate metrics; the classifier can correctly choose
+`en-GB` even when a weaker reply model later mixes British and American forms.
+
+The Markdown is a downstream context projection, not a lossless replacement
+for the structured result. Scores stay in the trace so classifier models can be
+evaluated; the ranked list saves prompt tokens and avoids asking later models
+to reinterpret Likert values. It currently has no inclusion threshold, so
+tests must establish whether its reason and ordering are sufficient for
+genuinely multilingual and low-confidence cases.
+
 ## Acceptance criteria
 
 Behind the `assistant.acceptance_criteria` switch (default off), a
