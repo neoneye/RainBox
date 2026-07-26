@@ -2,6 +2,8 @@
 
 Source repository: [supermemoryai/supermemory](https://github.com/supermemoryai/supermemory)
 
+Analyzed revision: [`603d0512fd40e4575e2a075938c1851a898ceeb6`](https://github.com/supermemoryai/supermemory/commit/603d0512fd40e4575e2a075938c1851a898ceeb6)
+
 ## 1. Executive Summary
 
 `supermemory` is a memory/context product monorepo. In this checkout, the core hosted ingestion, extraction, indexing, and retrieval engine does not appear to be fully present. What is present and inspectable:

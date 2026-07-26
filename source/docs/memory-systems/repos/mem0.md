@@ -2,6 +2,8 @@
 
 Source repository: [mem0ai/mem0](https://github.com/mem0ai/mem0)
 
+Analyzed revision: [`31cec11a790868f88c9acafb8b70eb25071f2150`](https://github.com/mem0ai/mem0/commit/31cec11a790868f88c9acafb8b70eb25071f2150)
+
 ## 1. Executive Summary
 
 `mem0` is a library-first and service-backed personal/agent memory layer. In this checkout, the open-source core is concentrated in the Python SDK under `mem0/mem0/memory/`, with configurable embedders, LLMs, vector stores, rerankers, SQLite history, and entity linking.

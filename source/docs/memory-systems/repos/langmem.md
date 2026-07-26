@@ -2,6 +2,8 @@
 
 Source repository: [langchain-ai/langmem](https://github.com/langchain-ai/langmem)
 
+Analyzed revision: [`c01e273b94aa4c06e41d0ed1ccce0db17de2bc11`](https://github.com/langchain-ai/langmem/commit/c01e273b94aa4c06e41d0ed1ccce0db17de2bc11)
+
 ## 1. Executive Summary
 
 `langmem` is not a full memory service. It is a compact set of LangGraph/LangChain primitives for agent memory tools, background reflection, structured extraction, and prompt optimization. The repository intentionally delegates persistence, indexing, and retrieval quality to LangGraph's `BaseStore`.

@@ -739,17 +739,17 @@ Privacy/deletion:
 
 ### Repos Inspected
 
-- [mem0ai/mem0](https://github.com/mem0ai/mem0)
-- [langchain-ai/langmem](https://github.com/langchain-ai/langmem)
-- [plastic-labs/honcho](https://github.com/plastic-labs/honcho)
-- [Gentleman-Programming/engram](https://github.com/Gentleman-Programming/engram)
-- [MemPalace/mempalace](https://github.com/MemPalace/mempalace)
-- [kunal12203/swafra](https://github.com/kunal12203/swafra)
-- [ctxr-dev/llm-wiki-memory](https://github.com/ctxr-dev/llm-wiki-memory)
-- [neoneye/RainBox](https://github.com/neoneye/RainBox)
-- [letta-ai/letta](https://github.com/letta-ai/letta)
-- [supermemoryai/supermemory](https://github.com/supermemoryai/supermemory)
-- [amitpatole/verel](https://github.com/amitpatole/verel)
+- [mem0ai/mem0](https://github.com/mem0ai/mem0) at [`31cec11a790868f88c9acafb8b70eb25071f2150`](https://github.com/mem0ai/mem0/commit/31cec11a790868f88c9acafb8b70eb25071f2150)
+- [langchain-ai/langmem](https://github.com/langchain-ai/langmem) at [`c01e273b94aa4c06e41d0ed1ccce0db17de2bc11`](https://github.com/langchain-ai/langmem/commit/c01e273b94aa4c06e41d0ed1ccce0db17de2bc11)
+- [plastic-labs/honcho](https://github.com/plastic-labs/honcho) at [`eb386c3ceb77774b29108f9ab114e71d52b7d420`](https://github.com/plastic-labs/honcho/commit/eb386c3ceb77774b29108f9ab114e71d52b7d420)
+- [Gentleman-Programming/engram](https://github.com/Gentleman-Programming/engram) at [`44faeee1fb4fabdee4ba9619df55af485f3d06eb`](https://github.com/Gentleman-Programming/engram/commit/44faeee1fb4fabdee4ba9619df55af485f3d06eb)
+- [MemPalace/mempalace](https://github.com/MemPalace/mempalace) at [`afd0428823b47f9a9d1d68c450d54bb0045a4988`](https://github.com/MemPalace/mempalace/commit/afd0428823b47f9a9d1d68c450d54bb0045a4988)
+- [kunal12203/swafra](https://github.com/kunal12203/swafra) at [`24dba18a4194aef0cb0d6d6c68cf46e6fcbf2da7`](https://github.com/kunal12203/swafra/commit/24dba18a4194aef0cb0d6d6c68cf46e6fcbf2da7)
+- [ctxr-dev/llm-wiki-memory](https://github.com/ctxr-dev/llm-wiki-memory) at [`b7cc76a493573baac133969b324a874990556146`](https://github.com/ctxr-dev/llm-wiki-memory/commit/b7cc76a493573baac133969b324a874990556146)
+- [neoneye/RainBox](https://github.com/neoneye/RainBox) at [`0792f8a07f6ff728931e928b2bdf7460492ac011`](https://github.com/neoneye/RainBox/commit/0792f8a07f6ff728931e928b2bdf7460492ac011)
+- [letta-ai/letta](https://github.com/letta-ai/letta) at [`6d8cb7fd48938b629aad5770faa051a8d42e1e9f`](https://github.com/letta-ai/letta/commit/6d8cb7fd48938b629aad5770faa051a8d42e1e9f)
+- [supermemoryai/supermemory](https://github.com/supermemoryai/supermemory) at [`603d0512fd40e4575e2a075938c1851a898ceeb6`](https://github.com/supermemoryai/supermemory/commit/603d0512fd40e4575e2a075938c1851a898ceeb6)
+- [amitpatole/verel](https://github.com/amitpatole/verel) at [`df80efe8207a99585a2ebce36fc6e32ba5077e2e`](https://github.com/amitpatole/verel/commit/df80efe8207a99585a2ebce36fc6e32ba5077e2e)
 
 ### Commands Used
 

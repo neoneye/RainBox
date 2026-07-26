@@ -2,6 +2,8 @@
 
 Source repository: [MemPalace/mempalace](https://github.com/MemPalace/mempalace)
 
+Analyzed revision: [`afd0428823b47f9a9d1d68c450d54bb0045a4988`](https://github.com/MemPalace/mempalace/commit/afd0428823b47f9a9d1d68c450d54bb0045a4988)
+
 ## 1. Executive Summary
 
 `mempalace` is a local-first, verbatim-memory system for coding agents and personal AI workflows. Its core bet is almost the opposite of `mem0`: do not summarize, paraphrase, or LLM-extract the primary memory. Store original text chunks as "drawers", index them with embeddings and metadata, then retrieve the original evidence.

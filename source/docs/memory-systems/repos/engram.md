@@ -2,6 +2,8 @@
 
 Source repository: [Gentleman-Programming/engram](https://github.com/Gentleman-Programming/engram)
 
+Analyzed revision: [`44faeee1fb4fabdee4ba9619df55af485f3d06eb`](https://github.com/Gentleman-Programming/engram/commit/44faeee1fb4fabdee4ba9619df55af485f3d06eb)
+
 ## 1. Executive Summary
 
 `engram` is a local-first memory system for coding agents. It is implemented as a single Go binary with SQLite + FTS5, exposed through CLI, HTTP, MCP stdio, TUI, and sync/cloud replication paths.

@@ -2,6 +2,8 @@
 
 Source repository: [kunal12203/swafra](https://github.com/kunal12203/swafra)
 
+Analyzed revision: [`24dba18a4194aef0cb0d6d6c68cf46e6fcbf2da7`](https://github.com/kunal12203/swafra/commit/24dba18a4194aef0cb0d6d6c68cf46e6fcbf2da7)
+
 ## 1. Executive Summary
 
 `swafra` is a compact, local-first graph-RAG memory server for MCP clients. It stores source text as embedded chunks, annotates chunks with regex-extracted entities, dates, and preferences, connects chunks with several edge types, and retrieves with a four-signal hybrid ranker plus graph expansion.

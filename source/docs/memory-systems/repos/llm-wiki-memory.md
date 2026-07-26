@@ -2,6 +2,8 @@
 
 Source repository: [ctxr-dev/llm-wiki-memory](https://github.com/ctxr-dev/llm-wiki-memory)
 
+Analyzed revision: [`b7cc76a493573baac133969b324a874990556146`](https://github.com/ctxr-dev/llm-wiki-memory/commit/b7cc76a493573baac133969b324a874990556146)
+
 ## 1. Executive Summary
 
 `llm-wiki-memory` is a local-first memory runtime for coding agents. It stores Markdown leaves in a filesystem wiki, maintains navigable `index.md` files through `@ctxr/skill-llm-wiki`, searches with on-device embeddings, and exposes the result through MCP, CLI commands, and Claude Code lifecycle hooks. Its primary memory unit is either a typed atomic note, a captured plan/investigation, or a verbatim full document. Private memory can be layered with repository-owned shared wikis.

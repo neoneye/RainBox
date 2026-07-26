@@ -2,6 +2,8 @@
 
 Source repository: [plastic-labs/honcho](https://github.com/plastic-labs/honcho)
 
+Analyzed revision: [`eb386c3ceb77774b29108f9ab114e71d52b7d420`](https://github.com/plastic-labs/honcho/commit/eb386c3ceb77774b29108f9ab114e71d52b7d420)
+
 ## 1. Executive Summary
 
 `honcho` is a FastAPI/Postgres memory service for stateful agents. Its core model is not "store arbitrary facts"; it stores messages/events, then derives peer-centric representations in the background. The system models workspaces, sessions, peers, messages, message embeddings, observer/observed collections, documents/observations, queue items, and active queue sessions.

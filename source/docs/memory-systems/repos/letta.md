@@ -2,6 +2,8 @@
 
 Source repository: [letta-ai/letta](https://github.com/letta-ai/letta)
 
+Analyzed revision: [`6d8cb7fd48938b629aad5770faa051a8d42e1e9f`](https://github.com/letta-ai/letta/commit/6d8cb7fd48938b629aad5770faa051a8d42e1e9f)
+
 ## 1. Executive Summary
 
 `letta` is an agent runtime with memory as part of agent state. Its memory model is older and deeper than most repos here: core in-context memory blocks, archival semantic memory, recall over conversation history, file/source memory, and newer git-backed memory projection support.

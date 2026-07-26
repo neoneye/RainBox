@@ -2,6 +2,8 @@
 
 Source repository: [amitpatole/verel](https://github.com/amitpatole/verel)
 
+Analyzed revision: [`df80efe8207a99585a2ebce36fc6e32ba5077e2e`](https://github.com/amitpatole/verel/commit/df80efe8207a99585a2ebce36fc6e32ba5077e2e)
+
 ## 1. Executive Summary
 
 `verel` is not primarily a memory product; it is a verification-first agent framework. Its memory package is nevertheless one of the most technically interesting in the workspace because it treats memory as an epistemic/trust problem, not just retrieval.
