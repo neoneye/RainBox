@@ -15,7 +15,7 @@ operator confirmation — is decided by code, never by prompt text.
 ## The loop
 
 `handle()` runs a bounded loop (`STEP_LIMIT = 6`). Its first model-facing
-activity is the observation-only
+activity is the
 [`response_language_classifier`](#response-language-classifier-experiment).
 With the `assistant.acceptance_criteria` switch on, a separate code-driven
 **step 0** then precedes the loop: one structured call establishes the reply's
@@ -98,9 +98,12 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   the request — and the supporting context follows. In order: the
   **current request** (a bare `<current_request>` tag, no attributes: the
   section order carries the emphasis and the time anchor is
-  current_local_time at the end), the **acceptance criteria**
-  (`<acceptance_criteria_json>`, directly after the request so the request
-  and its constraints travel together — present only when the
+  current_local_time at the end), the **response-language classification**
+  (`<reply_language_markdown authority="context" format="markdown">`,
+  directly after the request; reason, score-free language list ranked by
+  confidence, and audit), the **acceptance criteria**
+  (`<acceptance_criteria_json>`, directly after the language block so the
+  request and its constraints travel together — present only when the
   `assistant.acceptance_criteria` switch is on and the step-0 call
   succeeded; see [Acceptance criteria](#acceptance-criteria)), the
   transcript (`kind == "message"` rows
@@ -193,15 +196,40 @@ repair. It never invents a score for an omitted row; omissions are instead
 listed in `audit`. This keeps the useful classification exact without hiding
 upstream model-quality failures.
 
-This stage is intentionally **observation-only**. Its output is persisted as a
-`response_language_classifier` trace row with the prompts, model response,
-scores, audit, model identity and duration, but it is not added to the decide
-prompt and cannot change the reply. The dedicated binding-only
-`response_language_classifier` role allows scorer-model comparisons on
-`/agentmodel`; when unbound it falls back to the assistant's group. No usable
-group skips the experiment, and call failures are traced and fail open. A
-resolver and downstream directive should be added only after evals show that
-the upstream classification is reliable.
+The structured output is persisted as a `response_language_classifier` trace
+row with the prompts, model response, scores, audit, model identity and
+duration. Code also renders it as compact Markdown for every later assistant
+model call: reason, language tags sorted by descending score (ties retain the
+classifier's original order), and audit. Numeric scores are omitted from the
+Markdown; the system prompt explains that ordering carries confidence and that
+not every scored candidate must appear in the reply:
+
+```xml
+<reply_language_markdown authority="context" format="markdown">
+## Reason
+...
+
+## Languages - highest confidence first
+- `en-GB`
+- `da`
+
+## Audit
+OK
+</reply_language_markdown>
+```
+
+The dedicated binding-only `response_language_classifier` role allows
+scorer-model comparisons on `/agentmodel`; when unbound it falls back to the
+assistant's group. If neither binding has a usable group, no Markdown block is
+added. Call failures are traced and fail open.
+
+**Status (2026-07-26):** live exploratory use is very close to the operator's
+target. Multilingual-content prompts and translation intent classify well, and
+a broad target now retains the compatible preferred profile dialect (`English`
+with preferred `en-GB` becomes `en-GB`). The remaining gate is a repeatable
+edge-case corpus and confirmation that the ranked Markdown reliably controls
+downstream language delivery; further prompt redesign is not currently
+indicated.
 
 ## Acceptance criteria
 
@@ -210,10 +238,13 @@ code-driven **step 0** establishes the reply's constraints before the decide
 loop starts — enforced by the loop, so the model cannot skip or forget it.
 One structured call returns an `AcceptanceCriteria`:
 
-- `response_language` — with the reason, e.g. `"en-US (mirrors the current
-  message)"`. The operator's CURRENT message alone decides; the assistant's
-  own earlier replies are never a language reference (a prior reply in the
-  wrong language is an error to correct, not continuity to preserve).
+- `response_language` — with the reason, e.g. `"en-GB (English target;
+  preferred profile variant)"`. The current request decides the language
+  family and explicit language/dialect instructions always win. The preceding
+  `reply_language_markdown` supplies the compatible exact profile variant and
+  ranked context. The assistant's own earlier replies are never a language
+  reference (a prior reply in the wrong language is an error to correct, not
+  continuity to preserve).
 - `processing` — preferences that steer the WORK (the target unit for an
   ambiguous conversion, the timezone for a reminder).
 - `formatting` — preferences that steer the FINAL message (separators, date

@@ -245,11 +245,12 @@ def test_system_prompt_prioritizes_criteria_only_while_switch_on(room):
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
     system = prompts[0]["system"]
-    assert ('<source rank="3">acceptance_criteria_json' in system)
+    assert ('<source rank="3">reply_language_markdown' in system)
+    assert ('<source rank="4">acceptance_criteria_json' in system)
     assert '<source rank="2">current_request</source>' in system
     assert "acceptance_criteria_json is the established plan" in system
     # The other sources are still all ranked (shifted, not dropped).
-    assert '<source rank="6">conversation_history (context only)</source>' in system
+    assert '<source rank="7">conversation_history (context only)</source>' in system
 
 
 def test_step0_consumes_none_of_the_step_limit(room):

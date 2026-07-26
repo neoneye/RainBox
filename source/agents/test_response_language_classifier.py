@@ -1,4 +1,4 @@
-"""Tests for the assistant's observation-only response-language classifier."""
+"""Tests for the assistant's response-language classifier and Markdown bridge."""
 
 from uuid import uuid4
 
@@ -246,6 +246,36 @@ def test_broad_code_stays_broad_without_unambiguous_profile_variant():
     assert "omitted declared profile code(s): en-GB, en-US" in result.audit
 
 
+def test_markdown_sorts_by_score_stably_and_omits_scores():
+    classification = ResponseLanguageClassification(
+        reason="The request asks for multilingual narration.",
+        languages=[
+            ResponseLanguageItem(code="fr", score=4),
+            ResponseLanguageItem(code="en-GB", score=5),
+            ResponseLanguageItem(code="es", score=4),
+            ResponseLanguageItem(code="da", score=1),
+        ],
+        audit="OK",
+    )
+    markdown = AssistantAgent._format_reply_language_markdown(
+        classification)
+    assert markdown == (
+        "## Reason\n"
+        "The request asks for multilingual narration.\n\n"
+        "## Languages - highest confidence first\n"
+        "- `en-GB`\n"
+        "- `fr`\n"
+        "- `es`\n"
+        "- `da`\n\n"
+        "## Audit\n"
+        "OK"
+    )
+    assert "score" not in markdown.casefold()
+    # Formatting is a view: it must not reorder the stored structured result.
+    assert [item.code for item in classification.languages] == [
+        "fr", "en-GB", "es", "da"]
+
+
 def test_classifier_is_first_observed_step_and_does_not_consume_budget(room):
     agent = _agent()
     order: list[str] = []
@@ -275,11 +305,19 @@ def test_classifier_is_first_observed_step_and_does_not_consume_budget(room):
     assert '"audit": "OK"' in (rows[0].observation_preview or "")
 
 
-def test_classification_is_not_injected_or_used_downstream(room):
+def test_ranked_markdown_is_injected_into_every_later_decide_without_scores(room):
     agent = _agent()
     agent._request_response_language_classification = (
         lambda **_: _classification())
     decide_prompts: list[dict[str, str]] = []
+    decisions = [
+        AssistantStepDecision(
+            reason="probe",
+            action=AssistantActionName.MEMORY_QUERY,
+            args={"bogus": "force one more decide step"},
+        ),
+        _reply(),
+    ]
 
     def fake_completion(*, system_prompt, user_prompt, response_model,
                         validator=None):
@@ -287,16 +325,47 @@ def test_classification_is_not_injected_or_used_downstream(room):
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
         })
-        return _reply()
+        return decisions.pop(0)
 
     agent._structured_completion = fake_completion
     result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
     assert result["status"] == "finished"
-    assert len(decide_prompts) == 1
-    decide_prompt = decide_prompts[0]["user_prompt"]
-    assert "response_language_classifier" not in decide_prompt
-    assert _classification().reason not in decide_prompt
-    assert '"score": 5' not in decide_prompt
+    assert len(decide_prompts) == 2
+    for call in decide_prompts:
+        decide_prompt = call["user_prompt"]
+        system_prompt = call["system_prompt"]
+        assert decide_prompt.count("<reply_language_markdown") == 1
+        assert _classification().reason in decide_prompt
+        assert decide_prompt.index("- `en-GB`") < decide_prompt.index("- `da`")
+        assert "score" not in decide_prompt.casefold()
+        assert (decide_prompt.index("</current_request>")
+                < decide_prompt.index("<reply_language_markdown")
+                < decide_prompt.index("<conversation_history"))
+        assert (
+            '<source rank="3">reply_language_markdown' in system_prompt)
+        assert "scores are intentionally omitted" in system_prompt
+
+
+def test_acceptance_criteria_and_second_opinion_see_language_markdown():
+    agent = _agent()
+    agent._reply_language_markdown = (
+        agent._format_reply_language_markdown(_classification()))
+    messages = [{"sender_type": "human", "text": "Translate this to English."}]
+    criteria_prompt = agent._build_acceptance_criteria_prompt(messages)
+    assert "<reply_language_markdown" in criteria_prompt
+    assert "- `en-GB`" in criteria_prompt
+    assert "score" not in criteria_prompt.casefold()
+
+    decision = AssistantStepDecision(
+        reason="calculate",
+        action=AssistantActionName.PYTHON_RUN,
+        args={"code": "print(1)"},
+    )
+    reviewer_prompt = agent._build_second_opinion_prompt(
+        decision, reasoning=None, messages=messages)
+    assert "<reply_language_markdown" in reviewer_prompt
+    assert "- `en-GB`" in reviewer_prompt
+    assert "score" not in reviewer_prompt.casefold()
 
 
 def test_classifier_failure_is_traced_and_assistant_continues(room):

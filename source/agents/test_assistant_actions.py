@@ -132,7 +132,7 @@ def test_source_priority_policy_is_in_system_prompt_only():
     assert '<source rank="1">successful current_turn_steps observations</source>' in (
         ASSISTANT_SYSTEM_PROMPT
     )
-    assert '<source rank="5">conversation_history (context only)</source>' in (
+    assert '<source rank="6">conversation_history (context only)</source>' in (
         ASSISTANT_SYSTEM_PROMPT
     )
     # Ship dark: the criteria section enters the system prompt only when the
