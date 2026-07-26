@@ -1,5 +1,7 @@
 # RainBox Memory System Report
 
+Source repository: [neoneye/RainBox](https://github.com/neoneye/RainBox)
+
 ## 1. Executive Summary
 
 `rainbox` is a local-model personal assistant application with a first-class memory subsystem. It is not a standalone memory library like `mem0`, not a local corpus retriever like `mempalace`, and not a verification framework like `verel`. It is an operator-facing assistant platform where memory is tied into chat, assistant actions, review UI, telemetry, feedback, and evals.

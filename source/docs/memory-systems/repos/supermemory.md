@@ -1,5 +1,7 @@
 # Supermemory Memory System Report
 
+Source repository: [supermemoryai/supermemory](https://github.com/supermemoryai/supermemory)
+
 ## 1. Executive Summary
 
 `supermemory` is a memory/context product monorepo. In this checkout, the core hosted ingestion, extraction, indexing, and retrieval engine does not appear to be fully present. What is present and inspectable:
@@ -266,4 +268,3 @@ Study Supermemory for product/API surface design and memory graph UX more than f
 - Prompt injection: `supermemory/packages/tools/src/shared/context.ts`.
 - Client helper: `supermemory/packages/tools/src/shared/memory-client.ts`.
 - Graph UI: `supermemory/packages/memory-graph/src/`.
-

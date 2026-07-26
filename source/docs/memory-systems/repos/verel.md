@@ -1,5 +1,7 @@
 # Verel Memory System Report
 
+Source repository: [amitpatole/verel](https://github.com/amitpatole/verel)
+
 ## 1. Executive Summary
 
 `verel` is not primarily a memory product; it is a verification-first agent framework. Its memory package is nevertheless one of the most technically interesting in the workspace because it treats memory as an epistemic/trust problem, not just retrieval.
@@ -307,4 +309,3 @@ Add consolidation/promotion/replication later.
 - Scope lattice: `verel/src/verel/memory/lattice.py`.
 - Backends: `verel/src/verel/memory/*_backend.py`, `hosted.py`, `replicated.py`.
 - Tests: `verel/tests/test_memory*.py`, `verel/tests/test_consolidation.py`, `verel/tests/test_promotion.py`, `verel/tests/test_lattice.py`.
-

@@ -1,5 +1,7 @@
 # Swafra Memory System Report
 
+Source repository: [kunal12203/swafra](https://github.com/kunal12203/swafra)
+
 ## 1. Executive Summary
 
 `swafra` is a compact, local-first graph-RAG memory server for MCP clients. It stores source text as embedded chunks, annotates chunks with regex-extracted entities, dates, and preferences, connects chunks with several edge types, and retrieves with a four-signal hybrid ranker plus graph expansion.

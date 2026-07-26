@@ -725,31 +725,31 @@ Privacy/deletion:
 
 ### Individual Reports
 
-- `reports/repos/mem0.md`
-- `reports/repos/langmem.md`
-- `reports/repos/honcho.md`
-- `reports/repos/engram.md`
-- `reports/repos/mempalace.md`
-- `reports/repos/swafra.md`
-- `reports/repos/llm-wiki-memory.md`
-- `reports/repos/rainbox.md`
-- `reports/repos/letta.md`
-- `reports/repos/supermemory.md`
-- `reports/repos/verel.md`
+- [`mem0`](repos/mem0.md)
+- [`langmem`](repos/langmem.md)
+- [`honcho`](repos/honcho.md)
+- [`engram`](repos/engram.md)
+- [`mempalace`](repos/mempalace.md)
+- [`swafra`](repos/swafra.md)
+- [`llm-wiki-memory`](repos/llm-wiki-memory.md)
+- [`rainbox`](repos/rainbox.md)
+- [`letta`](repos/letta.md)
+- [`supermemory`](repos/supermemory.md)
+- [`verel`](repos/verel.md)
 
 ### Repos Inspected
 
-- `mem0`
-- `langmem`
-- `honcho`
-- `engram`
-- `mempalace`
-- `swafra`
-- `llm-wiki-memory`
-- `rainbox`
-- `letta`
-- `supermemory`
-- `verel`
+- [mem0ai/mem0](https://github.com/mem0ai/mem0)
+- [langchain-ai/langmem](https://github.com/langchain-ai/langmem)
+- [plastic-labs/honcho](https://github.com/plastic-labs/honcho)
+- [Gentleman-Programming/engram](https://github.com/Gentleman-Programming/engram)
+- [MemPalace/mempalace](https://github.com/MemPalace/mempalace)
+- [kunal12203/swafra](https://github.com/kunal12203/swafra)
+- [ctxr-dev/llm-wiki-memory](https://github.com/ctxr-dev/llm-wiki-memory)
+- [neoneye/RainBox](https://github.com/neoneye/RainBox)
+- [letta-ai/letta](https://github.com/letta-ai/letta)
+- [supermemoryai/supermemory](https://github.com/supermemoryai/supermemory)
+- [amitpatole/verel](https://github.com/amitpatole/verel)
 
 ### Commands Used
 

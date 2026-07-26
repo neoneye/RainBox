@@ -1,5 +1,7 @@
 # Letta Memory System Report
 
+Source repository: [letta-ai/letta](https://github.com/letta-ai/letta)
+
 ## 1. Executive Summary
 
 `letta` is an agent runtime with memory as part of agent state. Its memory model is older and deeper than most repos here: core in-context memory blocks, archival semantic memory, recall over conversation history, file/source memory, and newer git-backed memory projection support.
@@ -278,4 +280,3 @@ Letta is worth studying if you are building a full agent runtime. It is heavier 
 - Conversation search: `letta/letta/services/message_manager.py`.
 - Git memory: `letta/letta/services/memory_repo/`.
 - Tests: `letta/tests/`.
-

@@ -1,5 +1,7 @@
 # LangMem Memory System Report
 
+Source repository: [langchain-ai/langmem](https://github.com/langchain-ai/langmem)
+
 ## 1. Executive Summary
 
 `langmem` is not a full memory service. It is a compact set of LangGraph/LangChain primitives for agent memory tools, background reflection, structured extraction, and prompt optimization. The repository intentionally delegates persistence, indexing, and retrieval quality to LangGraph's `BaseStore`.
@@ -245,4 +247,3 @@ LangMem is best when you are already building on LangGraph and want memory primi
 - Graph/RAG extras: `langmem/src/langmem/graph_rag.py`, `langmem/src/langmem/graphs/`.
 - Short-term summarization: `langmem/src/langmem/short_term/summarization.py`.
 - Tests: `langmem/tests/`.
-

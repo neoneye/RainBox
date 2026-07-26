@@ -1,5 +1,7 @@
 # MemPalace Memory System Report
 
+Source repository: [MemPalace/mempalace](https://github.com/MemPalace/mempalace)
+
 ## 1. Executive Summary
 
 `mempalace` is a local-first, verbatim-memory system for coding agents and personal AI workflows. Its core bet is almost the opposite of `mem0`: do not summarize, paraphrase, or LLM-extract the primary memory. Store original text chunks as "drawers", index them with embeddings and metadata, then retrieve the original evidence.
@@ -397,4 +399,3 @@ For your own memory system, MemPalace is the strongest reminder that extraction 
 - Dedup/repair/sync: `mempalace/mempalace/dedup.py`, `repair.py`, `sync.py`.
 - Benchmarks: `mempalace/benchmarks/`.
 - Tests: `mempalace/tests/`.
-

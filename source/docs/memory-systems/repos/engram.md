@@ -1,5 +1,7 @@
 # Engram Memory System Report
 
+Source repository: [Gentleman-Programming/engram](https://github.com/Gentleman-Programming/engram)
+
 ## 1. Executive Summary
 
 `engram` is a local-first memory system for coding agents. It is implemented as a single Go binary with SQLite + FTS5, exposed through CLI, HTTP, MCP stdio, TUI, and sync/cloud replication paths.
@@ -283,4 +285,3 @@ Avoid copying if your target is consumer chat personalization or multi-tenant ho
 - HTTP server: `engram/internal/server/server.go`.
 - Sync: `engram/internal/sync/`, `engram/internal/cloud/`.
 - Tests: `engram/internal/**/*_test.go`.
-

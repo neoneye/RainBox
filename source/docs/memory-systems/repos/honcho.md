@@ -1,5 +1,7 @@
 # Honcho Memory System Report
 
+Source repository: [plastic-labs/honcho](https://github.com/plastic-labs/honcho)
+
 ## 1. Executive Summary
 
 `honcho` is a FastAPI/Postgres memory service for stateful agents. Its core model is not "store arbitrary facts"; it stores messages/events, then derives peer-centric representations in the background. The system models workspaces, sessions, peers, messages, message embeddings, observer/observed collections, documents/observations, queue items, and active queue sessions.
@@ -286,4 +288,3 @@ Avoid if your goal is a small local memory layer. Honcho is closer to memory inf
 - Dialectic chat: `honcho/src/dialectic/`.
 - Reconciler: `honcho/src/reconciler/`.
 - Tests/evals: `honcho/tests/`.
-
