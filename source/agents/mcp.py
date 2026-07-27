@@ -142,11 +142,10 @@ class MCPAgent(ModelGroupAgent):
                     self.name, model_name, provider_id,
                 )
                 t0 = time.monotonic()
-                # prepare_llm: for providers that support it (LM Studio),
-                # ensures the loaded n_ctx is at least args["context_window"]
-                # (otherwise llama.cpp rejects long prompts with
-                # "n_keep > n_ctx"), then builds the LLM. For Jan this is a
-                # no-op — context length is configured in Jan's UI.
+                # prepare_llm asks the selected provider to ensure the model is
+                # ready with the configured context window, then builds the LLM.
+                # Providers that do not support explicit loading treat that
+                # preparation step as a no-op.
                 the_llm = llm_module.prepare_llm(provider_id, model_name, args)
                 reply = asyncio.run(self._arun(the_llm, user_prompt))
                 logger.info(

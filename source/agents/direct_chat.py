@@ -1,7 +1,7 @@
 """Direct LLM chat agent — the responder for room_type='direct' chatrooms.
 
 A direct room is a one-to-one conversation between the operator and a single
-model, LM Studio-style: the model sees the ENTIRE room history as proper
+model: the model sees the ENTIRE room history as proper
 system/user/assistant chat messages (not the IRC-style transcript the
 group-chat agents get), and replies with one plain-text completion. No
 structured output, no tools, no memory retrieval, no persona.
@@ -116,9 +116,9 @@ class DirectChatAgent(Agent):
         try:
             provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
             logger.info(
-                "agent %s: streaming from model %s (this loads it into the "
-                "provider if it isn't already; a large cold model may take a while)",
-                self.name, model_name,
+                "agent %s: streaming from model %s (provider %s; a cold model "
+                "may take a while)",
+                self.name, model_name, provider_id,
             )
             if request_timeout:
                 # The HTTP-client field differs per path: native Ollama reads

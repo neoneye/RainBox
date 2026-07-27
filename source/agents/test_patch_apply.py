@@ -1,6 +1,6 @@
 """Tests for patch_apply.apply_patches.
 
-Pure-function tests; no DB / LM Studio.
+Pure-function tests; no DB or model server.
 
     python -m pytest test_patch_apply.py -v
 """

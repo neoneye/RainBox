@@ -12,7 +12,7 @@ docs/proposals/2026-06-19-improvements-v2.md:
 - query project status: the read-only QueryAgent handler path that
   `memory_query` reuses still returns text.
 
-No LM Studio dependency. The memory cases use the deterministic token-overlap
+No live model-provider dependency. The memory cases use deterministic token-overlap
 retriever; the project-status case calls a read-only handler directly.
 
 Trace-shape acceptance cases (two-step trace, step cap, failed action) are

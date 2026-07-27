@@ -1,5 +1,5 @@
 """Tests for memory_retrieval: deterministic token-overlap retrieval and
-formatting. No LM Studio dependency.
+formatting. No live model-provider dependency.
 
 Per-test cleanup tags rows with `subject="test-<uuid>"` and deletes by
 that tag (cascade removes evidence rows).

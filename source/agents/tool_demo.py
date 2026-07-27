@@ -112,13 +112,13 @@ class ToolDemoAgent(ModelGroupAgent):
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
             try:
-                _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+                provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
                 logger.info(
-                    "agent %s: calling model %s via FunctionAgent (this loads it "
-                    "into LM Studio if it isn't already; a large cold model may "
-                    "take a while)",
+                    "agent %s: calling model %s (provider %s) via FunctionAgent; "
+                    "a cold model may take a while",
                     self.name,
                     model_name,
+                    provider_id,
                 )
                 t0 = time.monotonic()
                 # FunctionAgent rejects an LLM that doesn't advertise function
@@ -127,7 +127,7 @@ class ToolDemoAgent(ModelGroupAgent):
                 # is_function_calling_model=True in their resolved args — so no
                 # forcing here. A misconfigured (non-FC) member just fails this
                 # candidate and falls through to the next.
-                the_llm = prepare_llm(_provider_id, model_name, args)
+                the_llm = prepare_llm(provider_id, model_name, args)
                 reply = asyncio.run(self._arun(the_llm, user_prompt))
                 logger.info(
                     "agent %s: model %s responded in %.1fs",

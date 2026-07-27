@@ -2,7 +2,7 @@
 creates a memory row; a non-memory query bypasses the memory dispatcher
 and reaches the existing Q&A path.
 
-No LM Studio dependency: the Q&A path is exercised via monkeypatched
+No live model-provider dependency: the Q&A path is exercised via monkeypatched
 internals so the test stays deterministic.
 """
 
@@ -44,7 +44,7 @@ def room_with_human(app_ctx):
 
 
 def _stub_query_internals(monkeypatch):
-    """Make the Q&A path a no-op so handle() doesn't hit LM Studio."""
+    """Make the Q&A path a no-op so handle() doesn't call a live model."""
     monkeypatch.setattr(query_agent, "_load_kb", lambda: None)
     monkeypatch.setattr(query_agent, "_vector_store", lambda: None)
     monkeypatch.setattr(query_agent, "_ensure_populated", lambda vs: None)

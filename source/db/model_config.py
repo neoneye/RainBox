@@ -279,16 +279,16 @@ def sync_model_configs(
             if not cfg.available:
                 cfg.available = True
                 re_enabled += 1
-            # Refresh size_bytes for currently-available models so the field
-            # tracks the file LM Studio is actually serving. size_bytes is
-            # observational metadata (not the immutable `arguments` blob),
-            # so updating is safe.
+            # Refresh size_bytes for currently available models so the field
+            # tracks what the provider is actually serving. size_bytes is
+            # observational metadata (not the immutable `arguments` blob), so
+            # updating is safe.
             if size is not None and cfg.size_bytes != size:
                 cfg.size_bytes = size
             # Only with the explicit force flag do we mutate an existing row's
-            # arguments — refreshing is_function_calling_model to match what LM
-            # Studio reports (reassign the dict so SQLAlchemy sees the JSONB
-            # change).
+            # arguments — refreshing is_function_calling_model to match what
+            # the provider reports (reassign the dict so SQLAlchemy sees the
+            # JSONB change).
             if (
                 force_update_arguments
                 and name in func_calling

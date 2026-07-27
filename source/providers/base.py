@@ -1,7 +1,7 @@
 """Provider Protocol — the contract every backend must satisfy.
 
-A Provider is the integration layer between rainbox and one
-local/remote LLM server (LM Studio, Jan, eventually Ollama, OpenRouter).
+A Provider is the integration layer between rainbox and one local or remote
+LLM service (for example LM Studio, Jan, or Ollama).
 The webapp talks to all providers through this interface; per-backend
 quirks live inside each provider module.
 """

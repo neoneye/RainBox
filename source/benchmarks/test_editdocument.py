@@ -1,6 +1,6 @@
 """Tests for benchmarks.editdocument.
 
-Deterministic / fast / no LM Studio. Verifies the seeded test cases are
+Deterministic / fast / no live model provider. Verifies the seeded test cases are
 self-consistent (the expected output really is reachable via valid
 patches), and that the runner records correct/failure outcomes given
 stubbed agents.

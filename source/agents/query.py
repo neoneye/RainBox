@@ -78,9 +78,9 @@ class QueryAgent(Agent):
         )
 
         # Memory commands take precedence over Q&A retrieval and must not
-        # depend on LM Studio / pgvector being healthy: parse first, dispatch,
-        # and return without touching the Q&A KB. Anything that doesn't parse
-        # falls through to the existing Q&A path below.
+        # depend on the model provider / pgvector being healthy: parse first,
+        # dispatch, and return without touching the Q&A KB. Anything that
+        # doesn't parse falls through to the existing Q&A path below.
         from memory.ops import handle_memory_command, parse_memory_command
         mem_cmd = parse_memory_command(query)
         if mem_cmd is not None:

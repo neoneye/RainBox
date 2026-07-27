@@ -1,7 +1,7 @@
 """Tests for the procedural-skills loader: markdown + frontmatter, base/overlay
 merge, id normalization, and the candidate/active/supersede/reject rules.
 
-No DB and no LM Studio: the loader is pure filesystem + parsing. Tests write
+No DB and no model server: the loader is pure filesystem + parsing. Tests write
 skill files into tmp dirs and pass them explicitly.
 """
 

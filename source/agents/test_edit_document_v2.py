@@ -3,7 +3,7 @@
 v2 mirrors v1's tests (schema, validator, renderer, handle) and adds
 three v2-specific schema tests for the `status` / `comment` fields. Like
 v1, schema/validator/renderer tests are pure functions; handle() tests
-stub `_structured_call` so they don't need LM Studio.
+stub `_structured_call` so they don't need a live model provider.
 
     python -m pytest test_agent_edit_document_v2.py -v
 """
@@ -287,7 +287,7 @@ def app_ctx():
 
 def _stub_agent(app_ctx, monkeypatch, response_plan: EditPlanV2):
     """Return an EditDocumentAgentV2 whose _structured_call returns the given
-    plan instead of hitting LM Studio. Avoids any model-group dependency.
+    plan instead of calling a live model. Avoids any model-group dependency.
     The stub accepts the optional `validator` kwarg added in v1 but does NOT
     invoke it — happy-path tests pass valid plans."""
     agent = EditDocumentAgentV2(

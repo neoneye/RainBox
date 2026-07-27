@@ -1,6 +1,6 @@
 """Shared fixtures for the tools/ tests.
 
-Everything is local (real subprocess + real Postgres); no LM Studio is involved,
+Everything is local (real subprocess + real Postgres); no model server is involved,
 so nothing skips. The DB fixture creates a throwaway room with no agent members
 and tears it (and everything attached) down afterward, so these tests don't
 accumulate rows in the shared dev database.

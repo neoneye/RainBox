@@ -1,6 +1,6 @@
 """Tests for the assistant decision contract and the fake-model seam.
 
-No DB and no LM Studio dependency: these exercise pure schema + helper
+No DB and no live model-provider dependency: these exercise pure schema + helper
 behaviour. They are the PR 1 half of the eval harness — they prove the seam
 that every PR 2-4 loop test will rely on actually behaves as scripted.
 """

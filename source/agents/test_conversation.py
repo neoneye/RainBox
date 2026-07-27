@@ -3,7 +3,7 @@
 Pure scheduler logic (next_speaker / evaluate_stop) needs no DB or model. The
 integration tests drive ConversationManagerAgent.handle directly against the
 live test DB (conftest pins rainbox_claude), simulating speaker turns by posting
-chat messages + replaying routed-completion payloads — no LM Studio required.
+chat messages + replaying routed-completion payloads — no model server required.
 Every DB test deletes the rows it created.
 """
 

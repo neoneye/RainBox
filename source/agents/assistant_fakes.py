@@ -2,8 +2,9 @@
 
 The only live-model seam in the assistant is `AssistantAgent._decide_next_step`.
 Tests replace it with a *scripted* provider so the loop, step cap, validation,
-dispatch, and trace shape can be exercised without LM Studio, the network, or a
-live model — monkeypatch `_decide_next_step` with `scripted_decisions(...)`.
+dispatch, and trace shape can be exercised without a model server, the network,
+or a live model — monkeypatch `_decide_next_step` with
+`scripted_decisions(...)`.
 
     from agents.assistant import AssistantActionName, AssistantStepDecision
     from agents.assistant_fakes import scripted_decisions

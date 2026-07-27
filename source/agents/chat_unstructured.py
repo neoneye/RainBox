@@ -226,18 +226,18 @@ class UnstructuredChatAgent(ModelGroupAgent):
         ]
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
-            _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+            provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
             logger.info(
-                "agent %s: streaming from model %s (this loads it into LM Studio "
-                "if it isn't already; a large cold model may take a while)",
-                self.name, model_name,
+                "agent %s: streaming from model %s (provider %s; a cold model "
+                "may take a while)",
+                self.name, model_name, provider_id,
             )
             t0 = time.monotonic()
             timeout_s = float(args.get("request_timeout") or args.get("timeout") or 60.0)
             writer = self._make_writer(room_uuid)
             reasoning_text = ""
             try:
-                the_llm = prepare_llm(_provider_id, model_name, args)
+                the_llm = prepare_llm(provider_id, model_name, args)
                 stream = the_llm.stream_chat(messages)
                 deadline = time.monotonic() + timeout_s
                 for chunk in stream:

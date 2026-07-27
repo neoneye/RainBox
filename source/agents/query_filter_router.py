@@ -386,10 +386,11 @@ def structured_llm_call(
     )
 
 # Posted to the room when the semantic-retrieval embeddings or the filter/route
-# LLMs can't be reached (e.g. LM Studio is not running). Without this, the
-# non-exact path raises out of handle() after the fail-fast attempt and the user
-# sees nothing happen at all — see the exact-vs-semantic dependency split in the
-# module docstring (exact matches need neither embeddings nor an LLM).
+# LLMs can't be reached (e.g. the selected provider is not running). Without
+# this, the non-exact path raises out of handle() after the fail-fast attempt
+# and the user sees nothing happen at all — see the exact-vs-semantic dependency
+# split in the module docstring (exact matches need neither embeddings nor an
+# LLM).
 PROVIDER_UNREACHABLE_REPLY: str = (
     "I can't reach my language models right now, so I can't answer that. "
     "(The model server may be down — exact built-in commands still work.)"
@@ -575,9 +576,9 @@ class QueryFilterRouterAgent(ModelGroupAgent):
         )
 
         # Memory commands take precedence over Q&A retrieval and must not
-        # depend on LM Studio / pgvector being healthy: parse first, dispatch,
-        # and return without touching the Q&A KB. Anything that doesn't parse
-        # falls through to the existing Q&A path below.
+        # depend on the model provider / pgvector being healthy: parse first,
+        # dispatch, and return without touching the Q&A KB. Anything that
+        # doesn't parse falls through to the existing Q&A path below.
         from memory.ops import handle_memory_command, parse_memory_command
         mem_cmd = parse_memory_command(query)
         if mem_cmd is not None:
@@ -643,7 +644,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                 "posted_message_uuid": str(posted.uuid),
             }
 
-        # Everything below this point depends on the model server (LM Studio):
+        # Everything below this point depends on the embedding/model providers:
         # query embedding for semantic retrieval, then the filter and route LLM
         # calls. If the server is unreachable, fail fast (clients are tuned to
         # not retry/backoff) and post a graceful message rather than raising

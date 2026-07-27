@@ -1,6 +1,6 @@
 """Unit tests for chat_transcript.format_history (IRC-style transcript rendering).
 
-These are pure functions — no database or LM Studio needed:
+These are pure functions — no database or model server needed:
 
     python -m pytest chat/test_transcript.py -v
 """

@@ -490,8 +490,8 @@ MODELS_TEMPLATE: str = """
       sessionStorage.setItem('pp-models-tree-scroll', String(pane.scrollTop));
     });
   })();
-  // Re-sync model_config rows with LM Studio without a server restart, then
-  // reload the page so the tree reflects newly downloaded models.
+  // Re-sync model_config rows with every registered provider without a server
+  // restart, then reload the page so the tree reflects newly available models.
   // Navigate to the same page with sort=<value>, preserving id= when
   // the user has a row selected. Default sort is "provider", so we omit
   // it from the URL in that case to keep the URL clean.
@@ -637,7 +637,7 @@ MODELS_TEMPLATE: str = """
   }
   // Streaming probe: POST to the NDJSON endpoint, read the stream line-by-line,
   // render live stats into the cell, and offer a Stop button that aborts the
-  // fetch (which closes the server generator and the upstream LM Studio HTTP
+  // fetch (which closes the server generator and the upstream provider HTTP
   // stream by GC).
   async function ppRunStreamingTest(btn){
     const table = btn.closest('.test-table');

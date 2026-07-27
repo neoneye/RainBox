@@ -1,6 +1,6 @@
 """Tests for UnstructuredChatAgent — wiring, the runtime
 must-not-have-structured-output guard, and the end-to-end streaming path with a
-fake LLM (real DB rows, no LM Studio)."""
+fake LLM (real DB rows, no live model provider)."""
 
 import inspect
 from types import SimpleNamespace

@@ -3,7 +3,7 @@
 Deterministic: the only live-model seam (`_decide_next_step`) is replaced with a
 scripted sequence via `agents.assistant_fakes.scripted_decisions`, so the loop,
 step cap, validation, terminal posting, and (in-memory) trace shape are
-exercised without LM Studio or a model binding.
+exercised without a live model provider or a model binding.
 
 Trace persistence to dedicated tables is PR 3; here the trace lives in
 `agent._steps` (a list the loop appends to), which PR 3 will swap for durable

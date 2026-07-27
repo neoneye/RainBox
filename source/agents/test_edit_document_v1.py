@@ -1,6 +1,6 @@
 """Tests for agent_edit_document_v1.
 
-Schema and validator tests are pure functions — no database or LM Studio
+Schema and validator tests are pure functions — no database or model server
 needed. The integration test (added in a later task) follows the
 test_agent_followup.py convention: skip if no model group is bound.
 
@@ -243,7 +243,7 @@ def app_ctx():
 
 def _stub_agent(app_ctx, monkeypatch, response_plan: EditPlan):
     """Return an EditDocumentAgentV1 whose _structured_call returns the given
-    plan instead of hitting LM Studio. Avoids any model-group dependency."""
+    plan instead of calling a live model. Avoids any model-group dependency."""
     agent = EditDocumentAgentV1(
         agent_uuid=EDIT_DOCUMENT_V1_UUID, name="edit_document_v1", send=lambda m: None
     )

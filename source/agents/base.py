@@ -330,7 +330,7 @@ class ModelGroupAgent(Agent):
             model_name = str(model_uuid)
             attempt_started = False
             try:
-                _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+                provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
                 timeout_s = float(
                     args.get("request_timeout") or args.get("timeout") or 60.0
                 )
@@ -338,13 +338,14 @@ class ModelGroupAgent(Agent):
                 self._model_attempt_started(model_uuid, model_name, timeout_s)
                 attempt_started = True
                 logger.info(
-                    "agent %s: calling model %s (this loads it into LM Studio if "
-                    "it isn't already; a large cold model may take a while)",
+                    "agent %s: calling model %s (provider %s; a cold model may "
+                    "take a while)",
                     self.name,
                     model_name,
+                    provider_id,
                 )
                 t0 = time.monotonic()
-                the_llm = prepare_llm(_provider_id, model_name, args)
+                the_llm = prepare_llm(provider_id, model_name, args)
                 sllm = the_llm.as_structured_llm(
                     response_model, callback_manager=CallbackManager([token_counter])
                 )

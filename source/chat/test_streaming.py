@@ -1,5 +1,5 @@
 """Unit tests for chat_streaming — the StreamingReplyWriter and the per-chunk
-delta extractor. No database or LM Studio: the writer takes fake create/update
+delta extractor. No database or model server: the writer takes fake create/update
 callables and a fake clock, and the extractor is fed synthetic chunk objects."""
 
 from types import SimpleNamespace

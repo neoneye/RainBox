@@ -216,11 +216,10 @@ def _random_plaintext(length: int) -> str:
 
 
 def warmup(target_uuid: UUID) -> float:
-    """Send a plain text-completion call to LM Studio to load / page in the
-    model before the first real benchmark trial. LM Studio's first request
-    for a fresh model can take ~30s to load — that latency would otherwise
-    skew the first benchmark's average. Plain `complete()` is enough; no
-    structured output needed.
+    """Send a plain text-completion call to the configured provider before the
+    first real benchmark trial. A provider may need to load or page in a cold
+    model, and that latency would otherwise skew the first benchmark's average.
+    Plain `complete()` is enough; no structured output is needed.
 
     Returns elapsed seconds. Raises if the call fails."""
     _provider_id, model_name, args = _resolve_target(target_uuid)

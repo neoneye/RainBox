@@ -402,7 +402,7 @@ def app_ctx():
 
 def _stub_agent(app_ctx, monkeypatch, response_plan: EditPlanV3):
     """Return an EditDocumentAgentV3 whose _structured_call returns the
-    given plan instead of hitting LM Studio. Avoids any model-group
+    given plan instead of calling a live model. Avoids any model-group
     dependency. The stub accepts the optional `validator` kwarg added in
     v1 but does NOT invoke it — happy-path tests pass valid plans."""
     agent = EditDocumentAgentV3(

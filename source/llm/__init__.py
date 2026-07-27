@@ -118,11 +118,12 @@ def _extract_json_from_thinking(text: str) -> str:
 class ThinkingAwareOpenAILike(OpenAILike):
     """OpenAILike subclass that handles Qwen3-style thinking tokens.
 
-    When thinking is enabled, LM Studio puts all model output into
-    `reasoning_content` and leaves `content` empty. The parent class only reads
-    `content`, so structured-output parsing crashes. This subclass intercepts
-    `chat()`, and when `content` is empty, extracts the final JSON answer from
-    `reasoning_content` and substitutes it as the message text.
+    Some OpenAI-compatible providers put all model output into
+    `reasoning_content` and leave `content` empty when thinking is enabled. The
+    parent class only reads `content`, so structured-output parsing crashes.
+    This subclass intercepts `chat()`, and when `content` is empty, extracts the
+    final JSON answer from `reasoning_content` and substitutes it as the message
+    text.
 
     Ported from PlanExe's ThinkingAwareOpenAILike."""
 
@@ -452,8 +453,8 @@ def stream_test_streaming(
         chunk_count += 1
         raw = getattr(chunk, "raw", None)
         if raw is not None and hasattr(raw, "choices") and raw.choices:
-            # OpenAI-compat shape (LM Studio / Jan): the content and reasoning
-            # deltas live on the raw choice. Ollama-over-/v1 names it `reasoning`.
+            # OpenAI-compatible shape: content and reasoning deltas live on the
+            # raw choice. Some endpoints name the latter `reasoning`.
             delta = raw.choices[0].delta
             c = getattr(delta, "content", None) or ""
             rc = (

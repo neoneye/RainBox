@@ -1,6 +1,6 @@
 """Stubbed-LLM tests for StructuredChatAgent's memory integration.
 
-`_structured_call` is monkeypatched so no LM Studio is required. We
+`_structured_call` is monkeypatched so no live model provider is required. We
 verify (1) the constructed user prompt includes a relevant remembered
 fact, (2) irrelevant memories are not included, and (3) a debug-memory
 row is posted when memories are injected.
@@ -215,7 +215,7 @@ def test_handle_posts_debug_memory_row_when_memories_injected(
             room_uuid, human.uuid, "What is the username style?",
         )
 
-        # Stub the LLM so no LM Studio call is made.
+        # Stub the LLM so no live model call is made.
         def fake_structured_call(self, user_prompt):
             return ChatAgentResponse(
                 reply_format="markdown",
