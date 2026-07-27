@@ -606,6 +606,13 @@ The project now has several memory-like layers:
 - Memory embeddings: semantic index for active and candidate memory claims.
 - Workspace shell state: narrow procedural state for shell sessions.
 
+The proposed
+[`Q&A follow-up questions`](proposals/2026-07-21-qa-followup-questions.md)
+feature stays on the Q&A side of this boundary. Generated questions and
+answerability edges are freshness-checked navigation projections, not
+`MemoryClaim` beliefs; candidate gaps remain operator review signals and never
+become canonical knowledge automatically.
+
 The memory layer should not replace all of these. It is the place for durable,
 reusable claims that benefit from provenance, lifecycle, conflict management, and
 retrieval control.

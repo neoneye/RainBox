@@ -59,7 +59,8 @@ history); `proposals/` holds design-time intent and reviews.
 - [skills-design.md](skills-design.md) — procedural skills: file format,
   overlay resolution, inert candidates, retrieval + injection budgets.
 - [qa-system.md](qa-system.md) — the curated Q&A knowledge base: registry,
-  retrieval, dynamic handlers, shields.
+  retrieval, dynamic handlers, shields; links to the design-only
+  [follow-up navigation and gap-discovery proposal](proposals/2026-07-21-qa-followup-questions.md).
 - [voice-and-services.md](voice-and-services.md) — the side services map:
   Whisper STT, Kokoro TTS, Telegram bridge, multimodal demo proxy.
 - [llm-providers.md](llm-providers.md) — the provider registry (LM Studio /

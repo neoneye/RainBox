@@ -351,6 +351,21 @@ question. Preserving context is worth more than a hard block on this edge case.
 Retrieval events (candidates, scores in permille, the chosen match) are recorded
 via `db.record_retrieval_event`; see `relevance-telemetry.md`.
 
+## Proposed maintenance and navigation
+
+The current Q&A system does not generate aliases, follow-up questions, or
+knowledge-gap rows. The design proposal
+[`proposals/2026-07-21-qa-followup-questions.md`](proposals/2026-07-21-qa-followup-questions.md)
+keeps those artifacts outside the human-owned JSONL and treats them as
+revocable derived projections.
+
+Its recommended delivery order is observed unanswered-query reporting first,
+derived alias enrichment second, synthetic gap discovery third, and
+user/model-facing hints last. Generated navigation must independently pass
+source-grounding and target-answerability checks; dynamic targets are
+exact-alias-only in phase 1. Operator-overlay or shielded generation remains
+blocked until an authenticated operator control plane exists.
+
 ## Reference
 
 | Thing | Where |
