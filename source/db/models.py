@@ -15,6 +15,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
+from providers import PREFERRED_PROVIDER_ID
+
 logger = logging.getLogger(__name__)
 
 db = SQLAlchemy()
@@ -67,7 +69,12 @@ class ModelConfig(db.Model):
     __tablename__ = "model_config"
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
-    provider: Mapped[str] = mapped_column(Text, nullable=False, default="lm_studio")
+    provider: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default=PREFERRED_PROVIDER_ID,
+        server_default=PREFERRED_PROVIDER_ID,
+    )
     model_name: Mapped[str] = mapped_column(Text)
     display_name: Mapped[str] = mapped_column(Text, default="")
     arguments: Mapped[dict] = mapped_column(JSONB, default=dict)

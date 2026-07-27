@@ -3,9 +3,16 @@ Postgres connection (per project convention — no SQLite). Each test
 cleans up the row it creates."""
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
-from db import ModelConfig, db, init_db, make_app
+from db import (
+    ModelConfig,
+    db,
+    init_db,
+    list_model_configs_with_overrides,
+    make_app,
+)
 
 
 @pytest.fixture
@@ -16,14 +23,44 @@ def app_ctx():
         yield app
 
 
-def test_provider_column_exists_and_defaults_to_lm_studio(app_ctx):
+def test_provider_column_exists_and_defaults_to_ollama(app_ctx):
     row = ModelConfig(model_name="pp3-test-provider-col-default", arguments={})
     db.session.add(row)
     db.session.commit()
     try:
-        assert row.provider == "lm_studio"
+        assert row.provider == "ollama"
+        column_default = db.session.execute(sa.text(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_name='model_config' AND column_name='provider'"
+        )).scalar_one()
+        assert "ollama" in column_default
     finally:
         db.session.delete(row)
+        db.session.commit()
+
+
+def test_provider_sort_puts_ollama_first(app_ctx):
+    suffix = "pp3-test-provider-order"
+    rows = [
+        ModelConfig(
+            model_name=f"{suffix}-{provider}",
+            arguments={},
+            provider=provider,
+        )
+        for provider in ("lm_studio", "ollama", "jan")
+    ]
+    db.session.add_all(rows)
+    db.session.commit()
+    try:
+        ordered = [
+            cfg.provider
+            for cfg, _overrides in list_model_configs_with_overrides()
+            if cfg.uuid in {row.uuid for row in rows}
+        ]
+        assert ordered == ["ollama", "jan", "lm_studio"]
+    finally:
+        for row in rows:
+            db.session.delete(row)
         db.session.commit()
 
 

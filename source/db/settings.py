@@ -107,8 +107,8 @@ def _validate_profile_current(value: object) -> None:
 
 
 def _default_chat_model() -> object:
-    """Unset fallback for chat.default_model: the alphabetically earliest
-    model config override (or None when no overrides exist)."""
+    """Unset fallback for chat.default_model: the preferred model-config
+    override (Ollama first), or None when no overrides exist."""
     import db.model_config as model_config
 
     default = model_config.default_chat_model_uuid()
@@ -159,7 +159,8 @@ SETTINGS: dict[str, Setting] = {
                     "has no model selected (a ModelConfig or "
                     "ModelConfigOverride uuid). Picking a model inside a room "
                     "overrides this for that room only. Unset = the "
-                    "alphabetically earliest model config override.",
+                    "first Ollama override by name, then another provider's "
+                    "override if Ollama has none.",
     ),
     "profile.current": Setting(
         "profile.current", None, "string", None,

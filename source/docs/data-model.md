@@ -52,9 +52,9 @@ based on `agents/config.py`.
 
 ### `model_config`
 
-Synced model rows from every registered LLM provider (LM Studio, Jan,
-…). Keyed by `(provider, model_name)`. Rows are not deleted when models
-disappear from a provider; `available` changes instead. See
+Synced model rows from every registered LLM provider (Ollama preferred, with
+Jan, LM Studio, … also supported). Keyed by `(provider, model_name)`. Rows are
+not deleted when models disappear from a provider; `available` changes instead. See
 [llm-providers.md](llm-providers.md) for the sync contract.
 
 ### `model_config_override`

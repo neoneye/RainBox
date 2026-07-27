@@ -3,9 +3,9 @@
 ## Purpose
 
 `rainbox` talks to local LLM servers through a small **provider
-registry**. Three providers ship today: **LM Studio**, **Jan**, and
-**Ollama**. All three can be active at the same time. Adding OpenRouter
-or any future backend is a matter of dropping in one module.
+registry**. **Ollama is the preferred default**; Jan and LM Studio are
+supported alternatives. All three can be active at the same time. Adding
+OpenRouter or any future backend is a matter of dropping in one module.
 
 This doc covers:
 
@@ -14,6 +14,18 @@ This doc covers:
 - How a model name is resolved at call time.
 - How to add a new provider.
 
+## Preference policy
+
+`providers/base.py` defines one Ollama-first provider order. That order controls:
+
+- the default provider for newly created `model_config` rows;
+- provider registration, startup sync, headers, and provider-grouped model lists;
+- the automatic direct-chat model choice while `chat.default_model` is unset.
+
+The preference never rewrites an existing model config, overrides an explicit
+room/default-model choice, or changes a model group's operator-defined fallback
+priority. Selecting Jan or LM Studio remains fully supported.
+
 ## What a provider is
 
 A provider is a Python class that satisfies the `Provider` Protocol in
@@ -21,8 +33,8 @@ A provider is a Python class that satisfies the `Provider` Protocol in
 
 ```python
 class Provider(Protocol):
-    id: ProviderId            # "lm_studio" | "jan" | "ollama"
-    display_name: str         # "LM Studio", "Jan", "Ollama" — for badges/logs
+    id: ProviderId            # "ollama" | "jan" | "lm_studio"
+    display_name: str         # "Ollama", "Jan", "LM Studio" — badges/logs
 
     def base_url(self) -> str: ...
     def list_models(self) -> list[str]: ...
@@ -44,24 +56,13 @@ providers/
   __init__.py         re-exports get(), all_providers(), Provider
   base.py             Protocol + ProviderId literal
   registry.py         _PROVIDERS dict, get(id), all_providers()
-  lm_studio.py        LM Studio (REST + `lms` CLI)
-  jan.py              Jan (REST only, ensure_loaded is a no-op)
   ollama.py           Ollama (REST only, ensure_loaded is a no-op)
+  jan.py              Jan (REST only, ensure_loaded is a no-op)
+  lm_studio.py        LM Studio (REST + `lms` CLI)
 ```
 
 Per-provider quirks live inside the provider module. Examples:
 
-- LM Studio's `ensure_loaded` shells out to `lms load --context-length N`
-  because its OpenAI-compat endpoint won't let you change context size
-  per request.
-- LM Studio's `fetch_model_sizes` calls `lms ls --json`.
-- Jan's `ensure_loaded` is a no-op — Jan auto-loads on first request
-  using whatever context length is set in Jan's UI.
-- Jan's `fetch_model_sizes` returns `{}` (no equivalent CLI).
-- Jan's `/v1/models` is plain OpenAI shape, so `fetch_native_models`
-  returns entries without capability metadata. Capability detection
-  (`is_function_calling_model`) falls back to the default (`False`) on
-  new Jan rows; the user flips it manually in an override if needed.
 - Ollama's `ensure_loaded` is a no-op — it auto-loads on first request
   and its OpenAI shim doesn't accept `options.num_ctx`, so context size
   is configured per-model in Ollama itself (`OLLAMA_NUM_CTX`, Modelfile).
@@ -71,30 +72,41 @@ Per-provider quirks live inside the provider module. Examples:
   `/api/tags` includes `size` in bytes, so `fetch_model_sizes` is fully
   populated. Capability info isn't present in `/api/tags`, so
   `is_function_calling_model` defaults to `False` on new rows.
+- Jan's `ensure_loaded` is a no-op — Jan auto-loads on first request
+  using whatever context length is set in Jan's UI.
+- Jan's `fetch_model_sizes` returns `{}` (no equivalent CLI).
+- Jan's `/v1/models` is plain OpenAI shape, so `fetch_native_models`
+  returns entries without capability metadata. Capability detection
+  (`is_function_calling_model`) falls back to the default (`False`) on
+  new Jan rows; the user flips it manually in an override if needed.
+- LM Studio's `ensure_loaded` shells out to `lms load --context-length N`
+  because its OpenAI-compat endpoint won't let you change context size
+  per request.
+- LM Studio's `fetch_model_sizes` calls `lms ls --json`.
 
 ### Environment variables
 
-- `LM_STUDIO_BASE_URL` — defaults to `http://127.0.0.1:1234`.
-- `JAN_BASE_URL` — defaults to `http://127.0.0.1:1337`.
 - `OLLAMA_BASE_URL` — defaults to `http://127.0.0.1:11434`.
+- `JAN_BASE_URL` — defaults to `http://127.0.0.1:1337`.
+- `LM_STUDIO_BASE_URL` — defaults to `http://127.0.0.1:1234`.
 - `LMS` — explicit path to LM Studio's `lms` CLI. Otherwise PATH, then
   `~/.cache/lm-studio/bin/lms`.
 
 ## DB schema
 
-`model_config` has a `provider` column (`Text NOT NULL DEFAULT 'lm_studio'`).
-The unique constraint is `(provider, model_name)` — the same model name
-can legitimately exist under multiple providers (e.g. `llama3.2:latest`
-under both LM Studio and Ollama) without collision.
+`model_config` has a `provider` column (`Text NOT NULL DEFAULT 'ollama'`).
+The unique constraint is `(provider, model_name)` — the same model name can
+legitimately exist under multiple providers (for example, under Ollama and
+LM Studio) without collision.
 
 `model_config_override` does NOT have a `provider` column. An override
 inherits its parent config's provider through the
 `model_config_uuid` FK; resolving an override always reads the parent's
 provider field.
 
-The migration is idempotent (`init_db()` runs the `ADD COLUMN IF NOT
-EXISTS` and `CREATE UNIQUE INDEX IF NOT EXISTS` statements every
-startup).
+The migration is idempotent. `init_db()` adds missing columns/indexes and sets
+the provider column's default to `ollama` for future rows. It never rewrites
+the provider on existing rows.
 
 ## Sync: how `model_config` rows track provider state
 
@@ -106,9 +118,10 @@ Two things keep `model_config` in step with what each backend exposes:
    `/model/api/reload`) and the `--force-model-sync` CLI flag both call
    the same function.
 
-`sync_models_from_providers()` iterates every registered provider and
-runs `_sync_one_provider` against each. **Providers are independent**:
-one being unreachable does not flip the other's rows.
+`sync_models_from_providers()` iterates every registered provider in preferred
+order (Ollama, Jan, LM Studio) and runs `_sync_one_provider` against each.
+**Providers are independent**: one being unreachable does not flip another's
+rows.
 
 For each provider the helper:
 
@@ -152,8 +165,8 @@ Return shape (per provider): `{"created", "re_enabled", "disabled",
 
 `python main.py --force-model-sync` runs the same sync but with
 `force_update_arguments=True`, then exits without starting the server.
-Use this after you've changed which models LM Studio reports tool support
-for and you want existing rows refreshed.
+Use this after a provider's reported tool support changes and you want
+existing rows refreshed.
 
 ## Resolving a model at call time
 
@@ -213,16 +226,16 @@ LLM routes through it, so provider selection (Ollama native wrapper vs
 
 The page renders one combined tree with a per-row provider badge:
 
-- Header shows each registered provider, for example `[LM Studio]
-  http://127.0.0.1:1234 · [Jan] http://127.0.0.1:1337 · [Ollama]
-  http://127.0.0.1:11434` (each clickable). The list is generated from
+- Header shows each registered provider, for example `[Ollama]
+  http://127.0.0.1:11434 · [Jan] http://127.0.0.1:1337 · [LM Studio]
+  http://127.0.0.1:1234` (each clickable). The list is generated from
   `providers.all_providers()` so any registered provider appears automatically.
 - Each model row has a small badge (`pp-provider-badge`) carrying the
   provider's display name. All providers share the same badge styling.
 - The Reload button calls `POST /model/api/reload`, which runs
   `sync_models_from_providers()`. The response is a provider-keyed summary such
-  as `{"ok": true, "summary": {"lm_studio": {…} | null, "jan": {…} | null,
-  "ollama": {…} | null}}`.
+  as `{"ok": true, "summary": {"ollama": {…} | null, "jan": {…} | null,
+  "lm_studio": {…} | null}}`.
   Unreachable providers come back as `null` in the summary and the page
   reloads to show the latest state.
 - The model-info side panel uses the row's provider when rendering its
@@ -286,11 +299,11 @@ the call killable.
 
 1. Create `providers/<id>.py` that defines a class implementing the
    `Provider` Protocol and exports an instance as `PROVIDER`.
-2. Add the entry to `_PROVIDERS` in `providers/registry.py`.
-3. Extend the `ProviderId` literal in `providers/base.py`.
-4. Add the `<id>` branch to the badge `{% if cfg.provider == … %}` chain
-   in `MODELS_TEMPLATE` (otherwise the badge text falls back to the raw
-   id — still legible, just not a friendly display name).
+2. Extend the `ProviderId` literal and place the provider in
+   `PROVIDER_ORDER` in `providers/base.py`.
+3. Add its instance to `_PROVIDER_INSTANCES` in `providers/registry.py`.
+4. Add a friendly label to the model-page badge/provider-label helpers
+   (otherwise the raw provider id remains as a legible fallback).
 
 That's it — startup sync, the Reload button, the /model page, and all
 probe paths pick the new provider up automatically.

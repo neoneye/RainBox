@@ -99,9 +99,9 @@ async function call(path, init) {
 // Friendly name for a provider id. Falls back to the raw id for unknown
 // providers — still legible, just not as pretty.
 function providerLabel(id) {
-  if (id === 'lm_studio') return 'LM Studio';
-  if (id === 'jan') return 'Jan';
   if (id === 'ollama') return 'Ollama';
+  if (id === 'jan') return 'Jan';
+  if (id === 'lm_studio') return 'LM Studio';
   return id || '';
 }
 function escapeHtml(s) {

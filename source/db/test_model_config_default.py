@@ -1,8 +1,8 @@
 """Tests for default_chat_model_uuid / chat_model_choices (db.model_config).
 
-The alphabetical pick is tested against fabricated config/override rows
-(list_model_configs_with_overrides monkeypatched) so the shared live DB's
-contents can't influence the ordering under test. No DB access needed.
+The Ollama-first pick is tested against fabricated config/override rows
+(list_model_configs_with_overrides monkeypatched), so the shared live DB's
+contents cannot influence the ordering under test. No DB access is needed.
 """
 
 from types import SimpleNamespace
@@ -22,18 +22,34 @@ def _override(name: str) -> SimpleNamespace:
     return SimpleNamespace(uuid=uuid4(), effective_display_name=name)
 
 
-def test_default_chat_model_uuid_picks_alphabetically_earliest_label(monkeypatch):
-    """The pick is by the full picker label 'provider · config — override',
-    case-insensitive, across ALL configs — not by table order."""
+def test_default_chat_model_uuid_prefers_ollama(monkeypatch):
+    """Provider preference beats alphabetical label order."""
     ollama = _cfg("ollama", "llama3")
     jan = _cfg("jan", "Qwen")
-    ov_late = _override("zeta")
-    ov_early = _override("Alpha")     # 'jan · Qwen — Alpha' sorts first
+    ollama_override = _override("zeta")
+    jan_override = _override("Alpha")
     monkeypatch.setattr(
         model_config, "list_model_configs_with_overrides",
-        lambda **kw: [(ollama, [ov_late]), (jan, [ov_early])],
+        lambda **kw: [(jan, [jan_override]), (ollama, [ollama_override])],
     )
-    assert model_config.default_chat_model_uuid() == ov_early.uuid
+    assert model_config.default_chat_model_uuid() == ollama_override.uuid
+
+
+def test_default_chat_model_uuid_sorts_labels_within_provider(monkeypatch):
+    """Config and override labels break ties inside one provider."""
+    later = _cfg("ollama", "Zulu")
+    earlier = _cfg("ollama", "Alpha")
+    later_override = _override("A")
+    earlier_override = _override("Z")
+    monkeypatch.setattr(
+        model_config,
+        "list_model_configs_with_overrides",
+        lambda **kw: [
+            (later, [later_override]),
+            (earlier, [earlier_override]),
+        ],
+    )
+    assert model_config.default_chat_model_uuid() == earlier_override.uuid
 
 
 def test_default_chat_model_uuid_none_without_overrides(monkeypatch):

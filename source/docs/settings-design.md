@@ -47,7 +47,7 @@ Unknown keys raise `UnknownSetting` — there is no ad-hoc key creation.
 | `backup.git_push` | bool | `false` | `RAINBOX_BACKUP_GIT_PUSH` | Commit+push each backup into the backup-repo git repo. |
 | `cron.paused` | bool | `false` | — | Global cron pause: the scheduler fires nothing while on; per-job/folder flags are untouched, so resume restores the prior state. |
 | `assistant.disabled_capabilities` | json | `[]` | — | Assistant capability names the operator has turned off; a disabled capability is removed from the assistant's prompt catalog *and* its dispatch path. |
-| `chat.default_model` | string | dynamic: alphabetically earliest model-config override | — | Model a direct chat room talks to while the room has no model selected (a ModelConfig / ModelConfigOverride uuid; validated to exist). |
+| `chat.default_model` | string | dynamic: first Ollama model-config override by name, then Jan / LM Studio | — | Model a direct chat room talks to while the room has no model selected (a ModelConfig / ModelConfigOverride uuid; validated to exist). |
 | `customize.dir` | string | unset | `RAINBOX_CUSTOMIZE_DIR` | Directory with the operator's private customizations (PII / persona); its `question_answer.jsonl` overlays the base Q&A registry by id. |
 | `qa.unlocked_shields` | json | `[]` | — | Names of unlocked Q&A shields. A shielded Q&A entry reaches the LLM only when its shield is listed; empty keeps every shielded entry hidden. |
 | `qa.facts_invalidated_at` | string | unset | — | ISO timestamp of the last change that can stale prior facts (shield toggle or Q&A repopulate); the assistant posts a one-time "re-check facts" notice per room after it changes. |

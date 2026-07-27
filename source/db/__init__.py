@@ -14,6 +14,8 @@ from pathlib import Path
 import sqlalchemy as sa
 from flask import Flask
 
+from providers import PREFERRED_PROVIDER_ID
+
 from db.models import *  # noqa: F401,F403  re-export db, models, constants, label helpers, psycopg_dsn
 from db.queue import *  # noqa: F401,F403  re-export queue ops (enqueue, take_item, ...)
 from db.model_config import *  # noqa: F401,F403  re-export model config/overrides/groups/bindings
@@ -115,6 +117,16 @@ def _column_exists(table: str, column: str) -> bool:
         ),
         {"t": table, "c": column},
     ).first() is not None
+
+
+def _column_default(table: str, column: str) -> str | None:
+    return db.session.execute(
+        sa.text(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_name=:t AND column_name=:c"
+        ),
+        {"t": table, "c": column},
+    ).scalar()
 
 
 def _add_column_if_missing(table: str, column: str, ddl: str) -> None:
@@ -275,7 +287,18 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("model_config", "size_bytes",
                                "size_bytes BIGINT")
         _add_column_if_missing("model_config", "provider",
-                               "provider TEXT NOT NULL DEFAULT 'lm_studio'")
+                               "provider TEXT NOT NULL DEFAULT "
+                               f"'{PREFERRED_PROVIDER_ID}'")
+        # Existing databases retain a column's old default after the column
+        # exists. Change only the default for future rows; never rewrite saved
+        # provider identities. Guard the ALTER so steady-state startup remains
+        # lock-free.
+        provider_default = _column_default("model_config", "provider") or ""
+        if f"'{PREFERRED_PROVIDER_ID}'" not in provider_default:
+            db.session.execute(sa.text(
+                "ALTER TABLE model_config ALTER COLUMN provider SET DEFAULT "
+                f"'{PREFERRED_PROVIDER_ID}'"
+            ))
         _add_column_if_missing("model_config", "display_name",
                                "display_name TEXT NOT NULL DEFAULT ''")
         if _constraint_def("model_config_model_name_key") is not None:

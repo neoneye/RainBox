@@ -128,18 +128,20 @@ def test_dynamic_default_used_when_unset(temp_setting, monkeypatch):
     assert db.get_setting("test.dyn") == "from_db"      # db beats everything
 
 
-def test_chat_default_model_dynamic_default_is_earliest_override(app_ctx, monkeypatch):
-    """Unset chat.default_model resolves to the alphabetically earliest model
-    config override (as a uuid string), or None when no overrides exist."""
+def test_chat_default_model_dynamic_default_uses_preferred_override(
+    app_ctx, monkeypatch
+):
+    """Unset chat.default_model resolves to the preferred model-config override
+    (as a uuid string), or None when no overrides exist."""
     import db.model_config as model_config
     from uuid import uuid4
 
     row = db.db.session.query(db.AppSetting).filter_by(key="chat.default_model").one()
     assert row.value in (None, ""), "operator has chat.default_model set; test needs it unset"
 
-    earliest = uuid4()
-    monkeypatch.setattr(model_config, "default_chat_model_uuid", lambda: earliest)
-    assert db.get_setting("chat.default_model") == str(earliest)
+    preferred = uuid4()
+    monkeypatch.setattr(model_config, "default_chat_model_uuid", lambda: preferred)
+    assert db.get_setting("chat.default_model") == str(preferred)
 
     monkeypatch.setattr(model_config, "default_chat_model_uuid", lambda: None)
     assert db.get_setting("chat.default_model") is None

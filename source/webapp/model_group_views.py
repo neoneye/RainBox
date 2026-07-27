@@ -94,9 +94,9 @@ function escapeHtml(s) {
 // Friendly name for a provider id. Falls back to the raw id for unknown
 // providers — still legible, just not as pretty.
 function providerLabel(id) {
-  if (id === 'lm_studio') return 'LM Studio';
-  if (id === 'jan') return 'Jan';
   if (id === 'ollama') return 'Ollama';
+  if (id === 'jan') return 'Jan';
+  if (id === 'lm_studio') return 'LM Studio';
   return id || '';
 }
 // Render a model member as a 3-line cell:
@@ -497,7 +497,7 @@ MODELGROUPPRIORITIES_TEMPLATE: str = """
       {% for cfg, overrides in tree %}
       <li>
         <span class="row">
-          <span class="label"><span class="pp-provider-badge">{% if cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'ollama' %}Ollama{% else %}{{ cfg.provider }}{% endif %}</span><b>{{ cfg.effective_display_name }}</b></span>
+          <span class="label"><span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% else %}{{ cfg.provider }}{% endif %}</span><b>{{ cfg.effective_display_name }}</b></span>
           <button class="select-btn" data-uuid="{{ cfg.uuid }}" data-kind="config" data-provider="{{ cfg.provider }}" data-model-name="{{ cfg.model_name }}" data-model-display-name="{{ cfg.effective_display_name }}" data-display-name="" data-fc="{{ '1' if (cfg.uuid|string) in fc_uuids else '0' }}" data-struct="{{ '1' if (cfg.uuid|string) in struct_uuids else '0' }}" data-reasoning="{{ '1' if (cfg.uuid|string) in reasoning_uuids else '0' }}">Select</button>
         </span>
         <ul>
@@ -563,9 +563,9 @@ function escapeHtml(s) {
 // Friendly name for a provider id. Falls back to the raw id for unknown
 // providers — still legible, just not as pretty.
 function providerLabel(id) {
-  if (id === 'lm_studio') return 'LM Studio';
-  if (id === 'jan') return 'Jan';
   if (id === 'ollama') return 'Ollama';
+  if (id === 'jan') return 'Jan';
+  if (id === 'lm_studio') return 'LM Studio';
   return id || '';
 }
 // Render a model member as a 3-line cell:

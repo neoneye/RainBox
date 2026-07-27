@@ -7,13 +7,17 @@ from typing import Iterable
 from . import jan as _jan
 from . import lm_studio as _lm_studio
 from . import ollama as _ollama
-from .base import Provider, ProviderId
+from .base import PROVIDER_ORDER, Provider, ProviderId
 
 
-_PROVIDERS: dict[ProviderId, Provider] = {
-    "lm_studio": _lm_studio.PROVIDER,
-    "jan": _jan.PROVIDER,
+_PROVIDER_INSTANCES: dict[ProviderId, Provider] = {
     "ollama": _ollama.PROVIDER,
+    "jan": _jan.PROVIDER,
+    "lm_studio": _lm_studio.PROVIDER,
+}
+_PROVIDERS: dict[ProviderId, Provider] = {
+    provider_id: _PROVIDER_INSTANCES[provider_id]
+    for provider_id in PROVIDER_ORDER
 }
 
 
@@ -26,5 +30,5 @@ def get(provider_id: str) -> Provider:
 
 
 def all_providers() -> Iterable[Provider]:
-    """Every registered provider, in deterministic registration order."""
+    """Every provider in preferred order: Ollama first, then alternatives."""
     return list(_PROVIDERS.values())

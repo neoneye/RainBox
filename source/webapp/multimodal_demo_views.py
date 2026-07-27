@@ -227,7 +227,7 @@ MULTIMODAL_TEMPLATE = """
          data-uuid="{{ cfg.uuid }}" data-name="{{ cfg.effective_display_name }}"
          onclick="return ppSelectModel(event, this)"
          class="{% if target and target.kind == 'config' and target.uuid == cfg.uuid %}selected{% endif %}">
-        <span class="pp-provider-badge">{% if cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'ollama' %}Ollama{% else %}{{ cfg.provider }}{% endif %}</span>
+        <span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% else %}{{ cfg.provider }}{% endif %}</span>
         {{ cfg.model_name }}
       </a>
       {% if overrides %}

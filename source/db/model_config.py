@@ -8,6 +8,8 @@ from collections.abc import Callable
 from typing import Any, Literal
 from uuid import UUID
 
+import sqlalchemy as sa
+
 from db.models import (
     CAPABILITY_CONSTRAINTS,
     AgentModelBinding,
@@ -18,6 +20,7 @@ from db.models import (
     args_reasoning_on,
     db,
 )
+from providers import PREFERRED_PROVIDER_ID, PROVIDER_ORDER, provider_sort_key
 
 
 def list_model_configs() -> list[ModelConfig]:
@@ -32,8 +35,16 @@ def get_model_config(model_config_uuid: UUID) -> ModelConfig | None:
     )
 
 
-def create_model_config(model_name: str, arguments: dict[str, Any]) -> ModelConfig:
-    row = ModelConfig(model_name=model_name, arguments=arguments)
+def create_model_config(
+    model_name: str,
+    arguments: dict[str, Any],
+    provider: str = PREFERRED_PROVIDER_ID,
+) -> ModelConfig:
+    row = ModelConfig(
+        provider=provider,
+        model_name=model_name,
+        arguments=arguments,
+    )
     db.session.add(row)
     db.session.commit()
     return row
@@ -87,18 +98,27 @@ def list_model_configs_with_overrides(
     """One DB pass: every ModelConfig and the ModelConfigOverrides that
     reference it. Available configs always sort before unavailable ones.
 
-    sort_by="provider" (default): provider ASC, model_name ASC. Groups
-    the tree by backend (all LM Studio rows, then Jan, then Ollama, …).
+    sort_by="provider" (default): preferred provider first, then model name.
+    Ollama is the preferred provider; Jan and LM Studio follow.
     sort_by="model_name": model_name ASC only — mixes providers but
-    surfaces same-name twins (e.g. llama3.2 under both LM Studio and
-    Ollama) right next to each other.
+    surfaces same-name twins (e.g. llama3.2 under both Ollama and
+    LM Studio) right next to each other.
 
     Overrides under each config are sorted by display_name."""
     if sort_by == "model_name":
         order = (ModelConfig.available.desc(), ModelConfig.model_name.asc())
     else:
+        provider_rank = sa.case(
+            {
+                provider_id: rank
+                for rank, provider_id in enumerate(PROVIDER_ORDER)
+            },
+            value=ModelConfig.provider,
+            else_=len(PROVIDER_ORDER),
+        )
         order = (
             ModelConfig.available.desc(),
+            provider_rank.asc(),
             ModelConfig.provider.asc(),
             ModelConfig.model_name.asc(),
         )
@@ -141,17 +161,24 @@ def chat_model_choices() -> list[dict[str, Any]]:
 
 
 def default_chat_model_uuid() -> UUID | None:
-    """The alphabetically earliest ModelConfigOverride, by its picker label
-    ('provider · config — override', case-insensitive). This is the built-in
-    default model for direct chat rooms while the chat.default_model setting
-    is unset. None when no overrides exist."""
-    best: tuple[str, UUID] | None = None
+    """The first override in provider-preference order, then picker-label order.
+
+    Ollama overrides are preferred; ties within a provider are resolved by
+    config and override label, case-insensitively. This is the built-in default
+    for direct rooms while chat.default_model is unset. None when no overrides
+    exist."""
+    best: tuple[tuple[int, str, str, str], UUID] | None = None
     for cfg, overrides in list_model_configs_with_overrides():
-        base = f"{cfg.provider} · {cfg.effective_display_name}"
+        rank, unknown_provider = provider_sort_key(cfg.provider)
         for ov in overrides:
-            label = f"{base} — {ov.effective_display_name}".lower()
-            if best is None or label < best[0]:
-                best = (label, ov.uuid)
+            key = (
+                rank,
+                unknown_provider,
+                cfg.effective_display_name.casefold(),
+                ov.effective_display_name.casefold(),
+            )
+            if best is None or key < best[0]:
+                best = (key, ov.uuid)
     return best[1] if best else None
 
 
@@ -180,8 +207,8 @@ def resolved_model_kwargs(target_uuid: UUID) -> tuple[str, str, dict[str, Any]]:
     Tries ModelConfig first, then ModelConfigOverride; for an override the
     arguments are the base config ∪ override (override wins). The `model`
     key is stripped from kwargs since callers pass model_name separately.
-    The first element is the base config's provider id ('lm_studio' / 'jan'
-    / …) — overrides inherit their parent config's provider. Raises
+    The first element is the base config's provider id ('ollama' / 'jan' /
+    'lm_studio' / …) — overrides inherit their parent config's provider. Raises
     LookupError if the uuid is in neither table (or an override's base is
     gone)."""
     cfg = get_model_config(target_uuid)

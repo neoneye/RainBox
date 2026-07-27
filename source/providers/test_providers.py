@@ -6,8 +6,14 @@ import providers
 
 
 def test_registry_lists_all_known_providers():
-    ids = {p.id for p in providers.all_providers()}
-    assert ids == {"lm_studio", "jan", "ollama"}
+    ids = [p.id for p in providers.all_providers()]
+    assert ids == ["ollama", "jan", "lm_studio"]
+
+
+def test_ollama_is_the_preferred_provider():
+    assert providers.PREFERRED_PROVIDER_ID == "ollama"
+    assert providers.provider_sort_key("ollama") < providers.provider_sort_key("jan")
+    assert providers.provider_sort_key("jan") < providers.provider_sort_key("lm_studio")
 
 
 def test_get_ollama_returns_ollama_provider():

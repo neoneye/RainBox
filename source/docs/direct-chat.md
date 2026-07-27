@@ -52,11 +52,12 @@ Per turn, in order:
    `ModelConfigOverride` uuid (`db.resolved_model_kwargs` accepts either),
    chosen in the room's Settings sidebar. Changing it affects only that room.
 2. **The global default** — the `chat.default_model` setting (`db/settings.py`).
-   Its own unset fallback is dynamic: the alphabetically earliest model
-   config override, by picker label `provider · config — override`
-   (`db.model_config.default_chat_model_uuid`). So a fresh install with at
-   least one override answers direct rooms with zero configuration. The
-   /settings page edits this key with a model dropdown
+   Its own unset fallback is dynamic: the first Ollama model-config override,
+   ordered by config and override name. If Ollama has no override, Jan and then
+   LM Studio are considered (`db.model_config.default_chat_model_uuid`). So a
+   fresh install with at least one override answers direct rooms with zero
+   configuration while preferring Ollama. The /settings page edits this key
+   with a model dropdown
    (`db.chat_model_choices` supplies the options).
 3. **Neither resolves** — the agent posts the no-model notice, and the /chat
    client auto-opens the Settings sidebar for model-less direct rooms only
@@ -164,11 +165,11 @@ model sees on the *next* operator message.
 | Room settings, triggers, editing (HTTP) | `webapp/chat_api.py` |
 | Sidebar + client behavior | `webapp/chat_template.py` |
 | Prompt resolution, edit/delete, tree | `db/chat.py` |
-| Model choices + alphabetical default | `db/model_config.py` |
+| Model choices + Ollama-first default | `db/model_config.py` |
 | `chat.default_model` setting | `db/settings.py` |
 
 Tests: `agents/test_direct_chat.py` (message building, model fallback,
 notice), `webapp/test_chat_direct_api.py` (HTTP surface),
 `db/test_chat_direct.py` (room/settings persistence),
-`db/test_model_config_default.py` (the alphabetical pick),
+`db/test_model_config_default.py` (the Ollama-first pick),
 `chat/test_streaming.py` (writer + delta shapes).

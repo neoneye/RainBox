@@ -1,7 +1,7 @@
 """Provider Protocol — the contract every backend must satisfy.
 
 A Provider is the integration layer between rainbox and one local or remote
-LLM service (for example LM Studio, Jan, or Ollama).
+LLM service (for example Ollama, Jan, or LM Studio).
 The webapp talks to all providers through this interface; per-backend
 quirks live inside each provider module.
 """
@@ -10,7 +10,21 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol
 
-ProviderId = Literal["lm_studio", "jan", "ollama"]
+ProviderId = Literal["ollama", "jan", "lm_studio"]
+PREFERRED_PROVIDER_ID: ProviderId = "ollama"
+PROVIDER_ORDER: tuple[ProviderId, ...] = (
+    PREFERRED_PROVIDER_ID,
+    "jan",
+    "lm_studio",
+)
+
+
+def provider_sort_key(provider_id: str) -> tuple[int, str]:
+    """Ollama-first deterministic order, with unknown future providers last."""
+    try:
+        return PROVIDER_ORDER.index(provider_id), ""
+    except ValueError:
+        return len(PROVIDER_ORDER), provider_id.casefold()
 
 
 class Provider(Protocol):
@@ -40,12 +54,12 @@ class Provider(Protocol):
 
     def default_arguments(self) -> dict[str, Any]:
         """ModelConfig.arguments defaults for newly-discovered models. Must
-        include api_base, api_key, is_chat_model, is_function_calling_model,
-        should_use_structured_outputs, timeout."""
+        include the client-appropriate endpoint/timeout fields and the shared
+        capability flags."""
         ...
 
     def ensure_loaded(self, model: str, context_window: int) -> None:
         """Make sure `model` is loaded with at least `context_window` tokens
         of context, blocking until ready. May be a no-op for providers
-        without per-request context-window control (e.g. Jan)."""
+        without per-request context-window control (e.g. Ollama or Jan)."""
         ...

@@ -1,13 +1,13 @@
 """Integration tests for FollowUpClassifierAgent (agent_followup.py).
 
-These make a real structured-output call to LM Studio, so they need a model
-group assigned to the "followup" agent first:
+These make a real structured-output call through the provider-backed model
+group assigned to the "followup" agent:
 
     Open http://127.0.0.1:5000/agentmodel and assign a model group to the
     "followup" agent.
 
-If no group is assigned (or LM Studio is unreachable) the tests skip rather
-than fail, so they're safe to run unattended.
+If no group is assigned (or none of its providers is reachable), the tests
+skip rather than fail, so they're safe to run unattended.
 
 Run with the venv's interpreter so the right pytest/psycopg are used:
 
@@ -29,7 +29,7 @@ from agents.followup import FollowUpClassifierAgent
 @pytest.fixture(scope="module")
 def classifier():
     """A set-up FollowUpClassifierAgent for the 'followup' agent, or a skip if
-    its preconditions (assigned model group, reachable LM Studio) aren't met."""
+    its preconditions (assigned model group, reachable provider) aren't met."""
     app = db.make_app()
     db.init_db(app)  # ensures schema + the 'followup' binding row exist
     ctx = app.app_context()
@@ -43,13 +43,28 @@ def classifier():
                 "http://127.0.0.1:5000/agentmodel before running these tests"
             )
             return
-        if not db.get_model_group_member_uuids(group_uuid):
+        members = db.get_model_group_member_uuids(group_uuid)
+        if not members:
             pytest.skip("the 'followup' agent's model group has no models")
-        lm = providers.get("lm_studio")
-        try:
-            lm.list_models()
-        except Exception as e:
-            pytest.skip(f"LM Studio unreachable at {lm.base_url()}: {e}")
+        provider_ids = list(dict.fromkeys(
+            db.resolved_model_kwargs(member_uuid)[0]
+            for member_uuid in members
+        ))
+        unreachable: list[str] = []
+        for provider_id in provider_ids:
+            provider = providers.get(provider_id)
+            try:
+                provider.list_models()
+                break
+            except Exception as e:
+                unreachable.append(
+                    f"{provider.display_name} at {provider.base_url()}: {e}"
+                )
+        else:
+            pytest.skip(
+                "no provider in the 'followup' model group is reachable: "
+                + "; ".join(unreachable)
+            )
 
         agent = FollowUpClassifierAgent(
             agent_uuid=FOLLOWUP_UUID, name="followup", send=lambda m: None

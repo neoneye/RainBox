@@ -16,7 +16,7 @@ it works internally: [deep-research.md](deep-research.md).
 
 2. **Postgres + a model provider running.** The CLI reads model groups from
    your normal RainBox database (`rainbox_production`), and the models run on
-   whichever provider backs them — start LM Studio / Ollama / Jan as usual
+   whichever provider backs them — preferably Ollama, or Jan / LM Studio
    (see [operator-guide.md](operator-guide.md)).
 
 3. **A model group named `research`.** Start the app (`python3 main.py`),

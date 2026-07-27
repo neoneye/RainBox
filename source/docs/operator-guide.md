@@ -18,10 +18,11 @@ Postgres must be available as `rainbox_production` unless `DATABASE_URL` is set.
 Tests run against a separate `rainbox_claude` database (forced by
 `conftest.py` at the `source/` root), so `pytest` never touches production
 data — create it once with `createdb rainbox_claude`.
-Run whichever local model provider backs your agent model groups: LM Studio
-(`127.0.0.1:1234`), Jan (`127.0.0.1:1337`), and/or Ollama
-(`127.0.0.1:11434`). Ollama must also have `embeddinggemma:300m` available for
-Q&A and memory embeddings.
+Ollama is the preferred local model provider; run it on
+`127.0.0.1:11434`. Jan (`127.0.0.1:1337`) and LM Studio
+(`127.0.0.1:1234`) remain supported alternatives for agent model groups.
+Ollama must also have `embeddinggemma:300m` available for Q&A and memory
+embeddings.
 
 ## Pages
 

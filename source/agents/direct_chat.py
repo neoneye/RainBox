@@ -186,8 +186,8 @@ class DirectChatAgent(Agent):
     def _default_model_uuid() -> UUID | None:
         """The global default model for rooms with none selected: the
         chat.default_model setting (an explicit value, or its dynamic default —
-        the alphabetically earliest model config override). None when it is
-        unset or no longer resolves to a model."""
+        the preferred model-config override, with Ollama first). None when it
+        is unset or no longer resolves to a model."""
         raw = db.get_setting("chat.default_model")
         if not raw:
             return None

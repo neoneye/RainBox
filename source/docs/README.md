@@ -63,8 +63,8 @@ history); `proposals/` holds design-time intent and reviews.
   [follow-up navigation and gap-discovery proposal](proposals/2026-07-21-qa-followup-questions.md).
 - [voice-and-services.md](voice-and-services.md) — the side services map:
   Whisper STT, Kokoro TTS, Telegram bridge, multimodal demo proxy.
-- [llm-providers.md](llm-providers.md) — the provider registry (LM Studio /
-  Jan / Ollama): sync, resolution, probes, adding a provider.
+- [llm-providers.md](llm-providers.md) — the Ollama-first provider registry
+  (also Jan and LM Studio): sync, resolution, probes, adding a provider.
 - [deep-research.md](deep-research.md) — the research pipeline: pluggable
   web search, SSRF-guarded fetching, subtask researchers, cited reports,
   injection posture.

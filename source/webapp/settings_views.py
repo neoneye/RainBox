@@ -324,7 +324,7 @@ function openEdit(key){
     || s.key === 'profile.current';
   if (s.key === 'chat.default_model'){
     field = 'Value <select id="s-edit-input">'
-      + '<option value="">(unset &mdash; alphabetically earliest override)</option>'
+      + '<option value="">(unset &mdash; Ollama-first automatic choice)</option>'
       + MODELS.map(m => '<option value="' + escapeHtml(m.uuid) + '">'
           + escapeHtml(m.label + (m.available ? '' : ' (unavailable)'))
           + '</option>').join('')
