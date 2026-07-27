@@ -346,15 +346,14 @@ def test_ranked_markdown_is_injected_into_every_later_decide_without_scores(room
         assert "scores are intentionally omitted" in system_prompt
 
 
-def test_acceptance_criteria_and_second_opinion_see_language_markdown():
+def test_classifier_output_skips_criteria_but_reaches_second_opinion():
     agent = _agent()
     agent._reply_language_markdown = (
         agent._format_reply_language_markdown(_classification()))
     messages = [{"sender_type": "human", "text": "Translate this to English."}]
     criteria_prompt = agent._build_acceptance_criteria_prompt(messages)
-    assert "<reply_language_markdown" in criteria_prompt
-    assert "- `en-GB`" in criteria_prompt
-    assert "score" not in criteria_prompt.casefold()
+    assert "<reply_language_markdown" not in criteria_prompt
+    assert "en-GB" not in criteria_prompt
 
     decision = AssistantStepDecision(
         reason="calculate",

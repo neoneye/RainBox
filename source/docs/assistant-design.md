@@ -255,13 +255,6 @@ code-driven **step 0** establishes the reply's constraints before the decide
 loop starts — enforced by the loop, so the model cannot skip or forget it.
 One structured call returns an `AcceptanceCriteria`:
 
-- `response_language` — with the reason, e.g. `"en-GB (English target;
-  preferred profile variant)"`. The current request decides the language
-  family and explicit language/dialect instructions always win. The preceding
-  `reply_language_markdown` supplies the compatible exact profile variant and
-  ranked context. The assistant's own earlier replies are never a language
-  reference (a prior reply in the wrong language is an error to correct, not
-  continuity to preserve).
 - `processing` — preferences that steer the WORK (the target unit for an
   ambiguous conversion, the timezone for a reminder).
 - `formatting` — preferences that steer the FINAL message (separators, date
@@ -271,17 +264,19 @@ One structured call returns an `AcceptanceCriteria`:
   where the settings provide a default; otherwise the ambiguity is recorded
   as unresolved and the normal `ask_clarifying_question` path handles it.
 
+Response language is deliberately absent. The preceding
+`reply_language_markdown` from the dedicated classifier is injected directly
+into decide and second-opinion prompts; the broader criteria call does not
+reinterpret or duplicate it.
+
 The call has its own small persona prompt
 (`ACCEPTANCE_CRITERIA_SYSTEM_PROMPT`, not the assistant's working prompt);
-profile languages enter it only through the prompt-boundary validation in
-`user_profile/formatting.py`. Inputs: the current request, the last few
-**operator** messages (`ACCEPTANCE_CRITERIA_MAX_MESSAGES = 6`,
-`assistant_messages="omitted"` — operator messages carry the
-language-continuity signal, assistant replies are exactly the wrong anchor),
-`user_settings_json`, and the formatting guide rendered from the criteria
-snapshot profile regardless of the `assistant.formatting_guide` switch
-(which gates only the decide-prompt injection). NOT the action catalog —
-the call plans constraints, not actions.
+Inputs: the current request, the last few **operator** messages
+(`ACCEPTANCE_CRITERIA_MAX_MESSAGES = 6`,
+`assistant_messages="omitted"`), `user_settings_json`, and the formatting
+guide rendered from the criteria snapshot profile regardless of the
+`assistant.formatting_guide` switch (which gates only the decide-prompt
+injection). NOT the action catalog — the call plans constraints, not actions.
 
 The result renders as a bare `<acceptance_criteria_json>` section directly
 after `<current_request>` in every decide step. Its authority lives in one

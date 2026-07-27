@@ -215,8 +215,10 @@ SETTINGS: dict[str, Setting] = {
         description="Run the acceptance-criteria call before the assistant's "
                     "decide loop (a code-driven step 0) and inject its result "
                     "as <acceptance_criteria_json> into every step, so the "
-                    "reply's constraints — language, target units, formatting "
-                    "— are established before any work happens. Default off: "
+                    "reply's work-steering preferences, formatting, and "
+                    "assumptions are established before any work happens. "
+                    "Response language is owned by the separate classifier. "
+                    "Default off: "
                     "enable after the criteria step passes its eval gate "
                     "(evals/profile_guidance.py).",
     ),

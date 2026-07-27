@@ -3,7 +3,8 @@
 **Status:** Implemented behind the `assistant.acceptance_criteria` switch
 (default off). Rollout steps 3-4 (the eval-suite extension and the switch
 flip) are pending; the `1_specification` reply argument stays until the
-evals confirm the run-level criteria make it redundant.
+evals confirm the run-level criteria make it redundant. Response language was
+removed from this contract after the dedicated classifier superseded it.
 **Date:** 2026-07-23
 
 ## Naming
@@ -45,22 +46,18 @@ reply's constraints too late, or never:
   lucky) target unit.
 
 The idea: a dedicated **acceptance_criteria step** that runs BEFORE the
-assistant starts doing things. Its only job is to find out, concretely for
+assistant starts doing things. Its current job is to find out, concretely for
 this request:
 
-1. **What language the response will be in.** The operator's rules:
-   - Mirror the conversation: ask in Danish → answer in Danish; ask in
-     English → answer in English. Never switch language mid-conversation
-     on your own.
-   - The profile's language (da) is used only when explicitly requested —
-     "answer in Danish" in an English message wins.
-   - Spelling follows the profile's English variant (en-US — American
-     spelling, "color" not "colour").
-2. **Which user preferences are relevant while processing the steps** —
+1. **Which user preferences are relevant while processing the steps** —
    e.g. the target unit for a conversion (metric → meters), the timezone
    for a reminder, the currency for a price.
-3. **Which user preferences are relevant when formatting the final
+2. **Which user preferences are relevant when formatting the final
    result** — separators, date format, temperature unit, spelling.
+
+Response language is established by the independent
+`response_language_classifier` and injected directly into downstream prompts.
+The acceptance-criteria step does not reinterpret it.
 
 ## Scope: the reply contract first
 
@@ -77,8 +74,7 @@ reply contract; the work contract is parked as a seed in
 
 For "convert 1053737172 feet" the step would establish, before any tool
 runs: *target = meters (user settings: metric); number format = dot
-decimal, no thousand separators; response language = American English
-(the message is English)*. The python_run step then converts to meters
+decimal, no thousand separators*. The python_run step then converts to meters
 because the criteria say so, and the reply formats accordingly.
 
 ## Design
@@ -115,12 +111,6 @@ not the assistant's 4-5k token working prompt):
 ```python
 class AcceptanceCriteria(BaseModel):
     """The reply's constraints, established before any step runs."""
-    response_language: str = Field(description=(
-        "The language the reply will be written in, with the reason — "
-        'e.g. "en-US (mirrors the current message; profile spelling '
-        'en-US)". Mirror the language of the current message; the '
-        "profile's preferred language applies only when the message "
-        "explicitly asks for it; an explicit request always wins."))
     processing: list[str] = Field(description=(
         "User preferences that steer the WORK — e.g. 'target unit: "
         "meters (settings: metric)' for an ambiguous conversion, the "
@@ -135,20 +125,16 @@ class AcceptanceCriteria(BaseModel):
         "e.g. 'convert target not stated; assuming meters'."))
 ```
 
-The system prompt is code-owned and small (~40 lines): the language
-rules above (generalized — the profile's languages interpolated through
-the existing prompt-boundary validation in `user_profile/formatting.py`),
-plus "resolve ambiguity from the user settings and SAY SO in
-assumptions". Assume only where a settings-based default exists; when
-none does, the criteria record the ambiguity as unresolved and the
-assistant's normal `ask_clarifying_question` path handles it — the
-criteria step never institutionalizes guessing over asking.
+The system prompt is code-owned and small. It says to resolve ambiguity from
+the user settings and SAY SO in `assumptions`. Assume only where a
+settings-based default exists; when none does, the criteria record the
+ambiguity as unresolved and the assistant's normal
+`ask_clarifying_question` path handles it — the criteria step never
+institutionalizes guessing over asking.
 
 **Inputs** of the step-0 call: the current request, the last few
-conversation messages from the OPERATOR only (their messages carry the
-language-continuity signal; the assistant's earlier replies are excluded
-— a prior reply in the wrong language must not become "continuity" the
-criteria preserve),
+conversation messages from the OPERATOR only (their requests and preferences
+are authoritative context; the assistant's earlier output is excluded),
 `user_settings_json`, and the formatting guide (rendered for this call
 from the snapshot profile regardless of the separate
 `assistant.formatting_guide` switch, which gates only the decide-prompt
@@ -179,8 +165,7 @@ travel together at the top of the prompt:
 
 ```xml
 <acceptance_criteria_json>
-{"response_language": "en-US (mirrors the current message)",
- "processing": ["target unit: meters (settings: metric)"],
+{"processing": ["target unit: meters (settings: metric)"],
  "formatting": ["numbers: dot decimal, no thousand separators"],
  "assumptions": ["convert target not stated; assuming meters"]}
 </acceptance_criteria_json>
@@ -299,16 +284,15 @@ House pattern — ship dark, gate, enable:
    `db/settings.py`.
 2. Unit tests: the criteria call is made once per run before step 0; the
    section renders after `current_request`; a failed call is fail-open;
-   the language rules render the profile languages through the prompt
-   boundary; a revision call's prompt carries the prior criteria and the
-   run's observations (and a scripted revision with identical inputs is
-   detectable as the no-op it would be); step 0 and code-driven
-   refreshes consume none of `step_limit` (a run can still take
-   `STEP_LIMIT` decide steps after them) and their step rows carry their
-   own indices; only the latest criteria render (a revision replaces the
-   `<acceptance_criteria_json>` section, never appends); the
-   second-opinion prompt carries the criteria section next to
-   `current_request`; a model-requested revision consumes a decide step.
+   the schema and prompt omit response language; a revision call's prompt
+   carries the prior criteria and the run's observations (and a scripted
+   revision with identical inputs is detectable as the no-op it would be);
+   step 0 and code-driven refreshes consume none of `step_limit` (a run can
+   still take `STEP_LIMIT` decide steps after them) and their step rows carry
+   their own indices; only the latest criteria render (a revision replaces
+   the `<acceptance_criteria_json>` section, never appends); the second-opinion
+   prompt carries the criteria section next to `current_request`; a
+   model-requested revision consumes a decide step.
 3. Extend `evals/profile_guidance.py` with ambiguity cases:
    - "convert 1053737172 feet" → expected: meters in the reply,
      `assumptions` names the metric default.

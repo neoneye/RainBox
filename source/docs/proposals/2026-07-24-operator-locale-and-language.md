@@ -45,7 +45,7 @@ gets converted afterwards has already made the wrong decision.
 | Deterministic locale guide | **Implemented** | Metric/Celsius, clock, date, timezone, number and currency directives are code-rendered and available at every reasoning step behind the existing release switch. |
 | `languages.rows` storage and editor | **Implemented on `main`** | Ordered BCP-47 rows, `level`, `stance`, notes, validation, autosave, duplication identities, summaries and built-in templates are complete. |
 | Flat `language` / `language_2` fields | **Removed** | Clean single-operator cutover: no templates, migration, fallback, API compatibility or prompt reads remain. Existing profiles use only `languages.rows`. |
-| Current prompt bridge | **Implemented** | The classifier's reason, score-free language list and audit are rendered as Markdown immediately after the current request for acceptance criteria, second opinion and every decide step. Languages are ordered by descending score with stable ties. |
+| Current prompt bridge | **Implemented** | The classifier's reason, score-free language list and audit are rendered as Markdown immediately after the current request for second opinion and every decide step. Languages are ordered by descending score with stable ties. The acceptance-criteria call no longer consumes or reinterprets classifier output. |
 | `level` and `stance` execution semantics | **Partial** | `prefer` now refines a compatible broad target to the exact profile variant. `avoid` does not yet redirect replies and `level` does not yet change register. |
 | Response-language intent classifier | **Implemented on `codex/response-language-classifier`; live results promising** | The assistant's first model-facing activity is a narrow typed call returning `reason`, BCP-47 candidates with 1–5 Likert confidence, and `audit`. It scores every `languages.rows` candidate plus explicit request languages, omits assistant history, persists a trace row and fails open. Broad targets are refined by a compatible preferred profile variant (`English` + preferred `en-GB` → `en-GB`); any deterministic broad-tag repair is disclosed in `audit`. Manual use so far indicates that the classifier is very close to the required behaviour. |
 | Deterministic resolver + response-language directive | **Partial** | Later model calls receive ranked Markdown derived from the classifier, with numeric scores omitted. No score threshold or smaller code-composed single/multilingual directive exists yet. |
@@ -95,8 +95,8 @@ OK
 
 The structured trace retains the Likert scores for evaluation. The Markdown
 does not show them; descending list order carries confidence and equal scores
-retain the classifier's original order. Acceptance criteria, second opinion
-and every decide step see this block immediately after `current_request`.
+retain the classifier's original order. Second opinion and every decide step
+see this block immediately after `current_request`.
 
 What remains is evidence rather than another prompt redesign: build the
 repeatable edge-case corpus, confirm that ranked Markdown produces reliable

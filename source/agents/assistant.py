@@ -236,13 +236,6 @@ class AcceptanceCriteria(BaseModel):
     field simply gets omitted by a small model, and an absent list is
     indistinguishable from a considered "none apply"."""
 
-    response_language: str = Field(description=(
-        "The language the reply will be written in, with the reason — "
-        'e.g. "en-US (mirrors the current message; profile spelling '
-        "en-US)\". The operator's CURRENT message decides the language "
-        "family and an explicit request always wins. When supplied, "
-        "reply_language_markdown carries the classifier's exact compatible "
-        "profile variant and ranked language context for this same request."))
     processing: list[str] = Field(description=(
         "User preferences that steer the WORK — e.g. 'target unit: "
         "meters (settings: metric)' for an ambiguous conversion, the "
@@ -259,17 +252,12 @@ class AcceptanceCriteria(BaseModel):
 
 # The acceptance-criteria call's persona prompt (like the second-opinion
 # reviewer: a separate narrow job, not the assistant's working prompt).
-# `{language_rules}` is filled by `_acceptance_criteria_system_prompt` with
-# code-owned sentences only — profile languages pass the prompt-boundary
-# validation in user_profile.formatting before they may appear.
 ACCEPTANCE_CRITERIA_SYSTEM_PROMPT: str = """\
 You establish the acceptance criteria for a personal assistant's reply — the
 conditions the reply must satisfy to be accepted — BEFORE the assistant starts
 working on the request. You do not answer the request and you do not plan
 actions; you only state the reply's constraints, as structured output:
 
-- response_language: the language the reply will be written in, with the
-  reason in parentheses.
 - processing: the user preferences that steer the work — the target unit for
   an ambiguous conversion, the timezone for a reminder, the currency for a
   price. Empty when none apply.
@@ -277,15 +265,6 @@ actions; you only state the reply's constraints, as structured output:
   date format, temperature unit, spelling. Empty when none apply.
 - assumptions: every ambiguity you resolved by a settings-based assumption,
   stated so the operator can spot a wrong one.
-
-Language rules:
-{language_rules}
-
-When `reply_language_markdown` is present, it is the narrow classifier's
-result for this same current request. Its language list is ordered from highest
-to lowest confidence and deliberately omits numeric scores. Use its reason and
-ordering when setting `response_language`; the current request remains final
-authority if it explicitly conflicts with the classification.
 
 Resolve an ambiguity from the user settings ONLY when they provide a default
 for it, and disclose the choice in `assumptions` (e.g. the settings say
@@ -4224,50 +4203,15 @@ class AssistantAgent(ModelGroupAgent):
 
     # --- acceptance criteria --------------------------------------------------
 
-    # How many prior conversation messages the criteria call sees: language
-    # continuity needs history, constraint planning does not need the decide
-    # loop's full MAX_RECENT_MESSAGES window.
+    # How many prior conversation messages the criteria call sees: constraint
+    # planning can need operator context but not the decide loop's full
+    # MAX_RECENT_MESSAGES window.
     ACCEPTANCE_CRITERIA_MAX_MESSAGES: int = 6
 
     @staticmethod
-    def _acceptance_criteria_system_prompt(
-        profile: dict[str, Any] | None,
-    ) -> str:
-        """The criteria call's system prompt: every sentence code-owned, the
-        profile languages admitted only through the prompt-boundary
-        validation (an unusable free-text value is omitted, never spliced —
-        same contract as the formatting guide)."""
-        # No "never switch mid-conversation" phrasing here on purpose: a
-        # small model anchors it on the assistant's own earlier reply, so a
-        # prior wrong-language reply becomes "continuity" and reproduces
-        # itself. The operator's current message is the only anchor.
-        rules = [
-            "- The reply's language is the language of the operator's "
-            "CURRENT message — that message alone decides. Ask in Danish "
-            "-> answer in Danish; ask in English -> answer in English.",
-            "- Earlier operator messages matter only when the current "
-            'message is too short to tell (e.g. "ok"). The assistant\'s '
-            "own earlier replies are never a language reference: an "
-            "earlier reply in the wrong language is an error to correct, "
-            "not continuity to preserve.",
-            "- An explicit language request in the current message always "
-            "wins.",
-        ]
-        language, secondary_language = user_profile.valid_profile_languages(
-            profile or {})
-        if language is not None:
-            known = (
-                f"{language} or {secondary_language}"
-                if secondary_language else language)
-            rules.append(
-                f"- The operator's preferred language is {known} — use it "
-                "only when the current message explicitly asks for it.")
-        for tag in (language, secondary_language):
-            if tag in user_profile.ENGLISH_SPELLING:
-                rules.append(f"- {user_profile.ENGLISH_SPELLING[tag]}")
-                break
-        return ACCEPTANCE_CRITERIA_SYSTEM_PROMPT.format(
-            language_rules="\n".join(rules))
+    def _acceptance_criteria_system_prompt() -> str:
+        """The criteria call's code-owned system prompt."""
+        return ACCEPTANCE_CRITERIA_SYSTEM_PROMPT
 
     def _build_acceptance_criteria_prompt(
         self,
@@ -4276,26 +4220,19 @@ class AssistantAgent(ModelGroupAgent):
         prior_criteria: "AcceptanceCriteria | None" = None,
         scratchpad: list[AssistantTurnEvent] | None = None,
     ) -> str:
-        """The criteria call's user prompt: the request, a short history tail
-        (language continuity), and — for a revision — the prior criteria and
-        the run's steps so far, without which the call would reproduce the
-        same criteria deterministically and the revision would be a no-op.
-        Then who is asking (identity) and the formatting guide. NOT the
-        action catalog: this call plans constraints, not actions. Same
-        ElementTree escaping guarantee as the other prompt builders."""
+        """The criteria call's user prompt: the request, a short operator
+        history tail, and — for a revision — the prior criteria and the run's
+        steps so far, without which the call would reproduce the same criteria
+        deterministically and the revision would be a no-op. Then who is
+        asking (identity) and the formatting guide. NOT the action catalog:
+        this call plans constraints, not actions. Same ElementTree escaping
+        guarantee as the other prompt builders."""
         root = ET.Element("acceptance_criteria_call")
         current = messages[-1] if messages else None
         request = ET.SubElement(root, "current_request")
         request.text = str((current or {}).get("text") or "none")
-        if self._reply_language_markdown:
-            language = ET.SubElement(
-                root, "reply_language_markdown",
-                {"authority": "context", "format": "markdown"})
-            language.text = self._reply_language_markdown
-        # Operator messages only: they carry the language-continuity signal,
-        # while the assistant's earlier replies are exactly the wrong anchor
-        # — a prior reply in the wrong language must not become "continuity"
-        # the criteria preserve.
+        # Operator messages only: their requests and preferences are
+        # authoritative context; earlier assistant output is not.
         context = [m for m in (messages[:-1] if messages else [])
                    if self._message_role(m) == "operator"
                    ][-self.ACCEPTANCE_CRITERIA_MAX_MESSAGES:]
@@ -4398,8 +4335,7 @@ class AssistantAgent(ModelGroupAgent):
         `step_limit`. Fail-open: a failed call logs a warning, records a
         failed row, injects no section, and the run proceeds exactly as
         without the feature."""
-        system_prompt = self._acceptance_criteria_system_prompt(
-            self._criteria_profile)
+        system_prompt = self._acceptance_criteria_system_prompt()
         user_prompt = self._build_acceptance_criteria_prompt(
             messages, prior_criteria=self._acceptance_criteria,
             scratchpad=scratchpad)
@@ -4517,8 +4453,7 @@ class AssistantAgent(ModelGroupAgent):
         A revision that reproduces the prior criteria is reported as the
         no-op it is."""
         prior = self._acceptance_criteria
-        system_prompt = self._acceptance_criteria_system_prompt(
-            self._criteria_profile)
+        system_prompt = self._acceptance_criteria_system_prompt()
         user_prompt = self._build_acceptance_criteria_prompt(
             messages, prior_criteria=prior, scratchpad=scratchpad)
         prompts = {"system_prompt": system_prompt, "user_prompt": user_prompt}
