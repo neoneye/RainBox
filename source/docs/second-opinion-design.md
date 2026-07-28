@@ -132,7 +132,10 @@ outage would degrade the assistant for no safety gain.
 
 ## The review payload
 
-Stored in `observation.data["second_opinion"]` on the step row:
+`_second_opinion` returns this dict; `observation.data["second_opinion"]` on
+the step row keeps only `{"review_uuid": …}` pointing at the row that stores
+it. The full payload stays inline only when the row could not be written, so a
+lost telemetry row does not also blank the inspector.
 
 | Key | Content |
 |---|---|
@@ -144,6 +147,7 @@ Stored in `observation.data["second_opinion"]` on the step row:
 | `reasoning` | the reviewer model's native thinking channel, via `llm.capture_reasoning` (None for non-reasoning models; partials kept when the call fails) |
 | `response` | the reviewer's verbatim content, falling back to the parsed verdict's JSON when the provider reports no content through instrumentation |
 | `skipped` / `error` | why the check did not gate (fail-open cases) |
+| `usage` | the review's own `{input, output, ms}`, via `structured_llm_call`'s `usage_out` — recorded nowhere else, and counted into the run dashboard so a gated run's cost is not under-reported |
 
 ## The review record
 
@@ -177,6 +181,21 @@ the newest wins. `under_blocked` is the right-answer-wrong-reasons miss.
 
 Design and rationale:
 `docs/proposals/2026-07-28-second-opinion-review-records.md`.
+
+## Overview and assessment
+
+`/second-opinion` lists reviews newest-first with filters for verdict,
+category, time range, and whether the operator has judged them yet. Its two
+motivating views are `verdict=rejected` (why did this run go wrong — with
+`skipped`/`error` separating "the gate never ran" from "the gate approved it")
+and `verdict=approved&category=identity_mismatch` (why was this right for the
+wrong reasons). Each row links into the run's trace at the gated step, and
+carries the assessment form; submitting returns to the same filters so working
+a backlog does not reset the view.
+
+Server-rendered with GET filters rather than a JS-hydrated table like
+/assistant-overview — review volume is low and the operator reads and judges
+rather than scanning. Reached from the nav's Assistant menu.
 
 ## Inspector
 
