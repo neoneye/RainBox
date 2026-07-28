@@ -32,13 +32,15 @@ consumes the step limit. Each loop iteration:
    the schema's `required` list — a non-required field simply gets omitted by
    the model). `reason` is an operator-facing audit note shown in the trace,
    not hidden chain-of-thought. `reply` takes number-prefixed args —
-   `{"1_specification": ..., "2_message": ..., "3_audit": ...}`, all
-   required — where the prefixes spell the writing order: first the
-   reply's constraints (response language mirrors the operator's message;
-   units, separators, date format), then the answer text obeying them,
-   then a skeptical self-audit of that text against the specification,
+   `{"1_message": ..., "2_audit": ...}`, both required — where the
+   prefixes spell the writing order: first the answer text (in the
+   language of the operator's current message), then a skeptical
+   self-audit of that text against `acceptance_criteria_json`,
    `user_settings_json` and the formatting guide (see
-   `profile-guidance.md`).
+   `profile-guidance.md`). The reply carries no constraints argument: the
+   acceptance-criteria step establishes them before the work, so the audit
+   checks against a pre-committed yardstick rather than one invented in
+   the same response.
 3. **Validate** — `_validate_decision` checks the action against the effective
    capability set: unknown/disabled/non-prompt-exposed actions, missing
    required args, and unknown args are all rejected. Reply args written out
@@ -50,7 +52,7 @@ consumes the step limit. Each loop iteration:
    diagnosable from the app log. A rejection records a `failed` step and
    feeds the error back via the scratchpad; the loop continues.
 4. **Dispatch** — terminal actions (`reply`, `ask_clarifying_question`) post
-   the chat message and finish the run — except a `reply` whose `3_audit` is
+   the chat message and finish the run — except a `reply` whose `2_audit` is
    anything but `OK`: the self-audit gate bounces it as a rejected step (the
    audit text flows back through the scratchpad so the model fixes the
    message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
@@ -258,11 +260,23 @@ One structured call returns an `AcceptanceCriteria`:
 - `processing` — preferences that steer the WORK (the target unit for an
   ambiguous conversion, the timezone for a reminder).
 - `formatting` — preferences that steer the FINAL message (separators, date
-  format, temperature unit, spelling).
+  format, temperature unit, spelling). The system prompt directs the call
+  through the formatting guide line by line: the criteria are what the reply
+  is checked against, so a preference omitted here is one nobody verifies.
 - `assumptions` — every ambiguity resolved by a settings-based assumption,
   stated so the operator can spot a wrong one. Assumptions are made only
   where the settings provide a default; otherwise the ambiguity is recorded
   as unresolved and the normal `ask_clarifying_question` path handles it.
+
+Each is a required, non-empty **string**, not a list. A list of terse
+fragments invites one fragment and an empty sibling: a call that has already
+read the formatting guide reasons that the guide applies itself later and
+returns `[]` for `formatting`, which then reaches the second-opinion reviewer
+as "no formatting constraints." `min_length=1` closes that exit — a field with
+nothing to carry must say so, which the operator can check, where a blank
+field cannot be told apart from an oversight. For the same reason the system
+prompt carries no worked example: a copyable one gets emitted verbatim in
+place of criteria derived from the actual request.
 
 Response language is deliberately absent. The preceding
 `reply_language_markdown` from the dedicated classifier is injected directly
@@ -513,8 +527,7 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   ORDER from a step, trust only the text columns (`model_response`): the
   JSONB columns (`args`, observations) are reordered by Postgres —
   length-then-bytes, so reply args always display as
-  `3_audit, 2_message, 1_specification` regardless of what the model
-  actually wrote.
+  `2_audit, 1_message` regardless of what the model actually wrote.
 - Before dispatching a decide call, the run's `metadata.active_call` checkpoint
   stores its step index, exact system/user prompts, request time, model group,
   and an attempt list. Each attempt adds the resolved model name/UUID,

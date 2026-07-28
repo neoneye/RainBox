@@ -2,9 +2,10 @@
 
 **Status:** Implemented behind the `assistant.acceptance_criteria` switch
 (default off). Rollout steps 3-4 (the eval-suite extension and the switch
-flip) are pending; the `1_specification` reply argument stays until the
-evals confirm the run-level criteria make it redundant. Response language was
-removed from this contract after the dedicated classifier superseded it.
+flip) are pending. The `1_specification` reply argument has been removed and
+the reply args shrunk to `{"1_message", "2_audit"}` (see "Relationship to the
+existing reply args"). Response language was removed from this contract after
+the dedicated classifier superseded it.
 **Date:** 2026-07-23
 
 ## Naming

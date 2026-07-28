@@ -229,25 +229,39 @@ class ResponseLanguageClassification(BaseModel):
         return self
 
 
+# Why prose and not a list of criteria: a list of terse fragments invites one
+# fragment and an empty sibling. Observed on a conversion request — the call
+# filled `processing` and `assumptions`, then reasoned that the formatting
+# guide "is usually handled by the final response generation" and returned an
+# empty `formatting`, which reached the second-opinion reviewer as "no
+# formatting constraints" while the operator's no-thousands-separator rule
+# went unchecked on a 16-digit result. `min_length=1` on every field removes
+# that exit: nothing to carry must be SAID, and a stated "nothing here" is a
+# decision the operator can audit where a blank field is indistinguishable
+# from an oversight. The docstring below is the schema description the model
+# reads — keep it model-facing.
 class AcceptanceCriteria(BaseModel):
-    """The reply's constraints, established before any step runs (the
-    code-driven step-0 call) and revised mid-run when the situation changes.
-    Every field is required in the JSON schema (no defaults): a non-required
-    field simply gets omitted by a small model, and an absent list is
-    indistinguishable from a considered "none apply"."""
+    """The reply's constraints, established before any step runs and revised
+    mid-run when the situation changes. Every field is required and must be
+    non-empty prose."""
 
-    processing: list[str] = Field(description=(
-        "User preferences that steer the WORK — e.g. 'target unit: "
-        "meters (settings: metric)' for an ambiguous conversion, the "
-        "timezone for a reminder. Empty when none apply."))
-    formatting: list[str] = Field(description=(
-        "User preferences that steer the FINAL MESSAGE — separators, "
-        "date format, temperature unit, spelling. Empty when none "
-        "apply."))
-    assumptions: list[str] = Field(description=(
-        "Ambiguities in the request resolved by a settings-based "
-        "assumption, stated so the operator can spot a wrong one — "
-        "e.g. 'convert target not stated; assuming meters'."))
+    processing: str = Field(min_length=1, description=(
+        "The user preferences that steer the WORK: which units, timezone, "
+        "currency or locale the work must adopt, and which setting each "
+        "comes from. One or two sentences. Never empty — when nothing "
+        "steers the work, say that."))
+    formatting: str = Field(min_length=1, description=(
+        "The user preferences that steer the FINAL MESSAGE: number "
+        "separators and decimal mark, date and time format, units and "
+        "temperature, spelling. Restate every formatting-guide line that "
+        "bears on this reply; the guide reaching the assistant separately "
+        "is not a reason to omit one. One or two sentences. Never empty — "
+        "when nothing shapes the message, say that."))
+    assumptions: str = Field(min_length=1, description=(
+        "Every ambiguity in the request you resolved from a settings "
+        "default, and every ambiguity the settings cannot resolve, stated "
+        "so the operator can spot a wrong one. One or two sentences. Never "
+        "empty — when the request is unambiguous, say that."))
 
 
 # The acceptance-criteria call's persona prompt (like the second-opinion
@@ -258,21 +272,31 @@ conditions the reply must satisfy to be accepted — BEFORE the assistant starts
 working on the request. You do not answer the request and you do not plan
 actions; you only state the reply's constraints, as structured output:
 
-- processing: the user preferences that steer the work — the target unit for
-  an ambiguous conversion, the timezone for a reminder, the currency for a
-  price. Empty when none apply.
-- formatting: the user preferences that steer the final message — separators,
-  date format, temperature unit, spelling. Empty when none apply.
-- assumptions: every ambiguity you resolved by a settings-based assumption,
-  stated so the operator can spot a wrong one.
+- processing: the user preferences that steer the work — which units,
+  timezone, currency or locale the work must adopt, and which setting each
+  one comes from.
+- formatting: the user preferences that steer the final message — number
+  separators and decimal mark, date and time format, units and temperature,
+  spelling.
+- assumptions: every ambiguity you resolved from a settings default, and
+  every ambiguity the settings cannot resolve.
+
+Each field is prose and each is required: write one or two sentences, never an
+empty string. When a field genuinely has nothing to carry, say so in one short
+sentence — a stated "nothing here" is a decision the operator can check, while
+a blank field cannot be told apart from an oversight.
+
+Read the formatting guide line by line and restate every line that bears on
+this reply. That the assistant also receives the guide is not a reason to
+leave `formatting` thin: these criteria are what the reply gets checked
+against, so a preference you leave out is one nobody verifies. Numbers are the
+usual casualty — whenever the reply will carry a computed value, an amount, a
+date or a temperature, the convention governing it belongs in `formatting`.
 
 Resolve an ambiguity from the user settings ONLY when they provide a default
-for it, and disclose the choice in `assumptions` (e.g. the settings say
-metric, the conversion target is not stated: processing gets "target unit:
-meters (settings: metric)" and assumptions gets "convert target not stated;
-assuming meters"). When the settings provide no default, state the ambiguity
-as unresolved in `assumptions` instead of guessing — the assistant will ask a
-clarifying question.
+for it, and disclose that choice in `assumptions`. When the settings provide
+no default, state the ambiguity as unresolved instead of guessing — the
+assistant will ask a clarifying question.
 
 When you are given prior acceptance criteria and the run's steps so far, you
 are revising: identify what changed and which criteria it invalidates, change
@@ -2214,21 +2238,17 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
         description=('give your final answer to the user; ends the turn. '
-                     'args: {"1_specification": "...", "2_message": "...", '
-                     '"3_audit": "..."} — the number prefixes are the '
-                     'writing order. 1_specification: BEFORE writing '
-                     'anything, establish the constraints this reply must '
-                     'follow. First the response language: the language the '
-                     "operator's current message is written in — never "
-                     'switch language on your own; an explicit language '
-                     'request in the message wins. Then the applicable user '
-                     'settings: units, decimal and thousand separators, '
-                     'date format, currency. 2_message: the full answer '
-                     'text, obeying your 1_specification. 3_audit: your '
-                     'self-review, written after the message: re-read '
-                     'args.2_message and check it against your '
-                     '1_specification, the user settings '
-                     '(user_settings_json) and the formatting_guide. Be '
+                     'args: {"1_message": "...", "2_audit": "..."} — the '
+                     'number prefixes are the writing order. 1_message: the '
+                     'full answer text, written in the language of the '
+                     "operator's current message — never switch language on "
+                     'your own; an explicit language request in the message '
+                     'wins. It must satisfy the constraints already '
+                     "established for this turn. 2_audit: your self-review, "
+                     'written after the message: re-read args.1_message and '
+                     "check it against this turn's established constraints, "
+                     'the user settings (user_settings_json) and the '
+                     'formatting_guide. Be '
                      'skeptical: hunt for silly mistakes such as wrong '
                      'thousand separators or the wrong language. The audit '
                      'is a bare verdict, never a narration of the checks you '
@@ -2238,7 +2258,7 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'An audit that is not exactly "OK" is treated as a '
                      'rejection and the message is NOT sent.'),
         summary="send the final answer to the user",
-        required_args=("1_specification", "2_message", "3_audit"),
+        required_args=("1_message", "2_audit"),
         terminal=True,
     ),
     AssistantActionName.ASK_CLARIFYING_QUESTION: Capability(
@@ -4627,16 +4647,12 @@ class AssistantAgent(ModelGroupAgent):
             value = args.get(key)
             if not isinstance(value, str) or not value.strip():
                 hints = {
-                    "1_specification": (
-                        " — state the reply's constraints first: response "
-                        "language (the language of the operator's current "
-                        "message), units, number and date format"
-                    ),
-                    "2_message": " — the full answer text goes in args.2_message",
-                    "3_audit": (
-                        " — the bare verdict on args.2_message: exactly "
-                        '"OK" if it complies with your 1_specification and '
-                        "the user settings, otherwise what is wrong"
+                    "1_message": " — the full answer text goes in args.1_message",
+                    "2_audit": (
+                        " — the bare verdict on args.1_message: exactly "
+                        '"OK" if it complies with this turn\'s established '
+                        "constraints and the user settings, otherwise what "
+                        "is wrong"
                     ),
                 }
                 hint = hints.get(key, "")
@@ -4650,17 +4666,15 @@ class AssistantAgent(ModelGroupAgent):
         unknown = sorted(set(args) - allowed)
         if unknown:
             return f"action '{action.value}' got unknown argument(s): {', '.join(unknown)}"
-        # The reply args must be WRITTEN in prefix order: constraints
-        # established before the message exists, the audit composed after
-        # it — otherwise the spec is a rationalization and the audit a
-        # reflex "OK", not a re-read. Checked in BOTH representations: the
-        # parsed dict preserves json insertion order when the parser is
-        # faithful, and the raw response text is the authority when it
-        # normalizes (a live reversed reply slipped through the raw check
-        # alone — the dict check has no plumbing to depend on).
+        # The reply args must be WRITTEN in prefix order: the audit composed
+        # after the message exists — otherwise it is a reflex "OK", not a
+        # re-read. Checked in BOTH representations: the parsed dict preserves
+        # json insertion order when the parser is faithful, and the raw
+        # response text is the authority when it normalizes (a live reversed
+        # reply slipped through the raw check alone — the dict check has no
+        # plumbing to depend on).
         if action is AssistantActionName.REPLY:
-            prefix_keys = [k for k in args
-                           if k in ("1_specification", "2_message", "3_audit")]
+            prefix_keys = [k for k in args if k in self.REPLY_ARG_ORDER]
             raw = self._last_response_text or ""
             # Forensics: reversed replies have shipped live while every
             # offline reproduction bounces — this line records exactly what
@@ -4668,8 +4682,7 @@ class AssistantAgent(ModelGroupAgent):
             logger.info(
                 "reply order check: dict=%s raw_positions=%s raw_len=%d",
                 prefix_keys,
-                [raw.find(f'"{k}"') for k in
-                 ("1_specification", "2_message", "3_audit")],
+                [raw.find(f'"{k}"') for k in self.REPLY_ARG_ORDER],
                 len(raw),
             )
             if prefix_keys != sorted(prefix_keys):
@@ -4677,11 +4690,15 @@ class AssistantAgent(ModelGroupAgent):
             return self._audit_order_error(self._last_response_text)
         return None
 
+    # The reply args in the order they must be WRITTEN. The prefixes keep that
+    # order under alphabetical key normalization, so "1_" < "2_" is both the
+    # instruction and the check.
+    REPLY_ARG_ORDER: tuple[str, ...] = ("1_message", "2_audit")
+
     AUDIT_ORDER_ERROR: str = (
         "the reply args must be written in prefix order — "
-        '"1_specification" (the constraints, before writing anything), '
-        'then "2_message", then "3_audit" (a re-read of the message you '
-        "already wrote). Resubmit in that order."
+        '"1_message" (the answer text), then "2_audit" (a re-read of the '
+        "message you already wrote). Resubmit in that order."
     )
 
     @classmethod
@@ -4696,7 +4713,7 @@ class AssistantAgent(ModelGroupAgent):
         if not raw_response:
             return None
         positions = [raw_response.find(f'"{key}"')
-                     for key in ("1_specification", "2_message", "3_audit")]
+                     for key in cls.REPLY_ARG_ORDER]
         present = [p for p in positions if p >= 0]
         if present != sorted(present):
             return cls.AUDIT_ORDER_ERROR
@@ -4704,15 +4721,15 @@ class AssistantAgent(ModelGroupAgent):
 
     def _terminal_text(self, decision: AssistantStepDecision) -> str:
         # Validation guarantees the required key is present and non-empty.
-        key = ("2_message" if decision.action is AssistantActionName.REPLY
+        key = ("1_message" if decision.action is AssistantActionName.REPLY
                else "question")
         return str(decision.args[key]).strip()
 
     @staticmethod
     def _audit_rejection(decision: AssistantStepDecision) -> str | None:
         """The self-audit gate on `reply`: corrective text when the model's
-        own `3_audit` argument says the message is wrong, else None (send
-        the reply). 3_audit is a required reply argument, so an empty one
+        own `2_audit` argument says the message is wrong, else None (send
+        the reply). 2_audit is a required reply argument, so an empty one
         has already been validation-rejected before this gate runs; one
         that still arrives empty passes (fail open) rather than burning the
         step limit. Only replies are gated — a clarifying question has no
@@ -4724,10 +4741,10 @@ class AssistantAgent(ModelGroupAgent):
         # escaped live in ways not yet reproduced offline, and this check
         # depends only on the decision object itself.
         prefix_keys = [k for k in decision.args
-                       if k in ("1_specification", "2_message", "3_audit")]
+                       if k in AssistantAgent.REPLY_ARG_ORDER]
         if prefix_keys != sorted(prefix_keys):
             return AssistantAgent.AUDIT_ORDER_ERROR
-        audit = str(decision.args.get("3_audit") or "").strip()
+        audit = str(decision.args.get("2_audit") or "").strip()
         # Literal check: the audit passes only as exactly "OK" (any case),
         # nothing more. A narration ending in OK ("checked separators. OK")
         # is NOT a pass — the model must emit the bare verdict, so an OK
@@ -4737,8 +4754,8 @@ class AssistantAgent(ModelGroupAgent):
         return (
             f"Your own audit rejected this reply: {audit}\n"
             "The message was NOT sent. If the message truly complies with "
-            "your 1_specification, user_settings_json and the "
-            'formatting_guide, reply again with 3_audit set to exactly "OK" '
+            "this turn's established constraints, user_settings_json and the "
+            'formatting_guide, reply again with 2_audit set to exactly "OK" '
             "— two letters, nothing else, no narration of the checks. "
             "Otherwise fix the message first."
         )

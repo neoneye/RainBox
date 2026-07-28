@@ -84,9 +84,8 @@ def _reply() -> AssistantStepDecision:
         reason="answer ready",
         action=AssistantActionName.REPLY,
         args={
-            "1_specification": "English narration",
-            "2_message": "Good night — and equivalents around the world.",
-            "3_audit": "OK",
+            "1_message": "Good night — and equivalents around the world.",
+            "2_audit": "OK",
         },
     )
 

@@ -86,17 +86,17 @@ def _agent() -> AssistantAgent:
 def _criteria(marker: str) -> AcceptanceCriteria:
     """A distinguishable criteria set; `marker` shows up in the rendered JSON."""
     return AcceptanceCriteria(
-        processing=[f"target unit: meters ({marker})"],
-        formatting=["numbers: dot decimal, no thousand separators"],
-        assumptions=["convert target not stated; assuming meters"],
+        processing=f"target unit: meters ({marker})",
+        formatting="numbers: dot decimal, no thousand separators",
+        assumptions="convert target not stated; assuming meters",
     )
 
 
 def _reply(message: str = "About 321179090 meters.") -> AssistantStepDecision:
     return AssistantStepDecision(
         reason="ready to answer", action=AssistantActionName.REPLY,
-        args={"1_specification": "en, metric", "2_message": message,
-              "3_audit": "OK"})
+        args={"1_message": message,
+              "2_audit": "OK"})
 
 
 def _probe(i: int) -> AssistantStepDecision:
@@ -331,6 +331,29 @@ def test_schema_contains_only_non_language_criteria():
         "processing", "formatting", "assumptions"}
 
 
+def test_every_criterion_is_a_required_non_empty_string():
+    """Prose, not a list, and no empty exit: a list of terse fragments let a
+    small model return `[]` for `formatting` on the theory that the
+    formatting guide applies itself downstream. A field with nothing to
+    carry has to say so."""
+    schema = AcceptanceCriteria.model_json_schema()
+    for field in ("processing", "formatting", "assumptions"):
+        assert schema["properties"][field]["type"] == "string"
+        assert schema["properties"][field]["minLength"] == 1
+    with pytest.raises(ValueError):
+        AcceptanceCriteria(processing="p", formatting="", assumptions="a")
+
+
+def test_system_prompt_offers_no_empty_exit_and_no_copyable_example():
+    """The observed failure was not a schema difficulty: the call filled two
+    fields and reasoned itself out of the third, then copied the prompt's
+    worked example verbatim into the first. Neither invitation survives."""
+    prompt = AssistantAgent._acceptance_criteria_system_prompt()
+    assert "Empty when none apply" not in prompt
+    assert "target unit: meters" not in prompt      # nothing to parrot
+    assert "formatting guide line by line" in prompt
+
+
 def test_criteria_history_carries_operator_messages_only(room):
     """The criteria call's conversation history keeps authoritative operator
     context only, not earlier assistant output."""
@@ -452,8 +475,8 @@ def test_model_requested_revision_costs_a_step_and_replaces_criteria(room):
     # its prompts (like the second-opinion payload) and the criteria it
     # produced.
     data = (revision_row.observation or {}).get("data") or {}
-    assert data.get("acceptance_criteria", {}).get("processing") == [
-        "target unit: meters (revised)"]
+    assert data.get("acceptance_criteria", {}).get("processing") == (
+        "target unit: meters (revised)")
     assert "<prior_acceptance_criteria" in data.get("user_prompt", "")
     assert "You establish the acceptance criteria" in data.get(
         "system_prompt", "")
@@ -491,7 +514,7 @@ def test_revision_observation_records_the_inner_call_model_meta(room):
         agent._last_usage = {"input": 300, "output": 60, "ms": 2500}
         agent._last_model_uuid = inner_model
         agent._last_response_text = (
-            '{"processing": [], "formatting": [], "assumptions": []}')
+            '{"processing": "p", "formatting": "f", "assumptions": "a"}')
         return _criteria("revised")
 
     agent._request_acceptance_criteria = fake_criteria
@@ -508,7 +531,7 @@ def test_revision_observation_records_the_inner_call_model_meta(room):
     assert data.get("model_uuid") == str(inner_model)
     assert (data.get("usage") or {}).get("output") == 60
     assert data.get("response") == (
-        '{"processing": [], "formatting": [], "assumptions": []}')
+        '{"processing": "p", "formatting": "f", "assumptions": "a"}')
 
 
 def test_revision_action_offered_in_catalog_when_switch_on(room):

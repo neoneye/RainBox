@@ -23,17 +23,17 @@ three blocks and posts a one-time context marker into each room; it preserves
 history and is **not an audience boundary**.
 
 The `reply` action carries its contract in numbered args:
-`{"1_specification": ..., "2_message": ..., "3_audit": ...}`, all
-required. The number prefixes spell the writing order and survive
-alphabetical key normalization (`1_` < `2_` < `3_`). The specification is
-written BEFORE the message: it establishes the reply's constraints —
-first the response language (the language of the operator's current
-message; the profile's preferred language applies only on explicit
-request), then the applicable settings (units, separators, date format,
-currency). The message obeys the specification, and the audit — an
-introspection of a message that already exists — re-checks it against
-the specification, `user_settings_json` and the formatting guide
-(separators, dates, units, currency, language). The audit is a bare
+`{"1_message": ..., "2_audit": ...}`, both required. The number prefixes
+spell the writing order and survive alphabetical key normalization
+(`1_` < `2_`). The message is written in the language of the operator's
+current message (the profile's preferred language applies only on explicit
+request) and obeys the constraints already established for the turn; the
+audit — an introspection of a message that already exists — re-checks it
+against `acceptance_criteria_json`, `user_settings_json` and the
+formatting guide (separators, dates, units, currency, language). The
+constraints are not a reply argument: the acceptance-criteria step
+establishes them before any work, so the audit has a pre-committed
+yardstick instead of one invented in the same response. The audit is a bare
 verdict: anything but exactly `OK` (any case, nothing else — an OK buried
 in a narration of the checks does not pass) bounces the reply back as a
 rejected step — the message is not posted, the audit text flows into the
@@ -126,14 +126,13 @@ This is the direct proof the assistant actually carries the blocks:
    directives, `<knowledge_calibration authority="context">` with the JSONL
    rows (when the profile has calibration topics).
 4. In the same run, inspect the final step's **model response**: the reply
-   args must show `1_specification`, `2_message`, `3_audit` (in that order — an
-   audit written first is a rejected step, visible in the trace). A non-OK
-   audit must appear as a rejected step followed by a corrected reply.
+   args must show `1_message`, `2_audit` (in that order — an audit written
+   first is a rejected step, visible in the trace). A non-OK audit must
+   appear as a rejected step followed by a corrected reply.
    Read the order from the **model response** block only — the **action
    call** block is stored as Postgres JSONB, which reorders keys by
    length-then-bytes, and for these key names that always displays as
-   `3_audit, 2_message, 1_specification` even when the model wrote the
-   correct order.
+   `2_audit, 1_message` even when the model wrote the correct order.
 5. Switch `profile.current` to another profile → the room's next turn is
    preceded by a visible one-time notice ("the active profile switched to
    …"); the marker itself must NOT appear inside the model's prompt.
