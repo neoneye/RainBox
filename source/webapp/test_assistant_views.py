@@ -713,6 +713,117 @@ def test_second_opinion_rejection_shows_problems(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def _pointer_review_step(run, *, verdict="rejected", problems=None):
+    """A gated step whose observation carries only a pointer, with the review
+    itself in its own row — the current shape."""
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="python_run",
+        reason="compute the conversion", args={"code": "print(12 * 0.3048)"})
+    row = db.record_second_opinion_review(
+        run_uuid=run.uuid, step_uuid=step.uuid, step_index=0,
+        action="python_run", verdict=verdict, group_from="second_opinion",
+        model_uuid=uuid4(), problems=problems or [],
+        system_prompt="You are a second-opinion reviewer.",
+        user_prompt="<python_program>print(12 * 0.3048)</python_program>",
+        reasoning="The operator is metric.", response='{"approved": false}')
+    text = "second_opinion rejected this python_run"
+    db.settle_assistant_step(
+        step, phase="failed", observation_preview=text,
+        observation={"ok": False, "text": text,
+                     "data": {"second_opinion": {"review_uuid": str(row.uuid)}}},
+        error=text)
+    return step, row
+
+
+def test_inspector_resolves_the_review_pointer(app_ctx, client):
+    """The payload lives in its own row now; the trace must render it the same
+    as when it was stored inline."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _pointer_review_step(run, problems=[
+        {"category": "identity_mismatch", "text": "convert to meters"}])
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "second opinion" in body
+        assert "approved: false" in body
+        assert "group: second_opinion" in body
+        assert "You are a second-opinion reviewer." in body
+        assert "- convert to meters" in body
+        assert "The operator is metric." in body
+        # The raw pointer is never shown as the action-result data.
+        assert "review_uuid" not in body
+        md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
+        assert "**second opinion**" in md
+        assert "- convert to meters" in md
+        assert "review_uuid" not in md
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_skipped_review_row_renders_its_reason(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="python_run")
+    row = db.record_second_opinion_review(
+        run_uuid=run.uuid, step_uuid=step.uuid, step_index=0,
+        action="python_run", verdict="skipped", skip_reason="no_model_group")
+    db.settle_assistant_step(
+        step, phase="observed", observation_preview="3.6576",
+        observation={"ok": True, "text": "3.6576",
+                     "data": {"second_opinion": {"review_uuid": str(row.uuid)}}})
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "review skipped: no_model_group" in body
+        # A skipped review never approved anything, so no verdict badge.
+        assert "approved: true" not in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_legacy_inline_payload_still_renders(app_ctx, client):
+    """Runs from before the row existed keep their payload inline and have no
+    pointer; they must not go blank."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _second_opinion_step(
+        run, approved=False,
+        problems=["the operator profile is metric; convert to meters"])
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "approved: false" in body
+        assert "- the operator profile is metric; convert to meters" in body
+        assert "You are a second-opinion reviewer." in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_dangling_pointer_does_not_break_the_trace(app_ctx, client):
+    """The row is gone (or was never written); the step must still render."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="python_run")
+    db.settle_assistant_step(
+        step, phase="observed", observation_preview="3.6576",
+        observation={"ok": True, "text": "3.6576",
+                     "data": {"second_opinion": {"review_uuid": str(uuid4())}}})
+    db.finish_run(run, "finished")
+    try:
+        resp = client.get(f"/assistant?id={run.uuid}")
+        assert resp.status_code == 200
+        assert "3.6576" in resp.get_data(as_text=True)
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_categorized_problems_render_as_text(app_ctx, client):
     """Problems are {category, text} objects now. Both the inspector and the
     markdown export must show the sentence, not the raw object."""

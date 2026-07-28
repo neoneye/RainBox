@@ -818,14 +818,46 @@ def _intent_md(it) -> list[str]:
     return lines
 
 
-def _split_second_opinion(step) -> tuple[dict | None, dict]:
-    """A gated step's observation data carries the second-opinion review, but
+def _review_payload(row) -> dict:
+    """A second_opinion_review row in the shape both renderers already expect,
+    so the row became the source of truth without either of them changing.
+    `approved` is present only for a real verdict — a skipped or failed-open
+    review never approved anything, and an `approved: false` badge on one would
+    read as a rejection."""
+    payload: dict = {
+        "problems": list(row.problems or []),
+        "group_from": row.group_from,
+        "model_uuid": str(row.model_uuid) if row.model_uuid else None,
+        "system_prompt": row.system_prompt,
+        "user_prompt": row.user_prompt,
+        "reasoning": row.reasoning,
+        "response": row.response,
+        "skipped": row.skip_reason,
+        "error": row.error,
+    }
+    if row.verdict in ("approved", "rejected"):
+        payload["approved"] = row.verdict == "approved"
+    return payload
+
+
+def _split_second_opinion(step, reviews: dict | None = None) -> tuple[dict | None, dict]:
+    """A gated step's observation data points at the second-opinion review, but
     chronologically the review ran BEFORE the action — so both renderers (HTML
-    and markdown) show it as its own block above the action call and strip it
-    from the action-result data. Returns (review_or_None, remaining_data)."""
+    and markdown) show it as its own block above the action call and strip the
+    pointer from the action-result data. Returns (review_or_None, remaining_data).
+
+    `reviews` maps review uuid -> row. Steps written before the row existed
+    carry the whole payload inline instead of a pointer and are passed through
+    unchanged; a pointer with no row (the write failed, or the run was pruned)
+    yields None rather than breaking the trace.
+    """
     obs = step.observation or {}
     data = dict(obs.get("data") or {})
-    return data.pop("second_opinion", None), data
+    so = data.pop("second_opinion", None)
+    if isinstance(so, dict) and "review_uuid" in so:
+        row = (reviews or {}).get(str(so["review_uuid"]))
+        return (_review_payload(row) if row is not None else None), data
+    return so, data
 
 
 def _second_opinion_md(so: dict) -> list[str]:
@@ -863,7 +895,8 @@ def _second_opinion_md(so: dict) -> list[str]:
     return lines
 
 
-def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -> list[str]:
+def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
+             reviews: dict | None = None) -> list[str]:
     """A single timeline step's body: model request/response, action call/result
     and any error. Mirror of the template's per-step io-blocks (search
     ASSISTANT_TEMPLATE for "mirrored in Python by _step_md"); keep the set of
@@ -912,7 +945,7 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str]) -
     if response_text:
         lines.append(_fence(response_text, "json" if decision else ""))
         lines.append("")
-    second_opinion, obs_data = _split_second_opinion(step)
+    second_opinion, obs_data = _split_second_opinion(step, reviews)
     if second_opinion is not None:
         lines.extend(_second_opinion_md(second_opinion))
     if step.action:
@@ -1029,7 +1062,8 @@ def _run_markdown(run, ctx: dict) -> str:
             title = f"{head} — {step.action or '—'}" + (f" — {desc}" if desc else "")
             out.append(f"### {title}")
         out.append("")
-        out += _step_md(step, ctx["decision_json"], ctx["model_names"])
+        out += _step_md(step, ctx["decision_json"], ctx["model_names"],
+                        ctx["reviews"])
         for it in intents:
             out += _intent_md(it)
 
@@ -1100,10 +1134,13 @@ def _load_run_detail(selected) -> dict:
     # The second-opinion review split out of each step's observation data, so
     # the template renders it in chronological position (before the action
     # call) and the action result shows only the remaining data.
+    # The review rows this run's steps point at, keyed by uuid for the pointer
+    # lookup — one query, like the steps and write-intents above.
+    reviews = {str(r.uuid): r for r in db.list_second_opinion_reviews(selected.uuid)}
     second_opinion: dict[str, dict] = {}
     obs_data: dict[str, dict] = {}
     for s in steps:
-        so, data = _split_second_opinion(s)
+        so, data = _split_second_opinion(s, reviews)
         if so is not None:
             # problems_text is precomputed because ASSISTANT_TEMPLATE is a
             # non-raw string: a '\n' inside a Jinja expression would be
@@ -1130,6 +1167,7 @@ def _load_run_detail(selected) -> dict:
         "second_opinion": second_opinion,
         "obs_data": obs_data,
         "unlinked": unlinked,
+        "reviews": reviews,
         "pending_controls": db.list_pending_controls(selected.uuid),
         "trigger": db.get_run_trigger_message(selected),
         "dash": _run_dashboard(selected, steps),
