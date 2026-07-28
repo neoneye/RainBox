@@ -169,9 +169,13 @@ ASSISTANT_TEMPLATE = """
   .as-main .card .hd .outcome { align-self:stretch; display:flex; align-items:center;
                                 margin:-10px 0; padding:10px 0 10px 1rem;
                                 border-left:1px solid #e5e7eb; font-weight:600; }
-  .as-main .card .hd .out-finished { color:#1e7e34; }
-  .as-main .card .hd .out-stopped { color:#555; }
-  .as-main .card .hd .out-failed, .as-main .card .hd .out-killed { color:#c0392b; }
+  /* The chip carries the run's outcome (same reading as the dashboard's
+     headline status), not its lifecycle status: "finished" only means the loop
+     terminated, so colouring it green would sell an unresolved run as a win. */
+  .as-main .card .hd .out-resolved { color:#1e7e34; }
+  .as-main .card .hd .out-unresolved { color:#c0392b; }
+  .as-main .card .hd .out-running { color:#1d4ed8; }
+  .as-main .card .hd .out-pending { color:#98a2b3; }
   .as-main .step-body, .as-main .card-body { padding:14px 16px; }
   .as-main .step-body > :first-child { margin-top:0; }
   .as-main .step-body > :last-child { margin-bottom:0; }
@@ -529,7 +533,7 @@ ASSISTANT_TEMPLATE = """
       <div class="card">
         <div class="hd">
           <div class="card-title">Verdict</div>
-          <span class="outcome out-{{ selected.status }}">{{ selected.status | capitalize }}</span>
+          <span class="outcome out-{{ dash.status_class }}">{{ dash.status }}</span>
           {% if reply %}<a class="card-link" href="/chat?id={{ selected.room_uuid }}&msg={{ reply.id }}">chat ↗</a>{% endif %}
         </div>
         <div class="card-body">
@@ -1037,7 +1041,11 @@ def _run_markdown(run, ctx: dict) -> str:
 
     # Verdict.
     if ctx["verdict"]:
-        out += [f"## Verdict — {run.status.capitalize()}", "", ctx["verdict"], ""]
+        # Mirrors the HTML chip: the outcome, not the lifecycle status. The
+        # not-yet-summarized label is "—", which reads as noise in a header.
+        label = ctx["dash"]["status"]
+        head = "## Verdict" + (f" — {label}" if label != "—" else "")
+        out += [head, "", ctx["verdict"], ""]
 
     return "\n".join(out).rstrip() + "\n"
 
