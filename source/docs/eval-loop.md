@@ -124,8 +124,9 @@ A separate opt-in **live** runner, `evals/profile_guidance.py`, executes
 chat_reply cases that carry `message` + `profile_uuid` (or an inline
 `profile`) against the real assistant prompt-construction path and a real
 model: three repetitions per case at production sampling, deterministic
-scoring only, four prompt variants (baseline / formatting_only /
-calibration_only / combined), and per-repetition
+scoring only, four gate prompt variants (baseline / formatting_only /
+calibration_only / combined) plus `classifier` (both blocks on and the live
+response-language call made before the decide prompt), and per-repetition
 output/prompt-hash/token/model records stored on each EvalResult so release
 gates can apply per-family rules over the raw repetitions. It never mutates
 settings (the profile is a per-call override) and creates no chat rows; it

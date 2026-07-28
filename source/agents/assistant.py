@@ -3580,6 +3580,7 @@ class AssistantAgent(ModelGroupAgent):
         profile: dict[str, Any] | None,
         include_formatting: bool = True,
         include_calibration: bool = True,
+        include_classifier: bool = False,
     ) -> tuple[str, str]:
         """The prompt-construction seam shared with the handle path, for the
         live eval harness (evals/profile_guidance.py): renders the
@@ -3589,7 +3590,15 @@ class AssistantAgent(ModelGroupAgent):
         value — then assembles the same (system, user) prompt pair a real
         step-0 decision would send. Posts nothing, dispatches nothing, and
         touches no room state; the include flags are the eval variants'
-        prompt-construction overrides, not production settings."""
+        prompt-construction overrides, not production settings.
+
+        `include_classifier` makes the LIVE response-language call against
+        the bound models first, exactly as a real turn does, and renders its
+        Markdown into the decide prompt — the closest the harness gets to
+        production. It stays off by default so the deterministic variants
+        measure the guide alone. Nothing persists: `self._run` is None on an
+        eval agent, so the classifier's checkpoint and step rows are
+        skipped."""
         identity, formatting, calibration = (
             self._build_declared_profile_blocks(
                 profile, formatting_enabled=True, calibration_enabled=True))
@@ -3598,9 +3607,13 @@ class AssistantAgent(ModelGroupAgent):
         self._calibration_block = calibration if include_calibration else ""
         self._profile_block = ""
         self._skill_block = ""
-        # The eval seam does not run the classifier. Never leak Markdown from a
-        # previous real handle() when an agent instance is reused.
+        # Never leak Markdown from a previous real handle() (or a previous
+        # eval case) when an agent instance is reused.
         self._reply_language_markdown = ""
+        self._response_language_classification = None
+        if include_classifier:
+            self._run_response_language_classifier(
+                step_index=0, messages=messages, profile=profile)
         user_prompt = self._build_user_prompt(
             messages=messages, scratchpad=[], step_index=0)
         return self._system_prompt(), user_prompt

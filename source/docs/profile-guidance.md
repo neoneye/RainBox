@@ -69,7 +69,7 @@ derived defaults (units → temperature, separators) either way.
 | Row-lock mutation helper (cross-subtree safety) | `db/profile.py` `profile_mutate_data` |
 | Switch + pointer settings | `db/settings.py` (`assistant.formatting_guide`, `assistant.knowledge_calibration`, `profile.current`, internal `profile.current_changed_at`) |
 | Assistant injection + context marker | `agents/assistant.py` |
-| Live eval runner (four variants, seeded case inventory) | `evals/profile_guidance.py` |
+| Live eval runner (prompt variants, seeded case inventory) | `evals/profile_guidance.py` |
 | Executable release gate | `evals/profile_gate.py` |
 
 ## Verifying that things work
@@ -158,7 +158,7 @@ This creates/updates the code-owned candidate cases (idempotent and
 versioned: re-running after a definition fix updates cases in place;
 operator-edited cases are never touched). Review them in Flask-Admin
 (`/admin` → EvalCase, names start with `pg `) and flip the ones you accept
-to `active`. Then run the four variants — three repetitions per case at
+to `active`. Then run the four gate variants — three repetitions per case at
 production sampling, so expect model traffic:
 
 ```bash
@@ -171,6 +171,22 @@ venv/bin/python -m evals.profile_guidance --variant combined
 Each prints its EvalRun uuid and summary. Exit code 2 means invalid case
 definitions (broken counterfactual pair) — fix before proceeding. The runner
 never touches settings or chat rooms; the profile is a per-call override.
+
+A fifth variant, `classifier`, runs both blocks **and** makes the live
+response-language call before the decide prompt, so its Markdown reaches the
+reply exactly as in production:
+
+```bash
+venv/bin/python -m evals.profile_guidance --variant classifier
+```
+
+It is not part of the release gate — it is how the `language` family
+separates the two metrics the classifier design keeps apart: whether the
+reply language is *decided* correctly, and whether the decision is
+*delivered*. Compare it against `combined` over the same cases; the delta is
+the classifier's effect, with the guide held constant. Nothing persists from
+the classifier call in an eval run (the agent has no run row, so its
+checkpoint and step rows are skipped).
 
 ### 5. The release gate
 

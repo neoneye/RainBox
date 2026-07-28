@@ -11,7 +11,12 @@ import pytest
 
 import db
 import evals.profile_guidance as pg
-from agents.assistant import AssistantActionName, AssistantStepDecision
+from agents.assistant import (
+    AssistantActionName,
+    AssistantStepDecision,
+    ResponseLanguageClassification,
+    ResponseLanguageItem,
+)
 
 
 @pytest.fixture
@@ -111,6 +116,61 @@ def test_variants_toggle_blocks_in_the_real_prompt(case, monkeypatch):
     assert all("<user_settings_json" in p for p in seen.values())
     # The case message is the current request in the production prompt shape.
     assert all("31 December 2026" in p for p in seen.values())
+
+
+def test_classifier_variant_runs_the_live_call_and_renders_its_markdown(
+        case, monkeypatch):
+    """The classifier variant is the only one that makes the live
+    response-language call and puts its Markdown in the decide prompt — the
+    closest the harness gets to a production turn. Every other variant leaves
+    the block out entirely, so a classifier effect can never be confused with
+    the formatting guide's."""
+    classified = ResponseLanguageClassification(
+        reason="The request is German; the profile declares de.",
+        languages=[ResponseLanguageItem(code="de", score=5),
+                   ResponseLanguageItem(code="en-US", score=2)],
+        audit="OK",
+    )
+    calls = {"n": 0}
+
+    def fake_classify(self, *, system_prompt, user_prompt):
+        calls["n"] += 1
+        return classified
+
+    monkeypatch.setattr(pg.AssistantAgent,
+                        "_request_response_language_classification",
+                        fake_classify)
+    seen = {}
+    for variant in pg.VARIANTS:
+        fake, captured = _stub("ok")
+        monkeypatch.setattr(pg.AssistantAgent, "_structured_completion", fake)
+        pg.run_profile_guidance_suite([case.uuid], variant=variant,
+                                      repetitions=1)
+        seen[variant] = captured["prompts"][0][1]
+    assert calls["n"] == 1
+    assert "<reply_language_markdown" in seen["classifier"]
+    assert "`de`" in seen["classifier"]
+    assert all("<reply_language_markdown" not in prompt
+               for name, prompt in seen.items() if name != "classifier")
+
+
+def test_classifier_failure_leaves_the_variant_running_without_markdown(
+        case, monkeypatch):
+    """The classifier fails open in production; the harness must inherit that
+    rather than scoring a zero for an unrelated outage — otherwise a
+    classifier hiccup looks like a reply-quality regression."""
+    def boom(self, *, system_prompt, user_prompt):
+        raise RuntimeError("classifier model unreachable")
+
+    monkeypatch.setattr(pg.AssistantAgent,
+                        "_request_response_language_classification", boom)
+    fake, captured = _stub("Das Datum ist 31.12.2026.")
+    monkeypatch.setattr(pg.AssistantAgent, "_structured_completion", fake)
+    run = pg.run_profile_guidance_suite([case.uuid], variant="classifier",
+                                        repetitions=1)
+    result = db.list_eval_results_for_run(run.uuid)[0]
+    assert result.score == 1.0 and result.passed
+    assert "<reply_language_markdown" not in captured["prompts"][0][1]
 
 
 def test_non_reply_decision_is_a_failed_repetition(case, monkeypatch):

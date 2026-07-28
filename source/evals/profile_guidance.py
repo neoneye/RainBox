@@ -48,13 +48,19 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REPETITIONS = 3
 
-# The four gate variants over the same cases: prompt-construction overrides
-# passed into build_turn_prompts, never production settings.
-VARIANTS: dict[str, tuple[bool, bool]] = {
-    "baseline": (False, False),
-    "formatting_only": (True, False),
-    "calibration_only": (False, True),
-    "combined": (True, True),
+# The variants over the same cases: (formatting, calibration, classifier)
+# prompt-construction overrides passed into build_turn_prompts, never
+# production settings. The first four are the release gate's; `classifier`
+# additionally makes the live response-language call before the decide
+# prompt — the closest the harness gets to a production turn, and the only
+# variant that measures the classifier's effect on delivered replies rather
+# than the guide's.
+VARIANTS: dict[str, tuple[bool, bool, bool]] = {
+    "baseline": (False, False, False),
+    "formatting_only": (True, False, False),
+    "calibration_only": (False, True, False),
+    "combined": (True, True, False),
+    "classifier": (True, True, True),
 }
 
 
@@ -92,6 +98,7 @@ def _eval_agent(model_group_uuid: UUID | None) -> AssistantAgent:
 def _build_case_prompts(
     agent: AssistantAgent, case: db.EvalCase, profile: dict[str, Any] | None,
     include_formatting: bool, include_calibration: bool,
+    include_classifier: bool = False,
 ) -> tuple[str, str]:
     message = str((case.input or {}).get("message") or "")
     messages = [{"sender_type": "human", "text": message, "kind": "message",
@@ -100,6 +107,7 @@ def _build_case_prompts(
         messages=messages, profile=profile,
         include_formatting=include_formatting,
         include_calibration=include_calibration,
+        include_classifier=include_classifier,
     )
 
 
@@ -194,7 +202,8 @@ def run_profile_guidance_case(
     against this case's expectations instead of generating again. When
     `invalid_reason` is given (a violated pair invariant), an explicit
     zero-scored invalid result is persisted with no generation at all."""
-    include_formatting, include_calibration = VARIANTS[variant]
+    include_formatting, include_calibration, include_classifier = (
+        VARIANTS[variant])
     profile = _resolve_profile(case.input or {})
     reps: list[dict[str, Any]] = []
     if invalid_reason is not None:
@@ -208,7 +217,8 @@ def run_profile_guidance_case(
                 for record in shared_records]
     else:
         system_prompt, user_prompt = _build_case_prompts(
-            agent, case, profile, include_formatting, include_calibration)
+            agent, case, profile, include_formatting, include_calibration,
+            include_classifier)
         for _ in range(repetitions):
             reps.append(_score_repetition(case, _generate_repetition(
                 agent, system_prompt, user_prompt)))
@@ -280,7 +290,11 @@ def run_profile_guidance_suite(
             "case_uuids": [str(c.uuid) for c in cases],
         },
     )
-    include_formatting, include_calibration = VARIANTS[variant]
+    # The classifier flag is deliberately unused here: shared generation only
+    # happens when a pair's differentiating block is OFF, and the classifier
+    # variant runs with both blocks on — so no pair ever shares a live
+    # classifier call, whose stochastic Markdown would break prompt equality.
+    include_formatting, include_calibration, _ = VARIANTS[variant]
     block_off = {"calibration": not include_calibration,
                  "formatting": not include_formatting}
     # A counterfactual pair (same rubric "pair" value) exists to force
@@ -393,7 +407,7 @@ def _template_uuid(template_name: str) -> str:
 
 # Bumped whenever a shipped case definition changes; seeded cases whose
 # rubric carries an older rev are updated in place (they are code-owned).
-SEED_REV = 7
+SEED_REV = 8
 
 
 def _seed_hash(input_obj: Any, expected_obj: Any, rubric_obj: Any) -> str:
@@ -537,6 +551,27 @@ def _seed_specs() -> list[dict[str, Any]]:
                          "updated_at": "2026-07-21T00:00:00Z",
                      }]}},
         }
+
+    # The language fixtures. Rows are the authoritative declaration: a
+    # `prefer` row sorts first through valid_profile_languages, so the
+    # Danish-preferring profile renders "da or en-US" in the guide and hands
+    # the classifier both candidates. Neither profile's languages are the
+    # reply language by themselves — mirroring the request is.
+    _language_profile = {
+        "uuid": "00000000-0000-0000-0000-00000000ab01",
+        "name": "LanguageFixture",
+        "data": {"units": "metric", "languages": {"rows": [
+            {"tag": "da", "level": "native", "stance": "prefer"},
+            {"tag": "en-US", "level": "fluent", "stance": "neutral"},
+        ]}},
+    }
+    _variant_profile = {
+        "uuid": "00000000-0000-0000-0000-00000000ab02",
+        "name": "VariantFixture",
+        "data": {"units": "metric", "languages": {"rows": [
+            {"tag": "en-GB", "level": "fluent", "stance": "prefer"},
+        ]}},
+    }
 
     date_message = "Write 31 December 2026 as a short numeric date."
     specs: list[dict[str, Any]] = [
@@ -685,6 +720,52 @@ def _seed_specs() -> list[dict[str, Any]]:
          "expected": {"must_include": ["12/31/2026"],
                       "must_not_include": ["31.12.2026"]},
          "rubric_extra": {"pair": "date_format_counterfactual"}},
+        # The language family: mirroring, explicit-request-wins, and variant
+        # delivery. Marker words (the Danish copula, lift/elevator) belong
+        # HERE, in scoring data, and never in a prompt — a contrastive
+        # example in a prompt gets parroted into unrelated replies.
+        {"name": "pg language: ambiguous conversion uses metric default",
+         "family": "language", "seed_id": "language.metric_default",
+         "input": {"message": "Convert 1053737172 feet.",
+                   "profile": _language_profile},
+         # Either spelling: the marker only checks that the metric target was
+         # chosen over another imperial unit, not which English variant wrote
+         # it.
+         "expected": {"must_include_any": [["meter", "metre"]],
+                      "must_not_include": ["yard"]}},
+        {"name": "pg language: Danish question gets a Danish reply",
+         "family": "language", "seed_id": "language.mirror_danish",
+         "input": {"message": "Hvor mange meter er der på en kilometer?",
+                   "profile": _language_profile},
+         "expected": {"must_include": ["1000", "meter"],
+                      "must_not_include": ["There are", "there are"]}},
+        {"name": "pg language: English question gets no Danish",
+         "family": "language", "seed_id": "language.no_unrequested_danish",
+         "input": {"message": "How many meters are there in a kilometer?",
+                   "profile": _language_profile},
+         # " er " with spaces: the Danish copula as a whole word — a coarse
+         # telltale of an unrequested switch to the profile's preferred da,
+         # and the reason this case must not ask for quoted Danish content.
+         "expected": {"must_include": ["1000"],
+                      "must_not_include": [" er ", "Der er"]}},
+        {"name": "pg language: explicit Danish request wins over English",
+         "family": "language", "seed_id": "language.explicit_wins",
+         "input": {"message": "Answer in Danish: how many meters are there "
+                              "in a kilometer?",
+                   "profile": _language_profile},
+         "expected": {"must_include": ["1000"],
+                      "must_include_any": [["Der er", "der er", "meter på",
+                                            "en kilometer er"]]}},
+        {"name": "pg language: declared variant reaches the reply",
+         "family": "language", "seed_id": "language.variant_vocabulary",
+         "input": {"message": "Translate to English: 'Fahrstuhl'.",
+                   "profile": _variant_profile},
+         # Vocabulary, not spelling: the declared variant must reach the word
+         # choice. This is the fidelity metric the proposal keeps separate
+         # from classification accuracy — the branch runs classified the
+         # variant correctly and still wrote the other one.
+         "expected": {"must_include_any": [["lift", "Lift"]],
+                      "must_not_include": ["elevator", "Elevator"]}},
     ]
     return specs
 

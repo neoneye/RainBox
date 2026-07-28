@@ -53,7 +53,7 @@ gets converted afterwards has already made the wrong decision.
 | Structured-result hardening | **Implemented** | The shared structured-call path re-validates final provider text and has dedicated tests. |
 | General acceptance-criteria step | **Implemented but default-off; not the chosen language solution** | The broad step-0 mechanism still exists behind `assistant.acceptance_criteria`. Measurements in this proposal do not justify enabling it for language/locale routing. |
 | Task-scoped locale | **Not implemented** | Explicit project/document locale still needs a separate design after the response-language path is stable. |
-| Post-cutover evals and reply-model selection | **Manual validation promising; systematic eval pending** | Exploratory use covers multilingual-content and translation-intent cases well, including exact `en-GB` refinement. A repeatable corpus for short messages, avoided languages, dialect conflicts and genuinely multilingual replies is still needed before calling it stable. |
+| Post-cutover evals and reply-model selection | **Corpus started; measurement pending** | Exploratory use covers multilingual-content and translation-intent cases well, including exact `en-GB` refinement. A `language` family of five seeded cases (mirroring, no unrequested switch, explicit-request-wins, metric default, variant delivery) and a `classifier` runner variant now exist in `evals/profile_guidance.py`; the runs that would turn them into evidence have not been made. Short messages, avoided languages, ties and genuinely multilingual replies are still unrepresented. |
 
 The profile slice is merged on local `main` through commit `1385d93`.
 Verification at merge: 185 profile/assistant integration tests, Python/JS
@@ -98,10 +98,19 @@ does not show them; descending list order carries confidence and equal scores
 retain the classifier's original order. Second opinion and every decide step
 see this block immediately after `current_request`.
 
-What remains is evidence rather than another prompt redesign: build the
-repeatable edge-case corpus, confirm that ranked Markdown produces reliable
+What remains is evidence rather than another prompt redesign: extend the
+corpus that now exists, confirm that ranked Markdown produces reliable
 downstream language delivery, and decide whether a score threshold is needed
 for genuinely multilingual replies.
+
+The harness for that is in place. `evals/profile_guidance.py` carries a
+`language` case family and a `classifier` variant that makes the live
+response-language call before the decide prompt, so one comparison —
+`classifier` against `combined` over the same cases — separates the two
+metrics this design insists on keeping apart: whether the reply language is
+decided correctly, and whether the decision survives into the reply. The
+five seeded cases are a floor, not the corpus: ties, short messages, avoided
+languages and genuinely multilingual replies still need definitions.
 
 ### Why this is better than the earlier acceptance-criteria branches
 
@@ -552,7 +561,10 @@ task-scoped locale, with evals showing that it improves that exact case.
 - [ ] Build a classifier eval corpus and measure explicit-language,
   multilingual-content, translation-intent, dialect, short-message,
   repeated-request and avoided-language cases. Manual exploratory results are
-  promising; this item is the repeatable release gate.
+  promising; this item is the repeatable release gate. The `language` family
+  and the `classifier` variant exist and cover mirroring, no-unrequested-switch,
+  explicit-request-wins, metric default and variant delivery; the remaining
+  case shapes and the actual measurement runs do not.
 - [ ] Evaluate whether ranked Markdown is sufficient downstream; if not, add
   a deterministic score threshold and smaller single/multilingual directive.
 - [ ] Add the language-versus-locale cross-product tests while keeping the
