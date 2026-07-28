@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 import profile_fields
 from user_profile.formatting import (
     DATE_FORMATS,
-    ENGLISH_SPELLING,
     MAX_FORMATTING_GUIDE_CHARS,
     NUMBER_FORMATS,
     TEMPERATURES,
@@ -238,17 +237,39 @@ def test_invalid_primary_currency_promotes_secondary():
 
 # ---- language line ---------------------------------------------------------
 
-def test_regioned_english_adds_spelling_and_bare_en_does_not():
+def test_a_tag_with_a_subtag_states_its_variant_and_a_bare_tag_does_not():
+    """The clause is rendered from the tag, so it is not an English feature:
+    any language whose declared tag carries a region or script subtag gets
+    it, and a bare primary tag has no variant to state."""
     gb = format_formatting_guide(
         _profile(languages=_language_rows("en-gb")))
     assert "Use en-GB only when the message asks" in gb   # canonicalized
-    assert "Use British English spelling when writing English." in gb
-    us = format_formatting_guide(
+    assert "use the en-GB variant" in gb
+    assert "spelling and vocabulary alike" in gb
+    br = format_formatting_guide(
+        _profile(languages=_language_rows("pt-BR")))
+    assert "When writing pt, use the pt-BR variant" in br
+    # A bare primary language first, a variant tag second: the variant is
+    # still stated, from whichever declared tag has one.
+    secondary = format_formatting_guide(
         _profile(languages=_language_rows("da", "en-US")))
-    assert "Use American English spelling when writing English." in us
-    bare = format_formatting_guide(
-        _profile(languages=_language_rows("en")))
-    assert "spelling" not in bare
+    assert "use the en-US variant" in secondary
+    for bare in ("en", "da"):
+        body = format_formatting_guide(
+            _profile(languages=_language_rows(bare)))
+        assert "variant" not in body
+
+
+def test_the_variant_clause_names_no_dialect_and_no_example_words():
+    """A dialect is NAMED by its tag, never exemplified: contrastive example
+    words in a prompt get parroted into unrelated replies, and a table of
+    dialect names would privilege the languages that happen to be in it."""
+    for tag in ("en-GB", "en-US", "pt-BR", "zh-Hans"):
+        body = format_formatting_guide(
+            _profile(languages=_language_rows(tag))).lower()
+        for word in ("british", "american", "colour", "anticlockwise",
+                     "car park", "brazilian"):
+            assert word not in body
 
 
 def test_invalid_primary_language_promotes_secondary():
@@ -275,7 +296,7 @@ def test_language_rows_are_authoritative_and_preferred_row_renders_first():
     language_line = next(
         line for line in body.splitlines() if line.startswith("- Language:"))
     assert "Use en-GB or da only when the message asks" in language_line
-    assert "Use British English spelling when writing English." in language_line
+    assert "use the en-GB variant" in language_line
     assert "fr" not in language_line and " de " not in language_line
 
 
@@ -331,5 +352,15 @@ def test_maximal_profile_stays_within_cap():
         assert 0 < len(body) <= MAX_FORMATTING_GUIDE_CHARS
 
 
-def test_english_spelling_table_is_the_two_supported_tags():
-    assert set(ENGLISH_SPELLING) == {"en-GB", "en-US"}
+def test_no_language_is_privileged_by_a_built_in_table():
+    """A language the code has never heard of gets exactly the treatment
+    en-GB gets. That is the property a per-language table cannot have: it
+    would need an entry first, making the listed languages first-class and
+    every other one an addition."""
+    unknown = format_formatting_guide(
+        _profile(languages=_language_rows("qaa-QX")))
+    known = format_formatting_guide(
+        _profile(languages=_language_rows("en-GB")))
+    assert "When writing qaa, use the qaa-QX variant" in unknown
+    assert (unknown.replace("qaa-QX", "en-GB").replace("qaa", "en")
+            == known)

@@ -133,12 +133,27 @@ _UNITS_DEFAULT_TEMPERATURE: dict[str, str] = {
     "metric": "celsius", "uk": "celsius", "imperial": "fahrenheit",
 }
 
-# canonical language tag -> spelling clause (bare "en" adds none; only the
-# two tags the profile can meaningfully disambiguate).
-ENGLISH_SPELLING: dict[str, str] = {
-    "en-GB": "Use British English spelling when writing English.",
-    "en-US": "Use American English spelling when writing English.",
-}
+def _variant_clause(tag: str | None) -> str:
+    """The variant directive for one declared tag, or "" when it has none.
+
+    A tag carrying a region or script subtag ("en-GB", "pt-BR", "zh-Hans")
+    names a specific variant of its language; a bare primary tag ("en",
+    "da") does not, and there is no default variant to state. The clause is
+    rendered from the tag itself rather than from a table of languages: a
+    per-language table would need an entry before any language could be
+    handled, which makes English structurally privileged and every other
+    language an addition. It also says spelling AND vocabulary, because a
+    directive naming only spelling gets applied to orthography alone — a
+    live run wrote one variant's spelling beside the other's word choice.
+
+    The variant is NAMED by its tag and never exemplified: contrastive
+    example words in a prompt get parroted into unrelated replies.
+    """
+    if not tag or "-" not in tag:
+        return ""
+    return (f" When writing {tag.split('-')[0]}, use the {tag} variant — "
+            f"spelling and vocabulary alike; never mix in another variant "
+            f"of the same language.")
 
 _GUIDE_HEADER = ("Use these defaults unless the current request or exact "
                  "source notation says otherwise:")
@@ -315,15 +330,15 @@ def format_formatting_guide(profile: dict[str, Any],
         known = (
             f"{language} or {secondary_language}"
             if secondary_language else language)
-        spelling = ""
-        for tag in (language, secondary_language):
-            if tag in ENGLISH_SPELLING:
-                spelling = " " + ENGLISH_SPELLING[tag]
-                break
+        # The first declared tag that names a variant states it; a profile
+        # whose tags are all bare adds nothing.
+        variant = next(
+            (c for c in (_variant_clause(language),
+                         _variant_clause(secondary_language)) if c), "")
         lines.append("- Language: reply in the language of the current "
                      "message; never switch on your own. Use "
                      f"{known} only when the message asks for it; an "
-                     f"explicit request always wins.{spelling}")
+                     f"explicit request always wins.{variant}")
 
     if not lines:
         return ""

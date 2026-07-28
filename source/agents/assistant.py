@@ -442,8 +442,8 @@ Evidence priority:
 
 Variant resolution is part of this classification:
 - A broad explicit target selects the LANGUAGE FAMILY; it does not discard a
-  compatible profile variant. For example, a request targeting English plus a
-  preferred British-English profile row calls for that exact profile tag.
+  compatible profile variant. A broad target plus a compatible preferred
+  profile row calls for that row's exact tag, never the broad one.
 - An explicit regional or dialect target still wins over the profile.
 - When the request names only a broad language, refine it to the compatible
   declared row with stance `prefer`. If none is preferred, use the sole

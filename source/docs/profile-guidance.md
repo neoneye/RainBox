@@ -15,6 +15,14 @@ system (metric / US customary / the UK hybrid), temperature (derived from
 the measurement system when unset), number format, currency, language — into
 code-owned directives with examples (free-text profile values pass a strict
 prompt boundary or are omitted — they can never become instructions).
+
+The language directive is rendered from the declared tag itself, so no
+language is built in: a tag carrying a region or script subtag (`en-GB`,
+`pt-BR`, `zh-Hans`) states that variant — spelling and vocabulary alike,
+since a directive naming only spelling gets applied to orthography alone —
+and a bare primary tag (`en`, `da`) has no variant to state. The variant is
+always NAMED by its tag and never exemplified: contrastive example words in
+a prompt get parroted into unrelated replies.
 Knowledge calibration is the operator's per-topic declaration (level, stance,
 depth, note), edited on `/profile` and injected under a shared 2 700-char
 budget with an honest degrade-then-drop ladder. Explicit requests in the
