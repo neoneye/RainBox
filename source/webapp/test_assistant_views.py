@@ -441,10 +441,13 @@ def test_selected_run_has_kebab_with_actions(app_ctx, client):
 
 
 def test_nav_link_present(app_ctx, client):
-    # The nav's Assistant link points at the overview (the run finder); the
-    # inspector page itself is reached by clicking a row there.
+    # The nav's Assistant menu reaches the overview (the run finder) and the
+    # second-opinion list; the inspector page itself is reached by clicking a
+    # row in the overview.
     body = client.get("/assistant").get_data(as_text=True)
-    assert 'href="/assistant-overview"' in body and ">Assistant<" in body
+    assert 'href="/assistant-overview"' in body
+    assert 'href="/second-opinion"' in body
+    assert "Assistant &#9662;" in body
 
 
 def test_markdown_export_serializes_the_run(app_ctx, client):

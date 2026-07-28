@@ -977,3 +977,88 @@ def get_second_opinion_assessment(
         .order_by(SecondOpinionAssessment.id.desc())
         .first()
     )
+
+
+_SECOND_OPINION_VERDICTS: tuple[str, ...] = (
+    "approved", "rejected", "skipped", "error")
+
+
+def list_second_opinion_reviews_page(
+    *,
+    verdict: str = "all",
+    category: str = "all",
+    assessed: str = "all",
+    since: datetime | None = None,
+    run_uuid: UUID | None = None,
+    offset: int = 0,
+    limit: int = 25,
+) -> tuple[list[SecondOpinionReview], int, dict[str, int]]:
+    """One page of reviews for the /second-opinion overview, newest first.
+
+    Returns (rows, total, counts). `counts` is per-verdict over the same
+    category/assessed/time window but ignoring the verdict filter itself, so
+    the filter chips show what each choice would give rather than collapsing to
+    the current selection.
+
+    `assessed` is 'all' | 'yes' | 'no' — the operator works a backlog of
+    unassessed reviews, so it has to be filterable, not just displayable.
+    `run_uuid` scopes to one run (used by tests and a per-run drill-down).
+    """
+    def _base():
+        q = db.session.query(SecondOpinionReview)
+        if since is not None:
+            q = q.filter(SecondOpinionReview.created_at >= since)
+        if run_uuid is not None:
+            q = q.filter(SecondOpinionReview.run_uuid == run_uuid)
+        if category != "all":
+            # ARRAY contains: the row lists this category among its findings.
+            q = q.filter(SecondOpinionReview.categories.any(category))
+        if assessed in ("yes", "no"):
+            exists = (
+                db.session.query(SecondOpinionAssessment)
+                .filter(SecondOpinionAssessment.review_uuid
+                        == SecondOpinionReview.uuid)
+                .exists()
+            )
+            q = q.filter(exists if assessed == "yes" else ~exists)
+        return q
+
+    counts = {"all": _base().count()}
+    for v in _SECOND_OPINION_VERDICTS:
+        counts[v] = _base().filter(SecondOpinionReview.verdict == v).count()
+
+    q = _base()
+    if verdict != "all":
+        q = q.filter(SecondOpinionReview.verdict == verdict)
+    total = q.count()
+    rows = (
+        q.order_by(SecondOpinionReview.id.desc())
+        .offset(max(0, offset)).limit(max(1, limit)).all()
+    )
+    return list(rows), total, counts
+
+
+def second_opinion_assessments_for(
+    review_uuids: list[UUID],
+) -> dict[UUID, SecondOpinionAssessment]:
+    """Each review's current (newest) assessment, for a page of rows in one
+    query. Reviews with no assessment are absent from the mapping."""
+    if not review_uuids:
+        return {}
+    rows = (
+        db.session.query(SecondOpinionAssessment)
+        .filter(SecondOpinionAssessment.review_uuid.in_(review_uuids))
+        .order_by(SecondOpinionAssessment.id)
+        .all()
+    )
+    # Ascending id, so a later row overwrites an earlier one: newest wins.
+    return {r.review_uuid: r for r in rows}
+
+
+def get_second_opinion_review(review_uuid: UUID) -> SecondOpinionReview | None:
+    """One review by uuid, or None."""
+    return (
+        db.session.query(SecondOpinionReview)
+        .filter(SecondOpinionReview.uuid == review_uuid)
+        .first()
+    )

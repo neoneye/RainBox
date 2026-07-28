@@ -139,6 +139,85 @@ def test_a_review_without_an_assessment_returns_none(run):
     assert db.get_second_opinion_assessment(_record(run).uuid) is None
 
 
+# --- the overview query -------------------------------------------------------
+
+
+def test_page_filters_by_verdict_and_reports_counts_for_the_others(run):
+    _record(run, verdict="approved")
+    _record(run, verdict="rejected")
+    _record(run, verdict="rejected")
+    _record(run, verdict="skipped", skip_reason="no_model_group")
+    rows, total, counts = db.list_second_opinion_reviews_page(
+        verdict="rejected", run_uuid=run.uuid)
+    assert total == 2
+    assert [r.verdict for r in rows] == ["rejected", "rejected"]
+    # The chips show what each *other* verdict would give, so counts ignore the
+    # verdict filter itself.
+    assert counts["approved"] == 1 and counts["rejected"] == 2
+    assert counts["skipped"] == 1 and counts["all"] == 4
+
+
+def test_page_filters_by_category(run):
+    _record(run, verdict="rejected", problems=[
+        {"category": "identity_mismatch", "text": "metric"}])
+    _record(run, verdict="rejected", problems=[
+        {"category": "logic_error", "text": "constant"}])
+    _record(run, verdict="approved")
+    rows, total, _counts = db.list_second_opinion_reviews_page(
+        category="identity_mismatch", run_uuid=run.uuid)
+    assert total == 1
+    assert rows[0].categories == ["identity_mismatch"]
+
+
+def test_the_right_answer_wrong_reasons_query_is_one_call(run):
+    """Approved, yet the reviewer flagged the ground the gate exists for."""
+    _record(run, verdict="approved", problems=[
+        {"category": "identity_mismatch", "text": "assumes US units"}])
+    _record(run, verdict="approved")
+    _record(run, verdict="rejected", problems=[
+        {"category": "identity_mismatch", "text": "metric"}])
+    rows, total, _counts = db.list_second_opinion_reviews_page(
+        verdict="approved", category="identity_mismatch", run_uuid=run.uuid)
+    assert total == 1
+    assert rows[0].verdict == "approved"
+
+
+def test_page_filters_by_whether_it_has_been_assessed(run):
+    a = _record(run, verdict="rejected")
+    _record(run, verdict="rejected")
+    db.record_second_opinion_assessment(a.uuid, "over_blocked", note="too strict")
+    unassessed, total_un, _ = db.list_second_opinion_reviews_page(
+        assessed="no", run_uuid=run.uuid)
+    assessed, total_as, _ = db.list_second_opinion_reviews_page(
+        assessed="yes", run_uuid=run.uuid)
+    assert total_un == 1 and unassessed[0].uuid != a.uuid
+    assert total_as == 1 and assessed[0].uuid == a.uuid
+
+
+def test_page_is_newest_first_and_paginated(run):
+    made = [_record(run, verdict="approved") for _ in range(5)]
+    rows, total, _counts = db.list_second_opinion_reviews_page(
+        run_uuid=run.uuid, offset=0, limit=2)
+    assert total == 5
+    assert [r.uuid for r in rows] == [made[4].uuid, made[3].uuid]
+    rows2, _t, _c = db.list_second_opinion_reviews_page(
+        run_uuid=run.uuid, offset=4, limit=2)
+    assert [r.uuid for r in rows2] == [made[0].uuid]
+
+
+def test_assessments_for_many_reviews_come_back_in_one_lookup(run):
+    a = _record(run, verdict="rejected")
+    b = _record(run, verdict="approved")
+    c = _record(run, verdict="approved")
+    db.record_second_opinion_assessment(a.uuid, "agree")
+    db.record_second_opinion_assessment(b.uuid, "unsure")
+    db.record_second_opinion_assessment(b.uuid, "under_blocked", note="missed it")
+    got = db.second_opinion_assessments_for([a.uuid, b.uuid, c.uuid])
+    assert got[a.uuid].assessment == "agree"
+    assert got[b.uuid].assessment == "under_blocked"   # newest wins
+    assert c.uuid not in got
+
+
 def test_unknown_assessment_is_rejected_by_the_database(run):
     review = _record(run)
     with pytest.raises(sa.exc.IntegrityError):
