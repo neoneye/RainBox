@@ -17,7 +17,7 @@ from uuid import UUID
 from flask import Response, render_template_string, request
 
 import db
-from agents.assistant import CAPABILITIES
+from agents.assistant import CAPABILITIES, problem_texts
 from .core import app
 
 # action value -> short human-readable summary, for the timeline's "action
@@ -852,8 +852,8 @@ def _second_opinion_md(so: dict) -> list[str]:
         lines.append("_response_")
         lines.append(_fence(so["response"], "json"))
         lines.append("")
-    for problem in so.get("problems") or []:
-        lines.append(f"- {problem}")
+    for text in problem_texts(so.get("problems")):
+        lines.append(f"- {text}")
     if so.get("skipped"):
         lines.append(f"- review skipped: {so['skipped']}")
     if so.get("error"):
@@ -1110,7 +1110,7 @@ def _load_run_detail(selected) -> dict:
             # interpreted by Python before Jinja ever parses it.
             so = dict(so)
             so["problems_text"] = "\n".join(
-                f"- {p}" for p in so.get("problems") or [])
+                f"- {t}" for t in problem_texts(so.get("problems")))
             second_opinion[str(s.uuid)] = so
         obs_data[str(s.uuid)] = data
     # The full final reply (the run stores only a truncated final_summary).

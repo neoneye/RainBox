@@ -26,6 +26,8 @@ from db import (
     AssistantRun,
     AssistantStep,
     AssistantWriteIntent,
+    SecondOpinionAssessment,
+    SecondOpinionReview,
     assistant_step_path,
     ChatMessage,
     Chatroom,
@@ -697,6 +699,76 @@ admin.add_view(AssistantRunView(AssistantRun, db, category="Assistant"))
 admin.add_view(AssistantStepView(AssistantStep, db, category="Assistant"))
 admin.add_view(ModelView(AssistantControl, db, category="Assistant"))
 admin.add_view(ModelView(AssistantWriteIntent, db, category="Assistant"))
+
+
+def _format_review_trace_link(view, context, model, name):
+    """Render a review's uuid cell as a link to the trace it gated — the run,
+    scrolled to the gated step when there is one. Same affordance and width as
+    the step list's uuid cell. `step_uuid` is nullable (the review runs before
+    dispatch), so fall back to the run without an anchor."""
+    full = str(model.uuid)
+    href = (assistant_step_path(model.run_uuid, model.step_uuid)
+            if model.step_uuid else f"/assistant?id={model.run_uuid}")
+    return Markup(f'<a href="{escape(href)}" title="{escape(full)}">'
+                  f'<code>{escape(full[:6])}</code> ↗</a>')
+
+
+def _format_review_problems(view, context, model, name):
+    """The findings as one plain line each — the category, then the sentence.
+    The stored shape is {category, text}, whose default repr is both unreadable
+    and wider than the finding itself. The category is kept per line because the
+    `categories` column only carries the row's distinct set, losing which
+    finding rests on which ground when a review reports several."""
+    # Local, like the other agents.* imports here: core.py loads early and
+    # agents.assistant is heavy.
+    from agents.assistant import problem_texts
+
+    rows = []
+    for text, problem in zip(problem_texts(model.problems), model.problems or []):
+        category = (problem or {}).get("category") if isinstance(problem, dict) else None
+        prefix = f"{escape(str(category))} — " if category else ""
+        rows.append(f"{prefix}{escape(text)}")
+    return Markup("<br>".join(rows)) if rows else ""
+
+
+class SecondOpinionReviewView(ModelView):
+    # Newest first; the review is a record of what a model said at a point in
+    # time, so it is read-only here — the operator's judgment of it goes in
+    # second_opinion_assessment, not by editing the row.
+    column_default_sort = ("id", True)
+    can_edit = False
+    can_create = False
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    # Every uuid column is shortened to 6 chars (full value on hover), as in
+    # AssistantStepView — a review row carries five of them, and at full width
+    # they push verdict/categories/problems off screen. `run_uuid`/`step_uuid`
+    # are foreign keys, which Flask-Admin leaves out of the list, so they are
+    # reachable through the uuid cell's link rather than as columns.
+    column_formatters = {
+        "uuid": _format_review_trace_link,
+        "journal_id": _fmt_short_uuid,
+        "room_uuid": _fmt_short_uuid,
+        "agent_uuid": _fmt_short_uuid,
+        "model_uuid": _fmt_short_uuid,
+        "problems": _format_review_problems,
+    }
+    # The prompts and the reviewer's raw output are long; keep the list scannable
+    # (they stay on the detail view).
+    column_exclude_list = ("system_prompt", "user_prompt", "reasoning", "response")
+
+
+class SecondOpinionAssessmentView(ModelView):
+    # Append-only: a changed mind is a new row, so editing is off.
+    column_default_sort = ("id", True)
+    can_edit = False
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {"uuid": _fmt_short_uuid}
+
+
+admin.add_view(SecondOpinionReviewView(
+    SecondOpinionReview, db, category="Assistant"))
+admin.add_view(SecondOpinionAssessmentView(
+    SecondOpinionAssessment, db, category="Assistant"))
 
 
 class EvalRunView(ModelView):

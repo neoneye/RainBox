@@ -20,11 +20,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 from xml.etree import ElementTree as ET
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 import db
 import skills
@@ -138,13 +138,62 @@ class AssistantStepDecision(BaseModel):
         return schema
 
 
+class SecondOpinionProblem(BaseModel):
+    """One finding, tagged with the ground it rests on. The categories are the
+    rejection bar SECOND_OPINION_SYSTEM_PROMPT already sets, so the reviewer is
+    naming the ground it already reasoned from rather than learning a new
+    taxonomy — and `identity_mismatch` becomes countable, which is the whole
+    point of the gate (see docs/second-opinion-design.md)."""
+
+    category: Literal[
+        "not_asked",
+        "identity_mismatch",
+        "logic_error",
+        "sandbox_infeasible",
+        "reason_mismatch",
+        "other",
+    ] = Field(
+        description=(
+            "Which ground the problem rests on. not_asked: the program does "
+            "not answer what the operator asked. identity_mismatch: an "
+            "assumption contradicts the operator's units, locale, language, "
+            "currency, timezone or date format. logic_error: a wrong formula, "
+            "constant, rounding or in-scope edge case. sandbox_infeasible: it "
+            "needs network, files, or packages beyond the allowed set. "
+            "reason_mismatch: the stated reason misrepresents the program. "
+            "other: a real problem none of these cover."
+        )
+    )
+    text: str = Field(
+        description=(
+            "The problem itself — one sentence, concrete, and actionable."
+        )
+    )
+
+
+def problem_texts(problems: Any) -> list[str]:
+    """The human-readable text of each problem, accepting both shapes: objects
+    from a current verdict and bare strings from a legacy inline payload. One
+    helper so every render path (the model-facing observation, the inspector,
+    the markdown export) agrees."""
+    out: list[str] = []
+    for p in problems or []:
+        if isinstance(p, SecondOpinionProblem):
+            out.append(p.text)
+        elif isinstance(p, dict):
+            out.append(str(p.get("text", "")))
+        else:
+            out.append(str(p))
+    return out
+
+
 class SecondOpinionVerdict(BaseModel):
     """The second-opinion reviewer's structured verdict over one gated action
     (currently python_run) before it executes. `problems` comes first so the
     model states its findings before committing to the verdict (same ordering
     trick as edit_document_v6's leading reasoning field)."""
 
-    problems: list[str] = Field(
+    problems: list[SecondOpinionProblem] = Field(
         default_factory=list,
         description=(
             "Real problems that would change or invalidate the result — each "
@@ -152,6 +201,19 @@ class SecondOpinionVerdict(BaseModel):
             "should run as-is."
         ),
     )
+
+    @field_validator("problems", mode="before")
+    @classmethod
+    def _accept_bare_strings(cls, value: Any) -> Any:
+        """A model that answers with plain strings still parses; the finding
+        lands in `other` rather than failing the whole review call."""
+        if not isinstance(value, list):
+            return value
+        return [
+            {"category": "other", "text": v} if isinstance(v, str) else v
+            for v in value
+        ]
+
     approved: bool = Field(
         description=(
             "True to let the program run. False only when `problems` names at "
@@ -316,18 +378,23 @@ for this step, its private reasoning (when the model exposes one), and the
 program. Review all of them together and report `problems` (findings first),
 then `approved`.
 
-Reject only for problems that would change or invalidate the result:
-- The program does not answer what the operator actually asked.
-- An assumption contradicts the operator's identity or profile — units
-  (metric vs imperial), locale, language, currency, timezone, date format.
-  Example: the profile shows a European operator, but the reasoning treats the
-  request as a US-units question. A correct final answer does not excuse wrong
-  reasoning here: reasoning that ignores who is asking fails on the next input.
-- A logic error: wrong formula or constant, off-by-one, wrong rounding,
-  mishandled edge case in scope of the request.
-- The program cannot work in the sandbox: it needs network, files, or packages
-  beyond the standard library + numpy, sympy, and mpmath.
-- The stated reason misrepresents what the program actually does.
+Reject only for problems that would change or invalidate the result. Each
+ground below carries the `category` to tag a problem of that kind with:
+- [not_asked] The program does not answer what the operator actually asked.
+- [identity_mismatch] An assumption contradicts the operator's identity or
+  profile — units (metric vs imperial), locale, language, currency, timezone,
+  date format. Example: the profile shows a European operator, but the
+  reasoning treats the request as a US-units question. A correct final answer
+  does not excuse wrong reasoning here: reasoning that ignores who is asking
+  fails on the next input.
+- [logic_error] A logic error: wrong formula or constant, off-by-one, wrong
+  rounding, mishandled edge case in scope of the request.
+- [sandbox_infeasible] The program cannot work in the sandbox: it needs
+  network, files, or packages beyond the standard library + numpy, sympy, and
+  mpmath.
+- [reason_mismatch] The stated reason misrepresents what the program does.
+
+Use `other` only for a real problem none of these grounds covers.
 
 Approve everything else. A rejection costs the assistant one of its few steps,
 so style preferences, micro-optimisations, and hypothetical concerns are never
@@ -3047,9 +3114,11 @@ class AssistantAgent(ModelGroupAgent):
                         approved, review = self._second_opinion(
                             decision, reasoning=reasoning, messages=messages
                         )
+                        self._record_second_opinion_review(
+                            action_ctx, decision, review)
                     if not approved:
                         assert review is not None
-                        problems = review.get("problems") or [
+                        problems = problem_texts(review.get("problems")) or [
                             "(the reviewer gave no specific problem)"
                         ]
                         listing = "\n".join(f"- {p}" for p in problems)
@@ -3792,7 +3861,9 @@ class AssistantAgent(ModelGroupAgent):
         # still blocks — the loop substitutes a placeholder complaint.
         return verdict.approved, {
             "approved": verdict.approved,
-            "problems": list(verdict.problems),
+            # Dumped, not the model objects: this payload lands in the step's
+            # JSONB observation column.
+            "problems": [p.model_dump() for p in verdict.problems],
             "group_from": group_from,
             "model_uuid": str(model_uuid),
             "reasoning": tally.reasoning_text or None,
@@ -3802,6 +3873,61 @@ class AssistantAgent(ModelGroupAgent):
             "response": tally.content_text or verdict.model_dump_json(),
             **prompts,
         }
+
+    def _record_second_opinion_review(
+        self,
+        ctx: "AssistantActionContext",
+        decision: AssistantStepDecision,
+        review: dict[str, Any] | None,
+    ) -> None:
+        """Persist the review as a first-class row. Deliberately at the call
+        site rather than inside `_second_opinion`, which stays a pure function
+        of the decision — the run and step context lives out here.
+
+        Best-effort: the gate is a quality check on side-effect-free compute,
+        so a telemetry write must never take down the turn it is describing.
+        """
+        if review is None or self._run is None:
+            return
+        # The fail-open paths carry no `approved` key at all; that absence is
+        # exactly what the four-value verdict exists to stop being an approval.
+        if review.get("skipped"):
+            verdict = "skipped"
+        elif review.get("error"):
+            verdict = "error"
+        else:
+            verdict = "approved" if review.get("approved") else "rejected"
+        raw_model_uuid = review.get("model_uuid")
+        try:
+            db.record_second_opinion_review(
+                run_uuid=self._run.uuid,
+                step_uuid=ctx.step_uuid,
+                step_index=ctx.step_index,
+                journal_id=ctx.journal_id,
+                room_uuid=ctx.room_uuid,
+                agent_uuid=ctx.agent_uuid,
+                action=decision.action.value,
+                verdict=verdict,
+                problems=[
+                    p if isinstance(p, dict)
+                    else {"category": "other", "text": str(p)}
+                    for p in review.get("problems") or []
+                ],
+                skip_reason=review.get("skipped"),
+                error=review.get("error"),
+                group_from=review.get("group_from"),
+                model_uuid=UUID(raw_model_uuid) if raw_model_uuid else None,
+                system_prompt=review.get("system_prompt"),
+                user_prompt=review.get("user_prompt"),
+                reasoning=review.get("reasoning"),
+                response=review.get("response"),
+            )
+        except Exception:
+            logger.exception(
+                "assistant: failed to record the second-opinion review; "
+                "the turn continues"
+            )
+            db.db.session.rollback()
 
     def _build_second_opinion_prompt(
         self,

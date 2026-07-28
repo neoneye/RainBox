@@ -713,6 +713,26 @@ def test_second_opinion_rejection_shows_problems(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_categorized_problems_render_as_text(app_ctx, client):
+    """Problems are {category, text} objects now. Both the inspector and the
+    markdown export must show the sentence, not the raw object."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _second_opinion_step(run, approved=False, problems=[
+        {"category": "identity_mismatch",
+         "text": "the operator profile is metric; convert to meters"}])
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "- the operator profile is metric; convert to meters" in body
+        assert "identity_mismatch" not in body      # the tag is not the finding
+        md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
+        assert "- the operator profile is metric; convert to meters" in md
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_markdown_export_mirrors_the_second_opinion_block(app_ctx, client):
     room = _room()
     run = db.start_assistant_run(

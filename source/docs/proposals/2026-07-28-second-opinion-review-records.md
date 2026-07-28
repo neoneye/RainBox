@@ -1,7 +1,11 @@
 # Second-opinion review records — making the gate's judgment inspectable
 
-**Status:** Proposed. Nothing implemented.
+**Status:** Storage implemented — rollout steps 1 (tables + write) and 2
+(categories) are done; step 3 (read paths: pointer-based inspector, dashboard
+cost, `/second-opinion` overview) is not. The queries below therefore work
+against rows written from now on; nothing is backfilled.
 **Date:** 2026-07-28
+**Last updated:** 2026-07-28
 
 ## The Problem
 
@@ -182,10 +186,13 @@ counts tell you *where* to look, the note tells future-you *what you concluded*.
 
 ### 6. `observation.data` keeps a pointer, not a copy
 
-The new table is the source of truth. `observation.data["second_opinion"]`
-shrinks to `{"review_uuid": "…"}`. The inspector loads reviews once per run by
-`run_uuid` in `_load_run_detail`, exactly as it already does for steps and
-write-intents, and `_split_second_opinion` resolves the pointer.
+*(Step 3 — not yet implemented; the payload is currently written both places.)*
+
+The new table becomes the source of truth and
+`observation.data["second_opinion"]` shrinks to `{"review_uuid": "…"}`. The
+inspector loads reviews once per run by `run_uuid` in `_load_run_detail`,
+exactly as it already does for steps and write-intents, and
+`_split_second_opinion` resolves the pointer.
 
 Historical rows keep their inline payload and have no `review_uuid`, so the
 view falls back to the inline blob when the pointer is absent. No backfill, no

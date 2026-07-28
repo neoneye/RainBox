@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -1260,6 +1260,117 @@ class AssistantWriteIntent(db.Model):
             name="ck_assistant_write_intent_state",
         ),
         Index("assistant_write_intent_by_run", "run_uuid", "id"),
+    )
+
+
+class SecondOpinionReview(db.Model):
+    """One pre-execution review by the second-opinion gate, as a first-class
+    row. The decide call that proposes a program already gets typed columns on
+    `assistant_step`; this is the same kind of event — one structured LLM call
+    with prompts, a reasoning channel and a parsed result — recorded at the
+    same tier instead of as a blob inside `observation.data`.
+
+    `verdict` is four-valued on purpose: the fail-open paths ('skipped' when no
+    model group is bound, 'error' when the review call itself failed) both let
+    the action run, but neither is an approval, and a run that went wrong
+    because the gate never ran is a different bug from one the gate approved.
+
+    See docs/proposals/2026-07-28-second-opinion-review-records.md.
+    """
+
+    __tablename__ = "second_opinion_review"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    run_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("assistant_run.uuid", ondelete="CASCADE"), index=True
+    )
+    # The gated step. Nullable because the review runs *before* dispatch, so a
+    # worker that dies between the two leaves a review with no step row.
+    step_uuid: Mapped[UUID | None] = mapped_column(
+        ForeignKey("assistant_step.uuid", ondelete="SET NULL"), index=True
+    )
+    # Mirrors assistant_step.step_index. Retries reuse the same index, so
+    # (run_uuid, step_index) ordered by id *is* the attempt chain — there is
+    # deliberately no attempt counter or supersedes pointer to keep in sync.
+    step_index: Mapped[int] = mapped_column()
+    journal_id: Mapped[UUID | None] = mapped_column()
+    room_uuid: Mapped[UUID | None] = mapped_column()
+    agent_uuid: Mapped[UUID | None] = mapped_column()
+    action: Mapped[str] = mapped_column(Text)
+    verdict: Mapped[str] = mapped_column(Text)
+    # Set only for their matching verdict; the fail-open reason is a column,
+    # not the absence of an `approved` key.
+    skip_reason: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    # [{category, text}] — the reviewer's findings. Present on approvals too:
+    # "approved with problems" is the right-answer-wrong-reasons signal.
+    problems: Mapped[list] = mapped_column(JSONB, default=list)
+    # Distinct categories from `problems`, denormalized purely so the overview
+    # can index/filter on them. Always derived, never supplied by a caller.
+    categories: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    group_from: Mapped[str | None] = mapped_column(Text)
+    model_uuid: Mapped[UUID | None] = mapped_column()
+    system_prompt: Mapped[str | None] = mapped_column(Text)
+    user_prompt: Mapped[str | None] = mapped_column(Text)
+    reasoning: Mapped[str | None] = mapped_column(Text)
+    response: Mapped[str | None] = mapped_column(Text)
+    # The gate's own cost. Nowhere else in the schema records it, so without
+    # these the review's tokens and model time are invisible.
+    input_tokens: Mapped[int | None] = mapped_column()
+    output_tokens: Mapped[int | None] = mapped_column()
+    duration_ms: Mapped[int | None] = mapped_column()
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "verdict IN ('approved','rejected','skipped','error')",
+            name="ck_second_opinion_review_verdict",
+        ),
+        Index("second_opinion_review_by_run", "run_uuid", "step_index", "id"),
+        Index("second_opinion_review_by_verdict", "verdict", "created_at"),
+        Index("second_opinion_review_by_category", "categories",
+              postgresql_using="gin"),
+    )
+
+
+class SecondOpinionAssessment(db.Model):
+    """The operator's later judgment of one review — the ground truth the gate's
+    rejection bar can be tuned against.
+
+    Append-only, and a separate table rather than columns on the review: the
+    review row records what a model said at a point in time and must not be
+    edited after the fact (the same discipline docs/relevance-telemetry.md sets
+    for retrieval_event). Changing your mind appends a row; the newest wins.
+
+    - agree         the verdict was right
+    - over_blocked  rejected something fine; cost a step for nothing
+    - under_blocked approved something that should have been stopped — the
+                    right-answer-wrong-reasons miss
+    - unsure        recorded so an inspected-but-undecided review is
+                    distinguishable from an unreviewed one
+    """
+
+    __tablename__ = "second_opinion_assessment"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    review_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("second_opinion_review.uuid", ondelete="CASCADE"), index=True
+    )
+    assessment: Mapped[str] = mapped_column(Text)
+    # Why, in the operator's own words. The counts say where to look; this says
+    # what they concluded when they looked.
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "assessment IN ('agree','over_blocked','under_blocked','unsure')",
+            name="ck_second_opinion_assessment_value",
+        ),
+        Index("second_opinion_assessment_by_review", "review_uuid", "id"),
     )
 
 
