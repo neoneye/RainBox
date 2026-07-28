@@ -253,6 +253,40 @@ def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_verdict_chip_carries_the_outcome_not_the_lifecycle_status(app_ctx, client):
+    """The Verdict card's chip is the verdict — Resolved/Unresolved — matching
+    the dashboard's headline status. It must never show the lifecycle status
+    ("Finished" = the loop terminated), which reads as success on a run that
+    resolved nothing."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished", final_summary="I could not complete it")
+    db.set_run_summary(run, {
+        "trigger": "file the report", "obstacles": ["no access"],
+        "outcome": "partial"})
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert '<span class="outcome out-unresolved">Unresolved</span>' in body
+        assert "out-finished" not in body      # the green lifecycle chip is gone
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_verdict_chip_is_resolved_when_the_run_resolved(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished", final_summary="done")
+    db.set_run_summary(run, {
+        "trigger": "file the report", "obstacles": [], "outcome": "resolved"})
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert '<span class="outcome out-resolved">Resolved</span>' in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_run_is_addressable_and_shown_by_uuid(app_ctx, client):
     room = _room()
     run = db.start_assistant_run(
@@ -441,7 +475,26 @@ def test_markdown_export_serializes_the_run(app_ctx, client):
         assert "Step 1 of 1 — memory_query" in md   # action + its description
         assert '"query": "report"' in md             # action args block
         assert "found it" in md                       # observation
-        assert "## Verdict — Finished" in md and "all done — the verdict" in md
+        assert "## Verdict — Resolved" in md and "all done — the verdict" in md
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_markdown_verdict_header_carries_the_outcome(app_ctx, client):
+    """The markdown twin of the Verdict chip: the outcome, not the lifecycle
+    status. A run that finished without resolving reads "Unresolved"."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished", final_summary="I could not complete it")
+    db.set_run_summary(run, {
+        "trigger": "file the report", "obstacles": ["no access"],
+        "outcome": "partial"})
+    try:
+        md = client.get(
+            f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
+        assert "## Verdict — Unresolved" in md
+        assert "## Verdict — Finished" not in md
     finally:
         _cleanup(run.uuid, room.uuid)
 

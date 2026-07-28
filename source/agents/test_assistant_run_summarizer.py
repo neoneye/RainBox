@@ -10,9 +10,11 @@ import pytest
 
 import db
 from agents.assistant_run_summarizer import (
+    ASSISTANT_RUN_SUMMARIZER_SYSTEM_PROMPT,
     AssistantRunSummarizerAgent,
     RunSummary,
     _find_repeated_calls,
+    _REPLY_PREVIEW_CHARS,
 )
 from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID, agent_config
 from db import AssistantRun
@@ -158,7 +160,8 @@ def test_find_repeated_calls_ignores_actionless_steps():
 def test_prompt_includes_repeated_call_hint_with_score():
     agent = _agent()
     steps = [_step(i, "kanban_read", {"board_uuid": "b1"}) for i in range(6)]
-    prompt = agent._build_prompt(SimpleNamespace(status="stopped"), steps, None)
+    prompt = agent._build_prompt(
+        SimpleNamespace(status="stopped"), steps, None, None)
     assert "Possible repeated calls" in prompt
     assert "kanban_read called 6×" in prompt
     assert "% similar" in prompt
@@ -168,5 +171,82 @@ def test_prompt_omits_hint_for_distinct_calls():
     agent = _agent()
     steps = [_step(0, "kanban_read", {"board_uuid": "b1"}),
              _step(1, "memory_query", {"q": "x"})]
-    prompt = agent._build_prompt(SimpleNamespace(status="finished"), steps, None)
+    prompt = agent._build_prompt(
+        SimpleNamespace(status="finished"), steps, None, None)
     assert "repeated calls" not in prompt.lower()
+
+
+# --- the delivered reply is the outcome evidence ------------------------------
+# Without it the digest's terminal line is a bare "#N [final] reply" with no
+# content, so a run that recovered from a rejected action and still answered
+# looked indistinguishable from one that died.
+
+def test_prompt_carries_the_delivered_reply():
+    agent = _agent()
+    steps = [_step(0, "python_run", {"program": "x"})]
+    prompt = agent._build_prompt(
+        SimpleNamespace(status="finished"), steps, None,
+        {"text": "The conversion is 3211234422121970.0 meters."})
+    assert "3211234422121970.0 meters" in prompt
+    assert "Final reply delivered to the operator" in prompt
+
+
+def test_prompt_states_plainly_when_no_reply_was_delivered():
+    agent = _agent()
+    steps = [_step(0, "python_run", {"program": "x"})]
+    prompt = agent._build_prompt(
+        SimpleNamespace(status="failed"), steps, None, None)
+    assert "No reply was delivered to the operator." in prompt
+
+
+def test_prompt_treats_a_blank_reply_as_no_reply():
+    agent = _agent()
+    prompt = agent._build_prompt(
+        SimpleNamespace(status="finished"), [], None, {"text": "   "})
+    assert "No reply was delivered to the operator." in prompt
+
+
+def test_prompt_truncates_a_long_reply():
+    agent = _agent()
+    prompt = agent._build_prompt(
+        SimpleNamespace(status="finished"), [], None, {"text": "z" * 5000})
+    assert "z" * _REPLY_PREVIEW_CHARS in prompt
+    assert "z" * (_REPLY_PREVIEW_CHARS + 1) not in prompt
+
+
+def test_handle_feeds_the_delivered_reply_into_the_prompt(app_ctx):
+    """The regression: a run that hit a rejected action, recovered, and replied.
+    The summarizer must see the answer it delivered, not just the failure."""
+    room = _room()
+    agent_uuid = uuid4()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=agent_uuid)
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="python_run", reason="convert it")
+    db.settle_assistant_step(step, phase="failed", error="second_opinion rejected this")
+    db.post_chat_message(room.uuid, agent_uuid, "It is 3211234422121970.0 meters.")
+    db.finish_run(run, "finished", final_summary="It is 3211234422121970.0 meters.")
+    agent = _agent()
+    captured: dict = {}
+
+    def fake_call(user_prompt, validator=None):
+        captured["prompt"] = user_prompt
+        return RunSummary(trigger="feet conversion", obstacles=["a rejected call"],
+                          outcome="resolved")
+
+    agent._structured_call = fake_call  # type: ignore[method-assign]
+    try:
+        assert agent.handle(uuid4(), {"run_uuid": str(run.uuid)})["ok"] is True
+        assert "3211234422121970.0 meters" in captured["prompt"]
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_outcome_guidance_separates_the_result_from_the_obstacles():
+    """Obstacles are recorded in their own field; hitting one must not by itself
+    drag the outcome below "resolved"."""
+    prompt = ASSISTANT_RUN_SUMMARIZER_SYSTEM_PROMPT
+    assert "obstacles" in prompt
+    # The guidance names the recovered-then-delivered case explicitly.
+    assert "recovered" in prompt
+    assert "never by itself" in prompt
