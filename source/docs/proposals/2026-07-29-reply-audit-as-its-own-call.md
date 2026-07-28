@@ -1,6 +1,8 @@
 # The reply audit is its own call, not an argument
 
-**Status:** Proposed. Nothing implemented.
+**Status:** Implemented on `reply-audit-own-call`. The measurement below —
+whether a separate auditor catches anything the self-audit missed — has not
+been run; that is what decides whether the second call earns its latency.
 **Date:** 2026-07-29
 
 ## Naming

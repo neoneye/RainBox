@@ -17,7 +17,7 @@ or a live model — monkeypatch `_decide_next_step` with
                                   args={"query": "git status"}),
             AssistantStepDecision(reason="Have enough.",
                                   action=AssistantActionName.REPLY,
-                                  args={"1_message": "Working tree clean.", "2_audit": "OK"}),
+                                  args={"message": "Working tree clean."}),
         ),
     )
 """

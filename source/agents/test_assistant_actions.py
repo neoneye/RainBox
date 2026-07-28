@@ -1040,7 +1040,7 @@ def _agent() -> AssistantAgent:
 
 def _decision(action: AssistantActionName, **args) -> AssistantStepDecision:
     if action is AssistantActionName.REPLY and "message" in args:
-        args = {"1_message": args.pop("message"), "2_audit": "OK", **args}
+        args = {"message": args.pop("message"), **args}
     return AssistantStepDecision(reason="step", action=action, args=args)
 
 
@@ -1066,7 +1066,7 @@ def test_loop_dispatches_read_action_then_replies(room):
     steps = _steps_for(result["assistant_run_uuid"])
     # One row per step: the read step settles running->observed in place, the
     # reply is a single terminal row.
-    assert [s.phase for s in steps] == ["observed", "final"]
+    assert [s.phase for s in steps] == ["observed", "observed", "final"]
     observed = steps[0]
     assert observed.action == "memory_query"
     assert observed.observation_preview is not None
@@ -1098,7 +1098,7 @@ def test_loop_does_not_dispatch_identical_successful_read_twice(room):
         (0, "memory_query", {"query": "Simon relation to demoscene"})
     ]
     steps = _steps_for(result["assistant_run_uuid"])
-    assert [s.phase for s in steps] == ["observed", "observed", "final"]
+    assert [s.phase for s in steps] == ["observed", "observed", "observed", "final"]
     assert "remembered fact: Simon used demos" in (steps[1].observation_preview or "")
     assert "already completed this exact read" in (steps[1].observation_preview or "")
 
@@ -1128,7 +1128,7 @@ def test_loop_does_not_dispatch_identical_failed_action_twice(room):
     assert result["status"] == "finished"
     assert calls == [(0, "memory_query", {"query": "Simon demoscene"})]
     steps = _steps_for(result["assistant_run_uuid"])
-    assert [s.phase for s in steps] == ["failed", "failed", "final"]
+    assert [s.phase for s in steps] == ["failed", "failed", "observed", "final"]
     assert "already failed earlier" in (steps[1].observation_preview or "")
 
 
@@ -1147,7 +1147,7 @@ def test_loop_records_failed_action_and_continues(room):
     steps = _steps_for(result["assistant_run_uuid"])
     # The blocked read opens a running row (committed before the action) that
     # settles in place to failed; then a terminal reply row.
-    assert [s.phase for s in steps] == ["failed", "final"]
+    assert [s.phase for s in steps] == ["failed", "observed", "final"]
     failed = steps[0]
     assert failed.action == "workspace_read_command"
     assert failed.error and "blocked" in failed.error.lower()

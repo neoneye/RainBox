@@ -30,31 +30,36 @@ current message always override both. Switching `profile.current` changes all
 three blocks and posts a one-time context marker into each room; it preserves
 history and is **not an audience boundary**.
 
-The `reply` action carries its contract in numbered args:
-`{"1_message": ..., "2_audit": ...}`, both required. The number prefixes
-spell the writing order and survive alphabetical key normalization
-(`1_` < `2_`). The message is written in the language of the operator's
-current message (the profile's preferred language applies only on explicit
-request) and obeys the constraints already established for the turn; the
-audit — an introspection of a message that already exists — re-checks it
-against `acceptance_criteria_json`, `user_settings_json` and the
-formatting guide (separators, dates, units, currency, language). The
-constraints are not a reply argument: the acceptance-criteria step
-establishes them before any work, so the audit has a pre-committed
-yardstick instead of one invented in the same response. The audit is a bare
-verdict: anything but exactly `OK` (any case, nothing else — an OK buried
-in a narration of the checks does not pass) bounces the reply back as a
-rejected step — the message is not posted, the audit text flows into the
-scratchpad, and the model fixes the message. Bounces are capped
-(`MAX_AUDIT_REJECTIONS`, 2 per run) so an audit that never approves cannot
-fail the turn: past the cap the reply ships anyway, and the run summariser
-typically flags the outcome Unresolved. The prefix order is enforced at
-two independent layers: validation checks the parsed args dict (json
-insertion order) AND the raw response text (the authority when the
-parser normalizes key order), and the audit gate re-checks the dict at
-the last moment before the message posts. Validation logs a
-`reply order check:` line (dict key order, raw-text key positions) for
-every reply, so an order escape is diagnosable from the app log.
+The `reply` action carries one argument, `{"message": ...}`: the answer
+text, written in the language of the operator's current message (the
+profile's preferred language applies only on explicit request) and obeying
+the constraints already established for the turn. Neither the constraints
+nor the audit is a reply argument — the acceptance-criteria step
+establishes the constraints before any work, and the audit is a separate
+call after the message exists.
+
+That call is the **reply audit**: a reviewer that did not write the message
+reads it against the request (every sentence and sub-question answered),
+`acceptance_criteria_json`, `user_settings_json`, the formatting guide
+(separators, dates, units, currency, language and its variant) and the
+turn's observations. It returns a typed
+`{reason, problems[], verdict: send|revise}` — a verdict the code reads,
+not prose it parses. A `revise` bounces the reply as a rejected step: the
+message is not posted, the problems flow into the scratchpad, and the model
+fixes the message. Bounces are capped (`MAX_AUDIT_REJECTIONS`, 2 per run)
+so an auditor that never approves cannot fail the turn: past the cap the
+reply ships anyway, and the run summariser typically flags the outcome
+Unresolved.
+
+The auditor is shown the turn's observations but not the decide loop's
+reasoning. A message claiming a figure no step observed is exactly what an
+audit should catch, so the evidence has to be there — while the reasoning
+that produced the message is the rationalization a separate call exists to
+escape. Its model resolves through the `reply_audit` binding on
+`/agentmodel`, else the assistant's own group, and it fails open: an
+unbound or unreachable auditor sends the message rather than losing the
+turn's answer. Every verdict lands in its own `reply_audit` trace row with
+the model, duration and prompts that produced it.
 
 The two gated blocks ship dark: each switch is flipped only after its block
 passes the live release gate below. Everything else on this page (the
@@ -133,14 +138,12 @@ This is the direct proof the assistant actually carries the blocks:
    `<formatting_guide authority="instructions">` with the profile's
    directives, `<knowledge_calibration authority="context">` with the JSONL
    rows (when the profile has calibration topics).
-4. In the same run, inspect the final step's **model response**: the reply
-   args must show `1_message`, `2_audit` (in that order — an audit written
-   first is a rejected step, visible in the trace). A non-OK audit must
-   appear as a rejected step followed by a corrected reply.
-   Read the order from the **model response** block only — the **action
-   call** block is stored as Postgres JSONB, which reorders keys by
-   length-then-bytes, and for these key names that always displays as
-   `2_audit, 1_message` even when the model wrote the correct order.
+4. In the same run, the final `reply` must be preceded by a `reply_audit`
+   row carrying its own model, duration and prompts. Open it: the
+   observation shows the verdict and any problems. A `revise` verdict must
+   appear as a rejected reply step followed by a corrected one. With no
+   model bound to `reply_audit`, the row records `no_model_group` and the
+   message is sent — the audit fails open by design.
 5. Switch `profile.current` to another profile → the room's next turn is
    preceded by a visible one-time notice ("the active profile switched to
    …"); the marker itself must NOT appear inside the model's prompt.

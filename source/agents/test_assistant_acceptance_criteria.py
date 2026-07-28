@@ -95,8 +95,7 @@ def _criteria(marker: str) -> AcceptanceCriteria:
 def _reply(message: str = "About 321179090 meters.") -> AssistantStepDecision:
     return AssistantStepDecision(
         reason="ready to answer", action=AssistantActionName.REPLY,
-        args={"1_message": message,
-              "2_audit": "OK"})
+        args={"message": message})
 
 
 def _probe(i: int) -> AssistantStepDecision:
@@ -266,9 +265,10 @@ def test_step0_consumes_none_of_the_step_limit(room):
     assert len(criteria_rows) == 1
     assert criteria_rows[0].phase == "observed"
     assert criteria_rows[0].step_index == 0
-    # The criteria row is not one of the decide steps: all STEP_LIMIT decide
-    # rows exist alongside it.
-    decide_rows = [s for s in rows if s.action != "acceptance_criteria"]
+    # Neither the criteria row nor the reply audit is one of the decide
+    # steps: all STEP_LIMIT decide rows exist alongside them.
+    code_driven = ("acceptance_criteria", AssistantAgent.REPLY_AUDIT_ACTION)
+    decide_rows = [s for s in rows if s.action not in code_driven]
     assert [s.step_index for s in decide_rows] == list(range(agent.STEP_LIMIT))
     # The step-0 call's prompts are persisted like any other step's.
     assert criteria_rows[0].user_prompt and "convert 1053737172 feet" in (

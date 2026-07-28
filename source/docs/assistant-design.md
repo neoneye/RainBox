@@ -31,36 +31,31 @@ consumes the step limit. Each loop iteration:
    `AssistantStepDecision`: `{reason, action, args}` (`args` is forced into
    the schema's `required` list — a non-required field simply gets omitted by
    the model). `reason` is an operator-facing audit note shown in the trace,
-   not hidden chain-of-thought. `reply` takes number-prefixed args —
-   `{"1_message": ..., "2_audit": ...}`, both required — where the
-   prefixes spell the writing order: first the answer text (in the
-   language of the operator's current message), then a skeptical
-   self-audit of that text against `acceptance_criteria_json`,
-   `user_settings_json` and the formatting guide (see
-   `profile-guidance.md`). The reply carries no constraints argument: the
-   acceptance-criteria step establishes them before the work, so the audit
-   checks against a pre-committed yardstick rather than one invented in
-   the same response.
+   not hidden chain-of-thought. `reply` takes one argument —
+   `{"message": ...}`, the answer text in the language of the operator's
+   current message. It carries neither a constraints argument (the
+   acceptance-criteria step establishes those before the work) nor an audit
+   argument (a separate reviewer runs after the message exists, step 4).
 3. **Validate** — `_validate_decision` checks the action against the effective
    capability set: unknown/disabled/non-prompt-exposed actions, missing
-   required args, and unknown args are all rejected. Reply args written out
-   of prefix order are also rejected — checked in both representations:
-   the parsed args dict (json insertion order) and the provider's raw
-   response text (the authority when the structured-output parser
-   normalizes key order). Every reply logs a `reply order check:` line
-   (dict key order, raw-text key positions) so an order escape is
-   diagnosable from the app log. A rejection records a `failed` step and
-   feeds the error back via the scratchpad; the loop continues.
+   required args, and unknown args are all rejected. A rejection records a
+   `failed` step and feeds the error back via the scratchpad; the loop
+   continues.
 4. **Dispatch** — terminal actions (`reply`, `ask_clarifying_question`) post
-   the chat message and finish the run — except a `reply` whose `2_audit` is
-   anything but `OK`: the self-audit gate bounces it as a rejected step (the
-   audit text flows back through the scratchpad so the model fixes the
-   message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
-   never-approving audit cannot burn the step limit. The gate also
-   re-checks the prefix order from the decision's own args — a second,
-   plumbing-free enforcement layer at the last moment before the message
-   posts. Reads and log-and-undo writes execute immediately. Confirm-tier
-   writes are **proposed**, never executed inline.
+   the chat message and finish the run — except a `reply`, which is first
+   sent to the **reply audit**: a separate model call that reads the
+   finished message against the request, the turn's constraints, the
+   operator settings and the turn's observations, and returns a typed
+   `{reason, problems, verdict}`. A `revise` verdict bounces the reply as a
+   rejected step (the problems flow back through the scratchpad so the model
+   fixes the message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
+   never-approving auditor cannot burn the step limit. The audit resolves
+   its model through the dedicated `reply_audit` binding, else the
+   assistant's own group; it fails open, so an unbound or unreachable
+   auditor sends the message. Every verdict lands in its own `reply_audit`
+   trace row with its model, duration and prompts. A clarifying question is
+   not audited. Reads and log-and-undo writes execute immediately.
+   Confirm-tier writes are **proposed**, never executed inline.
 5. **Observe** — the action's `AssistantObservation{ok, text, data}` is capped
    (per-capability `output_cap_chars`), persisted on the step row, and appended
    to the scratchpad for the next decision.
@@ -523,11 +518,10 @@ Every run is durable in `assistant_run` / `assistant_step` (see
 - Each step stores the exact decide-call prompts (`system_prompt`,
   `user_prompt`), raw `model_response`, the model used, token counts,
   `duration_ms`, and the
-  `requested_at`/`created_at`/`settled_at` timestamps. When reading key
-  ORDER from a step, trust only the text columns (`model_response`): the
-  JSONB columns (`args`, observations) are reordered by Postgres —
-  length-then-bytes, so reply args always display as
-  `2_audit, 1_message` regardless of what the model actually wrote.
+  `requested_at`/`created_at`/`settled_at` timestamps. The JSONB columns
+  (`args`, observations) are reordered by Postgres — length-then-bytes — so
+  never read key order from them; the text columns (`model_response`) hold
+  what the model actually wrote.
 - Before dispatching a decide call, the run's `metadata.active_call` checkpoint
   stores its step index, exact system/user prompts, request time, model group,
   and an attempt list. Each attempt adds the resolved model name/UUID,
