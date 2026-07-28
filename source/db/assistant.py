@@ -28,6 +28,8 @@ from db.models import (
     AssistantWriteIntent,
     ChatMessage,
     ChatUser,
+    SecondOpinionAssessment,
+    SecondOpinionReview,
     db,
 )
 from db.queue import fail_journal_if_processing
@@ -872,3 +874,106 @@ def request_run_stop(run_uuid: UUID) -> bool:
         db.session.add(run)
         db.session.commit()
     return True
+
+
+# --- second-opinion review records -------------------------------------------
+# The pre-execution gate's judgment as first-class rows, so "why did this run go
+# wrong?" and "why was this right for the wrong reasons?" are queries rather
+# than a scan of observation blobs. See
+# docs/proposals/2026-07-28-second-opinion-review-records.md.
+
+
+def record_second_opinion_review(
+    *,
+    run_uuid: UUID,
+    step_uuid: UUID | None,
+    step_index: int,
+    action: str,
+    verdict: str,
+    journal_id: UUID | None = None,
+    room_uuid: UUID | None = None,
+    agent_uuid: UUID | None = None,
+    problems: list[dict[str, Any]] | None = None,
+    skip_reason: str | None = None,
+    error: str | None = None,
+    group_from: str | None = None,
+    model_uuid: UUID | None = None,
+    system_prompt: str | None = None,
+    user_prompt: str | None = None,
+    reasoning: str | None = None,
+    response: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    duration_ms: int | None = None,
+    requested_at: datetime | None = None,
+) -> SecondOpinionReview:
+    """Persist one review. `categories` is derived from `problems` here rather
+    than accepted from the caller, so the indexed column can never disagree with
+    the findings it summarizes."""
+    rows = list(problems or [])
+    # dict.fromkeys: distinct, first-seen order — stable across equal inputs so
+    # the column doesn't churn between otherwise-identical reviews.
+    categories = list(dict.fromkeys(
+        str(p["category"]) for p in rows if p.get("category")
+    ))
+    review = SecondOpinionReview(
+        run_uuid=run_uuid, step_uuid=step_uuid, step_index=step_index,
+        journal_id=journal_id, room_uuid=room_uuid, agent_uuid=agent_uuid,
+        action=action, verdict=verdict, skip_reason=skip_reason, error=error,
+        problems=rows, categories=categories, group_from=group_from,
+        model_uuid=model_uuid, system_prompt=system_prompt,
+        user_prompt=user_prompt, reasoning=reasoning, response=response,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        duration_ms=duration_ms, requested_at=requested_at,
+    )
+    db.session.add(review)
+    db.session.commit()
+    return review
+
+
+def list_second_opinion_reviews(run_uuid: UUID) -> list[SecondOpinionReview]:
+    """Every review for a run, oldest first. Retries reuse a step_index, so this
+    order is the attempt chain."""
+    return list(
+        db.session.query(SecondOpinionReview)
+        .filter(SecondOpinionReview.run_uuid == run_uuid)
+        .order_by(SecondOpinionReview.step_index, SecondOpinionReview.id)
+        .all()
+    )
+
+
+def record_second_opinion_assessment(
+    review_uuid: UUID, assessment: str, note: str = "",
+) -> SecondOpinionAssessment:
+    """Append the operator's judgment of one review. Never edits an earlier
+    assessment — a changed mind is a new row and the newest one wins."""
+    row = SecondOpinionAssessment(
+        review_uuid=review_uuid, assessment=assessment, note=note)
+    db.session.add(row)
+    db.session.commit()
+    return row
+
+
+def list_second_opinion_assessments(
+    review_uuid: UUID,
+) -> list[SecondOpinionAssessment]:
+    """Every assessment of one review, oldest first — the operator's full
+    trail of judgment, not just where they landed."""
+    return list(
+        db.session.query(SecondOpinionAssessment)
+        .filter(SecondOpinionAssessment.review_uuid == review_uuid)
+        .order_by(SecondOpinionAssessment.id)
+        .all()
+    )
+
+
+def get_second_opinion_assessment(
+    review_uuid: UUID,
+) -> SecondOpinionAssessment | None:
+    """The operator's current judgment of one review, or None if unassessed."""
+    return (
+        db.session.query(SecondOpinionAssessment)
+        .filter(SecondOpinionAssessment.review_uuid == review_uuid)
+        .order_by(SecondOpinionAssessment.id.desc())
+        .first()
+    )

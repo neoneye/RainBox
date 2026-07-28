@@ -26,6 +26,8 @@ from db import (
     AssistantRun,
     AssistantStep,
     AssistantWriteIntent,
+    SecondOpinionAssessment,
+    SecondOpinionReview,
     assistant_step_path,
     ChatMessage,
     Chatroom,
@@ -697,6 +699,38 @@ admin.add_view(AssistantRunView(AssistantRun, db, category="Assistant"))
 admin.add_view(AssistantStepView(AssistantStep, db, category="Assistant"))
 admin.add_view(ModelView(AssistantControl, db, category="Assistant"))
 admin.add_view(ModelView(AssistantWriteIntent, db, category="Assistant"))
+
+
+class SecondOpinionReviewView(ModelView):
+    # Newest first; the review is a record of what a model said at a point in
+    # time, so it is read-only here — the operator's judgment of it goes in
+    # second_opinion_assessment, not by editing the row.
+    column_default_sort = ("id", True)
+    can_edit = False
+    can_create = False
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "run_uuid": _fmt_short_uuid,
+        "step_uuid": _fmt_short_uuid,
+        "model_uuid": _fmt_short_uuid,
+    }
+    # The prompts and the reviewer's raw output are long; keep the list scannable
+    # (they stay on the detail view).
+    column_exclude_list = ("system_prompt", "user_prompt", "reasoning", "response")
+
+
+class SecondOpinionAssessmentView(ModelView):
+    # Append-only: a changed mind is a new row, so editing is off.
+    column_default_sort = ("id", True)
+    can_edit = False
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {"review_uuid": _fmt_short_uuid}
+
+
+admin.add_view(SecondOpinionReviewView(
+    SecondOpinionReview, db, category="Assistant"))
+admin.add_view(SecondOpinionAssessmentView(
+    SecondOpinionAssessment, db, category="Assistant"))
 
 
 class EvalRunView(ModelView):

@@ -45,7 +45,19 @@ before `_dispatch_action`:
 `SecondOpinionVerdict` is structured output with `problems` deliberately
 before `approved` — the model states its findings before committing to a
 verdict (the same ordering trick as edit_document_v6's leading reasoning
-field). Each problem must be one concrete, actionable sentence.
+field). Each problem is a `SecondOpinionProblem`: one concrete, actionable
+sentence plus the `category` it rests on — `not_asked`, `identity_mismatch`,
+`logic_error`, `sandbox_infeasible`, `reason_mismatch`, or `other`. Those are
+the same five grounds the system prompt sets as the rejection bar, each bullet
+tagged with its category there, so the reviewer labels the ground it already
+reasoned from rather than learning a second taxonomy. `identity_mismatch` is
+the class the gate exists for, and tagging is what makes it countable.
+
+A bare string still parses — a `problems` list of plain strings normalizes to
+`other`, so a model that ignores the object shape degrades instead of failing
+the review call, and legacy inline payloads stay readable. `problem_texts()`
+renders either shape and is used by every display path (the model-facing
+observation, the inspector, the markdown export).
 
 - Approved with a non-empty `problems` list → the program runs; the problems
   stay in the trace as advisory notes.
@@ -132,6 +144,39 @@ Stored in `observation.data["second_opinion"]` on the step row:
 | `reasoning` | the reviewer model's native thinking channel, via `llm.capture_reasoning` (None for non-reasoning models; partials kept when the call fails) |
 | `response` | the reviewer's verbatim content, falling back to the parsed verdict's JSON when the provider reports no content through instrumentation |
 | `skipped` / `error` | why the check did not gate (fail-open cases) |
+
+## The review record
+
+Every review also lands as a row in `second_opinion_review`, written at the
+gate's call site in `AssistantAgent.handle` (not inside `_second_opinion`,
+which stays a pure function of the decision — the run and step context lives
+at the call site). The write is best-effort: a telemetry failure logs and
+rolls back rather than taking down the turn it describes.
+
+The row exists because the payload above cannot be queried. The decide call
+that proposes a program already gets typed columns on `assistant_step`;
+this is the same kind of event — one structured LLM call with prompts, a
+reasoning channel and a parsed result — recorded at the same tier.
+
+`verdict` is four-valued: `approved` / `rejected` / `skipped` / `error`. In the
+payload the fail-open cases carry no `approved` key at all, so downstream all
+three read as "the action ran"; as a column they stay distinct, and a run that
+went wrong because the gate never ran is separable from one the gate approved.
+
+`categories` is the distinct set from `problems`, derived on write so the
+indexed column can never disagree with the findings it summarizes. Retries
+reuse a `step_index`, so `(run_uuid, step_index)` ordered by `id` is the
+attempt chain — there is deliberately no attempt counter or supersedes pointer
+to keep in sync.
+
+`second_opinion_assessment` holds the operator's later judgment of one review
+— `agree` / `over_blocked` / `under_blocked` / `unsure` plus a free-text note.
+Append-only and a separate table: the review records what a model said at a
+point in time and is never edited afterwards, so a changed mind adds a row and
+the newest wins. `under_blocked` is the right-answer-wrong-reasons miss.
+
+Design and rationale:
+`docs/proposals/2026-07-28-second-opinion-review-records.md`.
 
 ## Inspector
 

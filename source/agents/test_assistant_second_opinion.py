@@ -19,8 +19,10 @@ from agents.assistant import (
     CAPABILITIES,
     AssistantActionName,
     AssistantAgent,
+    SECOND_OPINION_SYSTEM_PROMPT,
     AssistantStepDecision,
     SecondOpinionVerdict,
+    problem_texts,
 )
 from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
@@ -119,16 +121,159 @@ def test_the_gate_is_scoped_to_python_run_only():
 
 def test_verdict_parses_from_structured_output_json():
     verdict = SecondOpinionVerdict.model_validate(
-        {"problems": ["uses miles, operator is metric"], "approved": False}
+        {"problems": [{"category": "identity_mismatch",
+                       "text": "uses miles, operator is metric"}],
+         "approved": False}
     )
     assert verdict.approved is False
-    assert verdict.problems == ["uses miles, operator is metric"]
+    assert problem_texts(verdict.problems) == ["uses miles, operator is metric"]
 
 
 def test_verdict_problems_default_to_empty():
     verdict = SecondOpinionVerdict.model_validate({"approved": True})
     assert verdict.approved is True
     assert verdict.problems == []
+
+
+def test_verdict_parses_categorized_problems():
+    verdict = SecondOpinionVerdict.model_validate({
+        "problems": [{"category": "identity_mismatch",
+                      "text": "assumes US units"}],
+        "approved": False,
+    })
+    assert verdict.problems[0].category == "identity_mismatch"
+    assert verdict.problems[0].text == "assumes US units"
+
+
+def test_a_bare_string_problem_normalizes_to_other():
+    """Legacy payloads and any model that answers with plain strings still
+    parse — they land in `other` rather than failing the call."""
+    verdict = SecondOpinionVerdict.model_validate(
+        {"problems": ["uses miles, operator is metric"], "approved": False})
+    assert verdict.problems[0].category == "other"
+    assert verdict.problems[0].text == "uses miles, operator is metric"
+
+
+def test_each_rejection_ground_names_its_category_tag():
+    """The taxonomy is the rejection bar the prompt already sets — each ground
+    carries the tag the verdict must use, so the reviewer is labelling, not
+    classifying afresh."""
+    for category in ("not_asked", "identity_mismatch", "logic_error",
+                     "sandbox_infeasible", "reason_mismatch"):
+        assert category in SECOND_OPINION_SYSTEM_PROMPT
+
+
+def test_problem_texts_reads_both_shapes():
+    """One helper renders problems wherever they are shown, so a legacy inline
+    payload of strings and a new payload of objects both display as text."""
+    assert problem_texts(["plain string"]) == ["plain string"]
+    assert problem_texts([{"category": "logic_error", "text": "wrong constant"}]) == [
+        "wrong constant"]
+    assert problem_texts([]) == []
+
+
+# --- the review record --------------------------------------------------------
+
+
+def _reviewed_run(room, monkeypatch, sandbox_calls, review, approved):
+    """Run one gated turn with the review seam returning `review`; yields the
+    recorded rows for the run."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(
+        _python_run("print(12 * 5280)"), _reply("done")
+    )
+    monkeypatch.setattr(
+        AssistantAgent, "_second_opinion",
+        lambda self, decision, *, reasoning, messages: (approved, review),
+    )
+    agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    return db.list_second_opinion_reviews(agent._run.uuid)
+
+
+def test_a_rejection_is_recorded_as_its_own_row(room, monkeypatch, sandbox_calls):
+    rows = _reviewed_run(
+        room, monkeypatch, sandbox_calls,
+        {"approved": False, "group_from": "second_opinion",
+         "problems": [{"category": "identity_mismatch",
+                       "text": "the operator profile is metric"}]},
+        approved=False)
+    [row] = rows
+    assert row.verdict == "rejected"
+    assert row.action == "python_run"
+    assert row.categories == ["identity_mismatch"]
+    assert row.group_from == "second_opinion"
+    assert row.step_index == 0
+    assert row.step_uuid is not None       # bound to the gated step
+
+
+def test_an_approval_is_recorded_as_its_own_row(room, monkeypatch, sandbox_calls):
+    rows = _reviewed_run(
+        room, monkeypatch, sandbox_calls,
+        {"approved": True, "problems": []}, approved=True)
+    [row] = rows
+    assert row.verdict == "approved"
+    assert row.problems == []
+
+
+def test_an_approval_carrying_problems_keeps_them(room, monkeypatch, sandbox_calls):
+    """Approved-with-problems is the right-answer-wrong-reasons signal; it must
+    be distinguishable from a clean approval."""
+    rows = _reviewed_run(
+        room, monkeypatch, sandbox_calls,
+        {"approved": True,
+         "problems": [{"category": "identity_mismatch", "text": "assumes US units"}]},
+        approved=True)
+    [row] = rows
+    assert row.verdict == "approved"
+    assert row.categories == ["identity_mismatch"]
+
+
+def test_a_skipped_review_is_not_recorded_as_an_approval(
+    room, monkeypatch, sandbox_calls
+):
+    """The fail-open paths are the reason `verdict` is four-valued."""
+    rows = _reviewed_run(
+        room, monkeypatch, sandbox_calls,
+        {"skipped": "no_model_group"}, approved=True)
+    [row] = rows
+    assert row.verdict == "skipped"
+    assert row.skip_reason == "no_model_group"
+
+
+def test_a_failed_review_is_recorded_as_an_error(room, monkeypatch, sandbox_calls):
+    rows = _reviewed_run(
+        room, monkeypatch, sandbox_calls,
+        {"error": "RuntimeError: all models failed"}, approved=True)
+    [row] = rows
+    assert row.verdict == "error"
+    assert "all models failed" in row.error
+
+
+def test_the_rejection_listing_shows_the_text_not_the_raw_object(
+    room, monkeypatch, sandbox_calls
+):
+    """The observation the model reads back must be readable prose, not a dict
+    repr, now that problems are objects."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(
+        _python_run("print(12 * 5280)"), _reply("giving up"))
+    monkeypatch.setattr(
+        AssistantAgent, "_second_opinion",
+        lambda self, decision, *, reasoning, messages: (
+            False,
+            {"approved": False,
+             "problems": [{"category": "identity_mismatch",
+                           "text": "convert to meters"}]},
+        ),
+    )
+    agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    gated = db.list_assistant_steps(agent._run.uuid)[0]
+    assert "- convert to meters" in gated.observation["text"]
+    assert "category" not in gated.observation["text"]
 
 
 # --- the loop gate ------------------------------------------------------------
@@ -281,7 +426,9 @@ def test_review_rejection_returns_the_problems(monkeypatch):
         ),
     )
     assert approved is False
-    assert review["problems"] == ["converts to miles, operator is metric"]
+    # Dumped to plain dicts — the payload rides in a JSONB column.
+    assert review["problems"] == [
+        {"category": "other", "text": "converts to miles, operator is metric"}]
 
 
 def test_review_failure_fails_open(monkeypatch):
