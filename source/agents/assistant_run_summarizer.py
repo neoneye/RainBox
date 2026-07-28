@@ -2,9 +2,10 @@
 
 Runs *after* an `AssistantAgent` turn completes (enqueued by the assistant at
 every terminal state), so it never blocks the operator's reply. Given a run uuid,
-it reads the run's trigger + step trace and makes one structured call producing a
-compact digest — what triggered the run, the obstacles hit across its steps, and
-a one-word outcome — which it stores on `assistant_run.summary` for the
+it reads the run's trigger, step trace, and delivered reply, then makes one
+structured call producing a compact digest — what triggered the run, the
+obstacles hit across its steps, and a one-word outcome — which it stores on
+`assistant_run.summary` for the
 `/assistant` inspector. It posts no chat, drives no tools, and enqueues nothing
 (so it can never summarize itself).
 """
@@ -24,6 +25,11 @@ from agents.base import StatusSender, StructuredLLMAgent
 # many such calls is worth flagging to the summarizer as a possible stuck loop.
 _DUP_SIMILARITY_THRESHOLD = 0.85
 _DUP_MIN_GROUP = 2
+
+# How much of the delivered reply to show the summarizer. The reply is the
+# primary evidence for `outcome`, so it gets a longer budget than a step's
+# observation preview.
+_REPLY_PREVIEW_CHARS = 500
 
 
 def _canonical_args(args: dict | None) -> str:
@@ -103,8 +109,11 @@ class RunSummary(BaseModel):
         "list when the run went smoothly.",
     )
     outcome: Literal["resolved", "partial", "failed"] = Field(
-        description='One word: "resolved" if the run fulfilled the request, '
-        '"partial" if it only got part way, "failed" if it did not.'
+        description='One word for what the operator was left with: "resolved" '
+        "if the delivered reply fulfilled the request, even where the run had "
+        'to recover from a failed step to get there; "partial" if the reply '
+        'covers only some of what was asked; "failed" if nothing was delivered '
+        "or the reply does not address the request."
     )
 
 
@@ -124,7 +133,18 @@ phase, an error, a blocked/no-op action, a retry). One short phrase each. Use an
 empty list if the run proceeded without trouble — do NOT invent obstacles. If a \
 "Possible repeated calls" note appears below the steps, treat that repetition as \
 an obstacle (e.g. "repeated kanban_read 6× — stuck loop").
-  - `outcome`: "resolved", "partial", or "failed".
+  - `outcome`: "resolved", "partial", or "failed". Judge it by what the operator \
+was left with, not by how bumpy the path there was. A run that recovered from a \
+failed step and still delivered the reply the request asked for is "resolved". \
+Use "partial" when the delivered reply covers only some of what was asked, and \
+"failed" when no reply was delivered or the reply does not address the request. \
+The bumps belong in `obstacles`; a non-empty `obstacles` list never by itself \
+lowers the outcome.
+
+The digest ends with the reply the run delivered, or a line saying none was \
+delivered. That reply is the evidence for `outcome` — the terminal step itself \
+carries no observation, so a bare `reply` step is not a sign that the run \
+produced nothing.
 
 Be terse and factual. Do not add prose, markdown, or fields outside the schema.
 """
@@ -140,7 +160,8 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
             response_model=RunSummary,
         )
 
-    def _build_prompt(self, run: Any, steps: list, trigger: dict | None) -> str:
+    def _build_prompt(self, run: Any, steps: list, trigger: dict | None,
+                      reply: dict | None) -> str:
         lines = [f"Run status: {run.status}"]
         if trigger:
             lines.append(f"Triggering message from {trigger['sender_name']}: "
@@ -159,6 +180,17 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
                 seg += f" — {s.observation_preview[:200]}"
             lines.append(seg)
         lines.extend(_repeated_calls_hint(_find_repeated_calls(steps)))
+        # What the operator actually ended up with. The terminal `reply` step
+        # carries no observation, so without this the digest ends on a bare
+        # "#N [final] reply" and a run that recovered and answered reads the
+        # same as one that died mid-way.
+        lines.append("")
+        text = ((reply or {}).get("text") or "").strip()
+        if text:
+            lines.append("Final reply delivered to the operator:")
+            lines.append(text[:_REPLY_PREVIEW_CHARS])
+        else:
+            lines.append("No reply was delivered to the operator.")
         return "\n".join(lines)
 
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
@@ -174,8 +206,9 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
 
         steps = db.list_assistant_steps(run.uuid)
         trigger = db.get_run_trigger_message(run)
+        reply = db.get_run_final_reply(run)
         summary: RunSummary = self._structured_call(  # type: ignore[assignment]
-            self._build_prompt(run, steps, trigger)
+            self._build_prompt(run, steps, trigger, reply)
         )
         db.set_run_summary(run, {
             "trigger": summary.trigger,
