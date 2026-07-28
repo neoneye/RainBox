@@ -824,6 +824,33 @@ def test_a_dangling_pointer_does_not_break_the_trace(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_dashboard_counts_the_gate_as_part_of_the_run_cost(app_ctx, client):
+    """The review is a real model call made on the run's behalf. Counting only
+    assistant_step rows under-reported tokens and model time on every gated
+    run."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="python_run",
+        input_tokens=100, output_tokens=10, duration_ms=2000)
+    db.record_second_opinion_review(
+        run_uuid=run.uuid, step_uuid=step.uuid, step_index=0,
+        action="python_run", verdict="approved",
+        input_tokens=50, output_tokens=5, duration_ms=1000)
+    db.settle_assistant_step(step, phase="observed", observation_preview="ok")
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "in 150" in body and "out 15" in body
+        # 2000ms of step + 1000ms of review.
+        assert "3.0s" in body
+        md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
+        assert "in 150" in md and "out 5" not in md.split("in 150")[0]
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_categorized_problems_render_as_text(app_ctx, client):
     """Problems are {category, text} objects now. Both the inspector and the
     markdown export must show the sentence, not the raw object."""

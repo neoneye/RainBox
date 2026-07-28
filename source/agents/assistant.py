@@ -3850,12 +3850,16 @@ class AssistantAgent(ModelGroupAgent):
         # when the call fails.
         from llm import capture_reasoning
 
+        # The review's own token/time cost. Nothing else in the schema records
+        # it, so without this the gate's cost is invisible and the run
+        # dashboard under-reports every gated turn.
+        usage: dict[str, int] = {}
         with capture_reasoning() as tally:
             try:
                 verdict, model_uuid = structured_llm_call(
                     "assistant.second_opinion", model_uuids,
                     SECOND_OPINION_SYSTEM_PROMPT, user_prompt,
-                    SecondOpinionVerdict,
+                    SecondOpinionVerdict, usage_out=usage,
                 )
             except Exception as e:
                 logger.warning(
@@ -3865,6 +3869,7 @@ class AssistantAgent(ModelGroupAgent):
                     "group_from": group_from,
                     "reasoning": tally.reasoning_text or None,
                     "response": tally.content_text or None,
+                    "usage": usage,
                     **prompts,
                 }
         verdict = cast(SecondOpinionVerdict, verdict)
@@ -3883,6 +3888,7 @@ class AssistantAgent(ModelGroupAgent):
             # have the parsed verdict; dump it so the response pane is never
             # empty.
             "response": tally.content_text or verdict.model_dump_json(),
+            "usage": usage,
             **prompts,
         }
 
@@ -3936,6 +3942,9 @@ class AssistantAgent(ModelGroupAgent):
                 user_prompt=review.get("user_prompt"),
                 reasoning=review.get("reasoning"),
                 response=review.get("response"),
+                input_tokens=(review.get("usage") or {}).get("input"),
+                output_tokens=(review.get("usage") or {}).get("output"),
+                duration_ms=(review.get("usage") or {}).get("ms"),
             )
             return str(row.uuid)
         except Exception:

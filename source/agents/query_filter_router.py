@@ -23,6 +23,7 @@ prompt has a single concern, which is cheap to follow even for small models.
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 from uuid import UUID
@@ -344,13 +345,19 @@ def structured_llm_call(
     system_prompt: str,
     user_prompt: str,
     response_model: type[BaseModel],
+    usage_out: dict[str, int] | None = None,
 ) -> tuple[BaseModel, UUID]:
     """One structured-output call, falling back through a model group's members
     on failure. Returns (result, answering_model_uuid); raises RuntimeError when
     no group is bound or every member fails. `agent_name` only labels log/error
     messages. Free function (not an agent method) so non-agent callers — the
     assistant's memory_query recall filter, the /memory/developer page — can make
-    the same call against any group's members."""
+    the same call against any group's members.
+
+    Pass `usage_out` to have this call's cost written into it as
+    {input, output, ms} — the same shape as StructuredLLMAgent's `_last_usage`.
+    An out-parameter rather than a wider return type because every existing
+    caller ignores usage, and only the succeeding member's cost is recorded."""
     if not candidate_model_uuids:
         raise RuntimeError(
             f"agent {agent_name} has no model group bound (assign one on /agentmodel)"
@@ -360,7 +367,14 @@ def structured_llm_call(
         ChatMessage(role=MessageRole.USER, content=user_prompt),
     ]
     last_error: Exception | None = None
+    # Per-call token accounting, same pattern as StructuredLLMAgent: a
+    # TokenCountingHandler on the structured LLM sees input/output tokens even
+    # though `.raw` is the parsed model, not a usage dict.
+    from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+
+    token_counter = TokenCountingHandler()
     for model_uuid in candidate_model_uuids:
+        t0 = time.monotonic()
         try:
             _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
             # Fail fast on a down/unreachable provider: the OpenAI client's
@@ -371,8 +385,16 @@ def structured_llm_call(
             # key in prepare_llm's field filter, so this is a no-op there.)
             args = {**args, "max_retries": 0}
             the_llm = prepare_llm(_provider_id, model_name, args)
-            sllm = the_llm.as_structured_llm(response_model)
+            sllm = the_llm.as_structured_llm(
+                response_model, callback_manager=CallbackManager([token_counter])
+            )
             result = cast(BaseModel, sllm.chat(messages).raw)
+            if usage_out is not None:
+                usage_out.update({
+                    "input": token_counter.prompt_llm_token_count,
+                    "output": token_counter.completion_llm_token_count,
+                    "ms": int((time.monotonic() - t0) * 1000),
+                })
             return result, model_uuid
         except Exception as e:
             last_error = e

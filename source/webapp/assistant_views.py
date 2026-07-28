@@ -732,12 +732,17 @@ def _dash_status(run) -> tuple[str, str]:
     return ("Unresolved", "unresolved")
 
 
-def _run_dashboard(run, steps: list) -> dict:
-    """Aggregate metrics for the top-of-detail mini dashboard."""
+def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
+    """Aggregate metrics for the top-of-detail mini dashboard.
+
+    Second-opinion reviews count toward the run's cost: each is a real model
+    call made on the run's behalf, so leaving them out under-reported tokens
+    and model time on every gated run."""
     label, cls = _dash_status(run)
-    in_tokens = sum((s.input_tokens or 0) for s in steps)
-    out_tokens = sum((s.output_tokens or 0) for s in steps)
-    llm_ms = sum((s.duration_ms or 0) for s in steps)
+    calls = list(steps) + list(reviews or [])
+    in_tokens = sum((c.input_tokens or 0) for c in calls)
+    out_tokens = sum((c.output_tokens or 0) for c in calls)
+    llm_ms = sum((c.duration_ms or 0) for c in calls)
     llm_seconds = llm_ms / 1000
     # "action" time = wall-clock spent outside the model (action execution +
     # overhead) = total - model. Only computable once the run has finished.
@@ -1131,12 +1136,13 @@ def _load_run_detail(selected) -> dict:
         for s in steps
         if s.phase != "control" and (s.action is not None or s.reason is not None)
     }
-    # The second-opinion review split out of each step's observation data, so
-    # the template renders it in chronological position (before the action
-    # call) and the action result shows only the remaining data.
-    # The review rows this run's steps point at, keyed by uuid for the pointer
-    # lookup — one query, like the steps and write-intents above.
-    reviews = {str(r.uuid): r for r in db.list_second_opinion_reviews(selected.uuid)}
+    # The review rows this run's steps point at — one query, like the steps and
+    # write-intents above. Keyed by uuid for the pointer lookup; each is split
+    # out of its step's observation data so the template renders it in
+    # chronological position (before the action call) and the action result
+    # shows only the remaining data.
+    review_rows = db.list_second_opinion_reviews(selected.uuid)
+    reviews = {str(r.uuid): r for r in review_rows}
     second_opinion: dict[str, dict] = {}
     obs_data: dict[str, dict] = {}
     for s in steps:
@@ -1170,7 +1176,7 @@ def _load_run_detail(selected) -> dict:
         "reviews": reviews,
         "pending_controls": db.list_pending_controls(selected.uuid),
         "trigger": db.get_run_trigger_message(selected),
-        "dash": _run_dashboard(selected, steps),
+        "dash": _run_dashboard(selected, steps, review_rows),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,
