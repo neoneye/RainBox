@@ -8,6 +8,7 @@ import logging
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from pydantic import BaseModel
 
 import db
@@ -45,6 +46,50 @@ def test_empty_text_falls_back_to_the_stream_object():
         AssistantStepDecision, CORRUPTED, None
     )
     assert result is CORRUPTED
+
+
+def test_fence_remnant_text_is_recovered_not_discarded():
+    """The live miss: the provider text was the valid object prefixed with
+    a markdown-fence remnant ('json\\n{...}'), so re-validation failed and
+    the corrupt stream object won — a required field arrived as None. The
+    payload between the first '{' and the last '}' re-validates and wins."""
+    result = ModelGroupAgent._settle_structured_result(
+        AssistantStepDecision, CORRUPTED, "json\n" + TRUE_TEXT
+    )
+    assert isinstance(result, AssistantStepDecision)
+    assert result.args == {"code": "print(357737172 * 0.3048)"}
+
+
+def test_full_markdown_fence_is_recovered():
+    result = ModelGroupAgent._settle_structured_result(
+        AssistantStepDecision, CORRUPTED, f"```json\n{TRUE_TEXT}\n```"
+    )
+    assert result.args == {"code": "print(357737172 * 0.3048)"}
+
+
+def test_prose_wrapped_object_is_recovered():
+    result = ModelGroupAgent._settle_structured_result(
+        AssistantStepDecision, CORRUPTED,
+        f"Here is the decision:\n{TRUE_TEXT}\nLet me know."
+    )
+    assert result.args == {"code": "print(357737172 * 0.3048)"}
+
+
+def test_schema_violating_stream_object_is_rejected_not_returned():
+    """llama-index's partial parser builds the object WITHOUT validation, so
+    `.raw` can carry a required field as None — pydantic would never produce
+    that. Returning it hands every caller a schema-violating "parsed"
+    object, and the failure surfaces far away as nonsense instead of an
+    honest parse failure here. When neither the text nor the stream object
+    validates, raise: the model-group loop falls through to the next
+    candidate."""
+    corrupt = AssistantStepDecision.model_construct(
+        reason=None, action=AssistantActionName.PYTHON_RUN, args={}
+    )
+    with pytest.raises(ValueError, match="violates the schema"):
+        ModelGroupAgent._settle_structured_result(
+            AssistantStepDecision, corrupt, "not json at all"
+        )
 
 
 class _Reply(BaseModel):

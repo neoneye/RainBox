@@ -452,17 +452,48 @@ class ModelGroupAgent(Agent):
         rejected its own python_run six times for a missing `code` it had
         in fact written). The instrumentation capture holds the true
         provider text, so re-validate that — it wins whenever it parses;
-        the stream's object is only the fallback for unparseable text."""
+        the stream's object is only the fallback for unparseable text.
+
+        The text is tried verbatim first, then as the slice between its
+        first '{' and last '}': providers wrap the object in markdown-fence
+        remnants ("json\\n{...}" — a live run lost its reply-language call
+        to exactly that) or prose, and discarding an otherwise valid
+        payload hands the win to the corruptible stream object."""
         text = (final_text or "").strip()
-        if text:
+        candidates = [text] if text else []
+        start, end = text.find("{"), text.rfind("}")
+        if 0 <= start < end:
+            sliced = text[start:end + 1]
+            if sliced != text:
+                candidates.append(sliced)
+        for candidate in candidates:
             try:
-                return response_model.model_validate_json(text)
+                return response_model.model_validate_json(candidate)
             except Exception:
-                logger.warning(
-                    "structured stream: final text did not re-validate; "
-                    "keeping the stream-parsed object"
-                )
-        return stream_parsed
+                continue
+        if text:
+            logger.warning(
+                "structured stream: final text did not re-validate; "
+                "falling back to the stream-parsed object"
+            )
+        # The stream object is the fallback, but only when it actually
+        # satisfies the schema: the partial parser BUILDS IT WITHOUT
+        # VALIDATION, so a required field can arrive as None — pydantic
+        # would never produce that. Returning it hands the caller a
+        # schema-violating "parsed" object, and the failure then surfaces
+        # far away as nonsense (a live run died on "unusable language tag
+        # None" inside the classifier code). Failing here is honest: the
+        # model-group loop falls through to the next candidate.
+        try:
+            response_model.model_validate(
+                stream_parsed.model_dump(warnings=False))
+            return stream_parsed
+        except Exception as e:
+            raise ValueError(
+                f"model did not return a valid {response_model.__name__}: "
+                f"the response text did not parse and the streamed object "
+                f"violates the schema ({e})"
+            ) from e
 
 
 class StructuredLLMAgent(ModelGroupAgent):
