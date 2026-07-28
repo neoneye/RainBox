@@ -714,9 +714,11 @@ def _format_review_trace_link(view, context, model, name):
 
 
 def _format_review_problems(view, context, model, name):
-    """The findings as one readable line each — the category as a small tag,
-    then the sentence. The stored shape is {category, text}, whose default repr
-    is both unreadable and wider than the finding itself."""
+    """The findings as one plain line each — the category, then the sentence.
+    The stored shape is {category, text}, whose default repr is both unreadable
+    and wider than the finding itself. The category is kept per line because the
+    `categories` column only carries the row's distinct set, losing which
+    finding rests on which ground when a review reports several."""
     # Local, like the other agents.* imports here: core.py loads early and
     # agents.assistant is heavy.
     from agents.assistant import problem_texts
@@ -724,8 +726,8 @@ def _format_review_problems(view, context, model, name):
     rows = []
     for text, problem in zip(problem_texts(model.problems), model.problems or []):
         category = (problem or {}).get("category") if isinstance(problem, dict) else None
-        tag = f"<code>{escape(str(category))}</code> " if category else ""
-        rows.append(f"{tag}{escape(text)}")
+        prefix = f"{escape(str(category))} — " if category else ""
+        rows.append(f"{prefix}{escape(text)}")
     return Markup("<br>".join(rows)) if rows else ""
 
 

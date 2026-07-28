@@ -75,6 +75,10 @@ def test_problems_render_as_readable_lines_not_a_dict_repr():
     assert "assumes US units" in cell
     assert "wrong constant" in cell
     assert "{" not in cell and "'text'" not in cell
+    # The category stays as plain text — <code> is the uuid columns' styling and
+    # does not belong on a sentence.
+    assert "identity_mismatch" in cell
+    assert "<code>" not in cell
 
 
 def test_an_empty_problems_cell_is_blank():
