@@ -134,7 +134,13 @@ NAV_TEMPLATE = """
         <a href="{{ url_for('memory_developer_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_developer_page' }}">Developer</a>
       </div>
     </details>
-    <a href="{{ url_for('assistant_overview_page') }}" class="{{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page') }}">Assistant</a>
+    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page', 'second_opinion_page') }}">
+      <summary>Assistant &#9662;</summary>
+      <div class="pp-dd-menu">
+        <a href="{{ url_for('assistant_overview_page') }}" class="{{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page') }}">Runs</a>
+        <a href="{{ url_for('second_opinion_page') }}" class="{{ 'pp-active' if request.endpoint == 'second_opinion_page' }}">Second opinion</a>
+      </div>
+    </details>
     <a href="{{ url_for('git_page') }}" class="{{ 'pp-active' if request.endpoint == 'git_page' }}">Git</a>
     <a href="{{ url_for('profile_page') }}" class="{{ 'pp-active' if request.endpoint == 'profile_page' }}">Profile</a>
     <a href="{{ url_for('settings_page') }}" class="{{ 'pp-active' if request.endpoint == 'settings_page' }}">Settings</a>

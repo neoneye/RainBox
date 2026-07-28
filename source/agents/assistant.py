@@ -3106,19 +3106,31 @@ class AssistantAgent(ModelGroupAgent):
                     # args) BEFORE dispatch. A rejection becomes the step's
                     # failed observation — the action never executes, and the
                     # critique flows back through the scratchpad so the model
-                    # revises. The verdict rides in observation.data either
-                    # way, so the trace shows what the reviewer said.
+                    # revises. The step's observation carries a pointer to the
+                    # review row either way, so the trace shows what the
+                    # reviewer said.
                     review: dict[str, Any] | None = None
                     approved = True
+                    review_problems: list[str] = []
                     if cap.second_opinion:
                         approved, review = self._second_opinion(
                             decision, reasoning=reasoning, messages=messages
                         )
-                        self._record_second_opinion_review(
+                        # Read the findings before the payload is replaced by
+                        # its pointer below — they go into the observation the
+                        # model reads back, not just into storage.
+                        review_problems = problem_texts((review or {}).get("problems"))
+                        # The row is the source of truth; the observation keeps
+                        # only its uuid. When the write failed the full payload
+                        # stays inline instead, so a lost telemetry row does not
+                        # also blind the inspector.
+                        review_uuid = self._record_second_opinion_review(
                             action_ctx, decision, review)
+                        if review_uuid is not None:
+                            review = {"review_uuid": review_uuid}
                     if not approved:
                         assert review is not None
-                        problems = problem_texts(review.get("problems")) or [
+                        problems = review_problems or [
                             "(the reviewer gave no specific problem)"
                         ]
                         listing = "\n".join(f"- {p}" for p in problems)
@@ -3838,12 +3850,16 @@ class AssistantAgent(ModelGroupAgent):
         # when the call fails.
         from llm import capture_reasoning
 
+        # The review's own token/time cost. Nothing else in the schema records
+        # it, so without this the gate's cost is invisible and the run
+        # dashboard under-reports every gated turn.
+        usage: dict[str, int] = {}
         with capture_reasoning() as tally:
             try:
                 verdict, model_uuid = structured_llm_call(
                     "assistant.second_opinion", model_uuids,
                     SECOND_OPINION_SYSTEM_PROMPT, user_prompt,
-                    SecondOpinionVerdict,
+                    SecondOpinionVerdict, usage_out=usage,
                 )
             except Exception as e:
                 logger.warning(
@@ -3853,6 +3869,7 @@ class AssistantAgent(ModelGroupAgent):
                     "group_from": group_from,
                     "reasoning": tally.reasoning_text or None,
                     "response": tally.content_text or None,
+                    "usage": usage,
                     **prompts,
                 }
         verdict = cast(SecondOpinionVerdict, verdict)
@@ -3871,6 +3888,7 @@ class AssistantAgent(ModelGroupAgent):
             # have the parsed verdict; dump it so the response pane is never
             # empty.
             "response": tally.content_text or verdict.model_dump_json(),
+            "usage": usage,
             **prompts,
         }
 
@@ -3879,16 +3897,19 @@ class AssistantAgent(ModelGroupAgent):
         ctx: "AssistantActionContext",
         decision: AssistantStepDecision,
         review: dict[str, Any] | None,
-    ) -> None:
-        """Persist the review as a first-class row. Deliberately at the call
-        site rather than inside `_second_opinion`, which stays a pure function
-        of the decision — the run and step context lives out here.
+    ) -> str | None:
+        """Persist the review as a first-class row and return its uuid, which
+        becomes the step's pointer to it. Deliberately at the call site rather
+        than inside `_second_opinion`, which stays a pure function of the
+        decision — the run and step context lives out here.
 
         Best-effort: the gate is a quality check on side-effect-free compute,
         so a telemetry write must never take down the turn it is describing.
+        Returns None when nothing was written, and the caller then keeps the
+        full payload inline so a lost row does not also blind the inspector.
         """
         if review is None or self._run is None:
-            return
+            return None
         # The fail-open paths carry no `approved` key at all; that absence is
         # exactly what the four-value verdict exists to stop being an approval.
         if review.get("skipped"):
@@ -3899,7 +3920,7 @@ class AssistantAgent(ModelGroupAgent):
             verdict = "approved" if review.get("approved") else "rejected"
         raw_model_uuid = review.get("model_uuid")
         try:
-            db.record_second_opinion_review(
+            row = db.record_second_opinion_review(
                 run_uuid=self._run.uuid,
                 step_uuid=ctx.step_uuid,
                 step_index=ctx.step_index,
@@ -3921,13 +3942,18 @@ class AssistantAgent(ModelGroupAgent):
                 user_prompt=review.get("user_prompt"),
                 reasoning=review.get("reasoning"),
                 response=review.get("response"),
+                input_tokens=(review.get("usage") or {}).get("input"),
+                output_tokens=(review.get("usage") or {}).get("output"),
+                duration_ms=(review.get("usage") or {}).get("ms"),
             )
+            return str(row.uuid)
         except Exception:
             logger.exception(
                 "assistant: failed to record the second-opinion review; "
                 "the turn continues"
             )
             db.db.session.rollback()
+            return None
 
     def _build_second_opinion_prompt(
         self,

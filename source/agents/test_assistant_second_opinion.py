@@ -251,6 +251,55 @@ def test_a_failed_review_is_recorded_as_an_error(room, monkeypatch, sandbox_call
     assert "all models failed" in row.error
 
 
+def test_the_step_stores_only_a_pointer_to_the_review(
+    room, monkeypatch, sandbox_calls
+):
+    """The row is the source of truth; the step's observation keeps just the
+    uuid so the payload is not stored twice."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(
+        _python_run("print(12 * 5280)"), _reply("done"))
+    monkeypatch.setattr(
+        AssistantAgent, "_second_opinion",
+        lambda self, decision, *, reasoning, messages: (
+            True, {"approved": True, "problems": [], "system_prompt": "sys",
+                   "user_prompt": "usr", "group_from": "second_opinion"}),
+    )
+    agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    [row] = db.list_second_opinion_reviews(agent._run.uuid)
+    payload = db.list_assistant_steps(
+        agent._run.uuid)[0].observation["data"]["second_opinion"]
+    assert payload == {"review_uuid": str(row.uuid)}
+    assert row.system_prompt == "sys" and row.user_prompt == "usr"
+
+
+def test_the_inline_payload_survives_when_the_row_cannot_be_written(
+    room, monkeypatch, sandbox_calls
+):
+    """Recording is best-effort. If it fails the trace must still carry the
+    review — a lost telemetry row must not also blind the inspector."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(
+        _python_run("print(12 * 5280)"), _reply("done"))
+    monkeypatch.setattr(
+        AssistantAgent, "_second_opinion",
+        lambda self, decision, *, reasoning, messages: (
+            True, {"approved": True, "problems": [], "user_prompt": "usr"}),
+    )
+    def boom(**_kwargs):
+        raise RuntimeError("telemetry is down")
+    monkeypatch.setattr(db, "record_second_opinion_review", boom)
+    agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    payload = db.list_assistant_steps(
+        agent._run.uuid)[0].observation["data"]["second_opinion"]
+    assert payload["user_prompt"] == "usr"      # the full payload, not a pointer
+    assert "review_uuid" not in payload
+
+
 def test_the_rejection_listing_shows_the_text_not_the_raw_object(
     room, monkeypatch, sandbox_calls
 ):
@@ -306,7 +355,11 @@ def test_rejection_blocks_execution_and_feeds_the_critique_back(
     assert gated.phase == "failed"
     assert "second_opinion rejected" in gated.observation["text"]
     assert "convert to meters" in gated.observation["text"]
-    assert gated.observation["data"]["second_opinion"]["problems"] == [
+    [row] = db.list_second_opinion_reviews(agent._run.uuid)
+    assert gated.observation["data"]["second_opinion"] == {
+        "review_uuid": str(row.uuid)}
+    assert row.verdict == "rejected"
+    assert problem_texts(row.problems) == [
         "the operator profile is metric; convert to meters"
     ]
 
@@ -333,9 +386,11 @@ def test_approval_runs_the_program_and_records_the_verdict(
     gated = steps[0]
     assert gated.phase == "observed"
     assert gated.observation["ok"] is True
+    # The observation points at the review row, which carries the verdict.
+    [row] = db.list_second_opinion_reviews(agent._run.uuid)
     assert gated.observation["data"]["second_opinion"] == {
-        "approved": True, "problems": []
-    }
+        "review_uuid": str(row.uuid)}
+    assert row.verdict == "approved" and row.problems == []
 
 
 def test_ungated_actions_never_consult_the_reviewer(room, monkeypatch):
@@ -367,8 +422,11 @@ def _review(monkeypatch, *, verdict=None, error=None, no_group=False):
         qfr, "resolve_model_uuids", lambda candidates: resolved
     )
 
-    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, model):
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, model,
+                  usage_out=None):
         prompts.append((system_prompt, user_prompt))
+        if usage_out is not None:
+            usage_out.update({"input": 400, "output": 20, "ms": 1500})
         if error is not None:
             raise error
         return verdict, model_uuids[0]
@@ -429,6 +487,22 @@ def test_review_rejection_returns_the_problems(monkeypatch):
     # Dumped to plain dicts — the payload rides in a JSONB column.
     assert review["problems"] == [
         {"category": "other", "text": "converts to miles, operator is metric"}]
+
+
+def test_the_review_reports_its_own_cost(monkeypatch):
+    """The gate runs a real model call per gated step; its tokens and time are
+    recorded nowhere else, so the payload carries them to the review row."""
+    _approved, review, _ = _review(
+        monkeypatch, verdict=SecondOpinionVerdict(approved=True))
+    assert review["usage"] == {"input": 400, "output": 20, "ms": 1500}
+
+
+def test_a_failed_review_still_reports_what_it_spent(monkeypatch):
+    """A call that failed open still burned tokens; dropping them would
+    under-report the run."""
+    _approved, review, _ = _review(
+        monkeypatch, error=RuntimeError("all models in the group failed"))
+    assert review["usage"]["ms"] == 1500
 
 
 def test_review_failure_fails_open(monkeypatch):

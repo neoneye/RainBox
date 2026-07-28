@@ -1,9 +1,9 @@
 # Second-opinion review records — making the gate's judgment inspectable
 
-**Status:** Storage implemented — rollout steps 1 (tables + write) and 2
-(categories) are done; step 3 (read paths: pointer-based inspector, dashboard
-cost, `/second-opinion` overview) is not. The queries below therefore work
-against rows written from now on; nothing is backfilled.
+**Status:** Implemented — all three rollout steps. Nothing is backfilled, so
+the queries below see only reviews written from 2026-07-28 onward. Current
+behaviour lives in `docs/second-opinion-design.md`; this document is the
+design rationale.
 **Date:** 2026-07-28
 **Last updated:** 2026-07-28
 
@@ -185,8 +185,6 @@ sets for `retrieval_event`. Changing your mind appends a row; latest wins.
 counts tell you *where* to look, the note tells future-you *what you concluded*.
 
 ### 6. `observation.data` keeps a pointer, not a copy
-
-*(Step 3 — not yet implemented; the payload is currently written both places.)*
 
 The new table becomes the source of truth and
 `observation.data["second_opinion"]` shrinks to `{"review_uuid": "…"}`. The
