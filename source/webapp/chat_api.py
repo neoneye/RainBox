@@ -283,6 +283,12 @@ def _maybe_trigger_direct_chat(
         DIRECT_CHAT_UUID,
         {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)},
     )
+    # Same reason the assistant gets one: the responder still has to spawn and
+    # import its stack, and a cold model adds more, so without this a direct
+    # room shows nothing at all between the send and the first token — and
+    # nothing forever if the supervisor is down. Posted as the direct-chat
+    # agent, so its own first answer row (or its failure notice) reaps it.
+    db.upsert_progress(room_uuid, DIRECT_CHAT_UUID, ASSISTANT_WORKING_NOTICE)
 
 
 @app.route("/chat/api/rooms/<room_uuid>/messages", methods=["GET", "POST"])

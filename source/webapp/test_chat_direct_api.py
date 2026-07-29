@@ -441,7 +441,12 @@ def test_retry_on_user_message_deletes_following_and_reasks(client, direct_room)
     assert data["retry_of"] == u1
     assert data["deleted_ids"] == [id2, id3, id4]
     with app.app_context():
-        assert [m["id"] for m in db.list_room_messages(room_uuid)] == [id1]
+        rows = db.list_room_messages(room_uuid)
+        # The rewind leaves the anchor plus the "working on it" bubble the
+        # re-ask posts: a retry is a fresh turn, and it needs the same
+        # picked-up signal a typed message gets.
+        assert [m["id"] for m in rows if m["kind"] != "progress"] == [id1]
+        assert [m["kind"] for m in rows if m["kind"] == "progress"] == ["progress"]
         payloads = _drain_direct_inbox()
         assert len(payloads) == 1 and u1 in payloads[0]
 
@@ -473,3 +478,39 @@ def test_retry_missing_message_404(client, direct_room):
     room_uuid, _human = direct_room
     resp = test_client.post(f"/chat/api/rooms/{room_uuid}/messages/999999/retry")
     assert resp.status_code == 404
+
+
+def test_a_direct_room_shows_it_picked_the_message_up(client, direct_room):
+    """A direct room used to show nothing at all between the send and the
+    model's first token — the responder still has to spawn and import its
+    stack, and a cold model adds more, so the room looked like the message had
+    vanished (and looked that way forever if the supervisor was down). The
+    agent rooms already post a bubble at enqueue time; direct rooms now do
+    too, as the direct-chat agent so its own reply reaps it."""
+    test_client, app = client
+    room_uuid, _human_uuid = direct_room
+    resp = test_client.post(f"/chat/api/rooms/{room_uuid}/messages",
+                            json={"text": "who am I?"})
+    assert resp.status_code == 201
+    with app.app_context():
+        progress = [m for m in db.list_room_messages(room_uuid)
+                    if m["kind"] == "progress"]
+        assert len(progress) == 1
+        assert progress[0]["sender_uuid"] == str(DIRECT_CHAT_UUID)
+        # …and the answer clears it, the same terminal-kind transaction the
+        # agent rooms rely on.
+        db.post_chat_message(room_uuid, DIRECT_CHAT_UUID, "You are the operator.")
+        assert not [m for m in db.list_room_messages(room_uuid)
+                    if m["kind"] == "progress"]
+
+
+def test_a_second_send_does_not_stack_progress_bubbles(client, direct_room):
+    """Two sends before any reply leave one bubble, not two: a turn that died
+    without replying must not litter the room."""
+    test_client, app = client
+    room_uuid, _human_uuid = direct_room
+    for text in ("first", "second"):
+        test_client.post(f"/chat/api/rooms/{room_uuid}/messages", json={"text": text})
+    with app.app_context():
+        assert len([m for m in db.list_room_messages(room_uuid)
+                    if m["kind"] == "progress"]) == 1

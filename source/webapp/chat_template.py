@@ -1982,7 +1982,19 @@ async function send(){
   if (!text || !currentRoom) return;
   input.value = '';
   autoGrow();  // collapse back to one line after sending
-  await postJSON('/chat/api/rooms/' + currentRoom + '/messages', { text });
+  try {
+    await postJSON('/chat/api/rooms/' + currentRoom + '/messages', { text });
+  } catch (e) {
+    // The composer was cleared optimistically, so a failed POST silently ate
+    // what was typed and left the room looking like nothing happened. Put the
+    // text back and say so — losing a message with no error is the worst of
+    // both outcomes.
+    input.value = text;
+    autoGrow();
+    input.focus();
+    chatToast('Message not sent: ' + e.message + ' — your text is back in the box.');
+    return;
+  }
   // don't wait for the SSE round-trip; force the scroll because this row is
   // the operator's own — they are following the conversation, not reading back.
   await fetchNew(currentRoom, {force: true});

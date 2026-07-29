@@ -264,3 +264,14 @@ def test_assistant_rows_link_to_their_run_from_the_kebab():
     assert "inspect.textContent = 'Inspect \u2197';" in body
     assert "inspect.className = 'item';" in body
     assert "msg-run-link" not in body
+
+
+def test_a_failed_send_restores_the_text_and_says_so():
+    """The composer is cleared optimistically, so a failed POST used to eat
+    what was typed and leave the room looking like nothing happened — no
+    message, no error. The text goes back in the box and the toast explains."""
+    body = _body()
+    assert "await postJSON('/chat/api/rooms/' + currentRoom + '/messages', { text });" in body
+    assert "input.value = text;" in body
+    assert ("chatToast('Message not sent: ' + e.message "
+            "+ ' — your text is back in the box.');") in body
