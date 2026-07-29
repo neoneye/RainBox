@@ -298,21 +298,28 @@ class ReplyAudit(BaseModel):
     the literal string "OK", which made a narration ending in OK a parsing
     problem. A model that must choose between two named values has no prose
     to be misread.
+
+    Field order is the contract, because a grammar-constrained model fills the
+    fields in the order the schema declares them. Findings first, then the note,
+    then the verdict — the same ordering `SecondOpinionVerdict` uses, so the
+    model states what it found before committing to a call. With `reason`
+    leading, it had to summarize a decision it had not made yet, and local
+    models overwhelmingly answered with the verdict word itself.
     """
 
-    reason: str = Field(
-        min_length=1,
-        description=(
-            "Brief, audit-safe note on what was checked and what decided the "
-            "verdict. This is not hidden chain-of-thought."
-        ),
-    )
     problems: str = Field(
         default="",
         description=(
             "Every defect found, each naming what is wrong and quoting the "
             "phrase that shows it, one per line. Empty when the message is "
             "sound. Required for a revise verdict."
+        ),
+    )
+    reason: str = Field(
+        min_length=1,
+        description=(
+            "Brief, audit-safe note on what was checked and what decided the "
+            "verdict. This is not hidden chain-of-thought."
         ),
     )
     verdict: Literal["send", "revise"] = Field(

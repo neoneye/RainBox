@@ -109,6 +109,17 @@ def test_a_list_of_problems_is_now_a_schema_error():
             "problems": [{"problem": "p", "evidence": "e"}]})
 
 
+def test_the_findings_are_declared_before_the_verdict():
+    """Field order is the contract: a grammar-constrained model fills the
+    fields in the order the schema declares them, so the auditor states what it
+    found before it commits to a call. With `reason` leading it had to
+    summarize a decision it had not made yet, and local models answered with
+    the verdict word itself — 19 of 23 audits in one live database. The
+    second-opinion verdict has always been ordered this way."""
+    assert list(ReplyAudit.model_json_schema()["properties"]) == [
+        "problems", "reason", "verdict"]
+
+
 def test_an_unknown_verdict_is_rejected_by_the_schema():
     """The verdict is typed, so the old "is this string exactly OK, or is it
     a narration ending in OK" parsing has nowhere to live."""
