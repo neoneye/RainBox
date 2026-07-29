@@ -68,6 +68,31 @@ differed or because two samples differed. Establishing that needs the same
 rung sampled several times, which is unthinkable in a live turn and routine
 offline.
 
+### Two invariants
+
+**The forecaster gets the step's own input, not a special one.** For a step
+target, the forecast prompt **is** the recorded `user_prompt` of that step.
+Not a reconstruction of it, not a summary of it, not a purpose-built context
+containing the same facts. The only differences are the task instruction —
+*decide the next step* becomes *predict what the decider will do* — and the
+response schema.
+
+This is what makes the measurement mean anything. A forecaster given a
+tidier, shorter, or better-organized context is not predicting the assistant;
+it is answering an easier question, and its score says nothing about the run
+it claims to be about. In particular a forecaster must inherit the same
+scratchpad truncation, the same section order, and the same guidance blocks —
+including the ones suspected of causing the trouble.
+
+The test is a byte comparison: every section of the forecast prompt that
+corresponds to a section of the recorded prompt must be identical to it.
+
+**Nothing is added to the assistant's own prompt.** No forecast text, no
+forecast instruction, no field reserved for one. The production prompt is
+byte-identical whether this instrument has ever been run. A measurement that
+changes the thing it measures is not measuring it, and this one cannot,
+because the run it reads finished before the instrument existed.
+
 The one rung with no recorded prompt is `cold`, which sees only the request
 and transcript — there was never a call with that context. Code builds it
 from the stored messages. Every other rung is either a stored prompt or a
@@ -142,12 +167,13 @@ useless at the other. Keeping them apart is what makes the result readable.
 | `terminal` | what will the final reply say? | the delivered reply (weak), labels (scarce) |
 | `next_action` | which capability will the next step choose? | recorded `action` — exact |
 | `step_args` | with what arguments? | recorded `args` JSONB — exact |
-| `step_outcome` | will it succeed, and what will it return? | recorded `{ok, text, data}` — exact |
+| `step_success` | will it succeed? | the observation's recorded `ok` — exact |
+| `step_outcome` | what will it return? | recorded `{text, data}` — exact |
 
-The bottom three rows are why the benchmark is the sharpest of the three
+The bottom four rows are why the benchmark is the sharpest of the three
 instruments. `next_action` is closed-set classification over
-`AssistantActionName`, `step_outcome`'s success half is binary, and both are
-settled by a row that already exists. No LLM judge, no operator labelling,
+`AssistantActionName`, `step_success` is a binary, and both are settled by a
+row that already exists. No LLM judge, no operator labelling,
 no argument about whether the delivered reply was right.
 
 **The two targets are never mixed into one score.** A model that predicts
@@ -156,31 +182,71 @@ average across both is a number nobody can act on.
 
 ## The step forecast
 
+A forecast is a **bound, not a point.** Wondering what time it is and
+answering "twenty past four" tells you almost nothing when you look at the
+watch; answering "between four and half past" tells you whether you were
+calibrated, and by how much. The same holds here: a single predicted action
+scores as right or wrong and throws away everything about how sure the
+forecaster was, while a short ranked set with probabilities can be scored
+properly — and a forecaster that hedges across everything is caught by the
+same scoring rule that rewards a confident correct call.
+
 ```python
+class ActionCandidate(BaseModel):
+    action: AssistantActionName
+    probability: int = Field(ge=0, le=100, description=(
+        "Probability this is the capability the assistant chooses next."))
+
+
 class StepForecast(BaseModel):
     reason: str = Field(min_length=1, description=(
         "Brief audit-safe note on what in the context points at this step. "
         "Do not provide hidden chain-of-thought."))
-    action: AssistantActionName = Field(description=(
-        "The capability you expect the assistant to choose next."))
-    action_confidence: int = Field(ge=0, le=100)
+    candidates: list[ActionCandidate] = Field(
+        min_length=1, max_length=4, description=(
+            "The capabilities the next step might choose, most likely first. "
+            "Give one when the context determines it and several when it "
+            "does not."))
     args_sketch: str = Field(min_length=1, description=(
-        "The arguments you expect, as far as the context determines them. "
-        "Name what is determined and say what is not."))
-    will_succeed: bool = Field(description=(
-        "Whether you expect the step to return ok."))
-    success_probability: int = Field(ge=0, le=100)
-    expected_observation: str = Field(min_length=1, description=(
-        "What you expect the step to return. For a computation, the value. "
-        "For a read, whether the thing sought is there and what it says."))
-    is_terminal: bool = Field(description=(
-        "Whether you expect this step to end the run."))
+        "The arguments you expect for the most likely candidate, as far as "
+        "the context determines them. Name what is determined and say what "
+        "is not."))
+    success_probability: int = Field(ge=0, le=100, description=(
+        "Probability the step returns ok rather than an error."))
+    outcome: str = Field(min_length=1, description=(
+        "What you expect the step to return."))
+    outcome_low: str = Field(min_length=1, description=(
+        "When the result is a quantity, its lower bound with units. When it "
+        "is not a quantity, say so."))
+    outcome_high: str = Field(min_length=1, description=(
+        "When the result is a quantity, its upper bound with units. When it "
+        "is not a quantity, say so."))
 ```
 
 `action` is typed as the enum, so a forecast cannot name a capability that
 does not exist and cannot arrive as prose. The registry is code-owned and the
 prompt catalog is generated from it, so the closed set the forecaster picks
 from is the same closed set the assistant picked from.
+
+`candidates` is capped at four for the reason the original brief gave for
+guessing a place: a short list of live possibilities is a forecast, and a
+long one is a refusal to make one.
+
+There is no `will_succeed` boolean beside `success_probability`, and no
+`is_terminal` flag beside the candidate list. Both would be a second control
+over a decision the first already makes — code thresholds the probability
+when it needs a point prediction, and predicting `reply` or
+`ask_clarifying_question` *is* predicting a terminal step. Two fields that
+can contradict each other is a defect the rest of this design has been
+careful to avoid.
+
+`outcome_low` and `outcome_high` are the watch case, and they are required
+strings rather than optional numbers for the reason `AcceptanceCriteria`
+settled: an optional field beside a filled one gets left blank, and a blank
+cannot be told apart from an oversight. When the step's recorded observation
+turns out to be numeric, code reads the bounds and scores interval coverage;
+otherwise it ignores them. Code reading a number out of a field it asked for
+a number in is not prose parsing.
 
 `success_probability` is the field that finally makes calibration measurable
 here. Everything else in this document has been careful to say that a
@@ -199,9 +265,18 @@ up, not whether it forecasts well overall.
 
 - **Good early, bad late** — accuracy against step index. The prior runs the
   other way: later steps have more evidence and a more determined answer, so
-  accuracy should *rise*. A model whose accuracy falls as the scratchpad
-  grows is degrading under context length, which is a finding about
+  accuracy should *rise*. A model whose accuracy falls as the run lengthens
+  is degrading under context length, which is a finding about
   `MAX_SCRATCHPAD_CHARS` and prompt order, not about forecasting.
+
+  Step index confounds two things that move together — more evidence and a
+  longer prompt — so it cannot separate them on its own. The control is
+  prompt length **at a fixed step index**: runs differ in how much their
+  observations produced, so step 3 of a `memory_query`-heavy run carries a
+  scratchpad near the cap while step 3 of a short run carries a fraction of
+  it. If accuracy tracks length rather than position, the degradation is
+  about context size. If it tracks position regardless of length, it is
+  about the task getting harder. Without that split, "bad late" is a story.
 - **Good at the destination, bad at the route** — high `terminal` accuracy
   from pre-step-1 context together with poor `next_action` accuracy. A model
   that knows the answer but not how this assistant will get there is a good
@@ -225,11 +300,20 @@ finding lands somewhere that exists.
 
 | Target | Metric |
 |---|---|
-| `next_action` | accuracy, **macro-F1**, and a confusion matrix |
-| `will_succeed` | accuracy and **Brier score** over `success_probability` |
+| `next_action` | top-1 and top-k accuracy, **macro-F1**, confusion matrix, **log loss** over the candidate probabilities |
+| `step_success` | accuracy at a 50% threshold and **Brier score** over `success_probability` |
 | `step_args` | field-level match on the args the context determines |
-| `step_outcome` | exact for computed values; claim-level for text |
+| `step_outcome` | **interval coverage** for quantities; exact for computed values; claim-level for text |
 | `terminal` | claim-level against the delivered reply; labelled subset for correctness |
+
+Three of those are proper scoring rules, and that is the point. Accuracy
+alone rewards a forecaster that guesses confidently and punishes one that
+hedges honestly; log loss and Brier score both. **Interval coverage is the
+watch measurement in its purest form** — of the intervals stated with 80%
+confidence, how many contained the recorded value? A forecaster whose 80%
+intervals contain the truth 55% of the time is overconfident by a number, not
+by an impression, and one whose intervals always contain the truth is stating
+bounds so wide they cost nothing.
 
 Macro-F1 and the confusion matrix are not decoration. The action distribution
 is heavily skewed — `reply` and `memory_query` dominate ordinary runs — so
@@ -389,7 +473,7 @@ only reference is another model's output. They barely touch the step targets,
 because those resolve against recorded facts. Grade the evidence and never
 report across grades:
 
-**Hard.** `next_action`, `will_succeed`, `step_args`, and computed values.
+**Hard.** `next_action`, `step_success`, `step_args`, and computed values.
 Settled by `assistant_step.action`, `args`, and the observation's `ok`. No
 labels, no judge, available for every step of every stored run. The benchmark
 lives here, and so does the calibration corpus.
@@ -618,6 +702,12 @@ role.
   reported separately, never pooled into a model's score.
 - **Averaging across targets.** A single "forecasting score" hides the only
   finding worth having, which is what a model is good at.
+- **A tidier context than the assistant got.** The forecaster inherits the
+  recorded prompt verbatim, truncation and all. Cleaning it up measures an
+  easier question.
+- **Accuracy without a proper scoring rule.** Point-prediction accuracy
+  rewards confident guessing. Report log loss, Brier and interval coverage
+  beside it, or the benchmark selects for bluffing.
 
 ## Considered and not taken
 
@@ -641,10 +731,10 @@ role.
 
 ## Implementation seams
 
-1. `AnswerForecast`, `ForecastClaim` and `StepForecast` beside the existing
-   narrow structured models in `agents/assistant.py`. `StepForecast.action`
-   reuses `AssistantActionName` directly, so the closed set stays owned by
-   the registry.
+1. `AnswerForecast`, `ForecastClaim`, `ActionCandidate` and `StepForecast`
+   beside the existing narrow structured models in `agents/assistant.py`.
+   `ActionCandidate.action` reuses `AssistantActionName` directly, so the
+   closed set stays owned by the registry.
 2. A binding-only `answer_forecast` role, resolved through the same fallback
    pattern as `reply_audit` and `response_language_classifier`. No production
    switch is needed, because nothing runs in a turn.
@@ -677,7 +767,11 @@ Tests must prove:
   containing it;
 - a forecaster that always names the majority action scores at the printed
   baseline, not above it;
-- `StepForecast.action` cannot hold a name outside the capability registry.
+- a candidate's `action` cannot hold a name outside the capability registry;
+- every section of a step-target forecast prompt that corresponds to a
+  section of the recorded prompt is byte-identical to it;
+- the assistant's own production prompt is byte-identical with the
+  instrument present and absent.
 
 ## What this proposal does not claim
 
