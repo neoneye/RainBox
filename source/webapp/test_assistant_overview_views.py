@@ -47,3 +47,16 @@ def test_run_rows_are_real_links():
     assert "ao-cell" in body
     assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
     assert "text-decoration:none" in body
+
+
+def test_summary_shows_live_progress_and_steps_stays_a_bare_count():
+    """A run still working has no digest, and "summarizing…" is wrong of it
+    twice over — so the Summary cell carries its progress instead. The Steps
+    column stays a plain integer: the same number /assistant counts, with no
+    "Step N of M" wording repeating the header."""
+    b = _body()
+    assert "const live = run.status_kind === 'running';" in b
+    assert ("s.textContent = live\n"
+            "    ? 'Step ' + run.steps + (run.step_limit ? ' of ' + run.step_limit : '')\n"
+            "    : (run.summary || 'summarizing…');") in b
+    assert "stepsA.textContent = run.steps;" in b

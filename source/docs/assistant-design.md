@@ -651,10 +651,11 @@ UI), `POST …/stop`, `POST …/redirect`, `POST …/resummarize`, and
   intentionally absent from the markdown export.
 - **`/assistant-overview`** (`webapp/assistant_overview_views.py` +
   `static/assistant-overview.js`) — a searchable, sortable, paginated table of
-  all runs, each row linking into the inspector. The Steps column reads
-  "Step N of {step_limit}": N counts decide steps only (`assistant_step_counts`
-  excludes code-driven and control rows), since it is read against the budget
-  those rows never consume.
+  all runs, each row linking into the inspector. The Steps column is a bare
+  count of step rows — the same number /assistant's timeline numbers, warm-up
+  and follow-up calls included, so one run never reports two different counts.
+  While a run is still working it has no digest, so its Summary cell carries
+  "Step N of {step_limit}" instead: the overview's only progress readout.
 
 ## Testing
 

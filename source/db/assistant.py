@@ -565,21 +565,18 @@ def list_assistant_runs(limit: int = 50) -> list[AssistantRun]:
 
 
 def assistant_step_counts(run_uuids: list[UUID]) -> dict[UUID, int]:
-    """How many of each run's decide steps were used, for a batch of runs (one
-    GROUP BY — no N+1 over a result page). Runs with no steps are absent from
-    the result; the caller treats a missing key as 0.
+    """Number of step rows per run, for a batch of runs (one GROUP BY — no
+    N+1 over a result page). Runs with no steps are absent from the result; the
+    caller treats a missing key as 0.
 
-    Only decide steps count, because this number is read against `step_limit`
-    ("Step 4 of 6"): the code-driven calls consume none of that budget and
-    control rows are operator events, so counting every row would show a run
-    past a limit it never approached."""
+    Every row counts, matching how /assistant numbers its timeline: the
+    warm-up and follow-up calls are steps there, so a run must not report a
+    different number of steps on the two pages."""
     if not run_uuids:
         return {}
     rows = (
         db.session.query(AssistantStep.run_uuid, sa.func.count())
-        .filter(AssistantStep.run_uuid.in_(run_uuids),
-                sa.not_(AssistantStep.code_driven),
-                AssistantStep.phase != "control")
+        .filter(AssistantStep.run_uuid.in_(run_uuids))
         .group_by(AssistantStep.run_uuid)
         .all()
     )
@@ -650,9 +647,7 @@ def list_assistant_runs_page(
     # number the column shows.
     step_count = (
         sa.select(sa.func.count(AssistantStep.id))
-        .where(AssistantStep.run_uuid == AssistantRun.uuid,
-               sa.not_(AssistantStep.code_driven),
-               AssistantStep.phase != "control")
+        .where(AssistantStep.run_uuid == AssistantRun.uuid)
         .correlate(AssistantRun)
         .scalar_subquery()
     )

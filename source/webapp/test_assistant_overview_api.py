@@ -156,11 +156,10 @@ def test_bad_status_param_is_400():
     assert resp.get_json()["ok"] is False
 
 
-def test_step_count_is_the_decide_budget_used_not_every_row():
-    """The column reads "Step N of {step_limit}", so N must be the budget the
-    run actually consumed. The code-driven calls (criteria, classifier, reply
-    audit) cost none of it and control rows are operator events — counting them
-    showed runs sitting past a limit they never approached."""
+def test_step_count_matches_how_assistant_numbers_its_timeline():
+    """One run must not report two different step counts on two pages. The
+    /assistant timeline numbers every row — the warm-up and follow-up calls
+    included — so the overview counts every row too."""
     created = []
     tag = uuid4().hex[:8]
     a = db.make_app()
@@ -177,7 +176,7 @@ def test_step_count_is_the_decide_budget_used_not_every_row():
             db.db.session.commit()
         out = app.test_client().get(
             f"/assistant-overview/api/runs?q={tag}").get_json()
-        assert out["runs"][0]["steps"] == 2      # 5 rows, 2 decide steps
+        assert out["runs"][0]["steps"] == 5
         assert out["runs"][0]["step_limit"] == 6
     finally:
         _cleanup(created)
