@@ -615,6 +615,17 @@ UI), `POST …/stop`, `POST …/redirect`, `POST …/resummarize`, and
   `/assistant/<run>/markdown`. Deep-linked as `/assistant?id=<run-uuid>`
   (chat replies and the step-limit message link here).
 
+  A **Model calls** card above the timeline is the run's profile: one bar per
+  model call, placed on the run's wall-clock span and scaled by its duration,
+  so the gaps between bars are the time no model was working. The dashboard
+  counts the same calls. Both read `_llm_calls`, which is deliberately not a
+  count of step rows — three calls ride inside something else and would
+  otherwise be invisible, their seconds booking as "action" time: the
+  second-opinion review (its own table), the acceptance-criteria revision's
+  inner call, and the memory recall filter's scorer (both in a step's
+  observation payload, with `requested_at` + `usage`). A call with no recorded
+  start is placed at its row's end minus its duration.
+
   Timeline rows are numbered by their position ("Step 3 of 4"), not by
   `step_index` — the code-driven rows share the decide index they sit beside,
   so numbering by it repeated one number several times over. The decide-loop
@@ -640,7 +651,10 @@ UI), `POST …/stop`, `POST …/redirect`, `POST …/resummarize`, and
   intentionally absent from the markdown export.
 - **`/assistant-overview`** (`webapp/assistant_overview_views.py` +
   `static/assistant-overview.js`) — a searchable, sortable, paginated table of
-  all runs, each row linking into the inspector.
+  all runs, each row linking into the inspector. The Steps column reads
+  "Step N of {step_limit}": N counts decide steps only (`assistant_step_counts`
+  excludes code-driven and control rows), since it is read against the budget
+  those rows never consume.
 
 ## Testing
 

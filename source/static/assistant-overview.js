@@ -66,8 +66,12 @@ function aoRow(run) {
   s.textContent = run.summary || 'summarizing…';
   sumA.appendChild(s);
 
+  // Where the run got to in its decide budget, not a bare tally: "Step 4 of 6"
+  // says both how far it went and how much room was left.
   const [steps, stepsA] = cell('ao-mono');
-  stepsA.textContent = run.steps;
+  stepsA.textContent = run.step_limit
+    ? 'Step ' + run.steps + ' of ' + run.step_limit
+    : run.steps;
 
   const [dur, durA] = cell('ao-mono');
   durA.textContent = run.duration || '—';

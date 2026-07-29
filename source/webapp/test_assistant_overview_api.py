@@ -154,3 +154,30 @@ def test_bad_status_param_is_400():
     resp = app.test_client().get("/assistant-overview/api/runs?status=bogus")
     assert resp.status_code == 400
     assert resp.get_json()["ok"] is False
+
+
+def test_step_count_is_the_decide_budget_used_not_every_row():
+    """The column reads "Step N of {step_limit}", so N must be the budget the
+    run actually consumed. The code-driven calls (criteria, classifier, reply
+    audit) cost none of it and control rows are operator events — counting them
+    showed runs sitting past a limit they never approached."""
+    created = []
+    tag = uuid4().hex[:8]
+    a = db.make_app()
+    try:
+        rid = _seed(created, f"budget {tag}", outcome="resolved", n_steps=2)
+        with a.app_context():
+            for action, code_driven, phase in (
+                    ("acceptance_criteria", True, "observed"),
+                    ("reply_audit", True, "observed"),
+                    ("stop", False, "control")):
+                db.db.session.add(AssistantStep(
+                    uuid=uuid4(), run_uuid=rid, step_index=0, phase=phase,
+                    action=action, code_driven=code_driven))
+            db.db.session.commit()
+        out = app.test_client().get(
+            f"/assistant-overview/api/runs?q={tag}").get_json()
+        assert out["runs"][0]["steps"] == 2      # 5 rows, 2 decide steps
+        assert out["runs"][0]["step_limit"] == 6
+    finally:
+        _cleanup(created)

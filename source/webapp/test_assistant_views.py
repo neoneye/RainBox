@@ -782,6 +782,119 @@ def test_io_meta_line_has_a_single_definition(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def _run_with_hidden_calls(run, t0):
+    """A run whose model calls do NOT map onto step rows: a decide step whose
+    action ran the memory recall filter, and a gated step reviewed by the
+    second opinion. Both inner calls are invisible in the step columns."""
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look",
+        system_prompt="s", user_prompt="u", requested_at=t0,
+        input_tokens=2100, output_tokens=60, duration_ms=9000)
+    db.settle_assistant_step(
+        step, phase="observed", observation_preview="found",
+        observation={"ok": True, "text": "found", "data": {"recall_filter": {
+            "mode": "llm",
+            "requested_at": (t0 + timedelta(seconds=10)).isoformat(),
+            "usage": {"input": 3400, "output": 210, "ms": 12000}}}})
+    gated = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=1, action="python_run", reason="compute",
+        system_prompt="s", user_prompt="u",
+        requested_at=t0 + timedelta(seconds=23),
+        input_tokens=2600, output_tokens=140, duration_ms=11000)
+    db.settle_assistant_step(gated, phase="observed", observation_preview="1")
+    db.record_second_opinion_review(
+        run_uuid=run.uuid, step_uuid=gated.uuid, step_index=1,
+        action="python_run", verdict="approved", group_from="own",
+        system_prompt="s", user_prompt="u", response="{}",
+        input_tokens=1500, output_tokens=80, duration_ms=6000,
+        requested_at=t0 + timedelta(seconds=35))
+    # Pin the run's span to the calls, so the layout percentages below are
+    # arithmetic rather than a function of when the test happens to run.
+    db.finish_run(run, "finished")
+    run.started_at = t0
+    run.finished_at = t0 + timedelta(seconds=41)
+    db.db.session.commit()
+    return step, gated
+
+
+def test_counts_every_llm_call_including_the_ones_with_no_step_row(
+        app_ctx, client):
+    """Three of a run's model calls ride inside something else: the second
+    opinion, the criteria revision, and the memory recall filter. Counting step
+    rows misses them, and their seconds then reappear as unexplained "action"
+    time — the exact time an operator is hunting for."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    t0 = datetime(2026, 7, 29, 14, 0, 0, tzinfo=UTC)
+    _run_with_hidden_calls(run, t0)
+    try:
+        page, md = _rendered(client, run)
+        # 2 step rows, but 4 calls.
+        assert "- **Steps:** 2" in md
+        assert "- **LLM calls:** 4" in md
+        # 9 + 12 + 11 + 6 = 38s of model time, not the 20s the rows alone show.
+        assert "model 38.0s" in md
+        # …and the inner calls' tokens are in the run's total.
+        assert "in 9600" in md and "out 490" in md
+        assert "LLM calls" in page and ">4<" in page
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_waterfall_places_each_call_on_the_run_span(app_ctx, client):
+    """The visualization: one bar per call, offset by when it ran and scaled by
+    how long it took. The offsets are what show where the time went — a wide
+    gap between two bars is time no model was working."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    t0 = datetime(2026, 7, 29, 14, 0, 0, tzinfo=UTC)
+    _run_with_hidden_calls(run, t0)
+    try:
+        from webapp.assistant_views import _llm_calls, _waterfall
+        steps = db.list_assistant_steps(run.uuid)
+        rows = _waterfall(
+            _llm_calls(steps, db.list_second_opinion_reviews(run.uuid)), run)
+        assert [r["label"] for r in rows] == [
+            "query_memory", "memory recall filter", "python_run",
+            "second opinion"]
+        # The span runs from the first call to the last one's end (41s), so the
+        # first bar starts at 0 and the recall filter 10s in.
+        assert rows[0]["offset_pct"] == 0.0
+        assert rows[1]["offset_pct"] == pytest.approx(10 / 41 * 100, abs=0.01)
+        assert rows[1]["width_pct"] == pytest.approx(12 / 41 * 100, abs=0.01)
+        assert rows[1]["seconds"] == "12.0s"
+        # Clicking a bar lands on the step the call belongs to.
+        assert rows[1]["anchor"] == str(steps[0].uuid)
+        page, md = _rendered(client, run)
+        assert "memory recall filter" in page and "memory recall filter" in md
+        assert "wf-bar" in page
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_call_without_a_recorded_start_is_placed_at_its_row_end(
+        app_ctx, client):
+    """Rows written before start times were captured still belong on the
+    timeline: the response landed when the row was written, so the call ran the
+    duration before that."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="done", duration_ms=5000)
+    db.finish_run(run, "finished")
+    try:
+        from webapp.assistant_views import _llm_calls
+        steps = db.list_assistant_steps(run.uuid)
+        call = _llm_calls(steps)[0]
+        assert call["start"] == steps[0].created_at - timedelta(seconds=5)
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_model_chosen_step_still_shows_its_decision(app_ctx, client):
     """The counterpart: a step the model decided keeps its verbatim decision
     dump — that IS the model's response for a decide call."""

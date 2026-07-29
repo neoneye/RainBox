@@ -12,6 +12,7 @@ docs/ui-left-panel-tree.md.
 """
 
 import json
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from flask import Response, render_template_string, request
@@ -127,7 +128,7 @@ ASSISTANT_TEMPLATE = """
   /* Right detail pane. */
   /* Full-bleed band: negative margins cancel .as-main's 12px/18px padding so it
      reaches the pane edges; only a bottom divider, no rounded box. */
-  .as-main .dash { position:relative; display:grid; grid-template-columns:1.2fr 1fr 1.4fr 1fr;
+  .as-main .dash { position:relative; display:grid; grid-template-columns:1.1fr 0.6fr 0.6fr 1.2fr 1fr;
                    gap:24px; margin:-12px -18px 1.4rem; padding:18px 18px;
                    border-bottom:1px solid #e5e7eb; }
   /* Kebab sits in the dash's top-right free space (over the Tokens cell). */
@@ -205,6 +206,30 @@ ASSISTANT_TEMPLATE = """
                        margin:-10px 0; padding:10px 0 10px 1rem; border-left:1px solid #e5e7eb; }
   .as-main .step .hd .ix { color:inherit; }
   .as-main .step .hd .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  /* Model-call waterfall: name | track | duration. Bars are positioned on the
+     run's wall-clock span, so a wide gap between two bars is time no model was
+     working. Colours match the step headers: purple for the calls the loop
+     drove, blue for the model's own decide calls. */
+  .as-main .wf { display:flex; flex-direction:column; gap:2px; }
+  .as-main .wf-row { display:grid; grid-template-columns:14rem 1fr 4rem; gap:0.8rem;
+                     align-items:center; text-decoration:none; color:inherit;
+                     padding:2px 4px; border-radius:4px; }
+  .as-main .wf-row:hover { background:#f3f4f6; }
+  .as-main .wf-name { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                      font-size:0.76rem; white-space:nowrap; overflow:hidden;
+                      text-overflow:ellipsis; }
+  .as-main .wf-track { position:relative; height:0.85rem; background:#f1f3f5;
+                       border-radius:3px; overflow:hidden; }
+  .as-main .wf-bar { position:absolute; top:0; bottom:0; border-radius:3px;
+                     background:#93b4f5; }
+  .as-main .wf-bar.kind-code-driven, .as-main .wf-bar.kind-inner { background:#d8b4fe; }
+  .as-main .wf-bar.kind-review { background:#fcd34d; }
+  .as-main .wf-name.kind-code-driven, .as-main .wf-name.kind-inner { color:#7e22ce; }
+  .as-main .wf-name.kind-review { color:#b06f00; }
+  .as-main .wf-undated { position:absolute; left:4px; font-size:0.68rem; color:#98a2b3; }
+  .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;
+                      font-variant-numeric:tabular-nums; }
+  .as-main .card .hd .outcome.muted { color:#667085; font-weight:400; font-size:0.85rem; }
   /* Rows the loop produced itself (warm-up / follow-up calls). Purple like the
      control badge, which marks the other kind of row the model didn't decide;
      the tinted header keeps the real ReAct steps scannable between them. */
@@ -299,6 +324,10 @@ ASSISTANT_TEMPLATE = """
           <div class="dval-big">{{ dash.steps }}</div>
         </div>
         <div class="dcell">
+          <div class="dlabel" title="Every model call the run made, including the ones with no step row of their own (the second opinion, the criteria revision, the memory recall filter)">LLM calls</div>
+          <div class="dval-big">{{ dash.llm_calls }}</div>
+        </div>
+        <div class="dcell">
           <div class="dlabel">Time</div>
           <div class="dval">total {{ dash.total_time }}</div>
           <div class="dval">model {{ dash.model_time }}</div>
@@ -340,6 +369,36 @@ ASSISTANT_TEMPLATE = """
           {% endif %}
         </div>
       </div>
+
+      {% if waterfall %}
+      {# Where the run's wall-clock went. Each bar is one model call, placed on
+         the run's span and scaled by its duration — so the gaps between bars
+         are the time no model was working, which is the half a per-step
+         duration figure cannot show. #}
+      <div class="card">
+        <div class="hd">
+          <div class="card-title">Model calls</div>
+          <span class="outcome muted">{{ dash.llm_calls }} calls · model {{ dash.model_time }} · total {{ dash.total_time }}</span>
+        </div>
+        <div class="card-body">
+          <div class="wf">
+            {% for c in waterfall %}
+            <a class="wf-row" href="#step-{{ c.anchor }}" title="{{ c.label }} — {{ c.seconds }}{% if c.start %} at {{ c.start.strftime('%H:%M:%S') }}{% endif %}">
+              <span class="wf-name kind-{{ c.kind }}">{{ c.label }}</span>
+              <span class="wf-track">
+                {% if c.width_pct is not none %}
+                <span class="wf-bar kind-{{ c.kind }}" style="left:{{ c.offset_pct }}%;width:{{ c.width_pct }}%"></span>
+                {% else %}
+                <span class="wf-undated">not timed</span>
+                {% endif %}
+              </span>
+              <span class="wf-secs">{{ c.seconds }}</span>
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
 
       <div class="card">
         <div class="hd">
@@ -754,17 +813,151 @@ def _dash_status(run) -> tuple[str, str]:
     return ("Unresolved", "unresolved")
 
 
+# --- model calls --------------------------------------------------------------
+#
+# A run's model calls do not map one-to-one onto step rows. Most are a step's
+# own decide/code-driven call, but three ride inside something else: the
+# second-opinion review (its own table), the acceptance-criteria revision's
+# inner call, and the memory recall filter (both in a step's observation
+# payload). Counting rows therefore under-reports the calls, and their time
+# books as "action" time — exactly the time an operator is hunting for. This is
+# the single enumeration; the dashboard count, the waterfall, and the export all
+# read it.
+
+
+def _parse_ts(value):
+    """An ISO timestamp from a JSONB payload, or None. Payload-sourced values
+    are never trusted to parse — a malformed one drops the call's placement,
+    not the page."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    # Payloads store UTC; the rows come back from Postgres in the session's
+    # zone. Convert so a payload-sourced call is not shown hours off the step
+    # it ran inside.
+    return parsed.astimezone() if parsed.tzinfo else parsed
+
+
+def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
+          model_uuid=None, input_tokens=None, output_tokens=None) -> dict:
+    return {"label": label, "kind": kind, "start": start,
+            "duration_ms": duration_ms, "anchor": anchor,
+            "model_uuid": str(model_uuid) if model_uuid else None,
+            "input_tokens": input_tokens, "output_tokens": output_tokens}
+
+
+def _inner_calls(step, data: dict) -> list[dict]:
+    """The model calls a step made from inside its action, which have no row of
+    their own: the criteria revision's inner call and the memory recall
+    filter's scorer. Both record `requested_at` + `usage` in the observation
+    payload; older payloads have the usage but no start time."""
+    calls: list[dict] = []
+    if "acceptance_criteria" in data or "usage" in data:
+        usage = data.get("usage") or {}
+        if usage.get("ms") is not None:
+            calls.append(_call(
+                "acceptance_criteria revision", "inner",
+                start=_parse_ts(data.get("requested_at")),
+                duration_ms=usage.get("ms"), anchor=str(step.uuid),
+                model_uuid=data.get("model_uuid"),
+                input_tokens=usage.get("input"),
+                output_tokens=usage.get("output")))
+    recall = data.get("recall_filter") or {}
+    usage = recall.get("usage") or {}
+    if usage.get("ms") is not None:
+        calls.append(_call(
+            "memory recall filter", "inner",
+            start=_parse_ts(recall.get("requested_at")),
+            duration_ms=usage.get("ms"), anchor=str(step.uuid),
+            model_uuid=recall.get("scorer_model_uuid"),
+            input_tokens=usage.get("input"), output_tokens=usage.get("output")))
+    return calls
+
+
+def _llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
+    """Every model call the run made, oldest first.
+
+    A call with no recorded start is placed at its row's end minus its
+    duration — the response landed when the row was written, so that is where
+    it ran. Calls with neither a start nor a duration (a crash before the model
+    answered) still count: they happened, and hiding them would make the run
+    look cheaper than it was."""
+    calls: list[dict] = []
+    for s in steps:
+        if s.phase == "control":
+            continue          # an operator event, not a model call
+        data = (s.observation or {}).get("data") or {}
+        if s.requested_at or s.duration_ms is not None or s.system_prompt:
+            start = s.requested_at
+            if start is None and s.created_at and s.duration_ms:
+                start = s.created_at - timedelta(milliseconds=s.duration_ms)
+            calls.append(_call(
+                s.action or "—", "code-driven" if s.code_driven else "decide",
+                start=start, duration_ms=s.duration_ms, anchor=str(s.uuid),
+                model_uuid=s.model_uuid, input_tokens=s.input_tokens,
+                output_tokens=s.output_tokens))
+        calls.extend(_inner_calls(s, data))
+    for r in reviews or []:
+        calls.append(_call(
+            "second opinion", "review", start=r.requested_at,
+            duration_ms=r.duration_ms,
+            anchor=str(r.step_uuid) if r.step_uuid else "",
+            model_uuid=r.model_uuid, input_tokens=r.input_tokens,
+            output_tokens=r.output_tokens))
+    # Undated calls sort last rather than crashing the comparison — they are
+    # legacy rows, and the waterfall renders them without a bar.
+    calls.sort(key=lambda c: (c["start"] is None, c["start"] or datetime.min))
+    return calls
+
+
+def _waterfall(calls: list[dict], run) -> list[dict]:
+    """Lay the calls out over the run's wall-clock span as percentages, so the
+    page draws where each call sat and — by the gaps between bars — where the
+    time went that no model was working."""
+    starts = [c["start"] for c in calls if c["start"]]
+    if not starts:
+        return []
+    first = min([run.started_at] + starts) if run.started_at else min(starts)
+    ends = [c["start"] + timedelta(milliseconds=c["duration_ms"] or 0)
+            for c in calls if c["start"]]
+    last = max(ends + ([run.finished_at] if run.finished_at else []))
+    span = (last - first).total_seconds()
+    if span <= 0:
+        return []
+    rows = []
+    for c in calls:
+        row = dict(c)
+        if c["start"]:
+            offset = (c["start"] - first).total_seconds()
+            width = (c["duration_ms"] or 0) / 1000
+            row["offset_pct"] = round(offset / span * 100, 3)
+            # A floor so a sub-second call against a long run stays visible.
+            row["width_pct"] = round(max(width / span * 100, 0.6), 3)
+        else:
+            row["offset_pct"] = None
+            row["width_pct"] = None
+        row["seconds"] = (f"{c['duration_ms'] / 1000:.1f}s"
+                          if c["duration_ms"] is not None else "—")
+        rows.append(row)
+    return rows
+
+
 def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
     """Aggregate metrics for the top-of-detail mini dashboard.
 
-    Second-opinion reviews count toward the run's cost: each is a real model
-    call made on the run's behalf, so leaving them out under-reported tokens
-    and model time on every gated run."""
+    Cost is summed over `_llm_calls` — every model call the run made, including
+    the ones with no step row of their own. Counting rows instead left the
+    second opinion, the criteria revision's inner call and the recall filter's
+    scorer out of tokens and model time, which then reappeared as unexplained
+    "action" time."""
     label, cls = _dash_status(run)
-    calls = list(steps) + list(reviews or [])
-    in_tokens = sum((c.input_tokens or 0) for c in calls)
-    out_tokens = sum((c.output_tokens or 0) for c in calls)
-    llm_ms = sum((c.duration_ms or 0) for c in calls)
+    calls = _llm_calls(steps, reviews)
+    in_tokens = sum((c["input_tokens"] or 0) for c in calls)
+    out_tokens = sum((c["output_tokens"] or 0) for c in calls)
+    llm_ms = sum((c["duration_ms"] or 0) for c in calls)
     llm_seconds = llm_ms / 1000
     # "action" time = wall-clock spent outside the model (action execution +
     # overhead) = total - model. Only computable once the run has finished.
@@ -775,6 +968,7 @@ def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
         "status": label,
         "status_class": cls,
         "steps": len(steps),
+        "llm_calls": len(calls),
         "total_time": _format_seconds(total_seconds) if total_seconds is not None else "—",
         "model_time": _format_seconds(llm_seconds),
         "action_time": (_format_seconds(total_seconds - llm_seconds)
@@ -1122,6 +1316,7 @@ def _run_markdown(run, ctx: dict) -> str:
     out += [
         f"- **Status:** {dash['status']} ({run.status.capitalize()})",
         f"- **Steps:** {dash['steps']}",
+        f"- **LLM calls:** {dash['llm_calls']}",
         f"- **Time:** total {dash['total_time']} · model {dash['model_time']} · action {dash['action_time']}",
         f"- **Tokens:** {toks}",
         f"- **Start:** {fmt_dt(run.started_at)}",
@@ -1146,6 +1341,17 @@ def _run_markdown(run, ctx: dict) -> str:
         else:
             out.append("Not yet summarized.")
     out.append("")
+
+    # Model calls. The page draws these as a waterfall; flat text keeps the
+    # same reading — start offset from the run's beginning, then duration — so
+    # the gaps that show where the time went survive the export.
+    if ctx.get("waterfall"):
+        out += ["## Model calls", "",
+                "| call | kind | at | took |", "|---|---|---|---|"]
+        for c in ctx["waterfall"]:
+            at = c["start"].strftime("%H:%M:%S") if c["start"] else "—"
+            out.append(f"| {c['label']} | {c['kind']} | {at} | {c['seconds']} |")
+        out.append("")
 
     # Trigger message.
     out += ["## Run", ""]
@@ -1352,6 +1558,7 @@ def _load_run_detail(selected) -> dict:
         "pending_controls": db.list_pending_controls(selected.uuid),
         "trigger": db.get_run_trigger_message(selected),
         "dash": _run_dashboard(selected, steps, review_rows),
+        "waterfall": _waterfall(_llm_calls(steps, review_rows), selected),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,
@@ -1398,7 +1605,8 @@ def assistant_page() -> str:
         unlinked=ctx.get("unlinked", []),
         pending_controls=ctx.get("pending_controls", []),
         duration=duration, model_names=ctx.get("model_names", {}),
-        dash=ctx.get("dash"), verdict=ctx.get("verdict"), reply=ctx.get("reply"),
+        dash=ctx.get("dash"), waterfall=ctx.get("waterfall", []),
+        verdict=ctx.get("verdict"), reply=ctx.get("reply"),
         active_call=ctx.get("active_call"),
     )
 

@@ -7,6 +7,7 @@ running->observed/failed trace boundary. No writes, no MCP, no generated code.
 """
 
 import json
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -394,7 +395,8 @@ def test_query_memory_recall_filter_drops_low_scores_on_a_full_list(app_ctx, mon
     ]
     monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: matches)
 
-    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
+                  response_model, usage_out=None):
         assert "qa-noise" in user_prompt   # ungated candidates reach the scorer
         return (response_model(reasoning="scores calibrated on the message", items=[
             _score("qa-mac", direct="5", relevancy="5"),
@@ -432,6 +434,44 @@ def test_query_memory_recall_filter_drops_low_scores_on_a_full_list(app_ctx, mon
     assert obs.text.rstrip().endswith("</memory_filter_assessment>")
 
 
+def test_recall_filter_records_when_it_ran_and_what_it_cost(app_ctx, monkeypatch):
+    """The scorer is a real model call, made inside the action rather than as a
+    step of its own. Without its start time and usage in the payload it is
+    invisible: the /assistant trace can neither count it nor place it, and its
+    seconds book as action time — which is exactly the time an operator
+    profiling a slow run is trying to find."""
+    import agents.query_filter_router as qfr
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    _seed_entries(monkeypatch, qkb, {
+        "qa-mac": {"kind": "static", "path": "identity.first_mac",
+                   "_source": "user-overlay", "answer": "It was a PowerBook."},
+    })
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
+        Match(qa_id="qa-mac", method="semantic", score=0.62,
+              matched_question="first mac")])
+
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
+                  response_model, usage_out=None):
+        if usage_out is not None:
+            usage_out.update({"input": 3400, "output": 210, "ms": 12000})
+        return (response_model(reasoning="r", items=[
+            _score("qa-mac", direct="5", relevancy="5")]), model_uuids[0])
+
+    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    obs = _action_query_memory(_ctx(), {"query": "first mac"})
+    assert obs.ok
+    recall = obs.data["recall_filter"]
+    assert recall["usage"] == {"input": 3400, "output": 210, "ms": 12000}
+    assert recall["scorer_model_uuid"]
+    # Parseable, and stamped when the call went out.
+    requested_at = datetime.fromisoformat(recall["requested_at"])
+    assert (datetime.now(UTC) - requested_at).total_seconds() < 60
+
+
 def test_query_memory_recall_filter_keeps_all_when_fewer_than_top_k(app_ctx, monkeypatch):
     """With fewer than top-K candidates there is no real competition: every
     candidate is kept even when the LLM scored it low — the code-side policy
@@ -454,7 +494,8 @@ def test_query_memory_recall_filter_keeps_all_when_fewer_than_top_k(app_ctx, mon
     ]
     monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: matches)
 
-    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
+                  response_model, usage_out=None):
         return (response_model(reasoning="scores calibrated on the message", items=[
             _score("qa-brother", direct="5", relevancy="5"),
             _score("qa-family"),   # scored 1/1/1 — would drop on a full list
@@ -521,7 +562,8 @@ def test_query_memory_claims_go_through_the_filter_too(app_ctx, monkeypatch):
                         sensitivity="public", reason="fulltext"),
     ])
 
-    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
+                  response_model, usage_out=None):
         assert "remembered fact" in user_prompt   # claims presented to the scorer
         assert "prod-web-01" in user_prompt
         return (response_model(reasoning="one claim matches", items=[
@@ -568,7 +610,8 @@ def test_query_memory_records_recall_verdicts_with_fifo(app_ctx, monkeypatch):
         db_settings, "get_setting",
         lambda key: 3 if key == "memory.recall_fifo_capacity" else real_get(key))
 
-    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
+                  response_model, usage_out=None):
         return (response_model(reasoning="noise", items=[
             _score(str(claim_id)),   # 1/1/1 — but small set → kept... see below
         ]), model_uuids[0])
@@ -622,7 +665,8 @@ def test_query_memory_dropped_claim_leaves_the_observation(app_ctx, monkeypatch)
                         sensitivity="public", reason="fulltext"),
     ])
 
-    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
+                  response_model, usage_out=None):
         return (response_model(reasoning="claim is off-topic", items=[
             _score("qa-0", direct="5"),
             _score("qa-1", direct="4"),
@@ -669,7 +713,8 @@ def test_recall_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch
                             else [uuid4()]))
     seen_members = []
 
-    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
+                  response_model, usage_out=None):
         seen_members.extend(model_uuids)
         return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct="5")]), model_uuids[0])
 
@@ -714,7 +759,8 @@ def test_recall_filter_prefers_the_query_filter_routers_model_group(app_ctx, mon
                             else [assistant_member]))
     seen_members = []
 
-    def fake_call(agent_name, model_uuids, system_prompt, user_prompt, response_model):
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
+                  response_model, usage_out=None):
         seen_members.extend(model_uuids)
         return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct="5")]), model_uuids[0])
 

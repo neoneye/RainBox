@@ -912,10 +912,16 @@ def _filter_recalled_candidates(
         }
         for cid, m in claims_by_id.items()
     ]
+    # This scorer call is a real model call on the run's behalf, made inside an
+    # action rather than as a step of its own. Record when it went out and what
+    # it cost, or its time silently books as action time and the trace under-
+    # reports how many model calls the run made.
+    usage: dict[str, int] = {}
+    requested_at = datetime.now(UTC)
     decision, scorer_model_uuid = structured_llm_call(
         "assistant.memory_query", model_uuids,
         FILTER_SYSTEM_PROMPT, build_filter_prompt_rows(query, rows),
-        FilterDecision,
+        FilterDecision, usage_out=usage,
     )
     try:
         _provider, scorer_model, _args = db.resolved_model_kwargs(scorer_model_uuid)
@@ -954,6 +960,9 @@ def _filter_recalled_candidates(
         "mode": "llm",
         "group_from": group_from,
         "scorer_model": scorer_model,
+        "scorer_model_uuid": str(scorer_model_uuid),
+        "requested_at": requested_at.isoformat(),
+        "usage": usage,
         "reasoning": decision.reasoning,
         "candidates": [_debug_row(s) for s in scored],
     }
@@ -2851,6 +2860,9 @@ class AssistantAgent(ModelGroupAgent):
         ) = None
         self._reply_language_markdown: str = ""
         self._response_language_classifier_meta: dict[str, Any] = {}
+        # When the criteria revision's inner call went out. It has no step row
+        # of its own, so this is the only record of its start time.
+        self._criteria_call_requested_at: datetime | None = None
         # Operator-facing debug entries recorded on every step row this turn
         # (active profile, switch states, …) — the /assistant inspector's
         # collapsed "log" block. Extensible: future per-step diagnostics
@@ -4881,11 +4893,15 @@ class AssistantAgent(ModelGroupAgent):
         user_prompt = self._build_acceptance_criteria_prompt(
             messages, prior_criteria=prior, scratchpad=scratchpad)
         prompts = {"system_prompt": system_prompt, "user_prompt": user_prompt}
+        # Carried into the observation payload: this inner call has no step row
+        # of its own, so its start time lives nowhere else — and without it the
+        # trace can place every other model call on a timeline but not this one.
+        self._criteria_call_requested_at = datetime.now(UTC)
         if self._run is not None:
             db.checkpoint_assistant_call(
                 self._run, step_index=step_index,
                 system_prompt=system_prompt, user_prompt=user_prompt,
-                requested_at=datetime.now(UTC),
+                requested_at=self._criteria_call_requested_at,
                 model_group_uuid=self.model_group_uuid)
         try:
             criteria = self._request_acceptance_criteria(
@@ -4923,10 +4939,12 @@ class AssistantAgent(ModelGroupAgent):
         """The inner criteria call's model/usage/output as recorded by the
         structured-completion seam, for the observation payload (the step
         row's own model columns belong to the decide call)."""
+        requested_at = self._criteria_call_requested_at
         return {
             "model_uuid": (str(self._last_model_uuid)
                            if self._last_model_uuid else None),
             "usage": self._last_usage,
+            "requested_at": requested_at.isoformat() if requested_at else None,
             "reasoning": self._last_reasoning,
             "response": self._last_response_text,
         }
