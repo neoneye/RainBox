@@ -53,7 +53,14 @@ Three consequences, and each removes an objection that sank the live version:
 
 **Production cost is zero.** No forecast is issued during a turn, no latency
 is added to a reply, and no switch gates a hot path. The operator pays only
-when they run the instrument, on hardware that is otherwise idle.
+when they run the instrument.
+
+That is zero *production* cost, not zero cost, and the difference is worth
+being honest about: 200 runs at four steps, three repeats, six models and two
+targets is roughly 29 000 inferences before ablation, and ablation multiplies
+by the number of blocks. On a single local GPU that is a weekend, not a
+coffee break. The suite has to be sized deliberately — see
+[Running it](#running-it) — and the ablation is opt-in for a reason.
 
 **The seal is free and unbreakable.** A live forecast has to be kept out of
 the answerer's context by discipline — a scratchpad renderer that skips a
@@ -151,6 +158,24 @@ Ablation is more expensive than the ladder — one forecast per block per case,
 times the repeat count. That is the right place for the budget: it is the
 only instrument here that produces attribution rather than correlation.
 
+### Leave-one-out assumes the blocks act independently
+
+They do not, necessarily. The failure this misses is a **pair**: an answer
+that only derails when the profile block and a particular observation are
+both present, because they conflict. Remove either and the answer is fine, so
+each scores innocent and the bug survives with every block cleared.
+
+The remedy is not a leave-two-out sweep — the pairs grow quadratically and
+almost all of them are uninteresting. It is a targeted 2×2 on a *suspected*
+pair, run over the cases where the bug appears: both blocks, neither, and
+each alone. Four cells, one hypothesis, and it is a debugging tool rather
+than a suite. `--ablate-pair a,b` covers it.
+
+The default suite therefore reports single-block attribution and says so.
+A block set that clears every block on a case that is reliably wrong is not a
+clean bill of health; it is the signature of an interaction, and it is the
+cue to reach for the pair flag.
+
 ## Two things worth forecasting
 
 The ladder and the ablation both forecast **the final reply**, and they must:
@@ -180,6 +205,31 @@ no argument about whether the delivered reply was right.
 tool choices well and final replies badly is a specific, useful finding; an
 average across both is a number nobody can act on.
 
+### Behaviour is not correctness
+
+"Exact" in that table means the *fact* is exact, not that the fact is right,
+and the step targets split on exactly this line:
+
+- `next_action` and `step_args` are settled by **what the assistant chose**.
+  Hard as a fact about behaviour, silent as a fact about quality — a
+  forecaster predicting `python_run` where the run chose `memory_query`
+  scores wrong even when `python_run` was the better move. This is an
+  **imitation** score.
+- `step_success` and `step_outcome` are settled by **what happened**. Whether
+  a step returned `ok`, and what value it computed, are facts about the world
+  rather than about the incumbent's taste.
+
+The sharpest metric in the document is therefore the one most easily
+misread. A model scoring badly on `next_action` is not a worse assistant; it
+is a worse *predictor of this assistant*. Those coincide only when the
+incumbent's choices were good, which nothing here establishes.
+
+Both are worth having, and they answer different questions. Imitation is what
+a live guard would need — knowing a step is about to fail is useful whether
+or not the step was wise. Correctness is what a model-selection decision
+needs. Every scorecard column is labelled with which one it is, and nothing
+is averaged across that line.
+
 ## The step forecast
 
 A forecast is a **bound, not a point.** Wondering what time it is and
@@ -192,6 +242,13 @@ properly — and a forecaster that hedges across everything is caught by the
 same scoring rule that rewards a confident correct call.
 
 ```python
+class QuantityBounds(BaseModel):
+    low: str = Field(min_length=1, description=(
+        "Lower bound of the expected result, with units."))
+    high: str = Field(min_length=1, description=(
+        "Upper bound of the expected result, with units."))
+
+
 class ActionCandidate(BaseModel):
     action: AssistantActionName
     probability: int = Field(ge=0, le=100, description=(
@@ -215,12 +272,9 @@ class StepForecast(BaseModel):
         "Probability the step returns ok rather than an error."))
     outcome: str = Field(min_length=1, description=(
         "What you expect the step to return."))
-    outcome_low: str = Field(min_length=1, description=(
-        "When the result is a quantity, its lower bound with units. When it "
-        "is not a quantity, say so."))
-    outcome_high: str = Field(min_length=1, description=(
-        "When the result is a quantity, its upper bound with units. When it "
-        "is not a quantity, say so."))
+    bounds: QuantityBounds | None = Field(description=(
+        "Bounds on the result when it is a quantity. Null when the step does "
+        "not return one."))
 ```
 
 `action` is typed as the enum, so a forecast cannot name a capability that
@@ -240,13 +294,30 @@ when it needs a point prediction, and predicting `reply` or
 can contradict each other is a defect the rest of this design has been
 careful to avoid.
 
-`outcome_low` and `outcome_high` are the watch case, and they are required
-strings rather than optional numbers for the reason `AcceptanceCriteria`
-settled: an optional field beside a filled one gets left blank, and a blank
-cannot be told apart from an oversight. When the step's recorded observation
-turns out to be numeric, code reads the bounds and scores interval coverage;
-otherwise it ignores them. Code reading a number out of a field it asked for
-a number in is not prose parsing.
+`bounds` is the watch case, and it is the one nullable field in this
+document. That needs justifying, because the standing rule from
+`AcceptanceCriteria` is that an optional field beside a filled one gets left
+blank and a blank cannot be told apart from an oversight.
+
+The rule does not transfer, because the two blanks are different. An empty
+`formatting` is a *skipped judgment* — there is always something to say about
+formatting, so silence hides work not done. A `memory_query` returning fenced
+text has no lower bound; a bound there is not omitted, it is inapplicable.
+Forcing "not a quantity" into two string fields on most steps would spend
+tokens and generation time restating a type mismatch.
+
+Two ways of making it conditional are worse than nullable. A validator that
+decides whether `outcome` "represents a quantity" has to read prose to do it,
+which is trap 3 arriving in the schema layer. A `bounds_apply` boolean beside
+the object is a second control over what the object's presence already says —
+the same defect that removed `will_succeed`.
+
+The blank-versus-oversight worry does not disappear; it moves somewhere it
+can be measured. When the recorded observation *was* numeric and `bounds` came
+back null, the forecaster declined to bound something boundable, and that is
+scored and reported as its own rate rather than silently skipped. A model
+that never bounds anything is then visible in one column instead of hiding
+behind an unscored field.
 
 `success_probability` is the field that finally makes calibration measurable
 here. Everything else in this document has been careful to say that a
@@ -303,8 +374,9 @@ finding lands somewhere that exists.
 | `next_action` | top-1 and top-k accuracy, **macro-F1**, confusion matrix, **log loss** over the candidate probabilities |
 | `step_success` | accuracy at a 50% threshold and **Brier score** over `success_probability` |
 | `step_args` | field-level match on the args the context determines |
-| `step_outcome` | **interval coverage** for quantities; exact for computed values; claim-level for text |
+| `step_outcome` | **interval coverage** for quantities, plus the declined-to-bound rate; exact for computed values; claim-level for text |
 | `terminal` | claim-level against the delivered reply; labelled subset for correctness |
+| any target with claims | citation-hallucination rate, reported alone |
 
 Three of those are proper scoring rules, and that is the point. Accuracy
 alone rewards a forecaster that guesses confidently and punishes one that
@@ -335,6 +407,29 @@ bound at the time, so the action distribution reflects those models' habits.
 A forecaster tuned to a different style is penalised for a difference in the
 corpus rather than a deficiency. Report per-producer breakdowns and the
 corpus composition beside any headline.
+
+Reporting is not enough on its own, because an incumbent-only corpus makes
+the incumbent unbeatable: every challenger is scored on how well it imitates
+the model it is trying to replace, and the more distinctive it is the worse
+it looks. Left there, the benchmark can rank forecasters and can never
+justify a swap.
+
+The fix is **not** shadow-routing candidate models onto the operator's real
+turns. That spends the operator's actual replies to buy corpus diversity, and
+in a single-operator system that bill is not small.
+
+The corpus does not need production to grow producers. Take the *requests*
+from recorded runs — those are the part worth keeping — and re-run them as
+new runs with a different model bound, against `rainbox_claude`, the sandbox
+database that exists for exactly this. The result is genuine model-B runs,
+with model-B's action distribution, that never touched the operator's data or
+chat. Then the cross-model matrix is complete in both directions rather than
+one column wide.
+
+Producer runs dispatch real capabilities, so the sandbox is a requirement and
+not a convenience: reads are harmless, writes are not, and a producer sweep
+that mutates `rainbox_production` would be the worst possible way to learn
+this lesson twice.
 
 **The outcome leaks in more places than the prompt.** The stored
 `user_prompt` at step *n* contains steps 1..*n*-1 and is safe, but the
@@ -414,6 +509,28 @@ are what let the ablation be interpreted.** A claim citing
 `observation:4` that survives removing the profile block is expected; a claim
 citing `unsupported` that changes when the profile block is removed is a prior
 the profile was quietly supplying.
+
+### Citing a real id is not the same as being supported by it
+
+Id validation catches the easy half — a citation to `observation:9` in a
+context with four observations is mechanically invented. It cannot catch the
+common half: a model that made something up and attributed it to
+`observation:1` because the schema demanded a reference and `unsupported` felt
+like an admission. Models are reliably bad at declaring their own priors, and
+a required citation field is pressure to name *something*.
+
+Left unmeasured, that failure is invisible and the `unsupported` id becomes
+decorative. It is partly checkable without a judge: when a claim carries a
+number, a date, a uuid or a quoted name, code can ask whether that token
+appears in the block the claim cites. Absent, with the claim asserting it as
+supported, is **citation hallucination** — not proof of a lie, since a
+supported claim can paraphrase, but a rate that is comparable across models
+and damning at the extremes.
+
+It gets its own scorecard column and is never folded into anything else. A
+model with an excellent Brier score and a high citation-hallucination rate is
+precisely the model not to bind to any checking role: confident, well
+calibrated about its confidence, and inventing its evidence.
 
 No worked example belongs in the prompt. Smaller models copy example content
 into unrelated output (trap 1). Field descriptions state the form; the
@@ -509,10 +626,11 @@ moves an answer, and whose removal changes nothing is occupying a guidance
 budget its neighbours are competing for.
 
 **Forecaster scorecard**, per model: accuracy by target, by step index, and
-by capability, with the majority-class baseline, the repeat spread, and the
-self-forecasting diagonal called out. Read down a column to see whether a
-model is worth binding to a role; read across a row to see where its
-forecasting falls apart.
+by capability, with the majority-class baseline, the repeat spread, the
+self-forecasting diagonal, and the citation-hallucination rate called out.
+Every column is labelled imitation or correctness. Read down a column to see
+whether a model is worth binding to a role; read across a row to see where
+its forecasting falls apart.
 
 The scorecard is what turns "local models are worse" into something
 spendable. *Worse at what, by how much, at which step, on which capability*
@@ -541,6 +659,28 @@ corpus, so a scorecard is one command and re-running it after a model upgrade
 is the same command. It is the long-running one — models by targets by steps
 by repeats — and it is also the one that needs no labels, so it can run
 unattended against whatever the operator has bound.
+
+### Order the work so the KV cache survives
+
+Repeats are the multiplier, and they are also the one part of the sweep that
+is free to make cheap: the *same* prompt sampled K times is one prefill and K
+decodes, provided the runs are issued consecutively to the same loaded model
+and nothing evicts the cache in between. Interleaving models or cases between
+repeats throws that away and pays full prefill every time. So the sweep loops
+model-outermost, then case, then repeats innermost — the opposite of the
+order that feels natural when you want early results across models.
+
+The ladder tempts a second optimization that should be declined. Its rungs
+add sections cumulatively, so building them as strict prefixes of one another
+would make each rung cost only its delta tokens. But the assistant's real
+prompt has a fixed section order — the request leads, the guidance blocks and
+local time trail — and rungs built as prefixes would put sections in an order
+no real step ever saw. The instrument's value rests on the prompts being the
+pipeline's own, so fidelity wins and the ladder pays full prefill per rung.
+Recording the trade here so nobody re-derives it as a clever saving later.
+
+None of this is exotic: local backends cache prompt prefixes by default. The
+requirement is only that the sweep not defeat it.
 
 Replaying a run re-issues forecasts against reconstructed contexts and
 persists them; it posts nothing, touches no room, and writes nothing to the
@@ -708,6 +848,14 @@ role.
 - **Accuracy without a proper scoring rule.** Point-prediction accuracy
   rewards confident guessing. Report log loss, Brier and interval coverage
   beside it, or the benchmark selects for bluffing.
+- **Imitation read as competence.** `next_action` scores agreement with the
+  incumbent, not quality. Label the column.
+- **An incumbent-only corpus.** Every challenger is graded on imitating the
+  model it would replace. Grow producers in `rainbox_claude`.
+- **A citation that exists but does not support.** Id validation catches
+  invented ids, not misattributed ones. Score the token overlap.
+- **A sweep ordered so the KV cache never hits.** Repeats innermost, model
+  outermost.
 
 ## Considered and not taken
 
@@ -728,13 +876,22 @@ role.
   writing its own unverified uncertainty into memory is what the memory trust
   model exists to prevent — `memory_remember` deliberately creates an inert
   candidate pending operator confirmation. Findings live in the report.
+- **Shadow-routing candidate models onto real turns to diversify the
+  corpus.** It buys producer variety with the operator's actual replies, and
+  a sandbox producer sweep buys the same variety with none of their turns.
+- **Prefix-shaped ladder rungs.** Cheap, and they would put prompt sections
+  in an order no real step saw. Fidelity is the instrument's only claim.
+- **A full leave-two-out sweep.** Quadratic in blocks and almost entirely
+  uninteresting. A targeted 2×2 on a suspected pair answers the same question
+  for four cells.
 
 ## Implementation seams
 
-1. `AnswerForecast`, `ForecastClaim`, `ActionCandidate` and `StepForecast`
-   beside the existing narrow structured models in `agents/assistant.py`.
-   `ActionCandidate.action` reuses `AssistantActionName` directly, so the
-   closed set stays owned by the registry.
+1. `AnswerForecast`, `ForecastClaim`, `ActionCandidate`, `QuantityBounds` and
+   `StepForecast` beside the existing narrow structured models in
+   `agents/assistant.py`. `ActionCandidate.action` reuses
+   `AssistantActionName` directly, so the closed set stays owned by the
+   registry.
 2. A binding-only `answer_forecast` role, resolved through the same fallback
    pattern as `reply_audit` and `response_language_classifier`. No production
    switch is needed, because nothing runs in a turn.
@@ -748,9 +905,13 @@ role.
    include flags.
 6. `evals/forecast_ladder.py`: replay, repeats, ablation, persistence through
    `eval_run` / `eval_result`, and its two CLIs.
-7. `evals/forecast_bench.py`: the model sweep, the scorers (accuracy,
-   macro-F1, confusion, Brier), and the cross-model matrix.
-8. The two reports, with sample counts, the control's variation, and the
+7. `evals/forecast_bench.py`: the model sweep ordered model-outermost and
+   repeats-innermost, the scorers (accuracy, macro-F1, confusion, log loss,
+   Brier, interval coverage, citation hallucination), and the cross-model
+   matrix.
+8. A producer sweep that re-runs recorded *requests* under a different bound
+   model against `rainbox_claude`, so the corpus is not one model wide.
+9. The two reports, with sample counts, the control's variation, and the
    majority-class baseline beside every rate.
 
 Tests must prove:
@@ -771,7 +932,13 @@ Tests must prove:
 - every section of a step-target forecast prompt that corresponds to a
   section of the recorded prompt is byte-identical to it;
 - the assistant's own production prompt is byte-identical with the
-  instrument present and absent.
+  instrument present and absent;
+- a null `bounds` against a numeric recorded observation is counted as
+  declined, not skipped;
+- a claim asserting a number absent from the block it cites is counted as a
+  citation hallucination;
+- the producer sweep refuses to run against anything but the sandbox
+  database.
 
 ## What this proposal does not claim
 
