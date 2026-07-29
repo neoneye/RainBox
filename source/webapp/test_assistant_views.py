@@ -1248,3 +1248,32 @@ def test_markdown_export_mirrors_the_second_opinion_block(app_ctx, client):
         assert '"second_opinion"' not in md
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_live_refresh_keeps_expanded_blocks_open(app_ctx, client):
+    """A live run refreshes every few seconds, and the swap re-collapsed
+    everything the reader had opened — a prompt closed under them before they
+    could read it, so a running run could only be inspected after it finished.
+    The open blocks are carried across the swap, keyed by step + role rather
+    than by position: a live step grows blocks as it runs (its reasoning, then
+    its second opinion), so an index would reopen the wrong one."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="query_memory", reason="look",
+        system_prompt="s", user_prompt="u", reasoning="thinking",
+        log=[{"label": "profile", "text": "default"}])
+    db.settle_assistant_step(step, phase="observed", observation_preview="ok")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        # Every collapsible block is addressable by a stable role…
+        for role in ("log", "system", "user", "reasoning"):
+            assert f'data-k="{role}"' in body
+        # …and the refresh reads them before the swap and reapplies after.
+        assert "function detailsKey(d) {" in body
+        assert "return (step ? step.id : '') + '/' + d.getAttribute('data-k');" in body
+        assert "var open = openDetails(cur);" in body
+        assert "function (d) { if (open[detailsKey(d)]) d.open = true; });" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)

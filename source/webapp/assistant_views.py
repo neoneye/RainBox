@@ -444,7 +444,7 @@ ASSISTANT_TEMPLATE = """
           {% if step.reason %}<div class="reason">{{ step.reason }}</div>{% endif %}
         {% else %}
         {% if step.log %}
-        <details class="steplog">
+        <details class="steplog" data-k="log">
           <summary>log</summary>
           <div class="steplog-body">
           {% for entry in step.log %}
@@ -460,13 +460,13 @@ ASSISTANT_TEMPLATE = """
         <div class="io io-req">
           <div class="io-label">model request{{ io_meta(request_meta(step)) }}</div>
           {% if step.system_prompt %}
-          <details class="prompt">
+          <details class="prompt" data-k="system">
             <summary>system prompt</summary>
             <pre>{{ step.system_prompt }}</pre>
           </details>
           {% endif %}
           {% if step.user_prompt %}
-          <details class="prompt">
+          <details class="prompt" data-k="user">
             <summary>user prompt</summary>
             <pre>{{ step.user_prompt }}</pre>
           </details>
@@ -479,7 +479,7 @@ ASSISTANT_TEMPLATE = """
              before it emitted the structured decision); absent for
              non-reasoning models. Collapsed like the request prompts. #}
           <div class="io-label">model reasoning</div>
-          <details class="prompt">
+          <details class="prompt" data-k="reasoning">
             <summary>reasoning ({{ step.reasoning | length }} chars)</summary>
             <pre>{{ step.reasoning }}</pre>
           </details>
@@ -499,19 +499,19 @@ ASSISTANT_TEMPLATE = """
              payload is stripped from the action-result data below. #}
           <div class="io-label">second opinion{% if 'approved' in so %}<span class="fn-ok {{ 'ok-true' if so.approved else 'ok-false' }}" title="The reviewer's verdict: false means the action was blocked and never executed">approved: {{ 'true' if so.approved else 'false' }}</span>{% endif %}{{ io_meta(review_meta(so, model_names)) }}</div>
           {% if so.system_prompt %}
-          <details class="prompt">
+          <details class="prompt" data-k="so-system">
             <summary>system prompt</summary>
             <pre>{{ so.system_prompt }}</pre>
           </details>
           {% endif %}
           {% if so.user_prompt %}
-          <details class="prompt">
+          <details class="prompt" data-k="so-user">
             <summary>user prompt</summary>
             <pre>{{ so.user_prompt }}</pre>
           </details>
           {% endif %}
           {% if so.reasoning %}
-          <details class="prompt">
+          <details class="prompt" data-k="so-reasoning">
             <summary>reasoning ({{ so.reasoning | length }} chars)</summary>
             <pre>{{ so.reasoning }}</pre>
           </details>
@@ -735,6 +735,21 @@ ASSISTANT_TEMPLATE = """
     var runId = {% if selected %}'{{ selected.uuid }}'{% else %}null{% endif %};
     if (!runId) return;
     var timer = null, dirty = false, connectedOnce = false;
+    // Which collapsed block is which, across a swap. Keyed by the step it
+    // belongs to plus its `data-k` role, NOT by position: a live step grows
+    // blocks as it runs (its reasoning, then its second opinion), so an index
+    // would slide under the reader and reopen the wrong one.
+    function detailsKey(d) {
+      var step = d.closest('.step');
+      return (step ? step.id : '') + '/' + d.getAttribute('data-k');
+    }
+    function openDetails(root) {
+      var open = {};
+      Array.prototype.forEach.call(
+        root.querySelectorAll('details[data-k]'),
+        function (d) { if (d.open) open[detailsKey(d)] = true; });
+      return open;
+    }
     function refresh() {
       timer = null;
       if (document.hidden) { dirty = true; return; }
@@ -746,8 +761,16 @@ ASSISTANT_TEMPLATE = """
           var cur = document.querySelector('.as-main');
           if (!next || !cur) return;
           asCloseMenu();  // its buttons would reference pre-swap run state
+          // A live run refreshes every few seconds. Re-collapsing what the
+          // reader opened made a running run impossible to inspect — the
+          // prompt closed under them before they had read it — so carry the
+          // open blocks (and the scroll) across the swap.
           var scrollTop = cur.scrollTop;
+          var open = openDetails(cur);
           cur.innerHTML = next.innerHTML;
+          Array.prototype.forEach.call(
+            cur.querySelectorAll('details[data-k]'),
+            function (d) { if (open[detailsKey(d)]) d.open = true; });
           cur.scrollTop = scrollTop;
         })
         .catch(function () { dirty = true; });
