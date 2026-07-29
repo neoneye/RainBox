@@ -101,7 +101,9 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   **current request** (a bare `<current_request>` tag, no attributes: the
   section order carries the emphasis and the time anchor is
   current_local_time at the end), the **response-language classification**
-  (`<reply_language_markdown authority="context" format="markdown">`,
+  (a bare `<reply_language_markdown>`: the suffix states the format and the
+  system prompt names the section as reference data, so neither a `format` nor
+  an `authority` attribute repeats what is already said —
   directly after the request; reason, score-free language list ranked by
   confidence, and audit), the **acceptance criteria**
   (`<acceptance_criteria_markdown>`, directly after the language block so the
@@ -206,7 +208,7 @@ Markdown; the system prompt explains that ordering carries confidence and that
 not every scored candidate must appear in the reply:
 
 ```xml
-<reply_language_markdown authority="context" format="markdown">
+<reply_language_markdown>
 ## Reason
 ...
 
