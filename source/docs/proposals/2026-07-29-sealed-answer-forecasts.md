@@ -1,7 +1,6 @@
 # Sealed answer forecasts — give local models a second shot before sending
 
-**Status:** Proposal. Nothing implemented. This supersedes the trace-only
-ladder originally proposed under this filename.
+**Status:** Proposal. Nothing implemented.
 **Date:** 2026-07-29
 
 ## Decision
@@ -28,15 +27,32 @@ guess, but agreement between two model calls is not truth. The audit must
 settle disagreements against evidence, request verification when possible,
 and treat unresolved uncertainty honestly.
 
-The original context ladder remains valuable as an **eval and diagnostic
-mode**, where its cost is intentional and its output can be compared with
-labelled outcomes. It is not the production path.
+The full context ladder — one forecast at every context boundary, resolved
+after the run — remains valuable as an **eval and diagnostic mode**, where
+its cost is intentional and its output can be compared with labelled
+outcomes. It is not the production path.
 
-## Why the original ladder is not enough
+## Naming
 
-The original proposal had a strong information-flow idea — keep a forecast
-out of the answerer's context — but drew more from the resulting traces than
-they can support.
+`calibration` is the natural word for this and it is **taken**:
+`user_profile/calibration.py` renders the operator's self-declared knowledge
+rows, injected as the `knowledge_calibration` block behind its own switch. A
+second thing called calibration in the same prompt assembly is a maintenance
+trap, not a naming quibble. `prediction` is accurate and silent about timing,
+which is the whole mechanism. `guess` reads as an admission of sloppiness in
+a trace the operator opens while troubleshooting.
+
+Hence **`answer_forecast`** for the sealed independent answer and
+**`forecast_resolution`** for the later comparison against an independent
+outcome. *Resolution* is the term of art for settling a forecast, and it
+collides with nothing in trace vocabulary — `resolve_model_group` and
+`resolve_workspace_path` are code-level resolvers.
+
+## Why a trace-only ladder is not the production path
+
+Keeping a forecast out of the answerer's context is the sound part of the
+idea. Reading causes off the resulting traces is where it overreaches, in
+five specific ways — each of which also constrains the guard designed below.
 
 ### It diagnoses after the damage
 
@@ -141,6 +157,28 @@ The forecast needs the evidence and constraints required to answer. It does
 not need the argument that produced the candidate or the capabilities used to
 get there.
 
+### What this placement cannot catch
+
+The forecast is blind to the candidate but **not** to the run that produced
+it: its evidence is the observations the decide loop chose to gather. If the
+loop read the wrong board, converted with the wrong unit, or retrieved a
+look-alike fact, the forecast inherits that evidence and independently agrees
+with the candidate. Two calls, one poisoned premise, `agrees · sent`.
+
+The guard therefore covers **wrong summary of right evidence**, not **wrong
+evidence**. The only rung with the latter property is a `cold` forecast made
+before any tool ran, because its prior was formed before the wrong read
+existed — and that rung is exactly what this proposal moves out of
+production.
+
+That trade is accepted rather than hidden. A `cold` rung is cheap (almost no
+context) but its disagreement is dominated by cases where the answer legitimately
+depends on data the model could not have known, so in production it would
+bounce good replies far more often than it catches bad reads. It stays in the
+eval mode, where the label says which of the two happened. The consequence
+for the guard's promise is stated plainly: `agrees` means the answer is
+stable given the evidence, never that the evidence was the right evidence.
+
 ### One forecast per evidence revision
 
 The first forecast is reused across wording-only revisions. Regenerating it
@@ -171,9 +209,8 @@ class ForecastClaim(BaseModel):
         "One material factual, numerical, or action-outcome claim in the "
         "independent answer. Keep it short and checkable."))
     source_refs: list[str] = Field(min_length=1, description=(
-        "Exact ids of the request, criteria, profile facts, or observations "
-        "supporting the claim. Use 'none' when the supplied evidence does "
-        "not support it."))
+        "Exact ids from the supplied evidence that support this claim. Use "
+        "the id 'unsupported' when nothing supplied supports it."))
     probability: int = Field(ge=0, le=100, description=(
         "Estimated probability that this claim is correct. This is a "
         "forecast, not a style score."))
@@ -201,11 +238,21 @@ Every string is required and non-empty. `reason` and `unknowns` remain
 pressure valves beside constrained fields, following the lesson in
 `2026-07-24-operator-locale-and-language.md`.
 
-`source_refs` are data, not decoration. The prompt assigns ids such as
-`request`, `criteria`, and `observation:4`; code rejects or marks unknown ids
-rather than silently treating invented citations as support. `none` is valid
-and important: it lets the model make an explicit prior while admitting that
-the run did not verify it.
+`source_refs` are data, not decoration. Code issues every id — `request`,
+`criteria`, `observation:4` — and marks unknown ids as invented rather than
+silently treating them as support.
+
+`unsupported` is one of those **code-issued ids**, present in the allowlist
+the prompt hands the model, not a magic string the validator special-cases.
+That distinction is the difference between a typed value and prose parsing: a
+sentinel outside the id space invites `none`, `None`, `n/a`, and a validator
+that grows a synonym table. It is valid and important — it lets the model
+state an explicit prior while admitting the run did not verify it.
+
+Today's `_build_reply_audit_prompt` emits observations as
+`<observation action=… status=…>` with **no ids**, so the shared evidence
+projection has to grow them. That is a change to the existing audit prompt,
+not only to the new forecast prompt — see the switch-off note below.
 
 The 0–100 probability does not make the model calibrated by itself. It makes
 calibration measurable later, but only for claims with independent outcomes.
@@ -280,8 +327,19 @@ The audit rules are:
 5. Do not bounce stylistic differences unless they violate an established
    formatting or language constraint.
 6. A `major` or `critical` evidenced problem requires `revise`.
-7. `send` with a material unresolved problem is a contract failure recorded
-   in the trace.
+
+Rule 6 is the one rule the model does not get to apply. `severity` and
+`verdict` are two controls over the same decision, and a model that returns
+`verdict="send"` beside a `critical` problem has stated both. **Code
+disposes:** the effective verdict is `revise` whenever any problem carries
+`major` or `critical` with at least one valid evidence ref, whatever the
+model wrote. The stated verdict is kept in the trace as the disagreement it
+is, and a run that produces them repeatedly is a finding about the audit
+prompt.
+
+Recording the contradiction and shipping anyway would be the prose-parsing
+trap wearing a typed field: the type says the values are authoritative, and
+then the authority is decided by whichever one the reader happens to trust.
 
 `evidence_refs` are validated against the prompt's source ids. A reference to
 the forecast alone is not evidence. The corrective text passed to the decide
@@ -325,9 +383,17 @@ but it must be explicit:
 
 - record `forced_send=true`;
 - retain the last unresolved problems in the terminal trace row;
-- require the final candidate to state the relevant uncertainty when the
-  evidence could not settle it;
+- disclose the unresolved uncertainty to the operator;
 - never repeat a mutating action merely to repair its confirmation message.
+
+The disclosure is **code-composed, not model-composed**. Asking the final
+candidate to state its own unresolved uncertainty requires one more
+generation, which is precisely the generation the rejection cap just refused
+— and it asks the model that failed to fix the problem to describe it
+honestly instead. Code appends a deterministic operator-facing line naming
+the unresolved problem's category and count, in the room's existing
+`kind="notice"` idiom, from the audit's typed fields. Unfakeable, free, and
+already the pattern for operational output that is not conversation.
 
 The initial implementation keeps `MAX_AUDIT_REJECTIONS` and the existing
 loop. A release gate below limits how often forced sends may occur. If local
@@ -392,6 +458,37 @@ switch while measured:
 
 One switch is enough. The full context ladder belongs in the eval harness,
 not behind another production setting.
+
+### What the switch does and does not gate
+
+The switch gates the forecast **call**. It cannot gate two things that reach
+the audit model regardless:
+
+- the extended `ReplyProblem` — `category`, `severity`, `evidence_refs` and
+  `repair` are schema field descriptions, and a structured call's schema is
+  part of what the model is shown;
+- the evidence ids added to the shared observation projection.
+
+So a switched-off run is **not** byte-identical to today's behaviour, and a
+test asserting that would fail correctly. `assistant.acceptance_criteria`
+could promise byte-identity because it only ever *adds* a section; this
+feature edits a prompt that already ships.
+
+Two ways out, and the cheap one is right. Gating the extended schema behind
+the switch means maintaining two `ReplyProblem` shapes and two prompt paths
+for a live call — the exact duplicate-source-of-truth shape that sank an
+earlier attempt in `2026-07-24-operator-locale-and-language.md`. Instead,
+land the schema extension and the evidence ids as **their own change,
+unswitched, measured on their own** against the current audit before the
+forecast exists. A richer problem shape is independently useful — `repair`
+alone distinguishes productive verification from rewriting — and it makes the
+audit-only baseline in the eval plan an honest control rather than a
+different codebase. The switch then gates exactly one thing: whether a second
+answer gets generated.
+
+The corresponding test is `switch off ⇒ no forecast call, no forecast row,
+and an audit prompt containing no forecast section` — a property about the
+forecast, which is what the switch actually controls.
 
 ## Trace and inspector
 
@@ -594,8 +691,10 @@ The smallest coherent implementation is:
    prompt from the same evidence projection used by `reply_audit`;
 4. persist the forecast as an operator-only control row;
 5. pass the forecast to `_build_reply_audit_prompt`;
-6. extend `ReplyProblem` with typed category, severity, refs, and repair while
-   preserving the existing `send`/`revise` loop;
+6. extend `ReplyProblem` with typed category, severity, refs, and repair
+   while preserving the existing `send`/`revise` loop — as a separate,
+   unswitched change landed and measured **before** the forecast, so the
+   audit-only baseline is a control rather than a different codebase;
 7. cache by `evidence_revision` across wording-only bounces;
 8. ensure the summarizer, transcript builders, and scratchpad renderers skip
    forecast rows;
@@ -615,7 +714,10 @@ Tests must prove:
 - failure falls back to the existing audit;
 - mutating actions are not repeated;
 - every bounce, forced send, and model identity is traceable;
-- the switch-off path is byte-for-byte the current behaviour.
+- a `major` or `critical` evidenced problem bounces even when the model
+  wrote `verdict="send"`;
+- with the switch off, no forecast call is made, no forecast row is written,
+  and the audit prompt carries no forecast section.
 
 ## What this proposal does not claim
 
