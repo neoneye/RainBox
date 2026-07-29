@@ -568,12 +568,12 @@ ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION: str = """\
   <source rank="1">successful current_turn_steps observations</source>
   <source rank="2">current_request</source>
   <source rank="3">reply_language_markdown (ranked reply-language classification for this turn)</source>
-  <source rank="4">acceptance_criteria_json (this turn's established reply plan)</source>
+  <source rank="4">acceptance_criteria_markdown (this turn's established reply plan)</source>
   <source rank="5">formatting_guide (default formatting; the current request and exact source notation override it)</source>
   <source rank="6">current_local_time, user_settings_json, knowledge_calibration and operator_profile</source>
   <source rank="7">conversation_history (context only)</source>
 </source_priority>
-acceptance_criteria_json is the established plan for this turn's reply:
+acceptance_criteria_markdown is the established plan for this turn's reply:
 follow it during the steps and when composing the message, unless the
 operator's request overrides it."""
 
@@ -2425,12 +2425,12 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.ACCEPTANCE_CRITERIA: Capability(
         name=AssistantActionName.ACCEPTANCE_CRITERIA, family="conversation",
         read=False,
-        description=('revise this turn\'s acceptance_criteria_json when an '
+        description=('revise this turn\'s acceptance criteria when an '
                      'observation or the operator\'s message invalidates one '
                      'of its criteria or assumptions (e.g. a recalled fact '
                      'contradicts the assumed target unit). args: {} — the '
                      'revision sees the prior criteria and this turn\'s steps. '
-                     'The revised criteria replace acceptance_criteria_json '
+                     'The revised criteria replace the established plan '
                      'for the remaining steps. Costs a step: revise only when '
                      'something actually changed.'),
         summary="revise this turn's acceptance criteria",
@@ -2842,13 +2842,16 @@ class AssistantAgent(ModelGroupAgent):
         # The self-declared knowledge-calibration rows (authority=context),
         # injected after the formatting guide.
         self._calibration_block: str = ""
-        # This turn's acceptance criteria: the parsed object, its rendered
-        # JSON (the <acceptance_criteria_json> body; "" = no section), the
-        # profile dict its system prompt rendered from, and the switch state.
-        # A revision REPLACES the JSON — two sets of criteria in one prompt
-        # is a contradiction machine; the trace keeps the history.
+        # This turn's acceptance criteria: the parsed object (the
+        # evaluation authority, recorded on the trace row as JSON), the
+        # Markdown projection the prompts carry (the
+        # <acceptance_criteria_markdown> body; "" = no section), and the
+        # profile dict its system prompt rendered from. A revision REPLACES
+        # both renderings — two sets of criteria in one prompt is a
+        # contradiction machine; the trace keeps the history.
         self._acceptance_criteria: AcceptanceCriteria | None = None
         self._criteria_json: str = ""
+        self._criteria_markdown: str = ""
         self._criteria_profile: dict[str, Any] | None = None
         # Output, code-rendered Markdown, and call metadata from the classifier
         # that runs before the assistant starts reasoning. The Markdown is the
@@ -2978,6 +2981,7 @@ class AssistantAgent(ModelGroupAgent):
             # Fail-open — a failed call leaves the run exactly as today.
             self._acceptance_criteria = None
             self._criteria_json = ""
+            self._criteria_markdown = ""
             self._criteria_profile = context.profile
             self._set_activity("establishing acceptance criteria")
             self._run_acceptance_criteria_call(
@@ -3788,9 +3792,10 @@ class AssistantAgent(ModelGroupAgent):
         # bare `_json`-suffixed tag like <user_settings_json>: the content is
         # model-generated, so its authority lives in the code-owned sentence in
         # the system prompt, never in an attribute here.
-        if self._criteria_json:
-            criteria = ET.SubElement(root, "acceptance_criteria_json")
-            criteria.text = self._criteria_json
+        if self._criteria_markdown:
+            criteria = ET.SubElement(root, "acceptance_criteria_markdown",
+                                     {"format": "markdown"})
+            criteria.text = self._criteria_markdown
 
         has_fresh_read = any(
             isinstance(event, AssistantTurnStep)
@@ -4074,9 +4079,10 @@ class AssistantAgent(ModelGroupAgent):
             language.text = self._reply_language_markdown
         # The criteria are part of what "serves the request" means: a program
         # converting to yards should fail review when the criteria say meters.
-        if self._criteria_json:
-            criteria = ET.SubElement(root, "acceptance_criteria_json")
-            criteria.text = self._criteria_json
+        if self._criteria_markdown:
+            criteria = ET.SubElement(root, "acceptance_criteria_markdown",
+                                     {"format": "markdown"})
+            criteria.text = self._criteria_markdown
         proposed = ET.SubElement(
             root, "proposed_step", {"action": decision.action.value}
         )
@@ -4147,9 +4153,10 @@ class AssistantAgent(ModelGroupAgent):
         request.text = str((current or {}).get("text") or "none")
         proposed = ET.SubElement(root, "proposed_reply")
         proposed.text = message
-        if self._criteria_json:
-            criteria = ET.SubElement(root, "acceptance_criteria_json")
-            criteria.text = self._criteria_json
+        if self._criteria_markdown:
+            criteria = ET.SubElement(root, "acceptance_criteria_markdown",
+                                     {"format": "markdown"})
+            criteria.text = self._criteria_markdown
         if self._reply_language_markdown:
             language = ET.SubElement(
                 root, "reply_language_markdown",
@@ -4676,9 +4683,8 @@ class AssistantAgent(ModelGroupAgent):
         revising = prior_criteria is not None
         if revising:
             prior = ET.SubElement(root, "prior_acceptance_criteria",
-                                  {"format": "json"})
-            prior.text = json.dumps(prior_criteria.model_dump(),
-                                    ensure_ascii=False, indent=1)
+                                  {"format": "markdown"})
+            prior.text = self._format_criteria_markdown(prior_criteria)
             steps = ET.SubElement(root, "current_turn_steps",
                                   {"authority": "fresh_evidence"})
             kept, omitted = self._bounded_turn_events(scratchpad or [])
@@ -4752,10 +4758,35 @@ class AssistantAgent(ModelGroupAgent):
     def _set_acceptance_criteria(self, criteria: AcceptanceCriteria) -> None:
         """REPLACE the injected criteria — never append: two sets of criteria
         in one prompt is a contradiction machine. The trace keeps the
-        revision history as step rows."""
+        revision history as step rows.
+
+        Two renderings, same split the response-language classifier uses: the
+        structured result stays the authority and is what the trace row
+        records, while the prompts carry a Markdown projection — local models
+        read Markdown faster than the equivalent JSON (measured in rainbox's
+        own benchmarks), and nothing downstream parses this back."""
         self._acceptance_criteria = criteria
         self._criteria_json = json.dumps(criteria.model_dump(),
                                          ensure_ascii=False, indent=1)
+        self._criteria_markdown = self._format_criteria_markdown(criteria)
+
+    @staticmethod
+    def _format_criteria_markdown(criteria: AcceptanceCriteria) -> str:
+        """The criteria as Markdown for the prompts.
+
+        Free-text fields are collapsed to one line each so a model-written
+        criterion cannot forge headings or list items into the surrounding
+        section — the same containment the language projection applies."""
+        return "\n".join([
+            "## Processing",
+            " ".join(criteria.processing.split()),
+            "",
+            "## Formatting",
+            " ".join(criteria.formatting.split()),
+            "",
+            "## Assumptions",
+            " ".join(criteria.assumptions.split()),
+        ])
 
     def _run_acceptance_criteria_call(
         self,
@@ -4938,12 +4969,12 @@ class AssistantAgent(ModelGroupAgent):
                 text=("The revision left the acceptance criteria unchanged "
                       "— a no-op. Do not revise again unless a new "
                       "observation invalidates them.\n"
-                      f"{self._criteria_json}"),
+                      f"{self._criteria_markdown}"),
                 data=data)
         return AssistantObservation(
             ok=True,
             text=("Revised acceptance criteria (they replace the prior set "
-                  f"for the remaining steps):\n{self._criteria_json}"),
+                  f"for the remaining steps):\n{self._criteria_markdown}"),
             data=data)
 
     def _criteria_call_meta(self) -> dict[str, Any]:

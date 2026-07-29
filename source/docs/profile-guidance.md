@@ -40,7 +40,7 @@ call after the message exists.
 
 That call is the **reply audit**: a reviewer that did not write the message
 reads it against the request (every sentence and sub-question answered),
-`acceptance_criteria_json`, `user_settings_json`, the formatting guide
+`acceptance_criteria_markdown`, `user_settings_json`, the formatting guide
 (separators, dates, units, currency, language and its variant) and the
 turn's observations. It returns a typed
 `{reason, problems[], verdict: send|revise}` — a verdict the code reads,

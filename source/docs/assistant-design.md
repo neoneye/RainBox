@@ -104,7 +104,7 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   (`<reply_language_markdown authority="context" format="markdown">`,
   directly after the request; reason, score-free language list ranked by
   confidence, and audit), the **acceptance criteria**
-  (`<acceptance_criteria_json>`, directly after the language block so the
+  (`<acceptance_criteria_markdown>`, directly after the language block so the
   request and its constraints travel together — present when the step-0 call
   succeeded; see [Acceptance criteria](#acceptance-criteria)), the
   transcript (`kind == "message"` rows
@@ -290,12 +290,16 @@ guide rendered from the criteria snapshot profile regardless of the
 `assistant.formatting_guide` switch (which gates only the decide-prompt
 injection). NOT the action catalog — the call plans constraints, not actions.
 
-The result renders as a bare `<acceptance_criteria_json>` section directly
-after `<current_request>` in every decide step. Its authority lives in one
-code-owned system-prompt sentence, and `_system_prompt()` swaps the
-source-priority block for a variant ranking `acceptance_criteria_json`
-directly below `current_request` — both only while the switch is on, so a
-switched-off run's prompts are byte-identical to the feature-less baseline.
+The result renders as an `<acceptance_criteria_markdown>` section directly
+after `<current_request>` in every decide step: a Markdown projection of the
+structured result, since local models read Markdown faster than the equivalent
+JSON (rainbox's own benchmarks) and nothing downstream parses the section back.
+The parsed object stays the authority and is what the trace row records — the
+same split the response-language classifier uses. Each field collapses to one
+line, so a model-written criterion cannot forge a heading into the section that
+holds it. Its authority lives in one code-owned system-prompt sentence, and
+`_system_prompt()` swaps the source-priority block for a variant ranking
+`acceptance_criteria_markdown` directly below `current_request`.
 The second-opinion reviewer sees the same section next to its
 `current_request` (a program converting to yards should fail review when
 the criteria say meters).

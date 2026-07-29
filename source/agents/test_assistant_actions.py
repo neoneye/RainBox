@@ -154,7 +154,7 @@ def test_source_priority_policy_is_in_system_prompt_only():
     # swaps in the variant that ranks the criteria section (see
     # ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION), so this asserts the two are
     # genuinely separate literals rather than one drifting into the other.
-    assert "acceptance_criteria_json" not in ASSISTANT_SYSTEM_PROMPT
+    assert "acceptance_criteria_markdown" not in ASSISTANT_SYSTEM_PROMPT
 
 
 def test_turn_event_budget_drops_whole_old_events():

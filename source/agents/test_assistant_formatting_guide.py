@@ -382,7 +382,7 @@ def test_system_prompt_documents_the_reply_args(room):
     assert "constraints already established for this turn" in system
     reply_line = next(ln for ln in system.splitlines()
                       if ln.strip().startswith("- reply:"))
-    assert "acceptance_criteria_json" not in reply_line
+    assert "acceptance_criteria_markdown" not in reply_line
     assert "never switch language on your own" in system
     assert "audited before it is sent" in system
 

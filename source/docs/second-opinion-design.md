@@ -91,7 +91,7 @@ ElementTree so dynamic content cannot close or forge a section tag:
 
 1. `<current_request>` — the operator message the program is judged against
    (bare tag, no attributes)
-2. `<acceptance_criteria_json>` — this turn's established reply constraints
+2. `<acceptance_criteria_markdown>` — this turn's established reply constraints
    (present when the criteria call succeeded; see `assistant-design.md`
    §Acceptance criteria). The criteria are part of what "serves the request" means: a
    program converting to yards should fail review when they say meters.
