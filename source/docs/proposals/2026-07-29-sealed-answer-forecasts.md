@@ -1,492 +1,629 @@
-# Sealed answer forecasts — calibrating the assistant against itself
+# Sealed answer forecasts — give local models a second shot before sending
 
-**Status:** Proposal. Nothing implemented. The mechanism is pure
-instrumentation: it changes no reply, blocks no step, and its entire output
-is trace rows nobody in the loop can read.
+**Status:** Proposal. Nothing implemented. This supersedes the trace-only
+ladder originally proposed under this filename.
 **Date:** 2026-07-29
 
-## Naming
+## Decision
 
-The concept is a guess about the final answer, made before the answer exists,
-kept out of sight until it does, then scored against it.
+Do **not** ship one forecast before every decide step as the first version.
+That design roughly doubles the calls, adds latency throughout the run, and
+still cannot improve the reply the operator receives.
 
-`calibration` is the natural word and it is **taken**: `user_profile/
-calibration.py` renders the operator's self-declared knowledge rows, injected
-as the `knowledge_calibration` block behind its own switch. A second thing
-called calibration in the same prompt assembly would be a maintenance trap,
-not a naming quibble. `prediction` is accurate and says nothing about when it
-was made — the timing is the whole mechanism. `guess` reads as an admission
-of sloppiness in a trace the operator reads while troubleshooting.
+Ship a **terminal answer guard** instead:
 
-Chosen: **`answer_forecast`** for the sealed guess, **`forecast_resolution`**
-for the comparison afterwards. *Resolution* is the term of art for settling a
-forecast against the outcome, and it does not collide with anything here —
-`resolve_model_group`, `resolve_workspace_path` are code-level resolvers, not
-trace vocabulary.
+1. the normal decide call produces a candidate reply;
+2. a second, candidate-blind call independently forecasts the answer from the
+   request, constraints, and observations;
+3. the existing `reply_audit` call compares the candidate, the independent
+   forecast, and the evidence;
+4. material, evidenced problems bounce through the existing bounded revision
+   loop before anything is posted.
 
-The word *answer* in the name is load-bearing. See
-[One rung, one target](#one-rung-one-target): every forecast in a run
-predicts the same thing — the final answer — and never the next action.
+The first generation is a candidate, not a conclusion.
 
-## The idea, in this codebase's vocabulary
+This is the useful version of sealed forecasts for RainBox. Local models often
+miss on the first pass. Another answer-shaped sample can expose a brittle
+guess, but agreement between two model calls is not truth. The audit must
+settle disagreements against evidence, request verification when possible,
+and treat unresolved uncertainty honestly.
 
-Before the assistant knows anything, ask it what the answer will look like.
-Not the answer — its **shape**:
+The original context ladder remains valuable as an **eval and diagnostic
+mode**, where its cost is intentional and its output can be compared with
+labelled outcomes. It is not the production path.
 
-- a quantity gets a lower and an upper bound, with units;
-- a place gets two to four named candidates;
-- a computation gets the class of outcome — sign, order of magnitude, units,
-  whether it is finite at all.
+## Why the original ladder is not enough
 
-Seal it. The forecast goes to the trace and nowhere else. Ask again at each
-point where the assistant has learned something, so the guesses form a
-ladder. When the reply is finally posted, compare the whole ladder to it and
-find **the earliest rung that was already wrong**.
+The original proposal had a strong information-flow idea — keep a forecast
+out of the answerer's context — but drew more from the resulting traces than
+they can support.
 
-That rung is the answer to a question this system currently cannot ask:
-*where did it start going wrong?* Today a bad reply is a bad reply. The trace
-shows six steps and a message; nothing separates "the request was ambiguous
-from the first character" from "the profile block pointed the wrong way" from
-"the third tool read said something surprising and it never recovered." The
-ladder separates them, because each rung sees exactly one more class of
-context than the rung below it.
+### It diagnoses after the damage
 
-## The context ladder
+Resolving a ladder after the message posts cannot help the turn that paid for
+it. The operator gets the inaccurate first answer and the useful disagreement
+is left in `/assistant`.
 
-The rungs are placed at **context boundaries, not time intervals**. This is
-the design's one non-negotiable rule: if two adjacent rungs see the same
-context, the higher one is worthless, because a divergence between them
-names nothing.
+### The delivered answer is not ground truth
 
-| Rung | Fires | What it has that the rung below does not |
-|---|---|---|
-| `cold` | before the response-language classifier, before skill retrieval, before step 0 | the operator's message and the room transcript — nothing else |
-| `post_language` | after the classifier, before acceptance criteria | the ranked `reply_language_markdown` |
-| `step_1` | before the first decide call | user settings, formatting guide, knowledge calibration, the profile block, the skill block, the acceptance criteria, the action catalog |
-| `step_2` … `step_n` | before each subsequent decide call | one more step's observation in the scratchpad |
+A forecast landing outside the delivered answer means only that two outputs
+disagree. Calling that `answer_wrong` or `forecaster_error` requires an
+independent outcome: a deterministic calculation, a cited observation, a
+later user correction, a labelled eval case, or a human judgment. A local
+model cannot manufacture ground truth by judging two of its own samples.
 
-Two of these earn their place before a single run has been recorded.
+### Adjacent calls differ even when context does not
 
-**`cold` → `post_language` should never diverge.** Language is delivery, not
-content: which language the reply is written in cannot change what the
-correct answer *is*. If that rung moves the forecast's substance, the
-language block is steering content, which is a defect in a block whose whole
-justification is that it does not. The mechanism makes that claim falsifiable
-on day one, for the price of one extra call.
+Local generation is stochastic. If `cold` and `post_language` disagree, the
+language block may have moved the answer — or two samples from effectively
+the same prompt may simply differ. Without a same-context repeatability
+baseline, “the first divergent rung” does not localize a cause.
 
-**`step_n` → `step_n+1` not moving is a tool-value metric, for free.** A read
-that leaves the forecast exactly where it was is a read that told the
-assistant nothing. Six steps of unchanged forecast followed by a reply is a
-run that could have been one step. Nobody has to instrument for this
-separately; it falls out of the ladder.
+Likewise, an unchanged forecast does not prove a tool was worthless. The
+observation may have increased confidence, ruled out an alternative,
+strengthened a citation, or changed the explanation without changing the
+headline answer.
 
-### One rung, one target
+### Likert containment is not calibration
 
-Every rung forecasts **the final answer**. Not the next action, not the next
-observation, not the plan. This is what makes rungs comparable, and a ladder
-whose rungs measure different things cannot localize anything — the
-divergence you find is just the point where the question changed.
+A 1–5 confidence attached to a free-text answer space is inspectable, but it
+cannot support calibration statistics. Calibration needs:
 
-It is tempting to have `step_n` predict the next tool result, because that is
-the thing it is about to learn and the prediction would be sharper. Resist
-it: sharper rungs that measure different quantities are strictly worse than
-blunt rungs that measure one.
+- a numerical probability;
+- an independently resolved outcome;
+- enough comparable cases to test whether, for example, claims made at 70%
+  confidence are right about 70% of the time.
 
-## The forecast
+Without those three things, the trace shows confidence language, not
+calibration.
+
+### More calls can repeat the same error
+
+The same weights, prompt framing, retrieved context, and tool mistakes create
+correlated failures. “Ask it twice” is useful only as a disagreement detector.
+It is not a correctness proof, and majority vote among correlated local
+models is not a substitute for evidence.
+
+These are not reasons to discard the mechanism. They define the mechanism it
+needs to become.
+
+## The production pipeline
+
+The forecast runs only when the normal decide loop has produced a `reply`
+candidate. It is created **after** the candidate exists in memory, but the
+forecast call never receives that candidate. The seal is an information-flow
+property, not a wall-clock claim. It is a fresh model request with no shared
+conversation or generation state.
+
+```text
+1. request + constraints + observations
+   └─► normal decide call ─► candidate reply (held, not posted)
+
+2. request + constraints + observations
+   └─► fresh answer-forecast call (candidate omitted) ─► independent answer
+
+3. candidate + independent answer + constraints + observations
+   └─► reply_audit ─► send
+                 └─► revise ─► existing bounded correction loop
+```
+
+This reuses the seam implemented by
+`2026-07-29-reply-audit-as-its-own-call.md`. It does not add a second audit
+system or a new terminal action.
+
+### Why generate the forecast after the candidate
+
+Running before every decide step pays for forecasts when the next action is a
+tool call rather than a reply. Running only after `reply` is selected makes
+the cost one forecast per candidate, and the call can still be independent
+because code controls its inputs.
+
+The forecast sees:
+
+- `current_request`;
+- `reply_language_markdown`;
+- the current `acceptance_criteria_json`, when enabled;
+- relevant user settings and deterministic formatting guidance;
+- the bounded profile facts actually supplied to the decide call, with
+  code-issued source ids;
+- the turn's step observations, with stable observation ids;
+- the current local time when the answer depends on it.
+
+It does **not** see:
+
+- the candidate reply;
+- decide-step `reason` fields;
+- prior forecast text;
+- audit verdicts;
+- the action catalog, procedural skills, or unselected profile candidates.
+
+The forecast needs the evidence and constraints required to answer. It does
+not need the argument that produced the candidate or the capabilities used to
+get there.
+
+### One forecast per evidence revision
+
+The first forecast is reused across wording-only revisions. Regenerating it
+for every bounced draft would let the reference move toward the candidate and
+would charge repeatedly for the same evidence.
+
+Code computes an `evidence_revision` from the canonical request, effective
+constraints, supplied profile facts, and visible observations, including
+their ids and content digests. A new observation or a criteria refresh
+changes that revision and permits one new forecast. A rewritten candidate
+alone does not.
+
+This gives the forecast a stable target while still allowing a verification
+step to change the answer legitimately.
+
+## The forecast is an independent answer, not merely its shape
+
+Forecasting only “a positive quantity of roughly this order” can detect a
+unit catastrophe, but it cannot catch the ordinary local-model failure: a
+plausible, specific, wrong claim. The terminal guard therefore needs a concise
+answer proposal plus checkable claims.
 
 ```python
-class AnswerForecast(BaseModel):
-    """A guess at the final answer, made before it exists and sealed until
-    it does. Never enters a prompt the deciding model reads."""
+class ForecastClaim(BaseModel):
+    claim_id: str = Field(min_length=1, description=(
+        "Stable id unique within this forecast, used by later resolution."))
+    claim: str = Field(min_length=1, description=(
+        "One material factual, numerical, or action-outcome claim in the "
+        "independent answer. Keep it short and checkable."))
+    source_refs: list[str] = Field(min_length=1, description=(
+        "Exact ids of the request, criteria, profile facts, or observations "
+        "supporting the claim. Use 'none' when the supplied evidence does "
+        "not support it."))
+    probability: int = Field(ge=0, le=100, description=(
+        "Estimated probability that this claim is correct. This is a "
+        "forecast, not a style score."))
 
+
+class AnswerForecast(BaseModel):
     reason: str = Field(min_length=1, description=(
-        "Brief, audit-safe note on the evidence this forecast rests on. "
-        "This is not hidden chain-of-thought."))
+        "Brief audit-safe note about the decisive evidence and uncertainty. "
+        "Do not provide hidden chain-of-thought."))
     kind: Literal[
         "quantity", "place", "computation",
         "explanation", "action", "refusal",
-    ] = Field(description=(
-        "The form the true answer will take, which decides how "
-        "answer_space is written."))
-    answer_space: str = Field(min_length=1, description=(
-        "The set of answers the true answer should fall inside, written in "
-        "the form this kind takes. A quantity: a lower and an upper bound "
-        "with units, wide enough that you would be surprised to be outside "
-        "and narrow enough that being inside means something. A place: two "
-        "to four named locations. A computation: the shape of the outcome — "
-        "its sign, its order of magnitude, its units, whether it is finite. "
-        "An explanation: the claims the answer must contain to be correct. "
-        "An action: the capability you expect to be used and what it will "
-        "change. A refusal: what makes the request unanswerable."))
-    most_likely: str = Field(min_length=1, description=(
-        "The single answer you would give if you had to answer right now, "
-        "inside answer_space."))
-    confidence: int = Field(ge=1, le=5, description=(
-        "Confidence the true answer falls inside answer_space: 1=strong "
-        "negative, 2=weak negative, 3=neutral, 4=weak positive, 5=strong "
-        "positive."))
+    ]
+    proposed_answer: str = Field(min_length=1, description=(
+        "A concise independent answer to the request. Substance matters; "
+        "polished delivery does not."))
+    claims: list[ForecastClaim] = Field(min_length=1)
     unknowns: str = Field(min_length=1, description=(
-        "What you do not know that would move this forecast, and what would "
-        "resolve it. Never empty — when nothing is missing, say that."))
+        "Missing information that could materially change the answer, and "
+        "the cheapest check that would resolve it. Say 'none known' only "
+        "after checking the supplied evidence."))
 ```
 
-Every field required, every string non-empty. This is the argument
-`AcceptanceCriteria` already settled: an optional field next to a filled one
-gets left blank, and a blank field cannot be told apart from an oversight. A
-forecast with nothing to say about its unknowns must **say** that, which is a
-statement the operator can check.
+Every string is required and non-empty. `reason` and `unknowns` remain
+pressure valves beside constrained fields, following the lesson in
+`2026-07-24-operator-locale-and-language.md`.
 
-`answer_space` plus `most_likely` is the whole design compressed: **a
-forecast is a set, and a point inside it.** The set is what resolution checks
-containment against; the point is what makes a wide set embarrassing. A model
-that hedges by returning "somewhere between zero and the heat death of the
-universe" scores `inside` every time and is caught by `confidence` against
-the width — a `5` on a set that admits everything is the signature of a
-forecaster gaming its own metric, and it is visible in the trace without any
-extra machinery.
+`source_refs` are data, not decoration. The prompt assigns ids such as
+`request`, `criteria`, and `observation:4`; code rejects or marks unknown ids
+rather than silently treating invented citations as support. `none` is valid
+and important: it lets the model make an explicit prior while admitting that
+the run did not verify it.
 
-`confidence` reuses the 1–5 Likert scale the response-language classifier
-already uses, for the same reason it does: one scale across the trace, no new
-vocabulary for the operator to learn.
+The 0–100 probability does not make the model calibrated by itself. It makes
+calibration measurable later, but only for claims with independent outcomes.
 
-`reason` and `unknowns` are free text sitting beside constrained fields
-deliberately — trap 6 of `2026-07-24-operator-locale-and-language.md`:
-removing a model's free-text field makes it reason *inside* the constrained
-one. Two pressure valves here, because the forecast is the one call in the
-system explicitly asked to speculate.
+No worked example belongs in the system prompt. Smaller models copy example
+content into unrelated structured output. Field descriptions state the form,
+and eval fixtures carry the concrete cases.
 
-**No worked example in the system prompt.** Trap 1: example words get
-parroted. A forecast prompt that illustrates a bound with "between 200 and
-400 km" will produce distances in forecasts about payroll. The field
-descriptions above name the *form* and never fill it in, which is the same
-line `ACCEPTANCE_CRITERIA_SYSTEM_PROMPT` holds.
+## The seal
 
-## The sealing rule
+The candidate-producing model must never receive raw forecast content.
 
-**A forecast reaches the trace and nothing else.** Not the scratchpad, not an
-`observation.data` the model can see, not the room, not the summarizer.
+The forecast is available only to:
 
-This is architecturally free rather than a discipline to maintain. The decide
-prompt's scratchpad renders from an in-memory `list[AssistantTurnEvent]`
-built inside `handle()`, not from `self._steps` or from the persisted rows —
-which is exactly why the `response_language_classifier` and
-`acceptance_criteria` rows already sit in the trace without leaking into the
-loop. A forecast recorded the same way inherits the same isolation. The one
-piece of new discipline is the run summarizer, which reads step rows and
-must skip `answer_forecast` rows; its digest describes what the run did, and
-a sealed guess is not something the run did.
+- its own trace row;
+- `reply_audit`;
+- post-run evaluation and aggregation.
 
-Two things break if the seal leaks, and both are fatal rather than
-degrading:
+It is excluded from:
 
-- **The deciding model anchors on its own guess.** This is precisely the bias
-  that justified splitting `reply_audit` out of the reply into its own call
-  — the reasoning that produced a wrong answer is a bias toward ratifying it.
-  A forecast in the prompt is that bias, injected before the work instead of
-  after.
-- **The ladder collapses.** Rung *n+1* shown rung *n* copies it. Every rung
-  agrees, no rung diverges, and the mechanism reports perfect calibration
-  forever.
+- the scratchpad;
+- room messages;
+- the run summarizer's narrative input;
+- later decide prompts;
+- future conversation history.
 
-The second failure is silent and looks like success. That is why the seal is
-stated as a rule with a named owner rather than left as an implementation
-detail.
+When the audit bounces a candidate, the answerer receives only a short,
+evidence-backed problem statement. It does not receive “the forecast says
+X.” This prevents correction by blind copying and keeps the independent
+sample independent.
 
-## Resolution
+The implementation invariant should be tested by building every downstream
+decide prompt and asserting that a unique sentinel placed in
+`proposed_answer` and each forecast claim is absent.
 
-One call per run, **after** the terminal message is posted, off the critical
-path — the shape `assistant_run_summarizer` already established: enqueued at
-the terminal state, posts no chat, enqueues nothing, so it can never resolve
-itself. A sibling agent, `assistant_forecast_resolver`, rather than another
-field on the summarizer: the summarizer's job is a human-readable digest of
-what happened, and this one compares structured rows and returns structured
-rows.
+## Turn disagreement into an evidence question
 
-One call, not one per rung. The resolver must see the ladder *whole*, because
-the finding is which rung came first.
+The forecast is not an authority. It is a source of hypotheses for the
+auditor.
+
+Extend the existing audit problem shape:
 
 ```python
-class ForecastVerdict(BaseModel):
-    rung: str = Field(min_length=1, description=(
-        "The rung id, copied exactly from the ladder you were given."))
-    landed: Literal["inside", "outside", "unresolvable"] = Field(description=(
-        "inside when the delivered answer falls within this rung's "
-        "answer_space; outside when it does not; unresolvable when the run "
-        "produced no answer to compare against."))
-    note: str = Field(min_length=1)
-
-
-class ForecastResolution(BaseModel):
-    reason: str = Field(min_length=1)
-    verdicts: list[ForecastVerdict] = Field(min_length=1, description=(
-        "One verdict per rung, in the order given."))
-    first_divergence: str = Field(min_length=1, description=(
-        'The rung id of the earliest "outside" verdict, or "none".'))
-    cause: Literal[
-        "request_ambiguous", "context_missing", "context_misleading",
-        "forecaster_error", "answer_wrong", "none",
+class ReplyProblem(BaseModel):
+    category: Literal[
+        "unsupported_claim", "evidence_mismatch", "calculation",
+        "missing_answer", "constraint", "language", "uncertainty",
     ]
-    lesson: str = Field(min_length=1, description=(
-        "What a change to the prompts, the retrieval, or the settings would "
-        "have to do to move first_divergence later. Never empty — when there "
-        "is nothing to learn, say that."))
+    severity: Literal["minor", "major", "critical"]
+    problem: str = Field(min_length=1)
+    evidence_refs: list[str] = Field(min_length=1)
+    repair: Literal["rewrite", "verify", "clarify"]
+
+
+class ReplyAudit(BaseModel):
+    reason: str = Field(min_length=1)
+    forecast_relation: Literal[
+        "agrees", "material_disagreement", "not_comparable",
+    ]
+    problems: list[ReplyProblem]
+    verdict: Literal["send", "revise"]
 ```
 
-`cause` is the payload. A wrong guess is not actionable; a wrong guess with
-an attributed cause is:
+The audit rules are:
 
-- **`request_ambiguous`** — the operator's message genuinely admitted both
-  readings. The fix is `ask_clarifying_question`, not a prompt change.
-- **`context_missing`** — the answer depended on something no block carried.
-  The fix is retrieval.
-- **`context_misleading`** — a block was present and pointed the wrong way.
-  The fix is that block, and the rung names which one.
-- **`forecaster_error`** — everything needed was present at that rung and the
-  forecast blew it anyway. The fix is the forecast prompt or its model
-  binding. Nothing upstream is implicated.
-- **`answer_wrong`** — see below.
-- **`none`**.
+1. Compare candidate and forecast claim by claim, not by wording.
+2. Resolve a disagreement from observations or deterministic constraints when
+   possible.
+3. Never prefer the forecast merely because it is called a forecast.
+4. When neither side is supported, report uncertainty and ask for the
+   cheapest useful verification; do not invent a winner.
+5. Do not bounce stylistic differences unless they violate an established
+   formatting or language constraint.
+6. A `major` or `critical` evidenced problem requires `revise`.
+7. `send` with a material unresolved problem is a contract failure recorded
+   in the trace.
 
-### `answer_wrong`, and why it is the interesting one
+`evidence_refs` are validated against the prompt's source ids. A reference to
+the forecast alone is not evidence. The corrective text passed to the decide
+loop includes the problem and the underlying request/observation refs, but
+not the forecast's proposed answer.
 
-The mechanism is framed as calibrating the guess against the answer. But a
-divergence is **symmetric evidence**, and nothing about the arithmetic says
-the answer wins.
+### Repair means more than rewording
 
-A `cold` forecast that survives every rung unchanged, made before any
-context arrived, and then disagrees with the delivered reply, is a
-disagreement between the model's prior and six steps of work. Sometimes the
-work is right and the prior was naive — that is the ordinary case. Sometimes
-the work went somewhere strange and the prior is the only thing in the run
-that noticed. A unit conversion off by a factor of a thousand is outside a
-sane order-of-magnitude forecast, and the ladder catches it after the fact
-with no assertion, no test, and no reviewer.
+An inaccurate first draft is not always fixed by asking for better prose.
 
-This is not `reply_audit` doing its job late. The auditor checks a message
-against the request and the constraints — internal consistency. The forecast
-checks it against what the model believed before it started, which is a
-different and independent signal. They can disagree, and a reply the auditor
-passed that a stable cold forecast rejects is the single most interesting row
-this mechanism can produce.
+- `rewrite` means the evidence is already present and the candidate stated it
+  incorrectly or incompletely.
+- `verify` means the loop should perform the smallest read or deterministic
+  calculation that can settle the claim, then create a new
+  `evidence_revision`, forecast, and candidate.
+- `clarify` means the missing fact belongs to the operator and cannot be
+  recovered from available context or tools.
 
-It cannot block anything — it arrives after the message is posted. What it
-can do is be counted, and if `answer_wrong` shows up with any regularity,
-that is the argument for a forecast rung the auditor gets to see, which is a
-different proposal and should stay one.
+The existing audit bounce returns control to the decide loop, so these repair
+types are guidance rather than a parallel dispatcher. The decide model still
+selects the available capability, but the trace can now distinguish
+productive verification from endless rewriting.
 
-### When the run produced no answer
+## Bounded failure behaviour
 
-A `ask_clarifying_question` terminal, a stop, or a step-limit exit leaves
-nothing to resolve against, and every rung comes back `unresolvable`. One
-check still runs, and it is worth the call on its own:
+There are two different failures and they should not share one policy.
 
-**did the `cold` rung's `unknowns` already name the thing that was eventually
-asked about?** If it did, the assistant knew at message-read time that it
-needed clarification, and spent steps before asking. That is a directly
-actionable finding about the decide prompt's bias toward acting, and it is
-invisible in the trace today.
+### Infrastructure or parsing failure: fail open
 
-### The two languages problem
+If no forecast model is bound, the call times out, or structured parsing
+fails, run the existing reply audit without a forecast. If the auditor also
+fails, preserve today's fail-open behaviour and send the candidate. The trace
+records `guard_unavailable`; an unavailable helper must not make the
+assistant produce no answer.
 
-The `cold` rung fires **before** the response-language classifier — it has to,
-or `post_language` measures nothing. So a cold forecast is written in
-whatever language the request was in, while the delivered answer is written
-in the classified reply language, and those routinely differ: that is the
-entire point of the classifier.
+### A known substantive defect: do not silently call it success
 
-The resolver is therefore told plainly that the forecast and the answer may
-be in different languages and that **a language difference is never a
-divergence**. Containment is about the answer, not its wording. This is the
-one place the mechanism has to reach across into the language machinery, and
-it reaches with a single sentence rather than a shared table.
+If the auditor repeatedly finds a major or critical problem, the current
+“ship after the rejection cap” behaviour may still be needed for liveness,
+but it must be explicit:
 
-## Model binding
+- record `forced_send=true`;
+- retain the last unresolved problems in the terminal trace row;
+- require the final candidate to state the relevant uncertainty when the
+  evidence could not settle it;
+- never repeat a mutating action merely to repair its confirmation message.
 
-A binding-only `answer_forecast` role on `/agentmodel`, resolved through
-`resolve_model_group([(ANSWER_FORECAST_UUID, "answer_forecast"),
-(self.agent_uuid, "own")])` — the pattern `second_opinion`, `reply_audit` and
-`response_language_classifier` already use. Same for the resolver, which is
-an ordinary agent with its own group.
+The initial implementation keeps `MAX_AUDIT_REJECTIONS` and the existing
+loop. A release gate below limits how often forced sends may occur. If local
+models cannot produce an uncertainty-aware fallback reliably, that is a
+reason not to enable the guard yet, not a reason to hide the unresolved
+defect.
 
-The binding exists, and the default of leaving it unbound is the *correct*
-setting rather than a lazy one, which is unusual enough to state:
+## Model binding and diversity
 
-**the forecaster should be the same model as the answerer.** A cheap
-forecaster's misses tell you about the cheap model, not about the prompt —
-every divergence resolves to `forecaster_error` and the ladder measures the
-capability gap between two models instead of the context gap between two
-rungs. Unbound gives same-model for free.
+Add a binding-only `answer_forecast` role on `/agentmodel`, resolved through
+the same fallback pattern as `reply_audit` and
+`response_language_classifier`.
 
-Binding a different model is a legitimate experiment — "would a stronger
-model have flagged this earlier?" is a real question — but the moment the
-binding differs, `forecaster_error` verdicts stop being interpretable and the
-operator has to remember that. Worth a line in the setting's description, and
-worth surfacing the binding in the run's per-step debug `log` block beside
-the active profile, where the other "why is this run weird" answers already
-live.
+There is no universally correct default beyond preserving availability:
 
-## Cost, stated plainly
+- **same model group** measures whether the answer is stable under a
+  purpose-separated second attempt;
+- **different local model family** reduces some correlated errors and is the
+  preferred experiment when more than one capable local model is available;
+- **stronger local auditor** is usually more valuable than a stronger prose
+  generator, because the auditor decides whether disagreement matters;
+- **smaller or cheaper model** is acceptable only when evals show that it
+  does not rubber-stamp or create false bounces.
 
-`2 + n` extra calls per run, where `n` is the number of decide steps, capped
-by `STEP_LIMIT = 6`. A six-step run goes from six decide calls plus the
-classifier plus the criteria plus the audit, to eight of those plus eight
-forecasts. That is not a rounding error; on a bad turn it roughly doubles the
-model spend and adds a forecast's latency in front of every step.
+Every forecast and audit row records the exact model, prompt revision,
+sampling configuration, duration, and usage. Without that provenance,
+same-model and cross-model results are not comparable.
 
-And it buys the operator **nothing on that turn**. The reply is byte-identical
-whether the ladder ran or not. Everything this mechanism produces is read
-later, by a person deciding what to change.
+Temperature is not a diversity strategy by itself. Raising it can create
+more disagreement without creating more truth. Prefer role separation,
+evidence access, and model-family diversity; treat sampling changes as an
+eval variable.
 
-Three things make that defensible:
+## Cost and switch
 
-1. The forecast prompt is narrow by construction. It carries no action
-   catalog (it chooses no action), no skills block, and — at the `cold` and
-   `post_language` rungs — no profile digest, because the rung is *defined* by
-   not having seen it. Only the `step_n` rungs pay for the full decide
-   context, and they can reuse the exact prompt the decide call is about to
-   send.
-2. A `step_n` forecast and the `step_n` decide call see identical context, so
-   they are independent and could in principle be issued concurrently. The
-   model plumbing (`structured_llm_call`) is synchronous today, so this
-   proposal specifies the sequential version and notes the concurrency as the
-   obvious optimization once the mechanism has earned it.
-3. It is off by default and it is instrumentation. Nobody pays this on a turn
-   they are not studying.
+The production path adds one narrow structured call per evidence revision.
+The existing `reply_audit` call remains the adjudicator; there is no new
+resolver after the message posts.
 
-### The switch, and why this one gets a switch
+Most turns therefore pay:
 
-`2026-07-29-reply-audit-as-its-own-call.md` argued *against* a flag and for a
-clean cutover, on the grounds that the return was deleting the ordering
-machinery and a flag would keep it alive. Nothing about that argument
-transfers here, and the opposite conclusion is right for the opposite
-reasons: this mechanism deletes nothing, changes no reply, and has a real
-per-turn cost with no per-turn benefit. That is the exact profile a default-off
-switch is for.
+- normal decide calls;
+- one answer forecast when a candidate reply exists;
+- the already-existing reply audit;
+- an additional decide/forecast/audit cycle only when a material problem
+  bounces.
+
+The feature has an immediate per-turn benefit but still needs a default-off
+switch while measured:
 
 ```python
 "assistant.answer_forecast": Setting(
     "assistant.answer_forecast", None, "bool", False,
-    description="Record sealed answer forecasts at each context boundary "
-                "(before the language classifier, after it, and before each "
-                "decide step) and resolve them against the delivered reply "
-                "after the run finishes. Instrumentation only: forecasts "
-                "never enter a prompt the deciding model reads and never "
-                "change a reply. Costs one extra model call per decide step "
-                "plus two. Default off.",
+    description="Before a candidate reply is sent, generate one sealed "
+                "independent answer from the request, constraints and "
+                "observations, then let reply_audit use disagreements to "
+                "request evidence-backed revision or verification. The "
+                "candidate-producing model never sees the forecast. Adds "
+                "one local-model call per evidence revision. Default off.",
 ),
 ```
 
-One switch, not two. A "cheap ladder" setting that drops the `step_n` rungs
-is the obvious economy and it is the wrong first move: a truncated ladder
-cannot localize a late divergence, which is most of what there is to find. Run
-the full ladder, find out whether the tail carries signal, and cut it on
-evidence rather than on the assumption that it does not.
+One switch is enough. The full context ladder belongs in the eval harness,
+not behind another production setting.
 
-## Where it shows
+## Trace and inspector
 
-- **`/assistant`, the run inspector.** Each forecast is its own timeline row
-  at the index of the call it precedes, distinguished by `action`, collapsed
-  by default — the treatment the classifier row already gets. Above the
-  timeline, a **ladder strip**: one cell per rung, marked inside / outside /
-  unresolvable, with the divergence rung highlighted and the `cause` and
-  `lesson` beside it. That strip is the feature. The rows are the evidence
-  behind it.
-- **The markdown export** carries both. Unlike the live "in flight" card,
-  there is nothing live about a resolved ladder.
-- **Not `/chat`.** Nothing about this is conversation.
+For each candidate cycle, record:
 
-The aggregate view — `cause` counts across runs, which is where "so prompts
-can get better calibrated" actually pays off — is deliberately **not** in
-this proposal. It needs the rows to exist first, and a page built before its
-data is a page built against a guess about the data. It is the immediate
-follow-up, not the first commit.
+1. `answer_forecast` — observed, collapsed by default;
+2. `reply_audit` — observed, with relation, problems, and verdict;
+3. the bounced candidate or terminal reply using the existing rows.
 
-## How this gets measured
+The run header shows a compact guard result:
 
-The gate for instrumentation is not a pass rate. It is whether the output is
-actionable, and it has a specific failure mode worth naming in advance.
+- `agreed · sent`;
+- `disagreed · verified · revised`;
+- `disagreed · revised from existing evidence`;
+- `uncertain · clarification requested`;
+- `guard unavailable · sent unaudited`;
+- `forced send · unresolved major issue`.
 
-1. **Does the ladder localize?** Over the first several dozen turns, what
-   fraction produce a `first_divergence` other than `none`, and does the rung
-   vary? A mechanism that always blames `cold` has discovered only that
-   guessing before reading is hard.
-2. **Is `cause` non-uniform?** This is the kill criterion. If 90% of
-   divergences come back `forecaster_error`, the resolver is a rubber stamp,
-   the attribution is noise, and the ladder is an expensive way to learn that
-   models are bad at guessing. The distribution across the five causes is
-   what decides whether the mechanism survives.
-3. **Does a divergence survive a fix?** The only end-to-end proof: take a
-   `context_misleading` finding, change the block it named, rerun the same
-   case, and check that `first_divergence` moved later or disappeared. One
-   confirmed instance of this is worth more than any amount of aggregate
-   statistics.
-4. **Does `cold` → `post_language` stay quiet?** The standing assertion. A
-   divergence there is a finding about the language block, reportable
-   immediately.
+This is more actionable than an inside/outside ladder strip. The details
+remain in the rows, while the header answers whether the second shot changed
+what the operator received.
 
-`evals/profile_guidance.py` already runs cases through the live turn
-construction via `build_turn_prompts`, so the harness for (3) exists; a
-forecast variant beside the existing `classifier` and `audit` variants is the
-natural home, scored on rung agreement rather than on the delivered reply.
+Markdown export includes the guard summary and rows. `/chat` includes none of
+the internal forecast text.
 
-## Relationship to the neighbouring mechanisms
+## Resolution and calibration
 
-- **`reply_audit`** reviews the finished message against the request and the
-  constraints, before it posts, and can bounce it. The forecast ladder
-  compares the message to what the model believed before it started, after
-  it posts, and can bounce nothing. Different evidence, different timing,
-  different powers. Their disagreements are the interesting rows.
-- **`second_opinion`** reviews a program before it runs. No overlap.
-- **`acceptance_criteria`** states what the reply must satisfy; a forecast
-  states what the reply will probably *be*. Criteria are normative and enter
-  the prompt; forecasts are predictive and never do. A rung fired after the
-  criteria step sees them as context, which is exactly what makes `step_1`'s
-  jump measurable.
-- **`response_language_classifier`** is the rung boundary that
-  `post_language` exists to bracket, and the source of the two-languages
-  wrinkle above.
-- **`assistant_run_summarizer`** is the architectural precedent for the
-  resolver, and the one existing consumer of step rows that must learn to
-  skip a new action.
+Keep **comparison** separate from **resolution**.
 
-## Traps this walks straight into
+- `forecast_relation` compares the forecast with the candidate. It can be
+  computed on every guarded turn, but says nothing by itself about
+  correctness.
+- `forecast_resolution` exists only when an independent source settles a
+  claim.
 
-Named up front because each has already cost this codebase time:
+```python
+class ClaimResolution(BaseModel):
+    claim_id: str
+    outcome: Literal["correct", "incorrect", "indeterminate"]
+    source: Literal[
+        "deterministic_check", "tool_observation",
+        "user_correction", "eval_label", "human_review",
+    ]
+    evidence_ref: str = Field(min_length=1)
 
-- **Trap 1, parroted examples.** No worked example anywhere in the forecast
-  prompt. A bound illustrated is a bound copied.
-- **Trap 2, field descriptions mirrored as output.** `kind` is a `Literal`
-  and `confidence` is a bounded int precisely so neither can come back as
-  prose. `answer_space` cannot be typed and is the field most at risk;
-  its description names forms, never contents.
-- **Trap 3, parsing model prose.** `landed`, `cause` and `kind` are typed
-  values. Nothing about containment is decided by a string check — the
-  resolver decides, code records.
-- **Trap 6, the missing pressure valve.** `reason` and `unknowns` on the
-  forecast, `reason` and `note` and `lesson` on the resolution.
-- **A new one this mechanism invents: the wide-set gambit.** A forecaster
-  scored on containment is rewarded for uselessly wide sets. `most_likely`
-  and `confidence` are the countermeasure, and the operator reading the strip
-  is the enforcement. If gaming shows up anyway, the answer is a resolver
-  field for set width, not a cleverer prompt.
 
-## Open questions
+class ForecastResolution(BaseModel):
+    resolutions: list[ClaimResolution] = Field(min_length=1)
+    note: str = Field(min_length=1)
+```
 
-- **Does `cold` need the room transcript at all?** A forecast made from the
-  bare message is the purest baseline and the cheapest rung; a forecast made
-  with the transcript is the one that reflects what the assistant actually
-  starts from. Both are defensible and they measure different things. Ship
-  with the transcript (it matches what the classifier already sees) and let
-  the divergence rate say whether the purer version would be sharper.
-- **Should `step_n` forecasts stop once a write has executed?** After a
-  log-and-undo write the scratchpad already steers the model toward `reply`;
-  a forecast at that point is close to a forecast of the message it is about
-  to write, which is `reply_audit`'s territory arriving early and sealed.
-  Cheap to include, and possibly redundant.
-- **Does the resolver need the run's observations, or only the ladder and the
-  answer?** Observations would let it distinguish `context_missing` from
-  `context_misleading` with real evidence rather than inference — but they
-  are also the bulk of the prompt, and the resolver drawing its own
-  conclusions from raw tool output is a second reviewer with a different job.
-  Start without them; the `cause` distribution will say whether the
-  attribution is guessing.
+The delivered reply is deliberately absent from the `source` enum. It is the
+thing under evaluation.
+
+Calibration dashboards exclude `indeterminate` claims and show sample counts
+beside probability buckets. Brier score or reliability plots become
+meaningful only after enough independently resolved claims exist. Until then,
+show raw resolved cases and do not label the feature calibrated.
+
+## The full context ladder, demoted to an eval
+
+The original rungs remain useful when investigating prompt construction:
+
+| Rung | Additional context |
+|---|---|
+| `cold` | request and selected operator transcript |
+| `post_language` | ranked reply-language block |
+| `post_criteria` | acceptance criteria and settings-derived guidance |
+| `step_1` … `step_n` | one additional observation per rung |
+
+The eval must add a **same-context control**. For each rung transition under
+study:
+
+- sample the lower rung at least twice;
+- sample the higher rung at least twice;
+- compare within-rung variation with between-rung variation;
+- score both against a labelled or deterministically checked outcome.
+
+Only a between-rung improvement larger than normal same-prompt variation is
+evidence that the added context helped. A content change is not automatically
+a regression, and textual equality is not the metric; score material claims,
+uncertainty, and the resolved answer.
+
+The ladder can still find:
+
+- a language block that improperly changes answer substance;
+- criteria that resolve an ambiguity correctly or inject a bad assumption;
+- an observation that corrects a prior;
+- an observation the model ignores despite containing the answer;
+- a late tool result that makes confidence worse rather than better.
+
+Cause attribution is made by the eval label or a human reviewing the
+transition. Do not ask a resolver model that lacks the observations to choose
+among `context_missing`, `context_misleading`, and `forecaster_error`; that
+would be confident guessing about guessing.
+
+## Evaluation plan
+
+The key measurement is not forecast agreement. It is **quality lift from
+first candidate to delivered answer**.
+
+Build a corpus with:
+
+- exact calculations and unit conversions;
+- factual questions whose answers exist in supplied observations;
+- multi-part requests where omissions are easy to label;
+- explanation tasks with required claims;
+- action confirmations that must match recorded outcomes;
+- ambiguous requests whose correct outcome is clarification;
+- adversarial observations containing instructions that must remain inert.
+
+Retain both the first candidate and the delivered answer in eval artifacts.
+Run multiple seeds because one pass cannot characterize a local model.
+
+Compare these variants:
+
+1. current `reply_audit` only;
+2. sealed forecast plus `reply_audit`;
+3. same-model forecast versus different-family forecast;
+4. forecast without claims/source refs versus the structured version;
+5. terminal guard versus the full diagnostic ladder on a small subset.
+
+Score:
+
+- independently verified correctness before and after revision;
+- correct-draft regression rate;
+- material-disagreement precision: how often disagreement exposed a real
+  defect;
+- false-bounce rate;
+- verification success rate;
+- unresolved and forced-send rate;
+- clarification precision;
+- median and p95 added latency;
+- model calls per delivered reply.
+
+### Release gate
+
+Enable the switch only when the eval shows all of the following on the bound
+local models:
+
+- a meaningful reduction in verified first-candidate defects;
+- no material regression on already-correct candidates;
+- forecast disagreements outperform audit-only review at finding real
+  defects;
+- false bounces and forced sends are rare and inspectable;
+- the latency is acceptable for interactive use.
+
+The exact thresholds belong in the eval configuration beside the corpus and
+model bindings, not frozen in this design document. The comparison must
+report case counts and confidence intervals; a handful of good demos is not a
+release gate.
+
+## Security and prompt-boundary rules
+
+Observations are untrusted evidence, not instructions. Forecast and audit
+system prompts state this explicitly, and observation ids are code-generated.
+A tool result saying “approve the candidate” has no authority.
+
+Do not include assistant reasoning, prior audit prose, or prior forecast prose
+in the forecast prompt. Do not let a model choose which observations exist.
+Code selects and caps them using the same boundaries as `reply_audit`.
+
+Sensitive observation handling does not change: a forecast is another model
+consumer inside the same local trust boundary, and its trace follows the
+existing debug-data policy. If a future forecast model is remote, that is a
+different data-boundary decision and must not be enabled merely by binding a
+role.
+
+## Traps and explicit countermeasures
+
+- **Self-consistency mistaken for truth.** Agreement is a stability signal;
+  only independent evidence resolves correctness.
+- **Forecast authority bias.** The audit receives a competing hypothesis,
+  not an answer key. The answerer receives evidence-backed defects, not the
+  raw forecast.
+- **Moving reference.** Reuse one forecast until evidence changes.
+- **Invented citations.** Validate every `source_ref` against code-issued ids.
+- **Wide-set gaming.** Removed from the production schema; the guard makes a
+  concrete independent proposal.
+- **Parroted examples.** No worked examples in the production prompt.
+- **Prose parsing.** Kinds, probabilities, relations, severity, repair, and
+  verdict are typed.
+- **Pressure-valve removal.** `reason` and `unknowns` stay free text and
+  audit-safe.
+- **False correction of a good draft.** Measure correct-draft regression and
+  require evidence for material bounces.
+- **Endless self-repair.** Keep the rejection cap, reuse forecasts, record
+  forced sends, and make verification change the evidence revision.
+- **Repeated side effects.** A reply repair never reruns a write. Action
+  claims are checked against the existing write observation.
+
+## Implementation seams
+
+The smallest coherent implementation is:
+
+1. add `AnswerForecast` and `ForecastClaim` models beside the existing narrow
+   structured call models in `agents/assistant.py`;
+2. add the binding-only `answer_forecast` role and default-off setting;
+3. when a `reply` candidate is produced, build a candidate-blind forecast
+   prompt from the same evidence projection used by `reply_audit`;
+4. persist the forecast as an operator-only control row;
+5. pass the forecast to `_build_reply_audit_prompt`;
+6. extend `ReplyProblem` with typed category, severity, refs, and repair while
+   preserving the existing `send`/`revise` loop;
+7. cache by `evidence_revision` across wording-only bounces;
+8. ensure the summarizer, transcript builders, and scratchpad renderers skip
+   forecast rows;
+9. add inspector labels and the guard summary;
+10. extend `evals/profile_guidance.py` with candidate-versus-delivered
+    scoring and the ablations above.
+
+Tests must prove:
+
+- the candidate and decide reasoning are absent from the forecast prompt;
+- forecast sentinels never enter later decide prompts, room history, or the
+  summarizer;
+- the audit sees the candidate, forecast, constraints, and observations;
+- invalid source refs are exposed rather than accepted;
+- wording-only revision reuses the forecast;
+- new evidence invalidates it;
+- failure falls back to the existing audit;
+- mutating actions are not repeated;
+- every bounce, forced send, and model identity is traceable;
+- the switch-off path is byte-for-byte the current behaviour.
+
+## What this proposal does not claim
+
+It does not claim that a model can certify itself, that two local samples equal
+ground truth, or that confidence becomes calibrated merely because it is
+numeric.
+
+It claims something narrower and testable: a candidate-blind second answer,
+adjudicated against evidence before delivery, can give imperfect local models
+a useful second shot. RainBox should ship it only if the retained first
+candidate proves that the second shot makes the delivered answer better.
