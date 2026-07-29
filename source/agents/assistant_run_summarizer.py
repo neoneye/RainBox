@@ -109,7 +109,7 @@ class RunSummary(BaseModel):
         "list when the run went smoothly.",
     )
     outcome: Literal["resolved", "partial", "failed"] = Field(
-        description='One word for what the operator was left with: "resolved" '
+        description='One word for what the user was left with: "resolved" '
         "if the delivered reply fulfilled the request, even where the run had "
         'to recover from a failed step to get there; "partial" if the reply '
         'covers only some of what was asked; "failed" if nothing was delivered '
@@ -119,12 +119,12 @@ class RunSummary(BaseModel):
 
 ASSISTANT_RUN_SUMMARIZER_SYSTEM_PROMPT = """\
 You summarize a single completed run of an assistant's reason-act loop, for an \
-operator scanning a list of past runs. You are given the message that triggered \
+user scanning a list of past runs. You are given the message that triggered \
 the run and a digest of each step (its action, phase, and any error).
 
 Respond with ONE JSON object matching the `RunSummary` schema and nothing else:
   - `trigger`: a short noun phrase naming what the run was asked to do, for an \
-operator scanning a list. Drop leading verbs ("Create a new …" → "New …") and \
+user scanning a list. Drop leading verbs ("Create a new …" → "New …") and \
 omit noisy identifiers like UUIDs or board/object IDs; keep meaningful names. \
 E.g. 'New kanban task named "Find my phone"', not 'Create a new kanban task \
 named "Find my phone" on kanban board 753fc9b3-…'.
@@ -133,7 +133,7 @@ phase, an error, a blocked/no-op action, a retry). One short phrase each. Use an
 empty list if the run proceeded without trouble — do NOT invent obstacles. If a \
 "Possible repeated calls" note appears below the steps, treat that repetition as \
 an obstacle (e.g. "repeated kanban_read 6× — stuck loop").
-  - `outcome`: "resolved", "partial", or "failed". Judge it by what the operator \
+  - `outcome`: "resolved", "partial", or "failed". Judge it by what the user \
 was left with, not by how bumpy the path there was. A run that recovered from a \
 failed step and still delivered the reply the request asked for is "resolved". \
 Use "partial" when the delivered reply covers only some of what was asked, and \
@@ -187,10 +187,10 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
         lines.append("")
         text = ((reply or {}).get("text") or "").strip()
         if text:
-            lines.append("Final reply delivered to the operator:")
+            lines.append("Final reply delivered to the user:")
             lines.append(text[:_REPLY_PREVIEW_CHARS])
         else:
-            lines.append("No reply was delivered to the operator.")
+            lines.append("No reply was delivered to the user.")
         return "\n".join(lines)
 
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:

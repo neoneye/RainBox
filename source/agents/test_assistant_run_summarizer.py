@@ -188,7 +188,7 @@ def test_prompt_carries_the_delivered_reply():
         SimpleNamespace(status="finished"), steps, None,
         {"text": "The conversion is 3211234422121970.0 meters."})
     assert "3211234422121970.0 meters" in prompt
-    assert "Final reply delivered to the operator" in prompt
+    assert "Final reply delivered to the user" in prompt
 
 
 def test_prompt_states_plainly_when_no_reply_was_delivered():
@@ -196,14 +196,14 @@ def test_prompt_states_plainly_when_no_reply_was_delivered():
     steps = [_step(0, "python_run", {"program": "x"})]
     prompt = agent._build_prompt(
         SimpleNamespace(status="failed"), steps, None, None)
-    assert "No reply was delivered to the operator." in prompt
+    assert "No reply was delivered to the user." in prompt
 
 
 def test_prompt_treats_a_blank_reply_as_no_reply():
     agent = _agent()
     prompt = agent._build_prompt(
         SimpleNamespace(status="finished"), [], None, {"text": "   "})
-    assert "No reply was delivered to the operator." in prompt
+    assert "No reply was delivered to the user." in prompt
 
 
 def test_prompt_truncates_a_long_reply():
