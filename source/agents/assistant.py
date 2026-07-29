@@ -3117,7 +3117,8 @@ class AssistantAgent(ModelGroupAgent):
                     if decision.action is AssistantActionName.REPLY:
                         text = self._append_result_links(text, result_links)
                     db.post_chat_message(room_uuid, self.agent_uuid, text,
-                                         kind="message", meta=pending_proposal)
+                                         kind="message",
+                                         meta=self._run_meta(pending_proposal))
                     db.finish_run(run, "finished", final_summary=text[:200])
                     logger.info(
                         "assistant finished run %s in room %s at step %d",
@@ -3319,7 +3320,8 @@ class AssistantAgent(ModelGroupAgent):
                 "Please rephrase or narrow the request.\n\n"
                 f"Inspect the run: [{run_link}]({run_link})"
             )
-            db.post_chat_message(room_uuid, self.agent_uuid, msg, kind="message")
+            db.post_chat_message(room_uuid, self.agent_uuid, msg, kind="message",
+                                 meta=self._run_meta())
             db.finish_run(run, "stopped", final_summary="step limit reached")
             logger.warning(
                 "assistant run %s hit step limit (%d) in room %s",
@@ -5282,6 +5284,21 @@ class AssistantAgent(ModelGroupAgent):
             extra["assistant_run_uuid"] = str(self._run.uuid)
         return extra
 
+    def _run_meta(self, base: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Stamp a terminal chat post with the run that produced it, merged
+        over whatever else the post already carries (a write-proposal card).
+
+        The progress row carries the run link while the turn works, but it is
+        reaped the moment the reply lands — and a reply worth questioning is
+        exactly when the operator wants the trace. So the answer keeps the
+        pointer. It rides in `meta`, not in the text: the text is the answer,
+        it is what Copy yields, and it is what the model reads back as
+        conversation on the next turn."""
+        meta = dict(base or {})
+        if self._run is not None:
+            meta["assistant_run_uuid"] = str(self._run.uuid)
+        return meta
+
     def _set_activity(self, activity: str) -> None:
         """Say what the run is doing now — to the supervisor's watchdog (via
         the heartbeat) and to the operator (via the room's progress row). One
@@ -5354,7 +5371,8 @@ class AssistantAgent(ModelGroupAgent):
                     db.mark_control_state(other, "ignored", note="run stopped")
             self._activity = "stopped"
             db.post_chat_message(
-                run.room_uuid, self.agent_uuid, "Stopped at your request.", kind="message"
+                run.room_uuid, self.agent_uuid, "Stopped at your request.",
+                kind="message", meta=self._run_meta(),
             )
             db.finish_run(run, "stopped",
                           final_summary=f"stopped by operator at step {step_index}")

@@ -411,7 +411,11 @@ def post_assistant_failure_notice(
         run.agent_uuid,
         text,
         kind="notice",
-        meta={"assistant_failure_run_uuid": run_uuid},
+        # `assistant_failure_run_uuid` keeps notice creation idempotent per
+        # run; `assistant_run_uuid` is the pointer every terminal assistant
+        # post carries, so one renderer gives them all a link to the trace.
+        meta={"assistant_failure_run_uuid": run_uuid,
+              "assistant_run_uuid": run_uuid},
     )
 
 

@@ -231,3 +231,33 @@ def test_progress_row_reports_the_calls_made_before_the_first_decide(app_ctx):
             AssistantRun.room_uuid == chatroom.uuid).delete()
         db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
         db.db.session.commit()
+
+
+def test_the_reply_keeps_a_pointer_to_the_run_that_produced_it(app_ctx):
+    """The progress row carries the run link while the turn works, but it is
+    reaped the moment the reply lands — and a reply worth questioning is
+    exactly when the operator wants the trace. The answer keeps the pointer, in
+    `meta` rather than in the text: the text is the answer, it is what Copy
+    yields, and it is what the model reads back as conversation next turn."""
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"prog-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "how many kanban boards?")
+    db.set_setting("qa.facts_invalidated_at", None)
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent._decide_next_step = lambda **_: AssistantStepDecision(
+        reason="answer", action=AssistantActionName.REPLY,
+        args={"message": "You have 3 kanban boards."})
+    try:
+        result = agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        run_uuid = result["assistant_run_uuid"]
+        reply = [m for m in db.list_room_messages(chatroom.uuid)
+                 if m["sender_type"] == "agent" and m["kind"] == "message"][-1]
+        assert reply["meta"]["assistant_run_uuid"] == run_uuid
+        assert reply["text"] == "You have 3 kanban boards."   # the answer alone
+        assert run_uuid not in reply["text"]
+        assert _progress_count(chatroom.uuid) == 0            # bubble still reaped
+    finally:
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()

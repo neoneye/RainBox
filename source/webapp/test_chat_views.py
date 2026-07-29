@@ -250,3 +250,13 @@ def test_sending_a_message_always_scrolls_to_it():
     send. They wrote the newest row, so take them to it wherever they were."""
     body = _body()
     assert "await fetchNew(currentRoom, {force: true});" in body
+
+
+def test_assistant_rows_link_to_their_run():
+    """Every terminal assistant post carries `meta.assistant_run_uuid`, so the
+    chat keeps a way into the trace after the progress bubble is reaped. A
+    link, not text: Copy must still yield the answer alone."""
+    body = _body()
+    assert "const runUuid = (m.meta || {}).assistant_run_uuid;" in body
+    assert "runLink.href = '/assistant?id=' + encodeURIComponent(runUuid);" in body
+    assert "runLink.textContent = 'run ↗';" in body
