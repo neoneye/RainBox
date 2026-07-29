@@ -702,6 +702,34 @@ it.** A forecaster that always guesses `memory_query` will beat a thoughtful
 one on raw accuracy, and a benchmark that cannot show that is worse than no
 benchmark.
 
+### Scored coverage is itself a reported number
+
+Outcome scoring needs to know what a capability's observation *means*, and
+writing one deterministic scorer per capability does not scale: every new
+tool would owe the eval suite a unit normalizer and a JSON-path comparator
+before it could ship. A suite that taxes every new capability is a suite that
+quietly discourages new capabilities.
+
+The way out is to stop treating full coverage as a precondition. Three tiers,
+and the report says which one each result came from:
+
+- **Typed** — the observation is already JSON (`kanban_read`, `kanban_query`,
+  `find_uuid`) or a computed value (`python_run`). A generic JSON-path and
+  numeric comparator covers these with no per-capability code.
+- **Generic extraction** — numbers, dates and uuids pulled from text by one
+  shared scorer, not twelve.
+- **Unscored** — prose observations with no comparator. `memory_query`'s
+  fenced text and `workspace_read_command`'s output start here.
+
+**Every table prints scored coverage: how many capabilities and what share of
+steps were actually scored.** "Scored 4 of 12 capabilities, 61% of steps" is
+an honest headline. Silently averaging over whatever happened to be scoreable
+is the same failure as omitting the majority-class baseline — a number that
+looks like it describes the system and describes a convenient subset.
+
+Coverage grows when a capability earns a comparator, which is a deliberate
+decision with a cost, not a tax collected at capability-creation time.
+
 ### Ways this benchmark lies
 
 **Self-forecasting may be easier.** A model predicting runs it produced may
@@ -754,6 +782,44 @@ Requests that depend on unavailable personal or external state are excluded
 from paired mode rather than converted into trivial empty-result cases. Every
 report stratifies production trajectories, ecological sandbox trajectories,
 and paired fixture trajectories.
+
+### What the producer sweep is actually for
+
+The hermetic mode above is a state-perfect replay harness — frozen clocks,
+fixture databases, stubbed external responses — and it is worth being precise
+about what would need it, because the honest answer is: nothing in the first
+four phases.
+
+The sweep was introduced to fix incumbent bias: a corpus of one model's runs
+grades every challenger on imitating the model it would replace. That worry
+was half a mis-framing of my own, and the document has since removed its own
+grounds for it.
+
+**`next_action` is explicitly an imitation score.** If the target is *predict
+what this assistant does*, then a corpus of this assistant's runs is not a
+biased sample of the target — it **is** the target. There is no producer
+diversity to add, because a different producer would be a different question.
+The bias only bites when imitation is read as competence, which the document
+now forbids twice.
+
+**Conditional outcome forecasting is already producer-independent.** Code
+supplies the action and arguments, so whichever model chose them has left the
+scoring entirely. Model A and model B can be compared on the same recorded
+step, from the same recorded prompt, with no fixture anywhere — the
+comparison is paired by construction because the case is a fixed historical
+artifact.
+
+What genuinely needs the hermetic bundle is one question neither target asks:
+*would model B have chosen better?* That is competence, it needs labels, and
+labelled correctness does not arrive until Phase 4. Building a replay
+hypervisor to answer a question that is four phases away and gated on a
+scarce resource is the definition of premature.
+
+So the isolation requirements below stand as the contract for **if** a
+producer sweep is ever run — they are the right requirements and they should
+not be softened — but nothing in Phases 1 to 5 runs one. Ecological expansion
+remains available for corpus growth; paired hermetic comparison is deferred
+until something needs it.
 
 ### A sandbox database is not a sandbox
 
@@ -1279,10 +1345,37 @@ non-local endpoints until an explicit remote-eval policy exists.
 The eval corpus must not become “remember everything” by another name.
 Store one canonical redacted case snapshot when replay requires it; repeat
 rows reference the case id and prompt hash rather than copying the full prompt
-again. Derived forecasts inherit the strictest source sensitivity and an
-explicit retention/expiry policy. Expiry or deletion of a copied source
-triggers deletion or irreversible redaction of dependent snapshots unless a
-separately approved audit-retention rule applies.
+again. Derived forecasts inherit the strictest source sensitivity and an explicit
+retention policy.
+
+**A TTL on snapshots, not a dependency graph.** Propagating a production
+deletion into the eval store means a bidirectional dependency graph between
+the memory subsystem and an analytical store, walked on every expiry, editing
+JSON blobs and prompt hashes in place. That is a large amount of machinery
+whose only job is to make a copy disappear slightly sooner than time would
+have removed it anyway.
+
+The cheaper mechanism is a hard TTL on the copies, and it works because eval
+artifacts split cleanly in two:
+
+- **Snapshots** — embedded prompts, transcripts, observations, forecast prose.
+  These are operator content and they expire mechanically, on a short clock,
+  with no reference to what happened upstream.
+- **Scores** — accuracy, Brier, coverage, case ids, model ids, prompt hashes,
+  scorer versions. Derived measurements, carrying no operator content, and
+  they persist.
+
+That split is what makes the TTL affordable. A blanket purge would destroy
+the longitudinal comparison the scorecard exists for — the whole point is
+re-running it after a model upgrade and seeing what moved. Keeping the
+numbers and dropping the copies preserves that, and an expired case can be
+re-derived from the live trace whenever the trace is still there.
+
+The consequence is stated rather than hidden: after the TTL, a score can no
+longer be audited back to the exact text that produced it. That is the price
+of not building the graph, and for an internal instrument it is the right
+trade. A finding worth keeping past the TTL is worth promoting into a
+labelled case, which is a deliberate act with an owner.
 
 Findings remain eval artifacts. A repeated labelled finding may be proposed as
 a reusable lesson or skill only with its supporting case set, owner, review
@@ -1352,6 +1445,19 @@ durable active memory automatically.
 
 ## Considered and not taken
 
+- **A large remote model as the semantic judge.** It would solve the scorer
+  coverage problem in one step, and it cannot be used here. Grading an
+  outcome forecast against the historical trace means sending recorded
+  prompts, observations and operator content to a third party — the exact
+  data boundary this document draws twice, once for the forecaster and once
+  for the eval store. Providers are local (`providers/base.py`: Ollama, Jan,
+  LM Studio), and "it's only offline" does not change where the bytes go;
+  offline is when it happens, not whether it leaves the machine. A **local**
+  judge is admissible, and it owes a debt the deterministic scorers do not:
+  its agreement with the labelled subset must be measured before any verdict
+  of its own is allowed to count. An unvalidated judge is a model grading a
+  model, which is where this document started and declined to stay.
+
 - **A new four-table memory subsystem.** Identity, operating state, evidence,
   and lessons are valuable authority classes, but RainBox already has
   specialized stores with richer lifecycle and provenance. Use the classes as
@@ -1388,6 +1494,104 @@ durable active memory automatically.
 - **A full leave-two-out sweep.** Quadratic in blocks and almost entirely
   uninteresting. A targeted 2×2 on a suspected pair answers the same question
   for four cells.
+
+## Implementation phases
+
+This document describes a complete instrument. Nobody should build a complete
+instrument. The phases below are ordered so that the cheapest one produces a
+real number, each later phase is gated on the previous one having been worth
+it, and the riskiest engineering arrives only after three chances to abandon
+the idea.
+
+Each phase names what it needs, what it can say, what it cannot say yet, and
+the condition under which the right move is to stop.
+
+### Phase 1 — conditional outcome forecasting on typed observations
+
+The smallest thing that produces a number. Conditional mode only: code hands
+the forecaster the recorded action and arguments and asks what comes back.
+One model. No sweep, no ladder, no ablation, no labels.
+
+Restricted to capabilities whose observations are already typed —
+`kanban_read`, `kanban_query` and `find_uuid` return JSON, and `python_run`
+returns a computed value. No per-capability scorer has to be invented for
+those; the comparison is against structure that already exists.
+
+- **Needs:** a case builder over `assistant_step` rows; the recorded prompts
+  embedded verbatim; a JSON-path comparator; Brier over `ok_probability`;
+  interval coverage where the value is numeric.
+- **Says:** whether a local model understands what these tools return, and
+  how calibrated it is about execution success.
+- **Cannot say:** anything about action choice, prompt stages, or semantic
+  correctness.
+- **Stop if:** no bound model beats the trivial baseline of always predicting
+  `ok` at the corpus base rate. That result is cheap, decisive, and means the
+  premise is too weak to spend Phase 2 on.
+
+### Phase 2 — the imitation benchmark
+
+`next_action` top-1 and set membership across every bound model, with the
+majority-class baseline, repeats, per-capability breakdown, and first-attempt
+schema validity beside every score.
+
+- **Needs:** `allowed_actions` recovered per case from the historical
+  catalog; the sweep ordered model-outermost and repeats-innermost;
+  case-clustered intervals.
+- **Says:** which model predicts this assistant's behaviour, where it stops
+  doing so, and which models can hold a schema at all — a routing shortlist.
+- **Cannot say:** whether any predicted choice was better than the recorded
+  one. This is imitation.
+- **Stop if:** every model sits at the majority-class baseline. The corpus is
+  then too skewed to distinguish forecasters, and the fix is corpus
+  composition, not more phases.
+
+Phases 1 and 2 together need **no new prompt-assembly code**: they embed
+stored prompts verbatim. That is why they come first — most of the value at
+almost none of the risk.
+
+### Phase 3 — the sensitivity ladder and single-block ablation
+
+Where the real engineering starts, and the first phase that can be got subtly
+wrong: removing prompt sections from a stored prompt while keeping every
+surviving byte and its order intact.
+
+- **Needs:** byte-faithful section surgery, the synthetic-variant labelling,
+  repeats with the same-context control.
+- **Says:** where an answer becomes sensitive to added context, and which
+  single block controls the movement.
+- **Cannot say:** whether any movement was an improvement. Everything here is
+  unlabelled.
+- **Stop if:** movement rates are indistinguishable from the same-context
+  control. Nothing is being localized and the labels of Phase 4 have nothing
+  to be spent on.
+
+### Phase 4 — the labelled subset
+
+Labels are the scarce resource, and Phase 3's ranking is what decides where
+they go. Build cases only for the boundaries that ranked highest.
+
+- **Says:** improvement against damage, for the first time. Correctness
+  claims start here and nowhere earlier.
+- **Cannot say:** anything about the live guard.
+
+### Phase 5 — guard-readiness simulation
+
+Only reachable with Phase 4's labels. Produces the paired quality lift that
+gates Part 2, and nothing about Part 2 should be built before it exists.
+
+### Deferred indefinitely
+
+**Paired producer comparison and hermetic case bundles.** A frozen clock,
+database fixture, workspace fixture and stubbed external responses per case
+is a state-perfect replay harness, and it is not needed by anything above.
+See [What the producer sweep is actually for](#what-the-producer-sweep-is-actually-for).
+
+**Cascading redaction across the eval store.** Replaced by a TTL — see
+[Security and prompt boundaries](#security-and-prompt-boundaries).
+
+**Semantic scorers for capabilities that return prose.** Phase 1 covers the
+typed ones and reports its coverage honestly; extending it is a phase of its
+own with its own justification.
 
 ## Implementation seams
 
