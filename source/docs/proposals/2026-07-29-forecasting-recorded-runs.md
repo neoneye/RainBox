@@ -1,4 +1,4 @@
-# Sealed forecasts — where the pipeline leaks, and which model sees it coming
+# Forecasting recorded runs — where the pipeline leaks, and which model sees it coming
 
 **Status:** Proposal. Nothing implemented.
 **Date:** 2026-07-29
