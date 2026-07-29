@@ -473,9 +473,13 @@ Evidence priority:
 1. An explicit reply-language, translation, or dialect instruction in the
    current request wins.
 2. Otherwise, the language of the current request is the strongest signal.
-3. Earlier OPERATOR messages are context only, and matter mainly when the
-   current request is too short to identify. Assistant messages are omitted
-   because a previous wrong-language reply must not perpetuate itself.
+3. Earlier messages — the operator's and the assistant's alike — are context
+   only, and matter mainly when the current request is too short to identify.
+   An earlier assistant reply shows the language the conversation has been
+   running in, which is real evidence; it is never a reason to keep replying in
+   a language the current request contradicts. A previous wrong-language reply
+   must not perpetuate itself, so when it disagrees with the current request,
+   the request wins and the disagreement belongs in `audit`.
 4. Declared languages describe competence and preference. They are candidates,
    not permission to override a clear current request.
 
@@ -4407,15 +4411,15 @@ class AssistantAgent(ModelGroupAgent):
         request = ET.SubElement(root, "current_request")
         request.text = str((current or {}).get("text") or "none")
 
-        context = [
-            message for message in (messages[:-1] if messages else [])
-            if self._message_role(message) == "operator"
-        ][-self.RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES:]
-        history = ET.SubElement(
-            root,
-            "conversation_history_xml",
-            {"assistant_messages": "omitted"},
-        )
+        # Both roles: an earlier assistant reply is the only record of what
+        # language the conversation has actually been running in, and dropping
+        # it hid that from the one call whose job is to decide the language.
+        # The prompt carries the anti-perpetuation rule instead — a wrong-
+        # language reply loses to the current request rather than being
+        # withheld from the classifier.
+        context = (messages[:-1] if messages else [])[
+            -self.RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES:]
+        history = ET.SubElement(root, "conversation_history_xml")
         if context:
             for message in context:
                 self._append_prompt_message(history, message)
@@ -4667,13 +4671,14 @@ class AssistantAgent(ModelGroupAgent):
         current = messages[-1] if messages else None
         request = ET.SubElement(root, "current_request")
         request.text = str((current or {}).get("text") or "none")
-        # Operator messages only: their requests and preferences are
-        # authoritative context; earlier assistant output is not.
-        context = [m for m in (messages[:-1] if messages else [])
-                   if self._message_role(m) == "operator"
-                   ][-self.ACCEPTANCE_CRITERIA_MAX_MESSAGES:]
-        history = ET.SubElement(root, "conversation_history_xml",
-                                {"assistant_messages": "omitted"})
+        # Both roles. The operator's requests and preferences are the
+        # authoritative context, but how the assistant has been formatting and
+        # phrasing its replies is exactly the continuity these criteria are
+        # meant to establish, and the system prompt already declares everything
+        # here data rather than instruction.
+        context = (messages[:-1] if messages else [])[
+            -self.ACCEPTANCE_CRITERIA_MAX_MESSAGES:]
+        history = ET.SubElement(root, "conversation_history_xml")
         if context:
             for message in context:
                 self._append_prompt_message(history, message)

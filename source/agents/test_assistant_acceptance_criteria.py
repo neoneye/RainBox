@@ -392,9 +392,11 @@ def test_system_prompt_offers_no_empty_exit_and_no_copyable_example():
     assert "formatting guide line by line" in prompt
 
 
-def test_criteria_history_carries_operator_messages_only(room):
-    """The criteria call's conversation history keeps authoritative operator
-    context only, not earlier assistant output."""
+def test_criteria_history_carries_both_roles(room):
+    """The criteria call sees the assistant's earlier turns too. How the
+    assistant has been formatting and phrasing its replies is exactly the
+    continuity these criteria establish, and the call's system prompt already
+    declares everything it is shown data rather than instruction."""
     agent = _agent()
     messages = [
         {"sender_type": "human", "text": "convert 10537337172 feet"},
@@ -404,8 +406,8 @@ def test_criteria_history_carries_operator_messages_only(room):
     ]
     prompt = agent._build_acceptance_criteria_prompt(messages)
     assert "convert 10537337172 feet" in prompt          # operator history kept
-    assert "er lig med" not in prompt                    # assistant reply gone
-    assert 'assistant_messages="omitted"' in prompt
+    assert "er lig med" in prompt                        # and the assistant's
+    assert "assistant_messages" not in prompt
 
 
 # --- revision prompts ---------------------------------------------------------

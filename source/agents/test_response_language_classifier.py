@@ -124,7 +124,7 @@ def test_classifier_has_a_structured_output_model_binding():
     assert entry["next"] is None
 
 
-def test_prompt_scores_all_profile_rows_and_omits_assistant_history():
+def test_prompt_scores_all_profile_rows_and_carries_both_roles():
     agent = _agent()
     messages = [
         {"sender_type": "human", "text": "Vi talte dansk."},
@@ -155,12 +155,19 @@ def test_prompt_scores_all_profile_rows_and_omits_assistant_history():
         messages, profile)
     assert "Please explain it in English." in prompt
     assert "Vi talte dansk." in prompt
-    assert "Je vais répondre en français." not in prompt
+    # The assistant's turns are included: an earlier reply is the only record
+    # of what language the conversation has actually been running in, and
+    # withholding it hid that from the one call whose job is to decide the
+    # language. The anti-perpetuation guard moved into the prompt — a
+    # wrong-language reply loses to the current request rather than being kept
+    # out of sight.
+    assert "Je vais répondre en français." in prompt
+    assert "assistant_messages" not in prompt
+    assert "must not perpetuate itself" in RESPONSE_LANGUAGE_CLASSIFIER_SYSTEM_PROMPT
     assert '"code": "en-GB"' in prompt
     assert '"code": "da"' in prompt
     assert "copy every declared profile-language code exactly" in prompt
     assert "compatible preferred profile variant" in prompt
-    assert 'assistant_messages="omitted"' in prompt
 
 
 def test_system_prompt_uses_planexe_likert_and_distinguishes_content_language():

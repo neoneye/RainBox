@@ -181,10 +181,15 @@ runs one narrow structured classifier. It returns:
 - `audit`: exactly `OK` when the classifier trusts that it captured the
   situation, otherwise a description of likely mistakes or omissions.
 
-The request includes the current operator message, up to six earlier operator
-messages and every validated `languages.rows` entry (tag, level, stance, note).
-Assistant history is omitted so an earlier wrong-language reply cannot become
-a continuity signal. The prompt explicitly separates the language of the
+The request includes the current operator message, up to six earlier messages
+of either role and every validated `languages.rows` entry (tag, level, stance,
+note). The assistant's earlier turns are in there because they are the only
+record of what language the conversation has actually been running in — real
+evidence for the one call whose job is to decide the language. The
+anti-perpetuation guard that omission used to provide is now a stated
+precedence instead: a previous wrong-language reply loses to the current
+request, and the disagreement goes in `audit`. The prompt explicitly separates
+the language of the
 reply's narration from languages appearing as quoted examples: a request for
 multilingual phrases with English explanations remains an English reply unless
 the operator asks for a genuinely multilingual answer. A broad requested
@@ -287,9 +292,10 @@ reinterpret or duplicate it.
 
 The call has its own small persona prompt
 (`ACCEPTANCE_CRITERIA_SYSTEM_PROMPT`, not the assistant's working prompt);
-Inputs: the current request, the last few **operator** messages
-(`ACCEPTANCE_CRITERIA_MAX_MESSAGES = 6`,
-`assistant_messages="omitted"`), `user_settings_json`, and the formatting
+Inputs: the current request, the last few messages of either role
+(`ACCEPTANCE_CRITERIA_MAX_MESSAGES = 6`) — how the assistant has been
+formatting and phrasing its replies is exactly the continuity these criteria
+establish — plus `user_settings_json` and the formatting
 guide rendered from the criteria snapshot profile regardless of the
 `assistant.formatting_guide` switch (which gates only the decide-prompt
 injection). NOT the action catalog — the call plans constraints, not actions.
