@@ -229,3 +229,24 @@ def test_sse_events_never_rebuild_the_room_tree():
     assert "function bumpUnreadBadge" in body
     # the old full-rebuild deferral is gone along with the rebuild itself
     assert "deferredUnreadRender" not in body
+
+
+def test_live_messages_do_not_move_a_reader_who_scrolled_back():
+    """Arriving rows used to yank the log to the bottom, resetting anyone
+    reading older history. Following the tail is now conditional on already
+    being at it — and the decision is taken before the append, since appending
+    grows scrollHeight and the same reading afterwards would strand a reader
+    who WAS at the bottom one screen short."""
+    body = _body()
+    assert "const follow = (opts && opts.force) || isNearBottom();" in body
+    assert "msgs.forEach(appendMessage);\n  if (follow) scrollLogToBottom();" in body
+    # The threshold is named, because it is the pivot for every live update.
+    assert "const FOLLOW_THRESHOLD_PX = 80;" in body
+    assert "log.scrollHeight - log.scrollTop - log.clientHeight < FOLLOW_THRESHOLD_PX" in body
+
+
+def test_sending_a_message_always_scrolls_to_it():
+    """The one case that overrides the reader's position: the operator's own
+    send. They wrote the newest row, so take them to it wherever they were."""
+    body = _body()
+    assert "await fetchNew(currentRoom, {force: true});" in body

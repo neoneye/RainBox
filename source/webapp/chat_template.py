@@ -485,8 +485,14 @@ function removeDeletedMessages(ids){
   });
 }
 
+// How close to the bottom still counts as "following the conversation". This
+// is the pivot for every live update: inside it, new rows scroll into view;
+// outside it, the reader is looking at something and nothing may move. A few
+// lines of slack, so resting a scroll a hair off the end still follows.
+const FOLLOW_THRESHOLD_PX = 80;
+
 function isNearBottom(){
-  return log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  return log.scrollHeight - log.scrollTop - log.clientHeight < FOLLOW_THRESHOLD_PX;
 }
 
 // Pin the log to its newest message. Sets the scroll now AND again on the next
@@ -1908,12 +1914,21 @@ function scrollToMessage(msgId){
   setTimeout(go, 80);
 }
 
-async function fetchNew(uuid){
+// Pull rows posted since `lastId`. Arriving messages must never move a reader
+// who has scrolled back: follow the tail only for someone already sitting at
+// it, so a live run streams into view while reading older history stays put.
+// `opts.force` is for the operator's own send — they just wrote the newest
+// message, so take them to it wherever they were.
+async function fetchNew(uuid, opts){
   if (uuid !== currentRoom) return;
   const msgs = await getJSON('/chat/api/rooms/' + uuid + '/messages?after=' + lastId);
   if (uuid !== currentRoom || !msgs.length) return;  // re-check after await
+  // Measured BEFORE the append and after the await: appending grows
+  // scrollHeight, so the same reading taken afterwards would call someone who
+  // was at the bottom "scrolled up" and strand them one screen short.
+  const follow = (opts && opts.force) || isNearBottom();
   msgs.forEach(appendMessage);
-  scrollLogToBottom();
+  if (follow) scrollLogToBottom();
   if (activeSidebarMode() === 'stats') renderStats();  // keep the live message count fresh
 }
 
@@ -1950,7 +1965,9 @@ async function send(){
   input.value = '';
   autoGrow();  // collapse back to one line after sending
   await postJSON('/chat/api/rooms/' + currentRoom + '/messages', { text });
-  await fetchNew(currentRoom);  // don't wait for the SSE round-trip
+  // don't wait for the SSE round-trip; force the scroll because this row is
+  // the operator's own — they are following the conversation, not reading back.
+  await fetchNew(currentRoom, {force: true});
   input.focus();
 }
 
