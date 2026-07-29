@@ -655,7 +655,9 @@ UI), `POST …/stop`, `POST …/redirect`, `POST …/resummarize`, and
   count of step rows — the same number /assistant's timeline numbers, warm-up
   and follow-up calls included, so one run never reports two different counts.
   While a run is still working it has no digest, so its Summary cell carries
-  "Step N of {step_limit}" instead: the overview's only progress readout.
+  "Step N" instead: the overview's only progress readout. No denominator —
+  `step_limit` bounds decide steps while this counts every row, so a long run
+  read "Step 8 of 6".
 
 ## Testing
 

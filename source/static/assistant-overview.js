@@ -63,14 +63,13 @@ function aoRow(run) {
   // A live run has no digest yet — and saying "summarizing…" of a run still
   // working is wrong twice over. Show how far it has got instead: this is the
   // only place the overview reports progress, and a long run is exactly when
-  // one wants it.
+  // one wants it. No "of {step_limit}": that limit bounds decide steps while
+  // this counts every row, so a long run read "Step 8 of 6".
   const [sum, sumA] = cell();
   const s = document.createElement('div');
   const live = run.status_kind === 'running';
   s.className = 'ao-sum' + (run.summary || live ? '' : ' pending');
-  s.textContent = live
-    ? 'Step ' + run.steps + (run.step_limit ? ' of ' + run.step_limit : '')
-    : (run.summary || 'summarizing…');
+  s.textContent = live ? 'Step ' + run.steps : (run.summary || 'summarizing…');
   sumA.appendChild(s);
 
   const [steps, stepsA] = cell('ao-mono');

@@ -51,12 +51,12 @@ def test_run_rows_are_real_links():
 
 def test_summary_shows_live_progress_and_steps_stays_a_bare_count():
     """A run still working has no digest, and "summarizing…" is wrong of it
-    twice over — so the Summary cell carries its progress instead. The Steps
-    column stays a plain integer: the same number /assistant counts, with no
-    "Step N of M" wording repeating the header."""
+    twice over — so the Summary cell carries its progress instead. No
+    denominator: step_limit bounds decide steps while this counts every row, so
+    a long run read "Step 8 of 6". The Steps column stays a plain integer."""
     b = _body()
     assert "const live = run.status_kind === 'running';" in b
-    assert ("s.textContent = live\n"
-            "    ? 'Step ' + run.steps + (run.step_limit ? ' of ' + run.step_limit : '')\n"
-            "    : (run.summary || 'summarizing…');") in b
+    assert ("s.textContent = live ? 'Step ' + run.steps "
+            ": (run.summary || 'summarizing…');") in b
+    assert "run.step_limit" not in b
     assert "stepsA.textContent = run.steps;" in b
