@@ -1,4 +1,4 @@
-# Forecasting recorded runs — where the pipeline leaks, and which model sees it coming
+# Forecasting recorded runs — where the pipeline becomes sensitive, and which model sees it coming
 
 **Status:** Proposal. Nothing implemented.
 **Date:** 2026-07-29
@@ -12,42 +12,54 @@ and one observation per step. When a reply is wrong, nothing in the trace says
 **which of those** made it wrong. The operator reads six steps and a bad
 message and guesses.
 
-This is an instrument for answering that question. It asks the model to
-commit to an answer at each point in the pipeline, seals the commitments, and
-compares them — so a wrong reply can be traced to the stage where the answer
-first went wrong, and to the block that pushed it there.
+This is a screening instrument for that question. It asks a model to commit
+to an answer under controlled prompt variants, seals the commitments, and
+compares them. Without correctness labels, that reveals where an answer
+became **sensitive** to added context and which block controls the change. On
+the labelled subset, it can say whether the change was an improvement or a
+regression. The distinction is load-bearing: movement is cheap to measure;
+damage is not.
 
 It is **not** a per-turn guard. It does not run on every turn, it does not
 run in the turn at all, and it changes no reply. It is run deliberately, over
 recorded runs, when someone wants to know where the pipeline is leaking.
 
-Three questions on one mechanism:
+Three diagnostics and one ship gate on the same replay foundation:
 
-- **When did the answer go wrong?** The ladder: forecast at each context
+- **Where did the answer move?** The ladder: forecast at each context
   boundary, in the order the pipeline adds them.
-- **Which block made it go wrong?** The ablation: rebuild one recorded prompt
-  with a single block removed, and forecast again.
+- **Which block controls the movement?** The ablation: rebuild one recorded
+  prompt with a single block removed, and forecast again.
 - **Which model sees any of this coming?** The benchmark: run the same
   forecasts across every bound local model and score them against what the
   recorded run actually did.
+- **Does a second shot improve the delivered answer?** The guard-readiness
+  simulation: compare audit-only with forecast-assisted audit and revision on
+  held-out labelled replies.
 
-The ladder finds the stage. The ablation names the culprit. The ladder alone
-cannot — context arrives in a fixed order, so the rung where the answer moves
-is confounded with everything that arrived at that rung.
+The ladder finds a sensitive boundary. The ablation nominates a controlling
+block. Only an independently labelled outcome can call that block a culprit.
+The ladder alone cannot even nominate one — context arrives in a fixed order,
+so the rung where the answer moves is confounded with everything that arrived
+at that rung.
 
 The benchmark is not a bonus use of the first two. It is the one that
 produces hard numbers, because forecasting **what a step will do** has
-ground truth sitting in the trace already — the action taken, the arguments,
-and whether it succeeded are recorded facts, not judgments. Everything the
-first two instruments need labels for, the benchmark gets free.
+targets sitting in the trace already — the action taken, the arguments, the
+wrapper's `ok` status, and the returned observation are recorded historical
+facts, not judgments. They are exact targets for imitation and execution
+prediction. They are not automatically evidence that the action was wise or
+the returned content semantically correct.
 
 ## It does not run inside a turn
 
 The instrument replays **recorded runs**. `assistant_step` already persists
 the exact `system_prompt` and `user_prompt` of every decide call, the raw
 `model_response`, the model identity, and the full observation JSONB. The
-context at every boundary of a finished run is therefore reconstructible
-without re-running a single tool.
+actual decide contexts are replayable without re-running a tool. Earlier
+within-prompt boundaries are synthetic removals from those stored artifacts,
+and `cold` is reconstructed from messages preceding the subject turn; reports
+label both accordingly.
 
 Three consequences, and each removes an objection that sank the live version:
 
@@ -77,22 +89,37 @@ offline.
 
 ### Two invariants
 
-**The forecaster gets the step's own input, not a special one.** For a step
-target, the forecast prompt **is** the recorded `user_prompt` of that step.
-Not a reconstruction of it, not a summary of it, not a purpose-built context
-containing the same facts. The only differences are the task instruction —
-*decide the next step* becomes *predict what the decider will do* — and the
-response schema.
+**The subject context is byte-faithful, even though the forecast prompt cannot
+be.** A prediction call needs a different instruction and schema from the
+decide call, so saying the two prompts are identical would be false. For step
+targets, code places the recorded `system_prompt` and `user_prompt` verbatim
+inside inert, explicitly delimited subject-prompt sections under a narrow
+forecaster system prompt. Conditional mode additionally supplies the recorded
+action and arguments as target data. Nothing inside either stored prompt is
+rewritten, tidied, reordered, or regenerated.
 
 This is what makes the measurement mean anything. A forecaster given a
-tidier, shorter, or better-organized context is not predicting the assistant;
-it is answering an easier question, and its score says nothing about the run
-it claims to be about. In particular a forecaster must inherit the same
-scratchpad truncation, the same section order, and the same guidance blocks —
-including the ones suspected of causing the trouble.
+shorter or better-organized subject context is answering an easier question.
+It must inherit the same scratchpad truncation, section order, guidance
+blocks, and action catalog — including the pieces suspected of causing the
+trouble. The test is a byte comparison of both embedded subject prompts.
 
-The test is a byte comparison: every section of the forecast prompt that
-corresponds to a section of the recorded prompt must be identical to it.
+Terminal-answer probes are different: they ask the forecaster to answer from
+a synthetic subset of the recorded context, not to predict the producer's
+next token. Their surviving prompt sections remain byte-identical and in
+their original order, but the probe is correctly labelled synthetic.
+
+The allowed action set is part of the recorded case. It is recovered from the
+subject run's action catalog (or a persisted catalog snapshot), not from the
+current `AssistantActionName`: a capability added next month was not available
+to a run recorded today, and a removed historical action must remain
+scoreable.
+
+Behavior targets also include the producer model revision and sampling
+configuration as explicit case metadata, because “what will this decider do?”
+is conditional on which decider it is. A model-blind ablation can measure how
+much that metadata helps, but silently withholding it and then interpreting
+producer differences as forecaster skill would be an underspecified task.
 
 **Nothing is added to the assistant's own prompt.** No forecast text, no
 forecast instruction, no field reserved for one. The production prompt is
@@ -105,11 +132,13 @@ and transcript — there was never a call with that context. Code builds it
 from the stored messages. Every other rung is either a stored prompt or a
 stored prompt with sections removed.
 
-## The ladder — when the answer moved
+## The sensitivity ladder — where the answer moved
 
-The rungs are the prompt's own section boundaries, in assembly order. They
-are not time intervals: if two rungs see the same context, one of them is
-worthless.
+The rungs are semantic information sets, not literal prompt prefixes and not
+actual calls the historical run made. Each synthetic variant removes whole
+sections while preserving the original order and bytes of everything that
+survives. Observation rungs insert nothing at the end; they reveal the next
+stored scratchpad event at the scratchpad's original position.
 
 | Rung | What it adds |
 |---|---|
@@ -129,12 +158,13 @@ answer is. If that rung moves the substance, the language block is steering
 content, which is a defect in a block whose entire justification is that it
 does not. Cheap to test, and falsifiable.
 
-**A rung that never moves anything is a block that is not earning its
-tokens.** The guidance blocks share a 2 700-char budget and were added on
-reasoning, not measurement. A block that never changes an answer across a
-corpus is a block whose budget belongs to its neighbour.
+**A rung that never moves anything is a candidate for ablation.** The
+guidance blocks share a 2 700-char budget and were added on reasoning, not
+measurement. No movement is not enough to delete one — it may affect
+confidence or rare cases — but it is enough to ask whether its budget belongs
+to its neighbour.
 
-## The ablation — which block did it
+## The ablation — which block controls the movement
 
 The ladder is monotone: every rung adds context and nothing is ever removed,
 so a rung that moves the answer indicts everything that arrived there. The
@@ -143,8 +173,8 @@ so a rung that moves the answer indicts everything that arrived there. The
 The counterfactual is the sharper instrument. Take one recorded prompt, remove
 exactly one block, forecast again, and compare against the unmodified
 forecast. A block whose removal reliably changes the answer is a block that
-was driving it — and if the delivered answer was wrong and removing the block
-reliably fixes it, the block is the defect.
+was driving the probe. If labelled probe answers improve without it, the
+block is a strong harmful-input candidate for end-to-end confirmation.
 
 *Reliably* is doing real work in both sentences. A single altered sample
 differing from a single unaltered one is the sampling noise this document
@@ -152,17 +182,18 @@ insists on controlling for everywhere else; the comparison is between
 distributions over repeats, not between two generations. And what it
 establishes is causal about **the forecaster's answer under that context**,
 not about the recorded run, which happened once and cannot be re-run. That is
-strong evidence about what a block does and it is not a proof about the
-failure that prompted the investigation. Treating it as one is how a
-one-case finding becomes a prompt change nobody can reproduce.
+strong evidence about this probe's local sensitivity and not proof about the
+failure that prompted the investigation. Treating it as one is how a one-case
+finding becomes a prompt change nobody can reproduce.
 
-`build_turn_prompts` is already this seam. It exists for
-`evals/profile_guidance.py`, it renders the declared-profile blocks from a
-**given** profile dict rather than the global setting, and it already takes
-`include_formatting`, `include_calibration` and `include_classifier` as
-prompt-construction overrides. Leave-one-out over the remaining sections is
-an extension of a mechanism built for exactly this purpose, not new
-architecture.
+The stored prompt is the primary seam: remove a structurally identified XML
+section from that immutable artifact and leave every surviving byte in place.
+`build_turn_prompts` is useful for current-revision fixtures and already takes
+`include_formatting`, `include_calibration` and `include_classifier`
+overrides, but it is not an authority for historical reconstruction. Prompt
+assembly changes over time. A replay that regenerates an old prompt with
+today's builder has silently changed its specimen, so every case carries a
+prompt-revision hash and old cases are ablated from their stored text.
 
 Ablation is more expensive than the ladder — one forecast per block per case,
 times the repeat count. That is the right place for the budget: it is the
@@ -186,36 +217,45 @@ A block set that clears every block on a case that is reliably wrong is not a
 clean bill of health; it is the signature of an interaction, and it is the
 cue to reach for the pair flag.
 
+An ablation result is a **screening result about the probe model under a
+synthetic prompt intervention**. It does not prove that the historical
+producer would have answered differently, and it never ships a prompt change
+on its own. A proposed change must pass a paired end-to-end eval on labelled
+cases, using the actual assistant role and a state-matched sandbox where tools
+are involved.
+
 ## Two things worth forecasting
 
-The ladder and the ablation both forecast **the final reply**, and they must:
-comparing rungs requires every rung to predict the same thing, or the
-divergence you find is just the point where the question changed.
+The ladder and the ablation both produce an **independent terminal answer**,
+and they must: comparing rungs requires every rung to answer the same request,
+or the divergence is just the point where the question changed. This probe is
+not asked to imitate the producer's wording or predict its next token.
 
 Benchmarking a forecaster is a different job, and it wants a second target.
-*Predict the final reply from the pre-step-1 context* and *predict what step
-4 will return* are different skills, and a model can be good at one and
-useless at the other. Keeping them apart is what makes the result readable.
+*Answer from the pre-step-1 context* and *predict what step 4 will return* are
+different skills, and a model can be good at one and useless at the other.
+Keeping them apart is what makes the result readable.
 
 | Target | Question | Ground truth |
 |---|---|---|
-| `terminal` | what will the final reply say? | the delivered reply (weak), labels (scarce) |
+| `terminal` | what answer does this context support? | delivered reply agreement (weak), correctness labels (scarce) |
 | `next_action` | which capability will the next step choose? | recorded `action` — exact |
 | `step_args` | with what arguments? | recorded `args` JSONB — exact |
-| `step_success` | will it succeed? | the observation's recorded `ok` — exact |
-| `step_outcome` | what will it return? | recorded `{text, data}` — exact |
+| `step_ok` | will the capability wrapper return `ok`? | observation's recorded `ok` — exact execution status |
+| `step_outcome` | what historical observation will it return? | recorded `{text, data}` — exact event, semantic quality varies |
 
 The bottom four rows are why the benchmark is the sharpest of the three
 instruments. `next_action` is closed-set classification over
-`AssistantActionName`, `step_success` is a binary, and both are settled by a
-row that already exists. No LLM judge, no operator labelling,
-no argument about whether the delivered reply was right.
+the case's recorded action set, `step_ok` is binary, and both are settled by
+a row that already exists. No LLM judge or operator labelling is needed to
+say whether the forecast matched the trace. Semantic correctness is a
+separate target and is not free.
 
 **The two targets are never mixed into one score.** A model that predicts
 tool choices well and final replies badly is a specific, useful finding; an
 average across both is a number nobody can act on.
 
-### Behaviour is not correctness
+### Behaviour, execution, and correctness are three different things
 
 "Exact" in that table means the *fact* is exact, not that the fact is right,
 and the step targets split on exactly this line:
@@ -225,20 +265,26 @@ and the step targets split on exactly this line:
   forecaster predicting `python_run` where the run chose `memory_query`
   scores wrong even when `python_run` was the better move. This is an
   **imitation** score.
-- `step_success` and `step_outcome` are settled by **what happened**. Whether
-  a step returned `ok`, and what value it computed, are facts about the world
-  rather than about the incumbent's taste.
+- `step_ok` is settled by **execution status**. It says whether the capability
+  wrapper reported success. A query can return `ok` with stale or irrelevant
+  data, so this must not be called semantic success.
+- `step_outcome` is settled by **what was observed in that historical
+  environment**. A typed deterministic computation can be treated as a hard
+  value. A memory lookup, clock read, external API call, or prose result is
+  stateful, time-dependent, or semantically contestable even though the
+  recorded bytes are exact.
 
 The sharpest metric in the document is therefore the one most easily
 misread. A model scoring badly on `next_action` is not a worse assistant; it
 is a worse *predictor of this assistant*. Those coincide only when the
 incumbent's choices were good, which nothing here establishes.
 
-Both are worth having, and they answer different questions. Imitation is what
-a live guard would need — knowing a step is about to fail is useful whether
-or not the step was wise. Correctness is what a model-selection decision
-needs. Every scorecard column is labelled with which one it is, and nothing
-is averaged across that line.
+All three are worth having, and they answer different questions. Imitation is
+useful for predicting this assistant, execution prediction estimates whether
+a planned call will return normally, and semantic correctness is what a
+model-selection decision ultimately needs. Every scorecard column is labelled
+`imitation`, `execution`, or `semantic`; nothing is averaged across those
+lines.
 
 ### Joint and conditional modes
 
@@ -247,25 +293,33 @@ them hides the most interesting finding available here.
 
 In **joint** mode the forecaster gets the step's context and predicts both:
 which capability, and what comes back. That is what a live guard would need,
-and it is the harder task — an outcome predicted for the wrong action is
-scored against a result that action never produced.
+and it is the harder task. But an outcome predicted for the wrong action
+cannot sensibly be scored against the recorded action's result. Joint mode
+therefore reports action metrics on every case, outcome metrics only on the
+subset where the top action matched, and an end-to-end hit rate with that
+coverage printed beside it. It never pretends the unmatched outcomes are
+comparable.
 
 In **conditional** mode code supplies the recorded action and arguments, and
 the forecaster predicts only the outcome. *The assistant is about to run this
 program in the sandbox — what does it return?* *It is about to query memory
 for this — is the fact there, and what does it say?*
 
-Conditional mode is the world-model test in isolation: not "do you know this
-assistant's habits" but "do you understand the system it is operating." A
-model can be excellent at one and hopeless at the other, and those are
-different bindings.
+Conditional mode isolates outcome prediction from routing: not "do you know
+this assistant's habits" but "given this planned call and the state visible in
+the prompt, what do you expect?" For deterministic computation this is close
+to a world-model test. For memory, time, filesystem, or external-service
+capabilities it also measures how much of the required state is hidden from
+the prompt. Results are therefore stratified as `deterministic`,
+`state_snapshot`, `time_varying`, or `external`; pooling them would turn
+environment visibility into apparent model skill.
 
 This is where a coding model would actually show up. Asked to predict
 `next_action` it may do poorly — it has no feel for how this assistant
 sequences its work — while predicting what a Python program returns is
 precisely what it is for. Pooled into one number those cancel and the model
 looks mediocre. Scored conditionally and per capability, the finding is
-specific enough to bind on.
+specific enough to justify a direct role eval.
 
 Conditional mode is also the cheaper diagnostic, because it does not spend
 the run's hardest prediction to get at the one being asked about.
@@ -275,67 +329,93 @@ the run's hardest prediction to get at the one being asked about.
 A forecast is a **bound, not a point.** Wondering what time it is and
 answering "twenty past four" tells you almost nothing when you look at the
 watch; answering "between four and half past" tells you whether you were
-calibrated, and by how much. The same holds here: a single predicted action
-scores as right or wrong and throws away everything about how sure the
-forecaster was, while a short ranked set with probabilities can be scored
-properly — and a forecaster that hedges across everything is caught by the
-same scoring rule that rewards a confident correct call.
+calibrated, and by how much. The same holds here: one predicted action throws
+away uncertainty, while an unbounded list refuses to forecast.
+
+The sparse action forecast must not pretend to be a full multiclass
+distribution. Four named candidates with four probabilities leave the mass
+for every omitted action undefined, so multiclass log loss would be
+mathematically invalid. The default schema instead forecasts two explicit
+binary events: whether the first candidate is right, and whether the true
+action is anywhere in the short set.
 
 ```python
+from decimal import Decimal
+from typing import Any
+
+
 class QuantityBounds(BaseModel):
-    low: str = Field(min_length=1, description=(
-        "Lower bound of the expected result, with units."))
-    high: str = Field(min_length=1, description=(
-        "Upper bound of the expected result, with units."))
+    low: Decimal
+    high: Decimal
+    unit: str = Field(min_length=1)
+    coverage_probability: int = Field(ge=1, le=99, description=(
+        "Probability that the observed quantity falls inside [low, high]."))
 
 
-class ActionCandidate(BaseModel):
-    action: AssistantActionName
-    probability: int = Field(ge=0, le=100, description=(
-        "Probability this is the capability the assistant chooses next."))
+class ActionForecast(BaseModel):
+    candidates: list[str] = Field(
+        min_length=1, max_length=4, description=(
+            "Distinct case-allowed actions, most likely first."))
+    top_probability: int = Field(ge=0, le=100, description=(
+        "Probability that candidates[0] is the recorded next action."))
+    set_probability: int = Field(ge=0, le=100, description=(
+        "Probability that the recorded next action appears anywhere in "
+        "candidates. Must be at least top_probability."))
+    args: dict[str, Any] = Field(description=(
+        "Expected arguments for candidates[0]. Use the action's real keys "
+        "and omit keys the context does not determine."))
+
+
+class OutcomeForecast(BaseModel):
+    ok_probability: int = Field(ge=0, le=100, description=(
+        "Probability the capability wrapper returns ok. This is execution "
+        "status, not semantic correctness."))
+    outcome: str = Field(min_length=1, description=(
+        "What you expect the step to return."))
+    bounds: QuantityBounds | None = Field(description=(
+        "Bounds on the result when it is a quantity. Null when the step does "
+        "not return one."))
 
 
 class StepForecast(BaseModel):
     reason: str = Field(min_length=1, description=(
         "Brief audit-safe note on what in the context points at this step. "
         "Do not provide hidden chain-of-thought."))
-    candidates: list[ActionCandidate] = Field(
-        min_length=1, max_length=4, description=(
-            "The capabilities the next step might choose, most likely first. "
-            "Give one when the context determines it and several when it "
-            "does not."))
-    args_sketch: str = Field(min_length=1, description=(
-        "The arguments you expect for the most likely candidate, as far as "
-        "the context determines them. Name what is determined and say what "
-        "is not."))
-    success_probability: int = Field(ge=0, le=100, description=(
-        "Probability the step returns ok rather than an error."))
-    outcome: str = Field(min_length=1, description=(
-        "What you expect the step to return."))
-    bounds: QuantityBounds | None = Field(description=(
-        "Bounds on the result when it is a quantity. Null when the step does "
-        "not return one."))
+    action: ActionForecast
+    outcome_if_top_action: OutcomeForecast
+
+
+class ConditionalStepForecast(BaseModel):
+    reason: str = Field(min_length=1)
+    outcome: OutcomeForecast
 ```
 
-`action` is typed as the enum, so a forecast cannot name a capability that
-does not exist and cannot arrive as prose. The registry is code-owned and the
-prompt catalog is generated from it, so the closed set the forecaster picks
-from is the same closed set the assistant picked from.
+`ActionForecast.candidates` uses strings because Pydantic's enum would be the
+**current** registry, not the registry the historical run saw. Code validates
+every candidate against `case.allowed_actions`, rejects duplicates, and
+checks `top_probability <= set_probability`. This is still a closed set; it
+is simply the correct historical one.
 
 `candidates` is capped at four for the reason the original brief gave for
 guessing a place: a short list of live possibilities is a forecast, and a
 long one is a refusal to make one.
 
-There is no `will_succeed` boolean beside `success_probability`, and no
+There is no `will_succeed` boolean beside `ok_probability`, and no
 `is_terminal` flag beside the candidate list. Both would be a second control
 over a decision the first already makes — code thresholds the probability
-when it needs a point prediction, and predicting `reply` or
+when it needs a point prediction, and naming `reply` or
 `ask_clarifying_question` *is* predicting a terminal step. Two fields that
 can contradict each other is a defect the rest of this design has been
 careful to avoid.
 
-`bounds` is the watch case, and it is the one nullable field in this
-document. That needs justifying, because the standing rule from
+`args` is structured JSON rather than `args_sketch` prose because field-level
+matching otherwise requires parsing prose. It is scored only when the top
+action matched, after capability-specific normalization; omitted,
+secret-generated, time-generated, and nondeterministic fields are reported as
+unscored rather than guessed.
+
+`bounds` is the watch case, and it is the one nullable payload in this
+schema. That needs justifying, because the standing rule from
 `AcceptanceCriteria` is that an optional field beside a filled one gets left
 blank and a blank cannot be told apart from an oversight.
 
@@ -353,21 +433,27 @@ the object is a second control over what the object's presence already says —
 the same defect that removed `will_succeed`.
 
 The blank-versus-oversight worry does not disappear; it moves somewhere it
-can be measured. When the recorded observation *was* numeric and `bounds` came
-back null, the forecaster declined to bound something boundable, and that is
-scored and reported as its own rate rather than silently skipped. A model
-that never bounds anything is then visible in one column instead of hiding
-behind an unscored field.
+can be measured. “Numeric” is decided only by a capability-specific scorer
+reading a typed JSON path, never by parsing `outcome` prose. When that scorer
+marks an observation boundable and `bounds` is null, the forecaster declined
+to bound something boundable; report that rate rather than silently skipping
+it.
 
-`success_probability` is the field that finally makes calibration measurable
-here. Everything else in this document has been careful to say that a
+`coverage_probability` supplies what the earlier bounds schema was missing:
+the nominal coverage of the interval. Coverage alone rewards intervals from
+negative infinity to positive infinity, so report normalized width and a
+proper interval score beside coverage. Unit normalization is
+capability-specific; an unrecognized or incompatible unit is an invalid
+forecast, not a string-comparison miss. Code also requires `low <= high`.
+
+`ok_probability` is the field that makes one useful calibration measurement
+cheap. Everything else in this document has been careful to say that a
 probability beside a free-text claim is not calibration, because calibration
 needs a numeric probability, an independently resolved outcome, and enough
-comparable cases to test whether 70% claims are right 70% of the time. Step
-success supplies all three, in quantity, for free: the probability is
-numeric, the outcome is the recorded `ok`, and every step of every stored run
-is a case. **This is the calibration corpus** — not the terminal forecasts,
-which will always be label-starved.
+comparable cases. Wrapper `ok` supplies all three, in quantity, for free.
+This is an **execution-status calibration corpus**, stratified by capability
+and environment class — not a semantic-correctness corpus, and not the
+terminal forecasts, which will always be label-starved.
 
 ## Benchmarking forecasters
 
@@ -376,9 +462,8 @@ up, not whether it forecasts well overall.
 
 - **Good early, bad late** — accuracy against step index. The prior runs the
   other way: later steps have more evidence and a more determined answer, so
-  accuracy should *rise*. A model whose accuracy falls as the run lengthens
-  is degrading under context length, which is a finding about
-  `MAX_SCRATCHPAD_CHARS` and prompt order, not about forecasting.
+  accuracy might rise. A model whose accuracy falls as the run lengthens is a
+  candidate for a context-length investigation, not proof of degradation.
 
   Step index confounds two things that move together — more evidence and a
   longer prompt — so it cannot separate them on its own. The control is
@@ -388,49 +473,60 @@ up, not whether it forecasts well overall.
   it. If accuracy tracks length rather than position, the degradation is
   about context size. If it tracks position regardless of length, it is
   about the task getting harder. Without that split, "bad late" is a story.
-- **Good at the destination, bad at the route** — high `terminal` accuracy
-  from pre-step-1 context together with poor `next_action` accuracy. A model
-  that knows the answer but not how this assistant will get there is a good
-  reply model and a bad planner, and the codebase can act on that: the roles
-  are separately bindable.
+- **Good at the destination, bad at the route** — high labelled terminal
+  correctness from pre-step-1 context together with poor `next_action`
+  imitation. That pattern nominates the model for reply-generation eval and
+  argues against using its forecast score as evidence of planning skill.
 - **Domain specialists** — a coding model forecasting `python_run` outcomes,
   scored per capability, conditionally, rather than pooled. If it wins there
-  and loses everywhere else, that is an argument for a per-capability
-  binding, not for making it the assistant.
+  and loses everywhere else, that earns it a direct per-capability role eval,
+  not a binding.
 - **System understanding against habit** — conditional accuracy high and
-  `next_action` accuracy low is a model that understands the tools without
-  knowing this assistant. The reverse is a model that has learned the
-  sequence without understanding what it produces, which is the more
-  worrying of the two in anything that checks work.
-- **Size against role** — whether a small model is adequate at closed-set
-  action prediction while a larger one is needed for terminal content. The
-  cheapest possible finding, and the most immediately spendable.
+  `next_action` accuracy low can indicate a model that predicts tool outcomes
+  without knowing this assistant's habits — but only on deterministic or
+  state-matched cases. The reverse can indicate imitation without outcome
+  understanding. Both are hypotheses for direct tests, not role verdicts.
+- **Size against target** — whether a small model is adequate at closed-set
+  action forecasting while a larger one is needed for terminal content. The
+  cheapest possible finding, and an immediate way to narrow the role evals.
 
-The benchmark's product is therefore not a winner. It is a **routing table**:
-which model to bind to which role, backed by measurement instead of by which
-one felt better in chat. `/agentmodel` already has binding-only roles
-(`second_opinion`, `reply_audit`, `response_language_classifier`), so the
-finding lands somewhere that exists.
+The benchmark's product is therefore not a winner or a routing decision. It
+is a **routing shortlist**: which model deserves a direct eval for which
+role. Predicting a capability's outcome and performing that capability's
+checking role are related skills, not identical ones. `/agentmodel` already
+has binding-only roles (`second_opinion`, `reply_audit`,
+`response_language_classifier`), so a forecast result has somewhere concrete
+to be tested. No binding changes until the candidate also wins the role's
+own labelled end-to-end eval.
 
 ### Scoring
 
 | Target | Metric |
 |---|---|
-| `next_action` | top-1 and top-k accuracy, **macro-F1**, confusion matrix, **log loss** over the candidate probabilities |
-| `step_success` | accuracy at a 50% threshold and **Brier score** over `success_probability` |
-| `step_args` | field-level match on the args the context determines |
-| `step_outcome` | **interval coverage** for quantities, plus the declined-to-bound rate; exact for computed values; claim-level for text. Reported per mode — joint scores are not comparable with conditional ones |
+| `next_action` | top-1 and top-k accuracy, **macro-F1**, confusion matrix; Brier score for the declared top-1 and candidate-set events; average set size beside coverage |
+| `step_ok` | accuracy at a 50% threshold and **Brier score** over `ok_probability`, stratified by capability and environment class |
+| `step_args` | normalized field-level match when the top action matched; scored-field coverage printed beside it |
+| `step_outcome` | capability-specific: exact for deterministic typed values; interval coverage, normalized width and interval score for quantities; generic prose is descriptive unless a separate labelled scorer exists. Joint outcome scores include route-match coverage and are never pooled with conditional |
 | `terminal` | claim-level against the delivered reply; labelled subset for correctness |
-| any target with claims | citation-hallucination rate, reported alone |
+| any target with claims | lexical citation-mismatch screen, reported alone and never called entailment |
 
-Three of those are proper scoring rules, and that is the point. Accuracy
-alone rewards a forecaster that guesses confidently and punishes one that
-hedges honestly; log loss and Brier score both. **Interval coverage is the
-watch measurement in its purest form** — of the intervals stated with 80%
-confidence, how many contained the recorded value? A forecaster whose 80%
-intervals contain the truth 55% of the time is overconfident by a number, not
-by an impression, and one whose intervals always contain the truth is stating
-bounds so wide they cost nothing.
+Every target also reports **first-attempt schema validity**, repair/retry
+count, and valid-output latency. A local model that becomes excellent only
+after three structured-output repairs is not a cheap forecaster. Invalid
+first outputs are model failures, but a missing probability cannot be inserted
+into a proper score without inventing a fallback. Therefore proper scores are
+reported conditional on schema validity and always paired with validity
+coverage; the release gate treats an invalid case as failed. Any combined
+utility that assigns maximum loss to invalid output is explicitly named,
+versioned, and kept separate from the raw proper score.
+
+Proper scoring rules matter, but only where the schema defines the probability
+event completely. The sparse action set does not support multiclass log loss;
+its two declared binary events support Brier scores. **Interval coverage is
+the watch measurement in its purest form** — of the intervals stated with
+80% confidence, how many contained the recorded value? Coverage is printed
+with width and interval score because an interval that contains everything is
+otherwise unbeatable.
 
 Macro-F1 and the confusion matrix are not decoration. The action distribution
 is heavily skewed — `reply` and `memory_query` dominate ordinary runs — so
@@ -439,13 +535,13 @@ it.** A forecaster that always guesses `memory_query` will beat a thoughtful
 one on raw accuracy, and a benchmark that cannot show that is worse than no
 benchmark.
 
-### Four ways this benchmark lies
+### Ways this benchmark lies
 
-**Self-forecasting is easier.** A model predicting runs it produced is
-predicting its own idioms, not forecasting. Report the cross-model matrix —
-every forecaster against every producer's runs — and keep the diagonal
-separate. Without this, whichever model generated the corpus wins by
-construction and the result looks like a capability finding.
+**Self-forecasting may be easier.** A model predicting runs it produced may
+recognize its own action habits. Report the cross-model matrix — every
+forecaster against every producer's runs — and keep the diagonal separate.
+The diagonal advantage is an empirical quantity, not something to assume or
+pool into a capability finding.
 
 **The corpus inherits its producers.** Recorded runs came from whatever was
 bound at the time, so the action distribution reflects those models' habits.
@@ -454,27 +550,68 @@ corpus rather than a deficiency. Report per-producer breakdowns and the
 corpus composition beside any headline.
 
 Reporting is not enough on its own, because an incumbent-only corpus makes
-the incumbent unbeatable: every challenger is scored on how well it imitates
-the model it is trying to replace, and the more distinctive it is the worse
-it looks. Left there, the benchmark can rank forecasters and can never
-justify a swap.
+every challenger imitate the model it might replace. A distinctive but better
+policy can score poorly for disagreeing with bad incumbent choices. Left
+there, the benchmark can rank predictors of the incumbent and cannot justify
+a policy swap.
 
 The fix is **not** shadow-routing candidate models onto the operator's real
 turns. That spends the operator's actual replies to buy corpus diversity, and
 in a single-operator system that bill is not small.
 
-The corpus does not need production to grow producers. Take the *requests*
-from recorded runs — those are the part worth keeping — and re-run them as
-new runs with a different model bound, against `rainbox_claude`, the sandbox
-database that exists for exactly this. The result is genuine model-B runs,
-with model-B's action distribution, that never touched the operator's data or
-chat. Then the cross-model matrix is complete in both directions rather than
-one column wide.
+The corpus does not need production to grow producers. Recorded requests can
+seed new runs with a different model bound against an isolated evaluation
+environment. Those are genuine model-B trajectories and every forecaster can
+be scored against what model B actually did there.
 
-Producer runs dispatch real capabilities, so the sandbox is a requirement and
-not a convenience: reads are harmless, writes are not, and a producer sweep
-that mutates `rainbox_production` would be the worst possible way to learn
-this lesson twice.
+They are **not counterfactual replays of the production runs**. A request such
+as “summarize today's unread mail” can see five messages in production and
+none in the evaluation environment; a memory query can hit a different
+profile; “today” can be another date. The resulting trajectory is valid as a
+new forecasting case, but producer differences cannot be attributed to the
+model when state, transcript, clock, or tool fixtures also changed.
+
+The producer sweep therefore has two explicitly separate modes:
+
+- **ecological expansion** reuses eligible requests in whatever isolated
+  fixture state is declared. It grows action diversity, is tagged with an
+  environment fingerprint, and is never presented as a paired model
+  comparison;
+- **paired producer comparison** starts every model from the same hermetic
+  case bundle: request and required prior transcript, declared-profile
+  snapshot, frozen clock, database fixture, workspace fixture, and stubbed
+  external responses. Only this mode supports statements about model A versus
+  model B on the same task.
+
+Requests that depend on unavailable personal or external state are excluded
+from paired mode rather than converted into trivial empty-result cases. Every
+report stratifies production trajectories, ecological sandbox trajectories,
+and paired fixture trajectories.
+
+### A sandbox database is not a sandbox
+
+Pointing at `rainbox_claude` protects `rainbox_production`; it does not isolate
+the filesystem, network, provider credentials, calendar, email, or other
+external capabilities. Nor does it mean no operator data was touched: the
+recorded request and any copied transcript are operator data, even on the
+same machine.
+
+Before a producer sweep starts, code proves all of the following:
+
+- the database is the designated evaluation database, never production;
+- each case receives a fresh snapshot or transaction that is discarded, so a
+  write in case 1 cannot change case 2 or make model order matter;
+- filesystem access is rooted in a disposable case directory;
+- external network and real provider credentials are absent;
+- write and confirm-tier capabilities are disabled or replaced by
+  deterministic fixtures;
+- the case manifest allowlists which transcript/profile fields may be copied
+  and carries their sensitivity and retention policy;
+- the clock and locale are fixed when the request depends on them.
+
+The sweep refuses to start when any proof is missing. “Reads are harmless” is
+not an acceptable safety rule: a read can exfiltrate personal data, consume a
+paid API, or make the benchmark state-dependent.
 
 **The outcome leaks in more places than the prompt.** The stored
 `user_prompt` at step *n* contains steps 1..*n*-1 and is safe, but the
@@ -538,9 +675,12 @@ are free text beside constrained fields on purpose (trap 6 of
 `2026-07-24-operator-locale-and-language.md`: removing the free-text field
 makes the model reason inside the constrained one).
 
-Claims are what make the comparison mechanical. Two prose answers differ on
-every rung because wording differs on every rung; two claim sets can be
-compared on substance. **The ladder scores claims, never text similarity.**
+Claims make the unit of comparison explicit. Two prose answers differ on
+every rung because wording differs on every rung; claim sets at least expose
+the propositions to compare. Exact typed values can be normalized
+mechanically. Generic semantic equivalence still needs a labelled scorer or a
+reported judge model and is never disguised as a string metric. **The ladder
+scores claims, never whole-answer text similarity.**
 
 `source_refs` are data, not decoration. Code issues every id — `request`,
 `criteria`, `observation:4` — and marks unknown ids as invented rather than
@@ -565,37 +705,38 @@ like an admission. Models are reliably bad at declaring their own priors, and
 a required citation field is pressure to name *something*.
 
 Left unmeasured, that failure is invisible and the `unsupported` id becomes
-decorative. It is partly checkable without a judge: when a claim carries a
-number, a date, a uuid or a quoted name, code can ask whether that token
-appears in the block the claim cites. Absent, with the claim asserting it as
-supported, is **citation hallucination** — not proof of a lie, since a
-supported claim can paraphrase, but a rate that is comparable across models
-and damning at the extremes.
+decorative. It is partly screenable without a judge: for quoted identifiers,
+UUIDs, dates, and exact scalar claims, code can check normalized value overlap
+with the cited block. A miss is a **lexical citation mismatch**. It is not
+called hallucination or lack of support: a derived value may be calculated
+from cited inputs, a paraphrase may share no token, and a copied token may
+still be used dishonestly.
 
-It gets its own scorecard column and is never folded into anything else. A
-model with an excellent Brier score and a high citation-hallucination rate is
-precisely the model not to bind to any checking role: confident, well
-calibrated about its confidence, and inventing its evidence.
+The screen gets its own scorecard column and is never folded into calibration
+or correctness. Capability-specific provenance checks can promote a subset to
+hard mismatches — for example, an asserted returned uuid differing from the
+typed uuid in the cited observation. Everything else is a candidate for
+labelled support review. Token overlap is cheap triage, not entailment.
 
 No worked example belongs in the prompt. Smaller models copy example content
 into unrelated output (trap 1). Field descriptions state the form; the
 fixtures carry concrete cases.
 
-### An evidence ceiling on certainty
+### An evidence policy beside certainty
 
-Local models put 95 on priors they invented. Code owns the ceiling: the
-strongest `source_ref` class a claim cites bounds how certain that claim may
-be — a deterministic check supports near-certainty, a tool observation less,
-an `unsupported` prior much less.
+Local models put 95 on priors they invented. Code may define a policy ceiling
+by evidence class — not because a tool observation is intrinsically less true
+than a deterministic check, but because the operator may choose to treat
+unsupported confidence as a review trigger.
 
-The ceiling constrains **analysis, never the recorded value.** Clamping the
-stored probability would make every later reliability plot a measurement of
-the clamp: buckets fill at the ceiling, the curve bends to meet it, and the
-picture says the model is well calibrated because code made it so. Both
-numbers persist — what the model claimed, and what its evidence allowed.
+The policy never clamps or rescales the probability. Clamping would make every
+later reliability plot a measurement of the policy rather than the model.
+Persist the model's probability, the strongest cited evidence class, and a
+separate `evidence_policy_violation` flag. Calibration is scored on the raw
+probability; policy violations are counted separately.
 
-Thresholds live in the instrument's configuration. Any number written into a
-design document survives unexamined into production.
+Thresholds live in versioned eval configuration and are validated against
+labelled cases. They are governance choices, not laws of probability.
 
 ## What a divergence proves, and what it does not
 
@@ -623,48 +764,52 @@ this; `probability` movement catches more; neither catches all of it, so
 
 **More calls repeat the same error.** Shared weights, shared prompt framing
 and shared retrieved context produce correlated failures, so agreement across
-rungs is a stability signal and never a correctness proof. This is precisely
-why ablation matters more than the ladder: removing a block and watching the
-answer change is a causal claim about the pipeline, which survives the
-models being correlated.
+rungs is a stability signal and never a correctness proof. Ablation is still
+sharper than the ladder because it controls one synthetic input at a time,
+but its causal claim stops at the probe model under that intervention. It
+does not become a causal claim about the historical producer or the full
+pipeline merely because repeats agree.
 
-### Ground truth, in three grades
+### Reference strength, in three grades
 
 The four limits above all bite hardest on `terminal` forecasts, where the
 only reference is another model's output. They barely touch the step targets,
 because those resolve against recorded facts. Grade the evidence and never
 report across grades:
 
-**Hard.** `next_action`, `step_success`, `step_args`, and computed values.
-Settled by `assistant_step.action`, `args`, and the observation's `ok`. No
-labels, no judge, available for every step of every stored run. The benchmark
-lives here, and so does the calibration corpus.
+**Hard historical targets.** `next_action`, recorded `step_args`, wrapper
+`step_ok`, and values extracted by capability-specific deterministic scorers.
+Settled by `assistant_step.action`, `args`, and typed observation fields. No
+judge is needed to compare them with the trace. Action and args remain
+imitation targets, `ok` remains execution status, and only the deterministic
+value subset is semantic ground truth.
 
 **Free but weak.** Whether a `terminal` forecast agrees with the delivered
 reply. Cheap at any scale, and it establishes only that two outputs agree or
 differ — never which is right.
 
-**Scarce and strong.** Labelled correctness for terminal answers, and for the
-ladder and ablation, where the question is whether a rung's change was an
-improvement. Spend these where the weak tier points.
+**Scarce and strong.** Labelled correctness for terminal answers, generic
+prose outcomes, and the ladder and ablation, where the question is whether a
+rung's change was an improvement. Spend these where the weak tier points.
 
 That last grade is the scarce one, so screening decides where it is spent.
-Replay every recorded run and count where answers move — a fact about the
-pipeline regardless of which version was right — then build labelled cases
-only for the boundaries that ranks highest: exact calculations, questions
+Replay every recorded run and count where probe answers move — a fact about
+prompt sensitivity regardless of which version was right — then build
+labelled cases only for the boundaries that rank highest: exact calculations,
+questions
 answered by a supplied observation, multi-part requests with labellable
 omissions, ambiguous requests whose correct outcome is a clarifying question.
 Screening finds candidates; only labels assign blame. Reporting a movement
 count as a defect rate is the mistake this structure exists to prevent.
 
-## The two reports
+## The reports
 
-**Stage damage**, over many runs: which pipeline stage most often precedes a
-wrong answer. Per stage boundary, across the corpus — how often the answer's
-claims changed; how often the change was an improvement, a regression, or
-unlabelled; movement rate against the same-context control, so noise is
-visible; how often removing the block changed the answer; and how often the
-block was cited in `source_refs` at all.
+**Prompt sensitivity**, over many runs: which pipeline boundary most often
+precedes a material answer change. Per boundary — how often claims changed;
+on the labelled subset, how often the change was an improvement or regression;
+movement against the same-context control; how often removing the block
+changed the answer; and how often the block was cited in `source_refs`.
+“Stage damage” is reserved for labelled regressions.
 
 That last row is the cheap embarrassment. A block that is never cited, never
 moves an answer, and whose removal changes nothing is occupying a guidance
@@ -672,14 +817,20 @@ budget its neighbours are competing for.
 
 **Forecaster scorecard**, per model: accuracy by target, by step index, and
 by capability, with the majority-class baseline, the repeat spread, the
-self-forecasting diagonal, and the citation-hallucination rate called out.
-Every column is labelled imitation or correctness. Read down a column to see
-whether a model is worth binding to a role; read across a row to see where
-its forecasting falls apart.
+self-forecasting diagonal, environment class, and lexical citation-mismatch
+screen called out. First-attempt schema validity and retry cost sit at the
+left of every score row. Every column is labelled imitation, execution, or
+semantic. Read down a column to see which role eval a model has earned; read
+across a row to see where its forecasting falls apart.
 
-The scorecard is what turns "local models are worse" into something
-spendable. *Worse at what, by how much, at which step, on which capability*
-is a routing decision. "Worse" is not.
+The scorecard turns "local models are worse" into a testable nomination.
+*Worse at what, by how much, at which step, on which capability* tells you
+what direct role eval to run next. It does not replace that eval.
+
+**Guard readiness**, on held-out labelled terminal cases, compares the current
+audit with forecast-assisted audit and revision. It is defined after the
+replay-to-fix loop because it is the release report, not another descriptive
+dashboard.
 
 ## Running it
 
@@ -702,18 +853,36 @@ python -m evals.forecast_bench --recent 200 --targets next_action,step_outcome -
 The benchmark sweeps every model in the forecaster set over the same recorded
 corpus, so a scorecard is one command and re-running it after a model upgrade
 is the same command. It is the long-running one — models by targets by steps
-by repeats — and it is also the one that needs no labels, so it can run
-unattended against whatever the operator has bound.
+by repeats. Imitation, wrapper-`ok`, and deterministic typed-outcome targets
+need no labels and can run unattended; generic prose and terminal correctness
+cannot.
 
-### Order the work so the KV cache survives
+Every run starts with a frozen manifest: case ids and hashes, producer and
+environment fingerprints, prompt revisions, model revisions, sampling
+configuration, scorers, seed schedule, and requested call budget. The CLI
+prints the estimated calls and tokens before starting, accepts explicit
+wall-time and call ceilings, checkpoints each completed cell, and resumes by
+manifest id. A weekend sweep must fail resumably, not restart expensively.
 
-Repeats are the multiplier, and they are also the one part of the sweep that
-is free to make cheap: the *same* prompt sampled K times is one prefill and K
-decodes, provided the runs are issued consecutively to the same loaded model
-and nothing evicts the cache in between. Interleaving models or cases between
-repeats throws that away and pays full prefill every time. So the sweep loops
-model-outermost, then case, then repeats innermost — the opposite of the
-order that feels natural when you want early results across models.
+Cases are split by originating request/trajectory, never by generated repeat,
+into discovery and locked holdout manifests. Prompt, schema, threshold, and
+model-routing choices may use discovery results; the release report is run
+once on holdout. Near-duplicate requests and producer variants of the same
+case stay in the same split.
+
+### Schedule for locality; verify cache reuse
+
+Repeats are a large multiplier. The sweep loops model-outermost, then case,
+then repeats innermost to avoid model reloads and to give any provider prompt
+cache the best chance of hitting.
+
+That is a scheduling optimization, not a cost guarantee. Ollama, Jan, LM
+Studio, and their configured backends do not share one cache contract;
+identical API requests may perform a full prefill every time, cache only
+inside a session, or evict on structured-schema changes. Benchmark cache hits
+and prefill time per provider and report what was observed. Correctness,
+sample count, and budget estimates assume no cache until measurement proves
+otherwise.
 
 The ladder tempts a second optimization that should be declined. Its rungs
 add sections cumulatively, so building them as strict prefixes of one another
@@ -724,8 +893,13 @@ no real step ever saw. The instrument's value rests on the prompts being the
 pipeline's own, so fidelity wins and the ladder pays full prefill per rung.
 Recording the trade here so nobody re-derives it as a clever saving later.
 
-None of this is exotic: local backends cache prompt prefixes by default. The
-requirement is only that the sweep not defeat it.
+Each repeat uses the manifest's distinct seed when the provider supports one.
+At deterministic settings, identical outputs are recorded as zero observed
+sampling variance rather than treated as independent evidence. Statistical
+intervals resample by case or originating request, not by generation: K
+decodes of one prompt are repeated measurements, not K independent tasks.
+Model differences use paired case-level bootstrap intervals, and every table
+prints case count separately from generation count.
 
 Replaying a run re-issues forecasts against reconstructed contexts and
 persists them; it posts nothing, touches no room, and writes nothing to the
@@ -754,31 +928,75 @@ comparable.
 
 A ranking is only worth producing if something follows it.
 
-- **A guidance block that never moves an answer** → its budget goes to the
-  block competing with it, and the change is verified by re-running the
-  instrument.
-- **A block whose removal improves labelled answers** → the block is wrong,
-  not merely useless. The most valuable finding this can produce.
-- **The `language` rung moving substance** → the classifier's Markdown is
-  doing more than routing, and the fix is in its rendering.
-- **An observation the answer ignores** → the rung that added it changed
-  nothing while the answer contradicts it. That is a retrieval or capping
-  problem: `REPLY_AUDIT_MAX_OBSERVATION_CHARS`-style truncation, or an
-  observation the model never sees at the right altitude.
-- **`cold` right and the pipeline wrong** → the model knew the answer before
-  the pipeline confused it. Rare and worth reading carefully.
-- **A model that predicts actions well and replies badly** → bind it to the
-  roles that choose rather than compose. The binding-only roles exist.
-- **A model whose accuracy falls as the run lengthens** → not a forecasting
-  finding. It is context-length degradation, and it points at
-  `MAX_SCRATCHPAD_CHARS` and section order rather than at the model.
-- **A specialist that wins one capability** → a per-capability binding is a
-  real option; making it the assistant because it won one column is not.
+- **A guidance block that never moves an answer** → nominate a smaller or
+  removed variant, then test that variant in the actual assistant eval.
+- **A block whose removal improves labelled probe answers** → treat the block
+  as a strong defect candidate and run the end-to-end assistant ablation.
+- **The `language` rung repeatedly moving substance beyond the control** →
+  investigate whether the classifier Markdown is doing more than routing.
+- **An observation the answer appears to ignore** → check first that the
+  observation is correct and visible; then investigate capping, placement, or
+  overload such as `REPLY_AUDIT_MAX_OBSERVATION_CHARS`-style truncation.
+- **The labelled `cold` probe right and full probe wrong** → later context may
+  be harmful. Repeats and end-to-end confirmation decide whether the
+  historical assistant was actually confused.
+- **A model that predicts actions well and replies badly** → nominate it for
+  the direct eval of a choosing role. Prediction alone does not earn a
+  binding.
+- **A model whose accuracy falls as the run lengthens** → investigate context
+  length using the fixed-step control. Position, prompt length, and case
+  difficulty remain confounded until that control separates them.
+- **A specialist that wins one capability** → nominate a per-capability role
+  eval; making it the assistant because it won one forecast column is not.
 
-Each of these is a prompt or retrieval change, re-measured by re-running the
-same replay over the same corpus. That loop — measure, change, re-measure on
-identical inputs — is what a recorded-trace instrument buys that a live
-mechanism cannot.
+Replay verifies that the synthetic sensitivity moved in the expected
+direction. Shipping still requires a paired end-to-end run of the actual
+assistant on labelled cases. The confirmation uses the same case manifest and
+state fixture, changes only the proposed prompt or binding, and scores the
+delivered behavior. This instrument nominates fixes; it does not certify them.
+
+## Guard-readiness simulation — does the second shot improve the answer?
+
+Movement and forecaster accuracy do not answer the operator's original
+question: local models are inaccurate on the first shot, so does this
+mechanism make the delivered answer better? That needs an end-to-end offline
+simulation of the proposed guard, not an inference from disagreement rates.
+
+On the labelled terminal subset:
+
+1. retain the historical delivered reply as the first candidate;
+2. generate one candidate-blind `AnswerForecast` from the last pre-reply
+   context, excluding the delivered reply and all later trace state;
+3. run the current `reply_audit` twice on the same case — audit-only, then
+   audit plus forecast claims — with model and sampling held fixed;
+4. when the forecast-assisted audit says revise, run one bounded revision
+   call with the request, constraints, observations, and evidence-backed audit
+   problems; never show the reviser the raw proposed answer from the forecast;
+5. score the historical candidate and simulated delivered reply against the
+   same independent label.
+
+Cases whose repair requires a new tool observation are reported as
+`verification_required`, not silently converted into rewrite cases. A second
+phase may run those against a hermetic state fixture; the recorded-only phase
+cannot create evidence that was absent from the trajectory.
+
+The report contains:
+
+- defect recovery: wrong first candidates made correct;
+- correct-answer regression: correct candidates made wrong;
+- audit selection accuracy when candidate and forecast disagree;
+- false-bounce and no-op-revision rates;
+- unresolved and verification-required rates;
+- deterministic guard-gate recall: how many repairable defects the cheap gate
+  would have skipped;
+- quality lift over audit-only, paired by case;
+- calls, tokens, median latency, and p95 latency.
+
+The first release gate for a live guard is positive paired quality lift over
+the existing audit, with a low correct-answer regression rate on a held-out
+case set. “The second answer often disagrees” is not a gate. Neither is “the
+forecast alone is more accurate”: the auditor and reviser are part of the
+production mechanism and must be measured with it.
 
 ## Part 2 — the production guard this might justify later
 
@@ -803,9 +1021,9 @@ read against them:
 - **What it cannot catch.** The forecast would inherit the observations the
   loop chose to gather. A wrong read poisons both calls, they agree, and it
   ships. The guard covers *wrong summary of right evidence*, never *wrong
-  evidence*. The `cold` rung is the only thing with the latter property, and
-  in production it would bounce good replies far more often than it caught
-  bad reads — which is why it belongs in the instrument.
+  evidence*. A `cold` prior can disagree with poisoned evidence, but cannot
+  establish which side is right; live it would create many unactionable
+  bounces. That is why it belongs in the labelled instrument.
 - **One forecast per evidence revision.** Code derives an
   `evidence_revision` from the canonical request, effective constraints,
   supplied profile facts and visible observations. A wording-only bounce
@@ -830,7 +1048,9 @@ read against them:
 - **Not every turn deserves a guard.** A deterministic gate — did any step
   produce an observation, did the run compute or write, does the candidate
   contain a number or a proposal — skips the turns that cannot benefit. A
-  classifier that decides whether to spend a call costs a call.
+  classifier that decides whether to spend a call costs a call. The gate's
+  recall on repairable labelled defects is part of guard readiness; cheap
+  false negatives erase the feature's benefit.
 - **Failure is bounded and honest.** Infrastructure failure fails open and
   sends. A shipped-past-the-cap candidate records `forced_send=true` and
   discloses the unresolved uncertainty in code-composed text, not by asking
@@ -843,9 +1063,9 @@ read against them:
   interleave rather than overlap, so concurrency pays only against a second
   server.
 
-The gate for building any of it: the instrument shows that an independent
-second answer disagrees with the delivered reply often enough, and correctly
-often enough, to be worth a turn's latency.
+The gate for building any of it: the guard-readiness simulation shows that
+forecast-assisted audit and bounded revision improve held-out delivered
+answers over the existing audit often enough to justify the measured latency.
 
 ## Security and prompt boundaries
 
@@ -855,10 +1075,15 @@ prompt says so. Observation ids are code-generated; a tool result saying
 
 Replay reads stored prompts and observations, which is the same data the
 `/assistant` inspector already renders, under the same debug-data policy. It
-adds no new exposure — but it does send that data to whichever model is
-bound for forecasting. Providers are local today; binding a remote model
-would be a data-boundary decision, and it must not be reachable by binding a
-role.
+does add new processing and persisted derived output, and a producer sweep may
+copy selected request/transcript data into case fixtures. Eval rows inherit
+the source case's sensitivity and retention; exports are private by default
+and redact according to the manifest.
+
+The data is sent to whichever model is bound for forecasting. Providers are
+local today; binding a remote model would be a separate data-boundary decision
+and must not be reachable merely by binding a role. The eval preflight rejects
+non-local endpoints until an explicit remote-eval policy exists.
 
 ## Traps and countermeasures
 
@@ -870,8 +1095,8 @@ role.
   control.
 - **Text similarity mistaken for agreement.** Compare claims. Two correct
   answers differ in wording on every rung.
-- **Clamped probabilities mistaken for calibration.** The ceiling constrains
-  analysis, never the recorded value.
+- **Evidence policy mistaken for calibration.** Policy violations are
+  reported beside raw probabilities and never used to reshape them.
 - **Parroted examples.** No worked examples in the forecast prompt.
 - **Prose parsing.** `kind`, `probability`, and every verdict field are typed.
 - **Pressure-valve removal.** `reason` and `unknowns` stay free text.
@@ -887,20 +1112,31 @@ role.
   reported separately, never pooled into a model's score.
 - **Averaging across targets.** A single "forecasting score" hides the only
   finding worth having, which is what a model is good at.
-- **A tidier context than the assistant got.** The forecaster inherits the
-  recorded prompt verbatim, truncation and all. Cleaning it up measures an
-  easier question.
+- **A tidier context than the assistant got.** The forecaster receives the
+  recorded subject prompts verbatim inside the forecast wrapper, truncation
+  and all. Cleaning them up measures an easier question.
 - **Accuracy without a proper scoring rule.** Point-prediction accuracy
-  rewards confident guessing. Report log loss, Brier and interval coverage
-  beside it, or the benchmark selects for bluffing.
+  rewards confident guessing. Report Brier for fully declared events and
+  interval score with coverage and width. Never apply log loss to the sparse
+  action list.
+- **Malformed first shots silently retried away.** First-attempt validity and
+  every repair call remain visible; conditional-on-valid scores are never
+  shown without their coverage.
 - **Imitation read as competence.** `next_action` scores agreement with the
   incumbent, not quality. Label the column.
 - **An incumbent-only corpus.** Every challenger is graded on imitating the
-  model it would replace. Grow producers in `rainbox_claude`.
+  model it would replace. Grow producer trajectories in isolated,
+  fingerprinted environments, and use hermetic case bundles for paired model
+  claims.
 - **A citation that exists but does not support.** Id validation catches
-  invented ids, not misattributed ones. Score the token overlap.
-- **A sweep ordered so the KV cache never hits.** Repeats innermost, model
-  outermost.
+  invented ids, not misattributed ones. Lexical overlap screens exact-value
+  cases; it does not establish support.
+- **A database mistaken for a sandbox.** Database identity, filesystem root,
+  credentials, network, capability allowlist, clock, and per-case reset are
+  all part of the isolation proof.
+- **A sweep planned around imaginary cache hits.** Schedule repeats for
+  locality, measure provider cache behavior, and budget as if every prefill
+  misses.
 
 ## Considered and not taken
 
@@ -923,7 +1159,9 @@ role.
   candidate pending operator confirmation. Findings live in the report.
 - **Shadow-routing candidate models onto real turns to diversify the
   corpus.** It buys producer variety with the operator's actual replies, and
-  a sandbox producer sweep buys the same variety with none of their turns.
+  an isolated producer sweep buys trajectory variety without changing their
+  replies. It still processes copied operator requests and is governed as
+  operator data.
 - **Prefix-shaped ladder rungs.** Cheap, and they would put prompt sections
   in an order no real step saw. Fidelity is the instrument's only claim.
 - **A full leave-two-out sweep.** Quadratic in blocks and almost entirely
@@ -932,32 +1170,39 @@ role.
 
 ## Implementation seams
 
-1. `AnswerForecast`, `ForecastClaim`, `ActionCandidate`, `QuantityBounds` and
-   `StepForecast` beside the existing narrow structured models in
-   `agents/assistant.py`. `ActionCandidate.action` reuses
-   `AssistantActionName` directly, so the closed set stays owned by the
-   registry.
+1. `AnswerForecast`, `ForecastClaim`, `QuantityBounds`, `ActionForecast`,
+   `OutcomeForecast`, `StepForecast` and `ConditionalStepForecast` beside the
+   existing narrow structured models in `agents/assistant.py`. Case-time
+   validation owns the historical closed action set.
 2. A binding-only `answer_forecast` role, resolved through the same fallback
    pattern as `reply_audit` and `response_language_classifier`. No production
    switch is needed, because nothing runs in a turn.
-3. Context reconstruction from a recorded run: `cold` built from stored
-   messages, every later rung from the stored `user_prompt` with sections
-   added or removed.
-4. Evidence ids on the shared observation projection — today
+3. An immutable case manifest with stored system/user prompt hashes, prompt
+   revision, case-allowed actions, producer model, environment class and
+   fingerprint, transcript cutoff, scorer versions, and sensitivity labels.
+4. Context reconstruction from a recorded run: `cold` built only from
+   messages preceding the subject turn; every later synthetic rung removes
+   structurally identified sections from stored prompt text. The current
+   `build_turn_prompts` include flags are fixture helpers, not historical
+   reconstruction.
+5. Evidence ids on the shared observation projection — today
    `_build_reply_audit_prompt` emits `<observation action=… status=…>` with
    no ids, so this is new plumbing on an existing prompt builder.
-5. Leave-one-out ablation as an extension of `build_turn_prompts`'s existing
-   include flags.
 6. `evals/forecast_ladder.py`: replay, repeats, ablation, persistence through
-   `eval_run` / `eval_result`, and its two CLIs.
+   `eval_run` / `eval_result`, structural leave-one-out, targeted pairs, and
+   its two CLIs.
 7. `evals/forecast_bench.py`: the model sweep ordered model-outermost and
-   repeats-innermost, joint and conditional modes, the scorers (accuracy,
-   macro-F1, confusion, log loss, Brier, interval coverage, citation
-   hallucination), and the cross-model matrix.
-8. A producer sweep that re-runs recorded *requests* under a different bound
-   model against `rainbox_claude`, so the corpus is not one model wide.
-9. The two reports, with sample counts, the control's variation, and the
-   majority-class baseline beside every rate.
+   repeats-innermost, joint and conditional modes, capability-specific
+   scorers, sparse-event Brier, interval score, environment strata, and the
+   cross-model matrix.
+8. `evals/forecast_guard.py`: the paired audit-only versus
+   forecast-assisted-audit simulation on held-out labelled terminal cases.
+9. Producer-sweep ecological and paired modes, with per-case state reset,
+   disposable workspace, frozen clock, disabled external access, sensitivity
+   manifest, and a fail-closed isolation preflight.
+10. The two main reports plus guard-readiness report, with case counts,
+    generation counts, clustered intervals, control variation, environment
+    fingerprints, and majority-class baselines.
 
 Tests must prove:
 
@@ -969,24 +1214,41 @@ Tests must prove:
 - claim comparison ignores wording;
 - repeats with a fixed configuration produce a reported variance, and the
   report refuses to rank stages without one;
-- a run whose `summary` contains a sentinel never produces a forecast prompt
-  containing it;
+- sentinels in `summary`, delivered reply, future room messages, and
+  `active_call` never enter a forecast prompt;
 - a forecaster that always names the majority action scores at the printed
   baseline, not above it;
-- a candidate's `action` cannot hold a name outside the capability registry;
-- every section of a step-target forecast prompt that corresponds to a
-  section of the recorded prompt is byte-identical to it;
+- an action outside `case.allowed_actions` is rejected even when it exists in
+  the current registry, and a removed historical action remains scoreable;
+- the embedded subject system and user prompts are byte-identical to the
+  recorded pair;
 - the assistant's own production prompt is byte-identical with the
   instrument present and absent;
-- a null `bounds` against a numeric recorded observation is counted as
-  declined, not skipped;
-- a claim asserting a number absent from the block it cites is counted as a
-  citation hallucination;
-- the producer sweep refuses to run against anything but the sandbox
-  database;
+- `top_probability <= set_probability`, candidate actions are unique, and the
+  sparse action output is never passed to multiclass log-loss code;
+- a malformed first output remains counted after a later repair succeeds, and
+  every conditional-on-valid metric carries validity coverage;
+- a null `bounds` against a capability-typed numeric observation is counted
+  as declined, while prose containing digits is not auto-classified numeric;
+- reversed or incompatible-unit intervals fail scoring, and wide intervals
+  pay through the interval score;
+- an exact scalar absent from its cited block is counted as a lexical mismatch
+  rather than automatically labelled hallucinated;
+- the producer sweep refuses to run without the evaluation database,
+  disposable workspace, no real credentials/network, capability allowlist,
+  frozen case state, and reset proof;
+- model order cannot change paired producer outcomes because every case starts
+  from the same fixture;
 - conditional mode supplies the recorded action and arguments and the
   forecaster's own action prediction is absent from its prompt;
-- joint and conditional results are never pooled into one cell.
+- joint and conditional results are never pooled into one cell, and joint
+  outcomes from action-mismatch cases are never compared to the recorded
+  action's outcome;
+- guard simulation retains the original candidate, keeps the forecast answer
+  out of the reviser prompt, and reports correct-answer regressions beside
+  defect recovery;
+- confidence intervals cluster repeats by case rather than counting each
+  decode as an independent task.
 
 ## The standard names for what this does
 
@@ -995,24 +1257,26 @@ difference between checking the method against established practice and
 re-deriving it badly. Three well-studied things, combined:
 
 - **Calibration measurement.** Eliciting a probability or an interval and
-  scoring it against resolved outcomes is what Brier score, log loss and
-  interval coverage are for. The failure mode — a model asserting 95% and
-  being right 60% of the time — is the standard one, and the standard remedy
-  is a proper scoring rule rather than accuracy.
+  scoring it against resolved outcomes is what Brier and interval scores are
+  for. The failure mode — a model asserting 95% and being right 60% of the
+  time — is the standard one, and the remedy is a proper score on a fully
+  declared event rather than accuracy alone.
 - **Feature attribution by ablation.** Removing one input and measuring the
-  change in output is how a variable's contribution is isolated generally.
-  Its standard limitation is the one recorded above: it assumes the inputs
-  act independently, and it needs repeats to separate effect from noise.
-- **Offline evaluation over logged trajectories.** Scoring a policy against
-  recorded episodes instead of live interaction is what makes this safe and
-  reproducible, and its standard hazard is the one that took two rounds to
-  surface here: a corpus produced by one policy scores every other policy on
-  how well it imitates that one.
+  change in a probe output estimates local sensitivity to that input. Its
+  limitations are the ones recorded above: interactions, synthetic prompts,
+  model dependence, and the need for repeats and labelled confirmation.
+- **Supervised prediction over logged trajectories.** Predicting recorded
+  actions and observations avoids live intervention and is reproducible under
+  a frozen manifest. Its standard hazards are producer, selection, and state
+  bias. This is **not off-policy evaluation**: there are no action
+  propensities, counterfactual rewards, or support guarantees, so the
+  benchmark cannot estimate how a replacement policy would perform.
 
 The document's own contribution is not the metrics. It is that this
-assistant's runs are recorded completely enough — exact prompts, exact
-arguments, exact observations — that all three apply directly, with no
-instrumentation added to the production path.
+assistant's runs retain the subject prompts, arguments and observations
+needed to build these screens without adding instrumentation to the
+production path — while keeping historical prediction, synthetic sensitivity,
+and paired end-to-end evaluation visibly separate.
 
 ## What this proposal does not claim
 
@@ -1020,13 +1284,14 @@ It does not claim a model can certify itself, that two samples equal ground
 truth, or that a numeric probability is a calibrated one.
 
 It claims something narrower and testable: the assistant's prompt is built in
-stages, its runs are recorded in full, and asking a sealed question at each
-stage boundary of a recorded run tells you which stage is costing the most —
-which is the thing nobody can currently see, and the thing every prompt
-change is currently guessing at.
+stages, its runs retain enough context to probe those stages offline, and
+sealed repeated probes can screen which boundaries and blocks deserve
+labelled end-to-end investigation. They do not identify damage without those
+labels.
 
-And one more, which costs nothing extra once the replay exists: because a
-recorded step's action, arguments and result are facts rather than
-judgments, *predicting them* is a benchmark with real answers. That is where
-the question "which local model is good at this" stops being an impression
-and becomes a table.
+And one more, which costs nothing extra once the replay exists: recorded
+actions, arguments, wrapper status and observations are real historical
+targets. Predicting them produces an imitation/execution table; deterministic
+typed outcomes and labelled cases add semantic evidence. Together they turn
+“which local model deserves the next direct test?” from an impression into a
+reproducible shortlist.
