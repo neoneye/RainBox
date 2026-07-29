@@ -24,7 +24,7 @@ It is **not** a per-turn guard. It does not run on every turn, it does not
 run in the turn at all, and it changes no reply. It is run deliberately, over
 recorded runs, when someone wants to know where the pipeline is leaking.
 
-Three diagnostics and one ship gate on the same replay foundation:
+Four diagnostics and one ship gate on the same replay foundation:
 
 - **Where did the answer move?** The ladder: forecast at each context
   boundary, in the order the pipeline adds them.
@@ -33,6 +33,9 @@ Three diagnostics and one ship gate on the same replay foundation:
 - **Which model sees any of this coming?** The benchmark: run the same
   forecasts across every bound local model and score them against what the
   recorded run actually did.
+- **Did it use the right kind of support?** The authority report: distinguish
+  identity, live operating state, evidence, reusable lessons, and unsupported
+  priors instead of treating every retrieved block as proof.
 - **Does a second shot improve the delivered answer?** The guard-readiness
   simulation: compare audit-only with forecast-assisted audit and revision on
   held-out labelled replies.
@@ -127,6 +130,117 @@ byte-identical whether this instrument has ever been run. A measurement that
 changes the thing it measures is not measuring it, and this one cannot,
 because the run it reads finished before the instrument existed.
 
+## Prompt stage is not evidence authority
+
+The ladder groups context by **when it enters the prompt**. That is the right
+axis for prompt sensitivity and the wrong axis for deciding what a claim may
+rely on. A profile preference, a failed tool observation, a pending approval,
+and a reusable skill can all be visible in one prompt while carrying four
+different kinds of authority.
+
+Use a second, orthogonal classification in every case manifest:
+
+| Context class | RainBox sources | What it is authoritative for |
+|---|---|---|
+| `identity_context` | user settings; active, non-expired profile facts and preferences; project decisions | who the operator/project is and durable declared preferences |
+| `operating_state` | current request, current-turn scratchpad, `assistant_step`, task events, blockers, pending approvals | continuity: what is in progress, already attempted, failed, or awaiting a decision |
+| `evidence` | typed tool observations, action arguments/results, source receipts, `memory_evidence`, citations, append-only run/task logs | what a named source observed or recorded; claim authority remains limited by provenance |
+| `reusable_lesson` | skills, procedures, episode summaries, confirmed eval findings | how similar work may be approached; never proof that this run or fact is correct |
+| `unsupported` | model prior with no supplied source | a hypothesis that may be forecast, never evidence |
+
+This is not a replacement `MemoryClaim.kind` taxonomy. RainBox already keeps
+durable claims separate from their many `memory_evidence` rows; filters by
+status, expiry, sensitivity, and scope; keeps model-inferred writes as
+candidates; records retrieval telemetry separately; and stores operational
+history in assistant/task/journal rows. Flattening those systems into four new
+tables would lose information. The classification above is an eval-time
+authority overlay over the contracts in `docs/memory-architecture.md`.
+
+### Recall locates context; it does not prove it
+
+`memory_query` has two different facts attached to it:
+
+1. the trace can prove that a particular claim was retrieved and shown to the
+   model;
+2. retrieval cannot prove that the claim text was true.
+
+The first is an exact historical outcome of the retrieval pipeline. The
+second depends on the claim's lifecycle and evidence: `confirmed_by_user`,
+`observed_from_source`, `inferred_by_model`, later correction, expiry, and so
+on. Vector similarity, lexical rank, and the recall-filter verdict explain
+**why the claim was found**, not why it should be believed.
+
+Consequences:
+
+- predicting which memories `memory_query` returned is an execution/retrieval
+  benchmark, not a factuality benchmark;
+- a forecast may cite a recalled claim for identity or preference only with
+  its claim uuid and as-of lifecycle metadata;
+- a claim that some event happened must cite the underlying evidence or
+  append-only event row, not merely the semantically recalled summary of it;
+- current blockers and pending approvals come from the current run/task
+  state, never from a retrieved episode that may be stale;
+- reusable lessons may justify a proposed method, never a claim that the
+  method ran or succeeded here.
+
+### Code owns source metadata
+
+The model emits short `source_refs`; code resolves each one through a
+case-local catalog:
+
+```python
+from datetime import datetime
+
+
+class ContextSourceDescriptor(BaseModel):
+    source_id: str
+    context_class: Literal[
+        "identity_context", "operating_state",
+        "evidence", "reusable_lesson", "unsupported",
+    ]
+    authority: Literal["operator", "code", "tool", "model", "unknown"]
+    observed_at: datetime | None
+    confidence: float | None
+    expires_at: datetime | None
+    provenance: list[str]
+```
+
+These fields are derived from stored rows and prompt assembly; the forecaster
+never invents them. `confidence=None` means the source type has no comparable
+confidence field, not zero confidence. `expires_at=None` means no declared
+expiry, not “fresh forever.” The case manifest also retains scope, sensitivity,
+and owner/actor identifiers where the source model has them, without exposing
+those as free-form forecast fields.
+
+A prompt section without a descriptor may still participate in sensitivity
+analysis — it was visible to the subject model — but it cannot satisfy an
+evidence-backed audit problem or raise an evidence-policy ceiling. Missing
+provenance is an explicit limitation, not something a model repairs in prose.
+
+Promotion into a durable lesson has a stricter gate: the record must resolve
+its source, observation time, owner/actor, confidence semantics, and expiry or
+explicit no-expiry decision. If those questions cannot be answered, the
+finding remains short-term eval context rather than durable memory.
+
+### Historical visibility and present truth are separate
+
+Replay asks what the subject model could see **then**. If an active memory was
+later corrected or expired, the exact stored subject prompt remains the
+authority for historical visibility. Semantic scoring records the as-of claim
+state when reconstructible and the later correction as separate evidence; it
+does not rewrite history with today's memory value.
+
+Freshness is evaluated at the subject timestamp. A claim that expired later
+was current for that run; a claim already expired but nevertheless present in
+the stored prompt is preserved as historical input and flagged as a prompt
+assembly defect.
+
+Paired producer runs are stricter. Every model must start from the same as-of
+memory/profile/task fixture. If that state cannot be reconstructed without
+consulting today's mutable claims, the case is ineligible for paired
+comparison. Ecological expansion may still run it, tagged with the new
+environment fingerprint.
+
 ## The sensitivity ladder — where the answer moved
 
 The rungs are semantic information sets, not literal prompt prefixes and not
@@ -144,6 +258,13 @@ stored scratchpad event at the scratchpad's original position.
 | `profile` | the query-independent profile block |
 | `skills` | the retrieved skill block |
 | `step_1` … `step_n` | one observation per rung, in the order the run gathered them |
+
+Rungs and context classes deliberately do not align one-to-one. `profile` is
+mostly identity context; `skills` are reusable lessons; a step observation
+can be direct evidence, operating state, or a bundle of semantically recalled
+claims. The report therefore shows both the stage where a claim moved and the
+classes it cited. It never upgrades every observation to `evidence` merely
+because the action loop recorded it.
 
 Two rungs earn their place before any data exists.
 
@@ -192,7 +313,8 @@ prompt-revision hash and old cases are ablated from their stored text.
 
 Ablation is more expensive than the ladder — one forecast per block per case,
 times the repeat count. That is the right place for the budget: it is the
-only instrument here that produces attribution rather than correlation.
+only instrument here that produces local probe attribution rather than an
+ordered correlation.
 
 ### Leave-one-out assumes the blocks act independently
 
@@ -238,17 +360,19 @@ Keeping them apart is what makes the result readable.
 | `step_args` | with what arguments? | recorded `args` JSONB — exact |
 | `step_ok` | will the capability wrapper return `ok`? | observation's recorded `ok` — exact execution status |
 | `step_outcome` | what historical observation will it return? | recorded `{text, data}` — exact event, semantic quality varies |
+| `continuity_policy` | does the predicted/recorded next action respect completed work, failures, blockers, and approvals? | code-owned invariants where deterministic; labels where repetition is ambiguous |
 
-The bottom four rows are why the benchmark is the sharpest of the three
-instruments. `next_action` is closed-set classification over
-the case's recorded action set, `step_ok` is binary, and both are settled by
-a row that already exists. No LLM judge or operator labelling is needed to
-say whether the forecast matched the trace. Semantic correctness is a
-separate target and is not free.
+The recorded-step targets are why the benchmark is the sharpest of the three
+instruments. `next_action` is closed-set classification over the case's
+recorded action set, `step_ok` is binary, and both are settled by rows that
+already exist. `continuity_policy` is deliberately different: code can settle
+hard violations, while genuinely ambiguous repeat-work cases stay labelled.
+No LLM judge or operator labelling is needed merely to say whether a forecast
+matched the trace. Semantic correctness is a separate target and is not free.
 
-**The two targets are never mixed into one score.** A model that predicts
-tool choices well and final replies badly is a specific, useful finding; an
-average across both is a number nobody can act on.
+**The two target families are never mixed into one score.** A model that
+predicts tool choices well and final replies badly is a specific, useful
+finding; an average across both is a number nobody can act on.
 
 ### Behaviour, execution, and correctness are three different things
 
@@ -280,6 +404,14 @@ a planned call will return normally, and semantic correctness is what a
 model-selection decision ultimately needs. Every scorecard column is labelled
 `imitation`, `execution`, or `semantic`; nothing is averaged across those
 lines.
+
+`continuity_policy` supplies a narrow correctness signal that imitation cannot:
+a challenger may disagree with the incumbent action and still be right not to
+repeat a successful write or resubmit an unchanged failed call. Start with
+invariants code can defend — no duplicate mutating action after recorded
+success, no execution past a pending approval, no identical resubmission after
+an error that explicitly requires changed arguments. Reads and verification
+repeats are labelled rather than presumed wasteful.
 
 ### Joint and conditional modes
 
@@ -492,6 +624,10 @@ up, not whether it forecasts well overall.
   without knowing this assistant's habits — but only on deterministic or
   state-matched cases. The reverse can indicate imitation without outcome
   understanding. Both are hypotheses for direct tests, not role verdicts.
+- **Continuity under a long run** — whether the forecast respects completed
+  work, failed arguments, blockers, and pending approvals as the scratchpad
+  grows. A model can imitate the next action well overall while repeatedly
+  failing the few state transitions that make workflow agents unsafe.
 - **Size against target** — whether a small model is adequate at closed-set
   action forecasting while a larger one is needed for terminal content. The
   cheapest possible finding, and an immediate way to narrow the role evals.
@@ -512,7 +648,8 @@ own labelled end-to-end eval.
 | `next_action` | top-1 and top-k accuracy, **macro-F1**, confusion matrix; Brier score for the declared top-1 and candidate-set events; average set size beside coverage |
 | `step_ok` | accuracy at a 50% threshold and **Brier score** over `ok_probability`, stratified by capability and environment class |
 | `step_args` | normalized field-level match when the top action matched; scored-field coverage printed beside it |
-| `step_outcome` | capability-specific: exact for deterministic typed values; interval coverage, normalized width and interval score for quantities; generic prose is descriptive unless a separate labelled scorer exists. Joint outcome scores include route-match coverage and are never pooled with conditional |
+| `step_outcome` | capability-specific: exact for deterministic typed values; interval coverage, normalized width and interval score for quantities; retrieved-id set/rank metrics for `memory_query`; generic prose is descriptive unless a separate labelled scorer exists. Joint outcome scores include route-match coverage and are never pooled with conditional |
+| `continuity_policy` | deterministic violation count and rate by rule; labelled precision for ambiguous repeat-work cases |
 | `terminal` | claim-level against the delivered reply; labelled subset for correctness |
 | any target with claims | lexical citation-mismatch screen, reported alone and never called entailment |
 
@@ -645,11 +782,15 @@ independent answer decomposed into checkable claims.
 class ForecastClaim(BaseModel):
     claim_id: str = Field(min_length=1, description=(
         "Stable id unique within this forecast, used by later resolution."))
+    claim_role: Literal[
+        "fact", "preference", "operating_state",
+        "execution_event", "calculation", "recommendation",
+    ]
     claim: str = Field(min_length=1, description=(
         "One material factual, numerical, or action-outcome claim in the "
         "answer. Keep it short and checkable."))
     source_refs: list[str] = Field(min_length=1, description=(
-        "Exact ids from the supplied evidence that support this claim. Use "
+        "Exact ids from the supplied context that support this claim. Use "
         "the id 'unsupported' when nothing supplied supports it."))
     probability: int = Field(ge=0, le=100, description=(
         "Estimated probability that this claim is correct. This is a "
@@ -695,6 +836,16 @@ ids, present in the allowlist handed to the model, not a magic string the
 validator special-cases; a sentinel outside the id space invites `none`,
 `None`, `n/a` and a validator that grows a synonym table.
 
+Each id resolves to the `ContextSourceDescriptor` catalog above. Support is
+claim-relative: an operator-confirmed preference can support how to format an
+answer, operating state can support that approval is pending, and a skill can
+support a proposed procedure. None of those proves that a tool ran or a
+historical event occurred. The scorer records both citation presence and
+authority compatibility against `claim_role`. The role is model-declared and
+therefore auditable, not trusted: labelled cases separately count role
+misclassification so a model cannot make a weak source compatible merely by
+calling an execution claim a recommendation.
+
 This matters more here than it would in a guard: **a claim's `source_refs`
 are what let the ablation be interpreted.** A claim citing
 `observation:4` that survives removing the profile block is expected; a claim
@@ -731,15 +882,17 @@ fixtures carry concrete cases.
 ### An evidence policy beside certainty
 
 Local models put 95 on priors they invented. Code may define a policy ceiling
-by evidence class — not because a tool observation is intrinsically less true
-than a deterministic check, but because the operator may choose to treat
-unsupported confidence as a review trigger.
+by source authority, provenance, and as-of freshness — not because every tool
+observation is intrinsically truer than every confirmed preference, but
+because the operator may choose to treat unsupported or stale confidence as a
+review trigger. Context class alone never sets the ceiling.
 
 The policy never clamps or rescales the probability. Clamping would make every
 later reliability plot a measurement of the policy rather than the model.
-Persist the model's probability, the strongest cited evidence class, and a
-separate `evidence_policy_violation` flag. Calibration is scored on the raw
-probability; policy violations are counted separately.
+Persist the model's probability, resolved source descriptors, authority
+compatibility, and a separate `evidence_policy_violation` flag. Calibration
+is scored on the raw probability; stale citations, lesson-used-as-proof,
+recall-used-as-receipt, and other policy violations are counted separately.
 
 Thresholds live in versioned eval configuration and are validated against
 labelled cases. They are governance choices, not laws of probability.
@@ -820,6 +973,12 @@ changed the answer; and how often the block was cited in `source_refs`.
 That last row is the cheap embarrassment. A block that is never cited, never
 moves an answer, and whose removal changes nothing is occupying a guidance
 budget its neighbours are competing for.
+
+**Authority use**, per claim and model: which context class was cited, whether
+the citation was compatible with the claim, whether it was current at the
+subject timestamp, and whether semantic recall was mistaken for an audit
+receipt. This is where “the model found a memory” stays visibly separate from
+“the evidence says it happened.”
 
 **Forecaster scorecard**, per model: accuracy by target, by step index, and
 by capability, with the majority-class baseline, the repeat spread, the
@@ -977,7 +1136,8 @@ On the labelled terminal subset:
    audit plus forecast claims — with model and sampling held fixed;
 4. when the forecast-assisted audit says revise, run one bounded revision
    call with the request, constraints, observations, and evidence-backed audit
-   problems; never show the reviser the raw proposed answer from the forecast;
+   problems whose source descriptors are current and authority-compatible;
+   never show the reviser the raw proposed answer from the forecast;
 5. score the historical candidate and simulated delivered reply against the
    same independent label.
 
@@ -1044,9 +1204,10 @@ read against them:
   that apply here unchanged.
 - **Code disposes on severity.** If `ReplyProblem` grows `severity`, then
   `severity` and `verdict` are two controls over one decision. A `major` or
-  `critical` problem with a valid evidence ref forces `revise` whatever the
-  model wrote; the stated verdict stays in the trace as the disagreement it
-  is.
+  `critical` problem with a valid, current, authority-compatible evidence ref
+  forces `revise` whatever the model wrote. A recalled lesson or stale claim
+  cannot trigger the same mechanical force. The stated verdict stays in the
+  trace as the disagreement it is.
 - **Rejected claims accumulate for the turn**, mirroring `failed_actions` one
   rung down — but as evidence for the auditor, not a mechanical block: prose
   claims have no canonical signature, and re-quoting a wrong figure to forbid
@@ -1091,6 +1252,19 @@ local today; binding a remote model would be a separate data-boundary decision
 and must not be reachable merely by binding a role. The eval preflight rejects
 non-local endpoints until an explicit remote-eval policy exists.
 
+The eval corpus must not become “remember everything” by another name.
+Store one canonical redacted case snapshot when replay requires it; repeat
+rows reference the case id and prompt hash rather than copying the full prompt
+again. Derived forecasts inherit the strictest source sensitivity and an
+explicit retention/expiry policy. Expiry or deletion of a copied source
+triggers deletion or irreversible redaction of dependent snapshots unless a
+separately approved audit-retention rule applies.
+
+Findings remain eval artifacts. A repeated labelled finding may be proposed as
+a reusable lesson or skill only with its supporting case set, owner, review
+date, confidence, and expiry; model-generated “lessons learned” never enter
+durable active memory automatically.
+
 ## Traps and countermeasures
 
 - **Self-consistency mistaken for truth.** Agreement across rungs is a
@@ -1130,6 +1304,14 @@ non-local endpoints until an explicit remote-eval policy exists.
   shown without their coverage.
 - **Imitation read as competence.** `next_action` scores agreement with the
   incumbent, not quality. Label the column.
+- **Semantic recall read as proof.** Retrieval rank proves discoverability;
+  claim/evidence lifecycle determines authority. Score the two separately.
+- **Operating state reconstructed from durable memory.** Current steps,
+  blockers, failures, and approvals come from exact run/task events whenever
+  they exist, not from a stale episode summary.
+- **Eval storage becoming indiscriminate memory.** Case snapshots are
+  minimized, sensitivity/expiry propagate, and findings stay eval artifacts
+  until reviewed promotion.
 - **An incumbent-only corpus.** Every challenger is graded on imitating the
   model it would replace. Grow producer trajectories in isolated,
   fingerprinted environments, and use hermetic case bundles for paired model
@@ -1146,6 +1328,15 @@ non-local endpoints until an explicit remote-eval policy exists.
 
 ## Considered and not taken
 
+- **A new four-table memory subsystem.** Identity, operating state, evidence,
+  and lessons are valuable authority classes, but RainBox already has
+  specialized stores with richer lifecycle and provenance. Use the classes as
+  a manifest/report overlay rather than flattening claims, evidence, task
+  events, journals, and skills.
+- **Treating a recalled memory line as its own receipt.** The retrieval event
+  proves that the line was surfaced. Historical or factual claims still point
+  through to `memory_evidence`, a source observation, or an operator
+  confirmation.
 - **A hostile-fact-checker persona on the forecast.** Its job is to answer
   the request independently. A persona pushed toward disagreement produces
   disagreement, which corrupts exactly the movement rate the report is built
@@ -1176,39 +1367,49 @@ non-local endpoints until an explicit remote-eval policy exists.
 
 ## Implementation seams
 
-1. `AnswerForecast`, `ForecastClaim`, `QuantityBounds`, `ActionForecast`,
-   `OutcomeForecast`, `StepForecast` and `ConditionalStepForecast` beside the
-   existing narrow structured models in `agents/assistant.py`. Case-time
-   validation owns the historical closed action set.
+1. `ContextSourceDescriptor`, `AnswerForecast`, `ForecastClaim`,
+   `QuantityBounds`, `ActionForecast`, `OutcomeForecast`, `StepForecast` and
+   `ConditionalStepForecast` in an eval-owned
+   `evals/forecast_models.py`. Nothing imports eval schemas into the assistant
+   hot path. If the production guard later earns implementation, its shared
+   contract moves to a neutral module in that proposal. Case-time validation
+   owns the historical closed action set and source catalog.
 2. A binding-only `answer_forecast` role, resolved through the same fallback
    pattern as `reply_audit` and `response_language_classifier`. No production
    switch is needed, because nothing runs in a turn.
 3. An immutable case manifest with stored system/user prompt hashes, prompt
    revision, case-allowed actions, producer model, environment class and
-   fingerprint, transcript cutoff, scorer versions, and sensitivity labels.
+   fingerprint, transcript cutoff, source descriptors and as-of lifecycle,
+   scorer versions, sensitivity, retention, and expiry.
 4. Context reconstruction from a recorded run: `cold` built only from
    messages preceding the subject turn; every later synthetic rung removes
    structurally identified sections from stored prompt text. The current
    `build_turn_prompts` include flags are fixture helpers, not historical
    reconstruction.
-5. Evidence ids on the shared observation projection — today
+5. Source ids and code-owned descriptors on the shared context/observation
+   projection — today
    `_build_reply_audit_prompt` emits `<observation action=… status=…>` with
-   no ids, so this is new plumbing on an existing prompt builder.
+   no ids, so this is new plumbing on an existing prompt builder. Memory claim
+   descriptors join lifecycle metadata with their `memory_evidence` rows;
+   retrieval telemetry remains a separate “was found” source.
 6. `evals/forecast_ladder.py`: replay, repeats, ablation, persistence through
    `eval_run` / `eval_result`, structural leave-one-out, targeted pairs, and
    its two CLIs.
 7. `evals/forecast_bench.py`: the model sweep ordered model-outermost and
    repeats-innermost, joint and conditional modes, capability-specific
-   scorers, sparse-event Brier, interval score, environment strata, and the
-   cross-model matrix.
+   scorers (including retrieved-id set/rank metrics for `memory_query`),
+   sparse-event Brier, interval score, continuity-policy invariants, authority
+   compatibility, environment strata, and the cross-model matrix.
 8. `evals/forecast_guard.py`: the paired audit-only versus
    forecast-assisted-audit simulation on held-out labelled terminal cases.
 9. Producer-sweep ecological and paired modes, with per-case state reset,
-   disposable workspace, frozen clock, disabled external access, sensitivity
-   manifest, and a fail-closed isolation preflight.
-10. The two main reports plus guard-readiness report, with case counts,
-    generation counts, clustered intervals, control variation, environment
-    fingerprints, and majority-class baselines.
+   as-of memory/profile/task fixture, disposable workspace, frozen clock,
+   disabled external access, sensitivity manifest, and a fail-closed isolation
+   preflight.
+10. Prompt-sensitivity, authority-use, forecaster-scorecard, and
+    guard-readiness reports, with case counts, generation counts, clustered
+    intervals, control variation, environment fingerprints, and
+    majority-class baselines.
 
 Tests must prove:
 
@@ -1217,6 +1418,16 @@ Tests must prove:
   sections that rung adds;
 - ablation removes one block and nothing else;
 - invalid `source_refs` are surfaced as invented, not counted as support;
+- a retrieved memory uuid can score as an exact retrieval outcome without
+  being accepted as proof that the claim text is true;
+- a reusable lesson cannot mechanically support “this action ran,” while the
+  corresponding append-only step/event row can;
+- relabelling an execution event as a recommendation is surfaced by the
+  labelled claim-role scorer rather than laundering an incompatible source;
+- descriptor freshness is evaluated at the subject timestamp, and a later
+  correction is retained as later evidence rather than rewriting the prompt;
+- paired mode refuses a case whose as-of memory/profile/task state cannot be
+  reconstructed;
 - claim comparison ignores wording;
 - repeats with a fixed configuration produce a reported variance, and the
   report refuses to rank stages without one;
@@ -1245,6 +1456,9 @@ Tests must prove:
   frozen case state, and reset proof;
 - model order cannot change paired producer outcomes because every case starts
   from the same fixture;
+- continuity checks reject a duplicate successful write, execution past a
+  pending approval, and unchanged resubmission after a corrective error, while
+  leaving ambiguous repeated reads for labels;
 - conditional mode supplies the recorded action and arguments and the
   forecaster's own action prediction is absent from its prompt;
 - joint and conditional results are never pooled into one cell, and joint
@@ -1253,6 +1467,11 @@ Tests must prove:
 - guard simulation retains the original candidate, keeps the forecast answer
   out of the reviser prompt, and reports correct-answer regressions beside
   defect recovery;
+- derived eval snapshots inherit sensitivity and retention, and deleting an
+  expiring copied source exercises the configured deletion/redaction path;
+- an eval finding cannot create an active reusable memory or skill without a
+  reviewed promotion carrying sources, owner, confidence, review date, and
+  expiry;
 - confidence intervals cluster repeats by case rather than counting each
   decode as an independent task.
 
@@ -1260,7 +1479,7 @@ Tests must prove:
 
 None of the machinery here is novel, and knowing what it is called is the
 difference between checking the method against established practice and
-re-deriving it badly. Three well-studied things, combined:
+re-deriving it badly. Four well-studied things, combined:
 
 - **Calibration measurement.** Eliciting a probability or an interval and
   scoring it against resolved outcomes is what Brier and interval scores are
@@ -1277,6 +1496,10 @@ re-deriving it badly. Three well-studied things, combined:
   bias. This is **not off-policy evaluation**: there are no action
   propensities, counterfactual rewards, or support guarantees, so the
   benchmark cannot estimate how a replacement policy would perform.
+- **Retrieval separated from provenance.** Semantic or lexical retrieval is
+  an index for finding candidate context. Lifecycle state, evidence rows, and
+  append-only events are the audit trail for deciding what the candidate can
+  support. Retrieval rank is never promoted into source authority.
 
 The document's own contribution is not the metrics. It is that this
 assistant's runs retain the subject prompts, arguments and observations
@@ -1287,7 +1510,8 @@ and paired end-to-end evaluation visibly separate.
 ## What this proposal does not claim
 
 It does not claim a model can certify itself, that two samples equal ground
-truth, or that a numeric probability is a calibrated one.
+truth, that semantic recall proves a remembered claim, or that a numeric
+probability is a calibrated one.
 
 It claims something narrower and testable: the assistant's prompt is built in
 stages, its runs retain enough context to probe those stages offline, and
