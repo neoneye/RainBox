@@ -102,7 +102,7 @@ def format_profile_context(facts: list[RetrievedProfileFact]) -> str:
     can concatenate unconditionally without a stray header."""
     if not facts:
         return ""
-    lines = ["About the operator (active profile):"]
+    lines = ["About the user (active profile):"]
     for f in facts:
         lines.append(f"- [{f.kind}] {f.text}")
     return "\n".join(lines)

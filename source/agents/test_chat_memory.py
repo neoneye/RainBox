@@ -161,8 +161,8 @@ def test_user_prompt_includes_profile_block(app_ctx, fresh_subject):
         agent = StructuredChatAgent(
             agent_uuid=agent_uuid, name="chat_structured", send=lambda _: None)
         prompt = agent.user_prompt({"room_uuid": str(room_uuid)})
-        assert "About the operator" in prompt
-        assert prompt.index("About the operator") < prompt.index("Current message:")
+        assert "About the user" in prompt
+        assert prompt.index("About the user") < prompt.index("Current message:")
     finally:
         _cleanup_room(room_uuid, agent_uuid)
         _cleanup(fresh_subject)

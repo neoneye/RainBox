@@ -1,6 +1,6 @@
 """Integration: the AssistantAgent renders identity + formatting guide from
 ONE declared-profile context snapshot per turn and injects them in order
-(identity → formatting_guide → operator_profile), with no per-turn
+(identity → formatting_guide → user_profile), with no per-turn
 `profile.current` setting lookup on the handle path. The assembled prompt is
 captured by stubbing the model call (_structured_completion)."""
 

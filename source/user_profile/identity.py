@@ -3,7 +3,7 @@
 The `profile.current` setting points at one profile on the /profile page (a
 person profile — the operator's own "account"). This module renders that
 profile's filled-in fields into a compact prompt block the assistant injects
-as `<user_settings_json>`, next to the memory-derived `<operator_profile>`
+as `<user_settings_json>`, next to the memory-derived `<user_profile>`
 digest: identity is declared once by the operator, the digest accrues from
 remembered claims.
 

@@ -73,12 +73,12 @@ def test_profile_block_injected_before_skills(app_ctx, tmp_path, monkeypatch):
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         prompt = captured["user_prompt"]
-        assert "About the operator" in prompt           # profile injected
+        assert "About the user" in prompt           # profile injected
         assert "prefers concise replies" in prompt
         assert "unconfirmed secret habit" not in prompt  # candidate is inert
         assert "Widget how-to" in prompt                 # skill still injected
         # Profile (who you are) comes before skills (how to do the task).
-        assert prompt.index("About the operator") < prompt.index("Relevant skills")
+        assert prompt.index("About the user") < prompt.index("Relevant skills")
     finally:
         db.db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid

@@ -66,9 +66,9 @@ def test_context_block_has_profile_then_memory(app_ctx, tag):
     try:
         block, query, memories = build_chat_context_block(
             _msgs("zorp terse"), agent_uuid=uuid4(), room_uuid=uuid4())
-        assert "About the operator" in block
+        assert "About the user" in block
         assert "Relevant remembered facts" in block
-        assert block.index("About the operator") < block.index("Relevant remembered facts")
+        assert block.index("About the user") < block.index("Relevant remembered facts")
     finally:
         _cleanup(tag)
 

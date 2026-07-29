@@ -98,7 +98,7 @@ ElementTree so dynamic content cannot close or forge a section tag:
 3. `<proposed_step action="…">` — `<stated_reason>`, `<model_reasoning>`
    (omitted for non-reasoning models), `<python_program>`
 4. `<verdict_request>` — list real problems (or none), then set approved
-5. `<user_settings_json>` / `<operator_profile>` — who is asking
+5. `<user_settings_json>` / `<user_profile>` — who is asking
 6. `<current_local_time>`
 
 Reasoning is capped at 4 000 chars and code at 8 000

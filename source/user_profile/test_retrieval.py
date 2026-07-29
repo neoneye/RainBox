@@ -218,7 +218,7 @@ def test_format_includes_kind_tag_and_header(app_ctx, tag):
         facts = select_profile_facts(agent_uuid=None, room_uuid=None)
         mine = [f for f in facts if f.uuid == claim.uuid]
         block = format_profile_context(mine)
-        assert "About the operator" in block
+        assert "About the user" in block
         assert "[preference]" in block
         assert "prefers concise replies" in block
     finally:
