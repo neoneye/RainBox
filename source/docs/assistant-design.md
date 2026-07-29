@@ -45,7 +45,11 @@ consumes the step limit. Each loop iteration:
    sent to the **reply audit**: a separate model call that reads the
    finished message against the request, the turn's constraints, the
    operator settings and the turn's observations, and returns a typed
-   `{reason, problems, verdict}`. A `revise` verdict bounces the reply as a
+   `{reason, problems, verdict}`, where `problems` is one string (a line per
+   defect) rather than a list of typed objects — the nested shape asked a
+   small local model to hold a container, a per-item schema and two required
+   keys in mind while it was also judging the reply. A `revise` verdict
+   bounces the reply as a
    rejected step (the problems flow back through the scratchpad so the model
    fixes the message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
    never-approving auditor cannot burn the step limit. The audit resolves

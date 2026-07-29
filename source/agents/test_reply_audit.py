@@ -82,19 +82,31 @@ def test_send_verdict_parses_with_no_problems():
     audit = ReplyAudit.model_validate(
         {"reason": "answers the question in metric", "verdict": "send"})
     assert audit.verdict == "send"
-    assert audit.problems == []
+    assert audit.problems == ""
 
 
-def test_revise_verdict_carries_problem_and_evidence():
+def test_revise_verdict_carries_its_problems_as_one_text():
+    """`problems` is one string, not a list of two-field objects: the nested
+    shape asks a small local model to hold a container, a per-item schema and
+    two required keys in mind while it is also judging the reply."""
     audit = ReplyAudit.model_validate({
         "reason": "the second question is unanswered",
-        "problems": [{"problem": "does not say what 12 feet is in meters",
-                      "evidence": "the reply only converts to centimeters"}],
+        "problems": ("does not say what 12 feet is in meters — the reply "
+                     "only converts to centimeters"),
         "verdict": "revise",
     })
     assert audit.verdict == "revise"
-    assert audit.problems[0].problem.startswith("does not say")
-    assert audit.problems[0].evidence.startswith("the reply only")
+    assert audit.problems.startswith("does not say")
+
+
+def test_a_list_of_problems_is_now_a_schema_error():
+    """The previous shape must not silently pass: a model that still emits a
+    list gets a retry from the structured-output layer, not a half-parsed
+    verdict."""
+    with pytest.raises(Exception):
+        ReplyAudit.model_validate({
+            "reason": "r", "verdict": "revise",
+            "problems": [{"problem": "p", "evidence": "e"}]})
 
 
 def test_an_unknown_verdict_is_rejected_by_the_schema():
@@ -167,20 +179,20 @@ def test_a_send_verdict_approves_the_message(app_ctx, audit_call):
         _reply("12 feet is 3.6576 meters."), messages=[], scratchpad=[])
     assert ok is True
     assert payload["verdict"] == "send"
-    assert payload["problems"] == []
+    assert payload["problems"] == ""
 
 
 def test_a_revise_verdict_blocks_the_message(app_ctx, audit_call):
     audit_call["verdict"] = ReplyAudit(
         reason="one part unanswered",
-        problems=[{"problem": "no metric value given",
-                   "evidence": "the reply stops after restating the question"}],
+        problems=("no metric value given — the reply stops after restating "
+                  "the question"),
         verdict="revise",
     )
     ok, payload = _agent()._reply_audit(
         _reply("You asked about 12 feet."), messages=[], scratchpad=[])
     assert ok is False
-    assert payload["problems"][0]["problem"] == "no metric value given"
+    assert payload["problems"].startswith("no metric value given")
 
 
 def test_the_audit_fails_open_when_the_call_raises(app_ctx, audit_call):
@@ -253,7 +265,7 @@ def _audited_run(room, monkeypatch, *audits):
 
 def test_a_send_verdict_posts_the_message(room, monkeypatch):
     _agent_, messages = _audited_run(
-        room, monkeypatch, (True, {"verdict": "send", "problems": []}))
+        room, monkeypatch, (True, {"verdict": "send", "problems": ""}))
     assert any(m["text"] == "answer 0" for m in messages)
 
 
@@ -264,9 +276,9 @@ def test_a_revise_verdict_bounces_the_reply_and_posts_nothing_yet(
     _agent_, messages = _audited_run(
         room, monkeypatch,
         (False, {"verdict": "revise", "reason": "incomplete",
-                 "problems": [{"problem": "the second question is unanswered",
-                               "evidence": "no metric value appears"}]}),
-        (True, {"verdict": "send", "problems": []}))
+                 "problems": ("the second question is unanswered — no "
+                              "metric value appears")}),
+        (True, {"verdict": "send", "problems": ""}))
     assert not any(m["text"] == "answer 0" for m in messages)
     assert any(m["text"] == "answer 1" for m in messages)
 
@@ -275,9 +287,9 @@ def test_the_bounced_step_records_the_auditor_problems(room, monkeypatch):
     agent, _messages = _audited_run(
         room, monkeypatch,
         (False, {"verdict": "revise", "reason": "incomplete",
-                 "problems": [{"problem": "the second question is unanswered",
-                               "evidence": "no metric value appears"}]}),
-        (True, {"verdict": "send", "problems": []}))
+                 "problems": ("the second question is unanswered — no "
+                              "metric value appears")}),
+        (True, {"verdict": "send", "problems": ""}))
     steps = db.list_assistant_steps(agent._run.uuid)
     rejected = [s for s in steps if s.phase == "failed"]
     assert rejected, "the bounced reply must leave a failed step in the trace"
@@ -290,8 +302,8 @@ def test_a_revise_with_no_problems_still_bounces(room, monkeypatch):
     the next step is not handed an empty instruction."""
     agent, messages = _audited_run(
         room, monkeypatch,
-        (False, {"verdict": "revise", "reason": "unsure", "problems": []}),
-        (True, {"verdict": "send", "problems": []}))
+        (False, {"verdict": "revise", "reason": "unsure", "problems": ""}),
+        (True, {"verdict": "send", "problems": ""}))
     assert not any(m["text"] == "answer 0" for m in messages)
     steps = db.list_assistant_steps(agent._run.uuid)
     rejected = [s for s in steps if s.phase == "failed"]
@@ -302,8 +314,7 @@ def test_past_the_cap_the_reply_ships_despite_the_audit(room, monkeypatch):
     """An auditor that never says send must not burn the step limit and fail
     the turn. Unchanged from the self-audit contract."""
     revise = (False, {"verdict": "revise", "reason": "no",
-                      "problems": [{"problem": "still wrong",
-                                    "evidence": "everywhere"}]})
+                      "problems": "still wrong — everywhere"})
     audits = [revise] * (AssistantAgent.MAX_AUDIT_REJECTIONS + 1)
     _agent_, messages = _audited_run(room, monkeypatch, *audits)
     posted = [m["text"] for m in messages
@@ -317,7 +328,7 @@ def test_the_audit_gets_its_own_trace_row(room, monkeypatch):
     earns its latency."""
     agent, _messages = _audited_run(
         room, monkeypatch,
-        (True, {"verdict": "send", "reason": "sound", "problems": [],
+        (True, {"verdict": "send", "reason": "sound", "problems": "",
                 "model_uuid": str(uuid4()), "system_prompt": "sys",
                 "user_prompt": "usr"}))
     steps = db.list_assistant_steps(agent._run.uuid)
@@ -335,8 +346,8 @@ def test_a_bounced_audit_is_traced_too(room, monkeypatch):
     agent, _messages = _audited_run(
         room, monkeypatch,
         (False, {"verdict": "revise", "reason": "incomplete",
-                 "problems": [{"problem": "unanswered", "evidence": "none"}]}),
-        (True, {"verdict": "send", "reason": "sound", "problems": []}))
+                 "problems": "unanswered — none"}),
+        (True, {"verdict": "send", "reason": "sound", "problems": ""}))
     steps = db.list_assistant_steps(agent._run.uuid)
     audits = [s for s in steps
               if s.action == AssistantAgent.REPLY_AUDIT_ACTION]
