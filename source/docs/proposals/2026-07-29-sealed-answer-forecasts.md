@@ -172,9 +172,9 @@ existed — and that rung is exactly what this proposal moves out of
 production.
 
 That trade is accepted rather than hidden. A `cold` rung is cheap (almost no
-context) but its disagreement is dominated by cases where the answer legitimately
-depends on data the model could not have known, so in production it would
-bounce good replies far more often than it catches bad reads. It stays in the
+context), but its disagreements are dominated by cases where the answer
+legitimately depends on data the model could not have known, so in production
+it would bounce good replies far more often than it catches bad reads. It stays in the
 eval mode, where the label says which of the two happened. The consequence
 for the guard's promise is stated plainly: `agrees` means the answer is
 stable given the evidence, never that the evidence was the right evidence.
@@ -256,6 +256,27 @@ not only to the new forecast prompt — see the switch-off note below.
 
 The 0–100 probability does not make the model calibrated by itself. It makes
 calibration measurable later, but only for claims with independent outcomes.
+
+### An evidence ceiling on certainty
+
+A stated probability is a model's opinion about its own opinion, and local
+models put 95 on priors they invented. Code owns the ceiling instead: the
+strongest `source_ref` class a claim cites bounds how certain that claim is
+allowed to be — a deterministic check supports near-certainty, a tool
+observation less, an `unsupported` prior much less. A claim asserting
+certainty above its ceiling is a bounce the auditor does not have to be
+clever enough to notice.
+
+The ceiling constrains the **decision, never the recorded value.** Clamping
+the stored probability would make every later reliability plot a measurement
+of the clamp: buckets fill at the ceiling, the curve bends to meet it, and
+the resulting picture says the model is well calibrated because code made it
+so. So both numbers persist — what the model claimed and what its evidence
+allowed — and the calibration corpus reads the claimed one.
+
+The specific thresholds are eval configuration, not design. Any number
+written here would be invented, and inventing it in a design document is how
+it survives unexamined into production.
 
 No worked example belongs in the system prompt. Smaller models copy example
 content into unrelated structured output. Field descriptions state the form,
@@ -346,6 +367,31 @@ the forecast alone is not evidence. The corrective text passed to the decide
 loop includes the problem and the underlying request/observation refs, but
 not the forecast's proposed answer.
 
+### Keep the auditor's context small
+
+The auditor already carries the request, criteria, language block, settings,
+formatting guide, and observations capped at
+`REPLY_AUDIT_MAX_OBSERVATION_CHARS = 2_000`. Adding a whole second answer to
+that is the "lost in the middle" risk arriving by design, and a local auditor
+that drowns rubber-stamps the candidate — the exact failure the guard exists
+to prevent.
+
+So the audit prompt receives the forecast's **`claims` only**, not its
+`proposed_answer` prose. The claims are already the decomposition a
+claim-by-claim comparison needs; the prose is a delivery of the same content
+that the auditor is explicitly told not to compare on wording. It stays in
+the trace, where the operator can read what the second answer actually said.
+
+The symmetric move — having the candidate emit its own typed claims so the
+auditor compares two structured lists — is **rejected**. That means a second
+argument on `reply`, and `2026-07-29-reply-audit-as-its-own-call.md` removed
+the second argument on `reply` for reasons that apply here unchanged: one
+generation producing prose plus a faithful structured decomposition of that
+prose has no way to guarantee the decomposition describes what it actually
+wrote, and the codebase spent four layers of enforcement learning that. The
+auditor decomposing the candidate itself is a checking task with the
+candidate in front of it, which is the job it already has.
+
 ### Repair means more than rewording
 
 An inaccurate first draft is not always fixed by asking for better prose.
@@ -362,6 +408,41 @@ The existing audit bounce returns control to the decide loop, so these repair
 types are guidance rather than a parallel dispatcher. The decide model still
 selects the available capability, but the trace can now distinguish
 productive verification from endless rewriting.
+
+### Rejected claims accumulate for the rest of the turn
+
+A bounce hands the model a problem and hopes. Local models answer a "this
+claim is unsupported" note by rewording the claim, which satisfies nothing
+and costs the next audit. The loop has to remember refusals, not just report
+them.
+
+The codebase already does this one rung down: `failed_actions` holds an
+`action:sorted-args` signature set, and an exact resubmission is refused
+rather than replayed. The same shape applies to claims — every problem the
+auditor raises stays attached to the turn and is re-sent with **every**
+subsequent bounce, not replaced by the latest audit's findings. Two rewrites
+of the same unsupported figure then face both refusals, and a model that
+cycles between two bad claims stops being able to alternate its way past a
+one-shot memory.
+
+Two limits, stated rather than designed around:
+
+- **A rejected claim cannot be quoted back safely.** Re-injecting the exact
+  wrong figure to forbid it puts the wrong figure in the context — trap 1 of
+  `2026-07-24-operator-locale-and-language.md`, where naming a thing to
+  exclude it is how it gets emitted. The accumulated entry therefore carries
+  the problem and its evidence refs, which is what the corrective text
+  already carries, and the enforcement stays with the auditor rather than
+  with a negative instruction.
+- **Claim identity across drafts is fuzzy.** Actions have a canonical
+  signature; prose claims do not, so this cannot become a code-side exact
+  match the way `failed_actions` is. It accumulates evidence for the auditor,
+  and it does not mechanically block anything.
+
+That second limit is why this is a mitigation and not a fix. A hard
+mechanical block on repeating a claim needs claim identity the system does
+not have, and inventing a fuzzy matcher to get it would be a worse bug than
+the one it closes.
 
 ## Bounded failure behaviour
 
@@ -426,6 +507,66 @@ Temperature is not a diversity strategy by itself. Raising it can create
 more disagreement without creating more truth. Prefer role separation,
 evidence access, and model-family diversity; treat sampling changes as an
 eval variable.
+
+## Latency, and why parallelism is not free here
+
+Two extra generations in front of a reply is the guard's worst property, and
+the obvious cure does not work as cleanly as it looks.
+
+**The seal permits concurrency; the control flow does not.** The forecast may
+run beside the candidate — the seal is information flow, not wall clock. But
+the decide call returns `{action, args}` in **one** structured response: the
+choice to reply and the reply text arrive together. There is no moment where
+code knows a reply is coming and has not yet paid for it. Firing the forecast
+concurrently therefore means firing it *speculatively*, before knowing the
+step terminates — and a forecast fired at a step that turns out to be a tool
+call is wasted, because the observation it returns changes
+`evidence_revision`. Speculating on every step reproduces exactly the `2 + n`
+cost the terminal placement exists to avoid. Parallelism here buys latency
+with tokens; it does not create either.
+
+**Bounded speculation is the middle.** Code already knows when the loop is
+probably finishing: after any successful write the scratchpad steers toward
+`reply`, and a step whose observation resolved the request's last unknown is
+the common terminal shape. Speculating only at those points bounds the waste
+to roughly one forecast per run while removing the latency from the turns
+most likely to pay it. This is a knob, not a default — measure the hit rate
+before enabling it.
+
+**On this hardware the ceiling is lower than it looks.** Providers are local
+servers (`providers/base.py`: Ollama, Jan, LM Studio), so two concurrent
+requests to one instance contend for one GPU: they interleave rather than
+overlap, and wall-clock savings approach zero. Concurrency pays only when the
+forecast is bound to a model on a *different* server with its own capacity —
+which is the same configuration the diversity argument above already prefers,
+for unrelated reasons. Note the coincidence, and do not build the scheduler
+until a second server exists to schedule onto.
+
+`llm/__init__.py` wraps each call in its own `asyncio.run`, so there is no
+multi-call concurrency helper today. Speculation needs one. That is real work
+and it is not in the smallest coherent implementation below.
+
+## Not every turn deserves a guard
+
+The cheapest call is the one not made. Before running a forecast at all, code
+decides whether the turn carries epistemic risk, using facts it already has:
+
+- did any step produce an observation, or is the reply pure conversation?
+- did the run compute (`python_run`), read (`memory_query`,
+  `kanban_read`, `workspace_read_command`), or write?
+- does the candidate contain a number, a date, a quantity, or a proposal?
+
+"Thanks, that worked" needs no independent answer, and paying a forecast plus
+a larger audit for it is the feature's worst look. A deterministic gate is
+preferred over a small classifier model for the ordinary reason in this
+codebase — **models propose, code disposes** — and for a specific one: a
+classifier that decides whether to spend a call costs a call, so it only pays
+if it is much cheaper than what it skips, which a local model rarely is
+against a narrow forecast. If the deterministic gate proves too blunt in
+evals, a classifier is the escalation, not the starting point.
+
+The gate's decision is recorded on the run so a skipped guard is visible
+rather than indistinguishable from a disabled one.
 
 ## Cost and switch
 
@@ -718,6 +859,31 @@ Tests must prove:
   wrote `verdict="send"`;
 - with the switch off, no forecast call is made, no forecast row is written,
   and the audit prompt carries no forecast section.
+
+## Considered and not taken
+
+- **A hostile-fact-checker persona on the forecast.** The forecast's job is
+  to answer the request independently; a persona pushed toward disagreement
+  produces disagreement, which inflates the bounce rate and corrupts the
+  false-bounce metric that decides whether the feature ships. The adversarial
+  role already exists and it is the auditor. Role separation and model-family
+  diversity stay; adversarial framing of the answerer does not.
+- **A background ladder that corrects the next turn.** Running the diagnostic
+  ladder asynchronously after a send and injecting "the last message was
+  wrong" into the next turn's scratchpad assumes the ladder can detect a
+  hallucination — which is the claim this entire proposal declines to make.
+  Model-versus-model disagreement is not ground truth after the message posts
+  any more than before it. Sampling production turns into the eval corpus in
+  the background is fine and cheap; acting on the result unsupervised is not.
+- **Writing unresolved conflicts into persistent memory.** A forced send is a
+  real signal and losing it at turn end is a real gap. But the assistant
+  writing its own unverified uncertainty into memory is what the memory trust
+  model exists to prevent — `memory_remember` deliberately creates an inert
+  candidate pending operator confirmation, and a `ConflictedBelief` written
+  straight through would be a self-generated claim with no operator in the
+  loop. The forced send is already durable in the run trace. Carrying it
+  forward is a follow-up that belongs in `memory-architecture.md`'s vocabulary
+  and goes through the candidate path, not a field this proposal adds.
 
 ## What this proposal does not claim
 
