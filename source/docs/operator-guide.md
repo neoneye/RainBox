@@ -62,6 +62,19 @@ fallback.
   work — inspect its `assumptions` there to spot a wrong guess at a glance.
   Response language is handled by the separate classifier step; see
   `docs/assistant-design.md` §Acceptance criteria.
+
+  Reading a run: the **Model calls** card is where the time went — one bar per
+  model call, placed on the run's wall-clock span, so the gaps between bars are
+  the time no model was working. It counts calls that have no step row of their
+  own (the second opinion, the memory recall filter), which is why the LLM-calls
+  figure can exceed the step count. Rows badged `warm-up` or `follow-up` are
+  calls the loop made itself and cost none of the step budget; one badged
+  `skipped` is a call that could not run at all (usually no model group bound —
+  check `/agentmodel`). The page live-refreshes while a run works and keeps
+  whatever you expanded open, so a long run can be read as it happens.
+- In `/chat`, a working run shows one progress row — the step it is on, what it
+  is doing, and what it has cost so far — and every assistant message carries
+  `Inspect ↗` in its kebab, linking to the run behind it.
 - `/conversations` — persona-to-persona conversation runs.
 - `/find` — paste a uuid (or a fragment, even typo'd) to learn what it is
   and jump to it; also searches mentions in chats/logs and the Q&A registry.

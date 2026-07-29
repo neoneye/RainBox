@@ -123,7 +123,13 @@ Key fields:
 - `meta`: JSONB structured attachment for interactive messages — e.g. a
   confirm-tier write proposal stores `{write_intent, capability, step_link}` so
   chat can render confirm/reject controls; the facts-invalidation marker stores
-  its timestamp here.
+  its timestamp here. Every terminal assistant post (reply, clarifying
+  question, stop message, failure notice) carries `assistant_run_uuid`, which
+  /chat renders as the `Inspect ↗` kebab entry — the run's progress row is
+  reaped when the reply lands, and a reply worth questioning is exactly when
+  the trace is wanted. It rides in `meta` rather than the text because the text
+  is the answer: it is what Copy yields and what the model reads back as
+  conversation next turn.
 - `streaming`: true while the row's `text` grows in place token-by-token
   (flipped false on the final flush; the UI shows a live cursor and withholds
   feedback buttons while true).

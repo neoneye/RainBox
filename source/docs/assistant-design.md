@@ -313,8 +313,8 @@ the criteria say meters).
   one fresh `current_profile_context()` snapshot, and ALL settings-derived
   blocks plus the criteria re-render from it together.
 - **Model-requested**: the `acceptance_criteria` catalog action (loop-run
-  like the terminals, `action=None`; offered only while the switch is on)
-  revises for changes only the model can see. It costs a decide step — the
+  like the terminals, `action=None`) revises for changes only the model can
+  see. It costs a decide step — the
   right incentive against reflexive re-speccing — the revision call receives
   the prior criteria and the run's observations, and a revision reproducing
   the prior criteria is reported as the no-op it is.
@@ -354,7 +354,7 @@ only by `undo_write_intent`.
 | Capability | Family | Tier | Undo |
 |---|---|---|---|
 | `reply`, `ask_clarifying_question` | conversation | terminal | — |
-| `acceptance_criteria` | conversation | loop-run (switch-gated) | — (derived state) |
+| `acceptance_criteria` | conversation | loop-run | — (derived state) |
 | `memory_query` | memory | read | — |
 | `memory_remember` | memory | log-and-undo | `memory_reject_candidate` (internal) |
 | `memory_activate` | memory | **confirm** | — |

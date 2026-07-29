@@ -27,10 +27,16 @@ agents rooms.
 
 1. The operator posts. `POST /chat/api/rooms/<uuid>/messages` stores the row,
    then `_maybe_trigger_direct_chat` enqueues one inbox item for the
-   direct-chat agent, payload `{room_uuid, message_uuid}`. The human-only
-   guard (sender must be `user_type='human'`) is what prevents loops: the
-   model's reply is posted directly by the agent, never through this
-   endpoint's trigger path.
+   direct-chat agent, payload `{room_uuid, message_uuid}`, and posts a
+   `kind="progress"` bubble as the direct-chat agent. The bubble is posted
+   here rather than in the agent because steps 2-3 (spawn, import, model
+   resolution) happen before the agent can post anything, and a cold model
+   adds more: without it the room shows nothing between the send and the
+   first token, and nothing at all when the supervisor is down. The agent's
+   own first answer row — or its failure notice — reaps it, both being
+   terminal kinds. The human-only guard (sender must be `user_type='human'`)
+   is what prevents loops: the model's reply is posted directly by the agent,
+   never through this endpoint's trigger path.
 2. The supervisor (`main.py`) spawns the agent process;
    `agents/__main__.py` resolves the `direct_chat` kind to `DirectChatAgent`
    (`agents/direct_chat.py`).

@@ -84,7 +84,25 @@ at all.
     message is appended or a streaming bubble is upserted. Do not re-process
     the whole log on a timer, on scroll, or on focus.
 
-11. **Verify before claiming "low CPU."** If you are tuning this path,
+11. **Arriving rows never move the reader.** Following the tail is
+    conditional on already being at it (`FOLLOW_THRESHOLD_PX`, 80px): inside
+    it new rows scroll into view, outside it nothing moves. A live agent run
+    fires every few seconds, so a log that re-pins on every arrival makes
+    reading older history impossible. Take the measurement BEFORE appending —
+    appending grows `scrollHeight`, so the same reading afterwards calls a
+    reader who WAS at the bottom "scrolled up" and strands them a screen
+    short. The operator's own send is the one override (`{force: true}`):
+    they wrote the newest row, so they want to be at it.
+
+12. **A send either lands or says why.** The composer clears optimistically,
+    so a failed POST must put the text back and surface the error — losing a
+    message silently is the worst outcome available. And every path that
+    enqueues a responder posts its `kind="progress"` bubble at enqueue time
+    (agent rooms and direct rooms alike): the responder still has to spawn and
+    import its stack before the first token, and without the bubble the room
+    is indistinguishable from one where nothing was sent.
+
+13. **Verify before claiming "low CPU."** If you are tuning this path,
     measure: count `fetchNew` invocations over a fixed idle window, watch
     DevTools Network for unexpected requests, and check that the SSE
     connection stays open with only `: keepalive` comments arriving every
