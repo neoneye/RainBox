@@ -557,7 +557,7 @@ same state was already on the step rows. Like any progress row it is reaped
 when the real reply lands, so a finished turn leaves the answer, not the
 bookkeeping — but every terminal post (reply, clarifying question, stop
 message, failure notice) carries `meta.assistant_run_uuid`, which /chat renders
-as a `run ↗` link in the row's action bar. A reply worth questioning is exactly
+as an `Inspect ↗` entry in the row's kebab menu. A reply worth questioning is exactly
 when the trace is wanted, and the bubble that linked to it is gone by then. The
 pointer rides in `meta`, never in the text: the text is the answer, it is what
 Copy yields, and it is what the model reads back as conversation next turn.

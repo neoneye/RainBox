@@ -252,11 +252,15 @@ def test_sending_a_message_always_scrolls_to_it():
     assert "await fetchNew(currentRoom, {force: true});" in body
 
 
-def test_assistant_rows_link_to_their_run():
+def test_assistant_rows_link_to_their_run_from_the_kebab():
     """Every terminal assistant post carries `meta.assistant_run_uuid`, so the
-    chat keeps a way into the trace after the progress bubble is reaped. A
-    link, not text: Copy must still yield the answer alone."""
+    chat keeps a way into the trace after the progress bubble is reaped. It
+    lives in the message kebab, with the row's other navigations, rather than
+    beside copy and feedback where a bare "run" read as a control that would
+    execute something. An anchor, so cmd/middle-click opens a new tab."""
     body = _body()
     assert "const runUuid = (m.meta || {}).assistant_run_uuid;" in body
-    assert "runLink.href = '/assistant?id=' + encodeURIComponent(runUuid);" in body
-    assert "runLink.textContent = 'run ↗';" in body
+    assert "inspect.href = '/assistant?id=' + encodeURIComponent(runUuid);" in body
+    assert "inspect.textContent = 'Inspect \u2197';" in body
+    assert "inspect.className = 'item';" in body
+    assert "msg-run-link" not in body

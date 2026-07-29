@@ -61,6 +61,9 @@ CHAT_TEMPLATE: str = """
                    color:#333;padding:0.45em 0.6em;border-radius:6px}
   .room-menu .item:hover{background:#eef0f6}
   .room-menu .item.danger{color:#b91c1c}
+  /* Menu entries that navigate are anchors, so cmd/middle-click opens them in
+     a new tab; they inherit .item's look. */
+  .room-menu a.item{text-decoration:none;display:block}
 
   /* ---- folder tree (ported from /cron) ---- */
   #rooms ul{list-style:none;margin:0;padding:0}
@@ -217,9 +220,7 @@ CHAT_TEMPLATE: str = """
   .msg-actions{display:flex;gap:0.15em;align-items:center;margin-top:calc(0.3em + 2px)}
   .copy-btn{font-size:1rem;color:#6c757d;background:none;border:1px solid transparent;border-radius:4px;padding:5px;cursor:pointer;line-height:1.4;display:inline-flex;align-items:center}
   .copy-btn:hover{color:#1a1a2e;border-color:#cbd5e1}
-  /* The trace link sits with the row's other actions; text, not an icon, so
-     it reads as a destination rather than a control. */
-  .msg-run-link{font-size:0.78rem;text-decoration:none;white-space:nowrap}
+
   .fb-row{display:inline-flex;gap:0.15em}
   .fb-btn{font-size:1rem;color:#6c757d;background:none;border:1px solid transparent;border-radius:4px;padding:5px;cursor:pointer;line-height:1.4;display:inline-flex;align-items:center}
   .fb-btn:hover{color:#1a1a2e;border-color:#cbd5e1}
@@ -750,6 +751,20 @@ function buildMessageMenu(m){
   menu.className = 'room-menu msg-id-menu';
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
+  // The assistant run behind this row. The progress bubble carried this link
+  // while the turn worked but is reaped once the reply lands — and a reply
+  // worth questioning is exactly when the trace is wanted. An anchor, not a
+  // button: it navigates, so cmd/middle-click should open it in a new tab.
+  const runUuid = (m.meta || {}).assistant_run_uuid;
+  if (runUuid){
+    const inspect = document.createElement('a');
+    inspect.className = 'item';
+    inspect.setAttribute('role', 'menuitem');
+    inspect.href = '/assistant?id=' + encodeURIComponent(runUuid);
+    inspect.textContent = 'Inspect ↗';
+    inspect.title = 'Open the assistant run that produced this message';
+    menu.appendChild(inspect);
+  }
   if (currentRoomIsDirect() && !m.streaming){
     const retry = document.createElement('button');
     retry.type = 'button';
@@ -974,19 +989,6 @@ function makeMessage(m){
   // Copy = the message's stored text, uniformly for every row (debug-assistant
   // text is now the full trace, so no per-kind special-casing).
   addCopyButton(actions, m.text);
-  // The run behind this row. The progress bubble carries this link while the
-  // turn works but is reaped when the reply lands — and a reply worth
-  // questioning is exactly when the trace is wanted. It lives in meta, not in
-  // the text, so Copy still yields the answer alone.
-  const runUuid = (m.meta || {}).assistant_run_uuid;
-  if (runUuid){
-    const runLink = document.createElement('a');
-    runLink.className = 'copy-btn msg-run-link';
-    runLink.href = '/assistant?id=' + encodeURIComponent(runUuid);
-    runLink.title = 'Inspect the assistant run behind this message';
-    runLink.textContent = 'run ↗';
-    actions.appendChild(runLink);
-  }
   // Edit (pencil) + delete (trash): direct rooms only — the operator can
   // rewrite or remove their own and the model's earlier turns. Agent rooms
   // never show them (the server refuses too). Editing applies to real
