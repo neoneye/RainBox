@@ -654,14 +654,16 @@ def _real_run_shape(run) -> None:
         run_uuid=run.uuid, step_index=0, phase="observed",
         action="response_language_classifier", reason="the request is in English",
         code_driven=True, model_response='{"languages": [{"code": "en-US"}]}',
-        observation_preview="en-US", requested_at=t0)
+        observation_preview="en-US", requested_at=t0,
+        input_tokens=900, output_tokens=120, duration_ms=17000)
     db.append_assistant_step(
         run_uuid=run.uuid, step_index=0, phase="observed",
         action="acceptance_criteria",
         reason="established before step 0 (code-driven)", code_driven=True,
         model_response='{\n  "processing": "answer in meters"\n}',
         observation_preview='{\n "processing": "answer in meters"\n}',
-        requested_at=t0 + timedelta(seconds=17))
+        requested_at=t0 + timedelta(seconds=17),
+        input_tokens=1163, output_tokens=194, duration_ms=20849)
     db.append_assistant_step(
         run_uuid=run.uuid, step_index=0, phase="observed",
         action="reply_audit", reason="send", code_driven=True,
@@ -733,6 +735,50 @@ def test_code_driven_row_shows_its_payload_once_and_calls_no_action(
             # blocks survive there.
             assert "en-US" in text
     finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_every_model_call_row_shows_the_same_io_meta_fields(app_ctx, client):
+    """Every model call in the trace reports its cost the same way, including
+    the code-driven ones — a row missing in/out/throughput silently reads as
+    free. Both renderers draw from one set of field builders, so what the page
+    shows and what the export shows cannot drift apart."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _real_run_shape(run)
+    db.finish_run(run, "finished")
+    try:
+        page, md = _rendered(client, run)
+        for text in (page, md):
+            # The classifier and the criteria call both priced, same shape.
+            assert "in 900" in text and "out 120" in text and "60 tok/s" in text
+            assert "in 1163" in text and "out 194" in text and "65 tok/s" in text
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_io_meta_line_has_a_single_definition(app_ctx, client):
+    """The DRY guarantee, stated as a test: changing a field's wording in the
+    builder changes it in the page and the export at once. If either renderer
+    grows its own copy of the line, this fails."""
+    from webapp import assistant_views as views
+
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _real_run_shape(run)
+    db.finish_run(run, "finished")
+    original = views._field
+    try:
+        views._field = lambda text, title, **kw: original(
+            f"[{text}]", title, **kw)
+        page, md = _rendered(client, run)
+        for text in (page, md):
+            assert "[in 900]" in text and "[out 120]" in text
+            assert "[60 tok/s]" in text and "[took 17.0s]" in text
+    finally:
+        views._field = original
         _cleanup(run.uuid, room.uuid)
 
 

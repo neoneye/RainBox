@@ -4477,6 +4477,11 @@ class AssistantAgent(ModelGroupAgent):
             "group_from": group_from,
             "model_group_uuid": group_uuid,
         }
+        # This call's token cost, so the step row carries the same in/out/
+        # throughput figures as every other model call in the trace. Only the
+        # succeeding group member's usage is written here; `ms` is that
+        # attempt's, which is what the throughput figure divides by.
+        usage: dict[str, int] = {}
         with capture_reasoning() as tally:
             try:
                 result, model_uuid = structured_llm_call(
@@ -4485,8 +4490,12 @@ class AssistantAgent(ModelGroupAgent):
                     system_prompt,
                     user_prompt,
                     ResponseLanguageClassification,
+                    usage_out=usage,
                 )
             except Exception:
+                # No usage on this path — every member failed, so there is no
+                # succeeding attempt to charge. The wall-clock still tells the
+                # operator how long the failure took.
                 self._response_language_classifier_meta.update({
                     "reasoning": tally.reasoning_text or None,
                     "model_response": tally.content_text or None,
@@ -4500,7 +4509,10 @@ class AssistantAgent(ModelGroupAgent):
             "reasoning": tally.reasoning_text or None,
             "model_response": (
                 tally.content_text or classification.model_dump_json()),
-            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "input_tokens": usage.get("input"),
+            "output_tokens": usage.get("output"),
+            "duration_ms": usage.get(
+                "ms", int((time.perf_counter() - started) * 1000)),
         })
         return classification
 
@@ -4606,6 +4618,8 @@ class AssistantAgent(ModelGroupAgent):
             error=error,
             model_group_uuid=meta.get("model_group_uuid"),
             model_uuid=meta.get("model_uuid"),
+            input_tokens=meta.get("input_tokens"),
+            output_tokens=meta.get("output_tokens"),
             duration_ms=meta.get("duration_ms"),
         )
         db.clear_assistant_call_checkpoint(self._run)

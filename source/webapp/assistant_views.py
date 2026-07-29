@@ -45,6 +45,18 @@ _CODE_DRIVEN_DESCRIPTIONS = {
 ASSISTANT_TEMPLATE = """
 <!doctype html>
 <title>Assistant run &mdash; rainbox</title>
+{# The right-aligned meta line on an io-label. The fields come from the
+   builders in this module (_response_meta and friends) — the same ones the
+   markdown export renders through _meta_md — so this macro decides only how a
+   field looks, never which fields there are. #}
+{% macro io_meta(fields) %}
+{%- if fields %}<span class="io-meta">
+  {%- for f in fields %}
+    {%- if f.href %}<a class="{{ f.cls }}" href="{{ f.href }}" title="{{ f.title }}">{{ f.html or f.text }}</a>
+    {%- else %}<span class="{{ f.cls }}" title="{{ f.title }}">{{ f.html or f.text }}</span>{% endif %}
+  {%- endfor %}
+</span>{% endif %}
+{%- endmacro %}
 {% macro render_intent(it) %}
   <div class="intent {{ it.state }}">
     <span class="cap">{{ it.capability_name }}</span>
@@ -387,7 +399,7 @@ ASSISTANT_TEMPLATE = """
         {% endif %}
         {% if step.system_prompt or step.user_prompt %}
         <div class="io io-req">
-          <div class="io-label">model request{% if step.requested_at %}<span class="io-meta"><span class="io-time" title="When this model request was made: {{ step.requested_at.replace(microsecond=0).isoformat() }}">{{ step.requested_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
+          <div class="io-label">model request{{ io_meta(request_meta(step)) }}</div>
           {% if step.system_prompt %}
           <details class="prompt">
             <summary>system prompt</summary>
@@ -416,19 +428,7 @@ ASSISTANT_TEMPLATE = """
         {% endif %}
         <div class="io io-out">
           {% set decision_text = decision_json.get(step.uuid|string, '') %}
-          {% set has_toks = step.input_tokens is not none or step.output_tokens is not none %}
-          {% set has_right = step.model_uuid or has_toks or step.duration_ms is not none %}
-          {# This io-meta line (model · tokens · throughput · duration · time) is
-             duplicated in Python by _response_meta_md(); change both together. #}
-          <div class="io-label">{% if step.model_response and not decision_text and step.error %}partial model response{% else %}model response{% endif %}{% if has_right or step.created_at %}<span class="io-meta">
-            {% if step.model_uuid %}<a class="io-model" href="/model?id={{ step.model_uuid }}"
-                title="{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }}">model ↗</a>{% endif %}
-            {% if has_toks %}<span title="Input tokens: the size of the prompt sent to the model for this step">in {{ step.input_tokens or 0 }}</span>
-            <span title="Output tokens: the amount of text the model generated for this step">out {{ step.output_tokens or 0 }}</span>{% endif %}
-            {% if has_toks and step.duration_ms %}<span title="Throughput: total tokens (input + output) processed per second">{{ '%.0f'|format(((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms) }} tok/s</span>{% endif %}
-            {% if step.duration_ms is not none %}<span title="Duration: how long the model took to produce this response">took {{ '%.1f'|format(step.duration_ms / 1000) }}s</span>{% endif %}
-            {% if step.created_at %}<span class="io-time" title="When this model response was recorded: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span>{% endif %}
-          </span>{% endif %}</div>
+          <div class="io-label">{% if step.model_response and not decision_text and step.error %}partial model response{% else %}model response{% endif %}{{ io_meta(response_meta(step, model_names)) }}</div>
           <pre>{{ decision_text or step.model_response or '' }}</pre>
         </div>
         {% set so = second_opinion.get(step.uuid|string) %}
@@ -438,11 +438,7 @@ ASSISTANT_TEMPLATE = """
              python_run). Chronologically it ran between the model response and
              the action executing, so it renders before the action call; its
              payload is stripped from the action-result data below. #}
-          <div class="io-label">second opinion{% if 'approved' in so %}<span class="fn-ok {{ 'ok-true' if so.approved else 'ok-false' }}" title="The reviewer's verdict: false means the action was blocked and never executed">approved: {{ 'true' if so.approved else 'false' }}</span>{% endif %}<span class="io-meta">
-            {% if so.model_uuid %}<a class="io-model" href="/model?id={{ so.model_uuid }}"
-                title="{{ model_names.get(so.model_uuid, so.model_uuid[:8]) }}">model ↗</a>{% endif %}
-            {% if so.group_from %}<span title="Which agent binding supplied the reviewer's model group (second_opinion on /agentmodel, else the assistant's own)">group: {{ so.group_from }}</span>{% endif %}
-          </span></div>
+          <div class="io-label">second opinion{% if 'approved' in so %}<span class="fn-ok {{ 'ok-true' if so.approved else 'ok-false' }}" title="The reviewer's verdict: false means the action was blocked and never executed">approved: {{ 'true' if so.approved else 'false' }}</span>{% endif %}{{ io_meta(review_meta(so, model_names)) }}</div>
           {% if so.system_prompt %}
           <details class="prompt">
             <summary>system prompt</summary>
@@ -471,7 +467,7 @@ ASSISTANT_TEMPLATE = """
            decision, and the empty args made the block read as one that was. #}
         {% if step.action and not step.code_driven %}
         <div class="io io-call">
-          <div class="io-label">action call{% if step.created_at %}<span class="io-meta"><span class="io-time" title="When this action was called: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
+          <div class="io-label">action call{{ io_meta(call_meta(step)) }}</div>
           {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
         </div>
         {% endif %}
@@ -484,7 +480,7 @@ ASSISTANT_TEMPLATE = """
         {% if (obs is not none or step.observation_preview)
               and (step.uuid|string) not in duplicate_result %}
         <div class="io io-in">
-          <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at %}<span class="io-meta">{% if step.created_at %}<span class="io-dur" title="Duration: how long the action took to complete">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}<span class="io-time" title="When this action result was recorded: {{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
+          <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{{ io_meta(result_meta(step)) }}</div>
           {% if obs is not none %}
             {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
             {% set odata = obs_data.get(step.uuid|string) %}
@@ -813,27 +809,115 @@ def _hms(dt) -> str | None:
     return dt.strftime("%H:%M:%S") if dt else None
 
 
-def _response_meta_md(step, model_names: dict[str, str]) -> str:
-    """The "model response" meta line — model, tokens, throughput, duration,
-    time — joined with ' · '. Mirror of the template's `io-out`/`io-meta` line
-    (search ASSISTANT_TEMPLATE for "duplicated in Python by _response_meta_md");
-    the throughput formula must match the one there. Edit both together."""
-    parts: list[str] = []
+# --- io-meta ------------------------------------------------------------------
+#
+# The small right-aligned line on an io-label (model · tokens · throughput ·
+# duration · timestamp). Every io block has one, and both renderers draw it: the
+# page via the `io_meta` macro, the markdown export via _meta_md(). Each builder
+# below returns the line's fields ONCE, so a change to what a field says, how a
+# number is formatted, or which order they appear in is made in exactly one
+# place. Renderers decide presentation only — never which fields exist.
+
+
+def _field(text: str, title: str, *, html: str | None = None,
+           href: str | None = None, cls: str = "") -> dict:
+    """One io-meta field. `text` is the value both renderers show; `html`
+    overrides it on the page when the link text differs from the exported text;
+    `title` is the page's hover explanation."""
+    return {"text": text, "title": title, "html": html, "href": href, "cls": cls}
+
+
+def _model_field(model_uuid, model_names: dict[str, str], title: str) -> dict:
+    """The link to the model that answered. The page shows a compact "model ↗"
+    with the name on hover; the export has no hover, so it prints the name."""
+    name = model_names.get(str(model_uuid), str(model_uuid)[:8])
+    return _field(name, f"{title}: {name}", html="model ↗",
+                  href=f"/model?id={model_uuid}", cls="io-model")
+
+
+def _time_field(dt, title: str) -> list[dict]:
+    when = _hms(dt)
+    if not when:
+        return []
+    return [_field(when, f"{title}: {dt.replace(microsecond=0).isoformat()}",
+                   cls="io-time")]
+
+
+def _response_meta(step, model_names: dict[str, str]) -> list[dict]:
+    """The model-response line: which model, what the call cost, how fast."""
+    fields: list[dict] = []
     if step.model_uuid:
-        parts.append(model_names.get(str(step.model_uuid), str(step.model_uuid)[:8]))
-    has_toks = step.input_tokens is not None or step.output_tokens is not None
-    if has_toks:
-        parts.append(f"in {step.input_tokens or 0}")
-        parts.append(f"out {step.output_tokens or 0}")
-    if has_toks and step.duration_ms:
-        tps = ((step.input_tokens or 0) + (step.output_tokens or 0)) * 1000 / step.duration_ms
-        parts.append(f"{tps:.0f} tok/s")
+        fields.append(_model_field(
+            step.model_uuid, model_names, "The model that produced this response"))
+    if step.input_tokens is not None or step.output_tokens is not None:
+        tokens = (step.input_tokens or 0) + (step.output_tokens or 0)
+        fields.append(_field(
+            f"in {step.input_tokens or 0}",
+            "Input tokens: the size of the prompt sent to the model for this step"))
+        fields.append(_field(
+            f"out {step.output_tokens or 0}",
+            "Output tokens: the amount of text the model generated for this step"))
+        if step.duration_ms:
+            fields.append(_field(
+                f"{tokens * 1000 / step.duration_ms:.0f} tok/s",
+                "Throughput: total tokens (input + output) processed per second"))
     if step.duration_ms is not None:
-        parts.append(f"took {step.duration_ms / 1000:.1f}s")
-    when = _hms(step.created_at)
-    if when:
-        parts.append(when)
-    return " · ".join(parts)
+        fields.append(_field(
+            f"took {step.duration_ms / 1000:.1f}s",
+            "Duration: how long the model took to produce this response",
+            cls="io-dur"))
+    return fields + _time_field(
+        step.created_at, "When this model response was recorded")
+
+
+def _request_meta(step) -> list[dict]:
+    return _time_field(step.requested_at, "When this model request was made")
+
+
+def _call_meta(step) -> list[dict]:
+    return _time_field(step.created_at, "When this action was called")
+
+
+def _result_meta(step) -> list[dict]:
+    """The action-result line. Its duration is the action's own — wall-clock
+    from the call to the observation — not the model call's."""
+    if not step.settled_at:
+        return []
+    fields: list[dict] = []
+    if step.created_at:
+        elapsed = (step.settled_at - step.created_at).total_seconds()
+        fields.append(_field(
+            f"took {elapsed:.1f}s",
+            "Duration: how long the action took to complete", cls="io-dur"))
+    return fields + _time_field(
+        step.settled_at, "When this action result was recorded")
+
+
+def _review_meta(so: dict, model_names: dict[str, str]) -> list[dict]:
+    """The second-opinion line: the reviewer model and where its group came
+    from. No token counts — the review payload records no usage."""
+    fields: list[dict] = []
+    if so.get("model_uuid"):
+        fields.append(_model_field(
+            so["model_uuid"], model_names, "The reviewing model"))
+    if so.get("group_from"):
+        fields.append(_field(
+            f"group: {so['group_from']}",
+            "Which agent binding supplied the reviewer's model group "
+            "(second_opinion on /agentmodel, else the assistant's own)"))
+    return fields
+
+
+def _meta_md(fields: list[dict]) -> str:
+    """The export's rendering of an io-meta line: the field values, in order."""
+    return " · ".join(f["text"] for f in fields)
+
+
+def _labelled(label: str, fields: list[dict]) -> str:
+    """An export io-label with its meta line appended — the flat-text
+    counterpart of the page's label + right-aligned `io_meta` span."""
+    meta = _meta_md(fields)
+    return f"{label} · {meta}" if meta else label
 
 
 def _intent_md(it) -> list[str]:
@@ -891,14 +975,14 @@ def _split_second_opinion(step, reviews: dict | None = None) -> tuple[dict | Non
     return so, data
 
 
-def _second_opinion_md(so: dict) -> list[str]:
-    """The second-opinion block as Markdown: verdict on the label, the exact
-    prompts the reviewer model was given, then the problems (or why the review
-    was skipped / failed open) as bullets."""
+def _second_opinion_md(so: dict, model_names: dict[str, str]) -> list[str]:
+    """The second-opinion block as Markdown: verdict and reviewer on the label,
+    the exact prompts the reviewer model was given, then the problems (or why
+    the review was skipped / failed open) as bullets."""
     label = "**second opinion**"
     if "approved" in so:
         label += f" · approved: {'true' if so.get('approved') else 'false'}"
-    lines = [label, ""]
+    lines = [_labelled(label, _review_meta(so, model_names)), ""]
     if so.get("system_prompt"):
         lines.append("_system prompt_")
         lines.append(_fence(so["system_prompt"]))
@@ -948,8 +1032,7 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
             lines.append(f"- {entry.get('label')}: {text}{suffix}")
         lines.append("")
     if step.system_prompt or step.user_prompt:
-        when = _hms(step.requested_at)
-        lines.append("**model request**" + (f" · {when}" if when else ""))
+        lines.append(_labelled("**model request**", _request_meta(step)))
         lines.append("")
         if step.system_prompt:
             lines.append("_system prompt_")
@@ -964,7 +1047,6 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
         lines.append("")
         lines.append(_fence(step.reasoning))
         lines.append("")
-    meta = _response_meta_md(step, model_names)
     decision = decision_json.get(str(step.uuid), "")
     # "partial" means the call died mid-stream and this is as far as it got —
     # a row that never produced a decision AND recorded an error. A code-driven
@@ -975,7 +1057,8 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
         if step.model_response and not decision and step.error
         else "model response"
     )
-    lines.append(f"**{response_label}**" + (f" · {meta}" if meta else ""))
+    lines.append(_labelled(f"**{response_label}**",
+                           _response_meta(step, model_names)))
     lines.append("")
     response_text = decision or step.model_response or ""
     if response_text:
@@ -983,10 +1066,9 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
         lines.append("")
     second_opinion, obs_data = _split_second_opinion(step, reviews)
     if second_opinion is not None:
-        lines.extend(_second_opinion_md(second_opinion))
+        lines.extend(_second_opinion_md(second_opinion, model_names))
     if step.action and not step.code_driven:
-        when = _hms(step.created_at)
-        lines.append("**action call**" + (f" · {when}" if when else ""))
+        lines.append(_labelled("**action call**", _call_meta(step)))
         lines.append("")
         if step.args:
             lines.append(_fence(json.dumps(step.args, ensure_ascii=False, indent=2), "json"))
@@ -997,11 +1079,7 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
         label = "**action result**"
         if obs is not None:
             label += f" · ok: {'true' if obs.get('ok') else 'false'}"
-        if step.settled_at:
-            if step.created_at:
-                label += f" · took {(step.settled_at - step.created_at).total_seconds():.1f}s"
-            label += f" · {_hms(step.settled_at)}"
-        lines.append(label)
+        lines.append(_labelled(label, _result_meta(step)))
         lines.append("")
         if obs is not None:
             if obs.get("text"):
@@ -1312,6 +1390,11 @@ def assistant_page() -> str:
         obs_data=ctx.get("obs_data", {}),
         action_descriptions=_ACTION_DESCRIPTIONS,
         code_driven_descriptions=_CODE_DRIVEN_DESCRIPTIONS,
+        # The io-meta field builders, called from the template so the page and
+        # the markdown export read the same definitions.
+        response_meta=_response_meta, request_meta=_request_meta,
+        call_meta=_call_meta, result_meta=_result_meta,
+        review_meta=_review_meta,
         unlinked=ctx.get("unlinked", []),
         pending_controls=ctx.get("pending_controls", []),
         duration=duration, model_names=ctx.get("model_names", {}),
