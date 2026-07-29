@@ -258,7 +258,7 @@ def test_system_prompt_ranks_the_criteria_just_below_the_request(room):
     assert '<source rank="2">current_request</source>' in system
     assert "acceptance_criteria_markdown is the established plan" in system
     # The other sources are still all ranked (shifted, not dropped).
-    assert '<source rank="7">conversation_history (context only)</source>' in system
+    assert '<source rank="7">conversation_history_xml (context only)</source>' in system
 
 
 def test_step0_consumes_none_of_the_step_limit(room):

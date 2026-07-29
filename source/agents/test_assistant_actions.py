@@ -107,9 +107,11 @@ def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
         step_index=1,
     )
 
-    assert '<conversation_history authority="context_only"' in prompt
-    assert 'facts_are_authoritative="false"' in prompt
-    assert 'assistant_messages="omitted_after_fresh_read"' in prompt
+    # A bare suffixed tag apart from `assistant_messages`, which is this
+    # turn's own state rather than a restatement of the prompt's policy.
+    assert '<conversation_history_xml assistant_messages="omitted_after_fresh_read">' in prompt
+    assert "authority=" not in prompt.split("<conversation_history_xml")[1][:80]
+    assert "facts_are_authoritative" not in prompt
     assert "<current_request>" in prompt
     assert '<current_turn_steps authority="fresh_evidence">' in prompt
     assert "<source_priority" not in prompt
@@ -136,7 +138,7 @@ def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
     tags = [s.tag for s in parsed]
     assert tags[0] == "current_request"
     assert tags[-1] == "current_local_time"
-    assert tags.index("conversation_history") < tags.index("current_turn_steps") \
+    assert tags.index("conversation_history_xml") < tags.index("current_turn_steps") \
         < tags.index("decision_request")
     assert "<runtime_context>" not in prompt      # wrapper dropped
     assert parsed.find("current_request") is not None
@@ -147,7 +149,7 @@ def test_source_priority_policy_is_in_system_prompt_only():
     assert '<source rank="1">successful current_turn_steps observations</source>' in (
         ASSISTANT_SYSTEM_PROMPT
     )
-    assert '<source rank="6">conversation_history (context only)</source>' in (
+    assert '<source rank="6">conversation_history_xml (context only)</source>' in (
         ASSISTANT_SYSTEM_PROMPT
     )
     # The baseline constant is the un-swapped literal; _system_prompt() always
@@ -241,7 +243,7 @@ def test_system_prompt_requires_fresh_read_not_chat_history():
     assert "do not repeat the same read" in p
     assert "same\nargs" in p
     assert "source" in p and "current_turn_steps" in p
-    assert "conversation_history (context only)" in p
+    assert "conversation_history_xml (context only)" in p
 
 
 @pytest.fixture

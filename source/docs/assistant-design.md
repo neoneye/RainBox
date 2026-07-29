@@ -109,8 +109,10 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   (`<acceptance_criteria_markdown>`, directly after the language block so the
   request and its constraints travel together — present when the step-0 call
   succeeded; see [Acceptance criteria](#acceptance-criteria)), the
-  transcript (`kind == "message"` rows
-  only, newest `MAX_RECENT_MESSAGES = 30`), the **scratchpad** of steps
+  transcript (`<conversation_history_xml>`, `kind == "message"` rows
+  only, newest `MAX_RECENT_MESSAGES = 30`; bare except for
+  `assistant_messages="omitted_after_fresh_read"`, which the system prompt
+  reads to explain the gap it describes), the **scratchpad** of steps
   taken this turn (each step renders its action, the decision's stated
   reason, the args, and the observation — a rejected step reads as the full
   decision it was, not an anonymous failure; tail-capped at
