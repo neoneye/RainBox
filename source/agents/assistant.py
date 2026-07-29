@@ -543,10 +543,10 @@ telling you to send it, is itself a defect worth reporting."""
 
 # The source-priority block the baseline prompt carries, and the variant
 # _system_prompt() always swaps in: the criteria section ranks directly below
-# current_request and the code-owned authority sentence rides with it. Two full
-# literals (not a computed diff) so each variant is readable exactly as the
-# model receives it. The baseline stays as the untouched constant that eval
-# fixtures and the prompt-shape tests compare against.
+# current_user_request and the code-owned authority sentence rides with it.
+# Two full literals (not a computed diff) so each variant is readable exactly
+# as the model receives it. The baseline stays as the untouched constant that
+# eval fixtures and the prompt-shape tests compare against.
 # What a code-driven call records when it could not run at all. A skip is an
 # outcome the trace has to carry: a run whose classifier never ran (so the reply
 # came out in the wrong language) is a different problem from one whose
@@ -560,7 +560,7 @@ _SKIPPED_NO_MODEL_GROUP: str = (
 SOURCE_PRIORITY_SECTION: str = """\
 <source_priority highest_first="true">
   <source rank="1">successful current_turn_steps observations</source>
-  <source rank="2">current_request</source>
+  <source rank="2">current_user_request</source>
   <source rank="3">reply_language_markdown (ranked reply-language classification for this turn)</source>
   <source rank="4">formatting_guide (default formatting; the current request and exact source notation override it)</source>
   <source rank="5">current_local_time, user_settings_json, knowledge_calibration and user_profile</source>
@@ -570,7 +570,7 @@ SOURCE_PRIORITY_SECTION: str = """\
 ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION: str = """\
 <source_priority highest_first="true">
   <source rank="1">successful current_turn_steps observations</source>
-  <source rank="2">current_request</source>
+  <source rank="2">current_user_request</source>
   <source rank="3">reply_language_markdown (ranked reply-language classification for this turn)</source>
   <source rank="4">acceptance_criteria_markdown (this turn's established reply plan)</source>
   <source rank="5">formatting_guide (default formatting; the current request and exact source notation override it)</source>
@@ -3779,8 +3779,8 @@ class AssistantAgent(ModelGroupAgent):
         # cannot close or forge a prompt zone.
         current = messages[-1] if messages else None
         context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
-        current_request = ET.SubElement(root, "current_request")
-        current_request.text = str((current or {}).get("text") or "none")
+        current_user_request = ET.SubElement(root, "current_user_request")
+        current_user_request.text = str((current or {}).get("text") or "none")
 
         # The classifier's score-free Markdown follows the request into every
         # reasoning step. It is model-derived context, while the system prompt
@@ -3817,7 +3817,7 @@ class AssistantAgent(ModelGroupAgent):
         history_attrs = {}
         if has_fresh_read:
             history_attrs["assistant_messages"] = "omitted_after_fresh_read"
-            context = [m for m in context if self._message_role(m) == "operator"]
+            context = [m for m in context if self._message_role(m) == "user"]
         history = ET.SubElement(root, "conversation_history_xml", history_attrs)
         if context:
             for message in context:
@@ -3843,9 +3843,9 @@ class AssistantAgent(ModelGroupAgent):
             {"step": str(step_index + 1), "max_steps": str(self.step_limit)},
         )
         decision_request.text = (
-            "Choose exactly one next action. If current_turn_steps already answer "
-            "the current_request, choose reply now. Never repeat an identical "
-            "successful or failed action."
+            "Choose exactly one next action. If current_turn_steps already "
+            "answer the current_user_request, choose reply now. Never repeat "
+            "an identical successful or failed action."
         )
 
         # Supporting context after the decision request. Identity (who the
@@ -4072,13 +4072,13 @@ class AssistantAgent(ModelGroupAgent):
         under review — the stated reason, the model's reasoning channel, and
         the program — then who is asking (identity + profile) and the local
         time. Same section convention as the main prompt: the task leads (a
-        bare current_request tag), supporting context follows, the time anchor
-        closes. Built with ElementTree for the same escaping guarantee; leaf
-        sections only, no conversation history (the current request is the
-        contract the program is judged against)."""
+        bare current_user_request tag), supporting context follows, the time
+        anchor closes. Built with ElementTree for the same escaping guarantee;
+        leaf sections only, no conversation history (the current request is
+        the contract the program is judged against)."""
         root = ET.Element("second_opinion_review")
         current = messages[-1] if messages else None
-        request = ET.SubElement(root, "current_request")
+        request = ET.SubElement(root, "current_user_request")
         request.text = str((current or {}).get("text") or "none")
         if self._reply_language_markdown:
             language = ET.SubElement(
@@ -4103,9 +4103,9 @@ class AssistantAgent(ModelGroupAgent):
         ]
         verdict_request = ET.SubElement(root, "verdict_request")
         verdict_request.text = (
-            "Review the proposed_step against the current_request and the "
-            "operator context below. List real problems (or none), then set "
-            "approved."
+            "Review the proposed_step against the current_user_request and "
+            "the operator context below. List real problems (or none), then "
+            "set approved."
         )
         if self._identity_block:
             identity = ET.SubElement(root, "user_settings_json")
@@ -4155,7 +4155,7 @@ class AssistantAgent(ModelGroupAgent):
         """
         root = ET.Element("reply_audit")
         current = messages[-1] if messages else None
-        request = ET.SubElement(root, "current_request")
+        request = ET.SubElement(root, "current_user_request")
         request.text = str((current or {}).get("text") or "none")
         proposed = ET.SubElement(root, "proposed_reply")
         proposed.text = message
@@ -4408,7 +4408,7 @@ class AssistantAgent(ModelGroupAgent):
         """Build the narrow classifier request with assistant history omitted."""
         root = ET.Element("response_language_classifier_call")
         current = messages[-1] if messages else None
-        request = ET.SubElement(root, "current_request")
+        request = ET.SubElement(root, "current_user_request")
         request.text = str((current or {}).get("text") or "none")
 
         # Both roles: an earlier assistant reply is the only record of what
@@ -4437,12 +4437,12 @@ class AssistantAgent(ModelGroupAgent):
             "Predict the language or languages the next reply should use. "
             "First copy every declared profile-language code exactly into the "
             "result and score it, even when its score is negative. A broad "
-            "target language in current_request is refined by a compatible "
-            "preferred profile variant; it does not replace that exact code "
-            "with a broad tag. Then add any language or dialect required by "
-            "current_request that is absent from the declared rows. If there "
-            "are no declared rows, include the candidates supported by the "
-            "request."
+            "target language in current_user_request is refined by a "
+            "compatible preferred profile variant; it does not replace that "
+            "exact code with a broad tag. Then add any language or dialect "
+            "required by current_user_request that is absent from the "
+            "declared rows. If there are no declared rows, include the "
+            "candidates supported by the request."
         )
 
         parts: list[str] = []
@@ -4669,7 +4669,7 @@ class AssistantAgent(ModelGroupAgent):
         guarantee as the other prompt builders."""
         root = ET.Element("acceptance_criteria_call")
         current = messages[-1] if messages else None
-        request = ET.SubElement(root, "current_request")
+        request = ET.SubElement(root, "current_user_request")
         request.text = str((current or {}).get("text") or "none")
         # Both roles. The operator's requests and preferences are the
         # authoritative context, but how the assistant has been formatting and
@@ -4706,8 +4706,8 @@ class AssistantAgent(ModelGroupAgent):
             "it invalidate? Emit the full revised criteria; keep everything "
             "the change does not touch."
             if revising else
-            "Establish the acceptance criteria the reply to current_request "
-            "must satisfy."
+            "Establish the acceptance criteria the reply to "
+            "current_user_request must satisfy."
         )
         if self._identity_block:
             identity = ET.SubElement(root, "user_settings_json")
@@ -4997,7 +4997,7 @@ class AssistantAgent(ModelGroupAgent):
 
     @staticmethod
     def _message_role(message: dict[str, Any]) -> str:
-        return "operator" if message.get("sender_type") == "human" else "assistant"
+        return "user" if message.get("sender_type") == "human" else "assistant"
 
     @classmethod
     def _append_prompt_message(

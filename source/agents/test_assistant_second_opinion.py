@@ -464,8 +464,8 @@ def test_review_prompt_carries_all_artifacts_under_review(monkeypatch):
     assert 'action="python_run"' in user_prompt
     # Same section convention as the main prompt: the task leads (bare tag),
     # supporting context follows, the local-time anchor closes.
-    assert "<current_request>" in user_prompt
-    assert (user_prompt.index("<current_request>")
+    assert "<current_user_request>" in user_prompt
+    assert (user_prompt.index("<current_user_request>")
             < user_prompt.index("<proposed_step")
             < user_prompt.index("<verdict_request>")
             < user_prompt.index("<user_settings_json")

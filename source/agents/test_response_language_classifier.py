@@ -353,7 +353,7 @@ def test_ranked_markdown_is_injected_into_every_later_decide_without_scores(room
         assert _classification().reason in decide_prompt
         assert decide_prompt.index("- `en-GB`") < decide_prompt.index("- `da`")
         assert "score" not in decide_prompt.casefold()
-        assert (decide_prompt.index("</current_request>")
+        assert (decide_prompt.index("</current_user_request>")
                 < decide_prompt.index("<reply_language_markdown")
                 < decide_prompt.index("<conversation_history"))
         assert (

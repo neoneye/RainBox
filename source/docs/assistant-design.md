@@ -98,7 +98,7 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   leads the prompt — with the request buried at the bottom under a long
   profile/history, weaker models answered the surrounding context instead of
   the request — and the supporting context follows. In order: the
-  **current request** (a bare `<current_request>` tag, no attributes: the
+  **current request** (a bare `<current_user_request>` tag, no attributes: the
   section order carries the emphasis and the time anchor is
   current_local_time at the end), the **response-language classification**
   (a bare `<reply_language_markdown>`: the suffix states the format and the
@@ -301,17 +301,17 @@ guide rendered from the criteria snapshot profile regardless of the
 injection). NOT the action catalog — the call plans constraints, not actions.
 
 The result renders as an `<acceptance_criteria_markdown>` section directly
-after `<current_request>` in every decide step: a Markdown projection of the
-structured result, since local models read Markdown faster than the equivalent
+after `<current_user_request>` in every decide step: a Markdown projection of
+the structured result, since local models read Markdown faster than the equivalent
 JSON (rainbox's own benchmarks) and nothing downstream parses the section back.
 The parsed object stays the authority and is what the trace row records — the
 same split the response-language classifier uses. Each field collapses to one
 line, so a model-written criterion cannot forge a heading into the section that
 holds it. Its authority lives in one code-owned system-prompt sentence, and
 `_system_prompt()` swaps the source-priority block for a variant ranking
-`acceptance_criteria_markdown` directly below `current_request`.
+`acceptance_criteria_markdown` directly below `current_user_request`.
 The second-opinion reviewer sees the same section next to its
-`current_request` (a program converting to yards should fail review when
+`current_user_request` (a program converting to yards should fail review when
 the criteria say meters).
 
 **Revision — the criteria are current state, not a step-0 snapshot:**

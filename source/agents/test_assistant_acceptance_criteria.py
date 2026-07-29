@@ -1,8 +1,8 @@
 """Tests for the acceptance-criteria step: a code-driven step 0 establishes
 the reply's constraints (processing preferences, formatting, assumptions)
 before the decide loop starts, injects them as
-<acceptance_criteria_markdown> directly after <current_request> in every decide
-step, and supports mid-run revision — code-driven after a flagged preference
+<acceptance_criteria_markdown> directly after <current_user_request> in every
+decide step, and supports mid-run revision — code-driven after a flagged preference
 write, model-requested via the `acceptance_criteria` catalog action.
 
 Deterministic: the criteria live-model seam (`_request_acceptance_criteria`)
@@ -226,7 +226,7 @@ def test_criteria_call_made_once_per_run_before_the_first_decide(room):
     assert "memory_query" not in calls[0]
 
 
-def test_criteria_section_renders_directly_after_current_request(room):
+def test_criteria_section_renders_directly_after_current_user_request(room):
     agent = _agent()
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
@@ -234,15 +234,16 @@ def test_criteria_section_renders_directly_after_current_request(room):
     prompt = prompts[0]["user"]
     assert "<acceptance_criteria_markdown" in prompt
     assert "target unit: meters (step0)" in prompt
-    assert (prompt.index("</current_request>")
+    assert (prompt.index("</current_user_request>")
             < prompt.index("<acceptance_criteria_markdown")
             < prompt.index("<conversation_history"))
 
 
 def test_system_prompt_ranks_the_criteria_just_below_the_request(room):
-    """The decide system prompt lists acceptance_criteria_markdown directly below
-    current_request and carries the code-owned authority sentence, so the model
-    treats the criteria as binding rather than as one more piece of context.
+    """The decide system prompt lists acceptance_criteria_markdown directly
+    below current_user_request and carries the code-owned authority sentence,
+    so the model treats the criteria as binding rather than as one more piece
+    of context.
     The module constant is the un-swapped literal and mentions neither — the
     two variants stay readable exactly as the model receives them."""
     from agents.assistant import ASSISTANT_SYSTEM_PROMPT
@@ -255,7 +256,7 @@ def test_system_prompt_ranks_the_criteria_just_below_the_request(room):
     system = prompts[0]["system"]
     assert ('<source rank="3">reply_language_markdown' in system)
     assert ('<source rank="4">acceptance_criteria_markdown' in system)
-    assert '<source rank="2">current_request</source>' in system
+    assert '<source rank="2">current_user_request</source>' in system
     assert "acceptance_criteria_markdown is the established plan" in system
     # The other sources are still all ranked (shifted, not dropped).
     assert '<source rank="7">conversation_history_xml (context only)</source>' in system
@@ -577,7 +578,7 @@ def test_revision_observation_records_the_inner_call_model_meta(room):
 # --- second opinion -----------------------------------------------------------
 
 
-def test_second_opinion_prompt_carries_criteria_next_to_current_request(room):
+def test_second_opinion_prompt_carries_criteria_next_to_current_user_request(room):
     agent = _agent()
     _stub_criteria_seam(agent, [_criteria("step0")])
     _capture_decides(agent, [_reply()])
@@ -591,7 +592,7 @@ def test_second_opinion_prompt_carries_criteria_next_to_current_request(room):
         messages=[{"text": "convert 1053737172 feet", "sender_type": "human"}])
     assert "<acceptance_criteria_markdown" in prompt
     assert "target unit: meters (step0)" in prompt
-    assert (prompt.index("</current_request>")
+    assert (prompt.index("</current_user_request>")
             < prompt.index("<acceptance_criteria_markdown")
             < prompt.index("<proposed_step"))
 
