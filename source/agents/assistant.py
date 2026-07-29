@@ -3958,8 +3958,11 @@ class AssistantAgent(ModelGroupAgent):
 
         # The review's own token/time cost. Nothing else in the schema records
         # it, so without this the gate's cost is invisible and the run
-        # dashboard under-reports every gated turn.
+        # dashboard under-reports every gated turn. `requested_at` matters as
+        # much as the duration: a call the trace cannot place is a call the
+        # Model calls timeline cannot draw a bar for.
         usage: dict[str, int] = {}
+        requested_at = datetime.now(UTC)
         with capture_reasoning() as tally:
             try:
                 verdict, model_uuid = structured_llm_call(
@@ -3976,6 +3979,7 @@ class AssistantAgent(ModelGroupAgent):
                     "reasoning": tally.reasoning_text or None,
                     "response": tally.content_text or None,
                     "usage": usage,
+                    "requested_at": requested_at,
                     **prompts,
                 }
         verdict = cast(SecondOpinionVerdict, verdict)
@@ -3995,6 +3999,7 @@ class AssistantAgent(ModelGroupAgent):
             # empty.
             "response": tally.content_text or verdict.model_dump_json(),
             "usage": usage,
+            "requested_at": requested_at,
             **prompts,
         }
 
@@ -4051,6 +4056,7 @@ class AssistantAgent(ModelGroupAgent):
                 input_tokens=(review.get("usage") or {}).get("input"),
                 output_tokens=(review.get("usage") or {}).get("output"),
                 duration_ms=(review.get("usage") or {}).get("ms"),
+                requested_at=review.get("requested_at"),
             )
             return str(row.uuid)
         except Exception:

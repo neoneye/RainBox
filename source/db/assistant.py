@@ -782,9 +782,15 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
                 model_uuid=s.model_uuid, input_tokens=s.input_tokens,
                 output_tokens=s.output_tokens))
         calls.extend(_inner_calls(s, data))
+    by_uuid = {str(s.uuid): s for s in steps}
     for r in reviews or []:
+        # A review runs between its step's decide call returning and the action
+        # executing, so a row written before review start times were recorded
+        # is placed at the moment its step row was opened.
+        gated = by_uuid.get(str(r.step_uuid)) if r.step_uuid else None
+        start = r.requested_at or (gated.created_at if gated else None)
         calls.append(_call(
-            "second opinion", "review", start=r.requested_at,
+            "second opinion", "review", start=start,
             duration_ms=r.duration_ms,
             anchor=str(r.step_uuid) if r.step_uuid else "",
             model_uuid=r.model_uuid, input_tokens=r.input_tokens,

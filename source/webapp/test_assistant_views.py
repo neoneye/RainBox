@@ -874,6 +874,40 @@ def test_waterfall_places_each_call_on_the_run_span(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_review_written_before_start_times_still_gets_a_bar(app_ctx, client):
+    """Reviews recorded before the gate stamped its start have a duration and
+    no start, so the timeline drew every other call and left this one outside
+    the span marked "not timed" — reading as if the second opinion had not run
+    at all. A review runs between its step's decide call returning and the
+    action executing, so it is placed at the moment that step row was opened."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    gated = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="python_run", reason="compute",
+        system_prompt="s", user_prompt="u", requested_at=datetime.now(UTC),
+        input_tokens=100, output_tokens=10, duration_ms=19172)
+    db.settle_assistant_step(gated, phase="observed", observation_preview="ok")
+    db.record_second_opinion_review(
+        run_uuid=run.uuid, step_uuid=gated.uuid, step_index=0,
+        action="python_run", verdict="approved", group_from="own",
+        system_prompt="s", user_prompt="u", response="{}",
+        input_tokens=1459, output_tokens=10, duration_ms=17497)  # no start
+    db.finish_run(run, "finished")
+    try:
+        steps = db.list_assistant_steps(run.uuid)
+        reviews = db.list_second_opinion_reviews(run.uuid)
+        assert reviews[0].requested_at is None      # the shape being handled
+        call = next(c for c in db.assistant_llm_calls(steps, reviews)
+                    if c["label"] == "second opinion")
+        assert call["start"] == steps[0].created_at
+        page, md = _rendered(client, run)
+        assert "second opinion" in page and "17.5s" in page
+        assert "not timed" not in page
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_call_without_a_recorded_start_is_placed_at_its_row_end(
         app_ctx, client):
     """Rows written before start times were captured still belong on the

@@ -497,6 +497,19 @@ def test_the_review_reports_its_own_cost(monkeypatch):
     assert review["usage"] == {"input": 400, "output": 20, "ms": 1500}
 
 
+def test_the_review_records_when_it_ran(monkeypatch):
+    """A duration with no start cannot be placed: the /assistant Model calls
+    timeline had every other call on the run's span and the second opinion
+    sitting outside it, marked "not timed". Both paths stamp the start."""
+    from datetime import UTC, datetime
+
+    for kwargs in ({"verdict": SecondOpinionVerdict(approved=True)},
+                   {"error": RuntimeError("all models in the group failed")}):
+        _approved, review, _ = _review(monkeypatch, **kwargs)
+        requested_at = review["requested_at"]
+        assert (datetime.now(UTC) - requested_at).total_seconds() < 60
+
+
 def test_a_failed_review_still_reports_what_it_spent(monkeypatch):
     """A call that failed open still burned tokens; dropping them would
     under-report the run."""
