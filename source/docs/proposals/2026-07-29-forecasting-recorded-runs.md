@@ -1702,84 +1702,108 @@ own with its own justification.
    `eval_run` / `eval_result`, structural leave-one-out, targeted pairs, and
    its two CLIs.
 7. `evals/forecast_bench.py`: the model sweep ordered model-outermost and
-   repeats-innermost, joint and conditional modes, capability-specific
-   scorers (including retrieved-id set/rank metrics for `memory_query`),
-   sparse-event Brier, interval score, continuity-policy invariants, authority
-   compatibility, environment strata, and the cross-model matrix.
+   repeats-innermost, joint and conditional modes, the three scorer tiers with
+   scored-coverage reporting (including retrieved-id set/rank metrics for
+   `memory_query`), sparse-event Brier, interval score, continuity-policy
+   invariants, authority compatibility, environment strata, and the
+   cross-model matrix.
 8. `evals/forecast_guard.py`: the paired audit-only versus
    forecast-assisted-audit simulation on held-out labelled terminal cases.
-9. Producer-sweep ecological and paired modes, with per-case state reset,
-   as-of memory/profile/task fixture, disposable workspace, frozen clock,
-   disabled external access, sensitivity manifest, and a fail-closed isolation
-   preflight.
-10. Prompt-sensitivity, authority-use, forecaster-scorecard, and
-    guard-readiness reports, with case counts, generation counts, clustered
-    intervals, control variation, environment fingerprints, and
-    majority-class baselines.
+9. Prompt-sensitivity, authority-use, forecaster-scorecard, and
+   guard-readiness reports, with case counts, generation counts, clustered
+   intervals, control variation, environment fingerprints, scored coverage,
+   and majority-class baselines.
+10. A snapshot TTL sweep: expire embedded prompts, observations and forecast
+    prose on the clock; leave scores, ids and hashes in place.
 
-Tests must prove:
+Producer-sweep isolation — per-case state reset, as-of fixtures, disposable
+workspace, frozen clock, fail-closed preflight — is **not** a seam here. No
+phase runs a producer sweep; the requirements stay documented under
+[What the producer sweep is actually for](#what-the-producer-sweep-is-actually-for)
+as the contract for if one is ever built.
+
+Tests must prove — grouped by the phase that first needs them, so a phase's
+list is a checklist and anything below the phase in progress is out of scope:
+
+**Phase 1 — replay fidelity, isolation, and scoring hygiene**
 
 - the subject run's trace is not modified by a replay;
+- the embedded subject system and user prompts are byte-identical to the
+  recorded pair;
+- the assistant's own production prompt is byte-identical with the
+  instrument present and absent;
+- sentinels in `summary`, delivered reply, future room messages, and
+  `active_call` never enter a forecast prompt;
+- conditional mode supplies the recorded action and arguments and the
+  forecaster's own action prediction is absent from its prompt;
+- an unbounded metric never reaches `EvalResult.score`, which the schema
+  constrains to `[0.0, 1.0]`; raw metrics land in `details`;
+- a malformed first output remains counted after a later repair succeeds, and
+  every conditional-on-valid metric carries validity coverage;
+- confidence intervals cluster repeats by case rather than counting each
+  decode as an independent task;
+- a null `bounds` against a capability-typed numeric observation is counted
+  as declined, while prose containing digits is not auto-classified numeric;
+- reversed or incompatible-unit intervals fail scoring, and wide intervals
+  pay through the interval score;
+- the TTL sweep expires embedded prompts, observations and forecast prose
+  while leaving scores, ids and hashes intact.
+
+**Phase 2 — the imitation benchmark**
+
+- a forecaster that always names the majority action scores at the printed
+  baseline, not above it;
+- an action outside `case.allowed_actions` is rejected even when it exists in
+  the current registry, and a removed historical action remains scoreable;
+- `top_probability <= set_probability`, candidate actions are unique, and the
+  sparse action output is never passed to multiclass log-loss code;
+- joint and conditional results are never pooled into one cell, and joint
+  outcomes from action-mismatch cases are never compared to the recorded
+  action's outcome;
+- every table reports scored coverage, and an unscored capability is absent
+  from the numerator rather than counted as passing.
+
+**Phase 3 — section surgery**
+
 - a rung's reconstructed prompt differs from its neighbour by exactly the
   sections that rung adds;
 - ablation removes one block and nothing else;
+- repeats with a fixed configuration produce a reported variance, and the
+  report refuses to rank stages without one;
+- claim comparison ignores wording.
+
+**Phase 4 — the authority overlay, once claims carry evidence**
+
 - invalid `source_refs` are surfaced as invented, not counted as support;
+- a `memory_evidence` row whose provenance is `inferred_by_model` cannot
+  satisfy an evidence-class citation however it is stored;
 - a retrieved memory uuid can score as an exact retrieval outcome without
   being accepted as proof that the claim text is true;
-- a reusable lesson cannot mechanically support “this action ran,” while the
+- a reusable lesson cannot mechanically support "this action ran," while the
   corresponding append-only step/event row can;
 - relabelling an execution event as a recommendation is surfaced by the
   labelled claim-role scorer rather than laundering an incompatible source;
 - descriptor freshness is evaluated at the subject timestamp, and a later
   correction is retained as later evidence rather than rewriting the prompt;
-- paired mode refuses a case whose as-of memory/profile/task state cannot be
-  reconstructed;
-- claim comparison ignores wording;
-- repeats with a fixed configuration produce a reported variance, and the
-  report refuses to rank stages without one;
-- sentinels in `summary`, delivered reply, future room messages, and
-  `active_call` never enter a forecast prompt;
-- a forecaster that always names the majority action scores at the printed
-  baseline, not above it;
-- an action outside `case.allowed_actions` is rejected even when it exists in
-  the current registry, and a removed historical action remains scoreable;
-- the embedded subject system and user prompts are byte-identical to the
-  recorded pair;
-- the assistant's own production prompt is byte-identical with the
-  instrument present and absent;
-- `top_probability <= set_probability`, candidate actions are unique, and the
-  sparse action output is never passed to multiclass log-loss code;
-- a malformed first output remains counted after a later repair succeeds, and
-  every conditional-on-valid metric carries validity coverage;
-- a null `bounds` against a capability-typed numeric observation is counted
-  as declined, while prose containing digits is not auto-classified numeric;
-- reversed or incompatible-unit intervals fail scoring, and wide intervals
-  pay through the interval score;
-- an exact scalar absent from its cited block is counted as a lexical mismatch
-  rather than automatically labelled hallucinated;
-- the producer sweep refuses to run without the evaluation database,
-  disposable workspace, no real credentials/network, capability allowlist,
-  frozen case state, and reset proof;
-- model order cannot change paired producer outcomes because every case starts
-  from the same fixture;
+- an exact scalar absent from its cited block is counted as a lexical
+  mismatch rather than automatically labelled hallucinated;
 - continuity checks reject a duplicate successful write, execution past a
-  pending approval, and unchanged resubmission after a corrective error, while
-  leaving ambiguous repeated reads for labels;
-- conditional mode supplies the recorded action and arguments and the
-  forecaster's own action prediction is absent from its prompt;
-- joint and conditional results are never pooled into one cell, and joint
-  outcomes from action-mismatch cases are never compared to the recorded
-  action's outcome;
-- guard simulation retains the original candidate, keeps the forecast answer
-  out of the reviser prompt, and reports correct-answer regressions beside
-  defect recovery;
-- derived eval snapshots inherit sensitivity and retention, and deleting an
-  expiring copied source exercises the configured deletion/redaction path;
+  pending approval, and unchanged resubmission after a corrective error,
+  while leaving ambiguous repeated reads for labels;
 - an eval finding cannot create an active reusable memory or skill without a
   reviewed promotion carrying sources, owner, confidence, review date, and
-  expiry;
-- confidence intervals cluster repeats by case rather than counting each
-  decode as an independent task.
+  expiry.
+
+**Phase 5 — guard readiness**
+
+- guard simulation retains the original candidate, keeps the forecast answer
+  out of the reviser prompt, and reports correct-answer regressions beside
+  defect recovery.
+
+**Deferred with their features** — producer-sweep isolation preflight, model
+order not changing paired outcomes, and paired mode refusing an
+unreconstructable as-of state. These belong with the producer sweep and are
+not written until something needs it.
 
 ## The standard names for what this does
 
