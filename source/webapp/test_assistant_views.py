@@ -642,6 +642,100 @@ def test_code_driven_step_shows_its_real_response_not_a_synthesized_decision(
         _cleanup(run.uuid, room.uuid)
 
 
+def _real_run_shape(run) -> None:
+    """The row sequence a plain reply run produces: two calls the loop makes
+    before the loop opens, the audit of the finished reply, then the reply the
+    model decided. All four carry decide-step index 0 — the code-driven ones
+    ride alongside the decide step rather than consuming budget. The audit's
+    row precedes the reply's (the reply lands only once the audit says send)
+    while its call went out later, so the `requested_at` stamps matter."""
+    t0 = datetime(2026, 7, 29, 14, 7, 21, tzinfo=UTC)
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="observed",
+        action="response_language_classifier", reason="the request is in English",
+        code_driven=True, model_response='{"languages": [{"code": "en-US"}]}',
+        observation_preview="en-US", requested_at=t0)
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="observed",
+        action="acceptance_criteria",
+        reason="established before step 0 (code-driven)", code_driven=True,
+        model_response='{\n  "processing": "answer in meters"\n}',
+        observation_preview='{\n "processing": "answer in meters"\n}',
+        requested_at=t0 + timedelta(seconds=17))
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="observed",
+        action="reply_audit", reason="send", code_driven=True,
+        model_response='{"verdict": "send"}', observation_preview='{"verdict": "send"}',
+        requested_at=t0 + timedelta(seconds=55))
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="reply", reason="ready to answer",
+        args={"message": "About 321179090 meters."},
+        requested_at=t0 + timedelta(seconds=35))
+    db.settle_assistant_step(step, phase="final", observation_preview="replied")
+
+
+def test_steps_are_numbered_by_position_and_marked_warm_up_or_follow_up(
+        app_ctx, client):
+    """Numbering by `step_index` printed "Step 1 of 4" for three rows in a row,
+    because the code-driven calls share the decide index they sit beside. The
+    timeline numbers positions instead, and says which rows are not decide
+    steps: warm-up before the loop opens, follow-up once it has."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _real_run_shape(run)
+    db.finish_run(run, "finished")
+    try:
+        page, md = _rendered(client, run)
+        assert page.count("Step 1 of 4") == 1
+        assert [n for n in range(1, 5) if f"Step {n} of 4" in page] == [1, 2, 3, 4]
+        for text in (page, md):
+            # The two pre-loop calls, then the audit of what the model decided.
+            assert text.count("warm-up") >= 2
+            assert text.count("follow-up") >= 1
+        # The markdown headings carry it in reading order. The audit ran after
+        # the reply's decide call even though its row precedes the reply's.
+        heads = [ln.split(" — ")[:3] for ln in md.splitlines()
+                 if ln.startswith("### Step ")]
+        assert heads == [
+            ["### Step 1 of 4", "warm-up", "response_language_classifier"],
+            ["### Step 2 of 4", "warm-up", "acceptance_criteria"],
+            ["### Step 3 of 4", "follow-up", "reply_audit"],
+            # No kind on the one real decide step, so its action sits here.
+            ["### Step 4 of 4", "reply", "send the final answer to the user"],
+        ]
+        # The catalog summary for `acceptance_criteria` describes the revision
+        # the model can request; the loop's own call establishes them.
+        assert "establish what a good reply must satisfy" in md
+        assert "revise this turn's acceptance criteria" not in md
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_code_driven_row_shows_its_payload_once_and_calls_no_action(
+        app_ctx, client):
+    """Its response IS its result — printing the same JSON under both "model
+    response" and "action result" reads as two things having happened. Nor was
+    an action called: the loop made the call itself, so an "action call" block
+    with empty args is the same fiction the synthesized decision was."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _real_run_shape(run)
+    db.finish_run(run, "finished")
+    try:
+        for text in _rendered(client, run):
+            # Indentation differs between the raw response and the stored
+            # preview, so the duplicate is caught on content, not bytes.
+            assert text.count("answer in meters") == 1
+            assert text.count("action call") == 1  # the reply step's, only
+            # The classifier's rendered result is NOT its raw response, so both
+            # blocks survive there.
+            assert "en-US" in text
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_model_chosen_step_still_shows_its_decision(app_ctx, client):
     """The counterpart: a step the model decided keeps its verbatim decision
     dump — that IS the model's response for a decide call."""
@@ -697,6 +791,12 @@ def test_in_flight_model_call_card(app_ctx, client):
         assert "model call in progress" in body
         assert "pondering the request" in body
         assert "live-model" in body
+        # The card takes the position the timeline will give the row it becomes
+        # — not step_index + 1, which the timeline no longer numbers by.
+        assert "Step 1<" in body
+        _real_run_shape(run)
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "Step 5<" in body
 
         db.finish_run(run, "finished")
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)

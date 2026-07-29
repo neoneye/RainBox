@@ -35,6 +35,12 @@ _ACTION_DESCRIPTIONS.update({
     ),
     "reply_audit": "check the finished reply before it is sent",
 })
+# Consulted first for a `code_driven` row. `acceptance_criteria` is the one
+# action that is both: the catalog summary describes the revision the model can
+# request, which is not what the loop's own call does.
+_CODE_DRIVEN_DESCRIPTIONS = {
+    "acceptance_criteria": "establish what a good reply must satisfy",
+}
 
 ASSISTANT_TEMPLATE = """
 <!doctype html>
@@ -187,6 +193,11 @@ ASSISTANT_TEMPLATE = """
                        margin:-10px 0; padding:10px 0 10px 1rem; border-left:1px solid #e5e7eb; }
   .as-main .step .hd .ix { color:inherit; }
   .as-main .step .hd .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  /* Rows the loop produced itself (warm-up / follow-up calls). Purple like the
+     control badge, which marks the other kind of row the model didn't decide;
+     the tinted header keeps the real ReAct steps scannable between them. */
+  .as-main .step.aux .hd { background:#faf5ff; }
+  .as-main .step .hd .kind { color:#7e22ce; font-weight:600; }
   /* Right-aligned metadata on io-labels: model link, token counts, duration, timestamp.
      Fields are separated by the flex gap, not punctuation. */
   .as-main .step .io-meta { margin-left:auto; display:flex; gap:1rem; align-items:center;
@@ -344,11 +355,18 @@ ASSISTANT_TEMPLATE = """
 
       {% if not timeline %}<div class="as-empty">This run has no steps.</div>{% endif %}
       {% for step, intents in timeline %}
-      <div class="step phase-{{ step.phase }}" id="step-{{ step.uuid }}">
+      {% set kind = step_kinds.get(step.uuid|string) %}
+      <div class="step phase-{{ step.phase }}{% if kind %} aux{% endif %}" id="step-{{ step.uuid }}">
         <div class="hd">
-          <a class="ix step-anchor" href="#step-{{ step.uuid }}" title="Link to this step (internal step index={{ step.step_index }})">Step {{ step.step_index + 1 }} of {{ timeline|length }}</a>
-          <span class="action" title="The action the model decided to take for this step">{{ step.action or '—' }}</span>
-          {% if step.action and action_descriptions.get(step.action) %}<span class="action-desc">{{ action_descriptions[step.action] }}</span>{% endif %}
+          {# Numbered by position in the timeline, not by `step_index`: the
+             code-driven rows deliberately share the decide index they sit
+             beside, so numbering by it repeated "Step 1 of 4" three times. The
+             decide-loop index stays in the tooltip. #}
+          <a class="ix step-anchor" href="#step-{{ step.uuid }}" title="Link to this step (decide-loop step index={{ step.step_index }})">Step {{ loop.index }} of {{ timeline|length }}</a>
+          {% if kind %}<span class="kind" title="Not a decide step: the loop issued this call itself {{ 'before the first decide step' if kind == 'warm-up' else 'in reaction to what the model decided' }}, so the model never chose it and it consumes none of the step budget">{{ kind }}</span>{% endif %}
+          <span class="action" title="{% if kind %}The call the loop made at this point{% else %}The action the model decided to take for this step{% endif %}">{{ step.action or '—' }}</span>
+          {% set desc = step.action and ((code_driven_descriptions.get(step.action) if step.code_driven else none) or action_descriptions.get(step.action)) %}
+          {% if desc %}<span class="action-desc">{{ desc }}</span>{% endif %}
         </div>
         <div class="step-body">
         {% if step.phase == 'control' %}
@@ -449,7 +467,9 @@ ASSISTANT_TEMPLATE = """
           {% if so.error %}<pre>review failed open: {{ so.error }}</pre>{% endif %}
         </div>
         {% endif %}
-        {% if step.action %}
+        {# No action call on a code-driven row: nothing was dispatched from a
+           decision, and the empty args made the block read as one that was. #}
+        {% if step.action and not step.code_driven %}
         <div class="io io-call">
           <div class="io-label">action call{% if step.created_at %}<span class="io-meta"><span class="io-time" title="When this action was called: {{ step.created_at.replace(microsecond=0).isoformat() }}">{{ step.created_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
           {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
@@ -458,8 +478,11 @@ ASSISTANT_TEMPLATE = """
         {% endif %}
         {% set obs = step.observation %}
         {# The model request / second opinion / action call / action result
-           io-blocks are mirrored in Python by _step_md(); keep them aligned. #}
-        {% if obs is not none or step.observation_preview %}
+           io-blocks are mirrored in Python by _step_md(); keep them aligned.
+           The result is dropped when it only repeats the model response above
+           (a code-driven call's response IS its result). #}
+        {% if (obs is not none or step.observation_preview)
+              and (step.uuid|string) not in duplicate_result %}
         <div class="io io-in">
           <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{% if step.settled_at %}<span class="io-meta">{% if step.created_at %}<span class="io-dur" title="Duration: how long the action took to complete">took {{ '%.1f'|format((step.settled_at - step.created_at).total_seconds()) }}s</span>{% endif %}<span class="io-time" title="When this action result was recorded: {{ step.settled_at.replace(microsecond=0).isoformat() }}">{{ step.settled_at.strftime('%H:%M:%S') }}</span></span>{% endif %}</div>
           {% if obs is not none %}
@@ -505,7 +528,9 @@ ASSISTANT_TEMPLATE = """
       {% if active_call %}
       <div class="step phase-running" id="active-call">
         <div class="hd">
-          <span class="ix">{% if active_call.step_index is not none %}Step {{ active_call.step_index + 1 }}{% else %}Step{% endif %}</span>
+          {# The in-flight call has no row yet, so it takes the position right
+             after the last one — the number the timeline will give it. #}
+          <span class="ix" title="{% if active_call.step_index is not none %}decide-loop step index={{ active_call.step_index }}{% endif %}">Step {{ timeline|length + 1 }}</span>
           <span class="action">model call in progress…</span>
           {% if active_call.model_name %}<span class="action-desc">{{ active_call.model_name }}</span>{% endif %}
         </div>
@@ -902,7 +927,8 @@ def _second_opinion_md(so: dict) -> list[str]:
 
 
 def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
-             reviews: dict | None = None) -> list[str]:
+             reviews: dict | None = None,
+             duplicate_result: set[str] | None = None) -> list[str]:
     """A single timeline step's body: model request/response, action call/result
     and any error. Mirror of the template's per-step io-blocks (search
     ASSISTANT_TEMPLATE for "mirrored in Python by _step_md"); keep the set of
@@ -958,7 +984,7 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
     second_opinion, obs_data = _split_second_opinion(step, reviews)
     if second_opinion is not None:
         lines.extend(_second_opinion_md(second_opinion))
-    if step.action:
+    if step.action and not step.code_driven:
         when = _hms(step.created_at)
         lines.append("**action call**" + (f" · {when}" if when else ""))
         lines.append("")
@@ -966,7 +992,8 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
             lines.append(_fence(json.dumps(step.args, ensure_ascii=False, indent=2), "json"))
             lines.append("")
     obs = step.observation
-    if obs is not None or step.observation_preview:
+    if (obs is not None or step.observation_preview) and (
+            str(step.uuid) not in (duplicate_result or set())):
         label = "**action result**"
         if obs is not None:
             label += f" · ok: {'true' if obs.get('ok') else 'false'}"
@@ -1063,17 +1090,24 @@ def _run_markdown(run, ctx: dict) -> str:
     if not timeline:
         out += ["This run has no steps.", ""]
     n = len(timeline)
-    for step, intents in timeline:
-        head = f"Step {step.step_index + 1} of {n}"
+    kinds = ctx.get("step_kinds", {})
+    for position, (step, intents) in enumerate(timeline, start=1):
+        # Position, not step_index — see the template's numbering note.
+        head = f"Step {position} of {n}"
+        kind = kinds.get(str(step.uuid))
+        if kind:
+            head += f" — {kind}"
         if step.phase == "control":
             out.append(f"### {head} — control")
         else:
-            desc = _ACTION_DESCRIPTIONS.get(step.action or "")
+            desc = (step.code_driven
+                    and _CODE_DRIVEN_DESCRIPTIONS.get(step.action or "")
+                    ) or _ACTION_DESCRIPTIONS.get(step.action or "")
             title = f"{head} — {step.action or '—'}" + (f" — {desc}" if desc else "")
             out.append(f"### {title}")
         out.append("")
         out += _step_md(step, ctx["decision_json"], ctx["model_names"],
-                        ctx["reviews"])
+                        ctx["reviews"], ctx.get("duplicate_result", set()))
         for it in intents:
             out += _intent_md(it)
 
@@ -1115,6 +1149,52 @@ def _active_model_call(run) -> dict | None:
     }
 
 
+def _step_kinds(steps) -> dict[str, str]:
+    """Label the rows that are not decide steps, by uuid.
+
+    A code-driven row is a call the loop made on its own initiative, and it
+    consumes none of the step budget — so the operator needs to see at a glance
+    that it isn't part of the ReAct sequence. Which label depends on when it
+    ran: the response-language classifier and the acceptance-criteria step 0 go
+    out before the first decide call (`warm-up`), while the reply audit and a
+    mid-run criteria refresh react to something the model already decided
+    (`follow-up`).
+
+    `requested_at`, not row order, decides. The audit's row is written before
+    the reply row it audits (the reply lands only once the audit says send), so
+    ordering by row would call it a warm-up. Timing, not action name, also means
+    a code-driven call added later is labelled right the day it lands. Rows
+    predating `requested_at` capture fall back to row order."""
+    first_decide = min(
+        (s.requested_at for s in steps
+         if not s.code_driven and s.phase != "control" and s.requested_at),
+        default=None)
+    kinds: dict[str, str] = {}
+    seen_decide = False
+    for s in steps:
+        if not s.code_driven:
+            if s.phase != "control":
+                seen_decide = True
+            continue
+        started = (s.requested_at > first_decide
+                   if s.requested_at and first_decide else seen_decide)
+        kinds[str(s.uuid)] = "follow-up" if started else "warm-up"
+    return kinds
+
+
+def _same_payload(response: str | None, result: str | None) -> bool:
+    """True when a step's raw model response and its recorded result are the
+    same content. A code-driven call's result IS its response — the two differ
+    only by the serializer's indentation — and printing it twice under two
+    labels reads as two separate things having happened."""
+    if not response or not result:
+        return False
+    try:
+        return json.loads(response) == json.loads(result)
+    except ValueError:
+        return " ".join(response.split()) == " ".join(result.split())
+
+
 def _load_run_detail(selected) -> dict:
     """Assemble the per-run detail shared by the HTML page and the markdown
     export: the step timeline (each step with its write-intents), the verbatim
@@ -1144,6 +1224,12 @@ def _load_run_detail(selected) -> dict:
         for s in steps
         if s.phase != "control" and not s.code_driven
         and (s.action is not None or s.reason is not None)
+    }
+    step_kinds = _step_kinds(steps)
+    duplicate_result = {
+        str(s.uuid) for s in steps
+        if s.observation is None
+        and _same_payload(s.model_response, s.observation_preview)
     }
     # The review rows this run's steps point at — one query, like the steps and
     # write-intents above. Keyed by uuid for the pointer lookup; each is split
@@ -1179,6 +1265,8 @@ def _load_run_detail(selected) -> dict:
     return {
         "timeline": timeline,
         "decision_json": decision_json,
+        "step_kinds": step_kinds,
+        "duplicate_result": duplicate_result,
         "second_opinion": second_opinion,
         "obs_data": obs_data,
         "unlinked": unlinked,
@@ -1218,9 +1306,12 @@ def assistant_page() -> str:
         trigger=ctx.get("trigger"),
         timeline=ctx.get("timeline", []),
         decision_json=ctx.get("decision_json", {}),
+        step_kinds=ctx.get("step_kinds", {}),
+        duplicate_result=ctx.get("duplicate_result", set()),
         second_opinion=ctx.get("second_opinion", {}),
         obs_data=ctx.get("obs_data", {}),
         action_descriptions=_ACTION_DESCRIPTIONS,
+        code_driven_descriptions=_CODE_DRIVEN_DESCRIPTIONS,
         unlinked=ctx.get("unlinked", []),
         pending_controls=ctx.get("pending_controls", []),
         duration=duration, model_names=ctx.get("model_names", {}),

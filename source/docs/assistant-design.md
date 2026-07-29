@@ -615,6 +615,17 @@ UI), `POST …/stop`, `POST …/redirect`, `POST …/resummarize`, and
   `/assistant/<run>/markdown`. Deep-linked as `/assistant?id=<run-uuid>`
   (chat replies and the step-limit message link here).
 
+  Timeline rows are numbered by their position ("Step 3 of 4"), not by
+  `step_index` — the code-driven rows share the decide index they sit beside,
+  so numbering by it repeated one number several times over. The decide-loop
+  index stays in the anchor's tooltip. A code-driven row is marked `warm-up`
+  (its call went out before the first decide call: the response-language
+  classifier, the acceptance-criteria step 0) or `follow-up` (after: the reply
+  audit, a mid-run criteria refresh), so the real ReAct steps are scannable
+  between them. Those rows show no decision dump and no action call — neither
+  happened — and their result is dropped when it only repeats the response
+  above, which for such a call is the same content twice.
+
   The page updates live while its run is active, riding the same `chat_events`
   SSE stream as /chat (per `chat-frontend-rules.md`: no polling, hidden tab
   stays silent and catches up on refocus). The run/step/checkpoint helpers in
