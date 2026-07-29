@@ -127,11 +127,6 @@ byte-identical whether this instrument has ever been run. A measurement that
 changes the thing it measures is not measuring it, and this one cannot,
 because the run it reads finished before the instrument existed.
 
-The one rung with no recorded prompt is `cold`, which sees only the request
-and transcript — there was never a call with that context. Code builds it
-from the stored messages. Every other rung is either a stored prompt or a
-stored prompt with sections removed.
-
 ## The sensitivity ladder — where the answer moved
 
 The rungs are semantic information sets, not literal prompt prefixes and not
@@ -340,13 +335,12 @@ binary events: whether the first candidate is right, and whether the true
 action is anywhere in the short set.
 
 ```python
-from decimal import Decimal
 from typing import Any
 
 
 class QuantityBounds(BaseModel):
-    low: Decimal
-    high: Decimal
+    low: float
+    high: float
     unit: str = Field(min_length=1)
     coverage_probability: int = Field(ge=1, le=99, description=(
         "Probability that the observed quantity falls inside [low, high]."))
@@ -445,6 +439,18 @@ negative infinity to positive infinity, so report normalized width and a
 proper interval score beside coverage. Unit normalization is
 capability-specific; an unrecognized or incompatible unit is an invalid
 forecast, not a string-comparison miss. Code also requires `low <= high`.
+
+`low` and `high` are `float`, and deliberately not `Decimal`. Every numeric
+field in every structured-output model this codebase already runs is an
+`int` with bounds; nothing exotic has been through the llama-index path,
+which is the layer trap 5 of `2026-07-24-operator-locale-and-language.md`
+names — its streaming partial parser constructs the response *without*
+validation, so a field can arrive as a type the schema forbids. `Decimal`
+also renders as a JSON-schema string under Pydantic v2, which would ask a
+grammar-constrained model for a string and hand the scorer prose to parse
+while looking typed. Forecast bounds need no exact decimal arithmetic, so
+the risk buys nothing. Re-validate on the way out regardless, per that same
+trap.
 
 `ok_probability` is the field that makes one useful calibration measurement
 cheap. Everything else in this document has been careful to say that a
