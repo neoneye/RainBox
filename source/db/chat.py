@@ -1002,14 +1002,18 @@ def set_workspace_shell_state(room_uuid: UUID, cwd: str, env: dict[str, str]) ->
 
 
 def seed_chat_defaults() -> None:
-    """Idempotent chat seed: exactly one human operator, an agent chat_user per
+    """Idempotent chat seed: exactly one human user, an agent chat_user per
     agent_config entry, and — only if there are no rooms yet — a starter
-    'general' room so /chat isn't empty on first load."""
+    'general' room so /chat isn't empty on first load.
+
+    The human is named "user", not the person's own name: the name is a
+    display label that rides every transcript into the model, and the
+    identity behind it belongs in the profile blocks instead."""
     from agents.config import agent_config
 
     human = get_human_user()
     if human is None:
-        human = ChatUser(name="operator", user_type="human")
+        human = ChatUser(name="user", user_type="human")
         db.session.add(human)
         db.session.flush()
 

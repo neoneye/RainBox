@@ -15,29 +15,29 @@ def test_empty_history():
 
 
 def test_single_message_has_no_history():
-    out = format_history([{"sender_name": "operator", "text": "ping"}])
-    assert out == "Chat history: none\n\nCurrent message:\n<operator> ping"
+    out = format_history([{"sender_name": "user", "text": "ping"}])
+    assert out == "Chat history: none\n\nCurrent message:\n<user> ping"
 
 
 def test_multiple_oldest_first_with_current_separated():
     msgs = [
-        {"sender_name": "operator", "text": "hi"},
+        {"sender_name": "user", "text": "hi"},
         {"sender_name": "chatagent", "text": "Hi!"},
-        {"sender_name": "operator", "text": "ping"},
+        {"sender_name": "user", "text": "ping"},
     ]
     assert format_history(msgs) == (
         "Chat history, oldest first:\n"
-        "<operator> hi\n"
+        "<user> hi\n"
         "<chatagent> Hi!\n"
         "\n"
         "Current message:\n"
-        "<operator> ping"
+        "<user> ping"
     )
 
 
 def test_multiline_text_collapsed_to_one_line():
-    out = format_history([{"sender_name": "operator", "text": "first line\nsecond line"}])
-    assert "<operator> first line\\nsecond line" in out
+    out = format_history([{"sender_name": "user", "text": "first line\nsecond line"}])
+    assert "<user> first line\\nsecond line" in out
     assert "first line\nsecond line" not in out  # no real newline inside a message
 
 
@@ -45,17 +45,17 @@ def test_string_timestamp_rendered():
     out = format_history(
         [
             {"sender_name": "a", "text": "x"},
-            {"sender_name": "operator", "text": "ping", "timestamp": "2026-05-26 01:31"},
+            {"sender_name": "user", "text": "ping", "timestamp": "2026-05-26 01:31"},
         ]
     )
-    assert "[2026-05-26 01:31] <operator> ping" in out
+    assert "[2026-05-26 01:31] <user> ping" in out
 
 
 def test_datetime_timestamp_rendered():
     out = format_history(
-        [{"sender_name": "operator", "text": "ping", "created_at": datetime(2026, 5, 26, 1, 31)}]
+        [{"sender_name": "user", "text": "ping", "created_at": datetime(2026, 5, 26, 1, 31)}]
     )
-    assert "[2026-05-26 01:31] <operator> ping" in out
+    assert "[2026-05-26 01:31] <user> ping" in out
 
 
 def test_context_limit_caps_history():

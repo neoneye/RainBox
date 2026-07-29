@@ -287,7 +287,7 @@ def _run_query_filter_router(query: str, top_k_vector: int,
         if out["filter_error"] is None:
             try:
                 transcript = format_history(
-                    [{"sender_name": "operator", "text": query}]
+                    [{"sender_name": "user", "text": query}]
                 )
                 if relevant_qa_ids:
                     lines = ["", "Relevant candidates:"]
