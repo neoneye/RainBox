@@ -199,8 +199,14 @@ for its whole life, so write intents can reference the producing step.
 Key fields:
 
 - `run_uuid`, `step_index`
-- `phase`: `planned`, `running`, `observed`, `failed`, `final`, `control` —
-  the step's *current state*, not a per-transition log
+- `phase`: `planned`, `running`, `observed`, `failed`, `final`, `control`,
+  `skipped` — the step's *current state*, not a per-transition log.
+  `skipped` is a call the loop could not make at all (no model group bound):
+  neither observed (nothing came back) nor failed (nothing broke). It is
+  recorded rather than dropped, because a run whose classifier never ran is a
+  different problem from one whose classifier errored, and a dropped row makes
+  a misconfigured install look healthy. A skipped row is not a model call —
+  `assistant_llm_calls` excludes it, so it is never priced
 - `action`, `reason`, `args`
 - `system_prompt`, `user_prompt`: the exact decide-call prompt
 - `reasoning`: the model's native thinking channel from the decide call

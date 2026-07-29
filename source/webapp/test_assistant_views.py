@@ -1277,3 +1277,36 @@ def test_live_refresh_keeps_expanded_blocks_open(app_ctx, client):
         assert "function (d) { if (open[detailsKey(d)]) d.open = true; });" in body
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_a_skipped_call_reads_as_skipped_not_as_a_silent_row(app_ctx, client):
+    """A call the loop could not make is a row like any other, but it must not
+    look like one that ran: it carries a `skipped` badge, no empty "model
+    response" block, and no bar in the Model calls timeline (it cost nothing)."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    skipped = db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="skipped",
+        action="acceptance_criteria", reason="no model group is bound",
+        code_driven=True, system_prompt="s", user_prompt="u",
+        observation_preview="skipped: no model group is bound",
+        requested_at=datetime.now(UTC))
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="ready", duration_ms=4000, input_tokens=100, output_tokens=20)
+    db.finish_run(run, "finished")
+    try:
+        page, md = _rendered(client, run)
+        assert ">skipped<" in page
+        assert "no model group is bound" in page and "no model group is bound" in md
+        # It has no response, so it gets no "model response" block at all —
+        # an empty one reads as a call that answered with nothing.
+        fragment = page.split(f'id="step-{skipped.uuid}"')[1].split('id="step-')[0]
+        assert "model response" not in fragment
+        assert "no model group is bound" in fragment       # but its result is there
+        assert md.count("**model response**") == 1         # the reply's, only
+        # It cost nothing, so it is not one of the run's model calls.
+        assert "- **LLM calls:** 1" in md
+    finally:
+        _cleanup(run.uuid, room.uuid)

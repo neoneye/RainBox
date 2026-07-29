@@ -87,6 +87,8 @@ ASSISTANT_TEMPLATE = """
   /* Neutral phases & non-success terminal states → gray. "observed"/"final" are
      lifecycle phases, not outcomes, so they must not read as green. */
   .b-stopped,.b-rejected,.b-planned,.b-observed,.b-final { background:#f1f3f5; color:#555; }
+  /* A call the loop could not make at all — neither an outcome nor a failure. */
+  .b-skipped { background:#fff4e5; color:#b06f00; }
   /* A run finished — terminal but outcome-agnostic (the Resolved/Unresolved
      verdict says whether it succeeded) → blue-gray, not optimistic green. */
   .b-finished { background:#eef2f6; color:#475569; }
@@ -434,6 +436,7 @@ ASSISTANT_TEMPLATE = """
              beside, so numbering by it repeated "Step 1 of 4" three times. The
              decide-loop index stays in the tooltip. #}
           <a class="ix step-anchor" href="#step-{{ step.uuid }}" title="Link to this step (decide-loop step index={{ step.step_index }})">Step {{ loop.index }} of {{ timeline|length }}</a>
+          {% if step.phase == 'skipped' %}<span><span class="badge b-skipped" title="The loop could not make this call at all — nothing ran, and nothing failed">skipped</span></span>{% endif %}
           {% if kind %}<span class="kind" title="Not a decide step: the loop issued this call itself {{ 'before the first decide step' if kind == 'warm-up' else 'in reaction to what the model decided' }}, so the model never chose it and it consumes none of the step budget">{{ kind }}</span>{% endif %}
           <span class="action" title="{% if kind %}The call the loop made at this point{% else %}The action the model decided to take for this step{% endif %}">{{ step.action or '—' }}</span>
           {% set desc = step.action and ((code_driven_descriptions.get(step.action) if step.code_driven else none) or action_descriptions.get(step.action)) %}
@@ -485,11 +488,13 @@ ASSISTANT_TEMPLATE = """
           </details>
         </div>
         {% endif %}
+        {% set decision_text = decision_json.get(step.uuid|string, '') %}
+        {% if decision_text or step.model_response %}
         <div class="io io-out">
-          {% set decision_text = decision_json.get(step.uuid|string, '') %}
           <div class="io-label">{% if step.model_response and not decision_text and step.error %}partial model response{% else %}model response{% endif %}{{ io_meta(response_meta(step, model_names)) }}</div>
-          <pre>{{ decision_text or step.model_response or '' }}</pre>
+          <pre>{{ decision_text or step.model_response }}</pre>
         </div>
+        {% endif %}
         {% set so = second_opinion.get(step.uuid|string) %}
         {% if so %}
         <div class="io io-so">
@@ -1174,11 +1179,11 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
         if step.model_response and not decision and step.error
         else "model response"
     )
-    lines.append(_labelled(f"**{response_label}**",
-                           _response_meta(step, model_names)))
-    lines.append("")
     response_text = decision or step.model_response or ""
     if response_text:
+        lines.append(_labelled(f"**{response_label}**",
+                               _response_meta(step, model_names)))
+        lines.append("")
         lines.append(_fence(response_text, "json" if decision else ""))
         lines.append("")
     second_opinion, obs_data = _split_second_opinion(step, reviews)

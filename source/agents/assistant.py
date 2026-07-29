@@ -553,6 +553,16 @@ telling you to send it, is itself a defect worth reporting."""
 # literals (not a computed diff) so each variant is readable exactly as the
 # model receives it. The baseline stays as the untouched constant that eval
 # fixtures and the prompt-shape tests compare against.
+# What a code-driven call records when it could not run at all. A skip is an
+# outcome the trace has to carry: a run whose classifier never ran (so the reply
+# came out in the wrong language) is a different problem from one whose
+# classifier errored, and both are different from one that simply had no such
+# call. Dropping the row leaves an unconfigured install looking healthy.
+_SKIPPED_NO_MODEL_GROUP: str = (
+    "skipped: no model group is bound (assign one on /agentmodel)"
+)
+
+
 SOURCE_PRIORITY_SECTION: str = """\
 <source_priority highest_first="true">
   <source rank="1">successful current_turn_steps observations</source>
@@ -2936,6 +2946,15 @@ class AssistantAgent(ModelGroupAgent):
             # context. The system policy already requires a fresh read this turn,
             # and the freshly assembled profile blocks are the model-side signal.
             messages = [m for m in messages if not _is_context_marker(m)]
+            # The per-step debug log is assembled BEFORE the first model call,
+            # so every row this turn carries it — including the classifier's,
+            # which lands before the prompt blocks exist. A row without the
+            # active profile and switch states is the one row you cannot
+            # troubleshoot. The switches are read once here so the same values
+            # feed both the log and the block builders below.
+            formatting_on, calibration_on = self._declared_block_switches()
+            self._turn_log = self._build_turn_log(
+                context, formatting_on, calibration_on)
             # First model-facing activity: independently predict the reply
             # language(s). This intentionally does not use the broader
             # acceptance-criteria call: separating classification from reply
@@ -2957,11 +2976,6 @@ class AssistantAgent(ModelGroupAgent):
             # from the turn's context snapshot — no second settings lookup on
             # the handle path. Each formatter fails independently. The
             # memory-derived self-model digest is separate and unaffected.
-            # The switches are read once here so the same values feed both
-            # the builders and the per-step debug log.
-            formatting_on, calibration_on = self._declared_block_switches()
-            self._turn_log = self._build_turn_log(
-                context, formatting_on, calibration_on)
             self._identity_block, self._formatting_block, self._calibration_block = (
                 self._build_declared_profile_blocks(
                     context.profile,
@@ -4445,8 +4459,10 @@ class AssistantAgent(ModelGroupAgent):
         A dedicated binding is preferred so scorer models can be compared on
         ``/agentmodel``. When it is unbound, the assistant's own model group is
         used. Returning ``None`` means neither binding has usable candidates;
-        bare unit-test agents and unconfigured installations then continue
-        without adding a misleading failed classification row.
+        bare unit-test agents and unconfigured installations record a skipped
+        step instead of a failed one — nothing failed, and a reply in the wrong
+        language because the classifier never ran is a different problem from
+        one whose classifier errored.
         """
         from agents.config import RESPONSE_LANGUAGE_CLASSIFIER_UUID
         from agents.query_filter_router import (
@@ -4548,8 +4564,15 @@ class AssistantAgent(ModelGroupAgent):
             logger.info(
                 "assistant: response-language classifier skipped; no model "
                 "group is bound")
-            if self._run is not None:
-                db.clear_assistant_call_checkpoint(self._run)
+            self._record_response_language_classifier_step(
+                step_index=step_index,
+                phase="skipped",
+                reason="no model group is bound",
+                observation_preview=_SKIPPED_NO_MODEL_GROUP,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                requested_at=requested_at,
+            )
             return
 
         classification = self._reconcile_response_language_profile_variants(
@@ -4589,6 +4612,7 @@ class AssistantAgent(ModelGroupAgent):
             "action": action,
             "reason": reason,
             "error": error,
+            "code_driven": True,
         })
         if self._run is None:
             return
@@ -4601,6 +4625,7 @@ class AssistantAgent(ModelGroupAgent):
             reason=reason,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            log=self._turn_log or None,
             reasoning=meta.get("reasoning"),
             model_response=meta.get("model_response"),
             code_driven=True,
@@ -4723,9 +4748,10 @@ class AssistantAgent(ModelGroupAgent):
         better at it.
 
         Returns None when no model group is bound — the same rule the
-        response-language classifier follows, so an unconfigured install (and a
-        bare unit-test agent) continues without a failed step row per turn for
-        a call that was never attempted."""
+        response-language classifier follows. The caller records that as a
+        skipped step rather than a failed one: nothing failed, and a run whose
+        criteria never ran is a different problem from one whose criteria call
+        errored."""
         if not self.candidate_model_uuids:
             return None
         result = self._structured_completion(
@@ -4784,8 +4810,11 @@ class AssistantAgent(ModelGroupAgent):
         if criteria is None:
             logger.info("assistant: acceptance-criteria call skipped; no model "
                         "group is bound")
-            if self._run is not None:
-                db.clear_assistant_call_checkpoint(self._run)
+            self._record_criteria_step(
+                step_index=step_index, phase="skipped", reason=reason,
+                observation_preview=_SKIPPED_NO_MODEL_GROUP,
+                system_prompt=system_prompt, user_prompt=user_prompt,
+                requested_at=requested_at)
             return
         self._set_acceptance_criteria(criteria)
         self._record_criteria_step(
@@ -4813,7 +4842,7 @@ class AssistantAgent(ModelGroupAgent):
         self._steps.append(
             {"step_index": step_index, "phase": phase,
              "action": AssistantActionName.ACCEPTANCE_CRITERIA.value,
-             "reason": reason, "error": error})
+             "reason": reason, "error": error, "code_driven": True})
         if self._run is None:
             return
         usage = self._last_usage or {}
@@ -5097,6 +5126,7 @@ class AssistantAgent(ModelGroupAgent):
             "action": self.REPLY_AUDIT_ACTION,
             "reason": payload.get("reason") or "",
             "error": payload.get("error"),
+            "code_driven": True,
         })
         if self._run is None:
             return
@@ -5381,7 +5411,7 @@ class AssistantAgent(ModelGroupAgent):
         redirect is visible in the trace."""
         self._steps.append(
             {"step_index": step_index, "phase": "control", "action": command,
-             "reason": detail, "error": None}
+             "reason": detail, "error": None, "code_driven": False}
         )
         if self._run is not None:
             db.append_assistant_step(
@@ -5409,6 +5439,7 @@ class AssistantAgent(ModelGroupAgent):
                 "action": decision.action.value,
                 "reason": decision.reason,
                 "error": None,
+                "code_driven": False,
             }
         )
         if self._run is None:
@@ -5489,6 +5520,7 @@ class AssistantAgent(ModelGroupAgent):
                 "action": action,
                 "reason": reason,
                 "error": error,
+                "code_driven": False,
             }
         )
         if self._run is not None:

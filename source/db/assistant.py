@@ -48,7 +48,8 @@ def _bounded_model_progress_text(value: str | None) -> str | None:
     return value[:head] + marker + value[-(remaining - head):]
 
 
-StepPhase = Literal["planned", "running", "observed", "failed", "final", "control"]
+StepPhase = Literal["planned", "running", "observed", "failed", "final",
+                    "control", "skipped"]
 
 
 def _assistant_notify(run_uuid: UUID, event: str) -> None:
@@ -773,8 +774,11 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
     look cheaper than it was."""
     calls: list[dict] = []
     for s in steps:
-        if s.phase == "control":
-            continue          # an operator event, not a model call
+        if s.phase in ("control", "skipped"):
+            # An operator event, or a call the loop could not make — both are
+            # rows worth having in the trace, neither is a model call. Counting
+            # a skip would price a call that never went out.
+            continue
         data = (s.observation or {}).get("data") or {}
         if s.requested_at or s.duration_ms is not None or s.system_prompt:
             start = s.requested_at

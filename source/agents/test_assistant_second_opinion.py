@@ -64,6 +64,15 @@ def room(app_ctx):
         db.db.session.commit()
 
 
+def _gated_step(run_uuid):
+    """The step the reviewer gated: the first step the MODEL decided. Every
+    call a run makes is a row now, the loop's own included (the language
+    classifier and the acceptance criteria lead every run, recorded even when
+    skipped for want of a model group), so position 0 is no longer the decide
+    step."""
+    return next(s for s in db.list_assistant_steps(run_uuid) if not s.code_driven)
+
+
 def _agent() -> AssistantAgent:
     return AssistantAgent(
         agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None
@@ -269,8 +278,7 @@ def test_the_step_stores_only_a_pointer_to_the_review(
     agent.handle(
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
     [row] = db.list_second_opinion_reviews(agent._run.uuid)
-    payload = db.list_assistant_steps(
-        agent._run.uuid)[0].observation["data"]["second_opinion"]
+    payload = _gated_step(agent._run.uuid).observation["data"]["second_opinion"]
     assert payload == {"review_uuid": str(row.uuid)}
     assert row.system_prompt == "sys" and row.user_prompt == "usr"
 
@@ -294,8 +302,7 @@ def test_the_inline_payload_survives_when_the_row_cannot_be_written(
     monkeypatch.setattr(db, "record_second_opinion_review", boom)
     agent.handle(
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
-    payload = db.list_assistant_steps(
-        agent._run.uuid)[0].observation["data"]["second_opinion"]
+    payload = _gated_step(agent._run.uuid).observation["data"]["second_opinion"]
     assert payload["user_prompt"] == "usr"      # the full payload, not a pointer
     assert "review_uuid" not in payload
 
@@ -320,7 +327,7 @@ def test_the_rejection_listing_shows_the_text_not_the_raw_object(
     )
     agent.handle(
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
-    gated = db.list_assistant_steps(agent._run.uuid)[0]
+    gated = _gated_step(agent._run.uuid)
     assert "- convert to meters" in gated.observation["text"]
     assert "category" not in gated.observation["text"]
 
@@ -350,8 +357,7 @@ def test_rejection_blocks_execution_and_feeds_the_critique_back(
     agent.handle(
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
     assert sandbox_calls == []
-    steps = db.list_assistant_steps(agent._run.uuid)
-    gated = steps[0]
+    gated = _gated_step(agent._run.uuid)
     assert gated.phase == "failed"
     assert "second_opinion rejected" in gated.observation["text"]
     assert "convert to meters" in gated.observation["text"]
@@ -382,8 +388,7 @@ def test_approval_runs_the_program_and_records_the_verdict(
     agent.handle(
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
     assert sandbox_calls == ["print(12 * 0.3048)"]
-    steps = db.list_assistant_steps(agent._run.uuid)
-    gated = steps[0]
+    gated = _gated_step(agent._run.uuid)
     assert gated.phase == "observed"
     assert gated.observation["ok"] is True
     # The observation points at the review row, which carries the verdict.

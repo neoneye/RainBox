@@ -540,6 +540,12 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   not a chat row (see the progress row below). A non-reasoning model emits no
   reasoning channel, so nothing is stored or shown. On a decide-call crash
   (e.g. a timeout mid-think) the failed step keeps the partial reasoning.
+- Every call a run makes is a step row, including the ones it could not
+  make: with no model group bound the language classifier and the
+  acceptance-criteria call record a `skipped` row (see `data-model.md`
+  §assistant_step) rather than vanishing, keeping the trace a complete account
+  of the turn. The per-step debug `log` is assembled before the first model
+  call so those rows carry it too.
 - The journal `result` is a short summary plus pointers
   (`assistant_run_uuid`, step count) — the tables are the trace, the journal
   is not.

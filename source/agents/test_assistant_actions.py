@@ -30,6 +30,20 @@ from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
 
 
+def _decide_steps(steps) -> list:
+    """Only the steps the model decided — see _decide_phases."""
+    return [s for s in steps if not s.code_driven]
+
+
+def _decide_phases(steps) -> list[str]:
+    """The decide loop's own phases. Every call a run makes is a row, the
+    loop's own included — the language classifier, the acceptance criteria and
+    the reply audit, each recorded even when skipped for want of a model group
+    (a bare test agent binds none). Those are `code_driven` and cost no step
+    budget, so they are not what these tests count."""
+    return [s.phase for s in steps if not s.code_driven]
+
+
 def test_read_action_descriptions_disambiguate_query_memory_from_kanban():
     """The model once used the general Q&A action to 'query the kanban boards'.
     The catalog must steer inspecting a board to kanban_read, and mark
@@ -1113,8 +1127,8 @@ def test_loop_dispatches_read_action_then_replies(room):
     steps = _steps_for(result["assistant_run_uuid"])
     # One row per step: the read step settles running->observed in place, the
     # reply is a single terminal row.
-    assert [s.phase for s in steps] == ["observed", "observed", "final"]
-    observed = steps[0]
+    assert _decide_phases(steps) == ["observed", "final"]
+    observed = _decide_steps(steps)[0]
     assert observed.action == "memory_query"
     assert observed.observation_preview is not None
 
@@ -1145,9 +1159,10 @@ def test_loop_does_not_dispatch_identical_successful_read_twice(room):
         (0, "memory_query", {"query": "Simon relation to demoscene"})
     ]
     steps = _steps_for(result["assistant_run_uuid"])
-    assert [s.phase for s in steps] == ["observed", "observed", "observed", "final"]
-    assert "remembered fact: Simon used demos" in (steps[1].observation_preview or "")
-    assert "already completed this exact read" in (steps[1].observation_preview or "")
+    assert _decide_phases(steps) == ["observed", "observed", "final"]
+    second = _decide_steps(steps)[1]
+    assert "remembered fact: Simon used demos" in (second.observation_preview or "")
+    assert "already completed this exact read" in (second.observation_preview or "")
 
 
 def test_loop_does_not_dispatch_identical_failed_action_twice(room):
@@ -1175,8 +1190,9 @@ def test_loop_does_not_dispatch_identical_failed_action_twice(room):
     assert result["status"] == "finished"
     assert calls == [(0, "memory_query", {"query": "Simon demoscene"})]
     steps = _steps_for(result["assistant_run_uuid"])
-    assert [s.phase for s in steps] == ["failed", "failed", "observed", "final"]
-    assert "already failed earlier" in (steps[1].observation_preview or "")
+    assert _decide_phases(steps) == ["failed", "failed", "final"]
+    assert "already failed earlier" in (
+        _decide_steps(steps)[1].observation_preview or "")
 
 
 def test_loop_records_failed_action_and_continues(room):
@@ -1194,8 +1210,8 @@ def test_loop_records_failed_action_and_continues(room):
     steps = _steps_for(result["assistant_run_uuid"])
     # The blocked read opens a running row (committed before the action) that
     # settles in place to failed; then a terminal reply row.
-    assert [s.phase for s in steps] == ["failed", "observed", "final"]
-    failed = steps[0]
+    assert _decide_phases(steps) == ["failed", "final"]
+    failed = _decide_steps(steps)[0]
     assert failed.action == "workspace_read_command"
     assert failed.error and "blocked" in failed.error.lower()
 

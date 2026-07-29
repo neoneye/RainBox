@@ -101,7 +101,16 @@ def _agent_messages(room_uuid):
 
 
 def _phases(agent: AssistantAgent) -> list[str]:
-    return [s["phase"] for s in agent._steps]
+    """The decide loop's own phases. The loop also records the calls it makes
+    on its own initiative (the language classifier, the acceptance criteria,
+    the reply audit) — including when they were skipped for want of a model
+    group, which a bare test agent has none of. Those are `code_driven`, cost
+    no step budget, and are not what these tests are about."""
+    return [s["phase"] for s in _decide_steps(agent)]
+
+
+def _decide_steps(agent: AssistantAgent) -> list[dict]:
+    return [s for s in agent._steps if not s["code_driven"]]
 
 
 # --- terminal actions ---------------------------------------------------------
@@ -205,9 +214,8 @@ def test_reply_action_posts_one_message_and_finishes(room):
     assert len(posts) == 1
     assert posts[0]["text"] == "Working tree is clean."
     assert result["status"] == "finished"
-    # A terminal step is a single row (no separate planned transition);
-    # the reply audit precedes it as its own observed row.
-    assert _phases(agent) == ["observed", "final"]
+    # A terminal step is a single row (no separate planned transition).
+    assert _phases(agent) == ["final"]
 
 
 def test_ask_clarifying_question_is_terminal_and_posts(room):
@@ -272,10 +280,9 @@ def test_invalid_args_produce_traceable_failed_step_not_a_crash(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "finished"
-    # Step 0 fails validation (single failed row), step 1 is the terminal
-    # reply preceded by its audit row.
-    assert _phases(agent) == ["failed", "observed", "final"]
-    failed = agent._steps[0]
+    # Step 0 fails validation (single failed row), step 1 is the terminal reply.
+    assert _phases(agent) == ["failed", "final"]
+    failed = _decide_steps(agent)[0]
     assert failed["error"] and "message" in failed["error"]
     posts = _agent_messages(room_uuid)
     assert len(posts) == 1
@@ -371,8 +378,18 @@ def test_loop_persists_run_and_steps_to_tables(room):
     assert run.room_uuid == room_uuid
 
     steps = _steps_for(run.uuid)
-    assert [s.phase for s in steps] == ["observed", "final"]  # audit, reply
-    assert [s.action for s in steps] == ["reply_audit", "reply"]
+    # Every call the run made is a row, the loop's own included: the language
+    # classifier and the acceptance criteria (both skipped here — a bare test
+    # agent binds no model group), then the reply audit, then the decide step's
+    # terminal reply. A skipped call is recorded, not dropped: an install that
+    # never classifies is a different problem from one that classifies wrong.
+    assert [(s.action, s.phase) for s in steps] == [
+        ("response_language_classifier", "skipped"),
+        ("acceptance_criteria", "skipped"),
+        ("reply_audit", "observed"),
+        ("reply", "final"),
+    ]
+    assert [s.code_driven for s in steps] == [True, True, True, False]
 
 
 def test_journal_result_is_summary_not_full_trace(room):
@@ -421,10 +438,10 @@ def test_killed_mid_run_leaves_last_committed_step_and_marks_run_failed(room):
     run = runs[0]
     assert run.status == "failed"
     steps = _steps_for(run.uuid)
-    phases = [s.phase for s in steps]
     # Step 0's failed row survived the crash; a terminal failed row records the
-    # exception raised while deciding step 1. One row per step now.
-    assert phases == ["failed", "failed"]
+    # exception raised while deciding step 1. One row per step now. The loop's
+    # own calls (classifier, criteria) are rows too and are excluded here.
+    assert [s.phase for s in steps if not s.code_driven] == ["failed", "failed"]
     # The terminal failed row points at the logical step where it failed (the
     # model raised while deciding step 1), not a row count.
     assert steps[-1].phase == "failed"

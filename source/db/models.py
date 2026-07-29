@@ -1178,7 +1178,8 @@ class AssistantStep(db.Model):
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint(
-            "phase IN ('planned','running','observed','failed','final','control')",
+            "phase IN ('planned','running','observed','failed','final',"
+            "'control','skipped')",
             name="assistant_step_phase_check",
         ),
         Index("assistant_step_by_run", "run_uuid", "step_index", "id"),

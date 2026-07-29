@@ -277,8 +277,7 @@ def test_step0_consumes_none_of_the_step_limit(room):
     assert criteria_rows[0].step_index == 0
     # Neither the criteria row nor the reply audit is one of the decide
     # steps: all STEP_LIMIT decide rows exist alongside them.
-    code_driven = ("acceptance_criteria", AssistantAgent.REPLY_AUDIT_ACTION)
-    decide_rows = [s for s in rows if s.action not in code_driven]
+    decide_rows = [s for s in rows if not s.code_driven]
     assert [s.step_index for s in decide_rows] == list(range(agent.STEP_LIMIT))
     # The step-0 call's prompts are persisted like any other step's.
     assert criteria_rows[0].user_prompt and "convert 1053737172 feet" in (
@@ -593,3 +592,44 @@ def test_second_opinion_prompt_carries_criteria_next_to_current_request(room):
     assert (prompt.index("</current_request>")
             < prompt.index("<acceptance_criteria_json>")
             < prompt.index("<proposed_step"))
+
+
+def test_a_call_the_loop_could_not_make_is_recorded_as_skipped(app_ctx):
+    """A run's trace has to carry everything the run did, including what it
+    could not do. A call with no model group bound is neither `observed`
+    (nothing came back) nor `failed` (nothing broke), and the difference is the
+    whole diagnosis: an install that never establishes criteria is a different
+    problem from one whose criteria call errors. Dropping the row instead left
+    a misconfigured install looking healthy."""
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(
+        f"ac-skip-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "convert 1053737172 feet")
+    agent = _agent()          # bare: no model group bound
+    _capture_decides(agent, [_reply()])
+    try:
+        result = agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        row = next(s for s in _steps(result["assistant_run_uuid"])
+                   if s.action == "acceptance_criteria")
+        assert row.phase == "skipped"
+        assert row.error is None                     # nothing failed
+        assert "no model group is bound" in (row.observation_preview or "")
+        assert "/agentmodel" in (row.observation_preview or "")
+        # The prompts it would have sent are kept, so the operator can see what
+        # the call was going to ask…
+        assert row.system_prompt and row.user_prompt
+        # …but it cost nothing, so it is not one of the run's model calls.
+        assert not [c for c in db.assistant_llm_calls(
+            _steps(result["assistant_run_uuid"]))
+            if c["label"] == "acceptance_criteria"]
+        # Every row carries the turn's debug log, this one included — a row
+        # you cannot troubleshoot is the one that needed it.
+        assert row.log
+    finally:
+        db.db.session.query(db.AssistantRun).filter(
+            db.AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.ChatMessage).filter(
+            db.ChatMessage.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(
+            db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()

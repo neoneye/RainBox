@@ -293,17 +293,21 @@ def test_classifier_is_first_observed_step_and_does_not_consume_budget(room):
     assert order == ["classifier", "decide"]
 
     rows = db.list_assistant_steps(result["assistant_run_uuid"])
-    assert [row.action for row in rows] == [
-        "response_language_classifier",
-        "reply_audit",
-        "reply",
+    # Every call the run made is a row, including the one it could not make:
+    # the acceptance criteria are skipped here because a bare test agent binds
+    # no model group, and a skip is an outcome the trace has to carry.
+    assert [(row.action, row.phase) for row in rows] == [
+        ("response_language_classifier", "observed"),
+        ("acceptance_criteria", "skipped"),
+        ("reply_audit", "observed"),
+        ("reply", "final"),
     ]
-    assert [row.step_index for row in rows] == [0, 0, 0]
+    assert [row.step_index for row in rows] == [0, 0, 0, 0]
     # The classifier and the audit are calls the loop makes on its own; only
     # the reply is a model decision. Readers use the flag to tell them apart —
     # a code-driven row's action/reason are labels, not something the model
     # chose, and its response is the classification, not a decision.
-    assert [row.code_driven for row in rows] == [True, True, False]
+    assert [row.code_driven for row in rows] == [True, True, True, False]
     assert rows[0].phase == "observed"
     assert '"score": 5' in (rows[0].observation_preview or "")
     assert '"audit": "OK"' in (rows[0].observation_preview or "")
@@ -382,15 +386,17 @@ def test_classifier_failure_is_traced_and_assistant_continues(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
     assert result["status"] == "finished"
     rows = db.list_assistant_steps(result["assistant_run_uuid"])
-    assert [row.action for row in rows] == [
-        "response_language_classifier",
-        "reply_audit",
-        "reply",
+    # A classifier that errored and criteria that never ran are different
+    # outcomes, and the trace says which is which — a reply in the wrong
+    # language points at one or the other, not at both.
+    assert [(row.action, row.phase) for row in rows] == [
+        ("response_language_classifier", "failed"),
+        ("acceptance_criteria", "skipped"),
+        ("reply_audit", "observed"),
+        ("reply", "final"),
     ]
-    assert rows[0].phase == "failed"
     assert "scorer unavailable" in (rows[0].error or "")
-    assert rows[1].phase == "observed"      # the reply audit
-    assert rows[2].phase == "final"
+    assert rows[1].error is None            # skipped is not a failure
 
 
 def test_classifier_call_records_its_token_cost_on_the_step_row(room, monkeypatch):

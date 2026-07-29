@@ -541,6 +541,21 @@ def init_db(app: Flask) -> None:
                 )
             )
         # Phase 6 adds the transient 'stopping' assistant_run status.
+        # 'skipped' — a code-driven call the loop could not make at all (no
+        # model group bound). It is neither observed (nothing came back) nor
+        # failed (nothing broke), and the difference matters: a reply in the
+        # wrong language because the classifier never ran is a different bug
+        # from one whose classifier errored.
+        _phase_def = _constraint_def("assistant_step_phase_check")
+        if _phase_def is not None and "skipped" not in _phase_def:
+            db.session.execute(sa.text(
+                "ALTER TABLE assistant_step DROP CONSTRAINT IF EXISTS "
+                "assistant_step_phase_check"))
+            db.session.execute(sa.text(
+                "ALTER TABLE assistant_step ADD CONSTRAINT "
+                "assistant_step_phase_check CHECK (phase IN "
+                "('planned','running','observed','failed','final','control',"
+                "'skipped'))"))
         _ar_status = _constraint_def("assistant_run_status_check")
         if _ar_status is not None and "stopping" not in _ar_status:
             db.session.execute(
