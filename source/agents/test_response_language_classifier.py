@@ -84,8 +84,7 @@ def _reply() -> AssistantStepDecision:
         reason="answer ready",
         action=AssistantActionName.REPLY,
         args={
-            "1_message": "Good night — and equivalents around the world.",
-            "2_audit": "OK",
+            "message": "Good night — and equivalents around the world.",
         },
     )
 
@@ -296,9 +295,10 @@ def test_classifier_is_first_observed_step_and_does_not_consume_budget(room):
     rows = db.list_assistant_steps(result["assistant_run_uuid"])
     assert [row.action for row in rows] == [
         "response_language_classifier",
+        "reply_audit",
         "reply",
     ]
-    assert [row.step_index for row in rows] == [0, 0]
+    assert [row.step_index for row in rows] == [0, 0, 0]
     assert rows[0].phase == "observed"
     assert '"score": 5' in (rows[0].observation_preview or "")
     assert '"audit": "OK"' in (rows[0].observation_preview or "")
@@ -379,8 +379,10 @@ def test_classifier_failure_is_traced_and_assistant_continues(room):
     rows = db.list_assistant_steps(result["assistant_run_uuid"])
     assert [row.action for row in rows] == [
         "response_language_classifier",
+        "reply_audit",
         "reply",
     ]
     assert rows[0].phase == "failed"
     assert "scorer unavailable" in (rows[0].error or "")
-    assert rows[1].phase == "final"
+    assert rows[1].phase == "observed"      # the reply audit
+    assert rows[2].phase == "final"

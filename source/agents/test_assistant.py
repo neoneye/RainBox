@@ -70,7 +70,7 @@ def _reply(message: str) -> AssistantStepDecision:
     return AssistantStepDecision(
         reason="ready to answer",
         action=AssistantActionName.REPLY,
-        args={"1_message": message, "2_audit": "OK"},
+        args={"message": message},
     )
 
 
@@ -207,8 +207,9 @@ def test_reply_action_posts_one_message_and_finishes(room):
     assert len(posts) == 1
     assert posts[0]["text"] == "Working tree is clean."
     assert result["status"] == "finished"
-    # A terminal step is a single row (no separate planned transition).
-    assert _phases(agent) == ["final"]
+    # A terminal step is a single row (no separate planned transition);
+    # the reply audit precedes it as its own observed row.
+    assert _phases(agent) == ["observed", "final"]
 
 
 def test_ask_clarifying_question_is_terminal_and_posts(room):
@@ -273,8 +274,9 @@ def test_invalid_args_produce_traceable_failed_step_not_a_crash(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "finished"
-    # Step 0 fails validation (single failed row), step 1 is the terminal reply.
-    assert _phases(agent) == ["failed", "final"]
+    # Step 0 fails validation (single failed row), step 1 is the terminal
+    # reply preceded by its audit row.
+    assert _phases(agent) == ["failed", "observed", "final"]
     failed = agent._steps[0]
     assert failed["error"] and "message" in failed["error"]
     posts = _agent_messages(room_uuid)
@@ -371,8 +373,8 @@ def test_loop_persists_run_and_steps_to_tables(room):
     assert run.room_uuid == room_uuid
 
     steps = _steps_for(run.uuid)
-    assert [s.phase for s in steps] == ["final"]
-    assert [s.action for s in steps] == ["reply"]
+    assert [s.phase for s in steps] == ["observed", "final"]  # audit, reply
+    assert [s.action for s in steps] == ["reply_audit", "reply"]
 
 
 def test_journal_result_is_summary_not_full_trace(room):

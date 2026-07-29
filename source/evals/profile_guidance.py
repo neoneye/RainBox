@@ -169,7 +169,7 @@ def _generate_repetition(
         })
         return record
     record["output"] = str(
-        (getattr(decision, "args", None) or {}).get("1_message") or "")
+        (getattr(decision, "args", None) or {}).get("message") or "")
     return record
 
 

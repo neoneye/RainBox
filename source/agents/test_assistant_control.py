@@ -53,7 +53,7 @@ def _query(q="anything"):
 
 def _reply(m="done"):
     return AssistantStepDecision(reason="answer", action=AssistantActionName.REPLY,
-                                 args={"1_message": m, "2_audit": "OK"})
+                                 args={"message": m})
 
 
 def _decider_that_inserts_control(agent, command, payload=None):

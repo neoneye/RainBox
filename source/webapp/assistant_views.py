@@ -33,6 +33,7 @@ _ACTION_DESCRIPTIONS.update({
     "response_language_classifier": (
         "determine which language(s) the reply should use"
     ),
+    "reply_audit": "check the finished reply before it is sent",
 })
 
 ASSISTANT_TEMPLATE = """

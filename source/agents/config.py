@@ -99,6 +99,7 @@ MEMORY_FILTER_UUID: UUID = UUID("b4809a3f-12d6-4725-ab23-4808cec2d5d7")
 SECOND_OPINION_UUID: UUID = UUID("7a1d4c3e-5b2f-4e8a-9c6d-0f3b8a51e274")
 RESPONSE_LANGUAGE_CLASSIFIER_UUID: UUID = UUID(
     "6d4ef68c-8b63-4f55-b704-b3a2b416d9a7")
+REPLY_AUDIT_UUID: UUID = UUID("5c8e3a17-4d92-4b6f-8a30-1e7c9f2b45d8")
 EDIT_DOCUMENT_V1_UUID: UUID = UUID("9f3b1a8e-2c5d-4d7a-9e3b-5f8a1c2d4e7b")
 EDIT_DOCUMENT_V2_UUID: UUID = UUID("d2a7c5e1-6b3f-4e9a-9c1d-7e4b8f2a3c5d")
 EDIT_DOCUMENT_V3_UUID: UUID = UUID("8f4d9b2a-7e3c-4a5b-9c8d-1f6e7d2c4b3a")
@@ -204,6 +205,12 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": RESPONSE_LANGUAGE_CLASSIFIER_UUID,
         "requires_structured_output": True,
         "description": "binding-only: narrow scorer that predicts which language(s) the assistant's next reply should use before step 0; records reason, per-language Likert confidence and audit, then supplies later assistant calls with score-free ranked Markdown. Unbound, the assistant's own group classifies. Never receives journal work.",
+        "next": None,
+    },
+    "reply_audit": {
+        "uuid": REPLY_AUDIT_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that AUDITS a finished reply message before it is sent — checks it against the request (every sub-question answered), the turn's constraints, the operator settings and the turn's observations, and returns it with problems when it is not sound. Unbound, the assistant's own group audits; a failed or unbound audit sends the message. Never receives journal work.",
         "next": None,
     },
     "edit_document_v1": {

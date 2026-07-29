@@ -392,8 +392,10 @@ Independent of any architecture, and worth keeping:
 - **Pending — repeated-request history omission.** A verbatim-repeated message
   should drop the assistant's earlier replies, which are otherwise a decoding
   attractor.
-- **Implemented — reply args `{1_message, 2_audit}`.** The pre-work
-  specification argument was a rationalization written after the fact.
+- **Superseded — the reply's audit argument.** The pre-work specification
+  argument was a rationalization written after the fact, and so, in the end,
+  was the self-audit: `reply` now carries `{message}` alone and a separate
+  reviewer reads it (`2026-07-29-reply-audit-as-its-own-call.md`).
 
 What to reconsider rather than port: the two-call step 0 (no measured benefit,
 ~14.4s), and the work-criteria call in its current form (returns empty lists
