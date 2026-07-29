@@ -299,6 +299,11 @@ def test_classifier_is_first_observed_step_and_does_not_consume_budget(room):
         "reply",
     ]
     assert [row.step_index for row in rows] == [0, 0, 0]
+    # The classifier and the audit are calls the loop makes on its own; only
+    # the reply is a model decision. Readers use the flag to tell them apart —
+    # a code-driven row's action/reason are labels, not something the model
+    # chose, and its response is the classification, not a decision.
+    assert [row.code_driven for row in rows] == [True, True, False]
     assert rows[0].phase == "observed"
     assert '"score": 5' in (rows[0].observation_preview or "")
     assert '"audit": "OK"' in (rows[0].observation_preview or "")

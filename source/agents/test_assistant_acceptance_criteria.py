@@ -275,6 +275,35 @@ def test_step0_consumes_none_of_the_step_limit(room):
         criteria_rows[0].user_prompt)
 
 
+def test_step0_row_is_flagged_code_driven_and_the_revision_is_not(room):
+    """The loop chose step 0, so its row says so: `code_driven` is what lets a
+    reader tell an action the model picked from a call the code made. Without
+    it the row's code-written action/reason read as a model decision — the
+    inspector rendered exactly that, hiding the criteria the call returned."""
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0"), _criteria("revised")])
+    revise = AssistantStepDecision(
+        reason="the operator named a unit mid-run",
+        action=AssistantActionName.ACCEPTANCE_CRITERIA, args={})
+    _capture_decides(agent, [revise, _reply()])
+    result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    rows = _steps(result["assistant_run_uuid"])
+    step0 = next(s for s in rows if s.action == "acceptance_criteria"
+                 and s.step_index == 0)
+    assert step0.code_driven is True
+    # The model asking for a revision IS a decision — that row stays False, so
+    # its decide dump keeps rendering.
+    revision = next(s for s in rows if s.action == "acceptance_criteria"
+                    and s.reason == "the operator named a unit mid-run")
+    assert revision.code_driven is False
+    # The reply the model decided on, likewise.
+    assert next(s for s in rows if s.action == "reply").code_driven is False
+    # The reply audit is the loop's own call too (the classifier is covered in
+    # test_response_language_classifier).
+    audit = [s for s in rows if s.action == AssistantAgent.REPLY_AUDIT_ACTION]
+    assert audit and all(s.code_driven for s in audit)
+
+
 def test_criteria_call_sees_formatting_guide_despite_gated_switch(room):
     """The formatting guide is a declared INPUT of the criteria call, rendered
     from the criteria snapshot profile regardless of the separate

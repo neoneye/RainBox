@@ -543,3 +543,52 @@ def test_step_persists_model_reasoning(app_ctx):
         assert steps[1].reasoning is None
     finally:
         _cleanup_run(run.uuid)
+
+
+def test_backfill_flags_legacy_code_driven_rows_only(app_ctx):
+    """Rows written before the `code_driven` column existed are classified once,
+    at startup. The classifier and the reply audit are code-driven by
+    construction. The acceptance-criteria action is both: the establish/refresh
+    the loop issues (recognizable by the "(code-driven)" suffix the loop writes
+    into `reason`) and the revision the model can request, which must stay a
+    model decision."""
+    # A real room: a terminal row posts its debug-assistant trace message.
+    human = db.get_human_user()
+    assert human is not None
+    room = db.create_chatroom(f"bf-{uuid4().hex[:8]}", human.uuid, [])
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=human.uuid,
+        step_limit=6
+    )
+    try:
+        legacy = [
+            ("acceptance_criteria", "established before step 0 (code-driven)"),
+            ("acceptance_criteria", "refreshed after a preference write (code-driven)"),
+            ("acceptance_criteria", "the operator named a unit mid-run"),
+            ("response_language_classifier", "the request is in Danish"),
+            ("reply_audit", "send"),
+            ("reply", "ready to answer"),
+        ]
+        for i, (action, reason) in enumerate(legacy):
+            # code_driven left at its column default, as a pre-migration row is.
+            db.append_assistant_step(
+                run_uuid=run.uuid, step_index=i, phase="observed",
+                action=action, reason=reason)
+        db._backfill_code_driven_steps()
+        db.db.session.expire_all()
+        flags = [(s.action, s.reason, s.code_driven)
+                 for s in db.list_assistant_steps(run.uuid)]
+        assert [f[2] for f in flags] == [True, True, False, True, True, False]
+        # Idempotent: a second pass changes nothing (and never un-flags a row a
+        # recorder marked).
+        db._backfill_code_driven_steps()
+        db.db.session.expire_all()
+        assert [(s.action, s.reason, s.code_driven)
+                for s in db.list_assistant_steps(run.uuid)] == flags
+    finally:
+        _cleanup_run(run.uuid)
+        db.db.session.query(db.ChatMessage).filter(
+            db.ChatMessage.room_uuid == room.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(
+            db.Chatroom.uuid == room.uuid).delete()
+        db.db.session.commit()

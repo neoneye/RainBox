@@ -4600,6 +4600,7 @@ class AssistantAgent(ModelGroupAgent):
             user_prompt=user_prompt,
             reasoning=meta.get("reasoning"),
             model_response=meta.get("model_response"),
+            code_driven=True,
             requested_at=requested_at,
             observation_preview=observation_preview,
             error=error,
@@ -4806,6 +4807,7 @@ class AssistantAgent(ModelGroupAgent):
             user_prompt=user_prompt, log=self._turn_log or None,
             reasoning=self._last_reasoning,
             model_response=self._last_response_text,
+            code_driven=True,
             requested_at=requested_at,
             observation_preview=observation_preview, error=error,
             model_group_uuid=self.model_group_uuid,
@@ -5085,6 +5087,7 @@ class AssistantAgent(ModelGroupAgent):
             user_prompt=payload.get("user_prompt"),
             reasoning=payload.get("reasoning"),
             model_response=payload.get("response"),
+            code_driven=True,
             requested_at=requested_at,
             observation_preview=json.dumps(
                 {k: payload.get(k) for k in ("verdict", "problems", "reason",

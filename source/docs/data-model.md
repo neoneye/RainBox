@@ -209,6 +209,13 @@ Key fields:
   operator-facing audit note
 - `model_response`: raw provider content from the decide call; on interruption,
   the most recently checkpointed partial structured response
+- `code_driven`: true when the loop issued this call itself rather than the
+  model choosing it — the acceptance-criteria establish/refresh, the
+  response-language classifier, the reply audit. Such a row has no decision
+  behind it: its `action`/`reason` are labels the code wrote, and
+  `model_response` holds the call's own output. Readers must not present these
+  rows as a model decision (the inspector suppresses its decision dump for
+  them and shows `model_response` instead)
 - `observation_preview` (capped, model-facing) and `observation` (the full
   `{ok, text, data}` JSONB — the authoritative function-result record)
 - `error`

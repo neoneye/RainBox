@@ -1128,6 +1128,13 @@ class AssistantStep(db.Model):
     # for a worker interrupted mid-stream, the latest durable partial response.
     # NULL on legacy/control rows and providers that expose no content stream.
     model_response: Mapped[str | None] = mapped_column(Text)
+    # True when the loop issued this call itself rather than the model choosing
+    # it: the acceptance-criteria establish/refresh, the response-language
+    # classifier, the reply audit. Such a row has no decide decision behind it —
+    # its `action`/`reason` are labels the code wrote, and `model_response` holds
+    # the call's own output. Readers must not present these rows as a model
+    # decision. False for every step the model chose.
+    code_driven: Mapped[bool] = mapped_column(default=False, server_default="false")
     # The exact prompt sent to the model for this step's decide call (the
     # "model request" half of the LLM interaction); NULL for control steps and
     # legacy rows that predate prompt capture.

@@ -224,6 +224,7 @@ def append_assistant_step(
     user_prompt: str | None = None,
     reasoning: str | None = None,
     model_response: str | None = None,
+    code_driven: bool = False,
     requested_at: datetime | None = None,
     observation_preview: str | None = None,
     error: str | None = None,
@@ -237,7 +238,10 @@ def append_assistant_step(
     with no `running`→settle lifecycle: a `failed` validation, the `final` reply,
     and `control` (stop/redirect) events. Inserts the row and, when its `phase`
     is terminal, posts the self-contained `debug-assistant` trace row (see
-    `_post_terminal_trace`). Normal action steps use open/settle instead."""
+    `_post_terminal_trace`). Normal action steps use open/settle instead.
+
+    `code_driven` marks a row the loop produced on its own initiative (see the
+    column): its action and reason are labels, not a model decision."""
     step = AssistantStep(
         run_uuid=run_uuid,
         step_index=step_index,
@@ -250,6 +254,7 @@ def append_assistant_step(
         log=log,
         reasoning=reasoning,
         model_response=model_response,
+        code_driven=code_driven,
         requested_at=requested_at,
         observation_preview=observation_preview,
         error=error,

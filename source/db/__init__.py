@@ -165,6 +165,24 @@ def _backfill_chatroom_positions() -> None:
     db.session.commit()
 
 
+def _backfill_code_driven_steps() -> None:
+    """One-time: flag the code-driven step rows written before the column
+    existed, so historical runs stop rendering a synthesized decision in place
+    of the call's real response. The response-language classifier and the reply
+    audit are code-driven by construction — every such row qualifies. The
+    acceptance-criteria action is BOTH: the establish/refresh calls the loop
+    issues, and the revision the model can request. Only the former is matched,
+    by the "(code-driven)" suffix the loop writes into `reason` — a marker only
+    the code path produces (the model's own reason is free-form prose).
+    Idempotent: the UPDATE only touches rows still at FALSE."""
+    db.session.execute(sa.text(
+        "UPDATE assistant_step SET code_driven = TRUE WHERE NOT code_driven AND ("
+        "  action IN ('response_language_classifier', 'reply_audit')"
+        "  OR (action = 'acceptance_criteria' AND reason LIKE '%(code-driven)')"
+        ")"))
+    db.session.commit()
+
+
 def _backfill_memory_trust_numeric() -> None:
     """One-time: seed the Tier 1 numeric trust columns from `confidence`.
     Idempotent — each UPDATE is guarded by an IS NULL filter."""
@@ -445,6 +463,12 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("assistant_step", "user_prompt", "user_prompt TEXT")
         # Raw/partial provider response for successful and interrupted decides.
         _add_column_if_missing("assistant_step", "model_response", "model_response TEXT")
+        # Whether the loop issued this call itself instead of the model choosing
+        # it (criteria, language classifier, reply audit); existing rows are
+        # classified by _backfill_code_driven_steps below.
+        _add_column_if_missing(
+            "assistant_step", "code_driven",
+            "code_driven BOOLEAN NOT NULL DEFAULT FALSE")
         # Per-step operator-facing debug log (profile, switch states, …).
         _add_column_if_missing("assistant_step", "log", "log JSONB")
         # The full AssistantObservation ({ok, text, data}) the action returned.
@@ -479,6 +503,7 @@ def init_db(app: Flask) -> None:
         db.session.commit()
         _backfill_memory_trust_numeric()
         _backfill_memory_trust_keys()
+        _backfill_code_driven_steps()
         _status_def = _constraint_def("cron_run_status_check")
         if _status_def is None or "error" not in _status_def:
             db.session.execute(

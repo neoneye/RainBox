@@ -6,6 +6,7 @@ stop/redirect) wired to the existing endpoints. Read-only data; the buttons are
 the only writes.
 """
 
+import html
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -50,6 +51,18 @@ def _room():
     human = db.get_human_user()
     assert human is not None
     return db.create_chatroom(f"as-view-{uuid4().hex[:8]}", human.uuid, [])
+
+
+def _rendered(client, run) -> tuple[str, str]:
+    """The run as both renderers show it — the HTML page and the markdown
+    export. HTML-unescaped, so an assertion about JSON text reads the same
+    either way (and a negative assertion can't pass just because the page
+    escaped the quotes)."""
+    return (
+        html.unescape(client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)),
+        html.unescape(
+            client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)),
+    )
 
 
 def _cleanup(run_uuid, room_uuid) -> None:
@@ -593,6 +606,57 @@ def test_interrupted_step_shows_partial_model_response(app_ctx, client):
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
         assert "**partial model response**" in md
         assert "enough evidence" in md
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_code_driven_step_shows_its_real_response_not_a_synthesized_decision(
+        app_ctx, client):
+    """A code-driven call (criteria, language classifier, reply audit) has no
+    decision behind it: its action and reason are labels the loop wrote. Dumping
+    those in decision shape made every such row read as "the model chose
+    acceptance_criteria" — identical on every run — while the criteria the call
+    actually returned went unshown. The row's own response is what renders."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid,
+        step_index=0,
+        phase="observed",
+        action="acceptance_criteria",
+        reason="established before step 0 (code-driven)",
+        model_response='{"processing": "answer in meters"}',
+        code_driven=True,
+        observation_preview='{"processing": "answer in meters"}',
+    )
+    db.finish_run(run, "finished")
+    try:
+        for text in _rendered(client, run):
+            assert "answer in meters" in text
+            # No fabricated decision dump…
+            assert '"action": "acceptance_criteria"' not in text
+            # …and a complete response is not labelled a partial one.
+            assert "partial model response" not in text
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_model_chosen_step_still_shows_its_decision(app_ctx, client):
+    """The counterpart: a step the model decided keeps its verbatim decision
+    dump — that IS the model's response for a decide call."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="acceptance_criteria",
+        reason="the operator named a unit mid-run")
+    db.settle_assistant_step(step, phase="observed", observation_preview="revised")
+    db.finish_run(run, "finished")
+    try:
+        for text in _rendered(client, run):
+            assert '"action": "acceptance_criteria"' in text
+            assert "the operator named a unit mid-run" in text
     finally:
         _cleanup(run.uuid, room.uuid)
 

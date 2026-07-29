@@ -402,7 +402,7 @@ ASSISTANT_TEMPLATE = """
           {% set has_right = step.model_uuid or has_toks or step.duration_ms is not none %}
           {# This io-meta line (model · tokens · throughput · duration · time) is
              duplicated in Python by _response_meta_md(); change both together. #}
-          <div class="io-label">{% if step.model_response and not decision_text %}partial model response{% else %}model response{% endif %}{% if has_right or step.created_at %}<span class="io-meta">
+          <div class="io-label">{% if step.model_response and not decision_text and step.error %}partial model response{% else %}model response{% endif %}{% if has_right or step.created_at %}<span class="io-meta">
             {% if step.model_uuid %}<a class="io-model" href="/model?id={{ step.model_uuid }}"
                 title="{{ model_names.get(step.model_uuid|string, (step.model_uuid|string)[:8]) }}">model ↗</a>{% endif %}
             {% if has_toks %}<span title="Input tokens: the size of the prompt sent to the model for this step">in {{ step.input_tokens or 0 }}</span>
@@ -940,9 +940,13 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
         lines.append("")
     meta = _response_meta_md(step, model_names)
     decision = decision_json.get(str(step.uuid), "")
+    # "partial" means the call died mid-stream and this is as far as it got —
+    # a row that never produced a decision AND recorded an error. A code-driven
+    # row that succeeded holds its complete response, so it stays "model
+    # response". Duplicated in the template; change both together.
     response_label = (
         "partial model response"
-        if step.model_response and not decision
+        if step.model_response and not decision and step.error
         else "model response"
     )
     lines.append(f"**{response_label}**" + (f" · {meta}" if meta else ""))
@@ -1128,14 +1132,18 @@ def _load_run_detail(selected) -> dict:
     timeline = [(s, by_step.get(str(s.uuid), [])) for s in steps]
     # The model emits one AssistantStepDecision per step; dump it verbatim
     # (field order preserved, not Flask's key-sorted tojson) for the trace.
-    # Control steps are operator events, not model responses, so skip them.
+    # Skipped for rows with no decision behind them, because rendering their
+    # action/reason in decision shape would put words in the model's mouth:
+    # control steps are operator events, and code-driven steps are calls the
+    # loop issued itself (their real response is on `model_response`).
     decision_json = {
         str(s.uuid): json.dumps(
             {"reason": s.reason, "action": s.action, "args": s.args or {}},
             ensure_ascii=False,
         )
         for s in steps
-        if s.phase != "control" and (s.action is not None or s.reason is not None)
+        if s.phase != "control" and not s.code_driven
+        and (s.action is not None or s.reason is not None)
     }
     # The review rows this run's steps point at — one query, like the steps and
     # write-intents above. Keyed by uuid for the pointer lookup; each is split
