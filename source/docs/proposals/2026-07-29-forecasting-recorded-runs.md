@@ -142,9 +142,19 @@ so a rung that moves the answer indicts everything that arrived there. The
 
 The counterfactual is the sharper instrument. Take one recorded prompt, remove
 exactly one block, forecast again, and compare against the unmodified
-forecast. A block whose removal changes the answer is a block that determined
-the answer — and if the delivered answer was wrong and removing the block
-fixes it, the block is the defect.
+forecast. A block whose removal reliably changes the answer is a block that
+was driving it — and if the delivered answer was wrong and removing the block
+reliably fixes it, the block is the defect.
+
+*Reliably* is doing real work in both sentences. A single altered sample
+differing from a single unaltered one is the sampling noise this document
+insists on controlling for everywhere else; the comparison is between
+distributions over repeats, not between two generations. And what it
+establishes is causal about **the forecaster's answer under that context**,
+not about the recorded run, which happened once and cannot be re-run. That is
+strong evidence about what a block does and it is not a proof about the
+failure that prompted the investigation. Treating it as one is how a
+one-case finding becomes a prompt change nobody can reproduce.
 
 `build_turn_prompts` is already this seam. It exists for
 `evals/profile_guidance.py`, it renders the declared-profile blocks from a
@@ -229,6 +239,36 @@ a live guard would need — knowing a step is about to fail is useful whether
 or not the step was wise. Correctness is what a model-selection decision
 needs. Every scorecard column is labelled with which one it is, and nothing
 is averaged across that line.
+
+### Joint and conditional modes
+
+Predicting an outcome is entangled with predicting the action, and pooling
+them hides the most interesting finding available here.
+
+In **joint** mode the forecaster gets the step's context and predicts both:
+which capability, and what comes back. That is what a live guard would need,
+and it is the harder task — an outcome predicted for the wrong action is
+scored against a result that action never produced.
+
+In **conditional** mode code supplies the recorded action and arguments, and
+the forecaster predicts only the outcome. *The assistant is about to run this
+program in the sandbox — what does it return?* *It is about to query memory
+for this — is the fact there, and what does it say?*
+
+Conditional mode is the world-model test in isolation: not "do you know this
+assistant's habits" but "do you understand the system it is operating." A
+model can be excellent at one and hopeless at the other, and those are
+different bindings.
+
+This is where a coding model would actually show up. Asked to predict
+`next_action` it may do poorly — it has no feel for how this assistant
+sequences its work — while predicting what a Python program returns is
+precisely what it is for. Pooled into one number those cancel and the model
+looks mediocre. Scored conditionally and per capability, the finding is
+specific enough to bind on.
+
+Conditional mode is also the cheaper diagnostic, because it does not spend
+the run's hardest prediction to get at the one being asked about.
 
 ## The step forecast
 
@@ -354,9 +394,14 @@ up, not whether it forecasts well overall.
   reply model and a bad planner, and the codebase can act on that: the roles
   are separately bindable.
 - **Domain specialists** — a coding model forecasting `python_run` outcomes,
-  scored per capability rather than pooled. If it wins there and loses
-  everywhere else, that is an argument for a per-capability binding, not for
-  making it the assistant.
+  scored per capability, conditionally, rather than pooled. If it wins there
+  and loses everywhere else, that is an argument for a per-capability
+  binding, not for making it the assistant.
+- **System understanding against habit** — conditional accuracy high and
+  `next_action` accuracy low is a model that understands the tools without
+  knowing this assistant. The reverse is a model that has learned the
+  sequence without understanding what it produces, which is the more
+  worrying of the two in anything that checks work.
 - **Size against role** — whether a small model is adequate at closed-set
   action prediction while a larger one is needed for terminal content. The
   cheapest possible finding, and the most immediately spendable.
@@ -374,7 +419,7 @@ finding lands somewhere that exists.
 | `next_action` | top-1 and top-k accuracy, **macro-F1**, confusion matrix, **log loss** over the candidate probabilities |
 | `step_success` | accuracy at a 50% threshold and **Brier score** over `success_probability` |
 | `step_args` | field-level match on the args the context determines |
-| `step_outcome` | **interval coverage** for quantities, plus the declined-to-bound rate; exact for computed values; claim-level for text |
+| `step_outcome` | **interval coverage** for quantities, plus the declined-to-bound rate; exact for computed values; claim-level for text. Reported per mode — joint scores are not comparable with conditional ones |
 | `terminal` | claim-level against the delivered reply; labelled subset for correctness |
 | any target with claims | citation-hallucination rate, reported alone |
 
@@ -651,7 +696,7 @@ python -m evals.forecast_ladder --run <assistant-run-uuid> --ablate
 ```
 
 ```bash
-python -m evals.forecast_bench --recent 200 --targets next_action,step_outcome --all-models
+python -m evals.forecast_bench --recent 200 --targets next_action,step_outcome --mode joint --all-models
 ```
 
 The benchmark sweeps every model in the forecaster set over the same recorded
@@ -906,9 +951,9 @@ role.
 6. `evals/forecast_ladder.py`: replay, repeats, ablation, persistence through
    `eval_run` / `eval_result`, and its two CLIs.
 7. `evals/forecast_bench.py`: the model sweep ordered model-outermost and
-   repeats-innermost, the scorers (accuracy, macro-F1, confusion, log loss,
-   Brier, interval coverage, citation hallucination), and the cross-model
-   matrix.
+   repeats-innermost, joint and conditional modes, the scorers (accuracy,
+   macro-F1, confusion, log loss, Brier, interval coverage, citation
+   hallucination), and the cross-model matrix.
 8. A producer sweep that re-runs recorded *requests* under a different bound
    model against `rainbox_claude`, so the corpus is not one model wide.
 9. The two reports, with sample counts, the control's variation, and the
@@ -938,7 +983,36 @@ Tests must prove:
 - a claim asserting a number absent from the block it cites is counted as a
   citation hallucination;
 - the producer sweep refuses to run against anything but the sandbox
-  database.
+  database;
+- conditional mode supplies the recorded action and arguments and the
+  forecaster's own action prediction is absent from its prompt;
+- joint and conditional results are never pooled into one cell.
+
+## The standard names for what this does
+
+None of the machinery here is novel, and knowing what it is called is the
+difference between checking the method against established practice and
+re-deriving it badly. Three well-studied things, combined:
+
+- **Calibration measurement.** Eliciting a probability or an interval and
+  scoring it against resolved outcomes is what Brier score, log loss and
+  interval coverage are for. The failure mode — a model asserting 95% and
+  being right 60% of the time — is the standard one, and the standard remedy
+  is a proper scoring rule rather than accuracy.
+- **Feature attribution by ablation.** Removing one input and measuring the
+  change in output is how a variable's contribution is isolated generally.
+  Its standard limitation is the one recorded above: it assumes the inputs
+  act independently, and it needs repeats to separate effect from noise.
+- **Offline evaluation over logged trajectories.** Scoring a policy against
+  recorded episodes instead of live interaction is what makes this safe and
+  reproducible, and its standard hazard is the one that took two rounds to
+  surface here: a corpus produced by one policy scores every other policy on
+  how well it imitates that one.
+
+The document's own contribution is not the metrics. It is that this
+assistant's runs are recorded completely enough — exact prompts, exact
+arguments, exact observations — that all three apply directly, with no
+instrumentation added to the production path.
 
 ## What this proposal does not claim
 
