@@ -143,8 +143,8 @@ Use a second, orthogonal classification in every case manifest:
 | Context class | RainBox sources | What it is authoritative for |
 |---|---|---|
 | `identity_context` | user settings; active, non-expired profile facts and preferences; project decisions | who the operator/project is and durable declared preferences |
-| `operating_state` | current request, current-turn scratchpad, `assistant_step`, task events, blockers, pending approvals | continuity: what is in progress, already attempted, failed, or awaiting a decision |
-| `evidence` | typed tool observations, action arguments/results, source receipts, `memory_evidence`, citations, append-only run/task logs | what a named source observed or recorded; claim authority remains limited by provenance |
+| `operating_state` | current request, current-turn scratchpad, `assistant_step` rows, the run's completed-write signatures and `failed_actions` set, `KanbanTaskEvent` rows, `assistant_write_intent` rows still `proposed` | continuity: what is in progress, already attempted, failed, or awaiting a decision |
+| `evidence` | typed tool observations, action arguments/results, `memory_evidence` rows whose `provenance` qualifies (below), append-only run/task logs | what a named source observed or recorded; claim authority remains limited by provenance |
 | `reusable_lesson` | skills, procedures, episode summaries, confirmed eval findings | how similar work may be approached; never proof that this run or fact is correct |
 | `unsupported` | model prior with no supplied source | a hypothesis that may be forecast, never evidence |
 
@@ -155,6 +155,30 @@ candidates; records retrieval telemetry separately; and stores operational
 history in assistant/task/journal rows. Flattening those systems into four new
 tables would lose information. The classification above is an eval-time
 authority overlay over the contracts in `docs/memory-architecture.md`.
+
+### `memory_evidence` grades itself; use its grades
+
+Mapping the table wholesale into `evidence` would open the laundering path
+the overlay exists to close. `memory_evidence.provenance` is CHECK-constrained
+to four values, and they are not four flavours of the same authority:
+
+| `provenance` | Overlay class |
+|---|---|
+| `observed_from_source` | `evidence` — a named source was read |
+| `confirmed_by_user` | `identity_context` for a preference; `evidence` for a fact the operator attested |
+| `imported_from_transcript` | `operating_state` at best — something was *said*, which is a report, not an observation |
+| `inferred_by_model` | `unsupported` — a model prior, whatever row it now sits in |
+
+`inferred_by_model` is the one that matters. Without this split, a model
+guesses something, `memory_remember` stores it as a candidate, and a later
+forecast cites the resulting row for full evidence authority — a prior that
+laundered itself into evidence by being written down. Nothing about being
+persisted makes a guess an observation.
+
+`source_type` (`chat_message`, `journal`, `file`, `api`, `manual`,
+`transcript`) grades the channel and is recorded beside the class, but it
+does not override it: an `inferred_by_model` claim attached to a `file`
+source is still a prior about a file.
 
 ### Recall locates context; it does not prove it
 
@@ -178,8 +202,8 @@ Consequences:
   its claim uuid and as-of lifecycle metadata;
 - a claim that some event happened must cite the underlying evidence or
   append-only event row, not merely the semantically recalled summary of it;
-- current blockers and pending approvals come from the current run/task
-  state, never from a retrieved episode that may be stale;
+- what is still awaiting a decision comes from `assistant_write_intent`
+  rows in `proposed`, never from a retrieved episode that may be stale;
 - reusable lessons may justify a proposed method, never a claim that the
   method ran or succeeded here.
 
@@ -360,7 +384,7 @@ Keeping them apart is what makes the result readable.
 | `step_args` | with what arguments? | recorded `args` JSONB — exact |
 | `step_ok` | will the capability wrapper return `ok`? | observation's recorded `ok` — exact execution status |
 | `step_outcome` | what historical observation will it return? | recorded `{text, data}` — exact event, semantic quality varies |
-| `continuity_policy` | does the predicted/recorded next action respect completed work, failures, blockers, and approvals? | code-owned invariants where deterministic; labels where repetition is ambiguous |
+| `continuity_policy` | does the predicted/recorded next action respect completed writes, failed actions, and proposals awaiting confirmation? | code-owned invariants where deterministic; labels where repetition is ambiguous |
 
 The recorded-step targets are why the benchmark is the sharpest of the three
 instruments. `next_action` is closed-set classification over the case's
@@ -625,7 +649,7 @@ up, not whether it forecasts well overall.
   state-matched cases. The reverse can indicate imitation without outcome
   understanding. Both are hypotheses for direct tests, not role verdicts.
 - **Continuity under a long run** — whether the forecast respects completed
-  work, failed arguments, blockers, and pending approvals as the scratchpad
+  work, failed arguments, and proposals awaiting confirmation as the scratchpad
   grows. A model can imitate the next action well overall while repeatedly
   failing the few state transitions that make workflow agents unsafe.
 - **Size against target** — whether a small model is adequate at closed-set
@@ -1306,9 +1330,9 @@ durable active memory automatically.
   incumbent, not quality. Label the column.
 - **Semantic recall read as proof.** Retrieval rank proves discoverability;
   claim/evidence lifecycle determines authority. Score the two separately.
-- **Operating state reconstructed from durable memory.** Current steps,
-  blockers, failures, and approvals come from exact run/task events whenever
-  they exist, not from a stale episode summary.
+- **Operating state reconstructed from durable memory.** Steps, failures,
+  and pending proposals come from exact run/task rows whenever they exist,
+  not from a stale episode summary.
 - **Eval storage becoming indiscriminate memory.** Case snapshots are
   minimized, sensitivity/expiry propagate, and findings stay eval artifacts
   until reviewed promotion.
