@@ -29,8 +29,7 @@ from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
 
 KEYS = ("profile.current", "qa.facts_invalidated_at",
-        "profile.current_changed_at", "assistant.acceptance_criteria",
-        "assistant.formatting_guide")
+        "profile.current_changed_at", "assistant.formatting_guide")
 
 
 @pytest.fixture
@@ -57,9 +56,7 @@ def app_ctx():
 
 @pytest.fixture
 def room(app_ctx):
-    """A chatroom with the assistant and one ambiguous conversion request.
-    The criteria switch is ON (default-off is tested separately)."""
-    db.set_setting("assistant.acceptance_criteria", True)
+    """A chatroom with the assistant and one ambiguous conversion request."""
     human = db.get_human_user()
     assert human is not None
     chatroom = db.create_chatroom(
@@ -153,30 +150,34 @@ def _steps(run_uuid):
     )
 
 
-# --- the switch ---------------------------------------------------------------
+# --- always on ----------------------------------------------------------------
 
 
-def test_switch_defaults_off_no_call_no_section_no_catalog_entry(app_ctx):
-    db.set_setting("assistant.acceptance_criteria", None)  # back to default
+def test_criteria_run_on_every_turn_with_no_switch_to_turn_them_off(app_ctx):
+    """The criteria shipped behind `assistant.acceptance_criteria` while they
+    proved out. The switch is gone: with it off a small model would decide for
+    itself what the reply should look like, and guess wrong — imperial units
+    for a metric operator being the case that ended the experiment. Every turn
+    now establishes the constraints, and the section is in every prompt."""
     human = db.get_human_user()
     chatroom = db.create_chatroom(
-        f"ac-off-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+        f"ac-always-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
     db.post_chat_message(chatroom.uuid, human.uuid, "convert 1053737172 feet")
     agent = _agent()
     calls = []
-    _stub_criteria_seam(agent, [], calls)
+    _stub_criteria_seam(agent, [_criteria("step0")], calls)
     prompts = _capture_decides(agent, [_reply()])
     try:
         result = agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         assert result["status"] == "finished"
-        assert calls == []                                         # no criteria call
-        assert "<acceptance_criteria_json>" not in prompts[0]["user"]
-        # Ship dark: with the switch off nothing in the prompts changes —
-        # the system prompt neither mentions nor prioritizes the section.
-        assert "acceptance_criteria_json" not in prompts[0]["system"]
-        # The revision action is not offered while the switch is off.
-        assert "- acceptance_criteria:" not in agent._action_catalog()
-        assert AssistantActionName.ACCEPTANCE_CRITERIA not in agent._caps
+        assert len(calls) == 1                                   # the step-0 call
+        assert "<acceptance_criteria_json>" in prompts[0]["user"]
+        # The system prompt ranks the section, so the model treats it as
+        # binding rather than as one more piece of context.
+        assert "acceptance_criteria_json" in prompts[0]["system"]
+        # …and the revision action is always available to the model.
+        assert "- acceptance_criteria:" in agent._action_catalog()
+        assert AssistantActionName.ACCEPTANCE_CRITERIA in agent._caps
     finally:
         db.db.session.query(db.AssistantRun).filter(
             db.AssistantRun.room_uuid == chatroom.uuid).delete()
@@ -185,6 +186,14 @@ def test_switch_defaults_off_no_call_no_section_no_catalog_entry(app_ctx):
         db.db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid).delete()
         db.db.session.commit()
+
+
+def test_no_setting_exists_for_the_criteria(app_ctx):
+    """The /settings page must not offer a switch for this."""
+    import pytest as _pytest
+
+    with _pytest.raises(db.settings.UnknownSetting):
+        db.get_setting("assistant.acceptance_criteria")
 
 
 # --- step 0: one call, before the loop, outside the budget --------------------
@@ -230,11 +239,12 @@ def test_criteria_section_renders_directly_after_current_request(room):
             < prompt.index("<conversation_history"))
 
 
-def test_system_prompt_prioritizes_criteria_only_while_switch_on(room):
-    """With the switch on, the decide system prompt lists
-    acceptance_criteria_json directly below current_request and carries the
-    code-owned authority sentence. The module constant (the switch-off
-    baseline) mentions neither — the feature ships dark."""
+def test_system_prompt_ranks_the_criteria_just_below_the_request(room):
+    """The decide system prompt lists acceptance_criteria_json directly below
+    current_request and carries the code-owned authority sentence, so the model
+    treats the criteria as binding rather than as one more piece of context.
+    The module constant is the un-swapped literal and mentions neither — the
+    two variants stay readable exactly as the model receives them."""
     from agents.assistant import ASSISTANT_SYSTEM_PROMPT
 
     assert "acceptance_criteria_json" not in ASSISTANT_SYSTEM_PROMPT
@@ -308,8 +318,8 @@ def test_criteria_call_sees_formatting_guide_despite_gated_switch(room):
     """The formatting guide is a declared INPUT of the criteria call, rendered
     from the criteria snapshot profile regardless of the separate
     assistant.formatting_guide switch (which only gates the decide-prompt
-    injection) — otherwise enabling the criteria alone loses the derived
-    defaults (metric -> Celsius, separators)."""
+    injection) — otherwise a run with that switch off would establish its
+    criteria without the derived defaults (metric -> Celsius, separators)."""
     db.set_setting("assistant.formatting_guide", False)
     germany = next(e for e in db.profile_templates_entries()
                    if e["name"] == "Germany")["uuid"]
@@ -561,15 +571,6 @@ def test_revision_observation_records_the_inner_call_model_meta(room):
     assert (data.get("usage") or {}).get("output") == 60
     assert data.get("response") == (
         '{"processing": "p", "formatting": "f", "assumptions": "a"}')
-
-
-def test_revision_action_offered_in_catalog_when_switch_on(room):
-    agent = _agent()
-    _stub_criteria_seam(agent, [_criteria("step0")])
-    _capture_decides(agent, [_reply()])
-    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    assert AssistantActionName.ACCEPTANCE_CRITERIA in agent._caps
-    assert "- acceptance_criteria:" in agent._action_catalog()
 
 
 # --- second opinion -----------------------------------------------------------

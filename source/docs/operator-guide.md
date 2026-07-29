@@ -57,8 +57,7 @@ fallback.
   screen to someone else, use a fresh room and the demo database.
 - `/assistant` — assistant run inspector (traces, steps, write intents, and
   each step's collapsed debug log: active profile + block switch states).
-  With the default-off `assistant.acceptance_criteria` setting on, every run
-  starts with an `acceptance_criteria` step establishing the reply's
+  Every run starts with an `acceptance_criteria` step establishing the reply's
   work-steering preferences, formatting, and disclosed assumptions before any
   work — inspect its `assumptions` there to spot a wrong guess at a glance.
   Response language is handled by the separate classifier step; see

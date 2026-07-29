@@ -211,6 +211,26 @@ def test_reconcile_seeds_rows_and_heals_metadata(app_ctx):
     assert healed.value == value_before  # value untouched by reconcile
 
 
+def test_reconcile_drops_a_row_whose_setting_was_retired(app_ctx):
+    """The registry is what defines a setting, so a key that leaves it takes
+    its row with it. Left behind, the row is unreadable through get_setting yet
+    still lists in the admin's AppSetting table, describing behavior the code
+    no longer has — which is exactly the confusion retiring a switch is meant
+    to end."""
+    db.db.session.add(db.AppSetting(
+        key="retired.example", value="true", value_type="bool",
+        description="a switch that no longer exists"))
+    db.db.session.commit()
+
+    db.reconcile_app_settings()
+
+    assert db.db.session.query(db.AppSetting).filter_by(
+        key="retired.example").one_or_none() is None
+    # The registry's own rows are untouched.
+    assert db.db.session.query(db.AppSetting).filter_by(
+        key="backup.git_push").one_or_none() is not None
+
+
 def test_all_settings_covers_registry(app_ctx):
     keys = {s["key"] for s in db.all_settings()}
     assert {"backup.repo", "backup.age_recipient", "backup.git_push"} <= keys

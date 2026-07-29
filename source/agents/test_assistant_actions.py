@@ -136,9 +136,10 @@ def test_source_priority_policy_is_in_system_prompt_only():
     assert '<source rank="6">conversation_history (context only)</source>' in (
         ASSISTANT_SYSTEM_PROMPT
     )
-    # Ship dark: the criteria section enters the system prompt only when the
-    # assistant.acceptance_criteria switch is on (_system_prompt swaps the
-    # priority block); the baseline constant never mentions it.
+    # The baseline constant is the un-swapped literal; _system_prompt() always
+    # swaps in the variant that ranks the criteria section (see
+    # ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION), so this asserts the two are
+    # genuinely separate literals rather than one drifting into the other.
     assert "acceptance_criteria_json" not in ASSISTANT_SYSTEM_PROMPT
 
 

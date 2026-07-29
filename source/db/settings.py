@@ -210,18 +210,6 @@ SETTINGS: dict[str, Setting] = {
                     "(evals/profile_gate.py). Independent of the formatting "
                     "switch — the blocks gate separately.",
     ),
-    "assistant.acceptance_criteria": Setting(
-        "assistant.acceptance_criteria", None, "bool", False,
-        description="Run the acceptance-criteria call before the assistant's "
-                    "decide loop (a code-driven step 0) and inject its result "
-                    "as <acceptance_criteria_json> into every step, so the "
-                    "reply's work-steering preferences, formatting, and "
-                    "assumptions are established before any work happens. "
-                    "Response language is owned by the separate classifier. "
-                    "Default off: "
-                    "enable after the criteria step passes its eval gate "
-                    "(evals/profile_guidance.py).",
-    ),
     "profile.current_changed_at": Setting(
         "profile.current_changed_at", None, "string", None, internal=True,
         description="Event stamp of the last actual profile.current change, "
@@ -452,10 +440,17 @@ def all_settings(include_internal: bool = False) -> list[dict]:
 
 
 def reconcile_app_settings() -> None:
-    """Idempotent: ensure an `app_setting` row exists for every registry key
-    (value left NULL so env/default still apply) and (re)stamp its
-    value_type/secret/description from the registry, so the cached metadata
-    columns never drift from code. Called from init_db. App context required."""
+    """Idempotent: make `app_setting` match the registry. Ensure a row exists
+    for every registry key (value left NULL so env/default still apply),
+    (re)stamp its value_type/secret/description from the registry so the cached
+    metadata never drifts from code, and DELETE rows whose key has left the
+    registry. Called from init_db. App context required.
+
+    The deletion half matters because the registry is what defines a setting:
+    a retired key's row is unreadable through get_setting yet still shows up in
+    the admin's AppSetting table, carrying a description of behavior the code
+    no longer has. Its stored value goes with it — there is nothing left to
+    apply it to."""
     existing = {r.key: r for r in db.session.query(AppSetting).all()}
     for spec in SETTINGS.values():
         row = existing.get(spec.key)
@@ -465,4 +460,7 @@ def reconcile_app_settings() -> None:
         row.value_type = spec.type
         row.secret = spec.secret
         row.description = spec.description
+    for key, row in existing.items():
+        if key not in SETTINGS:
+            db.session.delete(row)
     db.session.commit()

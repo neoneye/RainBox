@@ -137,6 +137,7 @@ def test_each_step_boundary_emits_immediate_liveness(app_ctx):
         # rather than the whole run sharing one silence budget.
         assert activities == [
             "classifying response language",
+            "establishing acceptance criteria",
             "deciding step 0",
             "deciding step 1",
             "auditing the reply",

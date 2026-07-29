@@ -1,8 +1,9 @@
 # acceptance_criteria — establish the reply's constraints before any work
 
-**Status:** Implemented behind the `assistant.acceptance_criteria` switch
-(default off). Rollout steps 3-4 (the eval-suite extension and the switch
-flip) are pending. The `1_specification` reply argument has been removed and
+**Status:** Implemented and always on — the `assistant.acceptance_criteria`
+switch this proposal introduced has been removed, because with the criteria
+off a small model decides the reply's shape for itself and guesses wrong
+(imperial units for a metric operator). The `1_specification` reply argument has been removed and
 the reply args shrunk to `{"1_message", "2_audit"}` (see "Relationship to the
 existing reply args"). Response language was removed from this contract after
 the dedicated classifier superseded it.

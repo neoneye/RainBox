@@ -17,9 +17,8 @@ operator confirmation — is decided by code, never by prompt text.
 `handle()` runs a bounded loop (`STEP_LIMIT = 6`). Its first model-facing
 activity is the
 [`response_language_classifier`](#response-language-classifier-experiment).
-With the `assistant.acceptance_criteria` switch on, a separate code-driven
-**step 0** then precedes the loop: one structured call establishes the reply's
-constraints before any work happens (see
+A code-driven **step 0** then precedes the loop: one structured call
+establishes the reply's constraints before any work happens (see
 [Acceptance criteria](#acceptance-criteria)); neither preliminary call
 consumes the step limit. Each loop iteration:
 
@@ -100,8 +99,7 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   directly after the request; reason, score-free language list ranked by
   confidence, and audit), the **acceptance criteria**
   (`<acceptance_criteria_json>`, directly after the language block so the
-  request and its constraints travel together — present only when the
-  `assistant.acceptance_criteria` switch is on and the step-0 call
+  request and its constraints travel together — present when the step-0 call
   succeeded; see [Acceptance criteria](#acceptance-criteria)), the
   transcript (`kind == "message"` rows
   only, newest `MAX_RECENT_MESSAGES = 30`), the **scratchpad** of steps
@@ -247,9 +245,8 @@ genuinely multilingual and low-confidence cases.
 
 ## Acceptance criteria
 
-Behind the `assistant.acceptance_criteria` switch (default off), a
-code-driven **step 0** establishes the reply's constraints before the decide
-loop starts — enforced by the loop, so the model cannot skip or forget it.
+On every turn a code-driven **step 0** establishes the reply's constraints
+before the decide loop starts — enforced by the loop, so the model cannot skip or forget it.
 One structured call returns an `AcceptanceCriteria`:
 
 - `processing` — preferences that steer the WORK (the target unit for an

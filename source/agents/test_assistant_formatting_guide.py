@@ -257,8 +257,10 @@ def test_steps_record_the_debug_log(room):
         assert by_label["formatting_guide"]["text"] == "on"
         assert by_label["knowledge_calibration"]["text"] == "on"
         entry_labels = list(by_label)
+    # No acceptance_criteria entry: the log reports the switches a turn read,
+    # and the criteria no longer have one — they run on every turn.
     assert entry_labels == ["profile", "formatting_guide",
-                            "knowledge_calibration", "acceptance_criteria"]
+                            "knowledge_calibration"]
     # Debug context never leaks into the prompt.
     assert "formatting_guide\": " not in captured["user_prompt"]
     assert '"profile"' not in captured["user_prompt"]
@@ -373,11 +375,14 @@ def test_system_prompt_documents_the_reply_args(room):
     assert '"message"' in system
     assert "2_audit" not in system
     assert "1_specification" not in system
-    # Named neutrally, not as <acceptance_criteria_json>: the capability
-    # description is in every system prompt, and naming the section would
-    # break ship-dark for a switched-off run.
+    # The reply capability names the constraints neutrally rather than by tag —
+    # the prompt already names the section where it ranks it and where the
+    # revision action describes it, and a fourth naming inside `reply` would
+    # just be noise on the one action the model reaches for most.
     assert "constraints already established for this turn" in system
-    assert "acceptance_criteria_json" not in system
+    reply_line = next(ln for ln in system.splitlines()
+                      if ln.strip().startswith("- reply:"))
+    assert "acceptance_criteria_json" not in reply_line
     assert "never switch language on your own" in system
     assert "audited before it is sent" in system
 
