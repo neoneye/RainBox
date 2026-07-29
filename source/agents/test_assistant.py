@@ -134,11 +134,12 @@ def test_step_records_token_usage_and_model_from_the_decide_call(room):
     assert final.model_response == agent._last_response_text
 
 
-def test_step_records_and_posts_model_reasoning(room):
+def test_step_records_reasoning_without_posting_it_to_the_room(room):
     """The native reasoning text the structured-completion seam exposes (via
-    _last_reasoning) is stored on the step that decision produced AND posted
-    into the room as a kind="thinking" row, so /assistant and /chat both show
-    what a reasoning model was thinking."""
+    _last_reasoning) is stored on the step that decision produced, and read on
+    /assistant. It is deliberately not a chat row: a reasoning model emits one
+    per step, and a dozen collapsed thought bubbles per run buried the
+    conversation they were meant to explain."""
     room_uuid, message_uuid = room
     agent = _agent()
 
@@ -152,12 +153,9 @@ def test_step_records_and_posts_model_reasoning(room):
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
     final = db.list_assistant_steps(agent._run.uuid)[-1]
     assert final.reasoning == "The operator greeted me; a short reply suffices."
-    thinking = [
-        m for m in db.list_room_messages(room_uuid) if m["kind"] == "thinking"
-    ]
-    assert [m["text"] for m in thinking] == [
-        "The operator greeted me; a short reply suffices."
-    ]
+    kinds = {m["kind"] for m in db.list_room_messages(room_uuid)}
+    assert "thinking" not in kinds
+    assert "debug-assistant" not in kinds
 
 
 def test_non_reasoning_model_leaves_no_reasoning_trace(room):

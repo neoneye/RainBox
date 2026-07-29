@@ -93,17 +93,24 @@ def test_chatmessage_admin_list_has_uuid_column(app_ctx):
 
 
 def _make_debug_assistant_row(observation):
-    """Create a run + a terminal step with `observation`, returning the
-    debug-assistant chat message it anchored."""
+    """A `debug-assistant` chat row carrying a step's state as JSON.
+
+    Written directly: the assistant stopped producing these — a run mirrored
+    itself into the room once per step, which buried the conversation — but
+    every historical run left them, so the admin's formatter still has to
+    resolve them."""
+    import json
+
     from agents.config import ASSISTANT_UUID
     human = db.get_human_user()
     room = db.create_chatroom(f"trunc-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
-    run = db.start_assistant_run(
-        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=ASSISTANT_UUID, step_limit=6)
-    db.append_assistant_step(
-        run_uuid=run.uuid, step_index=0, phase="observed", action="memory_query",
-        reason="look it up", args={"query": "x"}, observation_preview=observation)
-    msg = next(m for m in db.list_room_messages(room.uuid) if m["kind"] == "debug-assistant")
+    state = {"step": 0, "phase": "observed", "action": "memory_query",
+             "reason": "look it up", "args": {"query": "x"},
+             "observation": observation}
+    row = db.post_chat_message(
+        room.uuid, ASSISTANT_UUID, json.dumps(state, indent=2),
+        content_type="json", kind="debug-assistant")
+    msg = next(m for m in db.list_room_messages(room.uuid) if m["uuid"] == str(row.uuid))
     return room, msg
 
 

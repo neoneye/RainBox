@@ -99,10 +99,11 @@ def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
         _cleanup_run(run.uuid)
 
 
-def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
-    """The inline anchor's text IS the full readable trace (action/reason/args/
-    observation) — self-contained, so it matches what's shown and copied. It lands
-    at the terminal transition (planned posts nothing), one per step."""
+def test_step_rows_post_nothing_into_the_room(app_ctx):
+    """Steps write to the trace tables only. Each one used to mirror itself
+    into the room as a `debug-assistant` bubble, so a single run left a dozen
+    rows the operator had to scroll past; the room now carries one progress row
+    that links to /assistant, where the same state is already rendered."""
     human = db.get_human_user()
     assert human is not None
     chatroom = db.create_chatroom(f"trace-ptr-{uuid4().hex[:8]}", human.uuid, [])
@@ -110,31 +111,20 @@ def test_append_posts_self_contained_debug_assistant_trace(app_ctx):
         journal_id=uuid4(), room_uuid=chatroom.uuid, agent_uuid=uuid4(), step_limit=6
     )
     try:
-        # `planned` posts NO anchor (the observation doesn't exist yet).
+        step = db.open_assistant_step(
+            run_uuid=run.uuid, step_index=0, action="memory_query",
+            reason="look it up", args={"query": "the-query"})
+        db.settle_assistant_step(
+            step, phase="observed", observation_preview="found the fact")
         db.append_assistant_step(
-            run_uuid=run.uuid, step_index=0, phase="planned",
-            action="memory_query", reason="look it up", args={"query": "the-query"},
-        )
-        assert not [m for m in db.list_room_messages(chatroom.uuid)
-                    if m["kind"] == "debug-assistant"]
-        db.append_assistant_step(
-            run_uuid=run.uuid, step_index=0, phase="observed",
-            action="memory_query", reason="look it up", args={"query": "the-query"},
-            observation_preview="found the fact",
-        )
-        rows = [
-            m for m in db.list_room_messages(chatroom.uuid)
-            if m["kind"] == "debug-assistant"
-        ]
-        assert len(rows) == 1  # exactly one anchor per step, at its terminal phase
-        assert rows[0]["content_type"] == "json"
-        state = json.loads(rows[0]["text"])          # the full step state as JSON
-        assert state["step"] == 0
-        assert state["action"] == "memory_query"
-        assert state["reason"] == "look it up"
-        assert state["args"] == {"query": "the-query"}  # args in full
-        assert state["observation"] == "found the fact"
-        assert "run_id" not in state                 # not a pointer
+            run_uuid=run.uuid, step_index=1, phase="final", action="reply",
+            reason="ready", args={"message": "the answer"})
+        assert not db.list_room_messages(chatroom.uuid)
+        # …and the state that used to be mirrored is on the rows.
+        rows = db.list_assistant_steps(run.uuid)
+        assert [r.phase for r in rows] == ["observed", "final"]
+        assert rows[0].observation_preview == "found the fact"
+        assert rows[0].args == {"query": "the-query"}
     finally:
         _cleanup_run(run.uuid)
         db.db.session.query(db.Chatroom).filter(
@@ -189,13 +179,7 @@ def test_open_then_settle_is_one_mutable_row(app_ctx):
         assert len(rows) == 1
         assert rows[0].phase == "observed"
         assert rows[0].observation_preview == "found the fact"
-        # Exactly one terminal anchor, posted at settle.
-        anchors = [m for m in db.list_room_messages(chatroom.uuid)
-                   if m["kind"] == "debug-assistant"]
-        assert len(anchors) == 1
-        state = json.loads(anchors[0]["text"])
-        assert state["action"] == "memory_query"
-        assert state["observation"] == "found the fact"
+        assert rows[0].action == "memory_query"
     finally:
         _cleanup_run(run.uuid)
         db.db.session.query(db.Chatroom).filter(

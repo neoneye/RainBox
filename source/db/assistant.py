@@ -4,16 +4,16 @@ The trace tables are the source of truth for an assistant turn. The loop calls
 exactly three helpers — `start_assistant_run`, `append_assistant_step`,
 `finish_run` — plus `list_assistant_steps` for readers. Re-exported from `db`.
 
-`append_assistant_step` commits the step row first, then (at the step's first
-transition) posts a thin `debug-assistant` chat row carrying only the
-run_uuid/step_index pointer, so the trace renders inline without putting the
-payload in chat. The pointer is never `kind="progress"` (those get reaped on a
-terminal reply) and never carries the step args/observation.
+Steps write only to these tables. A turn used to mirror each step into the room
+as a `debug-assistant` row and each reasoning channel as a `thinking` row, which
+buried the conversation under a dozen bubbles per run; the room now carries one
+`kind="progress"` row instead (see the agent's `_publish_progress`), linking to
+/assistant where the full trace already lives.
 """
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
 
@@ -97,47 +97,6 @@ def assistant_step_path(run_uuid: UUID, step_uuid: UUID) -> str:
     return f"/assistant?id={run_uuid}#step-{step_uuid}"
 
 
-_TERMINAL_PHASES = ("observed", "failed", "final")
-
-
-def _post_terminal_trace(step: AssistantStep) -> None:
-    """Post the self-contained `debug-assistant` chat row for a step that has
-    reached a terminal phase (observed/failed/final). The chat text IS the full
-    readable trace (action / reason / args / observation) — what's shown ==
-    what's copied, no pointer indirection. Anchored at the terminal phase so the
-    observation already exists. Commits the surrounding txn (including the step
-    row). No-op for non-terminal phases or a missing run.
-
-    Redaction v1: no secret-carrying actions exist yet, so `args` persist verbatim
-    into both the step row and this trace text; a later capability that sets
-    secrets=true must redact before this is called.
-    """
-    if step.phase not in _TERMINAL_PHASES:
-        db.session.commit()
-        return
-    run = db.session.get(AssistantRun, step.run_uuid)
-    if run is None:
-        db.session.commit()
-        return
-    state: dict[str, Any] = {
-        "step": step.step_index,
-        "phase": step.phase,
-        "action": step.action,
-        "reason": step.reason,
-        "args": step.args or {},
-    }
-    if step.phase == "observed":
-        state["observation"] = step.observation_preview
-    elif step.phase == "failed":
-        state["error"] = step.error or step.observation_preview
-    elif step.phase == "final":
-        state["result"] = "replied to the user"
-    post_chat_message(
-        run.room_uuid, run.agent_uuid, json.dumps(state, indent=2),
-        content_type="json", kind="debug-assistant",
-    )  # commits the txn (including the step row)
-
-
 def open_assistant_step(
     *,
     run_uuid: UUID,
@@ -197,8 +156,7 @@ def settle_assistant_step(
     error: str | None = None,
 ) -> AssistantStep:
     """Settle an open step in place: UPDATE its `running` row to a terminal
-    `phase` (observed/failed) with the outcome, then post the terminal
-    `debug-assistant` trace row. One row per step — no append."""
+    `phase` (observed/failed) with the outcome. One row per step — no append."""
     step.phase = phase
     step.observation_preview = observation_preview
     step.observation = observation
@@ -207,7 +165,7 @@ def settle_assistant_step(
     db.session.add(step)
     db.session.flush()
     _assistant_notify(step.run_uuid, "step")
-    _post_terminal_trace(step)
+    db.session.commit()
     return step
 
 
@@ -236,9 +194,8 @@ def append_assistant_step(
 ) -> AssistantStep:
     """Record a **single-insert** step row — the terminal-only path for a step
     with no `running`→settle lifecycle: a `failed` validation, the `final` reply,
-    and `control` (stop/redirect) events. Inserts the row and, when its `phase`
-    is terminal, posts the self-contained `debug-assistant` trace row (see
-    `_post_terminal_trace`). Normal action steps use open/settle instead.
+    and `control` (stop/redirect) events. Normal action steps use open/settle
+    instead.
 
     `code_driven` marks a row the loop produced on its own initiative (see the
     column): its action and reason are labels, not a model decision."""
@@ -267,7 +224,6 @@ def append_assistant_step(
     db.session.add(step)
     db.session.flush()  # commit the step row before anything else this txn
     _assistant_notify(run_uuid, "step")
-    _post_terminal_trace(step)
     db.session.commit()
     return step
 
@@ -736,6 +692,124 @@ def list_assistant_steps(run_uuid: UUID) -> list[AssistantStep]:
         .order_by(AssistantStep.id)
         .all()
     )
+
+
+# --- model calls --------------------------------------------------------------
+#
+# A run's model calls do not map one-to-one onto step rows. Most are a step's
+# own decide/code-driven call, but three ride inside something else: the
+# second-opinion review (its own table), the acceptance-criteria revision's
+# inner call, and the memory recall filter (both in a step's observation
+# payload). Counting rows therefore under-reports the calls, and their time
+# books as "action" time — exactly the time an operator is hunting for. This is
+# the single enumeration: the inspector's dashboard and waterfall, the markdown
+# export, and the in-chat progress row all read it, so no surface can quote a
+# different number of calls than another.
+
+
+def _parse_ts(value):
+    """An ISO timestamp from a JSONB payload, or None. Payload-sourced values
+    are never trusted to parse — a malformed one drops the call's placement,
+    not the page."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    # Payloads store UTC; the rows come back from Postgres in the session's
+    # zone. Convert so a payload-sourced call is not shown hours off the step
+    # it ran inside.
+    return parsed.astimezone() if parsed.tzinfo else parsed
+
+
+def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
+          model_uuid=None, input_tokens=None, output_tokens=None) -> dict:
+    return {"label": label, "kind": kind, "start": start,
+            "duration_ms": duration_ms, "anchor": anchor,
+            "model_uuid": str(model_uuid) if model_uuid else None,
+            "input_tokens": input_tokens, "output_tokens": output_tokens}
+
+
+def _inner_calls(step, data: dict) -> list[dict]:
+    """The model calls a step made from inside its action, which have no row of
+    their own: the criteria revision's inner call and the memory recall
+    filter's scorer. Both record `requested_at` + `usage` in the observation
+    payload; older payloads have the usage but no start time."""
+    calls: list[dict] = []
+    if "acceptance_criteria" in data or "usage" in data:
+        usage = data.get("usage") or {}
+        if usage.get("ms") is not None:
+            calls.append(_call(
+                "acceptance_criteria revision", "inner",
+                start=_parse_ts(data.get("requested_at")),
+                duration_ms=usage.get("ms"), anchor=str(step.uuid),
+                model_uuid=data.get("model_uuid"),
+                input_tokens=usage.get("input"),
+                output_tokens=usage.get("output")))
+    recall = data.get("recall_filter") or {}
+    usage = recall.get("usage") or {}
+    if usage.get("ms") is not None:
+        calls.append(_call(
+            "memory recall filter", "inner",
+            start=_parse_ts(recall.get("requested_at")),
+            duration_ms=usage.get("ms"), anchor=str(step.uuid),
+            model_uuid=recall.get("scorer_model_uuid"),
+            input_tokens=usage.get("input"), output_tokens=usage.get("output")))
+    return calls
+
+
+def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
+    """Every model call the run made, oldest first.
+
+    A call with no recorded start is placed at its row's end minus its
+    duration — the response landed when the row was written, so that is where
+    it ran. Calls with neither a start nor a duration (a crash before the model
+    answered) still count: they happened, and hiding them would make the run
+    look cheaper than it was."""
+    calls: list[dict] = []
+    for s in steps:
+        if s.phase == "control":
+            continue          # an operator event, not a model call
+        data = (s.observation or {}).get("data") or {}
+        if s.requested_at or s.duration_ms is not None or s.system_prompt:
+            start = s.requested_at
+            if start is None and s.created_at and s.duration_ms:
+                start = s.created_at - timedelta(milliseconds=s.duration_ms)
+            calls.append(_call(
+                s.action or "—", "code-driven" if s.code_driven else "decide",
+                start=start, duration_ms=s.duration_ms, anchor=str(s.uuid),
+                model_uuid=s.model_uuid, input_tokens=s.input_tokens,
+                output_tokens=s.output_tokens))
+        calls.extend(_inner_calls(s, data))
+    for r in reviews or []:
+        calls.append(_call(
+            "second opinion", "review", start=r.requested_at,
+            duration_ms=r.duration_ms,
+            anchor=str(r.step_uuid) if r.step_uuid else "",
+            model_uuid=r.model_uuid, input_tokens=r.input_tokens,
+            output_tokens=r.output_tokens))
+    # Undated calls sort last rather than crashing the comparison — they are
+    # legacy rows, and the waterfall renders them without a bar.
+    calls.sort(key=lambda c: (c["start"] is None, c["start"] or datetime.min))
+    return calls
+
+
+def assistant_run_stats(steps: list, reviews: list | None = None) -> dict:
+    """What a run has cost so far: `{calls, input_tokens, output_tokens,
+    duration_ms, tps}` over every model call. Summed from the call enumeration
+    rather than the step rows, so the inner calls are in the totals."""
+    calls = assistant_llm_calls(steps, reviews)
+    in_tokens = sum((c["input_tokens"] or 0) for c in calls)
+    out_tokens = sum((c["output_tokens"] or 0) for c in calls)
+    llm_ms = sum((c["duration_ms"] or 0) for c in calls)
+    return {
+        "calls": len(calls),
+        "input_tokens": in_tokens,
+        "output_tokens": out_tokens,
+        "duration_ms": llm_ms,
+        "tps": round((in_tokens + out_tokens) / (llm_ms / 1000)) if llm_ms else None,
+    }
 
 
 # --- confirm-tier write intents (Phase 5) ------------------------------------

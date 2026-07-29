@@ -852,10 +852,10 @@ def test_waterfall_places_each_call_on_the_run_span(app_ctx, client):
     t0 = datetime(2026, 7, 29, 14, 0, 0, tzinfo=UTC)
     _run_with_hidden_calls(run, t0)
     try:
-        from webapp.assistant_views import _llm_calls, _waterfall
+        from webapp.assistant_views import _waterfall
         steps = db.list_assistant_steps(run.uuid)
-        rows = _waterfall(
-            _llm_calls(steps, db.list_second_opinion_reviews(run.uuid)), run)
+        rows = _waterfall(db.assistant_llm_calls(
+            steps, db.list_second_opinion_reviews(run.uuid)), run)
         assert [r["label"] for r in rows] == [
             "query_memory", "memory recall filter", "python_run",
             "second opinion"]
@@ -887,9 +887,8 @@ def test_call_without_a_recorded_start_is_placed_at_its_row_end(
         reason="done", duration_ms=5000)
     db.finish_run(run, "finished")
     try:
-        from webapp.assistant_views import _llm_calls
         steps = db.list_assistant_steps(run.uuid)
-        call = _llm_calls(steps)[0]
+        call = db.assistant_llm_calls(steps)[0]
         assert call["start"] == steps[0].created_at - timedelta(seconds=5)
     finally:
         _cleanup(run.uuid, room.uuid)

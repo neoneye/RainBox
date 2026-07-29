@@ -935,6 +935,56 @@ def post_progress(room_uuid: UUID, sender_uuid: UUID, text: str) -> ChatMessage:
     return post_chat_message(room_uuid, sender_uuid, text, kind="progress")
 
 
+def upsert_progress(room_uuid: UUID, sender_uuid: UUID, text: str) -> ChatMessage:
+    """Rewrite the sender's live status row in this room, inserting one if it
+    has none.
+
+    A multi-step turn produces a stream of status; one row per update buries
+    the conversation under the agent's own bookkeeping. So a sender keeps
+    exactly ONE progress row per room: this rewrites its text and NOTIFYs an
+    `update`, which browsers apply to that bubble in place rather than
+    appending a message. Any older progress rows (a re-post that raced a reap)
+    are deleted in the same transaction and ride along in the notify, so open
+    browsers drop their nodes too.
+
+    Like every progress row it is reaped when the sender posts its real reply
+    (see post_chat_message), so a finished turn leaves the answer, not the
+    bookkeeping."""
+    rows = (
+        db.session.query(ChatMessage)
+        .filter(
+            ChatMessage.room_uuid == room_uuid,
+            ChatMessage.sender_uuid == sender_uuid,
+            ChatMessage.kind == "progress",
+        )
+        .order_by(ChatMessage.id.desc())
+        .all()
+    )
+    if not rows:
+        return post_chat_message(room_uuid, sender_uuid, text, kind="progress")
+    live, stale = rows[0], rows[1:]
+    deleted_ids = [m.id for m in stale]
+    for m in stale:
+        db.session.delete(m)
+    live.text = text
+    db.session.add(live)
+    db.session.flush()
+    _chat_notify(
+        room_uuid=room_uuid,
+        message_id=live.id,
+        event="update",
+        deleted_progress_ids=deleted_ids,
+        kind="progress",
+        # Not a streaming row, but the notify's {streaming, text} pair is what
+        # makes a browser update one bubble in place instead of fetching rows
+        # after its cursor — and an updated row is never after the cursor.
+        streaming=False,
+        text=text,
+    )
+    db.session.commit()
+    return live
+
+
 def get_workspace_shell_state(room_uuid: UUID) -> "WorkspaceShellState | None":
     """The persisted workspace-shell state for a room, or None if the room has run nothing yet."""
     return db.session.get(WorkspaceShellState, room_uuid)

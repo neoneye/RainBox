@@ -130,10 +130,104 @@ def test_each_step_boundary_emits_immediate_liveness(app_ctx):
             message.get("activity") for message in sent
             if message.get("status") == "heartbeat"
         ]
-        assert activities == ["deciding step 0", "deciding step 1"]
+        # Every phase of the turn reports itself, including the calls made
+        # before and after the decide loop — a run held up in the classifier
+        # or the audit is working, not hung, and the watchdog must be able to
+        # tell. Both decide steps appear, so a completed step resets the timer
+        # rather than the whole run sharing one silence budget.
+        assert activities == [
+            "classifying response language",
+            "deciding step 0",
+            "deciding step 1",
+            "auditing the reply",
+        ]
     finally:
         db.db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
         db.db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
+
+
+def test_one_progress_row_carries_the_run_state_and_links_to_the_trace(app_ctx):
+    """A run used to narrate itself with a chat row per step — a `thinking`
+    bubble and a `debug-assistant` bubble each time — so one turn buried the
+    conversation under a dozen rows. The room now carries ONE progress row,
+    rewritten in place: where the run is, what it has cost, and a link to
+    /assistant where the full trace already lives."""
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"prog-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "how many kanban boards?")
+    db.set_setting("qa.facts_invalidated_at", None)
+    db.post_chat_message(
+        chatroom.uuid, ASSISTANT_UUID, ASSISTANT_WORKING_NOTICE, kind="progress")
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    seen = {}
+
+    def fake_decide(**_kwargs):
+        # what base.py sets for a real decide call, so the row has a cost to show
+        agent._last_usage = {"input": 900, "output": 60, "ms": 4000}
+        if "rows" not in seen:
+            rows = [m for m in db.list_room_messages(chatroom.uuid)
+                    if m["kind"] == "progress"]
+            seen["rows"] = rows
+            seen["kinds"] = {m["kind"] for m in db.list_room_messages(chatroom.uuid)}
+        return AssistantStepDecision(
+            reason="answer", action=AssistantActionName.REPLY, args={"message": "ok"})
+
+    agent._decide_next_step = fake_decide
+    try:
+        result = agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        run_uuid = result["assistant_run_uuid"]
+        # Exactly one progress row while the run works — not one per step.
+        assert len(seen["rows"]) == 1
+        text = seen["rows"][0]["text"]
+        assert f"/assistant?id={run_uuid}" in text     # inspect the run from chat
+        assert "Step " in text
+        assert "LLM call" in text and "in " in text and "out " in text
+        # The bubbles it replaced are gone.
+        assert "thinking" not in seen["kinds"]
+        assert "debug-assistant" not in seen["kinds"]
+        # …and the reply reaps the progress row as any terminal post does.
+        assert _progress_count(chatroom.uuid) == 0
+    finally:
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
+
+
+def test_progress_row_reports_the_calls_made_before_the_first_decide(app_ctx):
+    """By the first decide call the run has already made a model call — the
+    language classifier. Its cost is in the row from the start, so a run that is
+    slow BEFORE the decide loop opens does not read as idle."""
+    from agents.assistant import ResponseLanguageClassification, ResponseLanguageItem
+
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"prog-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "hello")
+    db.set_setting("qa.facts_invalidated_at", None)
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent._request_response_language_classification = lambda **_: (
+        ResponseLanguageClassification(
+            reason="English request.",
+            languages=[ResponseLanguageItem(code="en-US", score=5)],
+            audit="OK"))
+    seen = {}
+
+    def fake_decide(**_kwargs):
+        rows = [m for m in db.list_room_messages(chatroom.uuid) if m["kind"] == "progress"]
+        seen["text"] = rows[0]["text"] if rows else ""
+        return AssistantStepDecision(
+            reason="answer", action=AssistantActionName.REPLY, args={"message": "ok"})
+
+    agent._decide_next_step = fake_decide
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        assert "1 LLM call ·" in seen["text"]    # the classifier, already counted
+        assert "deciding step 0" in seen["text"]
+    finally:
+        db.db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
         db.db.session.commit()

@@ -813,106 +813,6 @@ def _dash_status(run) -> tuple[str, str]:
     return ("Unresolved", "unresolved")
 
 
-# --- model calls --------------------------------------------------------------
-#
-# A run's model calls do not map one-to-one onto step rows. Most are a step's
-# own decide/code-driven call, but three ride inside something else: the
-# second-opinion review (its own table), the acceptance-criteria revision's
-# inner call, and the memory recall filter (both in a step's observation
-# payload). Counting rows therefore under-reports the calls, and their time
-# books as "action" time — exactly the time an operator is hunting for. This is
-# the single enumeration; the dashboard count, the waterfall, and the export all
-# read it.
-
-
-def _parse_ts(value):
-    """An ISO timestamp from a JSONB payload, or None. Payload-sourced values
-    are never trusted to parse — a malformed one drops the call's placement,
-    not the page."""
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value))
-    except ValueError:
-        return None
-    # Payloads store UTC; the rows come back from Postgres in the session's
-    # zone. Convert so a payload-sourced call is not shown hours off the step
-    # it ran inside.
-    return parsed.astimezone() if parsed.tzinfo else parsed
-
-
-def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
-          model_uuid=None, input_tokens=None, output_tokens=None) -> dict:
-    return {"label": label, "kind": kind, "start": start,
-            "duration_ms": duration_ms, "anchor": anchor,
-            "model_uuid": str(model_uuid) if model_uuid else None,
-            "input_tokens": input_tokens, "output_tokens": output_tokens}
-
-
-def _inner_calls(step, data: dict) -> list[dict]:
-    """The model calls a step made from inside its action, which have no row of
-    their own: the criteria revision's inner call and the memory recall
-    filter's scorer. Both record `requested_at` + `usage` in the observation
-    payload; older payloads have the usage but no start time."""
-    calls: list[dict] = []
-    if "acceptance_criteria" in data or "usage" in data:
-        usage = data.get("usage") or {}
-        if usage.get("ms") is not None:
-            calls.append(_call(
-                "acceptance_criteria revision", "inner",
-                start=_parse_ts(data.get("requested_at")),
-                duration_ms=usage.get("ms"), anchor=str(step.uuid),
-                model_uuid=data.get("model_uuid"),
-                input_tokens=usage.get("input"),
-                output_tokens=usage.get("output")))
-    recall = data.get("recall_filter") or {}
-    usage = recall.get("usage") or {}
-    if usage.get("ms") is not None:
-        calls.append(_call(
-            "memory recall filter", "inner",
-            start=_parse_ts(recall.get("requested_at")),
-            duration_ms=usage.get("ms"), anchor=str(step.uuid),
-            model_uuid=recall.get("scorer_model_uuid"),
-            input_tokens=usage.get("input"), output_tokens=usage.get("output")))
-    return calls
-
-
-def _llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
-    """Every model call the run made, oldest first.
-
-    A call with no recorded start is placed at its row's end minus its
-    duration — the response landed when the row was written, so that is where
-    it ran. Calls with neither a start nor a duration (a crash before the model
-    answered) still count: they happened, and hiding them would make the run
-    look cheaper than it was."""
-    calls: list[dict] = []
-    for s in steps:
-        if s.phase == "control":
-            continue          # an operator event, not a model call
-        data = (s.observation or {}).get("data") or {}
-        if s.requested_at or s.duration_ms is not None or s.system_prompt:
-            start = s.requested_at
-            if start is None and s.created_at and s.duration_ms:
-                start = s.created_at - timedelta(milliseconds=s.duration_ms)
-            calls.append(_call(
-                s.action or "—", "code-driven" if s.code_driven else "decide",
-                start=start, duration_ms=s.duration_ms, anchor=str(s.uuid),
-                model_uuid=s.model_uuid, input_tokens=s.input_tokens,
-                output_tokens=s.output_tokens))
-        calls.extend(_inner_calls(s, data))
-    for r in reviews or []:
-        calls.append(_call(
-            "second opinion", "review", start=r.requested_at,
-            duration_ms=r.duration_ms,
-            anchor=str(r.step_uuid) if r.step_uuid else "",
-            model_uuid=r.model_uuid, input_tokens=r.input_tokens,
-            output_tokens=r.output_tokens))
-    # Undated calls sort last rather than crashing the comparison — they are
-    # legacy rows, and the waterfall renders them without a bar.
-    calls.sort(key=lambda c: (c["start"] is None, c["start"] or datetime.min))
-    return calls
-
-
 def _waterfall(calls: list[dict], run) -> list[dict]:
     """Lay the calls out over the run's wall-clock span as percentages, so the
     page draws where each call sat and — by the gaps between bars — where the
@@ -948,16 +848,16 @@ def _waterfall(calls: list[dict], run) -> list[dict]:
 def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
     """Aggregate metrics for the top-of-detail mini dashboard.
 
-    Cost is summed over `_llm_calls` — every model call the run made, including
-    the ones with no step row of their own. Counting rows instead left the
-    second opinion, the criteria revision's inner call and the recall filter's
-    scorer out of tokens and model time, which then reappeared as unexplained
-    "action" time."""
+    Cost comes from `db.assistant_run_stats` — every model call the run made,
+    including the ones with no step row of their own. Counting rows instead left
+    the second opinion, the criteria revision's inner call and the recall
+    filter's scorer out of tokens and model time, which then reappeared as
+    unexplained "action" time. The in-chat progress row reads the same helper,
+    so the two cannot quote different figures for one run."""
     label, cls = _dash_status(run)
-    calls = _llm_calls(steps, reviews)
-    in_tokens = sum((c["input_tokens"] or 0) for c in calls)
-    out_tokens = sum((c["output_tokens"] or 0) for c in calls)
-    llm_ms = sum((c["duration_ms"] or 0) for c in calls)
+    stats = db.assistant_run_stats(steps, reviews)
+    in_tokens, out_tokens = stats["input_tokens"], stats["output_tokens"]
+    llm_ms = stats["duration_ms"]
     llm_seconds = llm_ms / 1000
     # "action" time = wall-clock spent outside the model (action execution +
     # overhead) = total - model. Only computable once the run has finished.
@@ -968,12 +868,12 @@ def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
         "status": label,
         "status_class": cls,
         "steps": len(steps),
-        "llm_calls": len(calls),
+        "llm_calls": stats["calls"],
         "total_time": _format_seconds(total_seconds) if total_seconds is not None else "—",
         "model_time": _format_seconds(llm_seconds),
         "action_time": (_format_seconds(total_seconds - llm_seconds)
                         if total_seconds is not None else "—"),
-        "llm_tps": round((in_tokens + out_tokens) / (llm_ms / 1000)) if llm_ms else None,
+        "llm_tps": stats["tps"],
         "in_tokens": in_tokens,
         "out_tokens": out_tokens,
     }
@@ -1558,7 +1458,7 @@ def _load_run_detail(selected) -> dict:
         "pending_controls": db.list_pending_controls(selected.uuid),
         "trigger": db.get_run_trigger_message(selected),
         "dash": _run_dashboard(selected, steps, review_rows),
-        "waterfall": _waterfall(_llm_calls(steps, review_rows), selected),
+        "waterfall": _waterfall(db.assistant_llm_calls(steps, review_rows), selected),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,

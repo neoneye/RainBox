@@ -86,10 +86,12 @@ def _maybe_trigger_chat_agents(
             # handle() runs, so posting here is what the operator sees
             # immediately. kind="progress" is reaped when the real reply lands.
             if agent_uuid == ASSISTANT_UUID:
-                db.post_chat_message(
-                    room_uuid, ASSISTANT_UUID, ASSISTANT_WORKING_NOTICE,
-                    kind="progress",
-                )
+                # Upsert, not post: a run that died without replying can leave
+                # its row behind, and two working bubbles in a room is a bug
+                # report waiting to happen. The agent rewrites this same row
+                # with its live state once it starts.
+                db.upsert_progress(
+                    room_uuid, ASSISTANT_UUID, ASSISTANT_WORKING_NOTICE)
 
 
 @app.route("/chat/api/rooms", methods=["GET", "POST"])

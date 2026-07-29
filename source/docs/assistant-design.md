@@ -539,14 +539,23 @@ Every run is durable in `assistant_run` / `assistant_step` (see
 - Each step also stores the model's native `reasoning` ("thinking") channel,
   captured via instrumentation while the structured output streams (the
   structured wrapper drops it from the parsed result). A reasoning model's
-  thinking shows on the /assistant step ("model reasoning", collapsed) and is
-  posted into the room as a `kind="thinking"` bubble; a non-reasoning model
-  emits no reasoning channel, so nothing is stored or shown. On a decide-call
-  crash (e.g. a timeout mid-think) the failed step keeps the partial
-  reasoning.
+  thinking shows on the /assistant step ("model reasoning", collapsed); it is
+  not a chat row (see the progress row below). A non-reasoning model emits no
+  reasoning channel, so nothing is stored or shown. On a decide-call crash
+  (e.g. a timeout mid-think) the failed step keeps the partial reasoning.
 - The journal `result` is a short summary plus pointers
   (`assistant_run_uuid`, step count) — the tables are the trace, the journal
   is not.
+
+A run narrates itself to the room through **one** `kind="progress"` row,
+rewritten in place as it works (`_set_activity` → `_publish_progress` →
+`db.upsert_progress`): which step it is on, what it is doing, what it has cost
+(`db.assistant_run_stats` — LLM calls, in/out tokens, throughput), and a link
+to `/assistant`. It replaced a `thinking` bubble and a `debug-assistant` bubble
+per step, which buried the conversation under a dozen rows per turn while the
+same state was already on the step rows. Like any progress row it is reaped
+when the real reply lands, so a finished turn leaves the answer, not the
+bookkeeping.
 
 After every terminal state the assistant stores an immediate deterministic
 failure digest when applicable, then enqueues the

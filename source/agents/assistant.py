@@ -2920,7 +2920,7 @@ class AssistantAgent(ModelGroupAgent):
         # ahead can take tens of seconds and the operator must not sit without
         # a signal.
         if self._maybe_post_context_marker(room_uuid, context):
-            db.post_progress(room_uuid, self.agent_uuid, ASSISTANT_WORKING_NOTICE)
+            db.upsert_progress(room_uuid, self.agent_uuid, ASSISTANT_WORKING_NOTICE)
         # The logical step the loop is on, so a crash records its failed row
         # against the right step (not a row count).
         current_step = 0
@@ -2948,8 +2948,7 @@ class AssistantAgent(ModelGroupAgent):
             self._response_language_classification = None
             self._reply_language_markdown = ""
             self._response_language_classifier_meta = {}
-            self._activity = "classifying response language"
-            self._emit_heartbeat()
+            self._set_activity("classifying response language")
             self._run_response_language_classifier(
                 step_index=0, messages=messages, profile=context.profile)
             # Retrieve active procedural skills for this turn (candidates are
@@ -2985,6 +2984,7 @@ class AssistantAgent(ModelGroupAgent):
             self._criteria_json = ""
             self._criteria_profile = context.profile
             if criteria_on:
+                self._set_activity("establishing acceptance criteria")
                 self._run_acceptance_criteria_call(
                     step_index=0, messages=messages,
                     reason="established before step 0 (code-driven)")
@@ -3022,11 +3022,11 @@ class AssistantAgent(ModelGroupAgent):
                 stopped = self._apply_pending_controls(run, step_index, scratchpad)
                 if stopped is not None:
                     return stopped
-                self._activity = f"deciding step {step_index}"
-                # The watchdog is a per-step guard. Reset it immediately at
-                # every boundary instead of letting completed steps consume one
-                # whole-run silence budget.
-                self._emit_heartbeat()
+                # The watchdog is a per-step guard, so liveness is emitted at
+                # every boundary rather than letting completed steps consume one
+                # whole-run silence budget; _set_activity does that and refreshes
+                # the room's progress row with the step just finished.
+                self._set_activity(f"deciding step {step_index}")
                 requested_at = datetime.now(UTC)
                 decision = self._decide_next_step(
                     messages=messages, scratchpad=scratchpad, step_index=step_index
@@ -3040,16 +3040,11 @@ class AssistantAgent(ModelGroupAgent):
                 user_prompt = self._last_user_prompt
                 model_response = self._last_response_text
                 # The model's native reasoning ("thinking") channel for this
-                # decide call; None for a non-reasoning model. Stored on the
-                # step row and surfaced in the room as a collapsible thought
-                # bubble (kind="thinking" — the same kind the direct-chat agent
-                # streams; excluded from transcripts, so the model never sees
-                # its own reasoning fed back).
+                # decide call; None for a non-reasoning model. Persisted on the
+                # step row and read on /assistant. It is deliberately NOT a
+                # chat row: a reasoning model emits one per step, and a dozen
+                # collapsed thought bubbles per run buried the conversation.
                 reasoning = self._last_reasoning
-                if reasoning:
-                    db.post_chat_message(
-                        room_uuid, self.agent_uuid, reasoning, kind="thinking"
-                    )
 
                 error = self._validate_decision(decision)
                 if error is not None:
@@ -3075,6 +3070,7 @@ class AssistantAgent(ModelGroupAgent):
                     # formatting surface worth a bounced step.
                     rejection = None
                     if decision.action is AssistantActionName.REPLY:
+                        self._set_activity("auditing the reply")
                         audit_requested_at = datetime.now(UTC)
                         send, audit_payload = self._reply_audit(
                             decision, messages=messages, scratchpad=scratchpad)
@@ -3135,7 +3131,7 @@ class AssistantAgent(ModelGroupAgent):
                 # observation. A confirm-tier write is *proposed* here, never
                 # executed inline; everything else (reads, log-and-undo writes)
                 # executes immediately.
-                self._activity = f"running {decision.action.value}"
+                self._set_activity(f"running {decision.action.value}")
                 step_row = self._open_step(
                     step_index=step_index, decision=decision, usage=usage,
                     model_uuid=model_uuid,
@@ -5279,6 +5275,55 @@ class AssistantAgent(ModelGroupAgent):
         if self._run is not None:
             extra["assistant_run_uuid"] = str(self._run.uuid)
         return extra
+
+    def _set_activity(self, activity: str) -> None:
+        """Say what the run is doing now — to the supervisor's watchdog (via
+        the heartbeat) and to the operator (via the room's progress row). One
+        call so the two can never disagree about what the run is up to."""
+        self._activity = activity
+        self._emit_heartbeat()
+        self._publish_progress()
+
+    def _publish_progress(self) -> None:
+        """Rewrite the room's single progress row with the run's live state.
+
+        A turn used to narrate itself with a chat row per step — a `thinking`
+        bubble and a `debug-assistant` bubble each time — so one run buried the
+        conversation under a dozen rows the operator had to scroll past. All of
+        that is on the step rows and rendered by /assistant, so the room needs
+        one line: where the run is, what it has cost, and a link to the trace.
+
+        Best-effort. Progress is a courtesy to the reader; a failure to post it
+        must never take down the turn that is doing the actual work."""
+        if self._run is None:
+            return
+        try:
+            steps = db.list_assistant_steps(self._run.uuid)
+            stats = db.assistant_run_stats(
+                steps, db.list_second_opinion_reviews(self._run.uuid))
+            db.upsert_progress(
+                self._run.room_uuid, self.agent_uuid,
+                self._progress_text(len(steps), stats))
+        except Exception:
+            logger.warning("assistant: progress row update failed",
+                           exc_info=True)
+
+    def _progress_text(self, step_count: int, stats: dict[str, Any]) -> str:
+        """The progress row's markdown: which step, what it is doing, what the
+        run has cost so far, and the link to inspect it.
+
+        `step_count` counts step rows, the same number /assistant numbers its
+        timeline by and the overview shows — one run must not report its
+        progress differently on three pages."""
+        calls = stats["calls"]
+        cost = [f"{calls} LLM call" + ("" if calls == 1 else "s"),
+                f"in {stats['input_tokens']}",
+                f"out {stats['output_tokens']}"]
+        if stats["tps"]:
+            cost.append(f"{stats['tps']} tok/s")
+        run_link = f"[inspect ↗](/assistant?id={self._run.uuid})"
+        return (f"💭 **Step {step_count}** — {self._activity}\n"
+                f"{' · '.join(cost)} · {run_link}")
 
     def _apply_pending_controls(
         self, run: Any, step_index: int, scratchpad: list[AssistantTurnEvent]
