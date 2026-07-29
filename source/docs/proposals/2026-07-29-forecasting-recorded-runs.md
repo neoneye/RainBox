@@ -54,6 +54,18 @@ facts, not judgments. They are exact targets for imitation and execution
 prediction. They are not automatically evidence that the action was wise or
 the returned content semantically correct.
 
+### If you are here to build it
+
+Read [Implementation phases](#implementation-phases), then the **Phase 1
+build sheet** under it, and stop. Phase 1 is one probability scored against
+one recorded boolean; it needs no ablation, no labels, no sandbox, and no new
+prompt-assembly code, and it carries a kill gate that makes the rest
+unnecessary if it fails.
+
+Everything between here and there is why the design is shaped this way. It is
+worth reading before Phase 3, where the choices start to bind, and it is not
+worth reading before Phase 1.
+
 ## It does not run inside a turn
 
 The instrument replays **recorded runs**. `assistant_step` already persists
@@ -1506,33 +1518,89 @@ the idea.
 Each phase names what it needs, what it can say, what it cannot say yet, and
 the condition under which the right move is to stop.
 
-### Phase 1 — conditional outcome forecasting on typed observations
+### Phase 1 — execution-success calibration
 
-The smallest thing that produces a number. Conditional mode only: code hands
-the forecaster the recorded action and arguments and asks what comes back.
-One model. No sweep, no ladder, no ablation, no labels.
+The smallest thing that produces a number, and smaller than it first looks.
+Conditional mode only: code hands the forecaster the recorded action and
+arguments and asks what comes back. One model. No sweep, no ladder, no
+ablation, no labels.
 
-Restricted to capabilities whose observations are already typed —
-`kanban_read`, `kanban_query` and `find_uuid` return JSON, and `python_run`
-returns a computed value. No per-capability scorer has to be invented for
-those; the comparison is against structure that already exists.
+The scoreable core is **one probability against one recorded boolean**.
+`OutcomeForecast.ok_probability` versus `observation.ok`, scored by Brier.
+That needs no comparator, no unit normalization, and no JSON path — and
+because every capability's observation carries `ok`, it works across the
+**whole** action surface rather than a typed subset. An earlier draft of this
+phase restricted it to capabilities returning JSON; that restriction belongs
+only to outcome *content* scoring, and applying it to the calibration metric
+throws away most of the corpus for no reason.
 
-- **Needs:** a case builder over `assistant_step` rows; the recorded prompts
-  embedded verbatim; a JSON-path comparator; Brier over `ok_probability`;
-  interval coverage where the value is numeric.
-- **Says:** whether a local model understands what these tools return, and
-  how calibrated it is about execution success.
-- **Cannot say:** anything about action choice, prompt stages, or semantic
-  correctness.
+Content scoring rides along where it is free:
+
+- `bounds` versus a numeric located in `observation.data` — interval
+  coverage, on the subset where a capability-specific path to a number
+  exists;
+- `outcome` prose — **unscored in this phase.** It is stored, and read by a
+  human when a result is surprising. Pretending otherwise would mean a
+  semantic comparator, which is the thing Phase 1 exists to avoid.
+
+Deliverable: `evals/forecast_bench.py` with a `--targets step_success` path,
+one persisted `EvalRun`, and a printed Brier score with the base rate beside
+it.
+
+- **Needs:** the case builder and persistence below; nothing else.
+- **Says:** whether a local model knows when a tool call is about to fail.
+- **Cannot say:** anything about action choice, prompt stages, outcome
+  content, or correctness.
 - **Stop if:** no bound model beats the trivial baseline of always predicting
-  `ok` at the corpus base rate. That result is cheap, decisive, and means the
-  premise is too weak to spend Phase 2 on.
+  `ok` at the corpus base rate. Cheap, decisive, and it means the premise is
+  too weak to spend Phase 2 on.
+
+#### The Phase 1 build sheet
+
+Everything here is checkable against the schema today.
+
+**Case eligibility.** One query over `assistant_step`: rows with
+`phase='observed'`, a non-null `user_prompt`, a non-null `action`, and a
+non-null `observation` JSONB carrying `ok`. Control rows, failed validations
+and crash rows have no executed action and are excluded. Terminal actions
+(`reply`, `ask_clarifying_question`) have no meaningful `ok` and are excluded
+too — this phase is about tool calls.
+
+**Persistence.** `case_type="tool_output"`, which the
+`eval_case_case_type_check` constraint already permits and which
+`docs/evals-design.md` names as an extension point. `run_eval_case` currently
+drops it into the else-branch and scores 0.0 with
+`unsupported case_type` — the seam is a new branch beside the `chat_reply`
+and `memory_retrieval` ones at [evals/runner.py:285](evals/runner.py:285).
+`split="holdout"`, following `monitor.py`'s precedent for rows that are
+sampled rather than curated.
+
+**Score normalization.** `EvalResult.score` is CHECK-constrained to
+`[0.0, 1.0]`, so the per-case score is `1 - brier` (already in range for a
+binary event) and every raw metric — Brier, base rate, coverage, width,
+interval score, schema-validity and retry counts — lands in `details`
+alongside the scorer version. Do not store a raw log loss anywhere in
+`score`: it is unbounded and would violate the constraint.
+
+**Prompt construction.** The recorded `system_prompt` and `user_prompt` are
+embedded verbatim inside delimited subject-prompt sections under the narrow
+forecaster system prompt, plus the recorded action and arguments as target
+data. No section of either stored prompt is rewritten, reordered or
+regenerated — the byte-comparison test is the acceptance criterion.
+
+**What is not needed yet:** no ablation, no section surgery, no
+`allowed_actions` catalog, no producer sweep, no sandbox, no labels, no
+cross-model matrix, no TTL machinery beyond deleting the run.
 
 ### Phase 2 — the imitation benchmark
 
 `next_action` top-1 and set membership across every bound model, with the
 majority-class baseline, repeats, per-capability breakdown, and first-attempt
 schema validity beside every score.
+
+Deliverable: a scorecard table, one row per bound model, with top-1, set
+membership, macro-F1, schema validity, the majority-class baseline, and
+scored coverage.
 
 - **Needs:** `allowed_actions` recovered per case from the historical
   catalog; the sweep ordered model-outermost and repeats-innermost;
@@ -1555,6 +1623,9 @@ Where the real engineering starts, and the first phase that can be got subtly
 wrong: removing prompt sections from a stored prompt while keeping every
 surviving byte and its order intact.
 
+Deliverable: the stage-damage table — movement rate per boundary against the
+same-context control, plus single-block attribution.
+
 - **Needs:** byte-faithful section surgery, the synthetic-variant labelling,
   repeats with the same-context control.
 - **Says:** where an answer becomes sensitive to added context, and which
@@ -1570,6 +1641,9 @@ surviving byte and its order intact.
 Labels are the scarce resource, and Phase 3's ranking is what decides where
 they go. Build cases only for the boundaries that ranked highest.
 
+Deliverable: a labelled case set, and the first stage-damage table whose
+movements are signed as improvement or regression.
+
 - **Says:** improvement against damage, for the first time. Correctness
   claims start here and nowhere earlier.
 - **Cannot say:** anything about the live guard.
@@ -1578,6 +1652,10 @@ they go. Build cases only for the boundaries that ranked highest.
 
 Only reachable with Phase 4's labels. Produces the paired quality lift that
 gates Part 2, and nothing about Part 2 should be built before it exists.
+
+Deliverable: one number with a confidence interval — defect recovery minus
+correct-answer regression, paired by case, against audit-only — and the
+latency it cost.
 
 ### Deferred indefinitely
 
