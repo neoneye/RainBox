@@ -186,6 +186,25 @@ def test_export_honours_format_and_sections():
         _cleanup([pu])
 
 
+def test_export_reports_utf8_byte_sizes_for_every_format():
+    """The dialog compares formats, so all three sizes must describe the same
+    document — and be bytes, not characters, or non-ASCII values undercount."""
+    client = app.test_client()
+    pu = _seed_export_profile(client)
+    try:
+        client.put(f"/profile/api/profiles/{pu}",
+                   json={"data": {"city": "København"}})
+        body = client.get(f"/profile/api/profiles/{pu}/export"
+                          "?format=yaml&sections=profile").get_json()
+        assert set(body["sizes"]) == {"json", "yaml", "xml"}
+        assert body["sizes"]["yaml"] == len(body["text"].encode("utf-8"))
+        assert body["sizes"]["yaml"] > len(body["text"])      # ø costs 2 bytes
+        for size in body["sizes"].values():
+            assert size > 0
+    finally:
+        _cleanup([pu])
+
+
 def test_export_rejects_unknown_format_and_section():
     client = app.test_client()
     pu = _seed_export_profile(client)

@@ -198,11 +198,17 @@ def profile_export(profile_uuid: str) -> tuple[Response, int] | Response:
     profile = db.profile_get(pu)
     if profile is None:
         return jsonify({"ok": False, "error": "profile not found"}), 404
+    # Collect once, render every format: `sizes` is what makes the dialog's
+    # byte counts comparable, and re-collecting per format would let the three
+    # numbers describe three different documents.
+    doc = user_profile.collect_sections(profile, sections)
     return jsonify({
         "ok": True,
         "format": fmt,
         "sections": sections,
-        "text": user_profile.export_settings(profile, sections=sections, fmt=fmt),
+        "text": user_profile.render(doc, fmt),
+        "sizes": {f: len(user_profile.render(doc, f).encode("utf-8"))
+                  for f in user_profile.FORMATS},
     })
 
 

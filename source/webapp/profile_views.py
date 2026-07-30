@@ -236,6 +236,11 @@ PROFILE_TEMPLATE = """
   .profile-export-sections input{width:auto}
   #profile-export-output{margin-top:10px;font-family:ui-monospace,Menlo,Consolas,monospace;
     font-size:0.82rem;white-space:pre;overflow:auto}
+  /* All three sizes at once: the overhead of a format is only legible next to
+     the others, and reading it off the picker one flip at a time is not. */
+  .profile-export-size{margin-top:6px;font-size:0.8rem;color:#6b7280;
+    font-variant-numeric:tabular-nums}
+  .profile-export-size .sel{color:#111827;font-weight:600}
   .profile-toast{position:fixed;bottom:20px;right:20px;background:#111827;color:#fff;padding:10px 14px;border-radius:6px;opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none}
   .profile-toast.show{opacity:1;transform:none}
 </style>
@@ -382,6 +387,7 @@ PROFILE_TEMPLATE = """
   </div>
   <textarea id="profile-export-output" readonly rows="20"
             spellcheck="false"></textarea>
+  <div class="profile-export-size" id="profile-export-size"></div>
   <div class="modal-actions">
     <button class="btn-primary" onclick="profileExportCopy()">Copy</button>
     <button class="btn-cancel" onclick="profileCloseExportModal()">Close</button>

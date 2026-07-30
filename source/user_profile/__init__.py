@@ -26,7 +26,9 @@ from user_profile.formatting import (
 from user_profile.export import (
     FORMATS,
     SECTIONS,
+    collect_sections,
     export_settings,
+    render,
 )
 from user_profile.identity import (
     build_identity_block,
@@ -50,8 +52,10 @@ __all__ = [
     "ProfileContext",
     "SECTIONS",
     "build_calibration_block",
+    "collect_sections",
     "declared_language_candidates",
     "export_settings",
+    "render",
     "current_profile_context",
     "format_calibration",
     "MAX_PROFILE_BLOCK_CHARS",

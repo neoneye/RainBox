@@ -452,11 +452,31 @@ function profileExportSections(){
   return Array.from(document.querySelectorAll('.profile-export-section'))
     .filter(cb => cb.checked).map(cb => cb.value);
 }
+// UTF-8 bytes for every format side by side, the current one highlighted —
+// a format's overhead only means something next to the alternatives. Built
+// from DOM nodes rather than innerHTML: the numbers are ours, but a size line
+// is not worth a second HTML-injection surface.
+function profileExportRenderSizes(sizes, active){
+  const el = document.getElementById('profile-export-size');
+  el.textContent = '';
+  if (!sizes) return;
+  Object.keys(sizes).forEach((fmt, i) => {
+    if (i) el.appendChild(document.createTextNode('  ·  '));
+    const span = document.createElement('span');
+    if (fmt === active) span.className = 'sel';
+    span.textContent = fmt.toUpperCase() + ' ' + sizes[fmt].toLocaleString() + ' B';
+    el.appendChild(span);
+  });
+}
 async function profileExportRefresh(){
   if (!profileExportUuid) return;
   const out = document.getElementById('profile-export-output');
   const sections = profileExportSections();
-  if (!sections.length){ out.value = ''; return; }
+  if (!sections.length){
+    out.value = '';
+    profileExportRenderSizes(null);
+    return;
+  }
   const fmt = document.getElementById('profile-export-format').value;
   const url = '/profile/api/profiles/' + encodeURIComponent(profileExportUuid)
     + '/export?format=' + encodeURIComponent(fmt)
@@ -468,11 +488,13 @@ async function profileExportRefresh(){
     body = await r.json();
   } catch (_) {
     out.value = '(export failed — could not reach the server)';
+    profileExportRenderSizes(null);
     return;
   }
   if (requested !== profileExportUuid) return;   // closed or switched while loading
   out.value = body && body.ok ? body.text
     : '(export failed: ' + ((body && body.error) || 'unknown error') + ')';
+  profileExportRenderSizes(body && body.ok ? body.sizes : null, fmt);
 }
 async function profileExportCopy(){
   const text = document.getElementById('profile-export-output').value;
