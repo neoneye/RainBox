@@ -55,17 +55,19 @@ _XML_ROOT = "user_settings"
 
 
 def _parse_calibration(body: str) -> dict[str, Any]:
-    """Split the calibration block into its three parts.
+    """The calibration rows, plus the disclosure when some were dropped.
 
     The block is a prose preamble, then one JSON object per row, then — only
-    when rows were dropped to fit the budget — a prose line disclosing how
-    many. Both prose lines would fail to parse as JSON, so position tells them
-    apart: prose before the first row is the preamble, prose after the last is
-    the omission disclosure. Keeping them separate matters, because one is
-    boilerplate present in every block and the other is a warning that the
-    prompt is not carrying everything the profile declares.
+    when rows were dropped to fit the budget — a prose line saying how many.
+    Neither prose line parses as JSON, so position tells them apart: prose
+    before the first row is the preamble, prose after the last is the
+    disclosure.
+
+    The preamble is discarded. It is a fixed sentence present in every block,
+    identical for every profile, and it says nothing about the profile being
+    exported. The disclosure is kept precisely because it is not boilerplate:
+    it means the prompt is not carrying everything the profile declares.
     """
-    preamble: list[str] = []
     rows: list[Any] = []
     trailing: list[str] = []
     for line in body.splitlines():
@@ -75,11 +77,9 @@ def _parse_calibration(body: str) -> dict[str, Any]:
         try:
             rows.append(json.loads(line))
         except ValueError:
-            (trailing if rows else preamble).append(line)
-    out: dict[str, Any] = {}
-    if preamble:
-        out["preamble"] = " ".join(preamble)
-    out["rows"] = rows
+            if rows:
+                trailing.append(line)
+    out: dict[str, Any] = {"rows": rows}
     if trailing:
         out["omitted"] = " ".join(trailing)
     return out

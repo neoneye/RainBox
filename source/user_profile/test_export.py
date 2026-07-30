@@ -62,6 +62,16 @@ def test_calibration_rows_are_the_block_jsonl():
     assert doc["knowledge"]["rows"] == jsonl
 
 
+def test_calibration_drops_the_boilerplate_preamble():
+    """The block opens with a fixed sentence that is identical for every
+    profile and says nothing about this one."""
+    doc = collect_sections(PROFILE, ["calibration"])
+    assert set(doc["knowledge"]) == {"rows"}
+    assert "Self-declared topic calibration" in format_calibration(PROFILE)
+    assert "Self-declared topic calibration" not in export_settings(
+        PROFILE, sections=["calibration"], fmt="json")
+
+
 def test_profile_fields_are_the_documents_top_level():
     """No `user_settings_json` wrapper: a suffix naming the payload format is
     a prompt-tag concern, and inside YAML or XML it names the wrong one."""
