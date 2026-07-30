@@ -369,9 +369,13 @@ function profileItemNode(p){
   // Kebab on every row, shown (via CSS) only on the selected one — matches
   // /cron. No Rename item: a selected profile's pane heading is already the
   // click-to-rename control. Built-ins are read-only: Duplicate only.
+  // Export is offered on built-ins too: a template's blocks are exactly what
+  // you want to read before adopting it.
   profileMakeKebab(n, p.builtin ? {
+    onExport: () => profileOpenExportModal(p.uuid),
     onDuplicate: () => profileDuplicateUuid(p.uuid),
   } : {
+    onExport: () => profileOpenExportModal(p.uuid),
     onDuplicate: () => profileDuplicateUuid(p.uuid),
     onDelete: () => profileConfirmDeleteItem(p.uuid),
   });
@@ -405,6 +409,7 @@ function profileMakeKebab(node, opts){
   const menu = document.createElement('div');
   menu.className = 'profile-menu'; menu.setAttribute('role', 'menu'); menu.hidden = true;
   const items = [];
+  if (opts.onExport) items.push(['Export', opts.onExport, '']);
   if (opts.onDuplicate) items.push(['Duplicate', opts.onDuplicate, '']);
   if (opts.onDelete) items.push(['Delete', opts.onDelete, 'danger']);
   if (!items.length) kebab.classList.add('profile-kebab-none');
@@ -425,6 +430,59 @@ function profileMakeKebab(node, opts){
     if (willOpen) profilePlaceMenu(menu, kebab.getBoundingClientRect());
   });
   node.appendChild(kebab); node.appendChild(menu);
+}
+
+// ---- export ----
+// Reads the serialization from the server rather than assembling it here: the
+// point of the dialog is to show what the assistant's own block builders
+// produce, and a JS reimplementation would be free to disagree with them.
+let profileExportUuid = null;
+function profileOpenExportModal(uuid){
+  profileExportUuid = uuid;
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('profile-export-modal').hidden = false;
+  profileExportRefresh();
+}
+function profileCloseExportModal(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('profile-export-modal').hidden = true;
+  profileExportUuid = null;
+}
+function profileExportSections(){
+  return Array.from(document.querySelectorAll('.profile-export-section'))
+    .filter(cb => cb.checked).map(cb => cb.value);
+}
+async function profileExportRefresh(){
+  if (!profileExportUuid) return;
+  const out = document.getElementById('profile-export-output');
+  const sections = profileExportSections();
+  if (!sections.length){ out.value = ''; return; }
+  const fmt = document.getElementById('profile-export-format').value;
+  const url = '/profile/api/profiles/' + encodeURIComponent(profileExportUuid)
+    + '/export?format=' + encodeURIComponent(fmt)
+    + '&sections=' + encodeURIComponent(sections.join(','));
+  const requested = profileExportUuid;
+  let body;
+  try {
+    const r = await fetch(url);
+    body = await r.json();
+  } catch (_) {
+    out.value = '(export failed — could not reach the server)';
+    return;
+  }
+  if (requested !== profileExportUuid) return;   // closed or switched while loading
+  out.value = body && body.ok ? body.text
+    : '(export failed: ' + ((body && body.error) || 'unknown error') + ')';
+}
+async function profileExportCopy(){
+  const text = document.getElementById('profile-export-output').value;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    profileToastMsg('Copied');
+  } catch (_) {
+    profileToastMsg('Copy failed');
+  }
 }
 
 // ---- add folder / add profile ----
@@ -1975,6 +2033,8 @@ function profileCloseOpenModal(){
   if (!document.getElementById('profile-desc-modal').hidden){ profileCloseDescModal(); return; }
   if (!document.getElementById('profile-rename-modal').hidden){ profileCloseRenameModal(); return; }
   if (!document.getElementById('profile-delete-modal').hidden){ profileCloseDeleteModal(); return; }
+  // Export is read-only, so it is never dirty and Escape always closes it.
+  if (!document.getElementById('profile-export-modal').hidden){ profileCloseExportModal(); return; }
 }
 function profileDismissIfClean(){ if (!profileOpenModalDirty()) profileCloseOpenModal(); }
 

@@ -23,11 +23,17 @@ from user_profile.formatting import (
     valid_language_tag,
     valid_profile_languages,
 )
+from user_profile.export import (
+    FORMATS,
+    SECTIONS,
+    export_settings,
+)
 from user_profile.identity import (
     build_identity_block,
     current_profile,
     format_identity_block,
 )
+from user_profile.languages import declared_language_candidates
 from user_profile.retrieval import (
     MAX_PROFILE_BLOCK_CHARS,
     MAX_PROFILE_FACTS,
@@ -38,10 +44,14 @@ from user_profile.retrieval import (
 )
 
 __all__ = [
+    "FORMATS",
     "MAX_FORMATTING_GUIDE_CHARS",
     "MAX_PROFILE_GUIDANCE_CHARS",
     "ProfileContext",
+    "SECTIONS",
     "build_calibration_block",
+    "declared_language_candidates",
+    "export_settings",
     "current_profile_context",
     "format_calibration",
     "MAX_PROFILE_BLOCK_CHARS",

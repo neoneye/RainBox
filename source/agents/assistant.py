@@ -4265,34 +4265,6 @@ class AssistantAgent(ModelGroupAgent):
 
     # --- response-language classifier ----------------------------------------
 
-    @staticmethod
-    def _declared_language_candidates(
-        profile: dict[str, Any] | None,
-    ) -> list[dict[str, Any]]:
-        """Return the validated semantic part of ``languages.rows``.
-
-        Row order, level, stance and note can all carry useful evidence. Order
-        is the list's own order and is not numbered into the rows: an index
-        field beside a JSON array restates what the array already says.
-        Invalid tags stop at the same shared prompt boundary as every other
-        language consumer instead of being copied into a code-owned prompt
-        sentence.
-        """
-        from language_tags import effective_language_rows
-
-        candidates: list[dict[str, Any]] = []
-        for row in effective_language_rows((profile or {}).get("data") or {}):
-            code = user_profile.valid_language_tag(row.get("tag"))
-            if code is None:
-                continue
-            candidates.append({
-                "code": code,
-                "level": str(row.get("level") or "").strip(),
-                "stance": str(row.get("stance") or "").strip(),
-                "note": str(row.get("note") or "").strip(),
-            })
-        return candidates
-
     @classmethod
     def _reconcile_response_language_profile_variants(
         cls,
@@ -4309,7 +4281,7 @@ class AssistantAgent(ModelGroupAgent):
         omitted profile rows are not invented because code cannot invent their
         scores; they are reported as contract failures in ``audit``.
         """
-        candidates = cls._declared_language_candidates(profile)
+        candidates = user_profile.declared_language_candidates(profile)
         declared_codes = {
             str(candidate["code"]) for candidate in candidates}
         by_primary: dict[str, list[dict[str, Any]]] = {}
@@ -4427,7 +4399,7 @@ class AssistantAgent(ModelGroupAgent):
             ET.SubElement(history, "none")
 
         rows = ET.SubElement(root, "user_settings_languages_json")
-        candidates = self._declared_language_candidates(profile)
+        candidates = user_profile.declared_language_candidates(profile)
         rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
 
         ask = ET.SubElement(root, "classification_request")

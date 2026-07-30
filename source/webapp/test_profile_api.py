@@ -4,7 +4,10 @@ Uses the live local Postgres (rainbox_claude via conftest). HTTP goes through
 the real app (webapp.core.app); DB seeding uses the same endpoints, so each
 test cleans up the rows it created.
 """
+import json
 from uuid import uuid4
+
+import yaml
 
 import sqlalchemy as sa
 
@@ -136,3 +139,69 @@ def test_bad_and_unknown_uuids():
     assert client.put(f"/profile/api/profiles/{uuid4()}",
                       json={"data": {}}).status_code == 404
     assert client.post(f"/profile/api/profiles/{uuid4()}/duplicate").status_code == 404
+
+
+# --- export -------------------------------------------------------------------
+
+
+def _seed_export_profile(client):
+    """A profile carrying all three exportable blocks."""
+    pu = _seed_profile(client, name="ExportTest")
+    client.put(f"/profile/api/profiles/{pu}",
+               json={"data": {"full_name": "Ada T", "timezone": "Europe/Copenhagen"}})
+    client.put(f"/profile/api/profiles/{pu}/languages",
+               json={"rows": [{"tag": "en-US", "level": "intermediate",
+                               "stance": "prefer", "note": "primary"}]})
+    client.put(f"/profile/api/profiles/{pu}/calibration",
+               json={"topics": [{"topic": "Mathematics", "level": "expert",
+                                 "stance": "neutral", "depth": "concise"}]})
+    return pu
+
+
+def test_export_defaults_to_json_with_every_section():
+    client = app.test_client()
+    pu = _seed_export_profile(client)
+    try:
+        body = client.get(f"/profile/api/profiles/{pu}/export").get_json()
+        assert body["ok"] is True and body["format"] == "json"
+        doc = json.loads(body["text"])
+        assert set(doc) == {"user_settings_json",
+                            "user_settings_languages_json",
+                            "knowledge_calibration"}
+        assert doc["user_settings_json"]["timezone"] == "Europe/Copenhagen"
+    finally:
+        _cleanup([pu])
+
+
+def test_export_honours_format_and_sections():
+    client = app.test_client()
+    pu = _seed_export_profile(client)
+    try:
+        body = client.get(
+            f"/profile/api/profiles/{pu}/export"
+            "?format=yaml&sections=languages").get_json()
+        assert body["ok"] is True
+        doc = yaml.safe_load(body["text"])
+        assert set(doc) == {"user_settings_languages_json"}
+        assert doc["user_settings_languages_json"][0]["code"] == "en-US"
+    finally:
+        _cleanup([pu])
+
+
+def test_export_rejects_unknown_format_and_section():
+    client = app.test_client()
+    pu = _seed_export_profile(client)
+    try:
+        bad_fmt = client.get(f"/profile/api/profiles/{pu}/export?format=toml")
+        assert bad_fmt.status_code == 400
+        bad_sec = client.get(
+            f"/profile/api/profiles/{pu}/export?sections=languages,secrets")
+        assert bad_sec.status_code == 400
+        assert "secrets" in bad_sec.get_json()["error"]
+    finally:
+        _cleanup([pu])
+
+
+def test_export_unknown_profile_is_404():
+    resp = app.test_client().get(f"/profile/api/profiles/{uuid4()}/export")
+    assert resp.status_code == 404

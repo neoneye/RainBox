@@ -17,6 +17,7 @@ from uuid import UUID
 from flask import Response, jsonify, request
 
 import db
+import user_profile
 from profile_fields import FIELDS_BY_KEY
 
 from .core import app
@@ -166,6 +167,43 @@ def profile_calibration(profile_uuid: str) -> tuple[Response, int] | Response:
     if detail is None:
         return jsonify({"ok": False, "error": "profile not found"}), 404
     return jsonify({"ok": True, **detail})
+
+
+@app.route("/profile/api/profiles/<profile_uuid>/export")
+def profile_export(profile_uuid: str) -> tuple[Response, int] | Response:
+    """One profile's prompt blocks, serialized for inspection.
+
+    `format` is one of user_profile.FORMATS; `sections` is a comma-separated
+    subset of user_profile.SECTIONS (default: all of them). The body is built
+    by the same functions that build the real prompt blocks, so this endpoint
+    can be trusted to answer "what does this profile put in the prompt?".
+    Read-only, and the profile's own values are the only dynamic content.
+    """
+    pu = _parse_uuid(profile_uuid)
+    if pu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    fmt = (request.args.get("format") or "json").strip().lower()
+    if fmt not in user_profile.FORMATS:
+        return jsonify({"ok": False, "error":
+                        f"format must be one of {', '.join(user_profile.FORMATS)}"}), 400
+    raw = request.args.get("sections")
+    if raw is None:
+        sections = list(user_profile.SECTIONS)
+    else:
+        sections = [s.strip() for s in raw.split(",") if s.strip()]
+        unknown = [s for s in sections if s not in user_profile.SECTIONS]
+        if unknown:
+            return jsonify({"ok": False, "error":
+                            f"unknown section(s): {', '.join(unknown)}"}), 400
+    profile = db.profile_get(pu)
+    if profile is None:
+        return jsonify({"ok": False, "error": "profile not found"}), 404
+    return jsonify({
+        "ok": True,
+        "format": fmt,
+        "sections": sections,
+        "text": user_profile.export_settings(profile, sections=sections, fmt=fmt),
+    })
 
 
 @app.route("/profile/api/profiles/<profile_uuid>/duplicate", methods=["POST"])

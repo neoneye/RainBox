@@ -222,6 +222,20 @@ PROFILE_TEMPLATE = """
   /* Button row + button colors come from the shared ui-modal.css
      (.modal-actions / .btn-primary / .btn-cancel). Only .err is page-local. */
   .ui-modal .err{color:#dc2626;font-size:0.85rem;min-height:1em;margin-top:6px}
+  /* Export dialog: wider than the name prompts because its payload is code. */
+  .ui-modal-wide{width:min(860px,92vw)}
+  .profile-export-hint{margin:0 0 10px;font-size:0.85rem;color:#6b7280}
+  .profile-export-controls{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap}
+  .profile-export-controls > label{margin:0;flex:0 0 auto}
+  .profile-export-controls select{font:inherit;padding:5px 7px}
+  /* Checkboxes read as a row of options, not as the stacked label/field pairs
+     the other modals use — override the .ui-modal label column layout. */
+  .profile-export-sections{display:flex;gap:14px;flex-wrap:wrap;padding-bottom:5px}
+  .profile-export-sections label{flex-direction:row;align-items:center;gap:5px;
+    margin:0;font-weight:400}
+  .profile-export-sections input{width:auto}
+  #profile-export-output{margin-top:10px;font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:0.82rem;white-space:pre;overflow:auto}
   .profile-toast{position:fixed;bottom:20px;right:20px;background:#111827;color:#fff;padding:10px 14px;border-radius:6px;opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none}
   .profile-toast.show{opacity:1;transform:none}
 </style>
@@ -342,6 +356,35 @@ PROFILE_TEMPLATE = """
   <div class="modal-actions">
     <button type="button" class="btn-cancel" onclick="profileCloseDeleteModal()">Cancel</button>
     <button type="button" class="btn-danger" id="profile-delete-confirm">Delete</button>
+  </div>
+</div>
+
+<div class="ui-modal ui-modal-wide" id="profile-export-modal" hidden>
+  <h3>Export user settings</h3>
+  <p class="profile-export-hint">The blocks this profile puts in the assistant
+    prompt, rendered by the same code the prompt uses.</p>
+  <div class="profile-export-controls">
+    <label>Format
+      <select id="profile-export-format" onchange="profileExportRefresh()">
+        <option value="json">JSON</option>
+        <option value="yaml">YAML</option>
+        <option value="xml">XML</option>
+      </select>
+    </label>
+    <span class="profile-export-sections">
+      <label><input type="checkbox" class="profile-export-section" value="profile"
+                    checked onchange="profileExportRefresh()"> User profile</label>
+      <label><input type="checkbox" class="profile-export-section" value="languages"
+                    checked onchange="profileExportRefresh()"> User languages</label>
+      <label><input type="checkbox" class="profile-export-section" value="calibration"
+                    checked onchange="profileExportRefresh()"> Knowledge calibration</label>
+    </span>
+  </div>
+  <textarea id="profile-export-output" readonly rows="20"
+            spellcheck="false"></textarea>
+  <div class="modal-actions">
+    <button class="btn-primary" onclick="profileExportCopy()">Copy</button>
+    <button class="btn-cancel" onclick="profileCloseExportModal()">Close</button>
   </div>
 </div>
 
