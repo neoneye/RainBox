@@ -33,21 +33,32 @@ In sandboxed/containerized runs, localhost Postgres may be blocked at the
 network layer; rerun with the normal approval path so the process can reach
 `localhost:5432`.
 
-## Known failures and environment sensitivity
+## Environment sensitivity
 
-- `webapp/test_admin_chatmessage_view.py::test_edit_page_shows_resolved_trace_field`
-  — a pre-existing failure on `main`, unrelated to memory/assistant work.
-- `agents/test_chat_memory.py::test_user_prompt_omits_irrelevant_memory` and
-  `…::test_handle_does_not_post_debug_memory_when_no_memories` — pass when
-  the Ollama embedder is unreachable (hybrid retrieval degrades to
-  lexical-only, retrieving nothing for the irrelevant query) and **fail when
-  Ollama + `embeddinggemma:300m` is live**, because the vector channel
-  scores semantically-unrelated facts above the retrieval threshold. Point
-  `OLLAMA_BASE_URL` at a dead port to reproduce the passing behavior.
+There are no known failures: the suite is green (2384 passed, 10 skipped as
+of this writing) both with the Ollama embedder live and with it unreachable.
 
-Everything else is green (≈1600 passed, 10 skipped as of this writing). If
-you see other failures, suspect your environment first: which local services
-are running changes what the retrieval tests observe.
+**A test that creates a `memory_claim` must delete it.** Retrieval tests
+assert on what recall returns, and recall returns the top-K of whatever is
+in the database. A test that leaks one claim per run poisons every later
+run: the lexical channel ignores the stale rows, so the suite stays green
+until `embeddinggemma:300m` is reachable, and then the vector channel — which
+ranks by similarity with no relevance floor — surfaces the accumulated noise
+ahead of the claim the failing test just created. The symptom looks like a
+retrieval-quality bug in a completely unrelated test, and pointing
+`OLLAMA_BASE_URL` at a dead port "fixes" it, which is what makes the real
+cause easy to miss. Use the module's `tag`/`fresh_subject` fixture as the
+claim's `subject` and delete by that subject in a `finally`.
+
+`SELECT count(*) FROM memory_claim;` against `rainbox_claude` should be 0
+after a full run. Anything else is a leak.
+
+Retrieval telemetry (`retrieval_event`) is not cleaned up and grows by
+roughly 15k rows per full run. It is inert — nothing ranks on it — but the
+table is worth truncating occasionally.
+
+If you see a failure not listed here, suspect your environment first: which
+local services are running changes what the retrieval tests observe.
 
 ## Service suites
 

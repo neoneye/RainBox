@@ -447,12 +447,21 @@ class ChatMessageView(ModelView):
         "text": _format_chatmessage_text,
     }
     column_formatters_detail = {"text": _format_chatmessage_text}
+    # `meta` is a reserved attribute on wtforms.Form (it holds the FormMeta
+    # instance). Scaffolding the column of the same name shadows it, and
+    # Form.process() then calls JSONField.wrap_formdata and dies — which took
+    # out the whole edit page, not just this field. Keep the column out of the
+    # form and surface it through the read-only extra below.
+    form_excluded_columns = ("meta",)
     # Flask-Admin's form converter skips the UUID columns, so the edit form shows
     # neither the room/sender uuids nor their names. Add read-only reference
     # fields that show both ("name (uuid)"), filled in on_form_prefill.
     form_extra_fields = {
         "room": StringField("Room", render_kw={"readonly": True}),
         "sender": StringField("Sender", render_kw={"readonly": True}),
+        "meta_json": TextAreaField(
+            "Meta (read-only)",
+            render_kw={"readonly": True, "rows": 6, "style": "width:100%"}),
         # For a debug-assistant row, show the full resolved step (action/reason/
         # args/observation) read-only — the editable `text` field holds only the
         # raw pointer.
@@ -469,6 +478,7 @@ class ChatMessageView(ModelView):
         user = db.session.query(ChatUser).filter_by(uuid=msg.sender_uuid).first()
         form.room.data = f"{room.name if room else '(unknown)'} ({msg.room_uuid})"
         form.sender.data = f"{user.name if user else '(unknown)'} ({msg.sender_uuid})"
+        form.meta_json.data = json.dumps(msg.meta, indent=2) if msg.meta else ""
         if msg.kind == "debug-assistant":
             form.resolved.data = _resolve_debug_assistant_text(msg) or (msg.text or "")
         else:

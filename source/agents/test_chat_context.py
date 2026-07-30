@@ -100,12 +100,15 @@ def test_context_block_is_fenced(app_ctx, tag):
     room = uuid4()
     db.record_belief(
         actor="explicit_human_command", scope="global", kind="fact",
-        text="fenced fact", confidence=1.0, room_uuid=room,
+        text="fenced fact", confidence=1.0, room_uuid=room, subject=tag,
         evidence={"provenance": "confirmed_by_user",
                   "source_type": "manual", "excerpt": "x"})
-    block, _, _ = build_chat_context_block(
-        [{"role": "user", "content": "fenced fact"}],
-        agent_uuid=uuid4(), room_uuid=room)
-    if block:                       # only when something was retrieved
-        assert block.startswith("<recalled_memory")
-        assert block.rstrip().endswith("</recalled_memory>")
+    try:
+        block, _, _ = build_chat_context_block(
+            [{"role": "user", "content": "fenced fact"}],
+            agent_uuid=uuid4(), room_uuid=room)
+        if block:                   # only when something was retrieved
+            assert block.startswith("<recalled_memory")
+            assert block.rstrip().endswith("</recalled_memory>")
+    finally:
+        _cleanup(tag)
