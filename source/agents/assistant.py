@@ -228,7 +228,7 @@ class ResponseLanguageItem(BaseModel):
     code: str = Field(
         description=(
             'Canonical BCP-47 language tag, for example "en-US". Copy codes '
-            "from declared_profile_languages exactly: never shorten a "
+            "from user_settings_languages_json exactly: never shorten a "
             "declared regional or dialect tag to its broad language subtag. "
             "Do not guess a region or dialect absent from the request and "
             "profile."
@@ -4271,21 +4271,21 @@ class AssistantAgent(ModelGroupAgent):
     ) -> list[dict[str, Any]]:
         """Return the validated semantic part of ``languages.rows``.
 
-        Row order, level, stance and note can all carry useful evidence. Invalid
-        tags stop at the same shared prompt boundary as every other language
-        consumer instead of being copied into a code-owned prompt sentence.
+        Row order, level, stance and note can all carry useful evidence. Order
+        is the list's own order and is not numbered into the rows: an index
+        field beside a JSON array restates what the array already says.
+        Invalid tags stop at the same shared prompt boundary as every other
+        language consumer instead of being copied into a code-owned prompt
+        sentence.
         """
         from language_tags import effective_language_rows
 
         candidates: list[dict[str, Any]] = []
-        for position, row in enumerate(
-            effective_language_rows((profile or {}).get("data") or {})
-        ):
+        for row in effective_language_rows((profile or {}).get("data") or {}):
             code = user_profile.valid_language_tag(row.get("tag"))
             if code is None:
                 continue
             candidates.append({
-                "position": position,
                 "code": code,
                 "level": str(row.get("level") or "").strip(),
                 "stance": str(row.get("stance") or "").strip(),
@@ -4426,9 +4426,7 @@ class AssistantAgent(ModelGroupAgent):
         else:
             ET.SubElement(history, "none")
 
-        rows = ET.SubElement(
-            root, "declared_profile_languages",
-            {"authority": "context_only", "format": "json"})
+        rows = ET.SubElement(root, "user_settings_languages_json")
         candidates = self._declared_language_candidates(profile)
         rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
 
