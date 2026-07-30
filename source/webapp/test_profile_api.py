@@ -165,10 +165,8 @@ def test_export_defaults_to_json_with_every_section():
         body = client.get(f"/profile/api/profiles/{pu}/export").get_json()
         assert body["ok"] is True and body["format"] == "json"
         doc = json.loads(body["text"])
-        assert set(doc) == {"user_settings_json",
-                            "user_settings_languages_json",
-                            "knowledge_calibration"}
-        assert doc["user_settings_json"]["timezone"] == "Europe/Copenhagen"
+        assert {"timezone", "language", "knowledge"} <= set(doc)
+        assert doc["timezone"] == "Europe/Copenhagen"
     finally:
         _cleanup([pu])
 
@@ -182,8 +180,8 @@ def test_export_honours_format_and_sections():
             "?format=yaml&sections=languages").get_json()
         assert body["ok"] is True
         doc = yaml.safe_load(body["text"])
-        assert set(doc) == {"user_settings_languages_json"}
-        assert doc["user_settings_languages_json"][0]["code"] == "en-US"
+        assert set(doc) == {"language"}
+        assert doc["language"][0]["code"] == "en-US"
     finally:
         _cleanup([pu])
 

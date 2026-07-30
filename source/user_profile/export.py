@@ -8,8 +8,12 @@ and re-rendered. Nothing re-implements a block. A second implementation would
 drift, and an export that quietly disagrees with the prompt is worse than no
 export at all.
 
-The document keys on the prompt tag each section is injected under, so an
-entry can be lined up against the block it becomes.
+The document does NOT key on the prompt tags. A tag like `user_settings_json`
+carries its suffix because the model needs to know what the payload inside it
+is; repeating that suffix as a key inside a YAML or XML document states the
+wrong format, and inside a JSON document states the obvious. The profile's
+own fields are the document's top level, with `language` and `knowledge`
+beside them.
 
 Deliberately absent: the profile's display name and uuid. The identity block
 carries neither (see `identity.py`), and adding them here would make the
@@ -36,15 +40,18 @@ from user_profile.languages import declared_language_candidates
 FORMATS: tuple[str, ...] = ("json", "yaml", "xml")
 SECTIONS: tuple[str, ...] = ("profile", "languages", "calibration")
 
-# The prompt tag each section arrives under.
-SECTION_TAGS: dict[str, str] = {
-    "profile": "user_settings_json",
-    "languages": "user_settings_languages_json",
-    "calibration": "knowledge_calibration",
+# The document key each section occupies. "profile" is absent on purpose: its
+# fields ARE the top level, so a field reads as `full_name`, not
+# `user_settings_json.full_name`. Nothing in the field registry may take one of
+# these names — see test_no_profile_field_collides_with_a_section_key, which
+# exists because `language` is an entirely plausible future field and hoisting
+# would silently overwrite it.
+SECTION_KEYS: dict[str, str] = {
+    "languages": "language",
+    "calibration": "knowledge",
 }
 
 _XML_ROOT = "user_settings"
-_XML_LIST_ITEM = "item"
 
 
 def _parse_calibration(body: str) -> dict[str, Any]:
@@ -84,7 +91,7 @@ def collect_sections(
     *,
     calibration_max_chars: int = MAX_PROFILE_GUIDANCE_CHARS,
 ) -> dict[str, Any]:
-    """The requested blocks as data, keyed by prompt tag, in prompt order.
+    """The requested blocks as one document, in prompt order.
 
     A section that renders empty is omitted rather than shown as `{}` or `[]`:
     the assistant omits the whole element in that case, and an empty container
@@ -94,18 +101,18 @@ def collect_sections(
     for name in SECTIONS:              # SECTIONS, not the argument: prompt order
         if name not in sections:
             continue
-        tag = SECTION_TAGS[name]
         if name == "profile":
-            payload = json.loads(format_identity_block(profile) or "{}")
-        elif name == "languages":
-            payload = declared_language_candidates(profile)
+            doc.update(json.loads(format_identity_block(profile) or "{}"))
+            continue
+        if name == "languages":
+            payload: Any = declared_language_candidates(profile)
         else:
             payload = _parse_calibration(
                 format_calibration(profile, max_chars=calibration_max_chars))
             if not payload.get("rows"):
                 payload = {}
         if payload:
-            doc[tag] = payload
+            doc[SECTION_KEYS[name]] = payload
     return doc
 
 
@@ -120,14 +127,25 @@ def _xml_name(key: str) -> str:
     return name
 
 
+def _xml_item_name(key: str) -> str:
+    """The element name for one entry of a list. XML says a list by repeating
+    an element, so `language: [...]` becomes repeated `<language>` and
+    `rows: [...]` becomes repeated `<row>` — not a wrapper full of `<item>`,
+    which is JSON's shape wearing angle brackets. Naive de-pluralization is
+    enough here: every key is ours and none is irregular."""
+    return key[:-1] if len(key) > 1 and key.endswith("s") else key
+
+
 def _append_xml(parent: ET.Element, key: str, value: Any) -> None:
+    if isinstance(value, list):
+        item = _xml_item_name(key)
+        for entry in value:
+            _append_xml(parent, item, entry)
+        return
     node = ET.SubElement(parent, _xml_name(key))
     if isinstance(value, dict):
         for k, v in value.items():
             _append_xml(node, k, v)
-    elif isinstance(value, list):
-        for item in value:
-            _append_xml(node, _XML_LIST_ITEM, item)
     elif value is not None:
         # ElementTree escapes the text, so a profile value cannot forge a tag.
         node.text = str(value)
