@@ -127,6 +127,22 @@ def test_delete_folder_cascades_and_returns_version():
         c.delete(f"/personality/api/folders/{folder['folder']['id']}")
 
 
+def test_tree_put_rejects_an_unknown_row():
+    c = _client()
+    made = _create_personality(c, "KnownRow")
+    try:
+        tree = c.get("/personality/api/tree").get_json()
+        invented = {"uuid": "11111111-1111-1111-1111-111111111111",
+                   "name": "Invented", "folderId": None}
+        resp = c.put("/personality/api/tree", json={
+            "folders": tree["folders"], "personalities": tree["personalities"] + [invented],
+            "version": tree["version"]})
+        assert resp.status_code == 400
+        assert "unknown" in resp.get_json()["error"]
+    finally:
+        _delete_personality(c, made["personality"]["uuid"])
+
+
 def test_delete_unknown_is_404():
     resp = _client().delete(
         "/personality/api/personalities/00000000-0000-0000-0000-000000000000")
@@ -236,6 +252,32 @@ def test_foreign_revision_restore_is_404():
     finally:
         _delete_personality(c, ua)
         _delete_personality(c, ub)
+
+
+def test_restore_of_the_current_revision_is_a_no_op():
+    c = _client()
+    made = _create_personality(c, "RestoreCurrentTest")
+    uuid = made["personality"]["uuid"]
+    try:
+        c.put(f"/personality/api/personalities/{uuid}", json={"content": "only text"})
+        revs = c.get(f"/personality/api/personalities/{uuid}/revisions").get_json()
+        current = revs["revisions"][0]
+        assert current["current"] is True
+        resp = c.post(
+            f"/personality/api/personalities/{uuid}/revisions/{current['uuid']}/restore")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["changed"] is False
+        after = c.get(f"/personality/api/personalities/{uuid}/revisions").get_json()
+        assert len(after["revisions"]) == 1   # nothing appended
+    finally:
+        _delete_personality(c, uuid)
+
+
+def test_get_personality_with_well_formed_unknown_uuid_is_404():
+    resp = _client().get(
+        "/personality/api/personalities/00000000-0000-0000-0000-000000000000")
+    assert resp.status_code == 404
 
 
 def test_content_put_requires_a_string():

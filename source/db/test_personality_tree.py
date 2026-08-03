@@ -229,3 +229,25 @@ def test_delete_folder_cascades_the_subtree(clean_tree):
     assert tree["folders"] == [] and tree["personalities"] == []
     assert db.db.session.execute(
         sa.select(sa.func.count(PersonalityRevision.id))).scalar_one() == 0
+
+
+def test_delete_folder_walks_a_subtree_larger_than_the_old_cap(clean_tree):
+    # A 150-deep chain used to trip the removed 100-folder walk cap, which
+    # stopped collecting mid-subtree and left the remainder (and any
+    # personality inside it) orphaned after delete. The walk must now cover
+    # the whole subtree regardless of size.
+    root = db.personality_create_folder("Root", None)
+    parent_uuid = UUID(root["id"])
+    chain = []
+    for i in range(150):
+        row = PersonalityFolder(uuid=uuid4(), name=f"F{i}", description="",
+                                parent_uuid=parent_uuid, position=0)
+        chain.append(row)
+        parent_uuid = row.uuid
+    db.db.session.add_all(chain)
+    leaf = db.personality_create("Leaf", parent_uuid)  # commits the whole chain too
+
+    assert db.personality_delete_folder(UUID(root["id"])) is True
+    tree = db.personality_load_tree()
+    assert tree["folders"] == [] and tree["personalities"] == []
+    assert db.personality_get(UUID(leaf["uuid"])) is None
