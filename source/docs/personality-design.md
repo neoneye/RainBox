@@ -95,8 +95,9 @@ that already exist** — a payload that omits an existing row, or names one the
 database doesn't have, is a 400 (`PersonalityTreeError`), not a silent delete
 or create. Creation and deletion are their own endpoints
 (`personality_create` / `personality_create_folder` /
-`personality_delete` / `personality_delete_folder`), and **every mutating
-endpoint returns a fresh `version` token**, not just the PUT. Because the PUT
+`personality_delete` / `personality_delete_folder`), and **every tree-structure
+endpoint returns a fresh `version` token**, not just the PUT. Content saves
+deliberately return no token, since text lives outside the version hash. Because the PUT
 cannot delete, there is no `deletes` counter — that tripwire only exists to
 catch a payload that lies about its own intent, and this shape cannot express
 deletion in the first place.
