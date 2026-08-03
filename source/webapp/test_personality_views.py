@@ -35,3 +35,20 @@ def test_page_has_editor_and_history_markers():
                    'id="personality-new-modal"', 'id="personality-delete-modal"',
                    'id="personality-restore-modal"']:
         assert marker in body, f"missing page marker: {marker}"
+
+
+def test_js_has_core_markers():
+    b = _body()
+    for marker in ["personalityLoadTree", "personalityRenderTree",
+                   "personalityItemNode", "personalitySavePush",
+                   "personalityAddPersonalityConfirm", "personalityDeleteItem",
+                   "/personality/api/tree"]:
+        assert marker in b, f"missing JS marker: {marker}"
+
+
+def test_tree_save_declares_no_deletes():
+    """Per docs/ui-tree-persistence.md the tree PUT cannot delete, so the
+    client must not carry a deletes counter — deletion goes to DELETE."""
+    b = _body()
+    assert "deletes" not in b
+    assert "method: 'DELETE'" in b
