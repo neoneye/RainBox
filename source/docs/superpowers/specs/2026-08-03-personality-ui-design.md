@@ -120,7 +120,6 @@ personality_create(name, folder_uuid)         → the new row
 personality_create_folder(name, parent_uuid)  → the new folder
 personality_delete(uuid)                      cascades revisions
 personality_delete_folder(uuid)               cascades the subtree
-personality_folder_delete_preview(uuid)       subtree counts for the modal
 personality_get(uuid)                         incl. content + revision_count
 personality_update_content(uuid, content)     appends a revision iff changed
 personality_revisions(uuid)                   newest first, with previews
@@ -151,13 +150,12 @@ new tree `version`**, so the client never holds a stale token.
 
 | Endpoint | Behavior |
 |---|---|
-| `GET /personality/api/tree` | `{folders, personalities, version}`; no content |
+| `GET /personality/api/tree` | `{folders, personalities, version}`; no content. Each personality row carries `revisionCount` — derived, so outside the version hash — which feeds the folder table's Revisions column and the delete modal's "this destroys N revisions" |
 | `PUT /personality/api/tree` | Name/placement/order of existing rows. 409 stale token; 400 on a missing or unknown uuid |
 | `POST /personality/api/folders` | `{name, parentId}` → 201 `{folder, version}` |
 | `POST /personality/api/personalities` | `{name, folderId}` → 201 `{personality, version}` |
 | `DELETE /personality/api/folders/<uuid>` | Cascades the subtree → `{ok, version}` |
 | `DELETE /personality/api/personalities/<uuid>` | Cascades its revisions → `{ok, version}` |
-| `GET /personality/api/folders/<uuid>/delete-preview` | Subtree counts for the confirm modal |
 | `GET /personality/api/personalities/<uuid>` | One personality incl. `content`, `revisionCount`, timestamps |
 | `PUT /personality/api/personalities/<uuid>` | `{content}` → `{ok, changed, revision}`; `changed: false` when the text was identical |
 | `GET /personality/api/personalities/<uuid>/revisions` | Newest first: `{uuid, created_at, bytes, lines, preview, current}` |
