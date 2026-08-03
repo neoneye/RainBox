@@ -38,6 +38,7 @@ from . import prompt_api  # noqa: F401,E402
 from . import profile_views  # noqa: F401,E402
 from . import profile_api  # noqa: F401,E402
 from . import personality_api  # noqa: F401,E402
+from . import personality_views  # noqa: F401,E402
 from . import settings_views  # noqa: F401,E402
 from . import memory_views  # noqa: F401,E402
 from . import memory_api  # noqa: F401,E402
