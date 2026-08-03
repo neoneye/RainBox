@@ -1,5 +1,5 @@
 """Tests for the personality tree persistence + revision history (db.personality)."""
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -134,3 +134,98 @@ def test_version_ignores_content(clean_tree):
     before = db.personality_tree_version()
     db.personality_update_content(p["uuid"], "some text")
     assert db.personality_tree_version() == before
+
+
+def test_create_places_at_end_of_folder(clean_tree):
+    f = db.personality_create_folder("F", None)
+    a = db.personality_create("A", f["id"])
+    b = db.personality_create("B", f["id"])
+    names = [p["name"] for p in db.personality_load_tree()["personalities"]]
+    assert names == ["A", "B"]
+    assert a["folderId"] == f["id"] and b["folderId"] == f["id"]
+    assert a["revisionCount"] == 0
+
+
+def test_first_save_creates_revision_one(clean_tree):
+    p = db.personality_create("A", None)
+    out = db.personality_update_content(p["uuid"], "Dry wit, no filler.")
+    assert out["changed"] is True
+    revs = db.personality_revisions(p["uuid"])
+    assert len(revs) == 1
+    assert revs[0]["current"] is True
+    assert revs[0]["preview"] == "Dry wit, no filler."
+    assert db.personality_get(p["uuid"])["content"] == "Dry wit, no filler."
+
+
+def test_unchanged_save_appends_nothing(clean_tree):
+    p = db.personality_create("A", None)
+    db.personality_update_content(p["uuid"], "same")
+    out = db.personality_update_content(p["uuid"], "same")
+    assert out["changed"] is False and out["revision"] is None
+    assert len(db.personality_revisions(p["uuid"])) == 1
+
+
+def test_newest_revision_always_mirrors_content(clean_tree):
+    p = db.personality_create("A", None)
+    for text in ("one", "two", "three"):
+        db.personality_update_content(p["uuid"], text)
+    revs = db.personality_revisions(p["uuid"])
+    assert len(revs) == 3 and revs[0]["current"] is True
+    assert db.personality_get(p["uuid"])["content"] == "three"
+    assert db.personality_revision_diff(p["uuid"], revs[0]["uuid"])["lines"] == []
+
+
+def test_restore_appends_rather_than_rewinds(clean_tree):
+    p = db.personality_create("A", None)
+    db.personality_update_content(p["uuid"], "one")
+    db.personality_update_content(p["uuid"], "two")
+    oldest = db.personality_revisions(p["uuid"])[-1]
+    out = db.personality_restore_revision(p["uuid"], UUID(oldest["uuid"]))
+    assert out["ok"] is True and out["changed"] is True and out["content"] == "one"
+    revs = db.personality_revisions(p["uuid"])
+    assert len(revs) == 3               # nothing was removed
+    assert revs[0]["current"] is True
+    assert db.personality_get(p["uuid"])["content"] == "one"
+
+
+def test_restore_of_a_foreign_revision_fails(clean_tree):
+    a = db.personality_create("A", None)
+    b = db.personality_create("B", None)
+    db.personality_update_content(a["uuid"], "a text")
+    rev = db.personality_revisions(a["uuid"])[0]
+    out = db.personality_restore_revision(b["uuid"], UUID(rev["uuid"]))
+    assert out["ok"] is False and out["error"] == "revision not found"
+
+
+def test_diff_reports_the_change(clean_tree):
+    p = db.personality_create("A", None)
+    db.personality_update_content(p["uuid"], "old line")
+    db.personality_update_content(p["uuid"], "new line")
+    oldest = db.personality_revisions(p["uuid"])[-1]
+    out = db.personality_revision_diff(p["uuid"], UUID(oldest["uuid"]))
+    assert out["ok"] is True
+    assert any(line.startswith("-old line") for line in out["lines"])
+    assert any(line.startswith("+new line") for line in out["lines"])
+
+
+def test_delete_personality_cascades_revisions(clean_tree):
+    p = db.personality_create("A", None)
+    db.personality_update_content(p["uuid"], "text")
+    assert db.personality_delete(UUID(p["uuid"])) is True
+    assert db.personality_get(UUID(p["uuid"])) is None
+    assert db.db.session.execute(
+        sa.select(sa.func.count(PersonalityRevision.id))
+        .where(PersonalityRevision.personality_uuid == UUID(p["uuid"]))
+    ).scalar_one() == 0
+
+
+def test_delete_folder_cascades_the_subtree(clean_tree):
+    outer = db.personality_create_folder("Outer", None)
+    inner = db.personality_create_folder("Inner", outer["id"])
+    p = db.personality_create("A", inner["id"])
+    db.personality_update_content(p["uuid"], "text")
+    assert db.personality_delete_folder(UUID(outer["id"])) is True
+    tree = db.personality_load_tree()
+    assert tree["folders"] == [] and tree["personalities"] == []
+    assert db.db.session.execute(
+        sa.select(sa.func.count(PersonalityRevision.id))).scalar_one() == 0

@@ -6,6 +6,7 @@ or invents a row is an error rather than a silent create or delete; creation
 and deletion are their own functions. This module holds both tree persistence
 and complete revision history. Re-exported from db for import compatibility.
 """
+import difflib
 import hashlib
 import json
 from typing import Any
@@ -239,3 +240,210 @@ def personality_save_tree(folders: list, personalities: list, *,
         row.folder_uuid = UUID(p["folderId"]) if p.get("folderId") else None
         row.position = i
     db.session.commit()
+
+
+# ---- create / delete (the tree save does neither) ----
+
+def _next_position(folder_uuid: UUID | None) -> int:
+    highest = db.session.execute(
+        sa.select(sa.func.max(Personality.position))
+        .where(Personality.folder_uuid == folder_uuid)
+    ).scalar_one()
+    return 0 if highest is None else highest + 1
+
+
+def personality_create(name: str, folder_uuid: UUID | None) -> dict[str, Any]:
+    """Create one empty personality at the end of its folder."""
+    row = Personality(uuid=uuid4(), name=name, content="",
+                      folder_uuid=folder_uuid,
+                      position=_next_position(folder_uuid))
+    db.session.add(row)
+    db.session.commit()
+    return _personality_dict(row, 0)
+
+
+def personality_create_folder(name: str, parent_uuid: UUID | None) -> dict[str, Any]:
+    """Create one folder at the end of its parent."""
+    highest = db.session.execute(
+        sa.select(sa.func.max(PersonalityFolder.position))
+        .where(PersonalityFolder.parent_uuid == parent_uuid)
+    ).scalar_one()
+    row = PersonalityFolder(uuid=uuid4(), name=name, description="",
+                            parent_uuid=parent_uuid,
+                            position=0 if highest is None else highest + 1)
+    db.session.add(row)
+    db.session.commit()
+    return _folder_dict(row)
+
+
+def personality_delete(personality_uuid: UUID) -> bool:
+    """Delete one personality and its whole revision history. False if the
+    uuid is unknown."""
+    row = _personality_row(personality_uuid)
+    if row is None:
+        return False
+    db.session.execute(sa.delete(PersonalityRevision).where(
+        PersonalityRevision.personality_uuid == personality_uuid))
+    db.session.delete(row)
+    db.session.commit()
+    return True
+
+
+def _descendant_folder_uuids(folder_uuid: UUID) -> list[UUID]:
+    """`folder_uuid` plus every folder nested under it, any depth. Cycle- and
+    depth-guarded: a corrupt parent loop must not spin."""
+    out = [folder_uuid]
+    seen = {folder_uuid}
+    frontier = [folder_uuid]
+    while frontier and len(out) < _PERSONALITY_FOLDER_CAP:
+        children = db.session.execute(
+            sa.select(PersonalityFolder.uuid)
+            .where(PersonalityFolder.parent_uuid.in_(frontier))
+        ).scalars().all()
+        frontier = [c for c in children if c not in seen]
+        seen.update(frontier)
+        out.extend(frontier)
+    return out
+
+
+def personality_delete_folder(folder_uuid: UUID) -> bool:
+    """Delete a folder, every folder nested under it, and every personality
+    inside any of them (revisions included). False if the uuid is unknown."""
+    if _folder_row(folder_uuid) is None:
+        return False
+    folder_uuids = _descendant_folder_uuids(folder_uuid)
+    doomed = db.session.execute(
+        sa.select(Personality.uuid).where(Personality.folder_uuid.in_(folder_uuids))
+    ).scalars().all()
+    if doomed:
+        db.session.execute(sa.delete(PersonalityRevision).where(
+            PersonalityRevision.personality_uuid.in_(doomed)))
+        db.session.execute(sa.delete(Personality).where(
+            Personality.uuid.in_(doomed)))
+    db.session.execute(sa.delete(PersonalityFolder).where(
+        PersonalityFolder.uuid.in_(folder_uuids)))
+    db.session.commit()
+    return True
+
+
+# ---- content + revision history ----
+
+_PREVIEW_CHARS = 80
+
+
+def _revision_dict(rev: PersonalityRevision, *, current: bool) -> dict[str, Any]:
+    """One history row: enough to scan the list without fetching any text."""
+    first_line = next((ln for ln in rev.content.splitlines() if ln.strip()), "")
+    return {
+        "uuid": str(rev.uuid),
+        "created_at": rev.created_at.isoformat() if rev.created_at else None,
+        "bytes": len(rev.content.encode("utf-8")),
+        "lines": len(rev.content.splitlines()),
+        "preview": first_line[:_PREVIEW_CHARS],
+        "current": current,
+    }
+
+
+def _revision_rows(personality_uuid: UUID) -> list[PersonalityRevision]:
+    """Newest first. Ordered by id, not created_at — two saves can land in the
+    same clock tick and the order still has to be exact."""
+    return list(db.session.execute(
+        sa.select(PersonalityRevision)
+        .where(PersonalityRevision.personality_uuid == personality_uuid)
+        .order_by(PersonalityRevision.id.desc())
+    ).scalars().all())
+
+
+def _revision_row(personality_uuid: UUID,
+                  revision_uuid: UUID) -> PersonalityRevision | None:
+    """One revision, but only if it belongs to this personality — a revision
+    of some other personality is 'not found', never a diff against a stranger."""
+    return db.session.execute(
+        sa.select(PersonalityRevision).where(
+            PersonalityRevision.uuid == revision_uuid,
+            PersonalityRevision.personality_uuid == personality_uuid)
+    ).scalar_one_or_none()
+
+
+def personality_get(personality_uuid: UUID) -> dict[str, Any] | None:
+    """One personality with its current text, for the editor pane. None if the
+    uuid is unknown."""
+    p = _personality_row(personality_uuid)
+    if p is None:
+        return None
+    count = db.session.execute(
+        sa.select(sa.func.count(PersonalityRevision.id))
+        .where(PersonalityRevision.personality_uuid == personality_uuid)
+    ).scalar_one()
+    return {**_personality_dict(p, count), "content": p.content}
+
+
+def _append_revision(p: Personality, content: str) -> dict[str, Any]:
+    """Set the text and append the revision that mirrors it. The invariant
+    'newest revision == content' is maintained here and nowhere else."""
+    p.content = content
+    rev = PersonalityRevision(uuid=uuid4(), personality_uuid=p.uuid, content=content)
+    db.session.add(rev)
+    db.session.commit()
+    return _revision_dict(rev, current=True)
+
+
+def personality_update_content(personality_uuid: UUID,
+                               content: str) -> dict[str, Any] | None:
+    """Save the text. A save that changes nothing appends nothing — no
+    revision, no updated_at churn. None if the uuid is unknown."""
+    p = _personality_row(personality_uuid)
+    if p is None:
+        return None
+    if p.content == content:
+        return {"changed": False, "revision": None}
+    return {"changed": True, "revision": _append_revision(p, content)}
+
+
+def personality_revisions(personality_uuid: UUID) -> list[dict[str, Any]] | None:
+    """The history, newest first; the newest is flagged `current` because it
+    is by definition the text the personality currently holds. None if the
+    uuid is unknown."""
+    if _personality_row(personality_uuid) is None:
+        return None
+    rows = _revision_rows(personality_uuid)
+    return [_revision_dict(r, current=(i == 0)) for i, r in enumerate(rows)]
+
+
+def personality_revision_diff(personality_uuid: UUID,
+                              revision_uuid: UUID) -> dict[str, Any]:
+    """Unified diff (3 context lines) of a revision's text → the current text.
+    {ok: False, error} on any lookup problem; the API maps that to 404."""
+    p = _personality_row(personality_uuid)
+    if p is None:
+        return {"ok": False, "error": "personality not found"}
+    rev = _revision_row(personality_uuid, revision_uuid)
+    if rev is None:
+        return {"ok": False, "error": "revision not found"}
+    stamp = rev.created_at.isoformat() if rev.created_at else str(rev.uuid)
+    lines = list(difflib.unified_diff(
+        rev.content.splitlines(), p.content.splitlines(),
+        fromfile=f"{p.name} @ {stamp}", tofile=f"{p.name} (current)",
+        lineterm="", n=3))
+    rows = _revision_rows(personality_uuid)
+    is_current = bool(rows) and rows[0].uuid == rev.uuid
+    return {"ok": True, "revision": _revision_dict(rev, current=is_current),
+            "lines": lines}
+
+
+def personality_restore_revision(personality_uuid: UUID,
+                                 revision_uuid: UUID) -> dict[str, Any]:
+    """Bring an old revision back as the current text by APPENDING a new
+    revision holding it. Nothing in the history is rewritten or removed, so a
+    mistaken restore is itself undoable. Restoring text that is already
+    current changes nothing."""
+    p = _personality_row(personality_uuid)
+    if p is None:
+        return {"ok": False, "error": "personality not found"}
+    rev = _revision_row(personality_uuid, revision_uuid)
+    if rev is None:
+        return {"ok": False, "error": "revision not found"}
+    if p.content == rev.content:
+        return {"ok": True, "changed": False, "content": p.content, "revision": None}
+    return {"ok": True, "changed": True, "content": rev.content,
+            "revision": _append_revision(p, rev.content)}
