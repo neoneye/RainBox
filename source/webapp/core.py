@@ -59,6 +59,9 @@ from db import (
     ModelConfigOverride,
     ModelGroup,
     ModelGroupMember,
+    Personality,
+    PersonalityFolder,
+    PersonalityRevision,
     Profile,
     ProfileFolder,
     Prompt,
@@ -1092,6 +1095,87 @@ class ProfileView(ModelView):
 
 admin.add_view(ProfileFolderView(ProfileFolder, db, category="Profile"))
 admin.add_view(ProfileView(Profile, db, category="Profile"))
+
+
+# Personality tables backing the /personality page (folder tree + the
+# free-text personality body + its append-only revision history).
+def _personality_open_link(view, context, model, name):
+    """Virtual column linking to the /personality page deep-linked to this
+    node (folder or personality — both select via ?id= in the tree)."""
+    return Markup(f'<a href="/personality?id={escape(model.uuid)}">inspect ↗</a>')
+
+
+def _personality_folder_label(view, context, model, name):
+    """Render a folder-uuid column (a personality's `folder_uuid` or a
+    folder's `parent_uuid`) as a truncated uuid (full on hover) with the
+    folder's name below. Plain columns (no FK), so look the folder up by uuid."""
+    fid = getattr(model, name)
+    if not fid:
+        return ""
+    full = str(fid)
+    short = Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
+    folder = db.session.query(PersonalityFolder).filter_by(uuid=fid).first()
+    return Markup(f"{short}<br>{escape(folder.name)}") if folder else short
+
+
+class PersonalityFolderView(ModelView):
+    column_list = (
+        "personality_link", "position", "uuid", "name", "description",
+        "parent_uuid", "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"personality_link": "Personality page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "parent_uuid": _personality_folder_label,
+        "personality_link": _personality_open_link,
+    }
+
+
+class PersonalityView(ModelView):
+    column_list = (
+        "personality_link", "position", "uuid", "name", "folder_uuid",
+        "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"personality_link": "Personality page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "folder_uuid": _personality_folder_label,
+        "personality_link": _personality_open_link,
+    }
+
+
+def _personality_revision_open_link(view, context, model, name):
+    """A revision has no page of its own — link to the personality whose
+    history holds it."""
+    return Markup(
+        f'<a href="/personality?id={escape(model.personality_uuid)}">inspect ↗</a>')
+
+
+class PersonalityRevisionView(ModelView):
+    """Read-only: revisions are append-only by design — the newest one always
+    mirrors the personality's current `content`, and editing or deleting a
+    revision by hand here would break that invariant."""
+    can_create = False
+    can_edit = False
+    can_delete = False
+    column_list = ("personality_link", "uuid", "personality_uuid", "created_at")
+    column_default_sort = ("id", True)
+    column_labels = {"personality_link": "Personality page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "personality_uuid": _fmt_short_uuid,
+        "personality_link": _personality_revision_open_link,
+    }
+
+
+admin.add_view(PersonalityFolderView(PersonalityFolder, db, category="Personality"))
+admin.add_view(PersonalityView(Personality, db, category="Personality"))
+admin.add_view(PersonalityRevisionView(PersonalityRevision, db, category="Personality"))
 
 
 # Kanban tables backing the /kanban page (boards + columns + tasks + the

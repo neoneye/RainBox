@@ -76,3 +76,20 @@ def test_content_editing_is_explicit():
     assert "function personalitySaveEdit" in b
     assert "function personalityCancelEdit" in b
     assert "#personality-editor.editing{position:relative;z-index:1600" in b
+
+
+def test_find_resolves_a_personality_uuid():
+    import db
+    c = app.test_client()
+    made = c.post("/personality/api/personalities",
+                  json={"name": "FindMe", "folderId": None}).get_json()
+    uuid = made["personality"]["uuid"]
+    try:
+        a = db.make_app()
+        db.init_db(a)
+        with a.app_context():
+            hits = db.find_uuid(uuid)
+        assert hits, "personality uuid did not resolve"
+        assert hits[0]["url"] == f"/personality?id={uuid}"
+    finally:
+        c.delete(f"/personality/api/personalities/{uuid}")
