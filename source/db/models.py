@@ -1590,6 +1590,70 @@ class Profile(db.Model):
     __table_args__ = (Index("profile_in_folder", "folder_uuid", "position"),)
 
 
+class PersonalityFolder(db.Model):
+    """Folder in the /personality tree. Same structural shape as PromptFolder:
+    parent pointer, no FK, position-ordered within a parent."""
+
+    __tablename__ = "personality_folder"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")  # notes about the child nodes
+    parent_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = root; plain col, no FK
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("personality_folder_children", "parent_uuid", "position"),)
+
+
+class Personality(db.Model):
+    """Who the assistant is: one free-text character description, backing
+    /personality. The uuid is stable for the life of the personality — edits
+    never mint a new one — so anything that binds to a personality keeps
+    pointing at it. `content` is the current text; every saved state of it is
+    kept in personality_revision, whose newest row always mirrors `content`."""
+
+    __tablename__ = "personality"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, default="")
+    content: Mapped[str] = mapped_column(Text, default="")  # the personality text itself
+    folder_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = unfiled at root; plain col, no FK
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("personality_in_folder", "folder_uuid", "position"),)
+
+
+class PersonalityRevision(db.Model):
+    """One saved state of a personality's text, appended on every content save
+    that actually changed something. Rows are never updated or deleted except
+    by cascade when the personality itself is deleted — restoring an old
+    revision appends a new one rather than rewinding. Full snapshots, not
+    deltas: the texts are small and there is no chain to corrupt. Order by
+    `id`, not `created_at` — two saves can share a clock tick."""
+
+    __tablename__ = "personality_revision"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    personality_uuid: Mapped[UUID] = mapped_column()  # owner; plain col, no FK
+    content: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (Index("personality_revision_of", "personality_uuid", "id"),)
+
+
 def psycopg_dsn() -> str:
     """The DATABASE_URL as a plain libpq DSN (no SQLAlchemy `+psycopg` driver
     tag), for opening a raw psycopg connection — used by the chat SSE stream to
