@@ -52,3 +52,27 @@ def test_tree_save_declares_no_deletes():
     b = _body()
     assert "deletes" not in b
     assert "method: 'DELETE'" in b
+
+
+def test_history_view_markers():
+    b = _body()
+    for marker in ["function personalityToggleHistory",
+                   "function personalityLoadHistory",
+                   "function personalityShowRevisionDiff",
+                   "function personalityConfirmRestore",
+                   "/revisions", "/restore"]:
+        assert marker in b, f"missing history marker: {marker}"
+
+
+def test_content_editing_is_explicit():
+    """Personality text is read-only until Edit is clicked; the edit resolves
+    only via Save or Cancel, with the rest of the page behind the modal
+    backdrop meanwhile — no autosave."""
+    b = _body()
+    assert 'id="personality-edit-btn"' in b
+    assert 'id="personality-save-btn"' in b
+    assert 'id="personality-cancel-btn"' in b
+    assert "function personalityStartEdit" in b
+    assert "function personalitySaveEdit" in b
+    assert "function personalityCancelEdit" in b
+    assert "#personality-editor.editing{position:relative;z-index:1600" in b

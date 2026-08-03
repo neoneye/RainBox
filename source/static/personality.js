@@ -69,6 +69,7 @@ function personalitySelectItem(uuid){
   const p = personalityByUuid(uuid);
   personalitySelectedItem = uuid;
   personalitySelectedFolder = p ? (p.folderId || null) : null;
+  personalityCloseHistoryView();  // a different personality has nothing to show History for
   personalityRenderTree();
   personalityRender();
 }
@@ -285,6 +286,9 @@ function personalityRenderEditor(){
   el.hidden = false;
   personalityCM.refresh();  // re-measure: the pane may have been display:none until now
   personalityRenderDates(p);
+  const rev = document.getElementById('personality-revcount');
+  const count = (p && p.revisionCount) || 0;
+  rev.textContent = count === 1 ? '1 version' : count + ' versions';
   if (personalityEditorUuid !== p.uuid){
     if (personalityEditMode) personalityExitEdit();  // content is being replaced anyway
     personalityEditorUuid = p.uuid;
@@ -346,6 +350,7 @@ function personalitySyncEditButtons(){
 }
 function personalityStartEdit(){
   if (!personalityEditorUuid || personalityEditMode || personalityContentLoading) return;
+  personalityCloseHistoryView();  // Edit takes over the pane; History has nothing left to show
   personalityEditMode = true;
   personalityEditOriginal = personalityEditorValue();
   personalityEditorReadOnly(false);
@@ -368,23 +373,33 @@ async function personalitySaveEdit(){
   const uuid = personalityEditorUuid;
   const saveBtn = document.getElementById('personality-save-btn');
   saveBtn.disabled = true;
-  let ok = false;
+  let ok = false, data = null;
   try {
     const r = await fetch('/personality/api/personalities/' + encodeURIComponent(uuid), {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({content: personalityEditorValue()}),
     });
     ok = r.ok;
+    data = await r.json();
   } catch (e) { /* ok stays false */ }
   saveBtn.disabled = false;
   if (!ok){
-    personalityToastMsg('Save failed — the personality is still in edit mode.');
+    personalityToastMsg((data && data.error) || 'Save failed — the personality is still in edit mode.');
     return;
   }
   personalityTouch(personalityByUuid(uuid));
   if (personalitySelectedItem === uuid) personalityRenderDates(personalityByUuid(uuid));
+  // The response tells us whether anything was actually recorded: a PUT of
+  // identical text changes nothing and appends no revision.
+  if (data.changed) {
+    const row = personalityByUuid(uuid);
+    if (row) row.revisionCount = (row.revisionCount || 0) + 1;
+    personalityToastMsg('saved — version ' + ((row && row.revisionCount) || 1));
+  } else {
+    personalityToastMsg('no changes');
+  }
   personalityExitEdit();
-  personalityToastMsg('Personality saved.');
+  personalityRenderEditor();
 }
 // Unsaved edit-mode changes are lost on tab close — warn like any editor.
 window.addEventListener('beforeunload', (e) => {
@@ -1069,6 +1084,10 @@ function personalityOpenModalDirty(){
     return personalityDeleteRequireName
       ? document.getElementById('personality-delete-input').value.trim() !== '' : false;
   }
+  // Restore confirm: a plain yes/no like a no-name-required delete — never dirty.
+  if (!document.getElementById('personality-restore-modal').hidden){
+    return false;
+  }
   // Content edit mode behaves like an open modal: dirty once the text differs
   // from the snapshot — then only Save / Cancel end it.
   if (personalityEditMode){
@@ -1082,9 +1101,162 @@ function personalityCloseOpenModal(){
   if (!document.getElementById('personality-desc-modal').hidden){ personalityCloseDescModal(); return; }
   if (!document.getElementById('personality-rename-modal').hidden){ personalityCloseRenameModal(); return; }
   if (!document.getElementById('personality-delete-modal').hidden){ personalityCloseDeleteModal(); return; }
+  if (!document.getElementById('personality-restore-modal').hidden){ personalityCloseRestoreModal(); return; }
   if (personalityEditMode){ personalityCancelEdit(); return; }
 }
 function personalityDismissIfClean(){ if (!personalityOpenModalDirty()) personalityCloseOpenModal(); }
+
+// ---- history view (append-only revisions; restore appends, never rewinds) ----
+let personalityHistoryOpen = false;
+let personalityHistoryRows = [];   // [{uuid, created_at, bytes, lines, preview, current}]
+let personalityRestoreUuid = null; // revision awaiting confirmation
+
+function personalityHistoryVisible(show){
+  document.getElementById('personality-history').hidden = !show;
+  document.getElementById('personality-editor')
+          .querySelector('.CodeMirror').style.display = show ? 'none' : '';
+  if (!show) personalityCM.refresh();  // re-measure: it was display:none while History was open
+}
+// Shared by a selection change and by entering edit mode: either way the
+// editor pane takes over and History has nothing left to show. Closing here
+// is unconditional (not a toggle), so it's a no-op when History is already shut.
+function personalityCloseHistoryView(){
+  if (!personalityHistoryOpen) return;
+  personalityHistoryOpen = false;
+  document.getElementById('personality-history-btn').textContent = 'History';
+  personalityHistoryVisible(false);
+}
+
+async function personalityToggleHistory(){
+  personalityHistoryOpen = !personalityHistoryOpen;
+  document.getElementById('personality-history-btn').textContent =
+    personalityHistoryOpen ? 'Editor' : 'History';
+  personalityHistoryVisible(personalityHistoryOpen);
+  if (personalityHistoryOpen) await personalityLoadHistory(personalitySelectedItem);
+}
+
+async function personalityLoadHistory(uuid){
+  const box = document.getElementById('personality-history-rows');
+  const diff = document.getElementById('personality-history-diff');
+  diff.hidden = true;
+  box.innerHTML = '';
+  if (!uuid) return;
+  let data;
+  try {
+    const resp = await fetch('/personality/api/personalities/' + uuid + '/revisions');
+    data = await resp.json();
+    if (!resp.ok) { personalityToastMsg(data.error || 'could not load history'); return; }
+  } catch (e) {
+    personalityToastMsg('could not load history');
+    return;
+  }
+  personalityHistoryRows = data.revisions;
+  if (!personalityHistoryRows.length) {
+    box.innerHTML = '<tr><td colspan="4" class="muted">' +
+      'No versions yet — the first save records one.</td></tr>';
+    return;
+  }
+  personalityHistoryRows.forEach(r => {
+    const tr = document.createElement('tr');
+    const when = personalityShortDate(r.created_at) + (r.current ? ' (current)' : '');
+    tr.innerHTML =
+      '<td class="personality-name-cell">' + personalityEscapeHtml(when) + '</td>' +
+      '<td>' + r.bytes + ' B</td>' +
+      '<td>' + personalityEscapeHtml(r.preview) + '</td>' +
+      '<td></td>';
+    const actions = tr.lastElementChild;
+    const diffBtn = document.createElement('button');
+    diffBtn.textContent = 'Diff';
+    diffBtn.onclick = () => personalityShowRevisionDiff(r.uuid);
+    actions.appendChild(diffBtn);
+    if (!r.current) {
+      const restoreBtn = document.createElement('button');
+      restoreBtn.textContent = 'Restore';
+      restoreBtn.onclick = () => personalityConfirmRestore(r.uuid);
+      actions.appendChild(restoreBtn);
+    }
+    box.appendChild(tr);
+  });
+}
+
+async function personalityShowRevisionDiff(revisionUuid){
+  const uuid = personalitySelectedItem;
+  const box = document.getElementById('personality-history-diff');
+  box.hidden = false;
+  box.textContent = 'Loading…';
+  let data;
+  try {
+    const resp = await fetch('/personality/api/personalities/' + uuid +
+                             '/revisions/' + revisionUuid + '/diff');
+    data = await resp.json();
+    if (!resp.ok) { box.textContent = data.error || 'could not diff'; return; }
+  } catch (e) {
+    box.textContent = 'could not diff';
+    return;
+  }
+  box.innerHTML = '';
+  if (!data.lines.length) {
+    box.innerHTML = '<div class="personality-diff-line ctx">' +
+      'Identical to the current text.</div>';
+    return;
+  }
+  data.lines.forEach(line => {
+    let cls = 'ctx';
+    if (line.startsWith('+++') || line.startsWith('---')) cls = 'hdr';
+    else if (line.startsWith('@@')) cls = 'hunk';
+    else if (line.startsWith('+')) cls = 'add';
+    else if (line.startsWith('-')) cls = 'del';
+    const div = document.createElement('div');
+    div.className = 'personality-diff-line ' + cls;
+    div.textContent = line;
+    box.appendChild(div);
+  });
+}
+
+function personalityConfirmRestore(revisionUuid){
+  const row = personalityHistoryRows.find(r => r.uuid === revisionUuid);
+  personalityRestoreUuid = revisionUuid;
+  document.getElementById('personality-restore-msg').textContent =
+    'Restore the version saved ' + personalityShortDate(row && row.created_at) + '?';
+  document.getElementById('personality-restore-confirm').onclick =
+    personalityRestoreConfirmed;
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('personality-restore-modal').hidden = false;
+}
+
+function personalityCloseRestoreModal(){
+  personalityRestoreUuid = null;
+  document.getElementById('personality-restore-modal').hidden = true;
+  document.getElementById('ui-modal-backdrop').hidden = true;
+}
+
+async function personalityRestoreConfirmed(){
+  const uuid = personalitySelectedItem;
+  const revisionUuid = personalityRestoreUuid;
+  personalityCloseRestoreModal();
+  if (!uuid || !revisionUuid) return;
+  let data;
+  try {
+    const resp = await fetch('/personality/api/personalities/' + uuid +
+                             '/revisions/' + revisionUuid + '/restore',
+                             {method: 'POST'});
+    data = await resp.json();
+    if (!resp.ok) { personalityToastMsg(data.error || 'could not restore'); return; }
+  } catch (e) {
+    personalityToastMsg('could not restore');
+    return;
+  }
+  personalityEditorSet(data.content);
+  if (data.changed) {
+    const row = personalityByUuid(uuid);
+    if (row) row.revisionCount = (row.revisionCount || 0) + 1;
+    personalityToastMsg('restored as a new version');
+  } else {
+    personalityToastMsg('already the current text');
+  }
+  await personalityLoadHistory(uuid);
+  personalityRenderEditor();
+}
 
 // ---- wiring + initial paint ----
 personalityInitTreeDnD();
