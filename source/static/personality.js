@@ -272,10 +272,6 @@ function personalityInitEditor(){
 function personalityEditorValue(){ return personalityCM.getValue(); }
 function personalityEditorSet(value){ personalityCM.setValue(value); }
 function personalityEditorReadOnly(ro){ personalityCM.setOption('readOnly', ro ? 'nocursor' : false); }
-function personalityEditorVisible(show){
-  personalityCM.getWrapperElement().style.display = show ? '' : 'none';
-  if (show) personalityCM.refresh();  // re-measure after being hidden
-}
 
 let personalityEditorUuid = null;   // uuid whose content the editor currently holds
 function personalityRenderEditor(){
@@ -909,6 +905,7 @@ async function personalityDeleteItem(uuid){
 }
 
 async function personalityDeleteFolderById(id){
+  const doomedFolder = personalityFolderById(id);  // captured before removal, for parent fallback below
   try {
     const resp = await fetch('/personality/api/folders/' + id, {method: 'DELETE'});
     const data = await resp.json();
@@ -927,7 +924,10 @@ async function personalityDeleteFolderById(id){
     personalityItems = personalityItems.filter(p => !doomedFolders.has(p.folderId));
     personalityFolders = personalityFolders.filter(f => !doomedFolders.has(f.id));
     personalityTreeVersion = data.version;
-    if (doomedFolders.has(personalitySelectedFolder)) personalitySelectedFolder = null;
+    // Land on the deleted folder's parent, not the root, so the operator stays in context.
+    if (doomedFolders.has(personalitySelectedFolder)) {
+      personalitySelectedFolder = (doomedFolder && doomedFolder.parentId) || null;
+    }
     if (personalitySelectedItem && !personalityByUuid(personalitySelectedItem)) {
       personalitySelectedItem = null;
     }
@@ -982,6 +982,18 @@ function personalitySave(){
   clearTimeout(personalitySaveTimer);
   personalitySaveTimer = setTimeout(personalitySavePush, 250);  // coalesce bursts into one PUT
 }
+// After a re-hydrate, the fresh data may no longer contain the selected
+// folder/personality (e.g. the rejected edit was the move that put it there).
+// Clear whichever selection no longer resolves so render doesn't point at a
+// row that isn't in the tree anymore.
+function personalityReconcileSelectionAfterReload(){
+  if (personalitySelectedItem && !personalityByUuid(personalitySelectedItem)) {
+    personalitySelectedItem = null;
+  }
+  if (personalitySelectedFolder && !personalityFolderById(personalitySelectedFolder)) {
+    personalitySelectedFolder = null;
+  }
+}
 async function personalitySavePush(){
   if (personalitySaveInFlight) { personalitySaveQueued = true; return; }
   personalitySaveInFlight = true;
@@ -999,21 +1011,35 @@ async function personalitySavePush(){
     });
     const data = await resp.json();
     if (resp.status === 409) {
-      personalityToastMsg('tree changed elsewhere — reloaded');
+      // Another tab/editor changed the tree; their version wins — re-hydrate
+      // and repaint so the screen matches what the server just accepted.
       await personalityLoadTree();
+      personalityReconcileSelectionAfterReload();
+      personalityRenderTree();
+      personalityRender();
+      personalityToastMsg('tree changed elsewhere — reloaded');
       return;
     }
     if (!resp.ok) {
       // A 400 here means our payload disagreed with the server about which
-      // rows exist — re-hydrate rather than retry the same bad shape.
-      personalityToastMsg(data.error || 'save failed — reloaded');
+      // rows exist — re-hydrate rather than retry the same bad shape, and
+      // repaint so the rejected edit doesn't linger on screen.
       await personalityLoadTree();
+      personalityReconcileSelectionAfterReload();
+      personalityRenderTree();
+      personalityRender();
+      personalityToastMsg(data.error || 'save failed — reloaded');
       return;
     }
     personalityTreeVersion = data.version;
   } catch (e) {
-    personalityToastMsg('save failed — reloaded');
+    // Network error: we can't tell whether the server applied the change, so
+    // re-hydrate and repaint rather than leave the client's guess on screen.
     await personalityLoadTree();
+    personalityReconcileSelectionAfterReload();
+    personalityRenderTree();
+    personalityRender();
+    personalityToastMsg('save failed — reloaded');
   } finally {
     personalitySaveInFlight = false;
     if (personalitySaveQueued) { personalitySaveQueued = false; personalitySave(); }
