@@ -3,8 +3,8 @@
 Backs the /personality page. Saves follow docs/ui-tree-persistence.md — the
 tree save only ever updates rows that already exist, so a payload that omits
 or invents a row is an error rather than a silent create or delete; creation
-and deletion are their own functions. The revision half lives in
-db/personality_history.py. Re-exported from db for import compatibility.
+and deletion are their own functions. This module holds both tree persistence
+and complete revision history. Re-exported from db for import compatibility.
 """
 import hashlib
 import json
