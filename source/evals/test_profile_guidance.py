@@ -129,7 +129,6 @@ def test_classifier_variant_runs_the_live_call_and_renders_its_markdown(
         reason="The request is German; the profile declares de.",
         languages=[ResponseLanguageItem(code="de", score=5),
                    ResponseLanguageItem(code="en-US", score=2)],
-        audit="OK",
     )
     calls = {"n": 0}
 

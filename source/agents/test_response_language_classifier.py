@@ -75,7 +75,6 @@ def _classification() -> ResponseLanguageClassification:
             ResponseLanguageItem(code="en-GB", score=5),
             ResponseLanguageItem(code="da", score=1),
         ],
-        audit="OK",
     )
 
 
@@ -93,7 +92,6 @@ def test_schema_enforces_likert_bounds_and_canonical_language_codes():
     result = ResponseLanguageClassification(
         reason="English request.",
         languages=[ResponseLanguageItem(code="EN-gb", score=5)],
-        audit="OK",
     )
     assert result.languages[0].code == "en-GB"
 
@@ -107,13 +105,11 @@ def test_schema_enforces_likert_bounds_and_canonical_language_codes():
                 ResponseLanguageItem(code="en-gb", score=5),
                 ResponseLanguageItem(code="EN-GB", score=4),
             ],
-            audit="OK",
         )
     with pytest.raises(ValidationError, match="invalid language code"):
         ResponseLanguageClassification(
             reason="invalid",
             languages=[ResponseLanguageItem(code="English", score=5)],
-            audit="problem",
         )
 
 
@@ -184,7 +180,7 @@ def test_system_prompt_uses_planexe_likert_and_distinguishes_content_language():
     assert "Use a broad language code when the evidence supports only" not in prompt
 
 
-def test_preferred_profile_variant_refines_broad_model_output_and_flags_audit():
+def test_preferred_profile_variant_refines_broad_model_output_and_flags_repair():
     """Regression for the live trace where reasoning selected en-GB but the
     structured answer collapsed it to en."""
     agent = _agent()
@@ -214,7 +210,6 @@ def test_preferred_profile_variant_refines_broad_model_output_and_flags_audit():
             ResponseLanguageItem(code="en", score=5),
             ResponseLanguageItem(code="da", score=1),
         ],
-        audit="OK",
     )
     result = agent._reconcile_response_language_profile_variants(
         broad, profile)
@@ -222,8 +217,11 @@ def test_preferred_profile_variant_refines_broad_model_output_and_flags_audit():
         ("en-GB", 5),
         ("da", 1),
     ]
-    assert result.audit != "OK"
-    assert "normalized it to declared profile variant 'en-GB'" in result.audit
+    # The repair is appended to the model's own reason, never hidden: the
+    # experiment measures upstream scorer quality, so a code-side fix has to
+    # stay visible in the trace and in the downstream Markdown.
+    assert result.reason.startswith("The explicit translation target is English.")
+    assert "normalized it to declared profile variant 'en-GB'" in result.reason
 
 
 def test_broad_code_stays_broad_without_unambiguous_profile_variant():
@@ -243,12 +241,11 @@ def test_broad_code_stays_broad_without_unambiguous_profile_variant():
     broad = ResponseLanguageClassification(
         reason="English target.",
         languages=[ResponseLanguageItem(code="en", score=5)],
-        audit="uncertain variant",
     )
     result = agent._reconcile_response_language_profile_variants(
         broad, profile)
     assert result.languages[0].code == "en"
-    assert "omitted declared profile code(s): en-GB, en-US" in result.audit
+    assert "omitted declared profile code(s): en-GB, en-US" in result.reason
 
 
 def test_markdown_sorts_by_score_stably_and_omits_scores():
@@ -260,7 +257,6 @@ def test_markdown_sorts_by_score_stably_and_omits_scores():
             ResponseLanguageItem(code="es", score=4),
             ResponseLanguageItem(code="da", score=1),
         ],
-        audit="OK",
     )
     markdown = AssistantAgent._format_reply_language_markdown(
         classification)
@@ -271,9 +267,7 @@ def test_markdown_sorts_by_score_stably_and_omits_scores():
         "- `en-GB`\n"
         "- `fr`\n"
         "- `es`\n"
-        "- `da`\n\n"
-        "## Audit\n"
-        "OK"
+        "- `da`"
     )
     assert "score" not in markdown.casefold()
     # Formatting is a view: it must not reorder the stored structured result.
@@ -317,7 +311,7 @@ def test_classifier_is_first_observed_step_and_does_not_consume_budget(room):
     assert [row.code_driven for row in rows] == [True, True, True, False]
     assert rows[0].phase == "observed"
     assert '"score": 5' in (rows[0].observation_preview or "")
-    assert '"audit": "OK"' in (rows[0].observation_preview or "")
+    assert '"audit"' not in (rows[0].observation_preview or "")
 
 
 def test_ranked_markdown_is_injected_into_every_later_decide_without_scores(room):

@@ -204,7 +204,7 @@ agent_config: dict[str, AgentConfigEntry] = {
     "response_language_classifier": {
         "uuid": RESPONSE_LANGUAGE_CLASSIFIER_UUID,
         "requires_structured_output": True,
-        "description": "binding-only: narrow scorer that predicts which language(s) the assistant's next reply should use before step 0; records reason, per-language Likert confidence and audit, then supplies later assistant calls with score-free ranked Markdown. Unbound, the assistant's own group classifies. Never receives journal work.",
+        "description": "binding-only: narrow scorer that predicts which language(s) the assistant's next reply should use before step 0; records reason and per-language Likert confidence, then supplies later assistant calls with score-free ranked Markdown. Unbound, the assistant's own group classifies. Never receives journal work.",
         "next": None,
     },
     "reply_audit": {

@@ -104,8 +104,8 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   (a bare `<reply_language_markdown>`: the suffix states the format and the
   system prompt names the section as reference data, so neither a `format` nor
   an `authority` attribute repeats what is already said —
-  directly after the request; reason, score-free language list ranked by
-  confidence, and audit), the **acceptance criteria**
+  directly after the request; reason and a score-free language list ranked by
+  confidence), the **acceptance criteria**
   (`<acceptance_criteria_markdown>`, directly after the language block so the
   request and its constraints travel together — present when the step-0 call
   succeeded; see [Acceptance criteria](#acceptance-criteria)), the
@@ -174,12 +174,11 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
 Before skill retrieval, acceptance criteria and the decide loop, the assistant
 runs one narrow structured classifier. It returns:
 
-- `reason`: a short operator-facing explanation of the evidence;
+- `reason`: a short operator-facing explanation of the evidence, which also
+  carries any omission or uncertainty the classifier is aware of;
 - `languages`: BCP-47 `{code, score}` rows, where score uses PlanExe's
   `1=strong negative, 2=weak negative, 3=neutral, 4=weak positive,
-  5=strong positive` scale;
-- `audit`: exactly `OK` when the classifier trusts that it captured the
-  situation, otherwise a description of likely mistakes or omissions.
+  5=strong positive` scale.
 
 The request includes the current operator message, up to six earlier messages
 of either role and every validated `languages.rows` entry (tag, level, stance,
@@ -188,7 +187,7 @@ record of what language the conversation has actually been running in — real
 evidence for the one call whose job is to decide the language. The
 anti-perpetuation guard that omission used to provide is now a stated
 precedence instead: a previous wrong-language reply loses to the current
-request, and the disagreement goes in `audit`. The prompt explicitly separates
+request, and the disagreement goes in `reason`. The prompt explicitly separates
 the language of the
 reply's narration from languages appearing as quoted examples: a request for
 multilingual phrases with English explanations remains an English reply unless
@@ -201,16 +200,16 @@ scored exactly.
 The output boundary performs one narrow, observable repair for scorer models
 that reason about the correct variant but still emit its broad parent tag: it
 refines that tag to the single compatible preferred variant (or sole compatible
-non-avoid variant) and changes `audit` from `OK` to a description of the
-repair. It never invents a score for an omitted row; omissions are instead
-listed in `audit`. This keeps the useful classification exact without hiding
-upstream model-quality failures.
+non-avoid variant) and appends a description of the repair to `reason`. It
+never invents a score for an omitted row; omissions are appended to `reason`
+too. This keeps the useful classification exact without hiding upstream
+model-quality failures.
 
 The structured output is persisted as a `response_language_classifier` trace
-row with the prompts, model response, scores, audit, model identity and
+row with the prompts, model response, scores, model identity and
 duration. Code also renders it as compact Markdown for every later assistant
-model call: reason, language tags sorted by descending score (ties retain the
-classifier's original order), and audit. Numeric scores are omitted from the
+model call: reason, then language tags sorted by descending score (ties retain
+the classifier's original order). Numeric scores are omitted from the
 Markdown; the system prompt explains that ordering carries confidence and that
 not every scored candidate must appear in the reply:
 
@@ -222,9 +221,6 @@ not every scored candidate must appear in the reply:
 ## Languages - highest confidence first
 - `en-GB`
 - `da`
-
-## Audit
-OK
 </reply_language_markdown>
 ```
 

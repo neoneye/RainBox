@@ -212,8 +212,7 @@ def test_progress_row_reports_the_calls_made_before_the_first_decide(app_ctx):
     agent._request_response_language_classification = lambda **_: (
         ResponseLanguageClassification(
             reason="English request.",
-            languages=[ResponseLanguageItem(code="en-US", score=5)],
-            audit="OK"))
+            languages=[ResponseLanguageItem(code="en-US", score=5)]))
     seen = {}
 
     def fake_decide(**_kwargs):
