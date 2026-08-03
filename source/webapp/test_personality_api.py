@@ -135,3 +135,99 @@ def test_delete_unknown_is_404():
 
 def test_bad_uuid_is_400():
     assert _client().delete("/personality/api/personalities/not-a-uuid").status_code == 400
+
+
+def test_content_put_appends_a_revision():
+    c = _client()
+    made = _create_personality(c, "ContentTest")
+    uuid = made["personality"]["uuid"]
+    try:
+        resp = c.put(f"/personality/api/personalities/{uuid}",
+                     json={"content": "Warm, concrete, allergic to filler."})
+        assert resp.status_code == 200
+        assert resp.get_json()["changed"] is True
+        detail = c.get(f"/personality/api/personalities/{uuid}").get_json()
+        assert detail["content"] == "Warm, concrete, allergic to filler."
+        assert detail["revisionCount"] == 1
+        revs = c.get(f"/personality/api/personalities/{uuid}/revisions").get_json()
+        assert len(revs["revisions"]) == 1 and revs["revisions"][0]["current"] is True
+    finally:
+        _delete_personality(c, uuid)
+
+
+def test_unchanged_content_put_reports_no_change():
+    c = _client()
+    made = _create_personality(c, "NoopTest")
+    uuid = made["personality"]["uuid"]
+    try:
+        c.put(f"/personality/api/personalities/{uuid}", json={"content": "same"})
+        resp = c.put(f"/personality/api/personalities/{uuid}", json={"content": "same"})
+        assert resp.get_json()["changed"] is False
+        revs = c.get(f"/personality/api/personalities/{uuid}/revisions").get_json()
+        assert len(revs["revisions"]) == 1
+    finally:
+        _delete_personality(c, uuid)
+
+
+def test_restore_appends_and_returns_the_old_text():
+    c = _client()
+    made = _create_personality(c, "RestoreTest")
+    uuid = made["personality"]["uuid"]
+    try:
+        c.put(f"/personality/api/personalities/{uuid}", json={"content": "first"})
+        c.put(f"/personality/api/personalities/{uuid}", json={"content": "second"})
+        revs = c.get(f"/personality/api/personalities/{uuid}/revisions").get_json()
+        oldest = revs["revisions"][-1]["uuid"]
+        resp = c.post(
+            f"/personality/api/personalities/{uuid}/revisions/{oldest}/restore")
+        assert resp.status_code == 200
+        assert resp.get_json()["content"] == "first"
+        after = c.get(f"/personality/api/personalities/{uuid}/revisions").get_json()
+        assert len(after["revisions"]) == 3   # appended, not rewound
+    finally:
+        _delete_personality(c, uuid)
+
+
+def test_diff_lists_the_change():
+    c = _client()
+    made = _create_personality(c, "DiffTest")
+    uuid = made["personality"]["uuid"]
+    try:
+        c.put(f"/personality/api/personalities/{uuid}", json={"content": "before"})
+        c.put(f"/personality/api/personalities/{uuid}", json={"content": "after"})
+        revs = c.get(f"/personality/api/personalities/{uuid}/revisions").get_json()
+        oldest = revs["revisions"][-1]["uuid"]
+        out = c.get(
+            f"/personality/api/personalities/{uuid}/revisions/{oldest}/diff").get_json()
+        assert out["ok"] is True
+        assert any(ln.startswith("-before") for ln in out["lines"])
+        assert any(ln.startswith("+after") for ln in out["lines"])
+    finally:
+        _delete_personality(c, uuid)
+
+
+def test_foreign_revision_diff_is_404():
+    c = _client()
+    a = _create_personality(c, "OwnerA")
+    b = _create_personality(c, "OwnerB")
+    ua, ub = a["personality"]["uuid"], b["personality"]["uuid"]
+    try:
+        c.put(f"/personality/api/personalities/{ua}", json={"content": "a text"})
+        rev = c.get(f"/personality/api/personalities/{ua}/revisions"
+                    ).get_json()["revisions"][0]["uuid"]
+        resp = c.get(f"/personality/api/personalities/{ub}/revisions/{rev}/diff")
+        assert resp.status_code == 404
+    finally:
+        _delete_personality(c, ua)
+        _delete_personality(c, ub)
+
+
+def test_content_put_requires_a_string():
+    c = _client()
+    made = _create_personality(c, "TypeTest")
+    uuid = made["personality"]["uuid"]
+    try:
+        assert c.put(f"/personality/api/personalities/{uuid}",
+                     json={"content": 42}).status_code == 400
+    finally:
+        _delete_personality(c, uuid)

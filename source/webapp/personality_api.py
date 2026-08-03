@@ -124,3 +124,68 @@ def personality_delete_route(personality_uuid: str) -> tuple[Response, int] | Re
     if not db.personality_delete(pu):
         return jsonify({"ok": False, "error": "personality not found"}), 404
     return jsonify({"ok": True, "version": db.personality_tree_version()})
+
+
+@app.route("/personality/api/personalities/<personality_uuid>",
+           methods=["GET", "PUT"])
+def personality_detail(personality_uuid: str) -> tuple[Response, int] | Response:
+    """GET: one personality incl. its current text, for the editor pane.
+    PUT {content}: the editor's explicit Save — appends a revision when the
+    text actually changed, and reports `changed: false` when it didn't."""
+    pu = _parse_uuid(personality_uuid)
+    if pu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    if request.method == "PUT":
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not isinstance(data.get("content"), str):
+            return jsonify({"ok": False, "error":
+                            "request body must be a JSON object with string "
+                            "'content'"}), 400
+        out = db.personality_update_content(pu, data["content"])
+        if out is None:
+            return jsonify({"ok": False, "error": "personality not found"}), 404
+        return jsonify({"ok": True, **out})
+    detail = db.personality_get(pu)
+    if detail is None:
+        return jsonify({"ok": False, "error": "personality not found"}), 404
+    return jsonify({"ok": True, **detail})
+
+
+@app.route("/personality/api/personalities/<personality_uuid>/revisions")
+def personality_revisions_route(personality_uuid: str) -> tuple[Response, int] | Response:
+    """The history, newest first — one row per saved state of the text."""
+    pu = _parse_uuid(personality_uuid)
+    if pu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    revisions = db.personality_revisions(pu)
+    if revisions is None:
+        return jsonify({"ok": False, "error": "personality not found"}), 404
+    return jsonify({"ok": True, "revisions": revisions})
+
+
+@app.route("/personality/api/personalities/<personality_uuid>"
+           "/revisions/<revision_uuid>/diff")
+def personality_revision_diff_route(
+        personality_uuid: str, revision_uuid: str) -> tuple[Response, int] | Response:
+    """Unified diff of that revision's text → the current text."""
+    pu, ru = _parse_uuid(personality_uuid), _parse_uuid(revision_uuid)
+    if pu is None or ru is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    result = db.personality_revision_diff(pu, ru)
+    if not result.get("ok"):
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+@app.route("/personality/api/personalities/<personality_uuid>"
+           "/revisions/<revision_uuid>/restore", methods=["POST"])
+def personality_restore_route(
+        personality_uuid: str, revision_uuid: str) -> tuple[Response, int] | Response:
+    """Bring an old revision back by appending a new one holding its text."""
+    pu, ru = _parse_uuid(personality_uuid), _parse_uuid(revision_uuid)
+    if pu is None or ru is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    result = db.personality_restore_revision(pu, ru)
+    if not result.get("ok"):
+        return jsonify(result), 404
+    return jsonify(result)
