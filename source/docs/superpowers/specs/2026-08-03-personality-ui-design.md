@@ -145,8 +145,11 @@ a uuid shared by a folder and a personality (a node is addressed globally as
 
 ## HTTP API (`webapp/personality_api.py`)
 
-JSON, same-origin, uuids as identifiers. **Every mutating endpoint returns the
-new tree `version`**, so the client never holds a stale token.
+JSON, same-origin, uuids as identifiers. **Every tree-structure endpoint
+returns the new tree `version`** (the tree PUT, folder/personality create,
+folder/personality delete), so the client never holds a stale token. The
+per-personality content PUT and the revision restore below don't touch
+placement, so their responses deliberately carry no version token.
 
 | Endpoint | Behavior |
 |---|---|
