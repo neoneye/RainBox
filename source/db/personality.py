@@ -16,11 +16,6 @@ import sqlalchemy as sa
 
 from db.models import Personality, PersonalityFolder, PersonalityRevision, db
 
-# Bound on the folder-descendant walk (_descendant_folder_uuids) so a
-# corrupt parent loop can't spin.
-_PERSONALITY_FOLDER_CAP = 100
-
-
 class PersonalityTreeError(ValueError):
     """A personality tree payload failed structural validation (bad uuid,
     dangling parent, cycle, a row that is missing or unknown). The API maps
@@ -291,12 +286,15 @@ def personality_delete(personality_uuid: UUID) -> bool:
 
 
 def _descendant_folder_uuids(folder_uuid: UUID) -> list[UUID]:
-    """`folder_uuid` plus every folder nested under it, any depth. Cycle- and
-    depth-guarded: a corrupt parent loop must not spin."""
+    """`folder_uuid` plus every folder nested under it, any depth. Cycle-guarded
+    via `seen`: a corrupt parent loop stops expanding a folder once it has
+    already been collected, rather than spinning. No size cap — a large but
+    legitimate subtree must be walked in full, or `personality_delete_folder`
+    would delete only the collected prefix and orphan the rest."""
     out = [folder_uuid]
     seen = {folder_uuid}
     frontier = [folder_uuid]
-    while frontier and len(out) < _PERSONALITY_FOLDER_CAP:
+    while frontier:
         children = db.session.execute(
             sa.select(PersonalityFolder.uuid)
             .where(PersonalityFolder.parent_uuid.in_(frontier))

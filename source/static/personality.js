@@ -40,7 +40,21 @@ const PERSONALITY_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" vi
 function personalityFolderById(id){ return personalityFolders.find(f => f.id === id) || null; }
 function personalityByUuid(uuid){ return personalityItems.find(p => p.uuid === uuid) || null; }
 function personalityChildFolders(parentId){ return personalityFolders.filter(f => (f.parentId || null) === (parentId || null)); }
-function personalitiesInFolder(id){ return personalityItems.filter(p => (p.folderId || null) === (id || null)); }
+function personalitiesInFolder(id){
+  const target = id || null;
+  if (target === null) {
+    // Root level also surfaces a personality whose folderId names a folder
+    // that isn't in personalityFolders (e.g. the folder was deleted via the
+    // admin, orphaning the row). The server rejects it in every tree save,
+    // so if it stayed invisible here the operator could never reach it to
+    // move or delete it and every structural edit would 400 forever.
+    return personalityItems.filter(p => {
+      const fid = p.folderId || null;
+      return fid === null || !personalityFolderById(fid);
+    });
+  }
+  return personalityItems.filter(p => (p.folderId || null) === target);
+}
 function personalityIsExpanded(id){ return personalityExpanded[id] !== false; }
 // Optimistically stamp a node as just-modified; the server sets the
 // authoritative updated_at on save and a reload reconciles.

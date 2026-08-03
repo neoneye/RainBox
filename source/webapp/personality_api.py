@@ -2,10 +2,12 @@
 
 Save shape per docs/ui-tree-persistence.md: the tree PUT only updates rows
 that already exist (a payload that omits or invents one is a 400), and
-creation/deletion are their own endpoints. Every mutating response carries the
-new tree `version`, so the client never holds a stale token. Personality text
-is read and written per-personality, and its history lives behind the
-/revisions routes.
+creation/deletion are their own endpoints. Every tree-structure endpoint
+(the tree PUT, folder/personality create, folder/personality delete) carries
+the new tree `version` in its response, so the client never holds a stale
+token. Personality text is read and written per-personality via its own PUT,
+and restored via the /revisions routes; those content endpoints don't touch
+placement, so they deliberately carry no version token.
 """
 from uuid import UUID
 

@@ -1141,6 +1141,11 @@ class PersonalityView(ModelView):
     column_default_sort = ("position", False)
     column_labels = {"personality_link": "Personality page"}
     column_type_formatters = CRON_TYPE_FORMATTERS
+    # Exclude `content` from the row form — editing it here would write the
+    # text with no revision appended, breaking the invariant (see
+    # PersonalityRevisionView above) that the newest revision always mirrors
+    # the personality's current content. Edit content through /personality.
+    form_columns = ("name", "folder_uuid", "position")
     column_formatters = {
         "uuid": _fmt_short_uuid,
         "folder_uuid": _personality_folder_label,
