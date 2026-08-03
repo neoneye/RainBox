@@ -160,7 +160,7 @@ new tree `version`**, so the client never holds a stale token.
 | `PUT /personality/api/personalities/<uuid>` | `{content}` → `{ok, changed, revision}`; `changed: false` when the text was identical |
 | `GET /personality/api/personalities/<uuid>/revisions` | Newest first: `{uuid, created_at, bytes, lines, preview, current}` |
 | `GET /personality/api/personalities/<uuid>/revisions/<rev>/diff` | Unified diff (3 context lines), that revision → current |
-| `POST /personality/api/personalities/<uuid>/revisions/<rev>/restore` | Appends a new revision → `{ok, content, revision}` |
+| `POST /personality/api/personalities/<uuid>/revisions/<rev>/restore` | Appends a new revision → `{ok, changed, content, revision}`; `changed: false` when the revision's text was already current |
 
 A revision uuid belonging to a different personality is a 404, not a diff
 against a stranger's text.

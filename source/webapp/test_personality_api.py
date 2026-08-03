@@ -222,6 +222,22 @@ def test_foreign_revision_diff_is_404():
         _delete_personality(c, ub)
 
 
+def test_foreign_revision_restore_is_404():
+    c = _client()
+    a = _create_personality(c, "OwnerA")
+    b = _create_personality(c, "OwnerB")
+    ua, ub = a["personality"]["uuid"], b["personality"]["uuid"]
+    try:
+        c.put(f"/personality/api/personalities/{ua}", json={"content": "a text"})
+        rev = c.get(f"/personality/api/personalities/{ua}/revisions"
+                    ).get_json()["revisions"][0]["uuid"]
+        resp = c.post(f"/personality/api/personalities/{ub}/revisions/{rev}/restore")
+        assert resp.status_code == 404
+    finally:
+        _delete_personality(c, ua)
+        _delete_personality(c, ub)
+
+
 def test_content_put_requires_a_string():
     c = _client()
     made = _create_personality(c, "TypeTest")

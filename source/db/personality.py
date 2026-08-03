@@ -16,7 +16,8 @@ import sqlalchemy as sa
 
 from db.models import Personality, PersonalityFolder, PersonalityRevision, db
 
-# Bound on the folder-ancestor walk so a corrupt parent loop can't spin.
+# Bound on the folder-descendant walk (_descendant_folder_uuids) so a
+# corrupt parent loop can't spin.
 _PERSONALITY_FOLDER_CAP = 100
 
 

@@ -62,6 +62,7 @@ function personalitySyncUrl(){
 function personalitySelectFolder(id){
   personalitySelectedFolder = id;
   personalitySelectedItem = null;
+  personalityCloseHistoryView();  // a folder has nothing to show History for
   personalityRenderTree();
   personalityRender();
 }
