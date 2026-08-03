@@ -83,17 +83,15 @@ order becomes each row's `position`.
 - **Debounce + serialize.** Edits coalesce (chat 300ms `saveTree`→`saveTreePush`;
   cron 250ms `cronSave`) and only one PUT is in flight at a time; a save
   requested mid-flight is queued and re-sent after.
-- **Two save shapes — pick one:**
-  - `/cron` PUT is a **full replace**: rows whose uuid is absent from the
-    payload are *deleted*. A `deletes` counter (`cronPendingDeletes` →
-    `expected_deletes`) guards against a frontend bug silently truncating the
-    tree (server rejects if it would delete more than declared).
-  - `/chat` PUT is **placement-only**: it upserts folders and updates room
-    folder/position, but creation and deletion go through separate endpoints
-    (`POST /chat/api/folders`, `DELETE /chat/api/folders/<uuid>` which cascades).
-  The full-replace shape is more powerful (one path for create/move/delete) but
-  needs the delete guard; the placement-only shape is simpler and safer by
-  construction. New pages can start placement-only.
+- **Save shape — see [`ui-tree-persistence.md`](ui-tree-persistence.md), the
+  authority on this.** The standard: the tree PUT updates only rows that
+  already exist, and creation/deletion are dedicated endpoints
+  (`POST`/`DELETE` for folders and for items), so a truncated payload is a 400
+  rather than a data-loss event. `/chat` and `/kanban` are placement-only in
+  this spirit; `/cron`, `/git`, `/prompt` and `/profile` still full-replace,
+  deleting rows absent from the payload behind a `deletes` counter
+  (`cronPendingDeletes` → `expected_deletes`). That doc records which page is
+  where and how a conversion goes.
 
 ## 3. Rendering — recursive, computed children
 
@@ -411,8 +409,10 @@ it.** Specific traps that each shipped before being caught:
 1. **DB:** folder + item tables with `parent_uuid`/`folder_uuid` (null = root) +
    `position`; `*_load_tree`, `*_save_tree(base_version)`, `*_tree_version`
    (structural fields only), `validate_*_tree` (reject dangling/cyclic). No FKs.
-2. **API:** `GET/PUT /<page>/api/tree` (+ `POST/DELETE folders` if going
-   placement-only like `/chat`). Return 409 on version mismatch.
+2. **API:** `GET/PUT /<page>/api/tree` plus `POST`/`DELETE` endpoints for
+   folders and for items — the save shape is fixed by
+   [`ui-tree-persistence.md`](ui-tree-persistence.md), not a per-page choice.
+   409 on version mismatch; 400 on a payload that omits or invents a row.
 3. **State:** `folders`/`items` arrays, `childFolders`/`itemsInFolder`/`folderById`,
    `expanded` map (persist to localStorage), `selectedFolder`, open-item id,
    `dragState`, `treeVersion`.

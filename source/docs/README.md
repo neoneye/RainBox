@@ -97,6 +97,8 @@ history); `proposals/` holds design-time intent and reviews.
   rules (no polling, SSE, streaming) and template-editing gotchas.
 - [ui-left-panel-tree.md](ui-left-panel-tree.md) — the shared folder-tree
   pattern (/chat, /cron, /kanban, /git) and its porting checklist.
+- [ui-tree-persistence.md](ui-tree-persistence.md) — how a tree page saves:
+  the PUT never creates or deletes, create/delete are their own endpoints.
 - [ui-modals.md](ui-modals.md) — the app-wide modal pattern.
 - [ui-modal-rename.md](ui-modal-rename.md) — renaming is modal-confirmed
   (click-to-rename name display, Cancel/Rename only) and why.
