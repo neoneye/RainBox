@@ -45,6 +45,27 @@ def test_create_returns_201_and_a_usable_version():
         _delete_personality(c, made["personality"]["uuid"])
 
 
+def test_create_folder_rejects_a_non_object_body():
+    resp = _client().post("/personality/api/folders", json=["not", "an", "object"])
+    assert resp.status_code == 400, resp.get_data(as_text=True)
+
+
+def test_create_personality_rejects_a_wrong_typed_name():
+    resp = _client().post("/personality/api/personalities", json={"name": ["x"]})
+    assert resp.status_code == 400, resp.get_data(as_text=True)
+
+
+def test_create_folder_rejects_a_wrong_typed_name():
+    resp = _client().post("/personality/api/folders", json={"name": 123})
+    assert resp.status_code == 400, resp.get_data(as_text=True)
+
+
+def test_create_folder_rejects_a_wrong_typed_parent_id():
+    resp = _client().post("/personality/api/folders",
+                          json={"name": "ok", "parentId": {"a": 1}})
+    assert resp.status_code == 400, resp.get_data(as_text=True)
+
+
 def test_tree_put_requires_version():
     resp = _client().put("/personality/api/tree",
                          json={"folders": [], "personalities": []})
@@ -92,11 +113,18 @@ def test_delete_folder_cascades_and_returns_version():
     inside = c.post("/personality/api/personalities",
                     json={"name": "Inside", "folderId": folder["folder"]["id"]}
                     ).get_json()["personality"]
-    resp = c.delete(f"/personality/api/folders/{folder['folder']['id']}")
-    assert resp.status_code == 200 and resp.get_json()["version"]
-    tree = c.get("/personality/api/tree").get_json()
-    assert not any(f["id"] == folder["folder"]["id"] for f in tree["folders"])
-    assert not any(p["uuid"] == inside["uuid"] for p in tree["personalities"])
+    try:
+        resp = c.delete(f"/personality/api/folders/{folder['folder']['id']}")
+        assert resp.status_code == 200 and resp.get_json()["version"]
+        tree = c.get("/personality/api/tree").get_json()
+        assert not any(f["id"] == folder["folder"]["id"] for f in tree["folders"])
+        assert not any(p["uuid"] == inside["uuid"] for p in tree["personalities"])
+    finally:
+        # Best-effort: if the delete under test worked, the folder cascade
+        # already removed both rows and these 404; if it failed, this is what
+        # actually cleans up so the shared DB doesn't keep the leftovers.
+        c.delete(f"/personality/api/personalities/{inside['uuid']}")
+        c.delete(f"/personality/api/folders/{folder['folder']['id']}")
 
 
 def test_delete_unknown_is_404():

@@ -16,7 +16,12 @@ import db
 from .core import app
 
 
-def _parse_uuid(raw: str) -> UUID | None:
+def _parse_uuid(raw: object) -> UUID | None:
+    # Called on both URL path segments (always str) and untrusted JSON-body
+    # values, so a non-string (dict, int, list, ...) must fail cleanly rather
+    # than raising from inside the uuid module.
+    if not isinstance(raw, str):
+        return None
     try:
         return UUID(raw)
     except (ValueError, TypeError):
@@ -49,11 +54,21 @@ def personality_tree() -> tuple[Response, int] | Response:
 
 @app.route("/personality/api/folders", methods=["POST"])
 def personality_create_folder_route() -> tuple[Response, int]:
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return jsonify({"ok": False,
+                        "error": "request body must be a JSON object"}), 400
+    name_raw = data.get("name")
+    if name_raw is not None and not isinstance(name_raw, str):
+        return jsonify({"ok": False, "error": "folder name required"}), 400
+    name = (name_raw or "").strip()
     if not name:
         return jsonify({"ok": False, "error": "folder name required"}), 400
     parent_raw = data.get("parentId")
+    if parent_raw is not None and not isinstance(parent_raw, str):
+        return jsonify({"ok": False, "error": "bad parentId"}), 400
     parent_uuid = None
     if parent_raw:
         parent_uuid = _parse_uuid(parent_raw)
@@ -66,11 +81,21 @@ def personality_create_folder_route() -> tuple[Response, int]:
 
 @app.route("/personality/api/personalities", methods=["POST"])
 def personality_create_route() -> tuple[Response, int]:
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return jsonify({"ok": False,
+                        "error": "request body must be a JSON object"}), 400
+    name_raw = data.get("name")
+    if name_raw is not None and not isinstance(name_raw, str):
+        return jsonify({"ok": False, "error": "personality name required"}), 400
+    name = (name_raw or "").strip()
     if not name:
         return jsonify({"ok": False, "error": "personality name required"}), 400
     folder_raw = data.get("folderId")
+    if folder_raw is not None and not isinstance(folder_raw, str):
+        return jsonify({"ok": False, "error": "bad folderId"}), 400
     folder_uuid = None
     if folder_raw:
         folder_uuid = _parse_uuid(folder_raw)
