@@ -83,7 +83,9 @@ cd telegram_service && venv/bin/python -m pytest -q
   inline script (e.g. the non-raw-string escaping gotcha in
   `chat-frontend-rules.md`) or CSS/layout regressions. Verify UI changes in
   a real browser (see the hard-won process note in
-  `ui-left-panel-tree.md` §8).
+  `ui-left-panel-tree.md` §8). `python -m tools.serve_ui` serves the pages
+  alone for that — port 5055 against `rainbox_claude`, so it neither
+  collides with the running instance on 5000 nor touches real data.
 - **Embedding tests use fakes** (`memory/test_embeddings.py`), so they pass
   without Ollama; only live retrieval *quality* needs the real embedder.
 
