@@ -1545,11 +1545,11 @@ class Profile(db.Model):
     __table_args__ = (Index("profile_in_folder", "folder_uuid", "position"),)
 
 
-class PersonalityFolder(db.Model):
-    """Folder in the /personality tree. Same structural shape as PromptFolder:
+class PersonaFolder(db.Model):
+    """Folder in the /persona tree. Same structural shape as PromptFolder:
     parent pointer, no FK, position-ordered within a parent."""
 
-    __tablename__ = "personality_folder"
+    __tablename__ = "persona_folder"
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text, default="")
@@ -1563,21 +1563,21 @@ class PersonalityFolder(db.Model):
         DateTime(timezone=True), default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
-    __table_args__ = (Index("personality_folder_children", "parent_uuid", "position"),)
+    __table_args__ = (Index("persona_folder_children", "parent_uuid", "position"),)
 
 
-class Personality(db.Model):
+class Persona(db.Model):
     """Who the assistant is: one free-text character description, backing
-    /personality. The uuid is stable for the life of the personality — edits
-    never mint a new one — so anything that binds to a personality keeps
+    /persona. The uuid is stable for the life of the persona — edits
+    never mint a new one — so anything that binds to a persona keeps
     pointing at it. `content` is the current text; every saved state of it is
-    kept in personality_revision, whose newest row always mirrors `content`."""
+    kept in persona_revision, whose newest row always mirrors `content`."""
 
-    __tablename__ = "personality"
+    __tablename__ = "persona"
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text, default="")
-    content: Mapped[str] = mapped_column(Text, default="")  # the personality text itself
+    content: Mapped[str] = mapped_column(Text, default="")  # the persona text itself
     folder_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = unfiled at root; plain col, no FK
     position: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(
@@ -1587,26 +1587,26 @@ class Personality(db.Model):
         DateTime(timezone=True), default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
-    __table_args__ = (Index("personality_in_folder", "folder_uuid", "position"),)
+    __table_args__ = (Index("persona_in_folder", "folder_uuid", "position"),)
 
 
-class PersonalityRevision(db.Model):
-    """One saved state of a personality's text, appended on every content save
+class PersonaRevision(db.Model):
+    """One saved state of a persona's text, appended on every content save
     that actually changed something. Rows are never updated or deleted except
-    by cascade when the personality itself is deleted — restoring an old
+    by cascade when the persona itself is deleted — restoring an old
     revision appends a new one rather than rewinding. Full snapshots, not
     deltas: the texts are small and there is no chain to corrupt. Order by
     `id`, not `created_at` — two saves can share a clock tick."""
 
-    __tablename__ = "personality_revision"
+    __tablename__ = "persona_revision"
     id: Mapped[int] = mapped_column(primary_key=True)
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
-    personality_uuid: Mapped[UUID] = mapped_column()  # owner; plain col, no FK
+    persona_uuid: Mapped[UUID] = mapped_column()  # owner; plain col, no FK
     content: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
-    __table_args__ = (Index("personality_revision_of", "personality_uuid", "id"),)
+    __table_args__ = (Index("persona_revision_of", "persona_uuid", "id"),)
 
 
 def psycopg_dsn() -> str:

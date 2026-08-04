@@ -58,9 +58,9 @@ from db import (
     ModelConfigOverride,
     ModelGroup,
     ModelGroupMember,
-    Personality,
-    PersonalityFolder,
-    PersonalityRevision,
+    Persona,
+    PersonaFolder,
+    PersonaRevision,
     Profile,
     ProfileFolder,
     Prompt,
@@ -135,12 +135,12 @@ NAV_TEMPLATE = """
         <a href="{{ url_for('memory_developer_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_developer_page' }}">Developer</a>
       </div>
     </details>
-    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page', 'second_opinion_page', 'personality_page') }}">
+    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page', 'second_opinion_page', 'persona_page') }}">
       <summary>Assistant &#9662;</summary>
       <div class="pp-dd-menu">
         <a href="{{ url_for('assistant_overview_page') }}" class="{{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page') }}">Runs</a>
         <a href="{{ url_for('second_opinion_page') }}" class="{{ 'pp-active' if request.endpoint == 'second_opinion_page' }}">Second opinion</a>
-        <a href="{{ url_for('personality_page') }}" class="{{ 'pp-active' if request.endpoint == 'personality_page' }}">Personality</a>
+        <a href="{{ url_for('persona_page') }}" class="{{ 'pp-active' if request.endpoint == 'persona_page' }}">Persona</a>
       </div>
     </details>
     <a href="{{ url_for('git_page') }}" class="{{ 'pp-active' if request.endpoint == 'git_page' }}">Git</a>
@@ -1094,16 +1094,16 @@ admin.add_view(ProfileFolderView(ProfileFolder, db, category="Profile"))
 admin.add_view(ProfileView(Profile, db, category="Profile"))
 
 
-# Personality tables backing the /personality page (folder tree + the
-# free-text personality body + its append-only revision history).
-def _personality_open_link(view, context, model, name):
-    """Virtual column linking to the /personality page deep-linked to this
-    node (folder or personality — both select via ?id= in the tree)."""
-    return Markup(f'<a href="/personality?id={escape(model.uuid)}">inspect ↗</a>')
+# Persona tables backing the /persona page (folder tree + the
+# free-text persona body + its append-only revision history).
+def _persona_open_link(view, context, model, name):
+    """Virtual column linking to the /persona page deep-linked to this
+    node (folder or persona — both select via ?id= in the tree)."""
+    return Markup(f'<a href="/persona?id={escape(model.uuid)}">inspect ↗</a>')
 
 
-def _personality_folder_label(view, context, model, name):
-    """Render a folder-uuid column (a personality's `folder_uuid` or a
+def _persona_folder_label(view, context, model, name):
+    """Render a folder-uuid column (a persona's `folder_uuid` or a
     folder's `parent_uuid`) as a truncated uuid (full on hover) with the
     folder's name below. Plain columns (no FK), so look the folder up by uuid."""
     fid = getattr(model, name)
@@ -1111,73 +1111,73 @@ def _personality_folder_label(view, context, model, name):
         return ""
     full = str(fid)
     short = Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
-    folder = db.session.query(PersonalityFolder).filter_by(uuid=fid).first()
+    folder = db.session.query(PersonaFolder).filter_by(uuid=fid).first()
     return Markup(f"{short}<br>{escape(folder.name)}") if folder else short
 
 
-class PersonalityFolderView(ModelView):
+class PersonaFolderView(ModelView):
     column_list = (
-        "personality_link", "position", "uuid", "name", "description",
+        "persona_link", "position", "uuid", "name", "description",
         "parent_uuid", "created_at", "updated_at",
     )
     column_default_sort = ("position", False)
-    column_labels = {"personality_link": "Personality page"}
+    column_labels = {"persona_link": "Persona page"}
     column_type_formatters = CRON_TYPE_FORMATTERS
     column_formatters = {
         "uuid": _fmt_short_uuid,
-        "parent_uuid": _personality_folder_label,
-        "personality_link": _personality_open_link,
+        "parent_uuid": _persona_folder_label,
+        "persona_link": _persona_open_link,
     }
 
 
-class PersonalityView(ModelView):
+class PersonaView(ModelView):
     column_list = (
-        "personality_link", "position", "uuid", "name", "folder_uuid",
+        "persona_link", "position", "uuid", "name", "folder_uuid",
         "created_at", "updated_at",
     )
     column_default_sort = ("position", False)
-    column_labels = {"personality_link": "Personality page"}
+    column_labels = {"persona_link": "Persona page"}
     column_type_formatters = CRON_TYPE_FORMATTERS
     # Exclude `content` from the row form — editing it here would write the
     # text with no revision appended, breaking the invariant (see
-    # PersonalityRevisionView above) that the newest revision always mirrors
-    # the personality's current content. Edit content through /personality.
+    # PersonaRevisionView above) that the newest revision always mirrors
+    # the persona's current content. Edit content through /persona.
     form_columns = ("name", "folder_uuid", "position")
     column_formatters = {
         "uuid": _fmt_short_uuid,
-        "folder_uuid": _personality_folder_label,
-        "personality_link": _personality_open_link,
+        "folder_uuid": _persona_folder_label,
+        "persona_link": _persona_open_link,
     }
 
 
-def _personality_revision_open_link(view, context, model, name):
-    """A revision has no page of its own — link to the personality whose
+def _persona_revision_open_link(view, context, model, name):
+    """A revision has no page of its own — link to the persona whose
     history holds it."""
     return Markup(
-        f'<a href="/personality?id={escape(model.personality_uuid)}">inspect ↗</a>')
+        f'<a href="/persona?id={escape(model.persona_uuid)}">inspect ↗</a>')
 
 
-class PersonalityRevisionView(ModelView):
+class PersonaRevisionView(ModelView):
     """Read-only: revisions are append-only by design — the newest one always
-    mirrors the personality's current `content`, and editing or deleting a
+    mirrors the persona's current `content`, and editing or deleting a
     revision by hand here would break that invariant."""
     can_create = False
     can_edit = False
     can_delete = False
-    column_list = ("personality_link", "uuid", "personality_uuid", "created_at")
+    column_list = ("persona_link", "uuid", "persona_uuid", "created_at")
     column_default_sort = ("id", True)
-    column_labels = {"personality_link": "Personality page"}
+    column_labels = {"persona_link": "Persona page"}
     column_type_formatters = CRON_TYPE_FORMATTERS
     column_formatters = {
         "uuid": _fmt_short_uuid,
-        "personality_uuid": _fmt_short_uuid,
-        "personality_link": _personality_revision_open_link,
+        "persona_uuid": _fmt_short_uuid,
+        "persona_link": _persona_revision_open_link,
     }
 
 
-admin.add_view(PersonalityFolderView(PersonalityFolder, db, category="Personality"))
-admin.add_view(PersonalityView(Personality, db, category="Personality"))
-admin.add_view(PersonalityRevisionView(PersonalityRevision, db, category="Personality"))
+admin.add_view(PersonaFolderView(PersonaFolder, db, category="Persona"))
+admin.add_view(PersonaView(Persona, db, category="Persona"))
+admin.add_view(PersonaRevisionView(PersonaRevision, db, category="Persona"))
 
 
 # Kanban tables backing the /kanban page (boards + columns + tasks + the
