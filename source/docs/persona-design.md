@@ -190,18 +190,55 @@ Layout and behavior follow `docs/ui-left-panel-tree.md` (tree),
 - **No seeded default.** The store ships empty; what the assistant should be
   is the operator's to write.
 
+## Wired to the assistant
+
+The binding lives on the room **member**, not the room: `chatroom_member`
+carries `persona_uuid` (which persona this participant speaks with; null =
+none) and `persona_revision_uuid` (null = follow the persona's newest
+revision, the default; set = pinned to that exact revision, so further edits
+on `/persona` stop reaching this member until the pin is released). It sits
+on the member row rather than the room because a room can hold more than one
+assistant, and each speaks with its own voice — one room, several personas.
+
+`db.resolve_member_persona(room_uuid, user_uuid)` (`db/chat.py`) resolves the
+binding fresh on every turn — no caching, no re-linking needed after an edit.
+A non-member, an unlinked member, a deleted persona, a pin whose revision is
+gone, and a persona that was never saved all resolve to no persona block,
+matching `resolve_room_system_prompt`'s fail-obvious shape (see
+`docs/direct-chat.md`): the member visibly has no voice rather than quietly
+using text the operator thought they had replaced. Following members get the
+persona's current `content` (the newest revision, by the invariant above);
+either way the resolution stamps the `PersonaRevision.uuid` that produced the
+text, so the turn always records exactly which revision it used.
+
+In the assistant's per-turn prompt (`agents/assistant.py`), a non-empty
+resolution renders as a `<persona authority="voice">` element holding the
+persona's text, ranked in `SOURCE_PRIORITY_SECTION` next to
+`formatting_guide` — below the current request and this turn's observations,
+above profile and conversation history. The system prompt carries one
+code-owned sentence policing the boundary: a persona changes voice and
+manner, never which actions are available, and never overrides the working
+rules or the source priority — operator-authored text, but still data inside
+the prompt, not a command. Every step's turn log (`_build_turn_log`) carries
+a `persona` entry — name, uuid, `href` to `/persona?id=<uuid>`, and the
+revision used — or `(none)` when the member carries no persona.
+
+The picker lives in the `/chat` sidebar's Settings mode (`renderAgentsSettings`
+in `webapp/chat_template.py`), one section per persona-capable member:
+link/change a persona, pin to an older revision from that persona's history,
+release the pin with Follow newest, or unlink back to none. It reads and
+writes through `GET /chat/api/rooms/<uuid>/personas` and
+`PUT /chat/api/rooms/<uuid>/members/<user_uuid>/persona`
+(`webapp/chat_api.py`), gated to `PERSONA_CAPABLE_UUIDS` (today, the
+assistant). A deleted linked persona renders as a red `(deleted)` link to
+`/persona?id=<uuid>` in the sidebar rather than silently reverting to none —
+the operator has to notice and relink or unlink. Direct rooms are untouched:
+they keep their own model + system-prompt Settings panel, no persona section.
+
 ## Open questions
 
-- **Where a persona lands in the assistant's prompt.** `_system_prompt()`
-  (`agents/assistant.py:3484`) is the seam, but whether a persona sits
-  above the working rules, below them, or inside a dedicated block — and how
-  it ranks against everything else already assembled there — is a question
-  for the wiring step, when it can be answered by trying it.
-- **Selecting the active persona.** A `persona.current` app setting
-  (mirroring `profile.current`) is the simplest binding, but a per-room picker
-  in `/chat`'s right-side panel may be what operators actually want. Neither
-  exists yet.
-- **Usage back-references.** Nothing binds to a persona yet, so nothing
-  needs to warn before delete. Once something does, the page will need a
-  "what uses this?" view — until then, delete is only safe while nothing
-  points at a persona.
+- **Usage back-references.** A persona can now be bound from a room member,
+  so deleting one can leave a room without a voice mid-conversation with no
+  warning. The page still has no "what uses this?" view — until it does,
+  delete is safe only while the operator remembers what points at a persona,
+  and that risk is higher now than when nothing could bind to one.
