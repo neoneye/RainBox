@@ -78,6 +78,22 @@ def test_content_editing_is_explicit():
     assert "#personality-editor.editing{position:relative;z-index:1600" in b
 
 
+def test_create_and_delete_flush_pending_save():
+    """Per docs/ui-tree-persistence.md the client must flush or await a
+    pending tree PUT before issuing a create or delete, so the older PUT's
+    response can't land after the create/delete's fresher token and stomp it
+    with a stale one."""
+    b = _body()
+    assert "function personalityFlushPendingSave" in b
+    for fn in ["personalityAddFolderConfirm", "personalityAddPersonalityConfirm",
+               "personalityDeleteItem", "personalityDeleteFolderById"]:
+        start = b.index("async function " + fn)
+        end = b.index("\n}", start)
+        body = b[start:end]
+        assert "await personalityFlushPendingSave()" in body, \
+            f"{fn} does not flush the pending tree PUT before its fetch"
+
+
 def test_find_resolves_a_personality_uuid():
     import db
     c = app.test_client()

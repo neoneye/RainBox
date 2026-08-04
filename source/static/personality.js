@@ -576,6 +576,7 @@ async function personalityAddFolderConfirm(){
   if (!name) return;
   const parentId = personalityAddFolderAsSub ? personalitySelectedFolder : null;
   try {
+    await personalityFlushPendingSave();
     const resp = await fetch('/personality/api/folders', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name, parentId}),
@@ -610,6 +611,7 @@ async function personalityAddPersonalityConfirm(){
   const name = (input.value || '').trim();
   if (!name) return;
   try {
+    await personalityFlushPendingSave();
     const resp = await fetch('/personality/api/personalities', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name, folderId: personalitySelectedFolder}),
@@ -918,6 +920,7 @@ function personalityConfirmDeleteFolder(id){
 }
 async function personalityDeleteItem(uuid){
   try {
+    await personalityFlushPendingSave();
     const resp = await fetch('/personality/api/personalities/' + uuid,
                              {method: 'DELETE'});
     const data = await resp.json();
@@ -937,6 +940,7 @@ async function personalityDeleteItem(uuid){
 async function personalityDeleteFolderById(id){
   const doomedFolder = personalityFolderById(id);  // captured before removal, for parent fallback below
   try {
+    await personalityFlushPendingSave();
     const resp = await fetch('/personality/api/folders/' + id, {method: 'DELETE'});
     const data = await resp.json();
     if (!resp.ok) { personalityToastMsg(data.error || 'could not delete'); return; }
@@ -1008,9 +1012,28 @@ let personalitySaveTimer = null;
 let personalityTreeVersion = null;    // token from hydrate; PUTs echo it (stale → 409)
 let personalitySaveInFlight = false;
 let personalitySaveQueued = false;
+let personalitySaveChain = null;      // promise for the active PUT (+ any queued follow-up), or null when idle
 function personalitySave(){
   clearTimeout(personalitySaveTimer);
   personalitySaveTimer = setTimeout(personalitySavePush, 250);  // coalesce bursts into one PUT
+}
+// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// issuing a create or delete." Nothing else orders a tree PUT against a
+// create/delete, and the two responses race — if the older PUT's response
+// lands after the create/delete's fresher token, it overwrites that token
+// with a stale one and the next save 409s for no reason the operator can see.
+// Resolves once no tree PUT is outstanding and personalityTreeVersion holds
+// the newest token: cancels a pending debounce timer and runs that save
+// immediately, or awaits a save already in flight (including one queued
+// behind it — personalitySaveChain covers that via personalitySavePush's
+// own re-invocation, see below). A no-op when nothing is pending.
+function personalityFlushPendingSave(){
+  if (personalitySaveTimer){
+    clearTimeout(personalitySaveTimer);
+    personalitySaveTimer = null;
+    return personalitySavePush();
+  }
+  return personalitySaveChain || Promise.resolve();
 }
 // After a re-hydrate, the fresh data may no longer contain the selected
 // folder/personality (e.g. the rejected edit was the move that put it there).
@@ -1024,56 +1047,75 @@ function personalityReconcileSelectionAfterReload(){
     personalitySelectedFolder = null;
   }
 }
-async function personalitySavePush(){
-  if (personalitySaveInFlight) { personalitySaveQueued = true; return; }
+// Returns the promise for this save (or, if one was already in flight, the
+// promise for that one — which folds in this call via personalitySaveQueued
+// once it settles). personalityFlushPendingSave relies on that: awaiting the
+// returned/chained promise always means "no tree PUT is outstanding anymore".
+function personalitySavePush(){
+  if (personalitySaveInFlight) { personalitySaveQueued = true; return personalitySaveChain; }
   personalitySaveInFlight = true;
-  try {
-    const resp = await fetch('/personality/api/tree', {
-      method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        folders: personalityFolders.map(f => ({
-          id: f.id, name: f.name, description: f.description || '',
-          parentId: f.parentId || null})),
-        personalities: personalityItems.map(p => ({
-          uuid: p.uuid, name: p.name, folderId: p.folderId || null})),
-        version: personalityTreeVersion,
-      }),
-    });
-    const data = await resp.json();
-    if (resp.status === 409) {
-      // Another tab/editor changed the tree; their version wins — re-hydrate
-      // and repaint so the screen matches what the server just accepted.
+  const run = (async () => {
+    try {
+      const resp = await fetch('/personality/api/tree', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          folders: personalityFolders.map(f => ({
+            id: f.id, name: f.name, description: f.description || '',
+            parentId: f.parentId || null})),
+          personalities: personalityItems.map(p => ({
+            uuid: p.uuid, name: p.name, folderId: p.folderId || null})),
+          version: personalityTreeVersion,
+        }),
+      });
+      const data = await resp.json();
+      if (resp.status === 409) {
+        // Another tab/editor changed the tree; their version wins — re-hydrate
+        // and repaint so the screen matches what the server just accepted.
+        await personalityLoadTree();
+        personalityReconcileSelectionAfterReload();
+        personalityRenderTree();
+        personalityRender();
+        personalityToastMsg('tree changed elsewhere — reloaded');
+        return;
+      }
+      if (!resp.ok) {
+        // A 400 here means our payload disagreed with the server about which
+        // rows exist — re-hydrate rather than retry the same bad shape, and
+        // repaint so the rejected edit doesn't linger on screen.
+        await personalityLoadTree();
+        personalityReconcileSelectionAfterReload();
+        personalityRenderTree();
+        personalityRender();
+        personalityToastMsg(data.error || 'save failed — reloaded');
+        return;
+      }
+      personalityTreeVersion = data.version;
+    } catch (e) {
+      // Network error: we can't tell whether the server applied the change, so
+      // re-hydrate and repaint rather than leave the client's guess on screen.
       await personalityLoadTree();
       personalityReconcileSelectionAfterReload();
       personalityRenderTree();
       personalityRender();
-      personalityToastMsg('tree changed elsewhere — reloaded');
-      return;
+      personalityToastMsg('save failed — reloaded');
+    } finally {
+      personalitySaveInFlight = false;
+      // A save requested while we were in flight (personalitySave() re-invoked
+      // us in the middle of this run) gets its own immediate push here, not a
+      // fresh 250ms debounce — and this run doesn't resolve until that one
+      // does too, so anything awaiting it (personalityFlushPendingSave) sees
+      // the whole chain settle before the token is treated as final.
+      if (personalitySaveQueued) {
+        personalitySaveQueued = false;
+        personalitySaveChain = personalitySavePush();
+        await personalitySaveChain;
+      } else {
+        personalitySaveChain = null;
+      }
     }
-    if (!resp.ok) {
-      // A 400 here means our payload disagreed with the server about which
-      // rows exist — re-hydrate rather than retry the same bad shape, and
-      // repaint so the rejected edit doesn't linger on screen.
-      await personalityLoadTree();
-      personalityReconcileSelectionAfterReload();
-      personalityRenderTree();
-      personalityRender();
-      personalityToastMsg(data.error || 'save failed — reloaded');
-      return;
-    }
-    personalityTreeVersion = data.version;
-  } catch (e) {
-    // Network error: we can't tell whether the server applied the change, so
-    // re-hydrate and repaint rather than leave the client's guess on screen.
-    await personalityLoadTree();
-    personalityReconcileSelectionAfterReload();
-    personalityRenderTree();
-    personalityRender();
-    personalityToastMsg('save failed — reloaded');
-  } finally {
-    personalitySaveInFlight = false;
-    if (personalitySaveQueued) { personalitySaveQueued = false; personalitySave(); }
-  }
+  })();
+  personalitySaveChain = run;
+  return run;
 }
 
 // ---- dirty-guarded dismissal (clicking backdrop / Esc) ----
