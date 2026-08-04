@@ -36,8 +36,7 @@ to it once taken.**
 - **`inbox`** — ephemeral. `enqueue(agent_uuid, payload)` inserts a row
   (payload stored as JSON text). Producers include the chat responder trigger
   (`webapp/chat_api.py` — each `CHAT_RESPONDER_UUIDS` member of a room is
-  enqueued when a *human* posts), the conversation manager endpoints
-  (`webapp/conversation_api.py`), cron `command` fires (`db/cron.py`), the
+  enqueued when a *human* posts), cron `command` fires (`db/cron.py`), the
   kanban Run button, and the supervisor's own routing pass.
 - **`journal`** — durable. `take_item(agent_uuid)` atomically pops the oldest
   inbox row for the agent (ordered by the inbox's integer `id`), deletes it,
@@ -58,7 +57,7 @@ boundaries without int collisions. The consequence: a random UUID is not
 monotonic, so "oldest first" ordering always uses `started_at`, never `id`
 (`fetch_unrouted_terminal` in `db/queue.py`). The model is also deliberately
 *not* named `AgentRun` — it is the queue-level substrate *beneath* the domain
-runs (`AssistantRun`, `ConversationRun`, `CronRun`, `EvalRun`), not a peer;
+runs (`AssistantRun`, `CronRun`, `EvalRun`), not a peer;
 for richer agents the journal result only points at the fuller trace.
 
 ## Spawn-on-demand, reap-when-idle
@@ -77,7 +76,7 @@ JSON config message (`{name, uuid, description, next, …}`) down the socket.
 The child (`agents/__main__.py`) reads that line, pushes a DB app context, and
 dispatches on `agent_kind` (default: the role name) via
 `resolve_agent_class`, which imports **only** the selected module — a spawned
-persona process never pays the assistant's import bill.
+chat process never pays the assistant's import bill.
 
 The agent drains its inbox to empty (`Agent.run` in `agents/base.py`), emits a
 final `{"status": "idle"}`, and returns — the process exits on its own. The
@@ -126,11 +125,11 @@ target. Each pass, `fetch_unrouted_terminal()` (`db/queue.py`) returns
 terminal journal rows (`completed` *or* `failed`) with `routed_at` still NULL,
 oldest first. For each row (`main.py`):
 
-1. **Dynamic return address first.** A manager (the conversation manager)
-   writes `return_to_agent_uuid` into the *inbox payload* of the turn it
-   delegates; `Agent.run` copies it into the result as `_routing` — on the
-   failure path too. If present, it wins, and it routes failed rows as well,
-   so an errored persona turn still wakes its manager.
+1. **Dynamic return address first.** A manager writes `return_to_agent_uuid`
+   into the *inbox payload* of the turn it delegates; `Agent.run` copies it
+   into the result as `_routing` — on the failure path too. If present, it
+   wins, and it routes failed rows as well, so an errored delegated turn still
+   wakes its manager.
 2. **Static `next` on success only.** Otherwise a `completed` row follows the
    source role's `next` uuid from `agent_config`; a `failed` row without a
    dynamic address routes nowhere.
@@ -143,7 +142,7 @@ routed at most once, and the stamp survives restarts.
 pipeline: `dreamer → critic → verifier` is the only chain (the no-LLM
 end-to-end demo); every other role has `next: None` and is either a terminus
 (chat repliers post their reply themselves) or manager-driven via the dynamic
-address (personas), which keeps a persona usable standalone.
+address, which keeps a delegated agent usable standalone.
 
 ## Lifecycle
 
@@ -189,8 +188,8 @@ the `/agentmodel` page when it sources its model elsewhere or runs no LLM.
 2. Implement the class — usually a `StructuredLLMAgent` or `ModelGroupAgent`
    subclass overriding `handle()` — and register it in `AGENT_CLASS_PATHS`.
    Skipping registration is valid: the role then runs the default
-   `ModelGroupAgent`. Many roles can share one class via `agent_kind`
-   (persona_egon / persona_benny both run `chat_unstructured`).
+   `ModelGroupAgent`. Several roles can share one class by setting
+   `agent_kind` to the shared implementation key.
 3. Bind a model group on `/agentmodel` (unless `uses_model_group = False`).
 4. Give it a producer: membership in a chatroom plus `CHAT_RESPONDER_UUIDS`
    (`webapp/chat_api.py`) for chat-triggered agents, an upstream role's

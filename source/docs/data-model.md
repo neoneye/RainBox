@@ -143,28 +143,6 @@ Per-room working directory (plus an `env` column kept at the fixed baseline)
 for the deterministic workspace shell agent, so `cd` survives between messages
 and restarts.
 
-## Conversation Tables
-
-### `conversation_run`
-
-State for bounded persona-to-persona conversations managed by the
-`conversation` agent.
-
-The transcript stays in `chat_message`; this row is the only mutable runtime
-state the feature adds. Two compare-and-set guards (`tick_count` for manual
-ticks; `last_speaker_journal_id`/`turn`/`active_turn` for routed completions)
-keep the turn loop idempotent under double-delivery and restarts.
-
-Key fields:
-
-- `id` (UUID primary key)
-- `room_uuid`
-- `status`: `running`, `paused`, `finished`, `stopped`, `failed`
-- `participants`
-- `turn`, `tick_count`, `active_turn`, `active_speaker_uuid`
-- `turn_policy`, `budget` (JSONB)
-- `retry_count`, `stop_requested`, `reason`
-
 ## Assistant Tables
 
 ### `assistant_run`
@@ -567,7 +545,7 @@ read-only in Flask-Admin as `SeedMemoryKb`.
 - Inbox/journal payloads are JSON-encoded `text`, not JSONB.
 - Model configs, memory/eval metadata, and telemetry metadata use JSONB.
 - UUIDs are native Postgres UUIDs. Where a UUID is the primary key
-  (`journal`, `assistant_run`, `conversation_run`), it is not monotonic —
+  (`journal`, `assistant_run`), it is not monotonic —
   ordering uses timestamps, never the id.
 - **Folder-tree house style:** tree references (`folder_uuid`, `parent_uuid`)
   and most cross-subsystem references (`agent_uuid`, `cron_uuid`,

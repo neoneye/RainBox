@@ -75,7 +75,6 @@ fallback.
 - In `/chat`, a working run shows one progress row — the step it is on, what it
   is doing, and what it has cost so far — and every assistant message carries
   `Inspect ↗` in its kebab, linking to the run behind it.
-- `/conversations` — persona-to-persona conversation runs.
 - `/find` — paste a uuid (or a fragment, even typo'd) to learn what it is
   and jump to it; also searches mentions in chats/logs and the Q&A registry.
 - `/user` — identity card for a chat participant (`?id=<uuid>`).
@@ -105,7 +104,6 @@ Useful responder agents:
 - `query_filter_router`: Q&A retrieval, LLM relevance filter, router reply.
 - `workspace_shell`: deterministic workspace-confined command runner.
 - `kanban_worker`: LLM worker that executes assigned kanban cards.
-- `conversation`: manager for bounded persona-to-persona conversations.
 - `edit_document_v1`…`v6`: the document-patching agent family.
 - `tool_demo`: FunctionAgent demo with a multiply tool.
 - `mcp`: FunctionAgent backed by MCP tools.

@@ -1031,24 +1031,6 @@ def seed_chat_defaults() -> None:
             # keep the chat_user row's display name in step so /chat doesn't show the
             # stale identifier.
             u.name = name
-    # Persona display names: agent_config seeds a chat_user per persona role
-    # (named e.g. "persona_egon"); override it with the persona's friendly name
-    # ("Egon") so the transcript reads naturally. Best-effort — a missing or
-    # broken agent_profiles/ must not break chat seeding.
-    try:
-        from agents.persona import load_personas
-
-        for p in load_personas().values():
-            cu = (
-                db.session.query(ChatUser)
-                .filter_by(uuid=p.agent_uuid)
-                .one_or_none()
-            )
-            if cu is not None and cu.name != p.name:
-                cu.name = p.name
-    except Exception:
-        logger.warning("persona chat-user name seeding skipped", exc_info=True)
-
     # The cron event sender: a plain agent-type chat_user with a fixed uuid,
     # deliberately NOT in agent_config so the supervisor never runs it. It only
     # authors event lines in the cron room.

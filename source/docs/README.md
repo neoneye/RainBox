@@ -53,8 +53,6 @@ history); `proposals/` holds design-time intent and reviews.
   blocks (formatting guide + knowledge calibration): architecture, the
   default-off switches, and the verification/enablement runbook (tests →
   browser → prompt inspection → live evals → release gate).
-- [conversation-design.md](conversation-design.md) — bounded
-  persona-to-persona conversations: manager, CAS turn guards, pause/resume.
 - [direct-chat.md](direct-chat.md) — one-to-one operator↔model rooms:
   turn lifecycle, model resolution (room pick → global default), linked
   system prompts, streaming rows, transcript editing.
