@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -27,6 +28,8 @@ from db.models import (
     ChatroomFolder,
     ChatroomMember,
     FeedbackEvent,
+    Persona,
+    PersonaRevision,
     Prompt,
     WorkspaceShellState,
     db,
@@ -224,6 +227,105 @@ def resolve_room_system_prompt(room: Chatroom) -> str:
         ).scalar_one_or_none()
         return prompt.content if prompt is not None else ""
     return room.system_prompt or ""
+
+
+@dataclass(frozen=True)
+class PersonaResolution:
+    """What a member's persona resolves to for one turn: the text to inject and
+    the revision that produced it. `text` empty means the turn carries no
+    persona block at all — no persona linked, the persona was deleted, or it
+    has never been saved."""
+
+    text: str
+    revision_uuid: UUID | None
+    persona_uuid: UUID | None
+    name: str
+
+
+_NO_PERSONA = PersonaResolution(text="", revision_uuid=None,
+                                persona_uuid=None, name="")
+
+
+def get_member_persona_row(room_uuid: UUID, user_uuid: UUID) -> ChatroomMember | None:
+    """The membership row carrying a participant's persona binding, or None
+    when that user is not in the room."""
+    return db.session.execute(
+        sa.select(ChatroomMember).where(
+            ChatroomMember.room_uuid == room_uuid,
+            ChatroomMember.user_uuid == user_uuid)
+    ).scalar_one_or_none()
+
+
+def resolve_member_persona(room_uuid: UUID, user_uuid: UUID) -> PersonaResolution:
+    """The persona text this participant's turn actually sends, read fresh so
+    an edit on /persona reaches its next reply with no re-linking.
+
+    Pinned members (persona_revision_uuid set) get that exact revision and stop
+    following edits. Following members get the persona's current content, which
+    is the newest revision by the table's invariant; the newest revision's uuid
+    is stamped so the turn records what it used either way.
+
+    A non-member, a deleted persona, a pin whose revision is gone, and a
+    persona that was never saved all resolve to no block — fail-obvious,
+    matching resolve_room_system_prompt: the member visibly has no voice rather
+    than quietly using text the operator thought they had replaced."""
+    member = get_member_persona_row(room_uuid, user_uuid)
+    if member is None or member.persona_uuid is None:
+        return _NO_PERSONA
+    persona = db.session.execute(
+        sa.select(Persona).where(Persona.uuid == member.persona_uuid)
+    ).scalar_one_or_none()
+    if persona is None:
+        return _NO_PERSONA
+    if member.persona_revision_uuid is not None:
+        pinned = db.session.execute(
+            sa.select(PersonaRevision).where(
+                PersonaRevision.uuid == member.persona_revision_uuid,
+                PersonaRevision.persona_uuid == persona.uuid)
+        ).scalar_one_or_none()
+        if pinned is None:
+            return _NO_PERSONA
+        return PersonaResolution(text=pinned.content, revision_uuid=pinned.uuid,
+                                 persona_uuid=persona.uuid, name=persona.name)
+    newest = db.session.execute(
+        sa.select(PersonaRevision)
+        .where(PersonaRevision.persona_uuid == persona.uuid)
+        .order_by(PersonaRevision.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    if newest is None or not persona.content:
+        return _NO_PERSONA
+    return PersonaResolution(text=persona.content, revision_uuid=newest.uuid,
+                             persona_uuid=persona.uuid, name=persona.name)
+
+
+def set_member_persona(
+    room_uuid: UUID,
+    user_uuid: UUID,
+    *,
+    persona_uuid: UUID | None = _UNSET,
+    persona_revision_uuid: UUID | None = _UNSET,
+) -> ChatroomMember:
+    """Link or unlink a participant's persona; only the fields passed change.
+    persona_uuid=None unlinks and releases any pin; persona_revision_uuid=None
+    releases the pin so the member follows the newest revision again.
+
+    Setting persona_uuid clears persona_revision_uuid unless a pin is passed in
+    the same call: picking a persona starts in follow-newest, including when it
+    replaces a persona that was pinned.
+
+    Applied mid-conversation — the next turn resolves fresh. Raises LookupError
+    when that user is not a member of that room."""
+    member = get_member_persona_row(room_uuid, user_uuid)
+    if member is None:
+        raise LookupError(f"user {user_uuid} is not a member of room {room_uuid}")
+    if persona_uuid is not _UNSET:
+        member.persona_uuid = persona_uuid
+        if persona_revision_uuid is _UNSET:
+            member.persona_revision_uuid = None
+    if persona_revision_uuid is not _UNSET:
+        member.persona_revision_uuid = persona_revision_uuid
+    db.session.commit()
+    return member
 
 
 def edit_chat_message(message_id: int, text: str) -> ChatMessage:

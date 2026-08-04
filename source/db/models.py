@@ -650,6 +650,16 @@ class ChatroomMember(db.Model):
     user_uuid: Mapped[UUID] = mapped_column(
         ForeignKey("chat_user.uuid", ondelete="CASCADE")
     )
+    # Which persona this participant speaks with in this room (persona.uuid,
+    # the /persona page); null = none, and its turns carry no persona block.
+    # On the membership row, not the room: a room can hold more than one
+    # assistant, and each speaks with its own voice. Plain col, no FK — a
+    # deleted persona resolves to no block, not stale text.
+    persona_uuid: Mapped[UUID | None] = mapped_column(default=None)
+    # Null = follow the persona's newest revision (the default). Set = pinned
+    # to that exact revision, so editing the persona no longer reaches this
+    # member until the pin is released.
+    persona_revision_uuid: Mapped[UUID | None] = mapped_column(default=None)
     __table_args__ = (
         Index("chatroom_member_unique", "room_uuid", "user_uuid", unique=True),
     )
