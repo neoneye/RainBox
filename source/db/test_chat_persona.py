@@ -139,3 +139,17 @@ def test_unlinking_clears_both_columns(room, persona, assistant_uuid):
     db.set_member_persona(room.uuid, assistant_uuid, persona_uuid=None)
     row = db.get_member_persona_row(room.uuid, assistant_uuid)
     assert row.persona_uuid is None and row.persona_revision_uuid is None
+
+
+def test_revision_get_rejects_a_foreign_revision(app_ctx):
+    a = db.persona_create("Owner A", None)
+    b = db.persona_create("Owner B", None)
+    au, bu = UUID(a["uuid"]), UUID(b["uuid"])
+    try:
+        db.persona_update_content(au, "a text")
+        rev = UUID(db.persona_revisions(au)[0]["uuid"])
+        assert db.persona_revision_get(au, rev) is not None
+        assert db.persona_revision_get(bu, rev) is None
+    finally:
+        db.persona_delete(au)
+        db.persona_delete(bu)
