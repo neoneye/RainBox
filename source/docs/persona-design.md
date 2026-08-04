@@ -237,8 +237,7 @@ they keep their own model + system-prompt Settings panel, no persona section.
 
 ## Open questions
 
-- **Usage back-references.** A persona can now be bound from a room member,
+- **Usage back-references.** A persona can be bound from a room member,
   so deleting one can leave a room without a voice mid-conversation with no
-  warning. The page still has no "what uses this?" view — until it does,
-  delete is safe only while the operator remembers what points at a persona,
-  and that risk is higher now than when nothing could bind to one.
+  warning. The page has no "what uses this?" view — without it,
+  delete is safe only while the operator remembers what points at a persona.
