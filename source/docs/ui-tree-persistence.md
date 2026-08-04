@@ -15,7 +15,7 @@ deletion, not a create — it is a malformed request.
 ## Endpoint set
 
 Five endpoints per page. `<page>` is the route prefix, `<item>` the plural leaf
-noun (`repos`, `prompts`, `personalities`, …).
+noun (`repos`, `prompts`, `personas`, …).
 
 | Method + path | Does |
 |---|---|
@@ -26,7 +26,7 @@ noun (`repos`, `prompts`, `personalities`, …).
 | `DELETE /<page>/api/folders/<uuid>` | Delete one folder (cascades its subtree) |
 | `DELETE /<page>/api/<item>s/<uuid>` | Delete one item (cascades what it owns) |
 
-Item *content* — prompt text, profile `data`, personality text — stays out of
+Item *content* — prompt text, profile `data`, persona text — stays out of
 all of these and saves through its own per-item `PUT`, so a content save can
 never collide with an open tree (and vice versa).
 
@@ -126,7 +126,7 @@ nothing to lie about.
 The cost of the split is four small endpoints. What it buys is a class of
 data-loss bug that cannot be written.
 
-This matters most for rows that **own** other rows: deleting a personality
+This matters most for rows that **own** other rows: deleting a persona
 takes its whole revision history, deleting a chat room takes its messages.
 Those deletions must be something an operator asked for, never something a
 payload implied.
@@ -137,7 +137,7 @@ payload implied.
 |---|---|
 | `/chat` | Placement-only for rooms; folders still upsert-and-delete through the PUT |
 | `/kanban` | Placement-only for boards and folders — closest to this standard |
-| `/personality` | This standard |
+| `/persona` | This standard |
 | `/cron`, `/git`, `/prompt`, `/profile` | Full replace: rows absent from the payload are deleted, guarded by a `deletes` counter |
 | `/kanban` board contents (columns + tasks) | Full replace with a `deletes` counter — not a tree, same delete-by-omission risk |
 

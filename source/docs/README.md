@@ -32,8 +32,8 @@ history); `proposals/` holds design-time intent and reviews.
   binding, fail-open policy, inspector rendering.
 - [prompt-design.md](prompt-design.md) — versioned system prompts: folder
   tree, clone lineage + diff, explicit Edit → Save, direct-chat linking.
-- [personality-design.md](personality-design.md) — the /personality page:
-  a folder tree of assistant personalities with append-only revisions.
+- [persona-design.md](persona-design.md) — the /persona page:
+  a folder tree of assistant personas with append-only revisions.
 - [cron-design.md](cron-design.md) — the scheduler: folder tree, action
   types, firing, outcomes, retries, reminders.
 - [kanban-design.md](kanban-design.md) — boards as a coordination ledger:

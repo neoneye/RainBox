@@ -49,8 +49,8 @@ from db.models import (AssistantRun, AssistantStep, ChatMessage, Chatroom,
                        GitFolder, GitRepo, Journal, KanbanBoard,
                        KanbanBoardFolder, KanbanColumn, KanbanTask,
                        KanbanTaskEvent, MemoryClaim, ModelConfig,
-                       ModelConfigOverride, ModelGroup, Personality,
-                       PersonalityFolder, PersonalityRevision, Profile,
+                       ModelConfigOverride, ModelGroup, Persona,
+                       PersonaFolder, PersonaRevision, Profile,
                        ProfileFolder, Prompt, PromptFolder, db)
 
 __all__ = ["find_uuid", "FIND_UUID_MIN_QUERY", "FIND_UUID_MIN_FUZZY_QUERY",
@@ -220,30 +220,30 @@ def _profile_folder(row: Any) -> dict:
                                      row.parent_uuid)}
 
 
-def _personality(row: Any) -> dict:
-    return {"name": row.name, "url": f"/personality?id={row.uuid}",
-            "parents": _folder_chain(PersonalityFolder, "personality folder",
+def _persona(row: Any) -> dict:
+    return {"name": row.name, "url": f"/persona?id={row.uuid}",
+            "parents": _folder_chain(PersonaFolder, "persona folder",
                                      row.folder_uuid)}
 
 
-def _personality_folder(row: Any) -> dict:
-    return {"name": row.name, "url": f"/personality?id={row.uuid}",
-            "parents": _folder_chain(PersonalityFolder, "personality folder",
+def _persona_folder(row: Any) -> dict:
+    return {"name": row.name, "url": f"/persona?id={row.uuid}",
+            "parents": _folder_chain(PersonaFolder, "persona folder",
                                      row.parent_uuid)}
 
 
-def _personality_revision(row: Any) -> dict:
-    # A revision has no page of its own — it resolves to the personality
+def _persona_revision(row: Any) -> dict:
+    # A revision has no page of its own — it resolves to the persona
     # whose history holds it. Parent chain mirrors _cron_run: the owning
     # entity plus its folder chain, not left empty.
-    personality = _row(Personality, row.personality_uuid)
+    persona = _row(Persona, row.persona_uuid)
     parents = []
-    if personality is not None:
-        parents.append(_parent_ref("personality", personality))
-        parents.extend(_folder_chain(PersonalityFolder, "personality folder",
-                                     personality.folder_uuid))
+    if persona is not None:
+        parents.append(_parent_ref("persona", persona))
+        parents.extend(_folder_chain(PersonaFolder, "persona folder",
+                                     persona.folder_uuid))
     return {"name": _excerpt(row.content),
-            "url": f"/personality?id={row.personality_uuid}",
+            "url": f"/persona?id={row.persona_uuid}",
             "parents": parents}
 
 
@@ -328,9 +328,9 @@ _SOURCES: tuple[_Source, ...] = (
     _Source("prompt", Prompt, _prompt),
     _Source("profile folder", ProfileFolder, _profile_folder),
     _Source("profile", Profile, _profile),
-    _Source("personality folder", PersonalityFolder, _personality_folder),
-    _Source("personality", Personality, _personality),
-    _Source("personality version", PersonalityRevision, _personality_revision),
+    _Source("persona folder", PersonaFolder, _persona_folder),
+    _Source("persona", Persona, _persona),
+    _Source("persona version", PersonaRevision, _persona_revision),
     _Source("model config", ModelConfig, _model_config),
     _Source("model config override", ModelConfigOverride, _model_config_override),
     _Source("model group", ModelGroup, _model_group),
@@ -362,7 +362,7 @@ _TEXT_SOURCES: tuple[_TextSource, ...] = (
                 entity_uuid_attr="task_uuid"),
     _TextSource(CronJob, ("message", "command", "description"), "cron job"),
     _TextSource(Prompt, ("content",), "prompt"),
-    _TextSource(Personality, ("content",), "personality"),
+    _TextSource(Persona, ("content",), "persona"),
     _TextSource(MemoryClaim, ("text",), "memory claim"),
     _TextSource(Journal, ("payload", "result"), "journal",
                 entity_uuid_attr="id"),
