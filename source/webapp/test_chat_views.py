@@ -69,14 +69,14 @@ def test_direct_room_settings_sidebar():
 
 
 def test_sidebar_modes_match_room_type():
-    """Members is hidden in direct rooms (no agents there); Settings is hidden
-    in agents rooms (model/prompt only exist for direct rooms). Instead of
-    dropping to hidden, the remembered mode maps to its counterpart
-    (Members<->Settings) so navigation never closes the sidebar."""
+    """Members is hidden in direct rooms (no agents there). Settings now
+    applies to both room types (model/prompt for a direct room, the persona
+    picker for an agents room) so it is never hidden, and the remembered mode
+    maps Members->Settings in a direct room rather than dropping to hidden."""
     body = _body()
     assert "function syncSidebarModeOptions" in body
     assert "membersOpt.hidden = membersOpt.disabled = direct" in body
-    assert "settingsOpt.hidden = settingsOpt.disabled = !direct" in body
+    assert "settingsOpt.hidden" not in body
     assert "function effectiveSidebarMode" in body
     assert "function activeSidebarMode" in body
 
@@ -275,3 +275,22 @@ def test_a_failed_send_restores_the_text_and_says_so():
     assert "input.value = text;" in body
     assert ("chatToast('Message not sent: ' + e.message "
             "+ ' — your text is back in the box.');") in body
+
+
+def test_agents_room_settings_panel_markers():
+    """The sidebar's Settings mode carries the persona picker for agents
+    rooms; direct rooms keep the model/prompt panel."""
+    body = app.test_client().get("/chat").get_data(as_text=True)
+    for marker in ["function renderAgentsSettings", "function openPersonaPicker",
+                   "function openPersonaVersionPicker", "function setMemberPersona",
+                   "function pinMemberPersonaRevision",
+                   "function renderPersonaMemberSection",
+                   "/persona/api/tree", "/personas", "persona_following"]:
+        assert marker in body, f"missing marker: {marker}"
+
+
+def test_settings_mode_is_available_in_agents_rooms():
+    """effectiveSidebarMode no longer maps settings->members away from agents
+    rooms — that mapping is what made the mode a dead end there."""
+    body = app.test_client().get("/chat").get_data(as_text=True)
+    assert "if (!direct && sidebarMode === 'settings') return 'members';" not in body
