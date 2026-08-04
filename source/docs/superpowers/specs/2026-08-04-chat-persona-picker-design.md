@@ -6,9 +6,9 @@
 assistant's prompt still describes only *how to work* — one step at a time,
 pick an action, cite sources — so every room gets the same voice.
 
-This feature connects the two: a room links to a persona, and the assistant's
-per-turn prompt carries that persona's text. The link is made from the `/chat`
-right-side panel.
+This feature connects the two: the assistant's membership in a room links to a
+persona, and its per-turn prompt carries that persona's text. The link is made
+from the `/chat` right-side panel.
 
 ## Scope
 
@@ -20,35 +20,52 @@ wins". The other chat responders (router, query,
 tool_demo, …) carry their own prompts and are not what "who is the assistant"
 means.
 
-## Binding: which persona, and which version of it
+## Binding: which participant, which persona, which version of it
 
-Two nullable columns on `chatroom`, both plain UUID columns with no FK — the
-same shape as the existing `prompt_uuid`:
+The binding lives on **`chatroom_member`**, not on the room. That table is
+already exactly `(room_uuid, user_uuid)` unique — "this participant, in this
+room" — so a persona there reads as *this participant's voice in this room*:
 
 ```
-chatroom
-  persona_uuid           -- which persona; null = none, the assistant has no persona block
+chatroom_member
+  persona_uuid           -- which persona this member speaks with; null = none
   persona_revision_uuid  -- null = follow newest (the default); set = pinned to that revision
 ```
 
+**Why the membership row rather than the room.** With one assistant the two are
+indistinguishable. With more than one — a math assistant and a physics
+assistant in the same room — a room-level column is simply wrong: two
+participants, two voices, one column. The membership row is also where the
+eventual "answers unprompted" vs "answers when named" distinction belongs, so
+both properties end up on the same row instead of a room column and a member
+flag that have to agree.
+
+Only **persona-capable** members can carry one. Today that is the assistant
+(`PERSONA_CAPABLE_UUIDS`, a tuple in `webapp/chat_api.py` mirroring
+`CHAT_RESPONDER_UUIDS`); the other responders — router, query, tool_demo — carry
+their own prompts and are not what "who is the assistant" means. A second
+assistant identity later is one entry added to that tuple, not a schema change.
+
 The default is **follow newest**: picking a persona sets `persona_uuid` and
 leaves `persona_revision_uuid` null, so editing the persona on `/persona`
-reaches the room's next reply with no re-linking. That is what the stable
+reaches that member's next reply with no re-linking. That is what the stable
 persona uuid was for.
 
-**Pinning** is the opt-out: set `persona_revision_uuid` and the room speaks
+**Pinning** is the opt-out: set `persona_revision_uuid` and the member speaks
 with that exact text until released, no matter how the persona is edited
-afterwards. A pinned revision must belong to the linked persona — a room can
+afterwards. A pinned revision must belong to the linked persona — a member can
 never pin to another persona's history.
 
 ### Resolution, fresh every turn
 
-`db.resolve_room_persona(room) -> PersonaResolution` returns the text and the
-revision uuid that produced it:
+`db.resolve_member_persona(room_uuid, user_uuid) -> PersonaResolution` returns
+the text and the revision uuid that produced it. The assistant calls it with
+its own `agent_uuid`, so a room with several assistants resolves each one
+independently with no further plumbing.
 
-| Room state | Text | Stamped revision |
+| Member state | Text | Stamped revision |
 |---|---|---|
-| `persona_uuid` null | `""` — no block | none |
+| No membership row, or `persona_uuid` null | `""` — no block | none |
 | Pinned, revision exists | that revision's `content` | the pinned uuid |
 | Following | the persona's `content` (newest by the invariant) | the newest revision's uuid |
 | Persona deleted | `""` — no block | none |
@@ -56,11 +73,12 @@ revision uuid that produced it:
 
 A **deleted persona sends no block**, rather than stale text — the same
 fail-obvious choice `resolve_room_system_prompt` already makes for a deleted
-linked prompt. The room visibly behaves as though it has no persona instead of
-quietly using text the operator thought they replaced.
+linked prompt. The member visibly behaves as though it has no persona instead
+of quietly using text the operator thought they had replaced.
 
 Deleting a persona cascades its revisions, so a pinned revision cannot outlive
-its persona; the pinned room simply falls to "no block".
+its persona; the pinned member simply falls to "no block".
+
 
 ## Prompt insertion
 
@@ -99,7 +117,7 @@ text that produced a reply is captured verbatim. This feature adds the
   uuid, and `href: /persona?id=<uuid>` — beside the existing `profile`,
   `formatting_guide` and `knowledge_calibration` entries.
 - The stamped **revision uuid** rides along, so a months-old reply resolves to
-  the exact version behind it. A following room and a pinned room are equally
+  the exact version behind it. A following member and a pinned one are equally
   traceable; the difference is only whether the pointer moves.
 
 ## The picker
@@ -113,12 +131,15 @@ does nothing useful in exactly the rooms the assistant lives in.
 So: stop mapping `settings → members` for agents rooms, and give the Settings
 panel an agents-room branch. The direct-room panel is unchanged.
 
-**Agents-room Settings panel:**
+**Agents-room Settings panel.** One section per persona-capable member, from
+`GET /chat/api/rooms/<uuid>/personas` — today that is a single section for the
+assistant, and a room with several assistants renders one each with no further
+UI work. Each section carries:
 
 - **Persona** — the linked persona's name, linking to `/persona?id=<uuid>`, or
-  *"(none — the assistant has no persona)"*. A deleted persona renders in red
+  *"(none — this assistant has no persona)"*. A deleted persona renders in red
   as *"(deleted)"*, matching the deleted-linked-prompt rendering, because the
-  room genuinely has no persona at that point.
+  member genuinely has no persona at that point.
 - **Choose persona…** — a modal rendering the persona folder tree read-only
   from `GET /persona/api/tree`; clicking one links it. Mirrors the existing
   "Choose stored prompt…" flow: same modal shape, same read-only tree, a
@@ -130,23 +151,43 @@ panel an agents-room branch. The direct-room panel is unchanged.
 - **Unlink** — clears both columns back to none.
 
 Picking a persona always starts in follow-newest, including when replacing a
-persona that was pinned.
+persona that was pinned. A room with no persona-capable member shows a short
+note instead of a picker.
 
 ## HTTP API
 
-`PUT /chat/api/rooms/<uuid>/settings` today rejects any non-direct room with
-400 "settings apply to direct rooms only". It gains two fields:
+Two new endpoints, member-addressed. `PUT /chat/api/rooms/<uuid>/settings` is
+**not** touched: it stays direct-room-only, and the persona mechanism does not
+overload it.
 
-- **`persona_uuid`** — accepted for **agents rooms only**; validated to name a
-  real persona. Setting it clears `persona_revision_uuid` (follow newest).
-  `null` unlinks and clears both.
-- **`persona_revision_uuid`** — accepted for agents rooms only; validated to
-  name a revision **of the linked persona**. `null` releases the pin.
+**`GET /chat/api/rooms/<room_uuid>/personas`** → one row per persona-capable
+member of the room, so the sidebar renders without a second request:
 
-A direct room sending either field is a 400 — direct rooms use prompt linking.
-An agents room may now call the endpoint at all, which is the change that makes
-the panel possible; it still rejects the direct-only fields (`model_uuid`,
-`system_prompt`, `prompt_uuid`, `request_timeout`).
+```json
+{"members": [{"user_uuid": "…", "name": "assistant",
+              "persona_uuid": "…", "persona_name": "Alice",
+              "persona_exists": true,
+              "persona_revision_uuid": null,
+              "persona_revision_saved_at": null,
+              "persona_following": true}]}
+```
+
+A room with no persona-capable member returns an empty list — which is what the
+sidebar shows for a room the assistant isn't in.
+
+**`PUT /chat/api/rooms/<room_uuid>/members/<user_uuid>/persona`**
+`{persona_uuid, persona_revision_uuid}` → the same row shape for that member.
+
+- `persona_uuid` — validated to name a real persona. Setting it clears
+  `persona_revision_uuid` (follow newest). `null` unlinks and clears both.
+- `persona_revision_uuid` — validated to name a revision **of the persona that
+  member will have after this call**. `null` releases the pin. Pinning with no
+  linked persona is a 400.
+- A member that is not persona-capable, or not in the room, is a 404.
+
+Addressing the member from the start is what keeps multi-assistant additive: a
+second assistant needs no endpoint change, just another row in the response.
+
 
 ## Testing
 
@@ -178,6 +219,10 @@ the panel possible; it still rejects the direct-only fields (`model_uuid`,
   working rules would be a prompt-injection surface with the operator's own
   text as the vector. It ranks with `formatting_guide` and the system prompt
   says so.
+- **The binding is per membership, not per room.** One assistant makes the two
+  identical; more than one makes the room-level column wrong. Choosing the
+  membership row now costs nothing and makes a multi-assistant room an additive
+  change — another row in the same response — rather than a migration.
 - **Direct rooms untouched.** They have their own mechanism; a second source
   would create exactly the ambiguity `/prompt`'s design already warns about.
 - **A deleted persona sends nothing.** Fail-obvious over fail-soft.
@@ -189,6 +234,12 @@ the panel possible; it still rejects the direct-only fields (`model_uuid`,
   that behavior (the room visibly loses its voice) rather than building
   back-references now, but the gap stops being theoretical once rooms link
   personas — the delete modal warning is the natural next step.
-- **Non-chat assistant work.** A cron-fired assistant run posts into a room,
-  so it inherits that room's persona. Whether a background run *should* speak
-  in character is unexamined; today it will.
+- **Non-chat assistant work.** A cron-fired assistant run posts into a room, so
+  it inherits that member's persona. Whether a background run *should* speak in
+  character is unexamined; today it will.
+- **Several assistants in one room.** The schema and the endpoints are shaped
+  for it — a math assistant and a physics assistant would be two persona-capable
+  members with their own personas. What is *not* designed here: the second
+  assistant identity itself, and the rule that a primary answers unprompted
+  while extras answer only when named. That rule belongs on the same membership
+  row when it is built.
