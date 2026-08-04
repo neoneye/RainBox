@@ -201,9 +201,12 @@ second assistant needs no endpoint change, just another row in the response.
   pin lookup is scoped to the linked persona, so a mismatched pin written by
   some other path resolves to no block rather than leaking another persona's
   text.
-- **`webapp/test_chat_*`** — the settings PUT accepts a persona on an agents
-  room; 400 on an unknown persona uuid; 400 on a revision that isn't the linked
-  persona's; 400 on a direct room; picking a persona clears an existing pin.
+- **`webapp/test_chat_*`** — the member persona PUT accepts a persona on an
+  agents-room member; 400 on an unknown persona uuid; 400 on a revision that
+  isn't the linked persona's; 400 on a direct room; 404 on a member that
+  cannot carry a persona or isn't in the room; picking a persona clears an
+  existing pin. The personas GET reports each persona-capable member's state,
+  empty for a room with none.
 - **`agents/test_assistant_*`** — `<persona>` appears in the built prompt when
   the room links one and is absent when it doesn't; the pinned room gets the
   pinned text, not the newest; the turn log carries the persona entry and the

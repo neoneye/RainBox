@@ -189,6 +189,22 @@ Layout and behavior follow `docs/ui-left-panel-tree.md` (tree),
   want to freeze a specific version.
 - **No seeded default.** The store ships empty; what the assistant should be
   is the operator's to write.
+- **No length cap on the persona text.** Unlike the other operator-authored
+  prompt blocks — `formatting_guide` and `knowledge_calibration` share a
+  2,700-char guidance budget, the skill block caps at 2,000 chars, and the
+  second-opinion and reply-audit excerpts are head-truncated — the persona
+  carries no bound at all. The operator authors this text on `/persona` and
+  sees its size right there as they write it. Its sibling mechanism, a room
+  linked to a stored `/prompt` version (`db.resolve_room_system_prompt`), is
+  likewise unbounded, so capping only the persona would be an inconsistency
+  with no principled reason behind it. And silently truncating a character
+  description is a worse failure than the other blocks' truncation: it would
+  change the assistant's voice — quietly dropping the back half of who it's
+  supposed to be — in a way that is hard to notice from the reply alone. The
+  real cost of this choice is that the text is re-sent on every step of the
+  loop, not once per turn, so a pasted document multiplies into latency and
+  token spend across a long run; that cost lands on the operator who pasted
+  it, and stays visible to them on the page that authored it.
 
 ## Wired to the assistant
 
