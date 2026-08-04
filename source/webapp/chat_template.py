@@ -2181,16 +2181,17 @@ function renderPersonaMemberSection(m, showName){
     none.className = 'src';
     none.textContent = '(none \\u2014 this assistant has no persona)';
     line.appendChild(none);
-  } else if (m.persona_exists === false){
-    const gone = document.createElement('span');
-    gone.className = 'gone';
-    gone.textContent = '(deleted)';
-    line.appendChild(gone);
   } else {
     const a = document.createElement('a');
     a.href = '/persona?id=' + encodeURIComponent(m.persona_uuid);
     a.target = '_blank';
-    a.textContent = m.persona_name;
+    if (m.persona_exists === false){
+      a.textContent = '(deleted)';
+      a.className = 'gone';
+      a.title = 'The linked persona was deleted on the Persona page.';
+    } else {
+      a.textContent = m.persona_name;
+    }
     line.appendChild(a);
   }
   sidebarEl.appendChild(line);
@@ -2245,14 +2246,22 @@ function renderPersonaMemberSection(m, showName){
 // Writes. Both re-render the panel from the server, so what the sidebar shows
 // is always what the member actually holds.
 async function setMemberPersona(userUuid, personaUuid){
-  await putJSON('/chat/api/rooms/' + currentRoom + '/members/' + userUuid + '/persona',
-    {persona_uuid: personaUuid});
+  try {
+    await putJSON('/chat/api/rooms/' + currentRoom + '/members/' + userUuid + '/persona',
+      {persona_uuid: personaUuid});
+  } catch (e) {
+    alert('Persona update failed: ' + e.message);
+  }
   await renderAgentsSettings();
 }
 
 async function pinMemberPersonaRevision(userUuid, revisionUuid){
-  await putJSON('/chat/api/rooms/' + currentRoom + '/members/' + userUuid + '/persona',
-    {persona_revision_uuid: revisionUuid});
+  try {
+    await putJSON('/chat/api/rooms/' + currentRoom + '/members/' + userUuid + '/persona',
+      {persona_revision_uuid: revisionUuid});
+  } catch (e) {
+    alert('Persona version update failed: ' + e.message);
+  }
   await renderAgentsSettings();
 }
 
