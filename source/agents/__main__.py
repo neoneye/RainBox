@@ -58,13 +58,10 @@ def main() -> None:
     def send(msg: dict[str, Any]) -> None:
         sock.sendall((json.dumps(msg) + "\n").encode("utf-8"))
 
-    # Dispatch on agent_kind when present, else the role name. This lets
-    # several roles share one implementation class while roles whose name is
-    # the implementation key need no agent_kind at all.
-    # _resolve_agent_class imports ONLY the selected agent, so this spawned
-    # process doesn't pay every agent's import cost (llama_index etc.).
-    kind = config.get("agent_kind", config["name"])
-    agent_cls = resolve_agent_class(kind)
+    # The role name IS the implementation key. resolve_agent_class imports
+    # ONLY the selected agent, so this spawned process doesn't pay every
+    # agent's import cost (llama_index etc.).
+    agent_cls = resolve_agent_class(config["name"])
     agent = agent_cls(agent_uuid=agent_uuid, name=config["name"], send=send)
     agent.run()
 

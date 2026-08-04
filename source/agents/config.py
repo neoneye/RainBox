@@ -6,11 +6,6 @@ class AgentConfigEntry(TypedDict):
     uuid: UUID
     description: str
     next: UUID | None
-    # Which Python agent class to run. Defaults to the role name (so a role
-    # whose name matches its implementation key needs nothing here). Lets
-    # several roles share one implementation class; agents/__main__.py
-    # dispatches on config.get("agent_kind", config["name"]).
-    agent_kind: NotRequired[str]
     # True for agents that drive tool/function calls (e.g. ToolDemoAgent). The
     # /agentmodel page only offers groups that require function calling to
     # these. Independent of requires_structured_output — a model may support
