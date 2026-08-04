@@ -145,8 +145,11 @@ a uuid shared by a folder and a personality (a node is addressed globally as
 
 ## HTTP API (`webapp/personality_api.py`)
 
-JSON, same-origin, uuids as identifiers. **Every mutating endpoint returns the
-new tree `version`**, so the client never holds a stale token.
+JSON, same-origin, uuids as identifiers. **Every tree-structure endpoint
+returns the new tree `version`** (the tree PUT, folder/personality create,
+folder/personality delete), so the client never holds a stale token. The
+per-personality content PUT and the revision restore below don't touch
+placement, so their responses deliberately carry no version token.
 
 | Endpoint | Behavior |
 |---|---|
@@ -160,7 +163,7 @@ new tree `version`**, so the client never holds a stale token.
 | `PUT /personality/api/personalities/<uuid>` | `{content}` → `{ok, changed, revision}`; `changed: false` when the text was identical |
 | `GET /personality/api/personalities/<uuid>/revisions` | Newest first: `{uuid, created_at, bytes, lines, preview, current}` |
 | `GET /personality/api/personalities/<uuid>/revisions/<rev>/diff` | Unified diff (3 context lines), that revision → current |
-| `POST /personality/api/personalities/<uuid>/revisions/<rev>/restore` | Appends a new revision → `{ok, content, revision}` |
+| `POST /personality/api/personalities/<uuid>/revisions/<rev>/restore` | Appends a new revision → `{ok, changed, content, revision}`; `changed: false` when the revision's text was already current |
 
 A revision uuid belonging to a different personality is a 404, not a diff
 against a stranger's text.

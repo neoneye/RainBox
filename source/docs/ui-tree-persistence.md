@@ -65,14 +65,36 @@ volatile field a background process writes (`last_message_id`, `next_run_at`,
 
 ## Client rules
 
+These rules govern the tree save (placement, order, name). The per-item
+content save is a separate request against a separate endpoint and follows
+its own rule, below.
+
 - **Debounce and serialize** the PUT (~250ms), one request in flight; a save
   requested mid-flight is queued and re-sent after.
 - **Create and delete are immediate, never debounced** — they are explicit
   operator acts, and their response carries the token the next PUT needs.
-- **Re-hydrate on any save failure**, 409 or network error alike, so the
+- **Flush or await a pending tree PUT before issuing a create or delete.**
+  Nothing else orders them against each other, and the two responses race:
+  if the older PUT's response lands after the create/delete's fresher token,
+  it overwrites that token with a stale one, and the next save 409s for a
+  reason the operator can't see.
+- **Re-hydrate on any tree-save failure**, 409 or network error alike, so the
   client converges on server truth instead of drifting.
 - Delete is confirmed in a modal (`docs/ui-modals.md`); a non-empty folder
   shows its subtree counts and requires typing its name.
+- **Surface orphaned rows instead of hiding them.** A row whose parent no
+  longer resolves (e.g. its folder was deleted out from under it by another
+  path, such as the admin) still exists and is still included in every tree
+  save, so validation still rejects it — see below — until it's fixed. If the
+  client's normal folder listing simply omits it, the operator can never see
+  or reach it to move or delete it, and every tree save 400s forever with no
+  visible cause. Render it at root level instead, alongside normally-placed
+  rows, so the operator can repair it.
+- **A per-item content save must NOT re-hydrate on failure.** Unlike the tree
+  save, a failed content save (validation error, network error, conflict)
+  keeps the operator in edit mode with their unsaved text intact — re-hydrating
+  there would fetch server state over the top of it and discard what they were
+  writing. Report the failure and let them retry or cancel.
 
 ## Validation
 
@@ -80,6 +102,12 @@ Structural checks run in the DB layer before any mutation
 (`validate_<page>_tree`), raising a page-specific error the API maps to 400.
 Parent references are plain UUID columns with **no FK constraints**, so this
 validator is the only thing standing between a bad payload and a corrupt tree.
+
+Validation stays strict — an orphaned row (dangling `folderId`/`parentId`) is
+still a 400, same as any other structural problem. The fix for the operator
+being stuck behind that 400 lives on the client (surfacing the row so it can
+be repaired, per Client rules above), not by loosening what the server
+accepts.
 
 ## Why
 
@@ -124,7 +152,9 @@ a missing or unknown uuid instead of inserting or deleting.
 2. `<page>_save_tree` raises on any uuid that is missing from, or unknown to,
    the payload. No `expected_deletes` parameter.
 3. `<page>_tree_version` hashes structural fields only.
-4. Every mutating endpoint returns `{"ok": true, "version": …}`.
+4. Every tree-structure endpoint — the PUT and both POSTs and DELETEs —
+   returns `{"ok": true, "version": …}`. Per-item content endpoints stay
+   outside the tree save (see Client rules) and deliberately carry no token.
 5. Deletes cascade in the DB layer and are confirmed in a modal.
 6. Tests: a PUT omitting an existing row is 400 and mutates nothing; a PUT
    naming an unknown row is 400; a stale token is 409; delete cascades;
