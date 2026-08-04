@@ -235,4 +235,4 @@ Two consequences worth knowing:
   /prompt page has no "which rooms link this version?" view yet, so deleting
   a version doesn't warn about rooms that would lose their system message.
 - **Non-chat consumers.** Only direct chat resolves stored prompts today;
-  agents defined in `agent_profiles/` carry their own prompt files.
+  every other agent carries its system prompt as a module constant.

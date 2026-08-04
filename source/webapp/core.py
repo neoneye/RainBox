@@ -34,7 +34,6 @@ from db import (
     ChatroomFolder,
     ChatroomMember,
     ChatUser,
-    ConversationRun,
     CronFolder,
     CronJob,
     CronRun,
@@ -127,7 +126,6 @@ NAV_TEMPLATE = """
   <div class="pp-links">
     <a href="{{ url_for('chat_page') }}" class="{{ 'pp-active' if request.endpoint == 'chat_page' }}">Chat</a>
     <a href="{{ url_for('prompt_page') }}" class="{{ 'pp-active' if request.endpoint == 'prompt_page' }}">Prompt</a>
-    <a href="{{ url_for('conversation_page') }}" class="{{ 'pp-active' if request.endpoint == 'conversation_page' }}">Conversations</a>
     <a href="{{ url_for('cron_page') }}" class="{{ 'pp-active' if request.endpoint == 'cron_page' }}">Cron</a>
     <a href="{{ url_for('kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'kanban_page' }}">Kanban</a>
     <details class="pp-dd {{ 'pp-active' if request.endpoint in ('memory_page', 'memory_developer_page') }}">
@@ -683,7 +681,6 @@ admin.add_view(EvalCaseView(EvalCase, db, category="Feedback"))
 admin.add_view(ModelView(ModelGroup, db, category="Config"))
 admin.add_view(ModelView(ModelGroupMember, db, category="Config"))
 admin.add_view(ModelView(AgentModelBinding, db, category="Config"))
-admin.add_view(ModelView(ConversationRun, db, category="Chat"))
 # Assistant ReAct loop: runs, per-step trace, control channel, write intents.
 class AssistantRunView(ModelView):
     # Newest first — the integer id is internal plumbing, not the sort the

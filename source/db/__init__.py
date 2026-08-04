@@ -1,7 +1,7 @@
 """Database facade.
 
 This package's submodules are db.models, db.queue, db.model_config, db.chat,
-db.assistant, db.conversation, db.memory, db.feedback, db.eval, db.cron,
+db.assistant, db.memory, db.feedback, db.eval, db.cron,
 db.kanban, db.settings. This `__init__` is the facade that re-exports their
 public names
 so callers can simply `import db`; it also owns the app/db lifecycle
@@ -22,7 +22,6 @@ from db.model_config import *  # noqa: F401,F403  re-export model config/overrid
 from db.chat import *  # noqa: F401,F403  re-export chat rooms/users/messages/NOTIFY/seed helpers
 from db.chat import _chat_event_payload  # noqa: F401  db/test_chat_streaming.py imports this private helper
 from db.assistant import *  # noqa: F401,F403  re-export assistant trace ops (start_assistant_run, append_assistant_step, finish_run, ...)
-from db.conversation import *  # noqa: F401,F403  re-export conversation_run ops (manager CAS, stop, …)
 from db.memory import *  # noqa: F401,F403  re-export memory claim/evidence ops
 from db.feedback import *  # noqa: F401,F403  re-export feedback + retrieval-telemetry ops
 from db.eval import *  # noqa: F401,F403  re-export eval case/run/result + promotion ops
@@ -238,7 +237,6 @@ def _migrate_journal_id_to_uuid() -> None:
     # 2. Remap each loose referencing column to the new uuid, by join.
     for table, col in (
         ("cron_run", "journal_id"),
-        ("conversation_run", "last_speaker_journal_id"),
         ("retrieval_event", "journal_id"),
         ("assistant_run", "journal_id"),
     ):

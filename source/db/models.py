@@ -218,7 +218,7 @@ class Journal(db.Model):
     mutates in place rather than being only appended to), but the local meaning
     is settled and load-bearing: `journal_id` is threaded across the codebase.
     It is deliberately NOT named `AgentRun`: that would read as a peer of the
-    higher-level domain runs (`AssistantRun`, `ConversationRun`, `CronRun`,
+    higher-level domain runs (`AssistantRun`, `CronRun`,
     `EvalRun`) when it is actually the lower-level substrate underneath them —
     and not every such run maps 1:1 to a journal row.
 
@@ -690,51 +690,6 @@ class ChatMessage(db.Model):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     __table_args__ = (Index("chat_message_by_room", "room_uuid", "id"),)
-
-
-class ConversationRun(db.Model):
-    """Live, bounded state for one persona-to-persona conversation, driven by the
-    ConversationManagerAgent. The transcript stays in `chat_message`; this row is
-    the only mutable runtime state the feature adds. The two compare-and-set
-    guards (`tick_count` for manual ticks, `last_speaker_journal_id`/`turn`/
-    `active_turn` for routed completions) keep the turn loop idempotent under
-    double-delivery and restarts."""
-
-    __tablename__ = "conversation_run"
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    room_uuid: Mapped[UUID] = mapped_column(
-        ForeignKey("chatroom.uuid", ondelete="CASCADE"), index=True
-    )
-    status: Mapped[str] = mapped_column(Text, default="running")
-    turn: Mapped[int] = mapped_column(default=0)
-    tick_count: Mapped[int] = mapped_column(default=0)
-    participants: Mapped[list] = mapped_column(JSONB, default=list)
-    turn_policy: Mapped[dict] = mapped_column(JSONB, default=dict)
-    last_speaker_journal_id: Mapped[UUID | None] = mapped_column(nullable=True)
-    active_turn: Mapped[int | None] = mapped_column(nullable=True)
-    active_speaker_uuid: Mapped[UUID | None] = mapped_column(nullable=True)
-    active_turn_enqueued_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_human_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    retry_count: Mapped[int] = mapped_column(default=0)
-    stop_requested: Mapped[bool] = mapped_column(default=False)
-    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    budget: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('running','paused','finished','failed','stopped')",
-            name="conversation_run_status_check",
-        ),
-    )
 
 
 class WorkspaceShellState(db.Model):

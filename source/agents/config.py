@@ -6,9 +6,9 @@ class AgentConfigEntry(TypedDict):
     uuid: UUID
     description: str
     next: UUID | None
-    # Which Python agent class to run. Defaults to the role name (so existing
-    # roles are unchanged). Lets many roles (e.g. persona_egon, persona_benny)
-    # share one implementation class (chat_unstructured). agents/__main__.py
+    # Which Python agent class to run. Defaults to the role name (so a role
+    # whose name matches its implementation key needs nothing here). Lets
+    # several roles share one implementation class; agents/__main__.py
     # dispatches on config.get("agent_kind", config["name"]).
     agent_kind: NotRequired[str]
     # True for agents that drive tool/function calls (e.g. ToolDemoAgent). The
@@ -61,7 +61,6 @@ AGENT_CLASS_PATHS: dict[str, str] = {
     "query_router": "agents.query_router:QueryRouterAgent",
     "query_filter_router": "agents.query_filter_router:QueryFilterRouterAgent",
     "mcp": "agents.mcp:MCPAgent",
-    "conversation": "agents.conversation:ConversationManagerAgent",
 }
 
 
@@ -116,13 +115,6 @@ ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25
 # agent process has spawned and imported its stack. kind="progress", so it is
 # reaped when the real reply lands and never enters the model transcript.
 ASSISTANT_WORKING_NOTICE: str = "💭 Working on it…"
-# Persona conversation feature (see docs/proposals/2026-06-08-persona-prompts-...).
-# Persona runnable UUIDs MUST match agent_profiles/personas.jsonl. These roles
-# are deliberately NOT in webapp.chat_api.CHAT_RESPONDER_UUIDS, so a human post
-# never triggers them — only the conversation manager drives them.
-PERSONA_EGON_UUID: UUID = UUID("c9e2669f-2d7d-4e7d-827e-e6c7eaf3c2fb")
-PERSONA_BENNY_UUID: UUID = UUID("20bcb996-771c-4d87-86e3-28421c0a866b")
-CONVERSATION_MANAGER_UUID: UUID = UUID("b0a1c2d3-4e5f-4a6b-8c7d-9e0f1a2b3c4d")
 
 agent_config: dict[str, AgentConfigEntry] = {
     "dreamer": {"uuid": DREAMER_UUID, "description": "generates ideas", "next": CRITIC_UUID},
@@ -270,32 +262,6 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": ASSISTANT_RUN_SUMMARIZER_UUID,
         "requires_structured_output": True,
         "description": "summarizes a completed assistant run (trigger + obstacles + outcome) off the critical path, via one structured call; enqueued by the assistant at every terminal state",
-        "next": None,
-    },
-    # --- persona conversation feature (Phase 0 walking skeleton) ---------------
-    # Two personas that run the plain-text chat agent (agent_kind) but carry their
-    # own identity + system prompt (resolved from agent_profiles/personas.jsonl).
-    # next=None: they return to the manager only via the dynamic return address
-    # the manager puts in each turn payload, so a persona stays usable standalone.
-    "persona_egon": {
-        "uuid": PERSONA_EGON_UUID,
-        "agent_kind": "chat_unstructured",
-        "excludes_structured_output": True,
-        "description": "persona 'Egon' (planner) — runs the plain-text chat agent with a persona system prompt; driven by the conversation manager",
-        "next": None,
-    },
-    "persona_benny": {
-        "uuid": PERSONA_BENNY_UUID,
-        "agent_kind": "chat_unstructured",
-        "excludes_structured_output": True,
-        "description": "persona 'Benny' (pragmatic sidekick) — runs the plain-text chat agent with a persona system prompt; driven by the conversation manager",
-        "next": None,
-    },
-    # The bounded conversation turn scheduler. Does no LLM work; needs no model
-    # group. role name == implementation key, so no agent_kind is needed.
-    "conversation": {
-        "uuid": CONVERSATION_MANAGER_UUID,
-        "description": "conversation manager: schedules bounded persona-to-persona turns (no LLM); driven by conversation_run state",
         "next": None,
     },
 }

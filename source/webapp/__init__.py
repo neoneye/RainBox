@@ -19,8 +19,6 @@ from . import benchmark_kanban_views  # noqa: F401,E402
 from . import agent_views  # noqa: F401,E402
 from . import chat_views  # noqa: F401,E402
 from . import chat_api  # noqa: F401,E402
-from . import conversation_api  # noqa: F401,E402
-from . import conversation_views  # noqa: F401,E402
 from . import tts_kokoro_views  # noqa: F401,E402
 from . import tts_dotstts_views  # noqa: F401,E402
 from . import stt_whisper_views  # noqa: F401,E402

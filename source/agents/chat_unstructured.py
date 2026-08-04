@@ -32,7 +32,6 @@ from agents.base import ModelGroupAgent, StatusSender
 from chat.streaming import StreamingReplyWriter, extract_stream_deltas
 from chat.transcript import format_history
 from llm import prepare_llm
-from agents.persona import resolve_persona_for_agent
 
 logger = logging.getLogger(__name__)
 
@@ -70,18 +69,10 @@ class UnstructuredChatAgent(ModelGroupAgent):
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
         self.system_prompt = UNSTRUCTURED_CHAT_SYSTEM_PROMPT
-        self.persona = None
         self.group_excludes_structured_output = False
 
     def setup(self) -> None:
         super().setup()  # resolves the bound model group + candidate models
-        # Persona-as-data: if this runnable identity maps to a persona, use its
-        # system prompt instead of the class constant. Non-persona instances
-        # (the plain chat_unstructured agent) keep the default — a pure superset.
-        self.persona = resolve_persona_for_agent(self.agent_uuid)
-        if self.persona is not None:
-            self.system_prompt = self.persona.system_prompt
-            logger.info("agent %s: using persona %r system prompt", self.name, self.persona.slug)
         group = (
             db.get_model_group(self.model_group_uuid)
             if self.model_group_uuid is not None
@@ -112,13 +103,6 @@ class UnstructuredChatAgent(ModelGroupAgent):
         journal_id: UUID | None = None,
     ) -> str:
         room_uuid = self._room_uuid(payload)
-        # Managed persona-to-persona turn: use the conversation context builder
-        # (runtime preamble + turn/budget + bounded recent transcript) instead of
-        # the generic chat context + memory retrieval.
-        if payload.get("run_uuid") and self.persona is not None:
-            self._last_retrieval_query = ""
-            self._last_retrieved_memories = []
-            return self._conversation_user_prompt(payload, room_uuid)
         # Diagnostic rows (debug-memory, debug-query, debug-router, thinking,
         # progress, ...) are operator-only audit content. Filter them out so
         # they never end up in the LLM prompt or become the "Current message".
@@ -144,40 +128,6 @@ class UnstructuredChatAgent(ModelGroupAgent):
         if context_block:
             return f"{context_block}\n\n{transcript}"
         return transcript
-
-    def _conversation_user_prompt(self, payload: dict[str, Any], room_uuid: UUID) -> str:
-        """Per-turn prompt for a persona inside a managed conversation: a runtime
-        preamble (who you are, who else is present, the turn budget, the DONE
-        contract) plus the last `CONVO_LAST_N` visible turns. Manager-authored
-        rows (debug + summaries) are excluded so the personas converse with each
-        other, not with the scheduler."""
-        from agents.conversation import (
-            CONVO_LAST_N,
-            build_conversation_prompt,
-        )
-        from agents.config import CONVERSATION_MANAGER_UUID
-
-        run = db.get_conversation_run(payload.get("run_uuid"))
-        mgr = str(CONVERSATION_MANAGER_UUID)
-        visible = [
-            m for m in db.list_room_messages(room_uuid)
-            if m.get("kind") == "message" and m.get("sender_uuid") != mgr
-        ]
-        transcript = format_history(visible[-CONVO_LAST_N:]) if visible else ""
-        policy = (run.turn_policy if run is not None else None) or {}
-        participants = (run.participants if run is not None else None) or []
-        other_names: list[str] = []
-        for p in participants:
-            pid = p.get("agent_uuid")
-            if not pid or pid == str(self.agent_uuid):
-                continue
-            other = resolve_persona_for_agent(UUID(pid))
-            other_names.append(other.name if other is not None else (p.get("slug") or "agent"))
-        speaker_name = self.persona.name if self.persona is not None else self.name
-        turn = payload.get("turn", run.turn if run is not None else 0)
-        return build_conversation_prompt(
-            speaker_name, other_names, turn, policy.get("max_turns"), transcript
-        )
 
     def _make_writer(self, room_uuid: UUID) -> StreamingReplyWriter:
         """A StreamingReplyWriter that creates/updates this agent's rows in the
@@ -305,10 +255,4 @@ class UnstructuredChatAgent(ModelGroupAgent):
                 "unstructured chat agent produced an empty reply in room %s",
                 room_uuid,
             )
-        result: dict[str, Any] = {"ok": True, "reply_content": reply}
-        if self.persona is not None:
-            # Provenance: which persona + prompt produced this turn, for
-            # reproducibility (Phase 0 records it on the journal result).
-            result["persona_id"] = str(self.persona.persona_id)
-            result["prompt_sha256"] = self.persona.prompt_sha256
-        return result
+        return {"ok": True, "reply_content": reply}

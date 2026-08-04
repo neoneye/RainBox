@@ -259,7 +259,7 @@ Optional board description (escaped, see below).
 
 ## To do (`columnId`)
 
-- **Write copy** (`taskId`) — @persona_egon (`agentId`)
+- **Write copy** (`taskId`) — @kanban_worker (`agentId`)
   Optional task description, indented under the bullet.
 - **Pick a font** (`taskId`) — _unassigned_
 

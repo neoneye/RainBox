@@ -1,7 +1,7 @@
 """Tests for the /agentmodel page: only agents whose class consumes a
 model-group binding (Agent.uses_model_group, default True) are listed; agents
-that opted out (direct_chat, workspace_shell, query, conversation) are hidden
-and their bindings can't be posted."""
+that opted out (direct_chat, workspace_shell, query) are hidden and their
+bindings can't be posted."""
 
 import pytest
 
@@ -24,7 +24,7 @@ def test_uses_model_group_flags():
 
     assert Agent.uses_model_group is True
     assert ModelGroupAgent.uses_model_group is True
-    for kind in ("direct_chat", "workspace_shell", "query", "conversation"):
+    for kind in ("direct_chat", "workspace_shell", "query"):
         assert resolve_agent_class(kind).uses_model_group is False, kind
     # A kind not in the class table falls back to ModelGroupAgent -> True.
     assert resolve_agent_class("dreamer").uses_model_group is True
@@ -44,7 +44,7 @@ def test_page_hides_agents_that_dont_use_model_groups(client):
     resp = test_client.get("/agentmodel")
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
-    for hidden in ("direct_chat", "workspace_shell", "conversation"):
+    for hidden in ("direct_chat", "workspace_shell"):
         assert str(agent_config[hidden]["uuid"]) not in body, hidden
     assert str(agent_config["query"]["uuid"]) not in body
     # Model-group consumers are still there (query_router also guards against
@@ -60,11 +60,3 @@ def test_post_binding_rejected_for_opted_out_agent(client):
         data={"agent_uuid": str(DIRECT_CHAT_UUID), "model_group": ""},
     )
     assert resp.status_code == 400
-
-
-def test_persona_roles_follow_their_agent_kind_class(client):
-    """persona_egon runs chat_unstructured (a model-group agent), so it stays
-    listed even though its role name has no class-table entry."""
-    test_client, _app = client
-    resp = test_client.get("/agentmodel")
-    assert str(agent_config["persona_egon"]["uuid"]) in resp.get_data(as_text=True)
