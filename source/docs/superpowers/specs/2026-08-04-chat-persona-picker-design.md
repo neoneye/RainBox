@@ -192,9 +192,15 @@ second assistant needs no endpoint change, just another row in the response.
 ## Testing
 
 - **`db/test_chat_*`** — resolution: unset, following, pinned, deleted persona,
-  persona with no revisions, and a pinned revision belonging to another persona
-  (rejected at write time, so resolution never sees it). A settings write that
-  doesn't mention the persona columns leaves them alone.
+  persona with no revisions, and a non-member. Two members of one room resolve
+  independently — the property the per-member binding exists for.
+
+  Ownership of a pin is validated at the **API layer** (`persona_revision_get`,
+  below), matching how `prompt_uuid` is already validated: the endpoint checks,
+  the DB writer does not. `resolve_member_persona` is fail-safe regardless — its
+  pin lookup is scoped to the linked persona, so a mismatched pin written by
+  some other path resolves to no block rather than leaking another persona's
+  text.
 - **`webapp/test_chat_*`** — the settings PUT accepts a persona on an agents
   room; 400 on an unknown persona uuid; 400 on a revision that isn't the linked
   persona's; 400 on a direct room; picking a persona clears an existing pin.
