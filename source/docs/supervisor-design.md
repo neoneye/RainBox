@@ -74,9 +74,9 @@ and `os.posix_spawn`s `python -m agents --socket-fd N` with `PYTHONPATH` set
 to the source root. The supervisor then sends exactly one newline-terminated
 JSON config message (`{name, uuid, description, next, …}`) down the socket.
 The child (`agents/__main__.py`) reads that line, pushes a DB app context, and
-dispatches on `agent_kind` (default: the role name) via
-`resolve_agent_class`, which imports **only** the selected module — a spawned
-chat process never pays the assistant's import bill.
+resolves the role name to its implementation via `resolve_agent_class`,
+which imports **only** the selected module — a spawned chat process never
+pays the assistant's import bill.
 
 The agent drains its inbox to empty (`Agent.run` in `agents/base.py`), emits a
 final `{"status": "idle"}`, and returns — the process exits on its own. The
@@ -188,8 +188,7 @@ the `/agentmodel` page when it sources its model elsewhere or runs no LLM.
 2. Implement the class — usually a `StructuredLLMAgent` or `ModelGroupAgent`
    subclass overriding `handle()` — and register it in `AGENT_CLASS_PATHS`.
    Skipping registration is valid: the role then runs the default
-   `ModelGroupAgent`. Several roles can share one class by setting
-   `agent_kind` to the shared implementation key.
+   `ModelGroupAgent`.
 3. Bind a model group on `/agentmodel` (unless `uses_model_group = False`).
 4. Give it a producer: membership in a chatroom plus `CHAT_RESPONDER_UUIDS`
    (`webapp/chat_api.py`) for chat-triggered agents, an upstream role's

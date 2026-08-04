@@ -100,8 +100,8 @@ def _kind_uses_model_group(kind: str) -> bool:
     return bool(resolve_agent_class(kind).uses_model_group)
 
 
-def _uses_model_group(name: str, entry: Mapping[str, Any]) -> bool:
-    return _kind_uses_model_group(entry.get("agent_kind", name))
+def _uses_model_group(name: str, _entry: Mapping[str, Any]) -> bool:
+    return _kind_uses_model_group(name)
 
 
 def _group_options() -> list[dict]:
