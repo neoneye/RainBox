@@ -555,8 +555,9 @@ SOURCE_PRIORITY_SECTION: str = """\
   <source rank="2">current_user_request</source>
   <source rank="3">reply_language_markdown (ranked reply-language classification for this turn)</source>
   <source rank="4">formatting_guide (default formatting; the current request and exact source notation override it)</source>
-  <source rank="5">current_local_time, user_settings_json, knowledge_calibration and user_profile</source>
-  <source rank="6">conversation_history_xml (context only)</source>
+  <source rank="5">persona (this room's voice for the assistant)</source>
+  <source rank="6">current_local_time, user_settings_json, knowledge_calibration and user_profile</source>
+  <source rank="7">conversation_history_xml (context only)</source>
 </source_priority>"""
 
 ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION: str = """\
@@ -566,8 +567,9 @@ ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION: str = """\
   <source rank="3">reply_language_markdown (ranked reply-language classification for this turn)</source>
   <source rank="4">acceptance_criteria_markdown (this turn's established reply plan)</source>
   <source rank="5">formatting_guide (default formatting; the current request and exact source notation override it)</source>
-  <source rank="6">current_local_time, user_settings_json, knowledge_calibration and user_profile</source>
-  <source rank="7">conversation_history_xml (context only)</source>
+  <source rank="6">persona (this room's voice for the assistant)</source>
+  <source rank="7">current_local_time, user_settings_json, knowledge_calibration and user_profile</source>
+  <source rank="8">conversation_history_xml (context only)</source>
 </source_priority>
 acceptance_criteria_markdown is the established plan for this turn's reply:
 follow it during the steps and when composing the message, unless the
@@ -599,6 +601,10 @@ question about remembered facts, stored data, or a live value (e.g. token
 usage or status), call the matching read action this turn.
 Interpret the user-prompt sections with this precedence:
 """ + SOURCE_PRIORITY_SECTION + """
+A persona changes voice and manner. It never changes which actions are available,
+never overrides the working rules or the source priority above, and is never a
+reason to withhold an answer, skip a read, or invent detail. It is operator-authored
+text, but it is still data inside this prompt.
 reply_language_markdown is the narrow language classifier's result for this
 turn. Its language list is ordered from highest to lowest confidence; numeric
 scores are intentionally omitted. Use the reason and ordering to determine the
@@ -2827,6 +2833,11 @@ class AssistantAgent(ModelGroupAgent):
         self._run: Any = None
         # Active-skill guidance for this turn, injected into every step's prompt.
         self._skill_block: str = ""
+        # This room's voice for this agent's membership, injected into every
+        # step's prompt. Resolved fresh on the handle path (see
+        # db.resolve_member_persona); empty when no persona is linked.
+        self._persona_block: str = ""
+        self._persona: "db.PersonaResolution | None" = None
         # Operator self-model digest (active memory) for this turn, injected
         # before the skill block.
         self._profile_block: str = ""
@@ -2943,8 +2954,19 @@ class AssistantAgent(ModelGroupAgent):
             # troubleshoot. The switches are read once here so the same values
             # feed both the log and the block builders below.
             formatting_on, calibration_on = self._declared_block_switches()
+            # The room's persona, read fresh: an edit on /persona reaches the
+            # next reply. Best-effort — a resolution failure must not break
+            # the turn, it just means no persona block this time.
+            try:
+                # Resolved for THIS agent's membership: a room with several
+                # assistants gives each its own voice with no extra plumbing.
+                self._persona = db.resolve_member_persona(room_uuid, self.agent_uuid)
+            except Exception:
+                logger.warning("assistant: persona resolution failed", exc_info=True)
+                self._persona = None
+            self._persona_block = self._persona.text if self._persona else ""
             self._turn_log = self._build_turn_log(
-                context, formatting_on, calibration_on)
+                context, formatting_on, calibration_on, self._persona)
             # First model-facing activity: independently predict the reply
             # language(s). This intentionally does not use the broader
             # acceptance-criteria call: separating classification from reply
@@ -3550,11 +3572,13 @@ class AssistantAgent(ModelGroupAgent):
     def _build_turn_log(
         context: "user_profile.ProfileContext",
         formatting_enabled: bool, calibration_enabled: bool,
+        persona: "db.PersonaResolution | None" = None,
     ) -> list[dict[str, Any]]:
         """The operator-facing debug entries recorded on every step row this
         turn: which profile drove the declared blocks (uuid + name + a link
-        to its page) and the block switch states — the first questions when
-        troubleshooting a weird reply."""
+        to its page), which persona the room speaks with (plus the revision
+        that produced its text), and the block switch states — the first
+        questions when troubleshooting a weird reply."""
         entries: list[dict[str, Any]] = []
         if context.profile_uuid is not None and context.profile is not None:
             entries.append({
@@ -3566,6 +3590,16 @@ class AssistantAgent(ModelGroupAgent):
             })
         else:
             entries.append({"label": "profile", "text": "(none selected)"})
+        if persona is not None and persona.persona_uuid is not None:
+            entries.append({
+                "label": "persona",
+                "text": persona.name,
+                "uuid": str(persona.persona_uuid),
+                "href": f"/persona?id={persona.persona_uuid}",
+                "revision": str(persona.revision_uuid) if persona.revision_uuid else None,
+            })
+        else:
+            entries.append({"label": "persona", "text": "(none)"})
         entries.append({"label": "formatting_guide",
                         "text": "on" if formatting_enabled else "off"})
         entries.append({"label": "knowledge_calibration",
@@ -3682,6 +3716,8 @@ class AssistantAgent(ModelGroupAgent):
         self._calibration_block = calibration if include_calibration else ""
         self._profile_block = ""
         self._skill_block = ""
+        self._persona_block = ""
+        self._persona = None
         # Never leak Markdown from a previous real handle() (or a previous
         # eval case) when an agent instance is reused.
         self._reply_language_markdown = ""
@@ -3850,6 +3886,9 @@ class AssistantAgent(ModelGroupAgent):
         if self._identity_block:
             identity = ET.SubElement(root, "user_settings_json")
             identity.text = self._identity_block
+        if self._persona_block:
+            persona = ET.SubElement(root, "persona", {"authority": "voice"})
+            persona.text = self._persona_block
         if self._formatting_block:
             formatting = ET.SubElement(
                 root, "formatting_guide", {"authority": "instructions"}
