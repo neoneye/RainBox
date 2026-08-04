@@ -60,7 +60,9 @@ CHAT_RESPONDER_UUIDS = (
 PERSONA_CAPABLE_UUIDS = (ASSISTANT_UUID,)
 
 
-def _parse_uuid(value: str) -> UUID:
+def _parse_uuid(value: Any) -> UUID:
+    if not isinstance(value, str):
+        abort(400, "invalid uuid")
     try:
         return UUID(value)
     except (ValueError, TypeError):
@@ -837,7 +839,7 @@ def _persona_member_row(room_uuid: UUID, user_uuid: UUID) -> dict[str, Any]:
                                   if member is not None
                                   and member.persona_revision_uuid else None),
         "persona_revision_saved_at": pinned["created_at"] if pinned else None,
-        "persona_following": (member is None or member.persona_revision_uuid is None),
+        "persona_following": (member is not None and member.persona_revision_uuid is None),
     }
 
 

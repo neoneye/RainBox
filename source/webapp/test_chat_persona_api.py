@@ -110,9 +110,65 @@ def test_a_member_that_cannot_carry_a_persona_is_404(room, persona):
     resp = _put(app.test_client(), room.uuid, human.uuid,
                 {"persona_uuid": persona["uuid"]})
     assert resp.status_code == 404
+    assert "cannot carry a persona" in resp.get_data(as_text=True)
 
 
-def test_a_non_member_is_404(room, persona):
-    resp = _put(app.test_client(), room.uuid, uuid4(),
-                {"persona_uuid": persona["uuid"]})
-    assert resp.status_code == 404
+def test_a_non_member_is_404(ctx, persona):
+    """ASSISTANT_UUID is persona-capable, so it clears the capability check;
+    this room just never added it as a member, so it must hit the
+    not-in-this-room branch (a different 404 message than the capability
+    rejection above)."""
+    human = db.get_human_user()
+    r = db.create_chatroom(f"api-persona-nomember-{uuid4().hex[:8]}",
+                           human.uuid, [])
+    try:
+        resp = _put(app.test_client(), r.uuid, ASSISTANT_UUID,
+                    {"persona_uuid": persona["uuid"]})
+        assert resp.status_code == 404
+        assert "not in this room" in resp.get_data(as_text=True)
+    finally:
+        db.delete_chatroom(r.uuid)
+
+
+def test_cross_persona_pin_in_the_same_request_is_400(room, persona):
+    """persona_revision_uuid must belong to the persona this member will have
+    *after this call* — persona_uuid=A with a revision of persona B, both in
+    one request, must be rejected even though the member has no persona
+    linked yet."""
+    c = app.test_client()
+    other = db.persona_create(f"ApiOther-{uuid4().hex[:8]}", None)
+    db.persona_update_content(UUID(other["uuid"]), "other voice")
+    other_rev = db.persona_revisions(UUID(other["uuid"]))[0]["uuid"]
+    try:
+        resp = _put(c, room.uuid, ASSISTANT_UUID,
+                    {"persona_uuid": persona["uuid"],
+                     "persona_revision_uuid": other_rev})
+        assert resp.status_code == 400
+    finally:
+        db.persona_delete(UUID(other["uuid"]))
+
+
+def test_non_string_persona_uuid_int_is_400(room):
+    resp = _put(app.test_client(), room.uuid, ASSISTANT_UUID,
+                {"persona_uuid": 123})
+    assert resp.status_code == 400, resp.get_data(as_text=True)
+
+
+def test_non_string_persona_uuid_list_is_400(room):
+    resp = _put(app.test_client(), room.uuid, ASSISTANT_UUID,
+                {"persona_uuid": ["a"]})
+    assert resp.status_code == 400, resp.get_data(as_text=True)
+
+
+def test_non_string_persona_uuid_bool_is_400(room):
+    resp = _put(app.test_client(), room.uuid, ASSISTANT_UUID,
+                {"persona_uuid": True})
+    assert resp.status_code == 400, resp.get_data(as_text=True)
+
+
+def test_non_string_persona_revision_uuid_dict_is_400(room, persona):
+    c = app.test_client()
+    _put(c, room.uuid, ASSISTANT_UUID, {"persona_uuid": persona["uuid"]})
+    resp = _put(c, room.uuid, ASSISTANT_UUID,
+                {"persona_revision_uuid": {"a": 1}})
+    assert resp.status_code == 400, resp.get_data(as_text=True)
