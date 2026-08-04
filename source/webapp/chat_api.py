@@ -864,8 +864,11 @@ def chat_member_persona(room_uuid: str, user_uuid: str) -> Response:
     """Link, pin, or unlink one member's persona. Applies from that member's
     next reply — the turn resolves the binding fresh."""
     ruuid, uuuid = _parse_uuid(room_uuid), _parse_uuid(user_uuid)
-    if db.get_chatroom(ruuid) is None:
+    room = db.get_chatroom(ruuid)
+    if room is None:
         abort(404, "room not found")
+    if room.room_type == "direct":
+        abort(400, "persona applies to agents rooms only")
     if uuuid not in PERSONA_CAPABLE_UUIDS:
         abort(404, "that member cannot carry a persona")
     member = db.get_member_persona_row(ruuid, uuuid)

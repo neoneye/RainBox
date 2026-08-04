@@ -3572,7 +3572,7 @@ class AssistantAgent(ModelGroupAgent):
     def _build_turn_log(
         context: "user_profile.ProfileContext",
         formatting_enabled: bool, calibration_enabled: bool,
-        persona: "db.PersonaResolution | None" = None,
+        persona: "db.PersonaResolution | None",
     ) -> list[dict[str, Any]]:
         """The operator-facing debug entries recorded on every step row this
         turn: which profile drove the declared blocks (uuid + name + a link
@@ -4902,7 +4902,7 @@ class AssistantAgent(ModelGroupAgent):
         context = self._capture_profile_context()
         formatting_on, calibration_on = self._declared_block_switches()
         self._turn_log = self._build_turn_log(
-            context, formatting_on, calibration_on)
+            context, formatting_on, calibration_on, self._persona)
         self._identity_block, self._formatting_block, self._calibration_block = (
             self._build_declared_profile_blocks(
                 context.profile, formatting_enabled=formatting_on,

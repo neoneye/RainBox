@@ -113,6 +113,23 @@ def test_a_member_that_cannot_carry_a_persona_is_404(room, persona):
     assert "cannot carry a persona" in resp.get_data(as_text=True)
 
 
+def test_a_direct_room_is_400(ctx, persona):
+    """A direct room has no persona section in the UI, and this endpoint must
+    reject it too — even a hand-crafted request that got the assistant into a
+    direct room's membership (POST /chat/api/rooms/<uuid>/members has no
+    room-type guard of its own) cannot link a persona to it."""
+    human = db.get_human_user()
+    r = db.create_chatroom(f"api-persona-direct-{uuid4().hex[:8]}", human.uuid,
+                           [ASSISTANT_UUID], room_type="direct")
+    try:
+        resp = _put(app.test_client(), r.uuid, ASSISTANT_UUID,
+                    {"persona_uuid": persona["uuid"]})
+        assert resp.status_code == 400
+        assert "agents rooms only" in resp.get_data(as_text=True)
+    finally:
+        db.delete_chatroom(r.uuid)
+
+
 def test_a_non_member_is_404(ctx, persona):
     """ASSISTANT_UUID is persona-capable, so it clears the capability check;
     this room just never added it as a member, so it must hit the
