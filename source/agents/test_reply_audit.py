@@ -140,13 +140,25 @@ def test_the_auditor_treats_a_source_preamble_as_a_defect():
     """The auditor used to bless an opening that credited the memory system —
     it read as diligence, so the habit passed the one check that could have
     stopped it. It is now a named defect, fenced off from tone nitpicking so
-    the carve-out does not reopen the style complaints check 5 sits beside."""
+    the carve-out does not reopen the style complaints check 6 sits beside."""
     p = REPLY_AUDIT_SYSTEM_PROMPT
-    assert "5. Against how it addresses the user." in p
+    assert "6. Against how it addresses the user." in p
     assert "the reply withholds the answer to narrate its own plumbing" in " ".join(
         p.split())
-    assert "check 5 is not an\nopening to raise them" in p
+    assert "check 6 is not an\nopening to raise them" in p
     assert "Do not raise style preferences" in p
+
+
+def test_the_auditor_checks_the_reply_answers_the_requests_subject():
+    """A reply that described the ASSISTANT passed an audit of a request asking
+    about the USER: the auditor read a fluent answer to an adjacent question as
+    a complete one. Subject alignment is now its own named check, not something
+    left implicit inside "does it answer all of it"."""
+    p = " ".join(REPLY_AUDIT_SYSTEM_PROMPT.split())
+    assert "2. Against WHO OR WHAT the request is about." in p
+    assert "Name the subject the request asks about" in p
+    assert "the user's question about themselves answered about the assistant" in p
+    assert "Quote the sentence that shows the mismatched subject." in p
 
 
 # --- the reply capability -----------------------------------------------------

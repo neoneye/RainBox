@@ -1324,3 +1324,79 @@ def test_system_prompt_explains_truncate_and_uuid_fetch():
     p = ASSISTANT_SYSTEM_PROMPT.lower()
     assert "truncate" in p
     assert '"uuid"' in p or "uuid" in p
+
+
+def _perception_messages() -> list[dict[str, object]]:
+    """The shape that broke: a previous turn whose question is a near-twin of
+    the current one, sitting at the tail of the history where it is the last
+    question the model reads."""
+    return [
+        {"sender_type": "human", "text": "how do you perceive your own persona",
+         "timestamp": "2026-08-06 00:57"},
+        {"sender_type": "agent", "text": "It's not 'better'; it's just correct.",
+         "timestamp": "2026-08-06 00:59"},
+        {"sender_type": "human", "text": "how do you perceive me",
+         "timestamp": "2026-08-06 01:04"},
+    ]
+
+
+def test_decision_request_quotes_the_current_request():
+    """A run answered the PREVIOUS turn's question: the reply step read the
+    request at the top of the prompt, then a history whose newest message asked
+    something adjacent, and the closing instruction named the request only by
+    tag. The closing instruction now carries the request's own words, so the
+    last question before the decision is the one actually asked."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    prompt = agent._build_user_prompt(
+        messages=_perception_messages(), scratchpad=[], step_index=0)
+
+    decision = prompt.split("<decision_request")[1]
+    assert '"how do you perceive me"' in decision
+    assert "your own persona" not in decision
+    assert "never a message from conversation_history_xml" in " ".join(
+        decision.split())
+
+
+def test_acceptance_criteria_request_quotes_the_current_request():
+    """The criteria call drifted the same way in the same run, and its criteria
+    then steered every later step — so it gets the same anchor."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    prompt = agent._build_acceptance_criteria_prompt(_perception_messages())
+
+    ask = prompt.split("<criteria_request>")[1]
+    assert '"how do you perceive me"' in ask
+    assert "your own persona" not in ask
+
+
+def test_request_anchor_points_at_a_long_request_instead_of_quoting_it():
+    """A truncated quote would read as the whole request, so past the cap the
+    anchor points at the section and quotes only the opening."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    long_request = "summarize this: " + "word " * 400
+    prompt = agent._build_user_prompt(
+        messages=[{"sender_type": "human", "text": long_request}],
+        scratchpad=[], step_index=0)
+
+    decision = " ".join(prompt.split("<decision_request")[1].split())
+    assert "the whole current_user_request at the top of this prompt" in decision
+    assert "too long to repeat here" in decision
+    assert len(decision) < len(long_request)
+
+
+def test_request_anchor_collapses_newlines_so_the_quote_stays_one_line():
+    """The anchor is a quoted sentence; a multi-line request pasted verbatim
+    would break it into what looks like separate instructions."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    prompt = agent._build_user_prompt(
+        messages=[{"sender_type": "human", "text": "fix this\n\nand that"}],
+        scratchpad=[], step_index=0)
+
+    assert '"fix this and that"' in prompt
+
+
+def test_system_prompt_says_the_newest_history_message_is_an_ended_turn():
+    """Naming the trap: the closer the newest history message is to the current
+    request, the more likely the substitution."""
+    p = " ".join(ASSISTANT_SYSTEM_PROMPT.split())
+    assert "belongs to a turn that already ended, including the last one" in p
+    assert "answer the quoted request, not the one you have already answered" in p
