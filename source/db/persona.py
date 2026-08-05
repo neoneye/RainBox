@@ -409,6 +409,18 @@ def persona_revisions(persona_uuid: UUID) -> list[dict[str, Any]] | None:
     return [_revision_dict(r, current=(i == 0)) for i, r in enumerate(rows)]
 
 
+def persona_revision_get(persona_uuid: UUID,
+                         revision_uuid: UUID) -> dict[str, Any] | None:
+    """One revision of one persona, for validating a pin before it is stored.
+    None when the revision does not exist OR belongs to a different persona —
+    a member can never pin to another persona's history."""
+    rev = _revision_row(persona_uuid, revision_uuid)
+    if rev is None:
+        return None
+    rows = _revision_rows(persona_uuid)
+    return _revision_dict(rev, current=bool(rows) and rows[0].uuid == rev.uuid)
+
+
 def persona_revision_diff(persona_uuid: UUID,
                               revision_uuid: UUID) -> dict[str, Any]:
     """Unified diff (3 context lines) of a revision's text → the current text.

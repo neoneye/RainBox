@@ -238,8 +238,8 @@ def test_calibration_budget_is_the_formatting_remainder(room, calibrated_profile
 
 def test_steps_record_the_debug_log(room):
     """Every step row carries the operator-facing debug log: the active
-    profile (uuid + name + page link) and the block switch states — and none
-    of it enters the model prompt."""
+    profile (uuid + name + page link), the room's persona, and the block
+    switch states — and none of it enters the model prompt."""
     db.set_current_profile(_germany_uuid())
     captured = _run_capture(room)
     steps = (db.db.session.query(db.AssistantStep)
@@ -254,12 +254,14 @@ def test_steps_record_the_debug_log(room):
         assert by_label["profile"]["text"] == "Germany"
         assert by_label["profile"]["uuid"] == _germany_uuid()
         assert by_label["profile"]["href"] == f"/profile?id={_germany_uuid()}"
+        # No persona is linked in this room, so the entry is the placeholder.
+        assert by_label["persona"]["text"] == "(none)"
         assert by_label["formatting_guide"]["text"] == "on"
         assert by_label["knowledge_calibration"]["text"] == "on"
         entry_labels = list(by_label)
     # No acceptance_criteria entry: the log reports the switches a turn read,
     # and the criteria no longer have one — they run on every turn.
-    assert entry_labels == ["profile", "formatting_guide",
+    assert entry_labels == ["profile", "persona", "formatting_guide",
                             "knowledge_calibration"]
     # Debug context never leaks into the prompt.
     assert "formatting_guide\": " not in captured["user_prompt"]

@@ -377,6 +377,28 @@ CHAT_TEMPLATE: str = """
     </div>
   </div>
 
+  <div class="ui-modal" id="chat-persona-modal" hidden>
+    <h3>Choose persona</h3>
+    <div class="prompt-pick-tree" id="chat-persona-tree"></div>
+    <p class="prompt-pick-hint">Personas are managed on the
+      <a href="/persona" target="_blank">Persona</a> page. Click one to link it
+      to this room; the assistant speaks with its current text from the next
+      reply on.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="chat-persona-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <div class="ui-modal" id="chat-persona-version-modal" hidden>
+    <h3>Pin to a version</h3>
+    <div class="prompt-pick-tree" id="chat-persona-version-list"></div>
+    <p class="prompt-pick-hint">Pinning stops this room following later edits
+      to the persona. Release it with &ldquo;Follow newest&rdquo;.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="chat-persona-version-cancel">Cancel</button>
+    </div>
+  </div>
+
   <div class="room-sidebar" id="room-sidebar"></div>
 </div>
 <div id="chat-toast" class="chat-toast"></div>
@@ -2057,14 +2079,13 @@ document.getElementById('chat-rename-input').addEventListener('keydown', (e) => 
 });
 
 // Members lists agents, so it's meaningless in a direct LLM room; Settings
-// (model picker + system prompt) only exists for direct rooms. Rather than
-// forgetting the remembered mode in a room where it doesn't apply, map it to
-// its counterpart (Members↔Settings); Stats/Export are shared and carry over
-// as-is. So navigating between room types never hides the sidebar.
+// Members lists agents, so it's meaningless in a direct LLM room: map it to
+// Settings there. Settings itself now exists for both room types — the model
+// picker + system prompt for a direct room, the persona picker for an agents
+// room — so it is never mapped away. Stats/Export are shared.
 function effectiveSidebarMode(){
   const direct = currentRoomIsDirect();
   if (direct && sidebarMode === 'members') return 'settings';
-  if (!direct && sidebarMode === 'settings') return 'members';
   return sidebarMode;
 }
 // What the right pane is actually showing: the mapped mode, or 'hidden' when
@@ -2080,12 +2101,12 @@ function persistSidebarPrefs(){
 }
 // Keep the select honest for the open room: hide the option that doesn't
 // apply to its type, and point the value at what is actually displayed.
+// Members is meaningless in a direct room (no agents to list) so it's hidden
+// there; Settings applies to both room types now, so it's always shown.
 function syncSidebarModeOptions(){
   const direct = currentRoomIsDirect();
   const membersOpt = sidebarModeSel.querySelector('option[value="members"]');
-  const settingsOpt = sidebarModeSel.querySelector('option[value="settings"]');
   membersOpt.hidden = membersOpt.disabled = direct;
-  settingsOpt.hidden = settingsOpt.disabled = !direct;
   sidebarModeSel.value = activeSidebarMode();
 }
 
@@ -2100,13 +2121,153 @@ async function renderSidebar(){
   splitEl.classList.add('sidebar-open');
   if (mode === 'members') await renderMembers();
   else if (mode === 'stats') renderStats();
-  else if (mode === 'settings') await renderDirectSettings();
+  else if (mode === 'settings') await renderSettingsPanel();
   else if (mode === 'export') renderExport();
+}
+
+// Settings has two shapes: a direct room configures the model it talks to and
+// its system prompt; an agents room picks which persona the assistant speaks
+// with. Neither applies to the other room type.
+async function renderSettingsPanel(){
+  if (currentRoomIsDirect()) return renderDirectSettings();
+  return renderAgentsSettings();
+}
+
+// Persona picker for an agents room: one section per persona-capable member.
+// Today that is the assistant; a room with a math assistant and a physics
+// assistant renders one section each, from the same response. Fetched on open
+// (user activity, not polling). Applied from that member's next reply.
+async function renderAgentsSettings(){
+  const room = currentRoom;
+  sidebarEl.innerHTML = '';
+  const h = document.createElement('h3');
+  h.className = 'sidebar-title';
+  h.textContent = 'Settings';
+  sidebarEl.appendChild(h);
+  let data;
+  try {
+    data = await getJSON('/chat/api/rooms/' + room + '/personas');
+  } catch (e) {
+    const err = document.createElement('p');
+    err.className = 'ds-note';
+    err.textContent = 'Could not load personas.';
+    sidebarEl.appendChild(err);
+    return;
+  }
+  if (room !== currentRoom || activeSidebarMode() !== 'settings') return;  // changed while loading
+  const members = data.members || [];
+  if (!members.length){
+    const note = document.createElement('p');
+    note.className = 'ds-note';
+    note.textContent = 'No assistant in this room, so there is no persona to set.';
+    sidebarEl.appendChild(note);
+    return;
+  }
+  members.forEach(m => renderPersonaMemberSection(m, members.length > 1));
+}
+
+// One member's persona controls. `showName` labels the section with the
+// member's name — needed only when the room has more than one.
+function renderPersonaMemberSection(m, showName){
+  const label = document.createElement('span');
+  label.className = 'ds-label';
+  label.textContent = showName ? m.name + ' \\u2014 persona' : 'Persona';
+  sidebarEl.appendChild(label);
+
+  const line = document.createElement('div');
+  line.className = 'ds-prompt-mode';
+  if (!m.persona_uuid){
+    const none = document.createElement('span');
+    none.className = 'src';
+    none.textContent = '(none \\u2014 this assistant has no persona)';
+    line.appendChild(none);
+  } else {
+    const a = document.createElement('a');
+    a.href = '/persona?id=' + encodeURIComponent(m.persona_uuid);
+    a.target = '_blank';
+    if (m.persona_exists === false){
+      a.textContent = '(deleted)';
+      a.className = 'gone';
+      a.title = 'The linked persona was deleted on the Persona page.';
+    } else {
+      a.textContent = m.persona_name;
+    }
+    line.appendChild(a);
+  }
+  sidebarEl.appendChild(line);
+
+  const actions = document.createElement('div');
+  actions.className = 'ds-prompt-mode';
+  const pick = document.createElement('button');
+  pick.type = 'button';
+  pick.textContent = m.persona_uuid ? 'Change persona\\u2026' : 'Choose persona\\u2026';
+  pick.addEventListener('click', () => openPersonaPicker(m.user_uuid));
+  actions.appendChild(pick);
+  if (m.persona_uuid){
+    const unlink = document.createElement('button');
+    unlink.type = 'button';
+    unlink.textContent = 'Unlink';
+    unlink.addEventListener('click', () => setMemberPersona(m.user_uuid, null));
+    actions.appendChild(unlink);
+  }
+  sidebarEl.appendChild(actions);
+
+  if (m.persona_uuid && m.persona_exists !== false){
+    const vlabel = document.createElement('span');
+    vlabel.className = 'ds-label';
+    vlabel.textContent = 'Version';
+    sidebarEl.appendChild(vlabel);
+    const vline = document.createElement('div');
+    vline.className = 'ds-prompt-mode';
+    const state = document.createElement('span');
+    state.className = 'src';
+    state.textContent = m.persona_following
+      ? 'following newest'
+      : 'pinned to ' + (m.persona_revision_saved_at || '').slice(0, 16).replace('T', ' ');
+    vline.appendChild(state);
+    const pin = document.createElement('button');
+    pin.type = 'button';
+    pin.textContent = 'Pin to a version\\u2026';
+    pin.addEventListener('click',
+      () => openPersonaVersionPicker(m.user_uuid, m.persona_uuid));
+    vline.appendChild(pin);
+    if (!m.persona_following){
+      const follow = document.createElement('button');
+      follow.type = 'button';
+      follow.textContent = 'Follow newest';
+      follow.addEventListener('click',
+        () => pinMemberPersonaRevision(m.user_uuid, null));
+      vline.appendChild(follow);
+    }
+    sidebarEl.appendChild(vline);
+  }
+}
+
+// Writes. Both re-render the panel from the server, so what the sidebar shows
+// is always what the member actually holds.
+async function setMemberPersona(userUuid, personaUuid){
+  try {
+    await putJSON('/chat/api/rooms/' + currentRoom + '/members/' + userUuid + '/persona',
+      {persona_uuid: personaUuid});
+  } catch (e) {
+    alert('Persona update failed: ' + e.message);
+  }
+  await renderAgentsSettings();
+}
+
+async function pinMemberPersonaRevision(userUuid, revisionUuid){
+  try {
+    await putJSON('/chat/api/rooms/' + currentRoom + '/members/' + userUuid + '/persona',
+      {persona_revision_uuid: revisionUuid});
+  } catch (e) {
+    alert('Persona version update failed: ' + e.message);
+  }
+  await renderAgentsSettings();
 }
 
 // Settings panel for a direct room: which model it talks to + its system
 // prompt. Both apply from the next turn on. Fetched on open (user activity,
-// not polling). For agents rooms it just explains itself.
+// not polling).
 async function renderDirectSettings(){
   const room = currentRoom;
   sidebarEl.innerHTML = '';
@@ -2114,13 +2275,6 @@ async function renderDirectSettings(){
   h.className = 'sidebar-title';
   h.textContent = 'Settings';
   sidebarEl.appendChild(h);
-  if (!currentRoomIsDirect()){
-    const note = document.createElement('p');
-    note.className = 'ds-note';
-    note.textContent = 'Settings are only available in direct LLM chats.';
-    sidebarEl.appendChild(note);
-    return;
-  }
   let settings, models;
   try {
     [settings, models] = await Promise.all([
@@ -2721,6 +2875,97 @@ function renderPromptPicker(folders, prompts){
 }
 document.getElementById('chat-prompt-cancel').addEventListener('click', closePromptPicker);
 
+// ---- persona picker (Settings sidebar, agents rooms): a read-only render of
+// the /persona tree, flattened to "folder / name" rows rather than the prompt
+// picker's expandable tree — there's nothing to browse here, just one pick.
+// Clicking a row links that persona to the member the picker was opened for,
+// starting the member in follow-newest. The member is held in a module-level
+// variable, the same way promptPickerOnPick holds the prompt picker's
+// callback. Mirrors openPromptPicker/closePromptPicker/renderPromptPicker.
+let personaPickerMember = null;
+async function openPersonaPicker(userUuid){
+  personaPickerMember = userUuid;
+  const treeEl = document.getElementById('chat-persona-tree');
+  treeEl.innerHTML = '<div class="prompt-pick-empty">loading\\u2026</div>';
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('chat-persona-modal').hidden = false;
+  let data = null;
+  try { data = await getJSON('/persona/api/tree'); } catch (_) {}
+  if (document.getElementById('chat-persona-modal').hidden) return;  // closed while loading
+  if (!data){
+    treeEl.innerHTML = '<div class="prompt-pick-empty">Could not load the persona tree.</div>';
+    return;
+  }
+  renderPersonaPicker(data.folders || [], data.personas || []);
+}
+function closePersonaPicker(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('chat-persona-modal').hidden = true;
+  personaPickerMember = null;
+}
+function renderPersonaPicker(folders, personas){
+  const treeEl = document.getElementById('chat-persona-tree');
+  if (!folders.length && !personas.length){
+    treeEl.innerHTML = '<div class="prompt-pick-empty">No personas yet \\u2014 ' +
+      'create one on the <a href="/persona" target="_blank">Persona</a> page.</div>';
+    return;
+  }
+  const folderName = (id) => {
+    const f = folders.find(x => x.id === id);
+    return f ? f.name + ' / ' : '';
+  };
+  const member = personaPickerMember;
+  treeEl.innerHTML = '';
+  personas.forEach(p => {
+    const el = document.createElement('div');
+    el.className = 'prompt-pick-leaf';
+    el.textContent = folderName(p.folderId) + p.name;
+    el.addEventListener('click', async () => {
+      closePersonaPicker();
+      await setMemberPersona(member, p.uuid);
+    });
+    treeEl.appendChild(el);
+  });
+}
+document.getElementById('chat-persona-cancel').addEventListener('click', closePersonaPicker);
+
+// The linked persona's revisions, newest first; clicking one pins the room.
+// Mirrors the persona picker above.
+let personaVersionPickerMember = null;
+async function openPersonaVersionPicker(userUuid, personaUuid){
+  personaVersionPickerMember = userUuid;
+  const listEl = document.getElementById('chat-persona-version-list');
+  listEl.innerHTML = '<div class="prompt-pick-empty">loading\\u2026</div>';
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('chat-persona-version-modal').hidden = false;
+  let data = null;
+  try { data = await getJSON('/persona/api/personas/' + personaUuid + '/revisions'); } catch (_) {}
+  if (document.getElementById('chat-persona-version-modal').hidden) return;  // closed while loading
+  if (!data){
+    listEl.innerHTML = '<div class="prompt-pick-empty">Could not load the versions.</div>';
+    return;
+  }
+  const member = personaVersionPickerMember;
+  listEl.innerHTML = '';
+  (data.revisions || []).forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'prompt-pick-leaf';
+    const when = (r.created_at || '').slice(0, 16).replace('T', ' ');
+    el.textContent = when + (r.current ? ' (newest)' : '') + ' \\u2014 ' + r.preview;
+    el.addEventListener('click', async () => {
+      closePersonaVersionPicker();
+      await pinMemberPersonaRevision(member, r.uuid);
+    });
+    listEl.appendChild(el);
+  });
+}
+function closePersonaVersionPicker(){
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('chat-persona-version-modal').hidden = true;
+  personaVersionPickerMember = null;
+}
+document.getElementById('chat-persona-version-cancel').addEventListener('click', closePersonaVersionPicker);
+
 // Close whichever chat modal is open; each close fn clears its own state.
 function closeOpenModal(){
   if (!document.getElementById('chat-folder-modal').hidden) closeFolderModal();
@@ -2728,6 +2973,8 @@ function closeOpenModal(){
   if (!document.getElementById('chat-room-modal').hidden) closeRoomModal();
   if (!document.getElementById('chat-prompt-modal').hidden) closePromptPicker();
   if (!document.getElementById('chat-rename-modal').hidden) closeChatRenameModal();
+  if (!document.getElementById('chat-persona-modal').hidden) closePersonaPicker();
+  if (!document.getElementById('chat-persona-version-modal').hidden) closePersonaVersionPicker();
 }
 // Has the user typed/checked anything in the currently open modal? If so we
 // refuse the accidental dismiss paths (outside-click / Esc) so no input is lost.

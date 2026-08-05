@@ -8,6 +8,7 @@ browser as a Server-Sent Event.
 """
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 import psycopg
@@ -51,8 +52,17 @@ CHAT_RESPONDER_UUIDS = (
     ASSISTANT_UUID,
 )
 
+# Which room members can carry a persona. Personas answer "who is the
+# assistant"; the other responders (router, query, tool_demo, …) carry their
+# own prompts and are not personas. A second assistant identity — a room with
+# a math assistant and a physics assistant — is one more entry here, not a
+# schema change.
+PERSONA_CAPABLE_UUIDS = (ASSISTANT_UUID,)
 
-def _parse_uuid(value: str) -> UUID:
+
+def _parse_uuid(value: Any) -> UUID:
+    if not isinstance(value, str):
+        abort(400, "invalid uuid")
     try:
         return UUID(value)
     except (ValueError, TypeError):
@@ -804,3 +814,95 @@ def chat_stream() -> Response:
     resp.headers["Cache-Control"] = "no-cache"
     resp.headers["X-Accel-Buffering"] = "no"  # disable proxy buffering if any
     return resp
+
+
+def _persona_member_row(room_uuid: UUID, user_uuid: UUID) -> dict[str, Any]:
+    """One persona-capable member as the sidebar needs it: who they are, which
+    persona they speak with, whether it still exists, and whether they follow
+    the newest revision or are pinned to one."""
+    member = db.get_member_persona_row(room_uuid, user_uuid)
+    persona = (db.persona_get(member.persona_uuid)
+               if member is not None and member.persona_uuid else None)
+    pinned = (db.persona_revision_get(member.persona_uuid, member.persona_revision_uuid)
+              if member is not None and member.persona_uuid
+              and member.persona_revision_uuid else None)
+    user = db.get_chat_user(user_uuid)
+    return {
+        "user_uuid": str(user_uuid),
+        "name": user.name if user is not None else str(user_uuid),
+        "persona_uuid": (str(member.persona_uuid)
+                         if member is not None and member.persona_uuid else None),
+        "persona_name": persona["name"] if persona else None,
+        "persona_exists": ((persona is not None)
+                           if member is not None and member.persona_uuid else None),
+        "persona_revision_uuid": (str(member.persona_revision_uuid)
+                                  if member is not None
+                                  and member.persona_revision_uuid else None),
+        "persona_revision_saved_at": pinned["created_at"] if pinned else None,
+        "persona_following": (member is not None and member.persona_revision_uuid is None),
+    }
+
+
+@app.route("/chat/api/rooms/<room_uuid>/personas")
+def chat_room_personas(room_uuid: str) -> Response:
+    """Every persona-capable member of the room, so the sidebar renders in one
+    request. A room with several assistants returns one row each."""
+    ruuid = _parse_uuid(room_uuid)
+    if db.get_chatroom(ruuid) is None:
+        abort(404, "room not found")
+    rows = [
+        _persona_member_row(ruuid, uuid)
+        for uuid in PERSONA_CAPABLE_UUIDS
+        if db.get_member_persona_row(ruuid, uuid) is not None
+    ]
+    return jsonify({"members": rows})
+
+
+@app.route("/chat/api/rooms/<room_uuid>/members/<user_uuid>/persona",
+           methods=["PUT"])
+def chat_member_persona(room_uuid: str, user_uuid: str) -> Response:
+    """Link, pin, or unlink one member's persona. Applies from that member's
+    next reply — the turn resolves the binding fresh."""
+    ruuid, uuuid = _parse_uuid(room_uuid), _parse_uuid(user_uuid)
+    room = db.get_chatroom(ruuid)
+    if room is None:
+        abort(404, "room not found")
+    if room.room_type == "direct":
+        abort(400, "persona applies to agents rooms only")
+    if uuuid not in PERSONA_CAPABLE_UUIDS:
+        abort(404, "that member cannot carry a persona")
+    member = db.get_member_persona_row(ruuid, uuuid)
+    if member is None:
+        abort(404, "that member is not in this room")
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        abort(400, "request body must be a JSON object")
+    kwargs: dict[str, Any] = {}
+    if "persona_uuid" in data:
+        raw = data.get("persona_uuid")
+        if raw is None:
+            kwargs["persona_uuid"] = None
+        else:
+            pu = _parse_uuid(raw)
+            if db.persona_get(pu) is None:
+                abort(400, "persona_uuid names no persona")
+            kwargs["persona_uuid"] = pu
+    if "persona_revision_uuid" in data:
+        raw = data.get("persona_revision_uuid")
+        if raw is None:
+            kwargs["persona_revision_uuid"] = None
+        else:
+            # The pin must belong to the persona this member will have after
+            # this call — the one being linked now, or the current one.
+            owner = kwargs.get("persona_uuid", member.persona_uuid)
+            if owner is None:
+                abort(400, "cannot pin a revision without a linked persona")
+            ru = _parse_uuid(raw)
+            if db.persona_revision_get(owner, ru) is None:
+                abort(400, "persona_revision_uuid names no revision of that persona")
+            kwargs["persona_revision_uuid"] = ru
+    try:
+        db.set_member_persona(ruuid, uuuid, **kwargs)
+    except LookupError:
+        abort(404, "that member is not in this room")
+    return jsonify({"member": _persona_member_row(ruuid, uuuid)})

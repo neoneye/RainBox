@@ -107,6 +107,16 @@ Folder tree for organizing chat rooms in the left panel.
 
 Room membership.
 
+Key fields:
+
+- `room_uuid`, `user_uuid`
+- `persona_uuid`: which `/persona` this participant speaks with in this room;
+  null = none. Bound per member, not per room, so one room can hold more than
+  one assistant, each with its own voice
+- `persona_revision_uuid`: null = follow the persona's newest revision
+  (default); set = pinned to that revision, so further edits on `/persona`
+  stop reaching this member until the pin is released
+
 ### `chat_message`
 
 Room messages. The autoincrement `id` doubles as the ordering / incremental-fetch
