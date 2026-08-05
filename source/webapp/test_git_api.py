@@ -36,16 +36,20 @@ def test_tree_put_requires_version():
 
 def test_check_path_on_real_repo(tmp_path):
     _init_repo(tmp_path)
-    res = app.test_client().post("/git/api/check-path",
-                                 json={"path": str(tmp_path)}).get_json()
+    a = db.make_app()
+    db.init_db(a)
+    with a.app_context():
+        res = db.git_check_path(str(tmp_path))
     assert res["ok"] is True
     assert res["branch"]           # some branch name (main/master)
     assert res["path"]             # absolute resolved path
 
 
 def test_check_path_on_nonrepo(tmp_path):
-    res = app.test_client().post("/git/api/check-path",
-                                 json={"path": str(tmp_path)}).get_json()
+    a = db.make_app()
+    db.init_db(a)
+    with a.app_context():
+        res = db.git_check_path(str(tmp_path))
     assert res["ok"] is False
     assert "not a git repository" in res["error"]
 
@@ -74,3 +78,85 @@ def test_repo_detail_lists_root_including_dotgit(tmp_path):
 def test_repo_detail_unknown_uuid_404():
     resp = app.test_client().get(f"/git/api/repos/{uuid4()}/detail")
     assert resp.status_code == 404
+
+
+def test_tree_put_refuses_to_omit_an_existing_row(tmp_path):
+    """The whole point of the split shape: a payload that drops a row is a
+    malformed request, not a deletion (docs/ui-tree-persistence.md)."""
+    _init_repo(tmp_path)
+    c = app.test_client()
+    made = c.post("/git/api/repos",
+                  json={"name": "R", "path": str(tmp_path)}).get_json()
+    uuid = made["repo"]["uuid"]
+    try:
+        tree = c.get("/git/api/tree").get_json()
+        resp = c.put("/git/api/tree", json={
+            "folders": tree["folders"],
+            "repos": [r for r in tree["repos"] if r["uuid"] != uuid],
+            "version": tree["version"]})
+        assert resp.status_code == 400
+        assert "omitted" in resp.get_json()["error"]
+        # …and nothing was mutated.
+        assert any(r["uuid"] == uuid for r in c.get("/git/api/tree").get_json()["repos"])
+    finally:
+        c.delete(f"/git/api/repos/{uuid}")
+
+
+def test_tree_put_refuses_an_unknown_row():
+    c = app.test_client()
+    tree = c.get("/git/api/tree").get_json()
+    resp = c.put("/git/api/tree", json={
+        "folders": tree["folders"],
+        "repos": tree["repos"] + [{"uuid": str(uuid4()), "name": "ghost",
+                                   "folderId": None}],
+        "version": tree["version"]})
+    assert resp.status_code == 400
+    assert "unknown" in resp.get_json()["error"]
+
+
+def test_tree_put_stale_version_409():
+    c = app.test_client()
+    tree = c.get("/git/api/tree").get_json()
+    resp = c.put("/git/api/tree", json={"folders": tree["folders"],
+                                        "repos": tree["repos"],
+                                        "version": "stale-token-xyz"})
+    assert resp.status_code == 409
+    assert resp.get_json()["version"] == tree["version"]
+
+
+def test_create_repo_rejects_a_path_that_is_not_a_repo(tmp_path):
+    resp = app.test_client().post("/git/api/repos",
+                                  json={"name": "R", "path": str(tmp_path)})
+    assert resp.status_code == 400
+    assert "not a git repository" in resp.get_json()["error"]
+
+
+def test_create_and_delete_return_a_token_the_next_put_accepts(tmp_path):
+    """Every mutating endpoint hands back the fresh version, or the client's
+    next drag 409s for a reason the operator can't see."""
+    _init_repo(tmp_path)
+    c = app.test_client()
+    folder = c.post("/git/api/folders", json={"name": "T-folder"}).get_json()
+    repo = c.post("/git/api/repos",
+                  json={"name": "R", "path": str(tmp_path),
+                        "folderId": folder["folder"]["id"]}).get_json()
+    assert repo["version"] and repo["version"] != folder["version"]
+    try:
+        tree = c.get("/git/api/tree").get_json()
+        assert tree["version"] == repo["version"]
+        # The create's own token is enough to save with — no re-hydrate needed.
+        assert c.put("/git/api/tree", json={
+            "folders": tree["folders"], "repos": tree["repos"],
+            "version": repo["version"]}).status_code == 200
+    finally:
+        out = c.delete(f"/git/api/folders/{folder['folder']['id']}").get_json()
+        assert out["ok"] and out["version"]
+    # The folder delete cascaded the repo inside it.
+    assert not any(r["uuid"] == repo["repo"]["uuid"]
+                   for r in c.get("/git/api/tree").get_json()["repos"])
+
+
+def test_delete_unknown_uuid_404():
+    c = app.test_client()
+    assert c.delete(f"/git/api/repos/{uuid4()}").status_code == 404
+    assert c.delete(f"/git/api/folders/{uuid4()}").status_code == 404

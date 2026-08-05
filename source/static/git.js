@@ -1,7 +1,8 @@
 // /git page logic (vanilla JS, no framework). The HTML shell + CSS live in
 // webapp/git_views.py; this file is served at /static/git.js with an mtime
-// cache-buster. State hydrates from GET /git/api/tree and saves via debounced
-// whole-tree PUTs (version-guarded). Mirrors static/cron.js.
+// cache-buster. State hydrates from GET /git/api/tree and structural edits
+// save via debounced PUTs; creation and deletion are their own immediate
+// requests (docs/ui-tree-persistence.md).
 
 // ---- helpers ----
 function gitEscapeHtml(s){
@@ -25,7 +26,21 @@ const GIT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0
 function gitFolderById(id){ return gitFolders.find(f => f.id === id) || null; }
 function gitRepoByUuid(uuid){ return gitRepos.find(r => r.uuid === uuid) || null; }
 function gitChildFolders(parentId){ return gitFolders.filter(f => (f.parentId || null) === (parentId || null)); }
-function gitReposInFolder(id){ return gitRepos.filter(r => (r.folderId || null) === (id || null)); }
+function gitReposInFolder(id){
+  const target = id || null;
+  if (target === null){
+    // Root level also surfaces a repo whose folderId names a folder that isn't
+    // in gitFolders (e.g. the folder was deleted via the admin, orphaning the
+    // row). The server rejects it in every tree save, so if it stayed invisible
+    // here the operator could never reach it to move or delete it and every
+    // structural edit would 400 forever.
+    return gitRepos.filter(r => {
+      const fid = r.folderId || null;
+      return fid === null || !gitFolderById(fid);
+    });
+  }
+  return gitRepos.filter(r => (r.folderId || null) === target);
+}
 function gitIsExpanded(id){ return gitExpanded[id] !== false; }
 // Optimistically stamp a node as just-modified; the server sets the
 // authoritative updated_at on save and a reload reconciles.
@@ -423,16 +438,26 @@ function gitCloseFolderModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('git-folder-modal').hidden = true;
 }
-function gitAddFolderConfirm(){
+async function gitAddFolderConfirm(){
   const name = document.getElementById('git-folder-input').value.trim();
   if (!name) return;
   const parentId = gitAddFolderAsSub ? gitSelectedFolder : null;
-  const id = crypto.randomUUID();
-  gitFolders.push({id: id, name: name, description: '', parentId: parentId});
-  if (parentId) gitExpanded[parentId] = true;
-  gitCloseFolderModal();
-  gitSelectFolder(id);
-  gitSave();
+  try {
+    await gitFlushPendingSave();
+    const r = await fetch('/git/api/folders', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, parentId: parentId}),
+    });
+    const data = await r.json();
+    if (!r.ok){ gitToast(data.error || 'Could not create folder.'); return; }
+    gitFolders.push(data.folder);
+    gitTreeVersion = data.version;
+    gitCloseFolderModal();
+    if (parentId) gitExpanded[parentId] = true;
+    gitSelectFolder(data.folder.id);
+  } catch (e) {
+    gitToast('Could not create folder.');
+  }
 }
 // The Name field auto-fills from the Path's last component until the user edits
 // Name themselves; this flag stops the auto-fill once they've typed their own.
@@ -451,30 +476,30 @@ function gitCloseRepoModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('git-repo-modal').hidden = true;
 }
-// Validate the path is a real git repo (server-side) before creating the node.
-// The repo is added into the currently-selected folder (null = root).
+// The create endpoint re-validates the path (it is the one that stores it), so
+// a bad path comes back as an inline error instead of a created node. The repo
+// lands in the currently-selected folder (null = root).
 async function gitAddRepoConfirm(){
   const name = document.getElementById('git-repo-name').value.trim();
   const path = document.getElementById('git-repo-path').value.trim();
   const err = document.getElementById('git-repo-err');
   err.textContent = '';
   if (!path){ err.textContent = 'Path is required.'; return; }
-  let res = null;
   try {
-    const r = await fetch('/git/api/check-path', {
+    await gitFlushPendingSave();
+    const r = await fetch('/git/api/repos', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({path: path}),
+      body: JSON.stringify({name: name, path: path, folderId: gitSelectedFolder}),
     });
-    res = await r.json();
-  } catch (e) { err.textContent = 'Could not reach the server.'; return; }
-  if (!res || !res.ok){ err.textContent = (res && res.error) || 'Not a git repository.'; return; }
-  const uuid = crypto.randomUUID();
-  const fallback = res.path.split('/').filter(Boolean).pop() || 'repo';
-  gitRepos.push({uuid: uuid, name: name || fallback, folderId: gitSelectedFolder,
-                 path: res.path, description: ''});
-  gitCloseRepoModal();
-  gitSelectRepo(uuid);
-  gitSave();
+    const data = await r.json();
+    if (!r.ok){ err.textContent = data.error || 'Not a git repository.'; return; }
+    gitRepos.push(data.repo);
+    gitTreeVersion = data.version;
+    gitCloseRepoModal();
+    gitSelectRepo(data.repo.uuid);
+  } catch (e) {
+    err.textContent = 'Could not reach the server.';
+  }
 }
 
 // ---- drag & drop (one node at a time) ----
@@ -695,9 +720,8 @@ function gitInitTreeDnD(){
 }
 
 // ---- delete (removes nodes from RainBox's DB only — never touches the repo on
-// disk). Uses the same whole-tree save + declared-deletes tripwire as /cron:
-// removed rows are absent from the next PUT, and gitPendingDeletes tells the
-// server how many deletions to expect. ----
+// disk). The tree PUT can only update existing rows, so removal always goes
+// through the dedicated DELETE endpoints below, never through the tree save. ----
 let gitDeleteOnConfirm = null;
 let gitDeleteRequireName = null;
 function gitOpenDeleteModal(opts){
@@ -764,36 +788,54 @@ function gitConfirmDeleteFolder(id){
     onConfirm: () => gitDeleteFolderById(f.id),
   });
 }
-function gitDeleteRepo(uuid){
-  const before = gitRepos.length;
-  gitRepos = gitRepos.filter(r => r.uuid !== uuid);
-  gitPendingDeletes += before - gitRepos.length;  // declare to the save's tripwire
-  if (gitSelectedRepo === uuid) gitSelectedRepo = null;
-  gitRenderTree();
-  gitRender();
-  gitSave();
-}
-function gitDeleteFolderById(id){
-  const f = gitFolderById(id);
-  if (!f) return;
-  // Cascade: this folder + every descendant folder + every repo inside any of them.
-  const folderIds = new Set([f.id]);
-  let grew = true;
-  while (grew){
-    grew = false;
-    gitFolders.forEach(c => {
-      if (folderIds.has(c.parentId) && !folderIds.has(c.id)){ folderIds.add(c.id); grew = true; }
-    });
+async function gitDeleteRepo(uuid){
+  try {
+    await gitFlushPendingSave();
+    const r = await fetch('/git/api/repos/' + uuid, {method: 'DELETE'});
+    const data = await r.json();
+    if (!r.ok){ gitToast(data.error || 'Could not delete.'); return; }
+    gitRepos = gitRepos.filter(x => x.uuid !== uuid);
+    gitTreeVersion = data.version;
+    if (gitSelectedRepo === uuid) gitSelectedRepo = null;
+    gitRenderTree();
+    gitRender();
+    gitToast('Deleted');
+  } catch (e) {
+    gitToast('Could not delete.');
   }
-  const beforeF = gitFolders.length, beforeR = gitRepos.length;
-  gitFolders = gitFolders.filter(x => !folderIds.has(x.id));
-  gitRepos = gitRepos.filter(r => !folderIds.has(r.folderId));
-  gitPendingDeletes += (beforeF - gitFolders.length) + (beforeR - gitRepos.length);
-  if (gitSelectedRepo && !gitRepoByUuid(gitSelectedRepo)) gitSelectedRepo = null;
-  if (folderIds.has(gitSelectedFolder)) gitSelectedFolder = f.parentId || null;
-  gitRenderTree();
-  gitRender();
-  gitSave();
+}
+async function gitDeleteFolderById(id){
+  const doomedFolder = gitFolderById(id);  // captured before removal, for the parent fallback below
+  try {
+    await gitFlushPendingSave();
+    const r = await fetch('/git/api/folders/' + id, {method: 'DELETE'});
+    const data = await r.json();
+    if (!r.ok){ gitToast(data.error || 'Could not delete.'); return; }
+    // The server cascaded the subtree; mirror that locally instead of re-fetching.
+    const folderIds = new Set([id]);
+    let grew = true;
+    while (grew){
+      grew = false;
+      gitFolders.forEach(c => {
+        if (c.parentId && folderIds.has(c.parentId) && !folderIds.has(c.id)){
+          folderIds.add(c.id); grew = true;
+        }
+      });
+    }
+    gitFolders = gitFolders.filter(x => !folderIds.has(x.id));
+    gitRepos = gitRepos.filter(x => !folderIds.has(x.folderId));
+    gitTreeVersion = data.version;
+    if (gitSelectedRepo && !gitRepoByUuid(gitSelectedRepo)) gitSelectedRepo = null;
+    // Land on the deleted folder's parent, not the root, so the operator stays in context.
+    if (folderIds.has(gitSelectedFolder)){
+      gitSelectedFolder = (doomedFolder && doomedFolder.parentId) || null;
+    }
+    gitRenderTree();
+    gitRender();
+    gitToast('Deleted');
+  } catch (e) {
+    gitToast('Could not delete.');
+  }
 }
 document.getElementById('git-delete-input').addEventListener('input', gitDeleteUpdateState);
 document.getElementById('git-delete-input').addEventListener('keydown', e => {
@@ -832,45 +874,104 @@ function gitToast(text){
 }
 let gitSaveTimer = null;
 let gitTreeVersion = null;     // token from hydrate; PUTs echo it (stale → 409)
-let gitPendingDeletes = 0;     // deletions since the last save (declared to the server)
 let gitSaveInFlight = false;
 let gitSaveQueued = false;
+let gitSaveChain = null;       // promise for the active PUT (+ any queued follow-up), or null when idle
 function gitSave(){
   clearTimeout(gitSaveTimer);
   gitSaveTimer = setTimeout(gitSavePush, 250);  // coalesce bursts into one PUT
 }
-async function gitSavePush(){
-  if (gitSaveInFlight){ gitSaveQueued = true; return; }  // serialize PUTs
-  gitSaveInFlight = true;
-  try {
-    const r = await fetch('/git/api/tree', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({folders: gitFolders, repos: gitRepos,
-                            version: gitTreeVersion, deletes: gitPendingDeletes}),
-    });
-    const j = await r.json().catch(() => null);
-    if (r.status === 409){
-      // Another tab/editor changed the tree; their version wins — re-hydrate.
-      await gitLoadTree();
-      gitPendingDeletes = 0;
-      if (gitSelectedRepo && !gitRepoByUuid(gitSelectedRepo)) gitSelectedRepo = null;
-      if (gitSelectedFolder && !gitFolderById(gitSelectedFolder)) gitSelectedFolder = null;
-      gitRenderTree();
-      gitRender();
-      gitToast('Git tree was changed elsewhere — reloaded. Your last edit was not saved.');
-    } else if (!r.ok){
-      gitToast('Save refused: ' + ((j && j.error) || ('HTTP ' + r.status)));
-    } else {
-      gitTreeVersion = (j && j.version) || gitTreeVersion;
-      gitPendingDeletes = 0;
-    }
-  } catch (e) {
-    // Network error: keep local state + version; the next edit retries.
-  } finally {
-    gitSaveInFlight = false;
-    if (gitSaveQueued){ gitSaveQueued = false; gitSavePush(); }
+// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// issuing a create or delete." Nothing else orders a tree PUT against a
+// create/delete, and the two responses race — if the older PUT's response
+// lands after the create/delete's fresher token, it overwrites that token with
+// a stale one and the next save 409s for no reason the operator can see.
+// Cancels a pending debounce timer and runs that save immediately, or awaits a
+// save already in flight (including one queued behind it). A no-op when
+// nothing is pending.
+function gitFlushPendingSave(){
+  if (gitSaveTimer){
+    clearTimeout(gitSaveTimer);
+    gitSaveTimer = null;
+    return gitSavePush();
   }
+  return gitSaveChain || Promise.resolve();
+}
+// After a re-hydrate the fresh data may no longer contain the selected
+// folder/repo (e.g. the rejected edit was the move that put it there). Clear
+// whichever selection no longer resolves so render doesn't point at a row that
+// isn't in the tree anymore.
+function gitReconcileSelectionAfterReload(){
+  if (gitSelectedRepo && !gitRepoByUuid(gitSelectedRepo)) gitSelectedRepo = null;
+  if (gitSelectedFolder && !gitFolderById(gitSelectedFolder)) gitSelectedFolder = null;
+}
+async function gitReloadAndRepaint(message){
+  await gitLoadTree();
+  gitReconcileSelectionAfterReload();
+  gitRenderTree();
+  gitRender();
+  gitToast(message);
+}
+// Returns the promise for this save (or, if one was already in flight, the
+// promise for that one — which folds in this call via gitSaveQueued once it
+// settles). gitFlushPendingSave relies on that: awaiting the returned/chained
+// promise always means "no tree PUT is outstanding anymore".
+function gitSavePush(){
+  if (gitSaveInFlight){ gitSaveQueued = true; return gitSaveChain; }  // serialize PUTs
+  gitSaveInFlight = true;
+  const run = (async () => {
+    try {
+      const r = await fetch('/git/api/tree', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          folders: gitFolders.map(f => ({
+            id: f.id, name: f.name, description: f.description || '',
+            parentId: f.parentId || null})),
+          repos: gitRepos.map(r => ({
+            uuid: r.uuid, name: r.name, description: r.description || '',
+            folderId: r.folderId || null})),
+          version: gitTreeVersion,
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      if (r.status === 409){
+        // Another tab/editor changed the tree; their version wins — re-hydrate
+        // and repaint so the screen matches what the server just accepted.
+        await gitReloadAndRepaint(
+          'Git tree was changed elsewhere — reloaded. Your last edit was not saved.');
+        return;
+      }
+      if (!r.ok){
+        // A 400 here means our payload disagreed with the server about which
+        // rows exist — re-hydrate rather than retry the same bad shape, and
+        // repaint so the rejected edit doesn't linger on screen.
+        await gitReloadAndRepaint(
+          'Save refused: ' + ((j && j.error) || ('HTTP ' + r.status)) + ' — reloaded.');
+        return;
+      }
+      gitTreeVersion = j.version;
+    } catch (e) {
+      // Network error: we can't tell whether the server applied the change, so
+      // re-hydrate and repaint rather than leave the client's guess on screen.
+      await gitReloadAndRepaint('Save failed — reloaded.');
+    } finally {
+      gitSaveInFlight = false;
+      // A save requested while we were in flight gets its own immediate push
+      // here, not a fresh 250ms debounce — and this run doesn't resolve until
+      // that one does too, so anything awaiting it (gitFlushPendingSave) sees
+      // the whole chain settle before the token is treated as final.
+      if (gitSaveQueued){
+        gitSaveQueued = false;
+        gitSaveChain = gitSavePush();
+        await gitSaveChain;
+      } else {
+        gitSaveChain = null;
+      }
+    }
+  })();
+  gitSaveChain = run;
+  return run;
 }
 
 // ---- dirty-guarded dismissal (clicking backdrop / Esc) ----

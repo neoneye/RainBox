@@ -55,22 +55,25 @@ stale cached snapshot.
 The left panel is the app-wide left-panel tree — see
 `docs/ui-left-panel-tree.md` for the mechanics (flat arrays + parent
 pointers, recursive render, drag-and-drop with a "Move to top level" strip,
-real-anchor rows so CMD/Ctrl-click opens a new tab, kebab menus). `/git` is
-the full-replace variant: the page hydrates from `GET /git/api/tree` and
-saves every structural edit as a debounced (250 ms, serialized) **whole-tree
-PUT** — an upsert by uuid where list order becomes `position` and rows absent
-from the payload are deleted. The two standard guards apply:
+real-anchor rows so CMD/Ctrl-click opens a new tab, kebab menus). The save
+shape is `docs/ui-tree-persistence.md`, which is the authority: the page
+hydrates from `GET /git/api/tree` and saves placement, order and names as a
+debounced (250 ms, serialized) **tree PUT** that only ever *updates rows that
+already exist*. It never creates and never deletes — a payload that omits an
+existing row, or names one the DB doesn't have, is a 400 and mutates nothing.
+Creation and deletion are their own immediate endpoints, and because the shape
+cannot express a deletion there is no `deletes` counter.
 
-- **`version`** — an optimistic-concurrency token (`git_tree_version`: sha256
-  over the persisted structural fields, timestamps excluded). Missing → 400;
-  stale → **409** + the current token, before any mutation; the page then
-  re-hydrates and toasts instead of clobbering another writer. A failed
-  initial hydrate leaves the page's token null, so a PUT of the resulting
-  empty state is refused rather than wiping the real tree.
-- **`deletes`** — the page declares how many deletions it knowingly performed
-  (a repo, or a folder-cascade's subtree count); a save that would delete more
-  rows than declared raises `GitTreeError` (400), the truncated-payload
-  tripwire.
+The **`version`** guard applies: an optimistic-concurrency token
+(`git_tree_version`: sha256 over the persisted structural fields, timestamps
+excluded), returned by *every* mutating endpoint so the client never holds a
+stale one. Missing → 400; stale → **409** + the current token, before any
+mutation; the page then re-hydrates and toasts instead of clobbering another
+writer. A failed initial hydrate leaves the page's token null, so a PUT of the
+resulting empty state is refused rather than wiping the real tree.
+
+A repo's `path` is never written by the tree PUT — it is the repo's identity on
+disk, fixed at creation.
 
 Validation (`validate_git_tree`, raises `GitTreeError` before any DB write):
 well-formed uuids; no duplicate folder ids or repo uuids; folder `name`/
@@ -87,8 +90,11 @@ JSON, same-origin, in `webapp/git_api.py`. uuids are the identifiers.
 | Method + path | Semantics | Guards |
 |---|---|---|
 | `GET /git/api/tree` | `{folders, repos, version}` in the frontend's field names (folder `id`/`parentId`, repo `uuid`/`folderId`/`path`), ordered by `position` then `id`; rows carry read-only `created_at`/`updated_at` | — |
-| `PUT /git/api/tree` | the guarded whole-tree save (above); returns the new `version` | `version` token (400 missing / 409 stale), `deletes` tripwire, `validate_git_tree` → 400 |
-| `POST /git/api/check-path` | validate a typed path is an existing git repo *before* the Add-repo flow creates a node → `{ok, path, branch}` or `{ok: false, error}` | always 200 (the `ok` flag carries validity) unless the body isn't a JSON object |
+| `PUT /git/api/tree` | update placement, order, name and description of existing rows (above); returns the new `version` | `version` token (400 missing / 409 stale), `validate_git_tree` → 400, missing/unknown uuid → 400 |
+| `POST /git/api/folders` | create one folder → `{ok, folder, version}` | 400 empty name / bad `parentId` |
+| `POST /git/api/repos` | create one repo node → `{ok, repo, version}`; re-validates the typed path is an existing git repo and stores the resolved absolute path | 400 with the path error inline |
+| `DELETE /git/api/folders/<uuid>` | delete a folder, its nested folders and every repo node inside them → `{ok, version}` | 400 malformed uuid, 404 unknown folder |
+| `DELETE /git/api/repos/<uuid>` | forget one repo node (never touches disk) → `{ok, version}` | 400 malformed uuid, 404 unknown repo |
 | `GET /git/api/repos/<uuid>/detail` | live snapshot for the repo pane → `{ok, path, exists, isRepo, branch, entries}` | 400 malformed uuid, 404 unknown repo |
 
 ## Repo inspection — what is read, and how
@@ -112,9 +118,10 @@ disk." / "This path is no longer a git repository.") instead of a 500.
 **Path validation** (`git_check_path`, the Add-repo gate): the typed path is
 `~`-expanded and `os.path.realpath`-resolved (symlinks collapse to the real
 location); it must be an existing directory, and `rev-parse
---is-inside-work-tree` must print `true`. The **resolved absolute path** is
-what the ok response returns and the frontend stores — the DB never holds a
-relative or symlinked path.
+--is-inside-work-tree` must print `true`. It runs inside `POST
+/git/api/repos` — the endpoint that stores the path — so what lands in the DB
+is always a **resolved absolute path** the server itself verified, never a
+relative or symlinked one, and never one that only the browser checked.
 
 ## Deliberately NOT there
 
@@ -137,8 +144,8 @@ relative or symlinked path.
 - **Kebab is minimal**: Rename and Delete only. Creation lives in the tree's
   **+ Folder** / **+ Repo** buttons; there is no Duplicate or Copy-id.
 - **Add repository modal**: Path + optional Name (auto-filled from the path's
-  last component until the user edits it); **Add** first POSTs `check-path`
-  and shows the server's error inline — a node is only created for a verified
+  last component until the user edits it); **Add** POSTs `/git/api/repos` and
+  shows the server's error inline — a node is only created for a verified
   repo, filed into the currently selected folder.
 - **Right pane, folder view**: the selected subtree (or the whole tree at
   "All repositories") as a depth-indented table — Name, Type (Folder/Repo),
@@ -163,5 +170,6 @@ relative or symlinked path.
   *inside* a repo, not just its root, so a subdirectory can be registered as
   a "repo"; `rev-parse --show-toplevel` would normalize this. Duplicate
   registrations of the same path are likewise not prevented.
-- **Immutable `path`.** Fine until a repo moves on disk; an "edit path"
-  (re-validated via `check-path`) would beat delete + re-add.
+- **Immutable `path`.** Fine until a repo moves on disk; an "edit path" (its
+  own per-repo endpoint, re-validating with `git_check_path`) would beat
+  delete + re-add.

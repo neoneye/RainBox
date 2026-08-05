@@ -1,7 +1,9 @@
 """Git repository tree: folder/repo persistence + live repo inspection.
 
-Backs the /git page. Holds the git folder/repo tree (load/validate/save — the
-whole-tree bulk pattern shared with /cron) plus read-only filesystem helpers
+Backs the /git page. Saves follow docs/ui-tree-persistence.md — the tree save
+only ever updates rows that already exist, so a payload that omits or invents a
+row is an error rather than a silent create or delete; creation and deletion
+are their own functions. Also holds read-only filesystem helpers
 (git_check_path, git_repo_detail) that shell out to `git` with bounded
 timeouts. Re-exported from db for import compatibility.
 """
@@ -10,7 +12,7 @@ import json
 import os
 import subprocess
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 
@@ -23,7 +25,8 @@ _GIT_TIMEOUT = 5
 
 class GitTreeError(ValueError):
     """A git tree payload failed structural validation (bad uuid, dangling
-    parent, cycle, …). The PUT endpoint maps this to 400, not 500."""
+    parent, cycle, a row that is missing or unknown). The PUT endpoint maps
+    this to 400, not 500."""
 
 
 class GitTreeConflict(Exception):
@@ -61,6 +64,33 @@ def git_tree_version() -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
+def _folder_row(folder_uuid: UUID) -> GitFolder | None:
+    return db.session.execute(
+        sa.select(GitFolder).where(GitFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+
+
+def _repo_row(repo_uuid: UUID) -> GitRepo | None:
+    return db.session.execute(
+        sa.select(GitRepo).where(GitRepo.uuid == repo_uuid)
+    ).scalar_one_or_none()
+
+
+def _folder_dict(f: GitFolder) -> dict[str, Any]:
+    return {"id": str(f.uuid), "name": f.name, "description": f.description,
+            "parentId": str(f.parent_uuid) if f.parent_uuid else None,
+            "created_at": f.created_at.isoformat() if f.created_at else None,
+            "updated_at": f.updated_at.isoformat() if f.updated_at else None}
+
+
+def _repo_dict(r: GitRepo) -> dict[str, Any]:
+    return {"uuid": str(r.uuid), "name": r.name,
+            "folderId": str(r.folder_uuid) if r.folder_uuid else None,
+            "path": r.path, "description": r.description,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None}
+
+
 def git_load_tree() -> dict[str, Any]:
     """The whole git tree in the frontend's field names, each list ordered by
     position then id so the page renders in saved order."""
@@ -71,21 +101,8 @@ def git_load_tree() -> dict[str, Any]:
         sa.select(GitRepo).order_by(GitRepo.position, GitRepo.id)
     ).scalars().all()
     return {
-        "folders": [
-            {"id": str(f.uuid), "name": f.name, "description": f.description,
-             "parentId": str(f.parent_uuid) if f.parent_uuid else None,
-             "created_at": f.created_at.isoformat() if f.created_at else None,
-             "updated_at": f.updated_at.isoformat() if f.updated_at else None}
-            for f in folders
-        ],
-        "repos": [
-            {"uuid": str(r.uuid), "name": r.name,
-             "folderId": str(r.folder_uuid) if r.folder_uuid else None,
-             "path": r.path, "description": r.description,
-             "created_at": r.created_at.isoformat() if r.created_at else None,
-             "updated_at": r.updated_at.isoformat() if r.updated_at else None}
-            for r in repos
-        ],
+        "folders": [_folder_dict(f) for f in folders],
+        "repos": [_repo_dict(r) for r in repos],
         # Optimistic-concurrency token; the page echoes it on PUT (409 if stale).
         "version": git_tree_version(),
     }
@@ -161,60 +178,135 @@ def validate_git_tree(folders: list, repos: list) -> None:
 
 
 def git_save_tree(folders: list, repos: list, *,
-                  base_version: str | None = None,
-                  expected_deletes: int | None = None) -> None:
-    """Upsert the whole git tree by uuid. List order becomes `position`. Rows
-    whose uuid is absent from the incoming lists are deleted. Validates first
-    (raises GitTreeError before any mutation). Two opt-in guards (skipped when
-    None): `base_version` (stale → GitTreeConflict) and `expected_deletes`
-    (a save deleting more than declared → GitTreeError, the truncated-payload
-    tripwire)."""
-    validate_git_tree(folders, repos)
+                  base_version: str | None = None) -> None:
+    """Update name, description, placement and order of rows that already
+    exist. List order becomes `position`.
+
+    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    a payload that omits an existing row, or names one the DB doesn't have, is
+    a GitTreeError — absence means a bug, not an instruction. Creation is
+    git_create_repo / git_create_folder; deletion is git_delete_repo /
+    git_delete_folder.
+
+    A stale `base_version` raises GitTreeConflict, checked before structural
+    validation so a concurrent edit surfaces as 409, not 400. A repo's `path`
+    is never touched: it is the repo's identity on disk, fixed at creation, and
+    the page has no editor for it."""
     if base_version is not None and base_version != git_tree_version():
         raise GitTreeConflict("git tree changed since it was loaded")
+    validate_git_tree(folders, repos)
     existing_f = {f.uuid: f for f in
                   db.session.execute(sa.select(GitFolder)).scalars().all()}
     existing_r = {r.uuid: r for r in
                   db.session.execute(sa.select(GitRepo)).scalars().all()}
-    if expected_deletes is not None:
-        incoming = {UUID(f["id"]) for f in folders} | {UUID(r["uuid"]) for r in repos}
-        would_delete = len((set(existing_f) | set(existing_r)) - incoming)
-        if would_delete > expected_deletes:
+    incoming_f = {UUID(f["id"]) for f in folders}
+    incoming_r = {UUID(r["uuid"]) for r in repos}
+    for label, incoming, existing in (("folder", incoming_f, existing_f),
+                                      ("repo", incoming_r, existing_r)):
+        missing = set(existing) - incoming
+        if missing:
             raise GitTreeError(
-                f"save would delete {would_delete} node(s) but only "
-                f"{expected_deletes} deletion(s) were declared — refusing")
-    seen_f: set[UUID] = set()
+                f"tree save omitted {len(missing)} existing {label}(s) — refusing "
+                f"(the tree save never deletes)")
+        unknown = incoming - set(existing)
+        if unknown:
+            raise GitTreeError(
+                f"tree save references {len(unknown)} unknown {label}(s) — refusing "
+                f"(the tree save never creates)")
     for i, f in enumerate(folders):
-        fu = UUID(f["id"])
-        seen_f.add(fu)
-        row = existing_f.get(fu)
-        if row is None:
-            row = GitFolder(uuid=fu)
-            db.session.add(row)
+        row = existing_f[UUID(f["id"])]
         row.name = f.get("name", "")
         row.description = f.get("description", "")
         row.parent_uuid = UUID(f["parentId"]) if f.get("parentId") else None
         row.position = i
-    for fu, row in existing_f.items():
-        if fu not in seen_f:
-            db.session.delete(row)
-    seen_r: set[UUID] = set()
     for i, r in enumerate(repos):
-        ru = UUID(r["uuid"])
-        seen_r.add(ru)
-        row = existing_r.get(ru)
-        if row is None:
-            row = GitRepo(uuid=ru)
-            db.session.add(row)
+        row = existing_r[UUID(r["uuid"])]
         row.name = r.get("name", "")
         row.folder_uuid = UUID(r["folderId"]) if r.get("folderId") else None
-        row.path = r.get("path", "")
         row.description = r.get("description", "")
         row.position = i
-    for ru, row in existing_r.items():
-        if ru not in seen_r:
-            db.session.delete(row)
     db.session.commit()
+
+
+# ---- create / delete (the tree save does neither) ----
+
+def _next_position(model: Any, column: Any, parent: UUID | None) -> int:
+    """One past the last sibling under `parent`, so a new row lands at the end
+    of the folder it was created in."""
+    highest = db.session.execute(
+        sa.select(sa.func.max(model.position)).where(column == parent)
+    ).scalar_one()
+    return 0 if highest is None else highest + 1
+
+
+def git_create_folder(name: str, parent_uuid: UUID | None) -> dict[str, Any]:
+    """Create one folder at the end of its parent."""
+    row = GitFolder(uuid=uuid4(), name=name, description="",
+                    parent_uuid=parent_uuid,
+                    position=_next_position(GitFolder, GitFolder.parent_uuid,
+                                            parent_uuid))
+    db.session.add(row)
+    db.session.commit()
+    return _folder_dict(row)
+
+
+def git_create_repo(name: str, path: str,
+                    folder_uuid: UUID | None) -> dict[str, Any]:
+    """Create one repo node at the end of its folder. `path` is stored as the
+    caller resolved it (git_check_path expands and validates it first)."""
+    row = GitRepo(uuid=uuid4(), name=name, path=path, description="",
+                  folder_uuid=folder_uuid,
+                  position=_next_position(GitRepo, GitRepo.folder_uuid,
+                                          folder_uuid))
+    db.session.add(row)
+    db.session.commit()
+    return _repo_dict(row)
+
+
+def git_delete_repo(repo_uuid: UUID) -> bool:
+    """Forget one repo node. The repository on disk is untouched — RainBox only
+    ever held a pointer to it. False if the uuid is unknown."""
+    row = _repo_row(repo_uuid)
+    if row is None:
+        return False
+    db.session.delete(row)
+    db.session.commit()
+    return True
+
+
+def _descendant_folder_uuids(folder_uuid: UUID) -> list[UUID]:
+    """`folder_uuid` plus every folder nested under it, any depth. Cycle-guarded
+    via `seen`: a corrupt parent loop stops expanding a folder once it has
+    already been collected, rather than spinning. No size cap — a large but
+    legitimate subtree must be walked in full, or `git_delete_folder` would
+    delete only the collected prefix and orphan the rest."""
+    out = [folder_uuid]
+    seen = {folder_uuid}
+    frontier = [folder_uuid]
+    while frontier:
+        children = db.session.execute(
+            sa.select(GitFolder.uuid)
+            .where(GitFolder.parent_uuid.in_(frontier))
+        ).scalars().all()
+        frontier = [c for c in children if c not in seen]
+        seen.update(frontier)
+        out.extend(frontier)
+    return out
+
+
+def git_delete_folder(folder_uuid: UUID) -> bool:
+    """Delete a folder, every folder nested under it, and every repo node
+    inside any of them. Repositories on disk are untouched. False if the uuid
+    is unknown."""
+    if _folder_row(folder_uuid) is None:
+        return False
+    folder_uuids = _descendant_folder_uuids(folder_uuid)
+    db.session.execute(sa.delete(GitRepo).where(
+        GitRepo.folder_uuid.in_(folder_uuids)))
+    db.session.execute(sa.delete(GitFolder).where(
+        GitFolder.uuid.in_(folder_uuids)))
+    db.session.commit()
+    return True
 
 
 # ---- live filesystem inspection (read-only) ----
@@ -261,9 +353,7 @@ def git_repo_detail(repo_uuid: UUID) -> dict[str, Any] | None:
     name-sorted). Returns None if the uuid is unknown. Never raises on
     filesystem problems — it reports them via the exists/isRepo flags so the UI
     can message."""
-    repo = db.session.execute(
-        sa.select(GitRepo).where(GitRepo.uuid == repo_uuid)
-    ).scalar_one_or_none()
+    repo = _repo_row(repo_uuid)
     if repo is None:
         return None
     path = repo.path

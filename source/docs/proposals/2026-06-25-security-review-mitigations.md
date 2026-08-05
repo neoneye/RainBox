@@ -338,10 +338,11 @@ no backup gate. Schema migration remains coupled to app boot.
 
 **Severity:** P1 · **Status:** open, unchanged
 
-`POST /git/api/check-path` (`webapp/git_api.py` → `db/git.py:238-254`) accepts an
+`POST /git/api/repos` (`webapp/git_api.py` → `db.git_check_path`) accepts an
 arbitrary path, expands `~`, resolves it, and runs
-`git -C <path> rev-parse --is-inside-work-tree`. There is no approved-roots
-policy — any directory the server can read can be probed and registered.
+`git -C <path> rev-parse --is-inside-work-tree`, reporting the outcome in its
+error message. There is no approved-roots policy — any directory the server can
+read can be probed and registered.
 
 `GET /git/api/repos/<uuid>/detail` (`db/git.py:257-293`) returns the absolute
 path, existence, git-repo status, current branch, and a listing of the root

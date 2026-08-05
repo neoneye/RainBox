@@ -1,5 +1,5 @@
 """Tests for the git tree persistence backend (db.models + db.git)."""
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -62,44 +62,95 @@ def git_tree_snapshot(app_ctx):
         db.db.session.commit()
 
 
-def test_save_and_load_roundtrip(app_ctx, git_tree_snapshot):
+@pytest.fixture
+def clean_tree(git_tree_snapshot):
+    """An empty git tree for the duration of the test; git_tree_snapshot puts
+    the operator's real rows back afterwards."""
     db.db.session.execute(sa.delete(GitRepo))
     db.db.session.execute(sa.delete(GitFolder))
     db.db.session.commit()
-    f_root, f_child, repo = str(uuid4()), str(uuid4()), str(uuid4())
-    folders = [
-        {"id": f_root, "name": "Root", "description": "top", "parentId": None},
-        {"id": f_child, "name": "Child", "parentId": f_root},
-    ]
-    repos = [
-        {"uuid": repo, "name": "MyRepo", "folderId": f_child,
-         "path": "/tmp/myrepo", "description": "note"},
-    ]
-    db.git_save_tree(folders, repos)
+    yield
+
+
+def test_save_and_load_roundtrip(clean_tree):
+    f_root = db.git_create_folder("Root", None)
+    f_child = db.git_create_folder("Child", UUID(f_root["id"]))
+    repo = db.git_create_repo("MyRepo", "/tmp/myrepo", UUID(f_child["id"]))
+    db.git_save_tree(
+        [{"id": f_root["id"], "name": "Root", "description": "top", "parentId": None},
+         {"id": f_child["id"], "name": "Child", "parentId": f_root["id"]}],
+        [{"uuid": repo["uuid"], "name": "MyRepo", "folderId": f_child["id"],
+          "description": "note"}])
     out = db.git_load_tree()
     assert [f["name"] for f in out["folders"]] == ["Root", "Child"]  # order preserved
-    assert out["folders"][1]["parentId"] == f_root
+    assert out["folders"][1]["parentId"] == f_root["id"]
     assert out["folders"][0]["created_at"]
     assert len(out["repos"]) == 1
     assert out["repos"][0]["path"] == "/tmp/myrepo"
-    assert out["repos"][0]["folderId"] == f_child
+    assert out["repos"][0]["description"] == "note"
+    assert out["repos"][0]["folderId"] == f_child["id"]
     assert out["version"]
 
 
-def test_version_conflict(app_ctx, git_tree_snapshot):
+def test_version_conflict(clean_tree):
     with pytest.raises(db.GitTreeConflict):
         db.git_save_tree([], [], base_version="stale-token-xyz")
 
 
-def test_delete_tripwire(app_ctx, git_tree_snapshot):
-    db.db.session.execute(sa.delete(GitRepo))
-    db.db.session.execute(sa.delete(GitFolder))
-    db.db.session.commit()
-    f = str(uuid4())
-    db.git_save_tree([{"id": f, "name": "F", "parentId": None}], [])
-    # Saving an empty tree would delete the folder; undeclared deletion → refused.
-    with pytest.raises(db.GitTreeError):
-        db.git_save_tree([], [], expected_deletes=0)
+def test_save_tree_refuses_to_omit_an_existing_row(clean_tree):
+    repo = db.git_create_repo("Keep me", "/tmp/keep", None)
+    with pytest.raises(db.GitTreeError, match="omitted"):
+        db.git_save_tree([], [])
+    assert [r["uuid"] for r in db.git_load_tree()["repos"]] == [repo["uuid"]]
+
+
+def test_save_tree_refuses_an_unknown_row(clean_tree):
+    with pytest.raises(db.GitTreeError, match="unknown"):
+        db.git_save_tree([], [{"uuid": str(uuid4()), "name": "ghost",
+                               "folderId": None}])
+    assert db.git_load_tree()["repos"] == []
+
+
+def test_save_tree_never_touches_the_path(clean_tree):
+    repo = db.git_create_repo("R", "/tmp/real", None)
+    db.git_save_tree([], [{"uuid": repo["uuid"], "name": "R", "folderId": None,
+                           "path": "/tmp/somewhere-else"}])
+    assert db.git_load_tree()["repos"][0]["path"] == "/tmp/real"
+
+
+def test_create_places_at_end_of_folder(clean_tree):
+    f = db.git_create_folder("F", None)
+    db.git_create_repo("A", "/tmp/a", UUID(f["id"]))
+    db.git_create_repo("B", "/tmp/b", UUID(f["id"]))
+    assert [r["name"] for r in db.git_load_tree()["repos"]] == ["A", "B"]
+
+
+def test_delete_repo(clean_tree):
+    repo = db.git_create_repo("R", "/tmp/r", None)
+    assert db.git_delete_repo(UUID(repo["uuid"])) is True
+    assert db.git_load_tree()["repos"] == []
+    assert db.git_delete_repo(UUID(repo["uuid"])) is False
+
+
+def test_delete_folder_cascades_the_subtree(clean_tree):
+    outer = db.git_create_folder("Outer", None)
+    inner = db.git_create_folder("Inner", UUID(outer["id"]))
+    db.git_create_repo("R", "/tmp/r", UUID(inner["id"]))
+    assert db.git_delete_folder(UUID(outer["id"])) is True
+    out = db.git_load_tree()
+    assert out["folders"] == [] and out["repos"] == []
+
+
+def test_create_and_delete_hand_back_a_usable_version(clean_tree):
+    f = db.git_create_folder("F", None)
+    repo = db.git_create_repo("R", "/tmp/r", None)
+    db.git_save_tree(
+        [{"id": f["id"], "name": "F", "parentId": None}],
+        [{"uuid": repo["uuid"], "name": "R", "folderId": None}],
+        base_version=db.git_tree_version())
+    db.git_delete_repo(UUID(repo["uuid"]))
+    db.git_save_tree([{"id": f["id"], "name": "F", "parentId": None}], [],
+                     base_version=db.git_tree_version())
 
 
 def test_validate_rejects_dangling_folder(app_ctx):

@@ -31,8 +31,8 @@ def test_nav_has_git_link():
 def test_js_has_core_markers():
     b = _body()
     for marker in ["gitLoadTree", "gitRenderTree", "gitRepoNode",
-                   "gitAddRepoConfirm", "/git/api/check-path",
-                   "gitLoadRepoDetail", "gitSavePush"]:
+                   "gitAddRepoConfirm", "/git/api/repos",
+                   "gitFlushPendingSave", "gitLoadRepoDetail", "gitSavePush"]:
         assert marker in b, f"missing JS marker: {marker}"
 
 
