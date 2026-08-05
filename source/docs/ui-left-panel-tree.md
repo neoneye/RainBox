@@ -84,14 +84,13 @@ order becomes each row's `position`.
   cron 250ms `cronSave`) and only one PUT is in flight at a time; a save
   requested mid-flight is queued and re-sent after.
 - **Save shape — see [`ui-tree-persistence.md`](ui-tree-persistence.md), the
-  authority on this.** The standard: the tree PUT updates only rows that
-  already exist, and creation/deletion are dedicated endpoints
-  (`POST`/`DELETE` for folders and for items), so a truncated payload is a 400
-  rather than a data-loss event. `/chat` and `/kanban` are placement-only in
-  this spirit; `/cron`, `/git`, `/prompt` and `/profile` still full-replace,
-  deleting rows absent from the payload behind a `deletes` counter
-  (`cronPendingDeletes` → `expected_deletes`). That doc records which page is
-  where and how a conversion goes.
+  authority on this.** The tree PUT updates only rows that already exist, and
+  creation/deletion are dedicated endpoints (`POST`/`DELETE` for folders and
+  for items), so a truncated payload is a 400 rather than a data-loss event.
+  Every tree page is on that standard, and none of them carries a `deletes`
+  counter. A page must also **flush its pending PUT before a create or
+  delete** (nothing else orders those responses against each other) and
+  **re-hydrate on any save failure**, not just a 409.
 
 ## 3. Rendering — recursive, computed children
 

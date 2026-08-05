@@ -192,3 +192,11 @@ def test_no_backslash_escapes_in_template():
     src = Path(profile_views.__file__).read_text(encoding="utf-8")
     template = src.split('PROFILE_TEMPLATE = """', 1)[1].split('"""', 1)[0]
     assert "\\" not in template
+
+
+def test_tree_save_declares_no_deletes():
+    """Per docs/ui-tree-persistence.md the tree PUT cannot delete, so the
+    client must not carry a deletes counter — deletion goes to DELETE."""
+    b = _body()
+    assert "deletes" not in b
+    assert "method: 'DELETE'" in b

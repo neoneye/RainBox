@@ -14,7 +14,7 @@ deletion, not a create — it is a malformed request.
 
 ## Endpoint set
 
-Five endpoints per page. `<page>` is the route prefix, `<item>` the plural leaf
+Six endpoints per page. `<page>` is the route prefix, `<item>` the plural leaf
 noun (`repos`, `prompts`, `personas`, …).
 
 | Method + path | Does |
@@ -26,6 +26,11 @@ noun (`repos`, `prompts`, `personas`, …).
 | `DELETE /<page>/api/folders/<uuid>` | Delete one folder (cascades its subtree) |
 | `DELETE /<page>/api/<item>s/<uuid>` | Delete one item (cascades what it owns) |
 
+A page may add **more** create endpoints — `/prompt`'s clone, `/profile`'s and
+`/kanban`'s duplicate, `/cron`'s two duplicates. Each is a create like any
+other: it mints the row server-side and returns the new `version`. What a page
+may never add is a second way to *delete*, or a create smuggled into the PUT.
+
 Item *content* — prompt text, profile `data`, persona text — stays out of
 all of these and saves through its own per-item `PUT`, so a content save can
 never collide with an open tree (and vice versa).
@@ -34,6 +39,15 @@ never collide with an open tree (and vice versa).
 
 Only these fields, only on rows already in the database: `name`,
 `description`, `parent_uuid` / `folder_uuid`, and `position` (from list order).
+
+The one exception is `/cron`, whose PUT also carries each job's schedule and
+action settings (`cron`, `timezone`, `type`, `target`, `message`, `command`,
+`maxRetries`, `enabled`). Those are configuration rather than content — they
+are small, they ride in the version hash, and the page edits them from the same
+detail pane that renames the job. The rule that matters holds unchanged: the
+PUT still cannot bring a job into existence or remove one. The per-job settings
+validation lives in `validate_cron_job_fields`, shared with `cron_create_job`,
+so neither path can accept a shape the other would reject.
 
 ### What the PUT must reject — 400, before any write
 
@@ -133,18 +147,28 @@ payload implied.
 
 ## Where the pages stand
 
-| Page | Tree save shape |
-|---|---|
-| `/chat` | Placement-only for rooms; folders still upsert-and-delete through the PUT |
-| `/kanban` | Placement-only for boards and folders — closest to this standard |
-| `/persona` | This standard |
-| `/cron`, `/git`, `/prompt`, `/profile` | Full replace: rows absent from the payload are deleted, guarded by a `deletes` counter |
-| `/kanban` board contents (columns + tasks) | Full replace with a `deletes` counter — not a tree, same delete-by-omission risk |
+Every left-panel tree is on this standard: `/chat`, `/cron`, `/git`,
+`/kanban`, `/persona`, `/profile`, `/prompt`. None of their tree saves can
+create or delete a row, and none of them has a `deletes` counter.
 
-A page not yet on the standard converts the next time its persistence layer is
-touched for another reason. Converting one is mechanical: add the two POSTs
-and two DELETEs, strip `expected_deletes`, and make the save function raise on
-a missing or unknown uuid instead of inserting or deleting.
+Two deliberate departures, both narrower than the rule rather than looser:
+
+- **`/kanban` folder delete reparents instead of cascading.** Its child
+  folders and boards move up one level. A board owns tasks, and losing a
+  folder must never be a way to lose them.
+- **`/profile` built-ins are virtual.** The shipped locale templates and the
+  folder holding them are not DB rows; the validator rejects their uuids in
+  every save, and create/delete refuse them outright.
+
+Still outstanding, and **not** a tree: **`/kanban` board contents** (columns +
+tasks) save through a full-replace PUT with a `deletes` counter. Same
+delete-by-omission risk, different shape — a board's columns and tasks are its
+document, not a hierarchy of nodes, so converting it means designing per-column
+and per-task endpoints rather than applying the recipe below.
+
+Converting a tree is mechanical: add the two POSTs and two DELETEs, strip
+`expected_deletes`, and make the save function raise on a missing or unknown
+uuid instead of inserting or deleting.
 
 ## Checklist for a new page
 
@@ -152,9 +176,10 @@ a missing or unknown uuid instead of inserting or deleting.
 2. `<page>_save_tree` raises on any uuid that is missing from, or unknown to,
    the payload. No `expected_deletes` parameter.
 3. `<page>_tree_version` hashes structural fields only.
-4. Every tree-structure endpoint — the PUT and both POSTs and DELETEs —
-   returns `{"ok": true, "version": …}`. Per-item content endpoints stay
-   outside the tree save (see Client rules) and deliberately carry no token.
+4. Every tree-structure endpoint — the PUT, both POSTs, both DELETEs, and any
+   clone/duplicate the page adds — returns `{"ok": true, "version": …}`.
+   Per-item content endpoints stay outside the tree save (see Client rules)
+   and deliberately carry no token.
 5. Deletes cascade in the DB layer and are confirmed in a modal.
 6. Tests: a PUT omitting an existing row is 400 and mutates nothing; a PUT
    naming an unknown row is 400; a stale token is 409; delete cascades;

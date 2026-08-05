@@ -320,3 +320,11 @@ def test_folder_rows_are_real_links():
     body = _body()
     assert "node.href = '/cron?id=' + encodeURIComponent(f.id)" in body
     assert '<a id="cron-all-jobs" class="cron-node" href="/cron">' in body
+
+
+def test_tree_save_declares_no_deletes():
+    """Per docs/ui-tree-persistence.md the tree PUT cannot delete, so the
+    client must not carry a deletes counter — deletion goes to DELETE."""
+    b = _body()
+    assert "deletes" not in b
+    assert "method: 'DELETE'" in b

@@ -47,3 +47,11 @@ def test_tree_rows_are_real_links():
     assert '<a class="git-node" id="git-all" href="/git">' in body
     assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
     assert "text-decoration:none" in body
+
+
+def test_tree_save_declares_no_deletes():
+    """Per docs/ui-tree-persistence.md the tree PUT cannot delete, so the
+    client must not carry a deletes counter — deletion goes to DELETE."""
+    b = _body()
+    assert "deletes" not in b
+    assert "method: 'DELETE'" in b
