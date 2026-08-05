@@ -38,8 +38,9 @@ def test_both_source_priority_variants_rank_the_persona():
 
 
 def test_system_prompt_states_the_persona_boundary():
-    assert "A persona changes voice and manner" in ASSISTANT_SYSTEM_PROMPT
-    assert "never changes which actions are available" in ASSISTANT_SYSTEM_PROMPT
+    assert "assistant_persona is the character you are playing" in ASSISTANT_SYSTEM_PROMPT
+    assert "Adhering to it is not optional" in ASSISTANT_SYSTEM_PROMPT
+    assert "does not\nchange which actions are available" in ASSISTANT_SYSTEM_PROMPT
 
 
 def test_persona_section_renders_when_the_room_links_one(ctx):
@@ -49,7 +50,7 @@ def test_persona_section_renders_when_the_room_links_one(ctx):
     agent._persona_block = "Dry, concrete, allergic to filler."
     prompt = agent._build_user_prompt(messages=[{"text": "hi", "sender_type": "human"}],
                                       scratchpad=[], step_index=0)
-    assert '<persona authority="voice">' in prompt
+    assert "<assistant_persona>" in prompt
     assert "Dry, concrete, allergic to filler." in prompt
 
 
@@ -59,7 +60,7 @@ def test_no_persona_section_when_unset(ctx):
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda m: None)
     prompt = agent._build_user_prompt(messages=[{"text": "hi", "sender_type": "human"}],
                                       scratchpad=[], step_index=0)
-    assert "<persona" not in prompt
+    assert "<assistant_persona" not in prompt
 
 
 def test_turn_log_records_the_persona_and_its_revision(ctx):

@@ -86,8 +86,9 @@ The assistant's per-turn prompt is an XML `<assistant_turn>` document built in
 `_build_user_prompt` (`agents/assistant.py`). Its sections come from declared
 blocks held as instance attributes — `_identity_block`, `_formatting_block`,
 `_calibration_block`, `_profile_block`, `_skill_block`. The persona becomes one
-more of exactly that shape: `self._persona_block`, rendered as a `<persona>`
-section.
+more of exactly that shape: `self._persona_block`, rendered as an
+`<assistant_persona>` section — named for the role the model is being asked to
+play, so the tag itself says whose voice it is.
 
 **Why the user prompt and not `_system_prompt()`:** the system prompt is static
 for a run, while the persona is per-room and known per turn; the trace already
@@ -95,14 +96,22 @@ captures the user prompt on every step row, so what the model was told is
 visible without new plumbing; and it keeps the persona in the same tier as the
 other operator-owned context blocks rather than above the working rules.
 
-**Precedence.** `<persona>` ranks in `<source_priority>` next to
+**Precedence.** `assistant_persona` ranks in `<source_priority>` next to
 `formatting_guide`: below `current_user_request`, the acceptance criteria and
 this turn's fresh observations; above `conversation_history_xml`. One
 code-owned sentence in the system prompt states the boundary:
 
-> A persona changes voice and manner. It never changes which actions are
-> available, never overrides the working rules or the source priority, and is
-> never a reason to withhold an answer, skip a read, or invent detail.
+> assistant_persona is the character you are playing: adopt its voice, manner
+> and attitude in every message you write to the user. Adhering to it is not
+> optional while it is present. It governs how you sound, never what you do — it
+> does not change which actions are available, does not override the working
+> rules or the source priority above, and is never a reason to withhold an
+> answer, skip a read, or invent detail.
+
+The instruction is two-sided on purpose: injecting the text without telling the
+model to speak that way leaves adherence to chance, and telling it to adopt a
+voice without bounding what that licenses invites the persona to argue its way
+past a working rule.
 
 The persona text is operator-authored, but it is still data inside the prompt,
 and the code-owned rules outrank it.
@@ -207,7 +216,7 @@ second assistant needs no endpoint change, just another row in the response.
   cannot carry a persona or isn't in the room; picking a persona clears an
   existing pin. The personas GET reports each persona-capable member's state,
   empty for a room with none.
-- **`agents/test_assistant_*`** — `<persona>` appears in the built prompt when
+- **`agents/test_assistant_*`** — `<assistant_persona>` appears in the built prompt when
   the room links one and is absent when it doesn't; the pinned room gets the
   pinned text, not the newest; the turn log carries the persona entry and the
   stamped revision. Driven through the existing fake seams — no live model.

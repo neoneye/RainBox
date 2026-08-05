@@ -228,7 +228,7 @@ either way the resolution stamps the `PersonaRevision.uuid` that produced the
 text, so the turn always records exactly which revision it used.
 
 In the assistant's per-turn prompt (`agents/assistant.py`), a non-empty
-resolution renders as a `<persona authority="voice">` element holding the
+resolution renders as an `<assistant_persona>` element holding the
 persona's text, ranked in `SOURCE_PRIORITY_SECTION` next to
 `formatting_guide` — below the current request and this turn's observations,
 above profile and conversation history. The system prompt carries one

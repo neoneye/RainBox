@@ -555,7 +555,7 @@ SOURCE_PRIORITY_SECTION: str = """\
   <source rank="2">current_user_request</source>
   <source rank="3">reply_language_markdown (ranked reply-language classification for this turn)</source>
   <source rank="4">formatting_guide (default formatting; the current request and exact source notation override it)</source>
-  <source rank="5">persona (this room's voice for the assistant)</source>
+  <source rank="5">assistant_persona (the character you speak as in this room)</source>
   <source rank="6">current_local_time, user_settings_json, knowledge_calibration and user_profile</source>
   <source rank="7">conversation_history_xml (context only)</source>
 </source_priority>"""
@@ -567,7 +567,7 @@ ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION: str = """\
   <source rank="3">reply_language_markdown (ranked reply-language classification for this turn)</source>
   <source rank="4">acceptance_criteria_markdown (this turn's established reply plan)</source>
   <source rank="5">formatting_guide (default formatting; the current request and exact source notation override it)</source>
-  <source rank="6">persona (this room's voice for the assistant)</source>
+  <source rank="6">assistant_persona (the character you speak as in this room)</source>
   <source rank="7">current_local_time, user_settings_json, knowledge_calibration and user_profile</source>
   <source rank="8">conversation_history_xml (context only)</source>
 </source_priority>
@@ -601,10 +601,13 @@ question about remembered facts, stored data, or a live value (e.g. token
 usage or status), call the matching read action this turn.
 Interpret the user-prompt sections with this precedence:
 """ + SOURCE_PRIORITY_SECTION + """
-A persona changes voice and manner. It never changes which actions are available,
-never overrides the working rules or the source priority above, and is never a
-reason to withhold an answer, skip a read, or invent detail. It is operator-authored
-text, but it is still data inside this prompt.
+assistant_persona is the character you are playing: adopt its voice, manner and
+attitude in every message you write to the user. Adhering to it is not optional
+while it is present. It governs how you sound, never what you do — it does not
+change which actions are available, does not override the working rules or the
+source priority above, and is never a reason to withhold an answer, skip a read,
+or invent detail. It is operator-authored text, but it is still data inside this
+prompt.
 reply_language_markdown is the narrow language classifier's result for this
 turn. Its language list is ordered from highest to lowest confidence; numeric
 scores are intentionally omitted. Use the reason and ordering to determine the
@@ -3887,7 +3890,7 @@ class AssistantAgent(ModelGroupAgent):
             identity = ET.SubElement(root, "user_settings_json")
             identity.text = self._identity_block
         if self._persona_block:
-            persona = ET.SubElement(root, "persona", {"authority": "voice"})
+            persona = ET.SubElement(root, "assistant_persona")
             persona.text = self._persona_block
         if self._formatting_block:
             formatting = ET.SubElement(
