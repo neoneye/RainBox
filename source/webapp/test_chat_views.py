@@ -294,3 +294,32 @@ def test_settings_mode_is_available_in_agents_rooms():
     rooms — that mapping is what made the mode a dead end there."""
     body = app.test_client().get("/chat").get_data(as_text=True)
     assert "if (!direct && sidebarMode === 'settings') return 'members';" not in body
+
+
+def test_typing_anywhere_focuses_the_composer():
+    """A keystroke with the composer unfocused went nowhere — nothing else on
+    the page consumes bare printable keys — so the opening characters of a
+    message were lost until the textarea was clicked. A printable key now hands
+    focus to the composer WITHOUT preventDefault, leaving the browser to deliver
+    that same keystroke into it: replaying the character by hand would break
+    dead keys, IME composition, key-repeat and the textarea's undo history."""
+    body = _body()
+    assert "function typingGoesToAnotherField(el)" in body
+    assert "if (e.ctrlKey || e.metaKey || e.altKey) return;" in body
+    assert "if (e.isComposing) return;" in body
+    assert "if (e.key.length !== 1) return;" in body
+    assert "if (typingGoesToAnotherField(e.target)) return;" in body
+    # No hand-replay of the keystroke anywhere in the handler.
+    handler = body.split("function typingGoesToAnotherField(el)")[1].split(
+        "});")[1]
+    assert "preventDefault" not in handler
+    assert "input.value +=" not in body
+
+
+def test_typing_redirect_yields_to_modals_and_the_folder_view():
+    """Two places have no composer to type into: an open modal owns the
+    keyboard even once its own field has lost focus, and the folder view hides
+    the compose form outright."""
+    body = _body()
+    assert "if (!document.getElementById('ui-modal-backdrop').hidden) return;" in body
+    assert "if (form.hidden) return;" in body

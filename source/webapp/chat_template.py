@@ -2760,6 +2760,36 @@ input.addEventListener('keydown', (e) => {
   }
 });
 
+// Start typing anywhere on the page and the composer takes it. Nothing else on
+// this page consumes bare printable keys — the chat log is its own scroller, so
+// a keystroke with the composer unfocused went nowhere and the first characters
+// of a message were simply lost until the box was clicked.
+//
+// The keystroke is NOT replayed by hand. Moving focus during keydown without
+// preventDefault leaves the browser to deliver the character into the newly
+// focused textarea itself, which is what keeps dead keys, IME composition,
+// key-repeat and undo history behaving exactly as they do when the box was
+// focused by hand; inserting the character manually would break all four.
+function typingGoesToAnotherField(el){
+  if (!el || el.isContentEditable) return !!el;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+      || el.tagName === 'SELECT';
+}
+document.addEventListener('keydown', (e) => {
+  // A modifier means a command (Ctrl+1, Cmd+R); Shift alone is just a capital.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.isComposing) return;
+  // One character wide: letters, digits, punctuation, space. Escape, Tab,
+  // Enter, Backspace and the arrows report longer names and stay with the page.
+  if (e.key.length !== 1) return;
+  if (typingGoesToAnotherField(e.target)) return;
+  // An open modal owns the keyboard even when its own field lost focus, and the
+  // folder view hides the composer — in both cases there is nothing to type in.
+  if (!document.getElementById('ui-modal-backdrop').hidden) return;
+  if (form.hidden) return;
+  input.focus();
+});
+
 async function loadAgents(){
   const agents = await getJSON('/chat/api/agents');
   agentListEl.innerHTML = '';
