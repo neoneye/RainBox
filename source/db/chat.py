@@ -563,14 +563,16 @@ def chat_save_tree(
     folders: list[dict[str, Any]], rooms: list[dict[str, Any]],
     *, base_version: str | None = None,
 ) -> None:
-    """Upsert the left-panel tree. Folders are created/updated/reordered by
-    uuid (list order becomes `position`); a folder uuid absent from the payload
-    is deleted (only ever an emptied folder — room placement is reassigned
-    first by the caller). Rooms are NEVER created or deleted here: only their
-    `folder_uuid` + `position` change, and the payload MUST list exactly the
-    existing rooms. A missing room would otherwise be silently dropped (and its
-    messages with it via cascade) on a truncated payload — destructive folder/
-    room deletion goes through the dedicated endpoints instead.
+    """Update the left-panel tree's existing rows: folder names, and folder +
+    room placement and order (list order becomes `position`). A room's name,
+    membership and messages are never touched here.
+
+    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    a payload that omits an existing folder or room, or names one the DB
+    doesn't have, is a ChatTreeError — absence means a bug, not an
+    instruction. That matters most for rooms, whose messages cascade with
+    them. Creation is create_chatroom_folder / create_chatroom; deletion is
+    delete_chatroom_folder / delete_chatroom.
 
     base_version, when given, is the chat_tree_version() the caller hydrated
     with: a stale token raises ChatTreeConflict (HTTP 409 upstream) — checked
@@ -585,31 +587,27 @@ def chat_save_tree(
     existing_r = {
         r.uuid: r for r in db.session.execute(sa.select(Chatroom)).scalars().all()
     }
-    incoming_rooms = {UUID(r["uuid"]) for r in rooms}
-    missing = set(existing_r) - incoming_rooms
-    if missing:
-        raise ChatTreeError(
-            f"chat tree save omitted {len(missing)} existing room(s) — refusing "
-            f"(the tree save never deletes rooms)"
-        )
-    unknown = incoming_rooms - set(existing_r)
-    if unknown:
-        raise ChatTreeError(f"chat tree save references {len(unknown)} unknown room(s)")
-    # Folders: update existing by uuid, insert new, delete the rest.
-    seen_f: set[UUID] = set()
+    incoming_f = {UUID(f["id"]) for f in folders}
+    incoming_r = {UUID(r["uuid"]) for r in rooms}
+    for label, incoming, existing in (("folder", incoming_f, existing_f),
+                                      ("room", incoming_r, existing_r)):
+        missing = set(existing) - incoming
+        if missing:
+            raise ChatTreeError(
+                f"chat tree save omitted {len(missing)} existing {label}(s) — "
+                f"refusing (the tree save never deletes)"
+            )
+        unknown = incoming - set(existing)
+        if unknown:
+            raise ChatTreeError(
+                f"chat tree save references {len(unknown)} unknown {label}(s) — "
+                f"refusing (the tree save never creates)"
+            )
     for i, f in enumerate(folders):
-        fu = UUID(f["id"])
-        seen_f.add(fu)
-        row = existing_f.get(fu)
-        if row is None:
-            row = ChatroomFolder(uuid=fu)
-            db.session.add(row)
+        row = existing_f[UUID(f["id"])]
         row.name = f.get("name", "")
         row.parent_uuid = UUID(f["parentId"]) if f.get("parentId") else None
         row.position = i
-    for fu, row in existing_f.items():
-        if fu not in seen_f:
-            db.session.delete(row)
     # Rooms: only placement + order (never name/membership/messages).
     for i, r in enumerate(rooms):
         row = existing_r[UUID(r["uuid"])]

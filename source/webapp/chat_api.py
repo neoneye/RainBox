@@ -124,7 +124,10 @@ def chat_rooms() -> Response | tuple[Response, int]:
         else:
             member_uuids = [_parse_uuid(raw) for raw in data.get("member_uuids", [])]
         room = db.create_chatroom(name, human.uuid, member_uuids, room_type=room_type)
-        return jsonify({"uuid": str(room.uuid), "name": room.name}), 201
+        # A create is a tree mutation, so it hands back the fresh tree version —
+        # without it the client's next drag 409s (docs/ui-tree-persistence.md).
+        return jsonify({"uuid": str(room.uuid), "name": room.name,
+                        "version": db.chat_tree_version()}), 201
     return jsonify(db.list_chatrooms())
 
 
@@ -139,9 +142,10 @@ def chat_room_details() -> Response:
 @app.route("/chat/api/tree", methods=["GET", "PUT"])
 def chat_tree() -> Response | tuple[Response, int]:
     """The left-panel folder/room tree. GET hydrates {folders, rooms, version};
-    PUT bulk-saves folder placement + room ordering (version-guarded). The PUT
-    never creates or deletes rooms — folder/room deletion has dedicated
-    endpoints (mirrors /cron/api/tree, but without room destruction)."""
+    PUT saves folder names plus folder and room placement + ordering
+    (version-guarded). Per docs/ui-tree-persistence.md the PUT only updates
+    rows that already exist — a payload that omits or invents a folder or room
+    is a 400 — and creation/deletion are their own endpoints below."""
     if request.method == "PUT":
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
@@ -180,6 +184,7 @@ def chat_create_folder() -> tuple[Response, int]:
         "id": str(folder.uuid),
         "name": folder.name,
         "parentId": str(folder.parent_uuid) if folder.parent_uuid else None,
+        "version": db.chat_tree_version(),
     }), 201
 
 
@@ -199,7 +204,8 @@ def chat_delete_folder(folder_uuid: str) -> Response:
         db.delete_chatroom_folder(fuuid)
     except LookupError:
         abort(404, "folder not found")
-    return jsonify({"id": str(fuuid), "deleted": True})
+    return jsonify({"id": str(fuuid), "deleted": True,
+                    "version": db.chat_tree_version()})
 
 
 @app.route("/chat/api/rooms/<room_uuid>/delete-preview")
@@ -230,7 +236,8 @@ def delete_chat_room(room_uuid: str) -> Response:
     if db.get_chatroom(ruuid) is None:
         abort(404, "room not found")
     db.delete_chatroom(ruuid)
-    return jsonify({"uuid": str(ruuid), "deleted": True})
+    return jsonify({"uuid": str(ruuid), "deleted": True,
+                    "version": db.chat_tree_version()})
 
 
 @app.route("/chat/api/rooms/<room_uuid>/members", methods=["GET", "POST"])

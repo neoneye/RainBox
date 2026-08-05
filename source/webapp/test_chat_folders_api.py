@@ -64,6 +64,72 @@ def test_put_tree_missing_version_is_400(app_ctx):
     assert resp.status_code == 400
 
 
+def _tree_payload(client):
+    """The whole current tree in the PUT's field names. The save can neither
+    create nor delete (docs/ui-tree-persistence.md), so every existing row has
+    to ride along."""
+    tree = client.get("/chat/api/tree").get_json()
+    folders = [{"id": f["id"], "name": f["name"], "parentId": f["parentId"]}
+               for f in tree["folders"]]
+    rooms = [{"uuid": r["uuid"], "folderId": r["folderId"]}
+             for r in tree["rooms"]]
+    return folders, rooms, tree["version"]
+
+
+def test_put_tree_refuses_to_omit_an_existing_folder(app_ctx):
+    """The whole point of the split shape: a payload that drops a row is a
+    malformed request, not a deletion."""
+    from webapp.core import app as flask_app
+    client = flask_app.test_client()
+    fid = client.post("/chat/api/folders",
+                      json={"name": "apitest-omit"}).get_json()["id"]
+    try:
+        folders, rooms, version = _tree_payload(client)
+        resp = client.put("/chat/api/tree", json={
+            "folders": [f for f in folders if f["id"] != fid],
+            "rooms": rooms, "version": version})
+        assert resp.status_code == 400 and "omitted" in resp.get_json()["error"]
+        # …and nothing was mutated.
+        assert any(f["id"] == fid
+                   for f in client.get("/chat/api/tree").get_json()["folders"])
+    finally:
+        client.delete(f"/chat/api/folders/{fid}")
+
+
+def test_put_tree_refuses_an_unknown_folder(app_ctx):
+    from webapp.core import app as flask_app
+    client = flask_app.test_client()
+    folders, rooms, version = _tree_payload(client)
+    resp = client.put("/chat/api/tree", json={
+        "folders": folders + [{"id": str(uuid4()), "name": "ghost",
+                               "parentId": None}],
+        "rooms": rooms, "version": version})
+    assert resp.status_code == 400 and "unknown" in resp.get_json()["error"]
+
+
+def test_create_and_delete_return_a_token_the_next_put_accepts(app_ctx):
+    """Every mutating endpoint hands back the fresh version, or the client's
+    next drag 409s for a reason the operator can't see."""
+    from webapp.core import app as flask_app
+    client = flask_app.test_client()
+    folder = client.post("/chat/api/folders",
+                         json={"name": "apitest-token"}).get_json()
+    room = client.post("/chat/api/rooms",
+                       json={"name": f"apitest-{uuid4().hex[:6]}"}).get_json()
+    assert folder["version"] and room["version"]
+    assert room["version"] != folder["version"]
+    try:
+        folders, rooms, version = _tree_payload(client)
+        assert version == room["version"]
+        # The create's own token is enough to save with — no re-hydrate needed.
+        assert client.put("/chat/api/tree", json={
+            "folders": folders, "rooms": rooms,
+            "version": room["version"]}).status_code == 200
+    finally:
+        assert client.delete(f"/chat/api/rooms/{room['uuid']}").get_json()["version"]
+        assert client.delete(f"/chat/api/folders/{folder['id']}").get_json()["version"]
+
+
 def test_folder_delete_preview_and_delete(app_ctx):
     from webapp.core import app as flask_app
     client = flask_app.test_client()

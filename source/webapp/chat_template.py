@@ -449,7 +449,21 @@ function saveExpandState(){
 }
 function folderById(id){ return folders.find(f => f.id === id) || null; }
 function childFolders(parentId){ return folders.filter(f => (f.parentId || null) === parentId); }
-function roomsInFolder(id){ return rooms.filter(r => (r.folderId || null) === id); }
+// Root level also surfaces a room whose folderId names a folder that isn't in
+// `folders` (e.g. the folder was deleted via the admin, orphaning the row). The
+// server rejects it in every tree save, so if it stayed invisible here the
+// operator could never reach it to move or delete it and every structural edit
+// would 400 forever (docs/ui-tree-persistence.md).
+function roomsInFolder(id){
+  const target = id || null;
+  if (target === null){
+    return rooms.filter(r => {
+      const fid = r.folderId || null;
+      return fid === null || !folderById(fid);
+    });
+  }
+  return rooms.filter(r => (r.folderId || null) === target);
+}
 // The top-most room in left-panel render order: depth-first, subfolders before
 // rooms (mirrors renderRooms). Used as the default selection — NOT rooms[0],
 // which is global position order and can sit below entire folders in the tree.
@@ -1625,14 +1639,31 @@ function wireRootDrop(el, atStart){
   });
 }
 
-// ---- persistence: debounced PUT of the whole tree ----
+// ---- persistence: debounced PUT of the tree (docs/ui-tree-persistence.md) ----
+// The PUT only ever updates rows that already exist; creation and deletion are
+// their own immediate requests. Any failure re-hydrates so the client converges
+// on server truth instead of drifting.
 let saveTimer = null;
+let saveChain = Promise.resolve();   // serializes PUTs; every save appends to it
 function saveTree(){
   renderRooms();
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(saveTreePush, 300);
 }
-async function saveTreePush(){
+function saveTreePush(){
+  if (saveTimer){ clearTimeout(saveTimer); saveTimer = null; }
+  saveChain = saveChain.then(doSaveTree);
+  return saveChain;
+}
+// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// issuing a create or delete." Nothing else orders them against each other,
+// and the two responses race — a PUT landing after the create/delete would put
+// a stale token back, and 409 the next save for no visible reason.
+function flushPendingTreeSave(){
+  if (saveTimer) return saveTreePush();
+  return saveChain;
+}
+async function doSaveTree(){
   if (!treeVersion){ await loadRooms(currentRoom); return; }  // no token -> re-hydrate, never blind-PUT
   const body = {
     folders: folders.map(f => ({id: f.id, name: f.name, parentId: f.parentId || null})),
@@ -1646,8 +1677,10 @@ async function saveTreePush(){
     });
     const data = await resp.json();
     if (resp.status === 409){ await loadRooms(currentRoom); return; }  // stale -> re-hydrate
+    // A 400 means our payload disagreed with the server about which rows
+    // exist — re-hydrate rather than retry the same bad shape.
     if (!resp.ok) throw new Error(data.error || ('PUT /chat/api/tree -> ' + resp.status));
-    treeVersion = data.version || treeVersion;
+    treeVersion = data.version;
   } catch (e) {
     await loadRooms(currentRoom);  // recover to server truth on any error
   }
@@ -1781,6 +1814,7 @@ async function confirmFolderModal(){
   }
   // create: POST, then re-hydrate so the new folder gets a server position.
   try {
+    await flushPendingTreeSave();
     const resp = await fetch('/chat/api/folders', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: name}),
@@ -1853,6 +1887,7 @@ async function performConfirmedDelete(){
   const {kind, id} = deleteModalState;
   const url = kind === 'folder' ? '/chat/api/folders/' + id : '/chat/api/rooms/' + id;
   try {
+    await flushPendingTreeSave();
     const r = await fetch(url, {method: 'DELETE'});
     if (!r.ok) throw new Error('DELETE ' + url + ' -> ' + r.status);
   } catch (e) { alert(e); return; }
@@ -2777,6 +2812,7 @@ async function confirmRoomModal(){
   const member_uuids = room_type === 'direct' ? []
     : Array.from(agentListEl.querySelectorAll('input:checked')).map(cb => cb.value);
   try {
+    await flushPendingTreeSave();
     const res = await postJSON('/chat/api/rooms', { name, member_uuids, room_type });
     closeRoomModal();
     await loadRooms(res.uuid);

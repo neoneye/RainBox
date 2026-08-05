@@ -167,12 +167,21 @@ def _all_rooms_payload(extra_overrides=None):
     ]
 
 
+def _all_folders_payload():
+    """Every existing folder in the PUT's field names. The save can neither
+    create nor delete (docs/ui-tree-persistence.md), so a payload that omits a
+    folder is refused just like one that omits a room."""
+    return [{"id": f["id"], "name": f["name"], "parentId": f["parentId"]}
+            for f in db.list_chatroom_folders()]
+
+
 def test_save_tree_moves_room_into_folder(two_rooms):
     a, b = two_rooms
-    fid = str(uuid4())
-    folders = [{"id": fid, "name": "svf-work", "parentId": None}]
+    folder = db.create_chatroom_folder("svf-work")
+    fid = str(folder.uuid)
     rooms = _all_rooms_payload({str(a): fid})
-    db.chat_save_tree(folders, rooms, base_version=db.chat_tree_version())
+    db.chat_save_tree(_all_folders_payload(), rooms,
+                      base_version=db.chat_tree_version())
     moved = next(r for r in db.list_chatrooms() if r["uuid"] == str(a))
     assert moved["folderId"] == fid
 
@@ -181,13 +190,32 @@ def test_save_tree_refuses_to_drop_a_room(two_rooms):
     a, b = two_rooms
     # Payload omitting room b would silently delete it -> must raise.
     rooms = [r for r in _all_rooms_payload() if r["uuid"] != str(b)]
-    with pytest.raises(db.ChatTreeError):
-        db.chat_save_tree([], rooms, base_version=db.chat_tree_version())
+    with pytest.raises(db.ChatTreeError, match="omitted"):
+        db.chat_save_tree(_all_folders_payload(), rooms,
+                          base_version=db.chat_tree_version())
+
+
+def test_save_tree_refuses_to_drop_a_folder(two_rooms):
+    """Folders get the same protection as rooms: absence is a bug, not a
+    deletion instruction."""
+    db.create_chatroom_folder("svf-keep")
+    with pytest.raises(db.ChatTreeError, match="omitted"):
+        db.chat_save_tree([], _all_rooms_payload(),
+                          base_version=db.chat_tree_version())
+
+
+def test_save_tree_refuses_an_unknown_folder(two_rooms):
+    """And it cannot create one: the PUT is not a way to mint a folder."""
+    ghost = [{"id": str(uuid4()), "name": "svf-ghost", "parentId": None}]
+    with pytest.raises(db.ChatTreeError, match="unknown"):
+        db.chat_save_tree(_all_folders_payload() + ghost, _all_rooms_payload(),
+                          base_version=db.chat_tree_version())
 
 
 def test_save_tree_409_on_stale_version(two_rooms):
     with pytest.raises(db.ChatTreeConflict):
-        db.chat_save_tree([], _all_rooms_payload(), base_version="staleversion0000")
+        db.chat_save_tree(_all_folders_payload(), _all_rooms_payload(),
+                          base_version="staleversion0000")
 
 
 def test_recursive_delete_preview_and_delete(app_ctx):
