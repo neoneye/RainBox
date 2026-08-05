@@ -2,8 +2,11 @@
 
 Split out of db.py. Holds the cron folder/job/run tree (load/validate/save),
 schedule computation, and job firing/tick (fire_cron_job, cron_tick, ...).
-Firing posts to chat (db.chat) and enqueues workspace-shell commands (db.queue).
-Re-exported from db for import compatibility.
+Saves follow docs/ui-tree-persistence.md — the tree save only ever updates
+rows that already exist, so a payload that omits or invents a row is an error
+rather than a silent create or delete; creation and deletion are their own
+functions. Firing posts to chat (db.chat) and enqueues workspace-shell
+commands (db.queue). Re-exported from db for import compatibility.
 """
 import hashlib
 import json
@@ -14,7 +17,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 
@@ -69,6 +72,46 @@ def _cron_last_run_brief(run: "CronRun | None") -> dict[str, Any] | None:
     }
 
 
+def _cron_folder_dict(f: CronFolder) -> dict[str, Any]:
+    return {
+        "id": str(f.uuid),
+        "name": f.name,
+        "description": f.description,
+        "parentId": str(f.parent_uuid) if f.parent_uuid else None,
+        "enabled": f.enabled,
+        "created_at": f.created_at.isoformat() if f.created_at else None,
+        "updated_at": f.updated_at.isoformat() if f.updated_at else None,
+    }
+
+
+def _cron_job_dict(j: CronJob, last_run: "CronRun | None" = None) -> dict[str, Any]:
+    return {
+        "uuid": str(j.uuid),
+        "name": j.name,
+        "enabled": j.enabled,
+        "folderId": str(j.folder_uuid) if j.folder_uuid else None,
+        "cron": j.cron_expr,
+        "timezone": j.timezone,
+        "type": j.action_type,
+        "target": j.target,
+        "message": j.message,
+        "command": j.command,
+        "description": j.description,
+        "maxRetries": j.max_retries,
+        "created_at": j.created_at.isoformat() if j.created_at else None,
+        "updated_at": j.updated_at.isoformat() if j.updated_at else None,
+        "last_run": _cron_last_run_brief(last_run),
+        # Read-only, for the lists' next-run column (the scheduler owns it).
+        "next_run_at": j.next_run_at.isoformat() if j.next_run_at else None,
+        # Provenance deep-link to the /assistant step that created the job
+        # (reminders); null for manual jobs. Read-only — ignored on save.
+        "origin_step_link": (
+            assistant_step_path(j.origin_run_uuid, j.origin_step_uuid)
+            if j.origin_run_uuid and j.origin_step_uuid else None
+        ),
+    }
+
+
 def cron_load_tree() -> dict[str, Any]:
     """Return the whole cron tree using the frontend's field names, each list
     ordered by `position` (then id) so the page renders in saved order. Each
@@ -90,46 +133,8 @@ def cron_load_tree() -> dict[str, Any]:
         ).scalars().all()
     }
     return {
-        "folders": [
-            {
-                "id": str(f.uuid),
-                "name": f.name,
-                "description": f.description,
-                "parentId": str(f.parent_uuid) if f.parent_uuid else None,
-                "enabled": f.enabled,
-                "created_at": f.created_at.isoformat() if f.created_at else None,
-                "updated_at": f.updated_at.isoformat() if f.updated_at else None,
-            }
-            for f in folders
-        ],
-        "jobs": [
-            {
-                "uuid": str(j.uuid),
-                "name": j.name,
-                "enabled": j.enabled,
-                "folderId": str(j.folder_uuid) if j.folder_uuid else None,
-                "cron": j.cron_expr,
-                "timezone": j.timezone,
-                "type": j.action_type,
-                "target": j.target,
-                "message": j.message,
-                "command": j.command,
-                "description": j.description,
-                "maxRetries": j.max_retries,
-                "created_at": j.created_at.isoformat() if j.created_at else None,
-                "updated_at": j.updated_at.isoformat() if j.updated_at else None,
-                "last_run": _cron_last_run_brief(latest_run.get(j.uuid)),
-                # Read-only, for the lists' next-run column (the scheduler owns it).
-                "next_run_at": j.next_run_at.isoformat() if j.next_run_at else None,
-                # Provenance deep-link to the /assistant step that created the job
-                # (reminders); null for manual jobs. Read-only — ignored on save.
-                "origin_step_link": (
-                    assistant_step_path(j.origin_run_uuid, j.origin_step_uuid)
-                    if j.origin_run_uuid and j.origin_step_uuid else None
-                ),
-            }
-            for j in jobs
-        ],
+        "folders": [_cron_folder_dict(f) for f in folders],
+        "jobs": [_cron_job_dict(j, latest_run.get(j.uuid)) for j in jobs],
         # Chatrooms for the message-target picker (value = uuid, label = name).
         "chatrooms": cron_chatrooms(),
         # Optimistic-concurrency token; the page echoes it on PUT (409 if stale).
@@ -157,8 +162,9 @@ def cron_chatrooms() -> list[dict[str, Any]]:
 
 class CronTreeError(ValueError):
     """A cron tree payload failed structural validation (bad uuid, dangling
-    parent, cycle, unknown action type, malformed cron). Callers (the PUT
-    endpoint, future MCP tools) turn this into a 4xx rather than a 500."""
+    parent, cycle, unknown action type, malformed cron, a row that is missing
+    or unknown). Callers (the PUT endpoint, future MCP tools) turn this into a
+    4xx rather than a 500."""
 
 
 class CronTreeConflict(Exception):
@@ -244,6 +250,36 @@ def validate_cron_expr(expr: Any) -> None:
             raise CronTreeError(f"invalid cron field {part!r} in {expr!r}")
 
 
+def validate_cron_job_fields(j: dict[str, Any], *, label: str) -> None:
+    """The per-job settings checks, shared by the tree save and by job
+    creation, so a job can never enter the DB through one path with a shape
+    the other would reject. Folder references are NOT checked here — the tree
+    save resolves them against the payload, creation against the DB. `label`
+    names the job in the error text."""
+    atype = j.get("type", "message")
+    if atype not in CRON_ACTION_TYPES:
+        raise CronTreeError(f"{label} has unknown type {atype!r}")
+    # A message target is a chatroom uuid (rename-proof). Empty is allowed
+    # (firing falls back to the cron room); a non-uuid is rejected so a stale
+    # name can't be saved.
+    if atype == "message":
+        tgt = j.get("target", "")
+        if tgt and _to_uuid(tgt) is None:
+            raise CronTreeError(
+                f"{label} message target must be a chatroom uuid: {tgt!r}"
+            )
+    tz = j.get("timezone", "localtime")
+    if tz not in CRON_TIMEZONES:
+        raise CronTreeError(f"{label} has unknown timezone {tz!r}")
+    retries = j.get("maxRetries", 0)
+    if not isinstance(retries, int) or isinstance(retries, bool) \
+            or not (0 <= retries <= CRON_MAX_RETRIES_CAP):
+        raise CronTreeError(
+            f"{label} maxRetries must be an int 0..{CRON_MAX_RETRIES_CAP}: {retries!r}"
+        )
+    validate_cron_expr(j.get("cron", ""))
+
+
 def validate_cron_tree(
     folders: list[dict[str, Any]], jobs: list[dict[str, Any]]
 ) -> None:
@@ -313,18 +349,7 @@ def validate_cron_tree(
         if ju in parent_of:
             raise CronTreeError(f"job uuid {ju} collides with a folder id")
         job_uuids.add(ju)
-        atype = j.get("type", "message")
-        if atype not in CRON_ACTION_TYPES:
-            raise CronTreeError(f"job {ju} has unknown type {atype!r}")
-        # A message target is a chatroom uuid (rename-proof). Empty is allowed
-        # (firing falls back to the cron room); a non-uuid is rejected so a stale
-        # name can't be saved.
-        if atype == "message":
-            tgt = j.get("target", "")
-            if tgt and _to_uuid(tgt) is None:
-                raise CronTreeError(
-                    f"job {ju} message target must be a chatroom uuid: {tgt!r}"
-                )
+        validate_cron_job_fields(j, label=f"job {ju}")
         fld_raw = j.get("folderId")
         if fld_raw is not None:
             fld = _to_uuid(fld_raw)
@@ -332,42 +357,29 @@ def validate_cron_tree(
                 raise CronTreeError(f"job {ju} folderId is not a uuid: {fld_raw!r}")
             if fld not in parent_of:
                 raise CronTreeError(f"job {ju} references missing folder {fld}")
-        tz = j.get("timezone", "localtime")
-        if tz not in CRON_TIMEZONES:
-            raise CronTreeError(f"job {ju} has unknown timezone {tz!r}")
-        retries = j.get("maxRetries", 0)
-        if not isinstance(retries, int) or isinstance(retries, bool) \
-                or not (0 <= retries <= CRON_MAX_RETRIES_CAP):
-            raise CronTreeError(
-                f"job {ju} maxRetries must be an int 0..{CRON_MAX_RETRIES_CAP}: {retries!r}"
-            )
-        validate_cron_expr(j.get("cron", ""))
 
 
 def cron_save_tree(
     folders: list[dict[str, Any]], jobs: list[dict[str, Any]],
-    *, base_version: str | None = None, expected_deletes: int | None = None,
+    *, base_version: str | None = None,
 ) -> None:
-    """Upsert the whole cron tree by uuid. `folders`/`jobs` use the frontend
-    field names; list order becomes `position`. Existing rows are updated in
-    place (so `created_at` is preserved and `updated_at`/onupdate only fires on
-    real changes); rows whose uuid is absent from the incoming lists are
-    deleted. No DB FKs, but keep it tidy.
+    """Update the cron tree's existing rows: folder/job placement, order, name
+    and each job's schedule + action settings. `folders`/`jobs` use the
+    frontend field names; list order becomes `position`. Rows are updated in
+    place, so `created_at` is preserved and `updated_at`/onupdate only fires on
+    real changes.
 
-    Validates the payload first (`validate_cron_tree`) and raises CronTreeError
-    *before* any mutation, so a bad payload leaves the tree untouched.
+    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    a payload that omits an existing row, or names one the DB doesn't have, is
+    a CronTreeError — absence means a bug, not an instruction. Creation is
+    cron_create_job / cron_create_folder / cron_create_one_shot_message;
+    deletion is cron_delete_job / cron_delete_folder.
 
-    Two opt-in guards against the whole-tree-replace foot-gun (both skipped
-    when their argument is None, for internal/test callers):
-    - `base_version`: the `cron_tree_version()` token the caller hydrated
-      with; raises CronTreeConflict (HTTP 409 upstream) when stale, so a
-      second tab / external editor can't be silently clobbered.
-    - `expected_deletes`: how many node deletions the caller knowingly
-      performed; a save that would delete more than that (e.g. a truncated
-      payload from a frontend bug) raises CronTreeError instead of wiping."""
-    validate_cron_tree(folders, jobs)
+    A stale `base_version` raises CronTreeConflict, checked before structural
+    validation so a concurrent edit surfaces as 409, not 400."""
     if base_version is not None and base_version != cron_tree_version():
         raise CronTreeConflict("cron tree changed since it was loaded")
+    validate_cron_tree(folders, jobs)
     existing_f = {
         f.uuid: f
         for f in db.session.execute(sa.select(CronFolder)).scalars().all()
@@ -376,47 +388,35 @@ def cron_save_tree(
         j.uuid: j
         for j in db.session.execute(sa.select(CronJob)).scalars().all()
     }
-    if expected_deletes is not None:
-        incoming = {UUID(f["id"]) for f in folders} | {UUID(j["uuid"]) for j in jobs}
-        would_delete = len((set(existing_f) | set(existing_j)) - incoming)
-        if would_delete > expected_deletes:
+    incoming_f = {UUID(f["id"]) for f in folders}
+    incoming_j = {UUID(j["uuid"]) for j in jobs}
+    for label, incoming, existing in (("folder", incoming_f, existing_f),
+                                      ("job", incoming_j, existing_j)):
+        missing = set(existing) - incoming
+        if missing:
             raise CronTreeError(
-                f"save would delete {would_delete} node(s) but only "
-                f"{expected_deletes} deletion(s) were declared — refusing"
+                f"tree save omitted {len(missing)} existing {label}(s) — refusing "
+                f"(the tree save never deletes)"
             )
-    # Folders: update existing by uuid, insert new, delete the rest.
-    seen_f: set[UUID] = set()
+        unknown = incoming - set(existing)
+        if unknown:
+            raise CronTreeError(
+                f"tree save references {len(unknown)} unknown {label}(s) — refusing "
+                f"(the tree save never creates)"
+            )
     for i, f in enumerate(folders):
-        fu = UUID(f["id"])
-        seen_f.add(fu)
-        row = existing_f.get(fu)
-        if row is None:
-            row = CronFolder(uuid=fu)
-            db.session.add(row)
+        row = existing_f[UUID(f["id"])]
         row.name = f.get("name", "")
         row.description = f.get("description", "")
         row.parent_uuid = UUID(f["parentId"]) if f.get("parentId") else None
         row.enabled = bool(f.get("enabled", True))
         row.position = i
-    for fu, row in existing_f.items():
-        if fu not in seen_f:
-            db.session.delete(row)
-    # Jobs: same upsert pattern.
-    seen_j: set[UUID] = set()
     for i, j in enumerate(jobs):
-        ju = UUID(j["uuid"])
-        seen_j.add(ju)
+        row = existing_j[UUID(j["uuid"])]
         atype = j.get("type", "message")
         if atype not in CRON_ACTION_TYPES:
             atype = "message"
-        row = existing_j.get(ju)
-        is_new = row is None
-        if row is None:
-            row = CronJob(uuid=ju)
-            db.session.add(row)
-        prev_cron = None if is_new else row.cron_expr
-        prev_tz = None if is_new else row.timezone
-        prev_next = None if is_new else row.next_run_at
+        prev_cron, prev_tz, prev_next = row.cron_expr, row.timezone, row.next_run_at
         row.name = j.get("name", "")
         row.enabled = bool(j.get("enabled", True))
         row.folder_uuid = UUID(j["folderId"]) if j.get("folderId") else None
@@ -432,12 +432,224 @@ def cron_save_tree(
         row.position = i
         # (Re)compute the next fire time when the schedule changed or isn't set;
         # the scheduler tick reads next_run_at. Unchanged jobs keep theirs.
-        if is_new or row.cron_expr != prev_cron or row.timezone != prev_tz or prev_next is None:
+        if row.cron_expr != prev_cron or row.timezone != prev_tz or prev_next is None:
             row.next_run_at = cron_compute_next_run(row.cron_expr, row.timezone)
-    for ju, row in existing_j.items():
-        if ju not in seen_j:
-            db.session.delete(row)
     db.session.commit()
+
+
+# ---- create / delete (the tree save does neither) ----
+
+def _folder_row(folder_uuid: UUID) -> CronFolder | None:
+    return db.session.execute(
+        sa.select(CronFolder).where(CronFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+
+
+def _job_row(job_uuid: UUID) -> CronJob | None:
+    return db.session.execute(
+        sa.select(CronJob).where(CronJob.uuid == job_uuid)
+    ).scalar_one_or_none()
+
+
+def _next_position(model: Any, column: Any, parent: UUID | None) -> int:
+    """One past the last sibling under `parent`, so a new row lands at the end
+    of the folder it was created in."""
+    highest = db.session.execute(
+        sa.select(sa.func.max(model.position)).where(column == parent)
+    ).scalar_one()
+    return 0 if highest is None else highest + 1
+
+
+def _resolve_folder(raw: Any, *, label: str) -> UUID | None:
+    """A create's target folder: None (root), or a folder uuid that must exist
+    in the DB. Unlike the tree save — which resolves references inside the
+    payload — a create has only the DB to check against."""
+    if raw is None or raw == "":
+        return None
+    parsed = _to_uuid(raw)
+    if parsed is None:
+        raise CronTreeError(f"{label} folderId is not a uuid: {raw!r}")
+    if _folder_row(parsed) is None:
+        raise CronTreeError(f"{label} references missing folder {parsed}")
+    return parsed
+
+
+def cron_create_folder(name: str, parent_raw: Any = None) -> dict[str, Any]:
+    """Create one enabled folder at the end of its parent."""
+    if not isinstance(name, str) or not name.strip():
+        raise CronTreeError("folder name is required")
+    parent_uuid = _resolve_folder(parent_raw, label="folder")
+    row = CronFolder(uuid=uuid4(), name=name.strip(), description="",
+                     enabled=True, parent_uuid=parent_uuid,
+                     position=_next_position(CronFolder,
+                                             CronFolder.parent_uuid,
+                                             parent_uuid))
+    db.session.add(row)
+    db.session.commit()
+    return _cron_folder_dict(row)
+
+
+def cron_create_job(spec: dict[str, Any]) -> dict[str, Any]:
+    """Create one job at the end of its folder from the /cron builder's field
+    names (name, folderId, cron, timezone, type, target, message, command,
+    description, maxRetries, enabled). Settings go through the same
+    validate_cron_job_fields the tree save uses, so a job can't enter the DB
+    with a shape a later save would reject. Raises CronTreeError on a bad
+    spec."""
+    if not isinstance(spec, dict):
+        raise CronTreeError(f"job must be an object, got {type(spec).__name__}")
+    name = spec.get("name", "")
+    if not isinstance(name, str) or not name.strip():
+        raise CronTreeError("job name is required")
+    validate_cron_job_fields(spec, label="job")
+    folder_uuid = _resolve_folder(spec.get("folderId"), label="job")
+    cron_expr = spec.get("cron", "")
+    timezone = spec.get("timezone", "localtime")
+    row = CronJob(
+        uuid=uuid4(), name=name.strip(),
+        enabled=bool(spec.get("enabled", True)),
+        folder_uuid=folder_uuid, cron_expr=cron_expr, timezone=timezone,
+        action_type=spec.get("type", "message"),
+        target=spec.get("target", ""), message=spec.get("message", ""),
+        command=spec.get("command", ""), description=spec.get("description", ""),
+        max_retries=spec.get("maxRetries", 0),
+        next_run_at=cron_compute_next_run(cron_expr, timezone),
+        position=_next_position(CronJob, CronJob.folder_uuid, folder_uuid))
+    db.session.add(row)
+    db.session.commit()
+    return _cron_job_dict(row)
+
+
+def _shift_later_siblings(model: Any, column: Any, parent: UUID | None,
+                          after: int) -> None:
+    """Make room at `after + 1` among the siblings under `parent`, so a
+    duplicate's slot is unambiguous even before the next tree save rewrites
+    all positions."""
+    for sib in db.session.execute(
+        sa.select(model).where(column == parent, model.position > after)
+    ).scalars().all():
+        sib.position += 1
+
+
+def cron_duplicate_job(job_uuid: UUID) -> dict[str, Any] | None:
+    """Copy a job into a new row named "<name> (copy)", in the same folder
+    right after the source. The copy starts DISABLED so it can never fire
+    before the operator has looked at it, and starts with no run history.
+    None if the uuid is unknown."""
+    src = _job_row(job_uuid)
+    if src is None:
+        return None
+    _shift_later_siblings(CronJob, CronJob.folder_uuid, src.folder_uuid,
+                          src.position)
+    row = CronJob(
+        uuid=uuid4(), name=f"{src.name} (copy)", enabled=False,
+        folder_uuid=src.folder_uuid, cron_expr=src.cron_expr,
+        timezone=src.timezone, action_type=src.action_type,
+        target=src.target, message=src.message, command=src.command,
+        description=src.description, max_retries=src.max_retries,
+        next_run_at=cron_compute_next_run(src.cron_expr, src.timezone),
+        position=src.position + 1)
+    db.session.add(row)
+    db.session.commit()
+    return _cron_job_dict(row)
+
+
+def cron_duplicate_folder(folder_uuid: UUID) -> dict[str, Any] | None:
+    """Deep-copy a folder — every nested folder and every job inside them —
+    with fresh uuids, placed right after the source among its siblings. The
+    top copy is named "<name> (copy)" and starts DISABLED (which disables the
+    whole copied subtree through the inherited-enabled rule, so nothing fires
+    before the operator has looked at it); descendants keep their own flags.
+    Jobs are copied without run history. Returns the top copy, or None if the
+    uuid is unknown."""
+    src = _folder_row(folder_uuid)
+    if src is None:
+        return None
+    _shift_later_siblings(CronFolder, CronFolder.parent_uuid, src.parent_uuid,
+                          src.position)
+
+    def clone(f: CronFolder, parent: UUID | None, position: int) -> CronFolder:
+        copy = CronFolder(uuid=uuid4(), name=f.name, description=f.description,
+                          enabled=f.enabled, parent_uuid=parent,
+                          position=position)
+        db.session.add(copy)
+        children = db.session.execute(
+            sa.select(CronFolder).where(CronFolder.parent_uuid == f.uuid)
+            .order_by(CronFolder.position, CronFolder.id)
+        ).scalars().all()
+        for i, child in enumerate(children):
+            clone(child, copy.uuid, i)
+        jobs = db.session.execute(
+            sa.select(CronJob).where(CronJob.folder_uuid == f.uuid)
+            .order_by(CronJob.position, CronJob.id)
+        ).scalars().all()
+        for i, j in enumerate(jobs):
+            db.session.add(CronJob(
+                uuid=uuid4(), name=j.name, enabled=j.enabled,
+                folder_uuid=copy.uuid, cron_expr=j.cron_expr,
+                timezone=j.timezone, action_type=j.action_type,
+                target=j.target, message=j.message, command=j.command,
+                description=j.description, max_retries=j.max_retries,
+                next_run_at=cron_compute_next_run(j.cron_expr, j.timezone),
+                position=i))
+        return copy
+
+    top = clone(src, src.parent_uuid, src.position + 1)
+    top.name = f"{src.name} (copy)"
+    top.enabled = False
+    db.session.commit()
+    return _cron_folder_dict(top)
+
+
+def cron_delete_job(job_uuid: UUID) -> bool:
+    """Delete one job and its whole run history. False if the uuid is
+    unknown."""
+    row = _job_row(job_uuid)
+    if row is None:
+        return False
+    db.session.execute(sa.delete(CronRun).where(CronRun.cron_uuid == job_uuid))
+    db.session.delete(row)
+    db.session.commit()
+    return True
+
+
+def _descendant_folder_uuids(folder_uuid: UUID) -> list[UUID]:
+    """`folder_uuid` plus every folder nested under it, any depth. Cycle-guarded
+    via `seen`: a corrupt parent loop stops expanding a folder once it has
+    already been collected, rather than spinning. No size cap — a large but
+    legitimate subtree must be walked in full, or `cron_delete_folder` would
+    delete only the collected prefix and orphan the rest."""
+    out = [folder_uuid]
+    seen = {folder_uuid}
+    frontier = [folder_uuid]
+    while frontier:
+        children = db.session.execute(
+            sa.select(CronFolder.uuid)
+            .where(CronFolder.parent_uuid.in_(frontier))
+        ).scalars().all()
+        frontier = [c for c in children if c not in seen]
+        seen.update(frontier)
+        out.extend(frontier)
+    return out
+
+
+def cron_delete_folder(folder_uuid: UUID) -> bool:
+    """Delete a folder, every folder nested under it, and every job inside any
+    of them (run history included). False if the uuid is unknown."""
+    if _folder_row(folder_uuid) is None:
+        return False
+    folder_uuids = _descendant_folder_uuids(folder_uuid)
+    doomed = db.session.execute(
+        sa.select(CronJob.uuid).where(CronJob.folder_uuid.in_(folder_uuids))
+    ).scalars().all()
+    if doomed:
+        db.session.execute(sa.delete(CronRun).where(
+            CronRun.cron_uuid.in_(doomed)))
+        db.session.execute(sa.delete(CronJob).where(CronJob.uuid.in_(doomed)))
+    db.session.execute(sa.delete(CronFolder).where(
+        CronFolder.uuid.in_(folder_uuids)))
+    db.session.commit()
+    return True
 
 
 # ---- cron scheduler / firing ----

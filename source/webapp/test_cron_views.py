@@ -198,7 +198,11 @@ def test_cron_page_has_kebab_menu():
     assert "prompt(" not in body
     assert "confirm(" not in body  # cronConfirmDelete* are PascalCase, not confirm(
     assert "alert(" not in body
-    assert "crypto.randomUUID" in body
+    # uuids are minted server-side by the create endpoints — the tree PUT can
+    # never bring a row into existence (docs/ui-tree-persistence.md).
+    assert "crypto.randomUUID" not in body
+    assert "cronFlushPendingSave" in body
+    assert "/cron/api/jobs" in body and "/cron/api/folders" in body
     assert ">Create job<" in body
     # Folders also appear as rows in the All-jobs / Folder-details lists,
     # interleaved in tree order (depth-first).

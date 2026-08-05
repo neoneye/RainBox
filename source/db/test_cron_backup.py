@@ -6,7 +6,7 @@ create — cron_job, cron_run, and cron-room chat messages — so the suite is
 non-destructive. Backups are written into pytest's tmp_path, which auto-cleans.
 """
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -187,36 +187,34 @@ def test_cron_tick_fires_due_backup(firing, tmp_path, age_recipient):
 
 
 def test_validate_and_save_tree_accepts_backup(app_ctx):
-    """A 'backup' action survives tree validation and the save/load round-trip."""
+    """A 'backup' action survives tree validation and the create/load
+    round-trip."""
     # Validation accepts it (no raise).
     db.validate_cron_tree([], [{
         "uuid": str(uuid4()), "name": "B", "enabled": True, "folderId": None,
         "cron": "30 3 * * *", "timezone": "UTC", "type": "backup",
         "command": "/tmp/x", "target": "", "message": "",
     }])
-    # Save/load preserves the type (and doesn't coerce it to "message").
-    # Snapshot the tree first so this whole-tree replace leaves the DB as found.
-    s = db.db.session
-    fsnap = [_row(r) for r in s.execute(sa.select(db.CronFolder)).scalars().all()]
-    jsnap = [_row(r) for r in s.execute(sa.select(db.CronJob)).scalars().all()]
-    try:
-        ju = str(uuid4())
-        db.cron_save_tree([], [{
-            "uuid": ju, "name": "B", "enabled": True, "folderId": None,
+    # Create/load preserves the type (and doesn't coerce it to "message").
+    spec = {"name": "B", "enabled": True, "folderId": None,
             "cron": "30 3 * * *", "timezone": "UTC", "type": "backup",
-            "command": "/tmp/x", "target": "", "message": "",
-        }])
-        out = db.cron_load_tree()
-        assert [j["type"] for j in out["jobs"]] == ["backup"]
-        assert out["jobs"][0]["command"] == "/tmp/x"
+            "command": "/tmp/x", "target": "", "message": ""}
+    made = db.cron_create_job(spec)
+    try:
+        row = next(j for j in db.cron_load_tree()["jobs"]
+                   if j["uuid"] == made["uuid"])
+        assert row["type"] == "backup" and row["command"] == "/tmp/x"
+        # …and a later tree save keeps it a backup too.
+        db.cron_save_tree(
+            [{"id": f["id"], "name": f["name"],
+              "description": f.get("description", ""),
+              "parentId": f.get("parentId"), "enabled": f.get("enabled", True)}
+             for f in db.cron_load_tree()["folders"]],
+            db.cron_load_tree()["jobs"])
+        assert next(j for j in db.cron_load_tree()["jobs"]
+                    if j["uuid"] == made["uuid"])["type"] == "backup"
     finally:
-        s.execute(sa.delete(db.CronJob))
-        s.execute(sa.delete(db.CronFolder))
-        for row in fsnap:
-            s.add(db.CronFolder(**row))
-        for row in jsnap:
-            s.add(db.CronJob(**row))
-        s.commit()
+        db.cron_delete_job(UUID(made["uuid"]))
 
 
 def test_seed_cron_defaults_idempotent(app_ctx):
@@ -234,7 +232,3 @@ def test_seed_cron_defaults_idempotent(app_ctx):
     assert len(folders) == 1 and len(jobs) == 1            # no duplicates
     assert jobs[0].action_type == "backup"
     assert jobs[0].enabled is enabled_before               # operator state preserved
-
-
-def _row(r):
-    return {c.name: getattr(r, c.name) for c in r.__table__.columns if c.name != "id"}

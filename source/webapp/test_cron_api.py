@@ -103,6 +103,26 @@ def cron_tree_snapshot(app_ctx):
         db.db.session.commit()
 
 
+@pytest.fixture
+def empty_tree(cron_tree_snapshot):
+    """An empty cron tree for the duration of the test; cron_tree_snapshot
+    puts the operator's real rows (and the seeded System jobs) back after."""
+    import sqlalchemy as sa
+
+    db.db.session.execute(sa.delete(CronJob))
+    db.db.session.execute(sa.delete(CronFolder))
+    db.db.session.commit()
+    yield
+
+
+def _job_spec(name="J", **over):
+    """A minimal valid job spec in the builder's field names."""
+    return {"name": name, "folderId": None, "cron": "* * * * *",
+            "timezone": "localtime", "type": "command", "target": "",
+            "message": "", "command": "ls", "description": "",
+            "maxRetries": 0, **over}
+
+
 def test_cron_models_round_trip(app_ctx, cron_tree_snapshot):
     import sqlalchemy as sa
 
@@ -124,18 +144,25 @@ def test_cron_models_round_trip(app_ctx, cron_tree_snapshot):
     assert j.action_type == "command" and j.enabled is False and j.folder_uuid == fu
 
 
-def test_cron_save_and_load_tree(app_ctx, cron_tree_snapshot):
-    f_root, f_child, j1 = str(uuid4()), str(uuid4()), str(uuid4())
+def test_cron_save_and_load_tree(app_ctx, empty_tree):
+    f_root = db.cron_create_folder("Root")
+    f_child = db.cron_create_folder("Child", f_root["id"])
     room_uuid = str(uuid4())  # message target is a chatroom uuid (rename-proof)
+    j1 = db.cron_create_job(_job_spec(
+        "J1", folderId=f_child["id"], cron="0 9 * * 1", timezone="UTC",
+        type="message", target=room_uuid, message="hi", command="",
+        description="note"))
     folders = [
-        {"id": f_root, "name": "Root", "description": "top-level notes",
+        {"id": f_root["id"], "name": "Root", "description": "top-level notes",
          "parentId": None, "enabled": True},
-        {"id": f_child, "name": "Child", "parentId": f_root, "enabled": False},
+        {"id": f_child["id"], "name": "Child", "parentId": f_root["id"],
+         "enabled": False},
     ]
     jobs = [
-        {"uuid": j1, "name": "J1", "enabled": True, "folderId": f_child,
-         "cron": "0 9 * * 1", "timezone": "UTC", "type": "message", "target": room_uuid,
-         "message": "hi", "command": "", "description": "note"},
+        {"uuid": j1["uuid"], "name": "J1", "enabled": True,
+         "folderId": f_child["id"], "cron": "0 9 * * 1", "timezone": "UTC",
+         "type": "message", "target": room_uuid, "message": "hi",
+         "command": "", "description": "note"},
     ]
     db.cron_save_tree(folders, jobs)
     out = db.cron_load_tree()
@@ -143,20 +170,117 @@ def test_cron_save_and_load_tree(app_ctx, cron_tree_snapshot):
     assert [f["name"] for f in out["folders"]] == ["Root", "Child"]   # order preserved
     assert out["folders"][0]["description"] == "top-level notes"      # folder notes round-trip
     assert out["folders"][0]["created_at"] and out["folders"][0]["updated_at"]
-    assert out["folders"][1]["parentId"] == f_root
+    assert out["folders"][1]["parentId"] == f_root["id"]
     assert out["folders"][1]["enabled"] is False
     assert len(out["jobs"]) == 1
     job = out["jobs"][0]
-    assert job["uuid"] == j1 and job["folderId"] == f_child
+    assert job["uuid"] == j1["uuid"] and job["folderId"] == f_child["id"]
     assert job["cron"] == "0 9 * * 1" and job["type"] == "message"
     assert job["target"] == room_uuid and job["description"] == "note"
     assert job["timezone"] == "UTC"   # timezone choice round-trips
 
-    # An unspecified timezone defaults to localtime.
-    db.cron_save_tree([], [
-        {"uuid": str(uuid4()), "name": "noTz", "folderId": None,
-         "cron": "* * * * *", "type": "command", "command": "ls"}])
+
+def test_unspecified_timezone_defaults_to_localtime(app_ctx, empty_tree):
+    made = db.cron_create_job({"name": "noTz", "folderId": None,
+                               "cron": "* * * * *", "type": "command",
+                               "command": "ls"})
+    assert made["timezone"] == "localtime"
     assert db.cron_load_tree()["jobs"][0]["timezone"] == "localtime"
+
+
+def test_save_tree_refuses_to_omit_an_existing_row(app_ctx, empty_tree):
+    made = db.cron_create_job(_job_spec("Keep me"))
+    with pytest.raises(db.CronTreeError, match="omitted"):
+        db.cron_save_tree([], [])
+    assert [j["uuid"] for j in db.cron_load_tree()["jobs"]] == [made["uuid"]]
+
+
+def test_save_tree_refuses_an_unknown_row(app_ctx, empty_tree):
+    with pytest.raises(db.CronTreeError, match="unknown"):
+        db.cron_save_tree([], [{"uuid": str(uuid4()), "name": "ghost",
+                                "folderId": None, "cron": "* * * * *",
+                                "type": "command", "command": "ls"}])
+    assert db.cron_load_tree()["jobs"] == []
+
+
+def test_create_job_validates_like_the_tree_save(app_ctx, empty_tree):
+    """A job can't be created in a shape a later tree save would reject —
+    both run validate_cron_job_fields."""
+    with pytest.raises(db.CronTreeError, match="5 fields"):
+        db.cron_create_job(_job_spec(cron="* * * *"))
+    with pytest.raises(db.CronTreeError, match="unknown type"):
+        db.cron_create_job(_job_spec(type="carrier-pigeon"))
+    with pytest.raises(db.CronTreeError, match="unknown timezone"):
+        db.cron_create_job(_job_spec(timezone="PST"))
+    with pytest.raises(db.CronTreeError, match="name is required"):
+        db.cron_create_job(_job_spec(name="  "))
+    with pytest.raises(db.CronTreeError, match="missing folder"):
+        db.cron_create_job(_job_spec(folderId=str(uuid4())))
+    assert db.cron_load_tree()["jobs"] == []
+
+
+def test_create_places_at_end_of_folder(app_ctx, empty_tree):
+    f = db.cron_create_folder("F")
+    db.cron_create_job(_job_spec("A", folderId=f["id"]))
+    db.cron_create_job(_job_spec("B", folderId=f["id"]))
+    assert [j["name"] for j in db.cron_load_tree()["jobs"]] == ["A", "B"]
+
+
+def test_delete_job_cascades_its_run_history(app_ctx, empty_tree):
+    import sqlalchemy as sa
+
+    made = db.cron_create_job(_job_spec())
+    ju = UUID(made["uuid"])
+    db.db.session.add(CronRun(uuid=uuid4(), cron_uuid=ju, status="ok"))
+    db.db.session.commit()
+    assert db.cron_delete_job(ju) is True
+    assert db.cron_load_tree()["jobs"] == []
+    assert db.db.session.execute(
+        sa.select(sa.func.count(CronRun.id)).where(CronRun.cron_uuid == ju)
+    ).scalar_one() == 0
+    assert db.cron_delete_job(ju) is False
+
+
+def test_delete_folder_cascades_the_subtree(app_ctx, empty_tree):
+    outer = db.cron_create_folder("Outer")
+    inner = db.cron_create_folder("Inner", outer["id"])
+    db.cron_create_job(_job_spec("A", folderId=inner["id"]))
+    assert db.cron_delete_folder(UUID(outer["id"])) is True
+    out = db.cron_load_tree()
+    assert out["folders"] == [] and out["jobs"] == []
+
+
+def test_duplicate_job_starts_disabled_right_after_the_source(app_ctx, empty_tree):
+    src = db.cron_create_job(_job_spec("Nightly", enabled=True))
+    db.cron_create_job(_job_spec("After"))
+    copy = db.cron_duplicate_job(UUID(src["uuid"]))
+    assert copy["name"] == "Nightly (copy)"
+    assert copy["enabled"] is False        # never fires before the operator looks at it
+    assert copy["command"] == src["command"]
+    order = [j["uuid"] for j in db.cron_load_tree()["jobs"]]
+    assert order.index(copy["uuid"]) == order.index(src["uuid"]) + 1
+    assert db.cron_duplicate_job(uuid4()) is None
+
+
+def test_duplicate_folder_deep_copies_the_subtree(app_ctx, empty_tree):
+    outer = db.cron_create_folder("Outer")
+    inner = db.cron_create_folder("Inner", outer["id"])
+    db.cron_create_job(_job_spec("Inside", folderId=inner["id"], enabled=True))
+    copy = db.cron_duplicate_folder(UUID(outer["id"]))
+    assert copy["name"] == "Outer (copy)" and copy["enabled"] is False
+    out = db.cron_load_tree()
+    # Two roots (the source and the copy), each with one nested folder holding
+    # one job — all with fresh uuids.
+    assert sorted(f["name"] for f in out["folders"]) == [
+        "Inner", "Inner", "Outer", "Outer (copy)"]
+    assert len({f["id"] for f in out["folders"]}) == 4
+    inner_copy = next(f for f in out["folders"]
+                      if f["parentId"] == copy["id"])
+    assert inner_copy["name"] == "Inner" and inner_copy["id"] != inner["id"]
+    assert [j["name"] for j in out["jobs"]] == ["Inside", "Inside"]
+    assert len({j["uuid"] for j in out["jobs"]}) == 2
+    assert {j["folderId"] for j in out["jobs"]} == {inner["id"], inner_copy["id"]}
+    assert db.cron_duplicate_folder(uuid4()) is None
 
 
 def test_toggling_active_on_one_shot_reminder_persists(app_ctx, cron_tree_snapshot):
@@ -181,20 +305,14 @@ def test_toggling_active_on_one_shot_reminder_persists(app_ctx, cron_tree_snapsh
     assert saved["next_run_at"] is not None  # fire time survived the save
 
 
-def test_cron_save_tree_replaces(app_ctx, cron_tree_snapshot):
-    db.cron_save_tree([{"id": str(uuid4()), "name": "A", "parentId": None, "enabled": True}], [])
-    db.cron_save_tree([{"id": str(uuid4()), "name": "B", "parentId": None, "enabled": True}], [])
-    out = db.cron_load_tree()
-    assert [f["name"] for f in out["folders"]] == ["B"]  # replace, not append
-
-
-def test_cron_save_tree_preserves_created_at(app_ctx, cron_tree_snapshot):
-    """The save upserts by uuid: an unchanged-uuid job keeps its created_at
-    across saves (the timestamps shown on the Job details page stay meaningful)
-    and updated_at moves forward when the job actually changes."""
+def test_cron_save_tree_preserves_created_at(app_ctx, empty_tree):
+    """The save updates in place by uuid: a job keeps its created_at across
+    saves (the timestamps shown on the Job details page stay meaningful) and
+    updated_at moves forward when the job actually changes."""
     import sqlalchemy as sa
 
-    ju = str(uuid4())
+    made = db.cron_create_job(_job_spec("Orig"))
+    ju = made["uuid"]
     job = {"uuid": ju, "name": "Orig", "enabled": True, "folderId": None,
            "cron": "* * * * *", "type": "command", "target": "", "message": "",
            "command": "ls", "description": ""}
@@ -324,13 +442,11 @@ def test_cron_api_put_rejects_invalid_tree(app_ctx, cron_tree_snapshot):
     ([1, 2, 3], 400),                             # root is not an object
     ({}, 400),                                    # missing version token
     ({"version": 5}, 400),                        # version not a string
-    ({"version": "x", "deletes": -1}, 400),       # deletes negative
-    ({"version": "x", "deletes": "1"}, 400),      # deletes not an int
 ])
 def test_cron_api_put_malformed_payload(app_ctx, cron_tree_snapshot, body, code):
     """Malformed bodies are 400s, never 500s. A bare {} is no longer a 'valid
-    wipe': every PUT must carry the version token it hydrated with, and
-    deletions must be declared via a non-negative int 'deletes'."""
+    wipe': every PUT must carry the version token it hydrated with, and an
+    empty payload omits every existing row, which the save refuses."""
     from webapp.core import app as flask_app
 
     client = flask_app.test_client()
@@ -343,30 +459,75 @@ def test_cron_api_put_malformed_payload(app_ctx, cron_tree_snapshot, body, code)
         assert resp.get_json()["ok"] is False
 
 
-def test_cron_api_tree_round_trip(app_ctx, cron_tree_snapshot):
+def test_cron_api_tree_round_trip(app_ctx, empty_tree):
     from webapp.core import app as flask_app
 
     client = flask_app.test_client()
+    folder = client.post("/cron/api/folders", json={"name": "ApiFolder"}).get_json()
+    job = client.post("/cron/api/jobs",
+                      json=_job_spec("ApiJob", folderId=folder["folder"]["id"],
+                                     enabled=True)).get_json()
+    # Every mutating endpoint hands back the fresh version, or the client's
+    # next drag 409s for a reason the operator can't see.
+    assert job["version"] and job["version"] != folder["version"]
+
     before = client.get("/cron/api/tree").get_json()
-    fu, ju = str(uuid4()), str(uuid4())
-    body = {
-        "folders": [{"id": fu, "name": "ApiFolder", "parentId": None, "enabled": True}],
-        "jobs": [{"uuid": ju, "name": "ApiJob", "enabled": True, "folderId": fu,
-                  "cron": "* * * * *", "type": "command", "target": "", "message": "",
-                  "command": "ls", "description": ""}],
-        "version": before["version"],
-        # Replacing the whole tree deletes every pre-existing row — declare it.
-        "deletes": len(before["folders"]) + len(before["jobs"]),
-    }
-    put = client.put("/cron/api/tree", json=body)
+    assert before["version"] == job["version"]
+    put = client.put("/cron/api/tree", json={
+        "folders": [{"id": folder["folder"]["id"], "name": "Renamed",
+                     "parentId": None, "enabled": True}],
+        "jobs": before["jobs"],
+        # The create's own token is enough to save with — no re-hydrate needed.
+        "version": job["version"]})
     assert put.status_code == 200 and put.get_json()["ok"] is True
-    # A successful save returns the new version token for the next PUT.
     assert isinstance(put.get_json()["version"], str) and put.get_json()["version"]
 
     got = client.get("/cron/api/tree").get_json()
-    assert [f["name"] for f in got["folders"]] == ["ApiFolder"]
-    assert got["jobs"][0]["uuid"] == ju and got["jobs"][0]["command"] == "ls"
+    assert [f["name"] for f in got["folders"]] == ["Renamed"]
+    assert got["jobs"][0]["uuid"] == job["job"]["uuid"]
+    assert got["jobs"][0]["command"] == "ls"
     assert got["version"] == put.get_json()["version"]
+
+    # The folder delete cascades the job inside it, and reports a token too.
+    out = client.delete(f"/cron/api/folders/{folder['folder']['id']}").get_json()
+    assert out["ok"] and out["version"]
+    final = client.get("/cron/api/tree").get_json()
+    assert final["folders"] == [] and final["jobs"] == []
+
+
+def test_cron_api_tree_put_refuses_to_omit_an_existing_row(app_ctx, empty_tree):
+    """The whole point of the split shape: a payload that drops a row is a
+    malformed request, not a deletion (docs/ui-tree-persistence.md)."""
+    from webapp.core import app as flask_app
+
+    client = flask_app.test_client()
+    job = client.post("/cron/api/jobs", json=_job_spec("Keep me")).get_json()
+    tree = client.get("/cron/api/tree").get_json()
+    resp = client.put("/cron/api/tree",
+                      json={"folders": [], "jobs": [], "version": tree["version"]})
+    assert resp.status_code == 400 and "omitted" in resp.get_json()["error"]
+    # …and nothing was mutated.
+    after = client.get("/cron/api/tree").get_json()
+    assert [j["uuid"] for j in after["jobs"]] == [job["job"]["uuid"]]
+
+
+def test_cron_api_delete_and_duplicate(app_ctx, empty_tree):
+    from webapp.core import app as flask_app
+
+    client = flask_app.test_client()
+    job = client.post("/cron/api/jobs", json=_job_spec("Nightly")).get_json()
+    ju = job["job"]["uuid"]
+    dup = client.post(f"/cron/api/jobs/{ju}/duplicate").get_json()
+    assert dup["ok"] and dup["job"]["name"] == "Nightly (copy)"
+    assert dup["version"] and dup["version"] != job["version"]
+    assert client.delete(f"/cron/api/jobs/{ju}").get_json()["version"]
+    assert client.delete(f"/cron/api/jobs/{uuid4()}").status_code == 404
+    assert client.delete(f"/cron/api/folders/{uuid4()}").status_code == 404
+    assert client.post(f"/cron/api/jobs/{uuid4()}/duplicate").status_code == 404
+    assert client.post(f"/cron/api/folders/{uuid4()}/duplicate").status_code == 404
+    assert client.post("/cron/api/folders", json={"name": " "}).status_code == 400
+    assert client.post("/cron/api/jobs",
+                       json=_job_spec(cron="nope")).status_code == 400
 
 
 def test_cron_api_put_stale_version_conflicts(app_ctx, cron_tree_snapshot):
@@ -377,62 +538,35 @@ def test_cron_api_put_stale_version_conflicts(app_ctx, cron_tree_snapshot):
     client = flask_app.test_client()
     got = client.get("/cron/api/tree").get_json()
     # Another writer (second tab / agent) adds a folder after our hydrate.
-    other = str(uuid4())
-    db.cron_save_tree(
-        got["folders"] + [{"id": other, "name": "OtherTab", "parentId": None, "enabled": True}],
-        got["jobs"])
-    # Our save, based on the stale hydrate (which omits OtherTab), is refused.
-    mine = str(uuid4())
+    other = db.cron_create_folder("OtherTab")["id"]
+    # Our save, based on the stale hydrate (which omits OtherTab), is refused —
+    # as a 409, checked before the structural validation that would otherwise
+    # report the omission as a 400.
     resp = client.put("/cron/api/tree", json={
-        "folders": got["folders"] + [{"id": mine, "name": "Mine", "parentId": None, "enabled": True}],
-        "jobs": got["jobs"], "version": got["version"], "deletes": 0,
+        "folders": got["folders"], "jobs": got["jobs"], "version": got["version"],
     })
     assert resp.status_code == 409
     assert resp.get_json()["ok"] is False
     # The response carries the current version so the client can re-hydrate.
     assert isinstance(resp.get_json()["version"], str)
-    ids = {f["id"] for f in db.cron_load_tree()["folders"]}
-    assert other in ids and mine not in ids  # their write survived; ours refused
+    assert other in {f["id"] for f in db.cron_load_tree()["folders"]}
 
 
-def test_cron_api_put_undeclared_delete_refused(app_ctx, cron_tree_snapshot):
-    """A save that would delete rows beyond the declared 'deletes' count (e.g.
-    a truncated payload from a frontend bug) is refused; declaring the
-    deletions lets the same payload through."""
-    from webapp.core import app as flask_app
-
-    client = flask_app.test_client()
-    got = client.get("/cron/api/tree").get_json()
-    n = len(got["folders"]) + len(got["jobs"])
-    assert n >= 2  # the seeded System folder + backup job at minimum
-
-    # Undeclared (deletes defaults to 0): refused, tree untouched.
-    resp = client.put("/cron/api/tree",
-                      json={"folders": [], "jobs": [], "version": got["version"]})
-    assert resp.status_code == 400 and "delete" in resp.get_json()["error"]
-    after = client.get("/cron/api/tree").get_json()
-    assert len(after["folders"]) + len(after["jobs"]) == n
-
-    # Declared: the same wipe is allowed.
-    resp = client.put("/cron/api/tree", json={
-        "folders": [], "jobs": [], "version": after["version"], "deletes": n})
-    assert resp.status_code == 200
-    final = client.get("/cron/api/tree").get_json()
-    assert final["folders"] == [] and final["jobs"] == []
-
-
-def test_cron_save_tree_populates_next_run_at(app_ctx, cron_tree_snapshot):
-    """Saving a job computes its next_run_at so the scheduler can fire it."""
+def test_cron_create_job_populates_next_run_at(app_ctx, empty_tree):
+    """A created job gets its next_run_at so the scheduler can fire it, and a
+    schedule change through the tree save recomputes it."""
     import sqlalchemy as sa
 
-    ju = str(uuid4())
-    db.cron_save_tree([], [{
-        "uuid": ju, "name": "J", "folderId": None, "cron": "*/5 * * * *",
-        "timezone": "UTC", "type": "command", "command": "ls",
-    }])
-    job = db.db.session.execute(
-        sa.select(db.CronJob).where(db.CronJob.uuid == UUID(ju))).scalar_one()
-    assert job.next_run_at is not None
+    made = db.cron_create_job(_job_spec(cron="*/5 * * * *", timezone="UTC"))
+    row = db.db.session.execute(
+        sa.select(db.CronJob).where(db.CronJob.uuid == UUID(made["uuid"]))
+    ).scalar_one()
+    assert row.next_run_at is not None
+    before = row.next_run_at
+    db.cron_save_tree([], [{**_job_spec(cron="0 9 * * 1", timezone="UTC"),
+                            "uuid": made["uuid"]}])
+    db.db.session.refresh(row)
+    assert row.next_run_at != before
 
 
 def test_one_shot_message_stores_origin(app_ctx, cron_tree_snapshot):
@@ -471,11 +605,9 @@ def test_cron_load_tree_exposes_origin_step_link(app_ctx, cron_tree_snapshot):
     assert prow["origin_step_link"] is None
 
 
-def test_cron_save_and_load_script_job(app_ctx, cron_tree_snapshot):
-    ju = str(uuid4())
-    db.cron_save_tree([], [
-        {"uuid": ju, "name": "Pollen", "folderId": None, "cron": "0 * * * *",
-         "type": "script", "command": "/x/daily.py"}])
+def test_cron_save_and_load_script_job(app_ctx, empty_tree):
+    db.cron_create_job(_job_spec("Pollen", cron="0 * * * *", type="script",
+                                 command="/x/daily.py"))
     job = db.cron_load_tree()["jobs"][0]
     assert job["type"] == "script" and job["command"] == "/x/daily.py"
 
@@ -488,14 +620,11 @@ def _script_job(tmp_path, body: str):
     p = tmp_path / "hc.sh"
     p.write_text("#!/bin/sh\n" + body + "\n")
     os.chmod(p, 0o755)
-    ju = str(uuid4())
-    db.cron_save_tree([], [
-        {"uuid": ju, "name": "HC", "folderId": None, "cron": "0 * * * *",
-         "type": "script", "command": str(p)}])
-    return ju
+    return db.cron_create_job(_job_spec("HC", cron="0 * * * *", type="script",
+                                        command=str(p)))["uuid"]
 
 
-def test_check_health_passes_flag_and_reports_ok(app_ctx, cron_tree_snapshot, tmp_path):
+def test_check_health_passes_flag_and_reports_ok(app_ctx, empty_tree, tmp_path):
     ju = _script_job(tmp_path, 'echo "args=$@"; echo "all good"')
     from webapp.core import app as flask_app
     client = flask_app.test_client()
@@ -507,7 +636,7 @@ def test_check_health_passes_flag_and_reports_ok(app_ctx, cron_tree_snapshot, tm
     assert "all good" in d["output"]
 
 
-def test_check_health_nonzero_exit_reports_unhealthy(app_ctx, cron_tree_snapshot, tmp_path):
+def test_check_health_nonzero_exit_reports_unhealthy(app_ctx, empty_tree, tmp_path):
     ju = _script_job(tmp_path, 'echo "FAIL disk"; exit 1')
     from webapp.core import app as flask_app
     client = flask_app.test_client()
@@ -516,21 +645,17 @@ def test_check_health_nonzero_exit_reports_unhealthy(app_ctx, cron_tree_snapshot
     assert "FAIL disk" in d["output"]
 
 
-def test_check_health_invalid_script_reports_error(app_ctx, cron_tree_snapshot):
-    ju = str(uuid4())
-    db.cron_save_tree([], [
-        {"uuid": ju, "name": "Gone", "folderId": None, "cron": "0 * * * *",
-         "type": "script", "command": "/nonexistent/daily.py"}])
+def test_check_health_invalid_script_reports_error(app_ctx, empty_tree):
+    ju = db.cron_create_job(_job_spec("Gone", cron="0 * * * *", type="script",
+                                      command="/nonexistent/daily.py"))["uuid"]
     from webapp.core import app as flask_app
     d = flask_app.test_client().post(f"/cron/api/jobs/{ju}/check_health").get_json()
     assert d["ok"] is False and "not found" in d["error"]
 
 
-def test_check_health_rejects_non_script_jobs(app_ctx, cron_tree_snapshot):
-    ju = str(uuid4())
-    db.cron_save_tree([], [
-        {"uuid": ju, "name": "Msg", "folderId": None, "cron": "0 * * * *",
-         "type": "message", "message": "hi"}])
+def test_check_health_rejects_non_script_jobs(app_ctx, empty_tree):
+    ju = db.cron_create_job(_job_spec("Msg", cron="0 * * * *", type="message",
+                                      message="hi", command=""))["uuid"]
     from webapp.core import app as flask_app
     resp = flask_app.test_client().post(f"/cron/api/jobs/{ju}/check_health")
     assert resp.status_code == 400

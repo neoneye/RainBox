@@ -3,9 +3,11 @@
 Defines cron-scheduled jobs that either send a message to an agent/chatroom or
 execute a command, organized in a folder tree. This module only renders the
 page shell; **persistence is real** — the browser-side state (`cronFolders` /
-`cronRowsState`) hydrates from and saves to `GET`/`PUT /cron/api/tree`
-(`webapp/cron_api.py` → `db.cron_load_tree`/`cron_save_tree`), so edits survive
-a refresh. Scheduled firing is the supervisor loop's cron tick (db.cron).
+`cronRowsState`) hydrates from `GET /cron/api/tree` and saves placement, order
+and job settings back through `PUT`; creation, duplication and deletion are
+their own endpoints, per docs/ui-tree-persistence.md (`webapp/cron_api.py` →
+`db/cron.py`). Edits survive a refresh. Scheduled firing is the supervisor
+loop's cron tick (db.cron).
 
 UI scope is **desktop-first** (tablet acceptable); small-phone layouts are a
 non-goal for now.

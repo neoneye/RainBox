@@ -342,12 +342,11 @@ def test_cron_tick_does_not_retry_old_errors(firing):
 
 
 def test_max_retries_round_trips_through_tree(app_ctx):
-    ju = str(uuid4())
-    db.cron_save_tree([], [{
-        "uuid": ju, "name": "R", "enabled": True, "folderId": None,
+    ju = db.cron_create_job({
+        "name": "R", "enabled": True, "folderId": None,
         "cron": "* * * * *", "timezone": "UTC", "type": "message",
         "target": "", "message": "m", "command": "", "maxRetries": 3,
-    }])
+    })["uuid"]
     try:
         out = next(j for j in db.cron_load_tree()["jobs"] if j["uuid"] == ju)
         assert out["maxRetries"] == 3

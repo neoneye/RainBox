@@ -1,11 +1,14 @@
 """JSON API backing the /cron page's persistence.
 
-Bulk load/save of the whole cron tree. The JSON uses the frontend's field names
-(folder `id`/`parentId`, job `uuid`/`folderId`/`cron`/`type`) so the page
-sends/receives its in-browser arrays almost verbatim. The save is an upsert by
-uuid (see `db.cron_save_tree`) and is validated server-side
+Save shape per docs/ui-tree-persistence.md: the tree PUT only updates rows that
+already exist (a payload that omits or invents one is a 400), and creation and
+deletion are their own endpoints. Every tree-structure endpoint (the tree PUT,
+folder/job create, both duplicates, folder/job delete) carries the new tree
+`version` in its response, so the client never holds a stale token. The JSON
+uses the frontend's field names (folder `id`/`parentId`, job
+`uuid`/`folderId`/`cron`/`type`) so the page sends/receives its in-browser
+arrays almost verbatim, and everything is validated server-side
 (`db.validate_cron_tree`) so a malformed tree is rejected with 400, not 500.
-Per-node CRUD/reorder endpoints are a later refinement (see docs/cron-design.md).
 Also exposes a manual "Run now" (`POST /cron/api/jobs/<uuid>/run`) that fires a
 job immediately; scheduled firing is driven by the supervisor loop's cron tick.
 """
@@ -19,6 +22,18 @@ import db
 from .core import app
 
 
+def _parse_uuid(raw: object) -> UUID | None:
+    # Called on both URL path segments (always str) and untrusted JSON-body
+    # values, so a non-string (dict, int, list, ...) must fail cleanly rather
+    # than raising from inside the uuid module.
+    if not isinstance(raw, str):
+        return None
+    try:
+        return UUID(raw)
+    except (ValueError, TypeError):
+        return None
+
+
 @app.route("/cron/api/tree", methods=["GET", "PUT"])
 def cron_tree() -> tuple[Response, int] | Response:
     if request.method == "PUT":
@@ -26,31 +41,108 @@ def cron_tree() -> tuple[Response, int] | Response:
         if not isinstance(data, dict):
             # Non-JSON or a non-object body (list/string/number) → 400, not 500.
             return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
-        # The PUT replaces the whole tree, so it must carry the version token
-        # it hydrated with (GET returns it); a stale token is a 409 and the
-        # page re-hydrates instead of clobbering the other writer's changes.
+        # The PUT must carry the version token it hydrated with (GET returns
+        # it); a stale token is a 409 and the page re-hydrates instead of
+        # clobbering the other writer's changes.
         version = data.get("version")
         if not isinstance(version, str) or not version:
             return jsonify({"ok": False, "error":
                             "missing tree 'version' (hydrate via GET first)"}), 400
-        # Deletions must be declared: rows absent from the payload are deleted,
-        # and an undeclared deletion is more likely a truncated payload (a
-        # frontend bug) than an intentional edit.
-        deletes = data.get("deletes", 0)
-        if not isinstance(deletes, int) or isinstance(deletes, bool) or deletes < 0:
-            return jsonify({"ok": False, "error":
-                            "'deletes' must be a non-negative integer"}), 400
         try:
             db.cron_save_tree(data.get("folders", []), data.get("jobs", []),
-                              base_version=version, expected_deletes=deletes)
+                              base_version=version)
         except db.CronTreeConflict as exc:
             return jsonify({"ok": False, "error": str(exc),
                             "version": db.cron_tree_version()}), 409
         except db.CronTreeError as exc:
-            # Invalid payload (bad shape, bad uuid, dangling/cyclic folder, bad cron, …).
+            # Invalid payload (bad shape, bad uuid, dangling/cyclic folder, bad
+            # cron, a row that is missing or unknown, …).
             return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": True, "version": db.cron_tree_version()})
     return jsonify(db.cron_load_tree())
+
+
+@app.route("/cron/api/folders", methods=["POST"])
+def cron_create_folder_route() -> tuple[Response, int]:
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return jsonify({"ok": False,
+                        "error": "request body must be a JSON object"}), 400
+    try:
+        folder = db.cron_create_folder(data.get("name", ""), data.get("parentId"))
+    except db.CronTreeError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "folder": folder,
+                    "version": db.cron_tree_version()}), 201
+
+
+@app.route("/cron/api/jobs", methods=["POST"])
+def cron_create_job_route() -> tuple[Response, int]:
+    """Create one job from the builder's complete spec. The settings run
+    through the same validator the tree save uses, so a job can never be
+    created in a shape a later save would reject."""
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return jsonify({"ok": False,
+                        "error": "request body must be a JSON object"}), 400
+    try:
+        job = db.cron_create_job(data)
+    except db.CronTreeError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "job": job,
+                    "version": db.cron_tree_version()}), 201
+
+
+@app.route("/cron/api/folders/<folder_uuid>/duplicate", methods=["POST"])
+def cron_duplicate_folder_route(folder_uuid: str) -> tuple[Response, int] | Response:
+    """Deep-copy a folder and everything under it. A create, so it returns the
+    new tree version; the copy's whole subtree comes back via a re-hydrate."""
+    fu = _parse_uuid(folder_uuid)
+    if fu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    folder = db.cron_duplicate_folder(fu)
+    if folder is None:
+        return jsonify({"ok": False, "error": "folder not found"}), 404
+    return jsonify({"ok": True, "folder": folder,
+                    "version": db.cron_tree_version()})
+
+
+@app.route("/cron/api/jobs/<job_uuid>/duplicate", methods=["POST"])
+def cron_duplicate_job_route(job_uuid: str) -> tuple[Response, int] | Response:
+    """Copy a job right after the source, disabled. A create, so it returns
+    the new tree version alongside the new row."""
+    ju = _parse_uuid(job_uuid)
+    if ju is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    job = db.cron_duplicate_job(ju)
+    if job is None:
+        return jsonify({"ok": False, "error": "job not found"}), 404
+    return jsonify({"ok": True, "job": job,
+                    "version": db.cron_tree_version()})
+
+
+@app.route("/cron/api/folders/<folder_uuid>", methods=["DELETE"])
+def cron_delete_folder_route(folder_uuid: str) -> tuple[Response, int] | Response:
+    fu = _parse_uuid(folder_uuid)
+    if fu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    if not db.cron_delete_folder(fu):
+        return jsonify({"ok": False, "error": "folder not found"}), 404
+    return jsonify({"ok": True, "version": db.cron_tree_version()})
+
+
+@app.route("/cron/api/jobs/<job_uuid>", methods=["DELETE"])
+def cron_delete_job_route(job_uuid: str) -> tuple[Response, int] | Response:
+    ju = _parse_uuid(job_uuid)
+    if ju is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    if not db.cron_delete_job(ju):
+        return jsonify({"ok": False, "error": "job not found"}), 404
+    return jsonify({"ok": True, "version": db.cron_tree_version()})
 
 
 @app.route("/cron/api/jobs/<job_uuid>/run", methods=["POST"])

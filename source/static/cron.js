@@ -1,7 +1,8 @@
 // /cron page logic (vanilla JS, no framework). The HTML shell + CSS live in
 // webapp/cron_views.py; this file is served at /static/cron.js with an
-// mtime cache-buster. State hydrates from GET /cron/api/tree and saves via
-// debounced whole-tree PUTs (version-guarded; see docs/cron-design.md).
+// mtime cache-buster. State hydrates from GET /cron/api/tree and structural
+// edits save via debounced PUTs; creation, duplication and deletion are their
+// own immediate requests (docs/ui-tree-persistence.md, docs/cron-design.md).
 
 // ---- helpers ----
 function ppOpt(value, label){
@@ -390,13 +391,28 @@ function cronAddOrUpdate(){
     err.textContent = 'Script needs an absolute path to an executable.'; return;
   }
   // The builder is create-only now (editing happens on the Job-details page via
-  // the Edit schedule / Edit action overlays), so this always creates a job.
-  row.uuid = crypto.randomUUID();
+  // the Edit schedule / Edit action overlays), so this always creates a job —
+  // through its own endpoint; the tree save can never make a row
+  // (docs/ui-tree-persistence.md).
   row.enabled = true;
-  cronRowsState.push(row);
-  cronCreating = false;       // leave the create form (closes the modal)
-  cronSelectJob(row.uuid);    // select the newly created job in the tree (renders)
-  cronSave();
+  cronCreateJob(row, err);
+}
+async function cronCreateJob(row, err){
+  try {
+    await cronFlushPendingSave();
+    const r = await fetch('/cron/api/jobs', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(row),
+    });
+    const data = await r.json();
+    if (!r.ok){ err.textContent = data.error || 'Could not create the job.'; return; }
+    cronRowsState.push(data.job);
+    cronTreeVersion = data.version;
+    cronCreating = false;              // leave the create form (closes the modal)
+    cronSelectJob(data.job.uuid);      // select the newly created job in the tree (renders)
+  } catch (e) {
+    err.textContent = 'Could not reach the server.';
+  }
 }
 function cronToggle(uuid){
   const r = cronRowsState.find(x => x.uuid === uuid);
@@ -706,14 +722,23 @@ function cronCancelEdit(){
   cronRenderTree();   // leaving the form returns to the list view
   cronRender();       // resets Add/Cancel buttons + section visibility
 }
-function cronDelete(uuid){
-  const before = cronRowsState.length;
-  cronRowsState = cronRowsState.filter(r => r.uuid !== uuid);
-  cronPendingDeletes += before - cronRowsState.length;  // declare to the save's tripwire
-  if (cronEditUuid === uuid) cronCancelEdit();
-  cronRender();
-  cronRenderTree();
-  cronSave();
+// Deletion goes through the dedicated endpoint — the tree PUT can only update
+// existing rows, never remove one (docs/ui-tree-persistence.md).
+async function cronDelete(uuid){
+  try {
+    await cronFlushPendingSave();
+    const r = await fetch('/cron/api/jobs/' + uuid, {method: 'DELETE'});
+    const data = await r.json();
+    if (!r.ok){ cronToast(data.error || 'Could not delete.'); return; }
+    cronRowsState = cronRowsState.filter(x => x.uuid !== uuid);
+    cronTreeVersion = data.version;
+    if (cronEditUuid === uuid) cronCancelEdit();
+    cronRender();
+    cronRenderTree();
+    cronToast('Deleted');
+  } catch (e) {
+    cronToast('Could not delete.');
+  }
 }
 
 // ---- folders + left tree ----
@@ -746,7 +771,21 @@ function cronNodePath(kind, node){
   return names.join(' -> ');
 }
 function cronChildFolders(parentId){ return cronFolders.filter(f => (f.parentId || null) === parentId); }
-function cronJobsInFolder(id){ return cronRowsState.filter(j => (j.folderId || null) === id); }
+function cronJobsInFolder(id){
+  const target = id || null;
+  if (target === null){
+    // Root level also surfaces a job whose folderId names a folder that isn't
+    // in cronFolders (e.g. the folder was deleted via the admin, orphaning the
+    // row). The server rejects it in every tree save, so if it stayed
+    // invisible here the operator could never reach it to move or delete it
+    // and every structural edit would 400 forever.
+    return cronRowsState.filter(j => {
+      const fid = j.folderId || null;
+      return fid === null || !cronFolderById(fid);
+    });
+  }
+  return cronRowsState.filter(j => (j.folderId || null) === target);
+}
 function cronIsExpanded(id){ return cronExpanded[id] !== false; }
 // Effective-enabled: a folder is live only if it AND every ancestor is enabled;
 // a job is live only if its own flag is on AND its folder chain is enabled.
@@ -1197,17 +1236,27 @@ function cronCloseFolderModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('cron-folder-modal').hidden = true;
 }
-function cronAddFolderConfirm(){
+async function cronAddFolderConfirm(){
   const name = document.getElementById('cron-folder-input').value.trim();
   if (!name) return;
   const parentId = cronAddFolderAsSub ? cronSelectedFolder : null;
-  const id = crypto.randomUUID();
-  cronFolders.push({id: id, name: name, description: '', parentId: parentId, enabled: true});
-  if (parentId) cronExpanded[parentId] = true;
-  cronCloseFolderModal();
-  cronPopulateFolderSelect();
-  cronSelectFolder(id);   // select the newly created folder
-  cronSave();
+  try {
+    await cronFlushPendingSave();
+    const r = await fetch('/cron/api/folders', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, parentId: parentId}),
+    });
+    const data = await r.json();
+    if (!r.ok){ cronToast(data.error || 'Could not create folder.'); return; }
+    cronFolders.push(data.folder);
+    cronTreeVersion = data.version;
+    cronCloseFolderModal();
+    if (parentId) cronExpanded[parentId] = true;
+    cronPopulateFolderSelect();
+    cronSelectFolder(data.folder.id);   // select the newly created folder
+  } catch (e) {
+    cronToast('Could not create folder.');
+  }
 }
 document.getElementById('cron-folder-input').addEventListener('input', () => {
   document.getElementById('cron-folder-create').disabled =
@@ -1218,31 +1267,40 @@ document.getElementById('cron-folder-input').addEventListener('keydown', e => {
     e.preventDefault(); cronAddFolderConfirm();
   }
 });
-function cronDeleteFolderById(id){
-  const f = cronFolderById(id);
-  if (!f) return;
-  // Cascade: delete this folder, every descendant folder, and every job inside
-  // any of them. (Confirmation is handled by cronConfirmDeleteFolder.)
-  const folderIds = new Set([f.id]);
-  let grew = true;
-  while (grew){
-    grew = false;
-    cronFolders.forEach(c => {
-      if (folderIds.has(c.parentId) && !folderIds.has(c.id)){ folderIds.add(c.id); grew = true; }
-    });
+async function cronDeleteFolderById(id){
+  const doomedFolder = cronFolderById(id);  // captured before removal, for the parent fallback below
+  if (!doomedFolder) return;
+  try {
+    await cronFlushPendingSave();
+    const r = await fetch('/cron/api/folders/' + id, {method: 'DELETE'});
+    const data = await r.json();
+    if (!r.ok){ cronToast(data.error || 'Could not delete.'); return; }
+    // The server cascaded this folder, every descendant folder and every job
+    // inside them; mirror that locally instead of re-fetching.
+    const folderIds = new Set([id]);
+    let grew = true;
+    while (grew){
+      grew = false;
+      cronFolders.forEach(c => {
+        if (c.parentId && folderIds.has(c.parentId) && !folderIds.has(c.id)){
+          folderIds.add(c.id); grew = true;
+        }
+      });
+    }
+    cronFolders = cronFolders.filter(x => !folderIds.has(x.id));
+    cronRowsState = cronRowsState.filter(j => !folderIds.has(j.folderId));
+    cronTreeVersion = data.version;
+    if (cronEditUuid && !cronRowsState.find(j => j.uuid === cronEditUuid)) cronCancelEdit();
+    // Land on the deleted folder's parent, not the root, so the operator stays in context.
+    if (folderIds.has(cronSelectedFolder)) cronSelectedFolder = doomedFolder.parentId || null;
+    cronPopulateFolderSelect();
+    document.getElementById('f-folder').value = cronSelectedFolder || '';
+    cronRenderTree();
+    cronRender();
+    cronToast('Deleted');
+  } catch (e) {
+    cronToast('Could not delete.');
   }
-  const beforeF = cronFolders.length, beforeJ = cronRowsState.length;
-  cronFolders = cronFolders.filter(x => !folderIds.has(x.id));
-  cronRowsState = cronRowsState.filter(j => !folderIds.has(j.folderId));
-  // Declare the cascade's deletions to the save's tripwire.
-  cronPendingDeletes += (beforeF - cronFolders.length) + (beforeJ - cronRowsState.length);
-  if (cronEditUuid && !cronRowsState.find(j => j.uuid === cronEditUuid)) cronCancelEdit();
-  if (folderIds.has(cronSelectedFolder)) cronSelectedFolder = f.parentId || null;
-  cronPopulateFolderSelect();
-  document.getElementById('f-folder').value = cronSelectedFolder || '';
-  cronRenderTree();
-  cronRender();
-  cronSave();
 }
 // Confirmation before deleting from the left-panel kebab, via a custom overlay
 // (a native confirm/prompt can be permanently suppressed by the browser). A
@@ -1315,41 +1373,34 @@ function cronConfirmDeleteFolder(id){
     onConfirm: () => cronDeleteFolderById(f.id),
   });
 }
-function cronDuplicateJob(uuid){
-  const idx = cronRowsState.findIndex(j => j.uuid === uuid);
-  if (idx < 0) return;
-  const copy = Object.assign({}, cronRowsState[idx], {
-    uuid: crypto.randomUUID(),
-    name: cronRowsState[idx].name + ' (copy)',
-    enabled: false,  // a fresh copy starts inactive so it doesn't run immediately
-  });
-  cronRowsState.splice(idx + 1, 0, copy);  // right after the original
-  cronSelectJob(copy.uuid);                // select the new copy
-  cronSave();
+// Duplication is a create, so it runs server-side through its own endpoint —
+// the tree save can never make a row (docs/ui-tree-persistence.md). Both
+// re-hydrate afterwards: the copy shifted its later siblings' positions, and
+// a folder copy brought a whole fresh subtree with it.
+async function cronDuplicateJob(uuid){
+  try {
+    await cronFlushPendingSave();
+    const r = await fetch('/cron/api/jobs/' + uuid + '/duplicate', {method: 'POST'});
+    const data = await r.json();
+    if (!r.ok){ cronToast(data.error || 'Could not duplicate.'); return; }
+    await cronLoadTree();
+    cronSelectJob(data.job.uuid);          // select the new copy
+  } catch (e) {
+    cronToast('Could not duplicate.');
+  }
 }
-function cronDuplicateFolder(uuid){
-  const src = cronFolderById(uuid);
-  if (!src) return;
-  // Deep-clone the whole subtree (child folders + jobs) with fresh uuids.
-  const cloneSubtree = (f, newParentId) => {
-    const nid = crypto.randomUUID();
-    cronFolders.push(Object.assign({}, f, {id: nid, parentId: newParentId}));
-    cronChildFolders(f.id).forEach(c => cloneSubtree(c, nid));
-    cronJobsInFolder(f.id).forEach(j =>
-      cronRowsState.push(Object.assign({}, j, {uuid: crypto.randomUUID(), folderId: nid})));
-    return nid;
-  };
-  const topId = cloneSubtree(src, src.parentId || null);
-  const top = cronFolderById(topId);
-  top.name = src.name + ' (copy)';
-  top.enabled = false;  // the copied subtree starts inactive (descendants keep their own flags)
-  // Place the copy right after the original among its siblings.
-  cronFolders = cronFolders.filter(f => f.id !== topId);
-  const si = cronFolders.findIndex(f => f.id === src.id);
-  cronFolders.splice(si + 1, 0, top);
-  cronPopulateFolderSelect();
-  cronSelectFolder(topId);                 // select the new copy
-  cronSave();
+async function cronDuplicateFolder(uuid){
+  try {
+    await cronFlushPendingSave();
+    const r = await fetch('/cron/api/folders/' + uuid + '/duplicate', {method: 'POST'});
+    const data = await r.json();
+    if (!r.ok){ cronToast(data.error || 'Could not duplicate.'); return; }
+    await cronLoadTree();
+    cronPopulateFolderSelect();
+    cronSelectFolder(data.folder.id);      // select the new copy
+  } catch (e) {
+    cronToast('Could not duplicate.');
+  }
 }
 
 // ---- drag & drop (one node at a time) ----
@@ -1635,51 +1686,99 @@ function cronCopyId(uuid, kind){
 }
 let cronSaveTimer = null;
 let cronTreeVersion = null;    // token from hydrate; PUTs echo it (stale → 409)
-let cronPendingDeletes = 0;    // deletions since the last successful save (declared to the server)
 let cronSaveInFlight = false;
 let cronSaveQueued = false;
+let cronSaveChain = null;      // promise for the active PUT (+ any queued follow-up), or null when idle
 function cronSave(){
   // Debounce so a burst of edits coalesces into one PUT of the whole tree.
   clearTimeout(cronSaveTimer);
   cronSaveTimer = setTimeout(cronSavePush, 250);
 }
-async function cronSavePush(){
+// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// issuing a create or delete." Nothing else orders a tree PUT against a
+// create/delete, and the two responses race — if the older PUT's response
+// lands after the create/delete's fresher token, it overwrites that token with
+// a stale one and the next save 409s for no reason the operator can see.
+// Cancels a pending debounce timer and runs that save immediately, or awaits a
+// save already in flight (including one queued behind it). A no-op when
+// nothing is pending.
+function cronFlushPendingSave(){
+  if (cronSaveTimer){
+    clearTimeout(cronSaveTimer);
+    cronSaveTimer = null;
+    return cronSavePush();
+  }
+  return cronSaveChain || Promise.resolve();
+}
+// After a re-hydrate the fresh data may no longer contain the selected
+// folder/job (e.g. the rejected edit was the move that put it there). Clear
+// whichever selection no longer resolves so render doesn't point at a row that
+// isn't in the tree anymore.
+async function cronReloadAndRepaint(message){
+  await cronLoadTree();
+  if (cronEditUuid && !cronRowsState.find(x => x.uuid === cronEditUuid)) cronEditUuid = null;
+  if (cronSelectedFolder && !cronFolderById(cronSelectedFolder)) cronSelectedFolder = null;
+  cronPopulateFolderSelect();
+  cronRenderTree();
+  cronRender();
+  cronToast(message);
+}
+// Returns the promise for this save (or, if one was already in flight, the
+// promise for that one — which folds in this call via cronSaveQueued once it
+// settles). cronFlushPendingSave relies on that: awaiting the returned/chained
+// promise always means "no tree PUT is outstanding anymore".
+function cronSavePush(){
   // Serialize PUTs: a save fired while one is in flight would still carry the
   // old version token and 409 against our own write. Queue it instead.
-  if (cronSaveInFlight){ cronSaveQueued = true; return; }
+  if (cronSaveInFlight){ cronSaveQueued = true; return cronSaveChain; }
   cronSaveInFlight = true;
-  try {
-    const r = await fetch('/cron/api/tree', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({folders: cronFolders, jobs: cronRowsState,
-                            version: cronTreeVersion, deletes: cronPendingDeletes}),
-    });
-    const j = await r.json().catch(() => null);
-    if (r.status === 409){
-      // Another tab/editor changed the tree since this page hydrated. Their
-      // version wins: re-hydrate rather than clobber. This page's last edit
-      // burst is dropped (redo it on the fresh state).
-      await cronLoadTree();
-      cronPendingDeletes = 0;
-      if (cronEditUuid && !cronRowsState.find(x => x.uuid === cronEditUuid)) cronEditUuid = null;
-      if (cronSelectedFolder && !cronFolderById(cronSelectedFolder)) cronSelectedFolder = null;
-      cronPopulateFolderSelect();
-      cronRenderTree();
-      cronRender();
-      cronToast('Cron tree was changed elsewhere — reloaded. Your last edit was not saved.');
-    } else if (!r.ok){
-      cronToast('Save refused: ' + ((j && j.error) || ('HTTP ' + r.status)));
-    } else {
-      cronTreeVersion = (j && j.version) || cronTreeVersion;
-      cronPendingDeletes = 0;
+  const run = (async () => {
+    try {
+      const r = await fetch('/cron/api/tree', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({folders: cronFolders, jobs: cronRowsState,
+                              version: cronTreeVersion}),
+      });
+      const j = await r.json().catch(() => null);
+      if (r.status === 409){
+        // Another tab/editor changed the tree since this page hydrated. Their
+        // version wins: re-hydrate rather than clobber. This page's last edit
+        // burst is dropped (redo it on the fresh state).
+        await cronReloadAndRepaint(
+          'Cron tree was changed elsewhere — reloaded. Your last edit was not saved.');
+        return;
+      }
+      if (!r.ok){
+        // A 400 here means our payload disagreed with the server about which
+        // rows exist — re-hydrate rather than retry the same bad shape, and
+        // repaint so the rejected edit doesn't linger on screen.
+        await cronReloadAndRepaint(
+          'Save refused: ' + ((j && j.error) || ('HTTP ' + r.status)) + ' — reloaded.');
+        return;
+      }
+      cronTreeVersion = j.version;
+    } catch (e) {
+      // Network error: we can't tell whether the server applied the change, so
+      // re-hydrate and repaint rather than leave the client's guess on screen.
+      await cronReloadAndRepaint('Save failed — reloaded.');
+    } finally {
+      cronSaveInFlight = false;
+      // A save requested while we were in flight gets its own immediate push
+      // here, not a fresh 250ms debounce — and this run doesn't resolve until
+      // that one does too, so anything awaiting it (cronFlushPendingSave) sees
+      // the whole chain settle before the token is treated as final.
+      if (cronSaveQueued){
+        cronSaveQueued = false;
+        cronSaveChain = cronSavePush();
+        await cronSaveChain;
+      } else {
+        cronSaveChain = null;
+      }
     }
-  } catch (e) {
-    // Network error: keep local state + version; the next edit retries.
-  } finally {
-    cronSaveInFlight = false;
-    if (cronSaveQueued){ cronSaveQueued = false; cronSavePush(); }
-  }
+  })();
+  cronSaveChain = run;
+  return run;
 }
 
 // ---- dirty-guarded dismissal (docs/ui-modals.md) --------------------------
