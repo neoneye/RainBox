@@ -50,10 +50,18 @@ const kbIsExpanded = (id) => kbExpanded[id] !== false;
 const kbChildFolders = (parentId) => kbFolders
   .filter(f => (f.parentId || null) === parentId)
   .sort((a, b) => a.position - b.position);
-const kbBoardsInFolder = (id) => kbBoards
-  .filter(b => (b.folderId || null) === id)
-  .sort((a, b) => a.position - b.position);
 const kbFolderById = (id) => kbFolders.find(f => f.uuid === id) || null;
+// Root level also surfaces a board whose folderId names a folder that isn't in
+// kbFolders (e.g. the folder was deleted via the admin, orphaning the row). The
+// server rejects it in every tree save, so if it stayed invisible here the
+// operator could never reach it to move or delete it and every structural edit
+// would 400 forever.
+const kbBoardsInFolder = (id) => kbBoards
+  .filter(b => {
+    const fid = b.folderId || null;
+    return id === null ? (fid === null || !kbFolderById(fid)) : fid === id;
+  })
+  .sort((a, b) => a.position - b.position);
 const kbFolderHasChildren = (id) =>
   kbChildFolders(id).length > 0 || kbBoardsInFolder(id).length > 0;
 // Deletions since the last successful save are tracked PER BOARD (a
@@ -100,8 +108,11 @@ async function kbLoadIndex(){
   } catch (e) { kbFolders = []; kbBoards = []; kbTreeVersion = ''; }
 }
 
-// Debounced, serialized tree PUT — same shape as the board kbSave chain. On
-// 409 or network failure we re-hydrate so the client converges to server truth.
+// Debounced, serialized tree PUT — same shape as the board kbSave chain. The
+// PUT only updates rows that already exist; creation and deletion are their
+// own immediate requests (docs/ui-tree-persistence.md). On ANY failure — 409,
+// 400 or network — we re-hydrate so the client converges to server truth
+// instead of drifting.
 let kbTreeSaveTimer = null;
 let kbTreeSaveChain = Promise.resolve();
 function kbSaveTree(){
@@ -112,6 +123,15 @@ function kbTreeSavePush(){
   clearTimeout(kbTreeSaveTimer);
   kbTreeSaveTimer = null;
   kbTreeSaveChain = kbTreeSaveChain.then(kbDoSaveTree);
+  return kbTreeSaveChain;
+}
+// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// issuing a create or delete." Nothing else orders them against each other,
+// and the two responses race — if the older PUT's response lands after the
+// create/delete's fresher token, it overwrites that token with a stale one and
+// the next save 409s for no reason the operator can see.
+function kbFlushPendingTreeSave(){
+  if (kbTreeSaveTimer) return kbTreeSavePush();
   return kbTreeSaveChain;
 }
 async function kbDoSaveTree(){
@@ -132,11 +152,22 @@ async function kbDoSaveTree(){
       kbRenderTree();
       kbToast('Tree changed elsewhere — reloaded.');
     } else if (!r.ok){
-      kbToast('Tree save refused: ' + ((j && j.error) || ('HTTP ' + r.status)));
+      // A 400 means our payload disagreed with the server about which rows
+      // exist — re-hydrate rather than retry the same bad shape.
+      await kbLoadIndex();
+      kbRenderTree();
+      kbToast('Tree save refused: ' + ((j && j.error) || ('HTTP ' + r.status))
+              + ' — reloaded.');
     } else {
-      kbTreeVersion = (j && j.version) || kbTreeVersion;
+      kbTreeVersion = j.version;
     }
-  } catch (e) { /* network error: next edit retries */ }
+  } catch (e) {
+    // Network error: we can't tell whether the server applied the change, so
+    // re-hydrate rather than leave the client's guess on screen.
+    await kbLoadIndex();
+    kbRenderTree();
+    kbToast('Tree save failed — reloaded.');
+  }
 }
 async function kbLoadBoard(uuid){
   try {
@@ -312,8 +343,11 @@ document.addEventListener('keydown', e => {
 
 async function kbDuplicateBoard(uuid){
   // The duplicate snapshots SERVER state: edits still in the debounce window
-  // must be fully persisted first, so await the whole save chain.
+  // must be fully persisted first, so await the whole save chain. The tree PUT
+  // is flushed too — the duplicate bumps the tree version, and a PUT response
+  // landing after it would put the stale token back.
   await kbFlushSave();
+  await kbFlushPendingTreeSave();
   let j = null;
   try {
     const r = await fetch('/kanban/api/board/' + encodeURIComponent(uuid) + '/duplicate',
@@ -742,6 +776,7 @@ async function kbSaveBoardModal(){
   }
   // Create server-side (the server makes the default columns + the version token).
   try {
+    await kbFlushPendingTreeSave();
     const r = await fetch('/kanban/api/boards', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: name, description: desc}),
@@ -784,7 +819,8 @@ function kbConfirmDeleteBoard(uuid){
   kbConfirm('Delete board?',
     '“' + board.name + '” and its ' + (board.tasks ? board.tasks.length : board.taskCount) + ' task(s) will be deleted.',
     async () => {
-      kbCancelSave(board.uuid);  // a pending save would just race the DELETE
+      kbCancelSave(board.uuid);  // a pending board save would just race the DELETE
+      await kbFlushPendingTreeSave();
       const r = await fetch('/kanban/api/board/' + encodeURIComponent(board.uuid),
                             {method: 'DELETE'}).catch(() => null);
       if (!r || !r.ok){ kbToast('Delete failed.'); return; }
@@ -1453,6 +1489,7 @@ async function kbSaveFolderModal(){
   }
   // Create server-side (the server assigns the uuid + position).
   try {
+    await kbFlushPendingTreeSave();
     const r = await fetch('/kanban/api/folders', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: name, parentId: kbFolderModalParent}),
@@ -1477,6 +1514,7 @@ function kbConfirmDeleteFolder(folderId){
     '“' + f.name + '” will be deleted. Any boards and subfolders inside it ' +
     'move up one level — boards and their tasks are NOT deleted.',
     async () => {
+      await kbFlushPendingTreeSave();
       const r = await fetch('/kanban/api/folders/' + encodeURIComponent(folderId),
                             {method: 'DELETE'}).catch(() => null);
       if (!r || !r.ok){ kbToast('Delete failed.'); return; }

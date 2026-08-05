@@ -46,7 +46,10 @@ def kanban_boards() -> tuple[Response, int] | Response:
                                            folder_uuid=folder)
         except db.KanbanError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
-        return jsonify({"ok": True, "board": board})
+        # A create is a tree mutation, so it hands back the fresh tree version —
+        # without it the client's next drag 409s (docs/ui-tree-persistence.md).
+        return jsonify({"ok": True, "board": board,
+                        "version": db.kanban_tree_version()})
     return jsonify({"boards": db.kanban_list_boards()})
 
 
@@ -58,7 +61,7 @@ def kanban_board(board_uuid: str) -> tuple[Response, int] | Response:
     if request.method == "DELETE":
         if not db.kanban_delete_board(bu):
             return jsonify({"ok": False, "error": "board not found"}), 404
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "version": db.kanban_tree_version()})
     if request.method == "PUT":
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
@@ -89,14 +92,16 @@ def kanban_board(board_uuid: str) -> tuple[Response, int] | Response:
 @app.route("/kanban/api/board/<board_uuid>/duplicate", methods=["POST"])
 def kanban_board_duplicate(board_uuid: str) -> tuple[Response, int] | Response:
     """Deep-clone a board (fresh uuids throughout, audit trail not copied);
-    returns the new board's payload."""
+    returns the new board's payload plus the fresh tree version (it is a
+    create)."""
     bu = _uuid_or_none(board_uuid)
     if bu is None:
         return jsonify({"ok": False, "error": "bad uuid"}), 400
     board = db.kanban_duplicate_board(bu)
     if board is None:
         return jsonify({"ok": False, "error": "board not found"}), 404
-    return jsonify({"ok": True, "board": board})
+    return jsonify({"ok": True, "board": board,
+                    "version": db.kanban_tree_version()})
 
 
 @app.route("/kanban/api/board/<board_uuid>/markdown")
@@ -295,9 +300,12 @@ def kanban_task_events(task_uuid: str) -> tuple[Response, int] | Response:
 
 @app.route("/kanban/api/tree", methods=["GET", "PUT"])
 def kanban_tree() -> tuple[Response, int] | Response:
-    """Hydrate / placement-only save the folder tree (folders + board
-    placement). The PUT echoes the version token GET returned; a stale token
-    is a 409 and the page re-hydrates instead of clobbering another writer."""
+    """Hydrate / save the folder tree (folder names and descriptions, folder
+    and board placement). Per docs/ui-tree-persistence.md the PUT only updates
+    rows that already exist — a payload that omits or invents one is a 400 —
+    and creation/deletion are their own endpoints below. The PUT echoes the
+    version token GET returned; a stale token is a 409 and the page
+    re-hydrates instead of clobbering another writer."""
     if request.method == "PUT":
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
@@ -334,16 +342,19 @@ def kanban_folders() -> tuple[Response, int] | Response:
                                          data.get("description", ""))
     except db.KanbanError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    return jsonify({"ok": True, "folder": folder})
+    return jsonify({"ok": True, "folder": folder,
+                    "version": db.kanban_tree_version()})
 
 
 @app.route("/kanban/api/folders/<folder_uuid>", methods=["DELETE"])
 def kanban_folder_delete(folder_uuid: str) -> tuple[Response, int] | Response:
     """Delete a folder; its child folders + boards reparent up one level
-    (boards are never deleted). 404 if the folder doesn't exist."""
+    (boards are never deleted — a board owns tasks, so /kanban deliberately
+    reparents where the other trees cascade). 404 if the folder doesn't
+    exist."""
     fu = _uuid_or_none(folder_uuid)
     if fu is None:
         return jsonify({"ok": False, "error": "bad uuid"}), 400
     if not db.kanban_delete_folder(fu):
         return jsonify({"ok": False, "error": "folder not found"}), 404
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "version": db.kanban_tree_version()})

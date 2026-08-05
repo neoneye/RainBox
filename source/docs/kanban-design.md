@@ -50,21 +50,31 @@ capabilities.**
   instead of clobbering (so an agent's write can never be silently
   overwritten by a stale tab, and vice versa); and a **declared-deletes
   tripwire** (`deletes` count) so a truncated payload can't wipe a board.
-- `PUT /kanban/api/tree` with the whole folder/board placement — a
-  **placement-only** save (names and content are not editable through it),
-  with its own version token (`kanban_tree_version`) and the same
-  409-and-rehydrate contract. Folder delete reparents children; it never
-  cascades to boards.
+- `PUT /kanban/api/tree` with the whole folder/board placement — folder names
+  and descriptions plus folder/board placement and order; board names and
+  content are not editable through it. The save follows
+  `docs/ui-tree-persistence.md`: it **only updates rows that already exist**,
+  so a payload that omits an existing folder or board — or names one the DB
+  doesn't hold — is a **400** that mutates nothing, and it has no `deletes`
+  counter because the shape can't express a deletion. Its version token
+  (`kanban_tree_version`) follows the same 409-and-rehydrate contract, and is
+  returned by *every* tree-mutating endpoint below so the client never holds a
+  stale one.
 
 UI saves also append audit events ('created', 'moved' with column names) so
 human edits land in the same trail as agent operations. Saves are debounced
-(250 ms) and serialized — one in-flight PUT at a time.
+(250 ms) and serialized — one in-flight PUT at a time, and the page flushes a
+pending tree PUT before any create/delete so their responses can't race.
 
-Adjacent human-surface endpoints: `POST /kanban/api/boards` (create, accepts
-`folderId`), `DELETE /kanban/api/board/<uuid>` (cascade),
+Creation and deletion have their own endpoints, each answering `{…, version}`:
+`POST /kanban/api/boards` (create, accepts `folderId`),
+`DELETE /kanban/api/board/<uuid>` (cascades its columns, tasks and events),
 `POST /kanban/api/board/<uuid>/duplicate` (deep clone with fresh uuids; the
-audit trail is not copied), `POST /kanban/api/folders`,
-`DELETE /kanban/api/folders/<uuid>`.
+audit trail is not copied), `POST /kanban/api/folders`, and
+`DELETE /kanban/api/folders/<uuid>` — which **reparents** its child folders and
+boards up one level rather than cascading. That is a deliberate departure from
+the other trees: a board owns tasks, and losing a folder must never be a way to
+lose them.
 
 **2. Worker operations** — row-level, uuid-addressed, each recorded in
 `kanban_task_event`.
@@ -308,7 +318,7 @@ mint a structurally valid task or column line.)
              claimedBy|null, claimExpiresAt|null}],  // lease fields read-only
   version }                                      // PUT also sends `deletes`
 
-// GET/PUT /kanban/api/tree — placement only
+// GET/PUT /kanban/api/tree — folder names + placement; never creates or deletes
 { folders: [{uuid, name, description, parentId|null, position}],
   boards:  [{uuid, name, folderId|null, position, taskCount}],  // taskCount read-only
   version }
@@ -456,7 +466,9 @@ target model's comfortable context budget.
   payload contract, move, complete ok/failed, the events endpoints, and
   cascade delete.
 - `webapp/test_kanban_tree.py` — the folder tree: CRUD, reparenting delete,
-  placement-only save, tree-version conflicts.
+  the update-only save (a payload that omits or invents a row is refused and
+  mutates nothing), tree-version conflicts, and that every mutating endpoint
+  returns a token the next PUT accepts.
 - `webapp/test_kanban_task_get_api.py` + `db/test_kanban_get_task.py` — the
   single-task reader behind the `?id=<task>` deep link.
 - `webapp/test_kanban_views.py` — page-shell markers for the wiring.

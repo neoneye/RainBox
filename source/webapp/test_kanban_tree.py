@@ -47,6 +47,28 @@ def _new_folder(name="F", parent=None):
     return db.kanban_create_folder(name, parent_uuid=parent)
 
 
+def _full_payload(*, folders=(), boards=()):
+    """The whole current tree in the PUT's field names, with the listed rows'
+    fields overridden and those rows moved to the front in the order given.
+
+    The save can neither create nor delete (docs/ui-tree-persistence.md), so a
+    payload that omits a row is refused — a test that only wants to move two
+    rows must still send every row the shared DB holds."""
+    tree = db.kanban_load_tree()
+    current_f = [{"uuid": f["uuid"], "name": f["name"],
+                  "description": f.get("description") or "",
+                  "parentId": f.get("parentId")} for f in tree["folders"]]
+    current_b = [{"uuid": b["uuid"], "folderId": b.get("folderId")}
+                 for b in tree["boards"]]
+
+    def merge(current, wanted):
+        by_uuid = {r["uuid"]: r for r in current}
+        head = [{**by_uuid.pop(w["uuid"]), **w} for w in wanted]
+        return head + list(by_uuid.values())
+
+    return merge(current_f, folders), merge(current_b, boards)
+
+
 def test_folder_table_and_board_column_exist(app_ctx):
     # The folder table is creatable and round-trips.
     f = KanbanBoardFolder(uuid=uuid4(), name="schema check")
@@ -92,11 +114,11 @@ def test_delete_folder_reparents_children_and_keeps_boards(app_ctx):
     board = db.kanban_create_board("filed board")
     try:
         # File the board + a sub-board-folder under `child`.
-        db.kanban_save_tree(
+        f, b = _full_payload(
             folders=[{"uuid": parent["uuid"], "name": "parent", "parentId": None},
                      {"uuid": child["uuid"], "name": "child", "parentId": parent["uuid"]}],
-            boards=[{"uuid": board["uuid"], "folderId": child["uuid"]}],
-        )
+            boards=[{"uuid": board["uuid"], "folderId": child["uuid"]}])
+        db.kanban_save_tree(f, b)
         # Delete the middle folder `child`: its board reparents up to `parent`,
         # the board (and its columns/tasks) survives.
         assert db.kanban_delete_folder(_u(child["uuid"])) is True
@@ -176,12 +198,13 @@ def test_save_tree_round_trips_placement(app_ctx):
     b1 = db.kanban_create_board("b1")
     b2 = db.kanban_create_board("b2")
     try:
-        # Nest f2 under f1; file b1 under f2, b2 under f1; reorder folders.
-        db.kanban_save_tree(
+        # Nest f1 under f2; file b1 under f2, b2 under f1; reorder folders.
+        f, b = _full_payload(
             folders=[{"uuid": f2["uuid"], "name": "two", "parentId": None},
                      {"uuid": f1["uuid"], "name": "one-renamed", "parentId": f2["uuid"]}],
             boards=[{"uuid": b2["uuid"], "folderId": f1["uuid"]},
                     {"uuid": b1["uuid"], "folderId": f2["uuid"]}])
+        db.kanban_save_tree(f, b)
         tree = db.kanban_load_tree()
         f1_out = next(f for f in tree["folders"] if f["uuid"] == f1["uuid"])
         assert f1_out["name"] == "one-renamed" and f1_out["parentId"] == f2["uuid"]
@@ -195,20 +218,35 @@ def test_save_tree_round_trips_placement(app_ctx):
         db.kanban_delete_folder(_u(f2["uuid"]))
 
 
-def test_save_tree_never_deletes_boards(app_ctx):
-    """Placement-only: a board absent from the payload is NOT deleted."""
+def test_save_tree_refuses_to_omit_an_existing_row(app_ctx):
+    """A payload that drops a row is a malformed request, not a deletion, and
+    nothing is mutated (docs/ui-tree-persistence.md)."""
     f = db.kanban_create_folder("f")
     keep = db.kanban_create_board("keep")
     absent = db.kanban_create_board("absent from payload")
     try:
-        db.kanban_save_tree(
-            folders=[{"uuid": f["uuid"], "name": "f", "parentId": None}],
+        folders, boards = _full_payload(
+            folders=[{"uuid": f["uuid"], "name": "renamed", "parentId": None}],
             boards=[{"uuid": keep["uuid"], "folderId": f["uuid"]}])
+        with pytest.raises(db.KanbanError, match="omitted"):
+            db.kanban_save_tree(
+                folders, [b for b in boards if b["uuid"] != absent["uuid"]])
         assert db.kanban_load_board(_u(absent["uuid"])) is not None  # survives
+        # The rename in the same rejected payload didn't land either.
+        assert next(x for x in db.kanban_load_tree()["folders"]
+                    if x["uuid"] == f["uuid"])["name"] == "f"
     finally:
         db.kanban_delete_board(_u(keep["uuid"]))
         db.kanban_delete_board(_u(absent["uuid"]))
         db.kanban_delete_folder(_u(f["uuid"]))
+
+
+def test_save_tree_refuses_an_unknown_row(app_ctx):
+    """It cannot create either: a uuid the DB doesn't hold is a 400."""
+    folders, boards = _full_payload()
+    with pytest.raises(db.KanbanError, match="unknown"):
+        db.kanban_save_tree(folders, boards + [{"uuid": str(uuid4()),
+                                                "folderId": None}])
 
 
 def test_save_tree_stale_version_conflicts(app_ctx):
@@ -216,16 +254,47 @@ def test_save_tree_stale_version_conflicts(app_ctx):
     try:
         v0 = db.kanban_load_tree()["version"]
         # Another writer renames the folder, rotating the version.
-        db.kanban_save_tree(folders=[{"uuid": f["uuid"], "name": "theirs", "parentId": None}],
-                            boards=[])
+        theirs_f, theirs_b = _full_payload(
+            folders=[{"uuid": f["uuid"], "name": "theirs", "parentId": None}])
+        db.kanban_save_tree(theirs_f, theirs_b)
+        mine_f, mine_b = _full_payload(
+            folders=[{"uuid": f["uuid"], "name": "mine", "parentId": None}])
         with pytest.raises(db.KanbanConflict):
-            db.kanban_save_tree(
-                folders=[{"uuid": f["uuid"], "name": "mine", "parentId": None}],
-                boards=[], base_version=v0)
+            db.kanban_save_tree(mine_f, mine_b, base_version=v0)
         assert next(x for x in db.kanban_load_tree()["folders"]
                     if x["uuid"] == f["uuid"])["name"] == "theirs"
     finally:
         db.kanban_delete_folder(_u(f["uuid"]))
+
+
+def test_tree_endpoints_all_return_a_usable_version(app_ctx):
+    """Every mutating tree endpoint hands back the fresh version, or the
+    client's next drag 409s for a reason the operator can't see."""
+    from webapp.core import app as flask_app
+
+    client = flask_app.test_client()
+    folder = client.post("/kanban/api/folders", json={"name": "TokenTest"}).get_json()
+    board = client.post("/kanban/api/boards",
+                        json={"name": "TokenBoard",
+                              "folderId": folder["folder"]["uuid"]}).get_json()
+    assert folder["version"] and board["version"]
+    assert board["version"] != folder["version"]
+    dup = client.post(f"/kanban/api/board/{board['board']['uuid']}/duplicate").get_json()
+    assert dup["version"] and dup["version"] != board["version"]
+    try:
+        tree = client.get("/kanban/api/tree").get_json()
+        assert tree["version"] == dup["version"]
+        # The create's own token is enough to save with — no re-hydrate needed.
+        folders, boards = _full_payload()
+        assert client.put("/kanban/api/tree", json={
+            "folders": folders, "boards": boards,
+            "version": dup["version"]}).status_code == 200
+    finally:
+        for b in (dup["board"]["uuid"], board["board"]["uuid"]):
+            out = client.delete(f"/kanban/api/board/{b}").get_json()
+            assert out["ok"] and out["version"]
+        out = client.delete(f"/kanban/api/folders/{folder['folder']['uuid']}").get_json()
+        assert out["ok"] and out["version"]
 
 
 def test_create_board_into_folder(app_ctx):

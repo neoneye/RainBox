@@ -426,34 +426,47 @@ def kanban_save_tree(
     folders: list[dict[str, Any]], boards: list[dict[str, Any]],
     *, base_version: str | None = None,
 ) -> None:
-    """Placement-only save of the tree: upsert folder name/description/parent/
-    position and update each board's folder_uuid/position from list order.
-    NEVER creates or deletes boards, and does not delete folders (deletion is
-    kanban_delete_folder). A folder present in the DB but absent from the
-    payload is left untouched. Validates first (KanbanError before any write);
-    a stale base_version raises KanbanConflict."""
-    validate_kanban_tree(folders, boards)
+    """Update name, description, placement and order of rows that already
+    exist. List order becomes `position`. A board's `name` is not touched here
+    — it lives in the board's own contents save.
+
+    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    a payload that omits an existing row, or names one the DB doesn't have, is
+    a KanbanError — absence means a bug, not an instruction. Creation is
+    kanban_create_board / kanban_create_folder; deletion is
+    kanban_delete_board / kanban_delete_folder.
+
+    A stale `base_version` raises KanbanConflict, checked before structural
+    validation so a concurrent edit surfaces as 409, not 400."""
     if base_version is not None and base_version != kanban_tree_version():
         raise KanbanConflict("kanban tree changed since it was loaded")
+    validate_kanban_tree(folders, boards)
     existing_f = {f.uuid: f for f in db.session.execute(
         sa.select(KanbanBoardFolder)).scalars().all()}
     existing_b = {b.uuid: b for b in db.session.execute(
         sa.select(KanbanBoard)).scalars().all()}
+    incoming_f = {_to_uuid(f["uuid"]) for f in folders}
+    incoming_b = {_to_uuid(b["uuid"]) for b in boards}
+    for label, incoming, existing in (("folder", incoming_f, existing_f),
+                                      ("board", incoming_b, existing_b)):
+        missing = set(existing) - incoming
+        if missing:
+            raise KanbanError(
+                f"tree save omitted {len(missing)} existing {label}(s) — refusing "
+                f"(the tree save never deletes)")
+        unknown = incoming - set(existing)
+        if unknown:
+            raise KanbanError(
+                f"tree save references {len(unknown)} unknown {label}(s) — refusing "
+                f"(the tree save never creates)")
     for i, f in enumerate(folders):
-        fu = _to_uuid(f["uuid"])
-        row = existing_f.get(fu)
-        if row is None:
-            row = KanbanBoardFolder(uuid=fu)
-            db.session.add(row)
+        row = existing_f[_to_uuid(f["uuid"])]
         row.name = f.get("name", "")
         row.description = f.get("description", "")
         row.parent_uuid = _to_uuid(f["parentId"]) if f.get("parentId") else None
         row.position = i
     for i, b in enumerate(boards):
-        bu = _to_uuid(b["uuid"])
-        row = existing_b.get(bu)
-        if row is None:
-            continue  # placement-only: never create a board here
+        row = existing_b[_to_uuid(b["uuid"])]
         row.folder_uuid = _to_uuid(b["folderId"]) if b.get("folderId") else None
         row.position = i
     db.session.commit()
