@@ -44,7 +44,12 @@ consumes the step limit. Each loop iteration:
    the chat message and finish the run — except a `reply`, which is first
    sent to the **reply audit**: a separate model call that reads the
    finished message against the request, the turn's constraints, the
-   operator settings and the turn's observations, and returns a typed
+   operator settings, the turn's observations and how the message addresses
+   the user (an opening that credits the answer's source instead of giving
+   it is a defect — the auditor previously read such an opening as diligence
+   and blessed it, so the one check that could have caught the habit was
+   reinforcing it; the carve-out is fenced off from tone nitpicking, since
+   the auditor is otherwise barred from style complaints), and returns a typed
    `{problems, reason, verdict}` — findings first, so the auditor states what
    it found before committing to a call (the ordering `SecondOpinionVerdict`
    already used; with `reason` leading, local models answered it with the
@@ -89,8 +94,16 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   appear). The static part encodes the behavioral rules: one step at a time,
   read before answering (transcript answers are stale; `truncateN` facts have
   a uuid escape hatch), fix reported errors rather than resubmitting, never
-  invent placeholder values, and never claim a write that didn't run
-  (anti-fabrication).
+  invent placeholder values, never claim a write that didn't run
+  (anti-fabrication), and **answer without narrating the retrieval** — no
+  opening that credits memory, records or a lookup before the answer, and no
+  imitating the shape of one's own earlier replies. That last clause is load
+  bearing: an opening the model adopts once appears in every assistant turn
+  of `conversation_history_xml` thereafter, and the model reads its own habit
+  as the room's convention. The rule never quotes an offending opening —
+  a phrase in a prompt is a phrase the model emits. Voice beyond this belongs
+  to `assistant_persona`, which the system prompt does not compete with; this
+  rule is about a reply that withholds the answer, not about tone.
 - **User prompt** — the sections are emitted as top-level sibling tags (no
   root wrapper: models recognize the start/end tags without a single-rooted
   document, and a wrapper would cost one indentation level on every line;

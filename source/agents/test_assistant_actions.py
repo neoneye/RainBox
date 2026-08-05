@@ -55,6 +55,23 @@ def test_read_action_descriptions_disambiguate_query_memory_from_kanban():
     assert "kanban_read" in ASSISTANT_SYSTEM_PROMPT.lower()
 
 
+def test_system_prompt_forbids_narrating_where_the_answer_came_from():
+    """Replies opened by crediting the memory system before answering, turn
+    after turn, because nothing forbade it and every earlier reply in the
+    transcript modelled the habit. The rule names both: no source preamble,
+    and no imitating the shape of one's own previous messages. It states the
+    rule without quoting the offending opening — an example phrase in a prompt
+    is a phrase the model emits (see test_reply_audit's no-dialect test)."""
+    p = ASSISTANT_SYSTEM_PROMPT
+    assert "Write the answer, not an account of how you obtained it." in p
+    assert "Never preface a reply by crediting where it came from" in p
+    assert "never imitate the shape of your own\nprevious messages" in p
+    # The escape hatch stays: a source that changes what the user believes.
+    assert "Name a source only when it changes what the user should believe" in (
+        " ".join(p.split()))
+    assert "based on your stored" not in p.lower()
+
+
 def test_set_reminder_description_anchors_to_local_time():
     """A reminder time with no explicit offset must be read as the operator's
     local time, not UTC. The capability description tells the model so."""

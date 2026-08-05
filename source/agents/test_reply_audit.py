@@ -136,6 +136,19 @@ def test_the_system_prompt_states_the_job_and_names_no_dialect():
         assert word not in low
 
 
+def test_the_auditor_treats_a_source_preamble_as_a_defect():
+    """The auditor used to bless an opening that credited the memory system —
+    it read as diligence, so the habit passed the one check that could have
+    stopped it. It is now a named defect, fenced off from tone nitpicking so
+    the carve-out does not reopen the style complaints check 5 sits beside."""
+    p = REPLY_AUDIT_SYSTEM_PROMPT
+    assert "5. Against how it addresses the user." in p
+    assert "the reply withholds the answer to narrate its own plumbing" in " ".join(
+        p.split())
+    assert "check 5 is not an\nopening to raise them" in p
+    assert "Do not raise style preferences" in p
+
+
 # --- the reply capability -----------------------------------------------------
 
 
