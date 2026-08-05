@@ -4,10 +4,12 @@ Manages person profiles — the structured record of a human (name, locale,
 formats, contact) — as a folder tree whose leaf detail pane is a form. The
 form's fieldsets are generated server-side from profile_fields.PROFILE_FIELDS,
 so the page can never drift from the validator. Persistence is real: the
-browser-side state hydrates from and saves to GET/PUT /profile/api/tree
-(webapp/profile_api.py → db.profile_load_tree/profile_save_tree); field edits
-autosave through a per-profile PUT. The built-in locale templates render
-read-only from the same tree GET. Mirrors the /prompt page; desktop-first.
+browser-side state hydrates from GET /profile/api/tree and saves placement,
+order and names back through PUT; creation and deletion are their own
+endpoints, per docs/ui-tree-persistence.md (webapp/profile_api.py →
+db/profile.py). Field edits autosave through a per-profile PUT. The built-in
+locale templates render read-only from the same tree GET. Mirrors the /prompt
+page; desktop-first.
 """
 from pathlib import Path
 

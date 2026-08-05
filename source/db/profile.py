@@ -1,12 +1,13 @@
 """Person-profile tree: folder/profile persistence + data validation.
 
-Backs the /profile page. Holds the profile folder tree (load/validate/save —
-the whole-tree bulk pattern shared with /prompt, /git and /cron) plus the
-per-profile data operations: the registry-driven validator, data read/write
-that preserves the connector-owned `dynamic` subtree, and duplication. The
-built-in locale templates are not DB rows — they ship in
-data/profile_templates.json and merge virtually into the tree load.
-Re-exported from db for import compatibility.
+Backs the /profile page. Saves follow docs/ui-tree-persistence.md — the tree
+save only ever updates rows that already exist, so a payload that omits or
+invents a row is an error rather than a silent create or delete; creation and
+deletion are their own functions. Also holds the per-profile data operations:
+the registry-driven validator, data read/write that preserves the
+connector-owned `dynamic` subtree, and duplication. The built-in locale
+templates are not DB rows — they ship in data/profile_templates.json and merge
+virtually into the tree load. Re-exported from db for import compatibility.
 """
 import hashlib
 import json
@@ -26,8 +27,8 @@ from profile_fields import FIELDS_BY_KEY, SUMMARY_KEYS
 
 class ProfileTreeError(ValueError):
     """A profile tree payload failed structural validation (bad uuid, dangling
-    parent folder, cycle, built-in uuid, …). The PUT endpoint maps this to
-    400, not 500."""
+    parent folder, cycle, built-in uuid, a row that is missing or unknown).
+    The PUT endpoint maps this to 400, not 500."""
 
 
 class ProfileTreeConflict(Exception):
@@ -194,25 +195,12 @@ def profile_load_tree() -> dict[str, Any]:
     ).scalars().all()
     tpl = _templates()
     return {
-        "folders": [
-            {"id": str(f.uuid), "name": f.name, "description": f.description,
-             "parentId": str(f.parent_uuid) if f.parent_uuid else None,
-             "created_at": f.created_at.isoformat() if f.created_at else None,
-             "updated_at": f.updated_at.isoformat() if f.updated_at else None}
-            for f in folders
-        ] + [
+        "folders": [_folder_tree_row(f) for f in folders] + [
             {"id": tpl["folder"]["uuid"], "name": tpl["folder"]["name"],
              "description": tpl["folder"]["description"], "parentId": None,
              "builtin": True}
         ],
-        "profiles": [
-            {"uuid": str(p.uuid), "name": p.name,
-             "folderId": str(p.folder_uuid) if p.folder_uuid else None,
-             "summary": profile_data_summary(p.data),
-             "created_at": p.created_at.isoformat() if p.created_at else None,
-             "updated_at": p.updated_at.isoformat() if p.updated_at else None}
-            for p in profiles
-        ] + [
+        "profiles": [_profile_tree_row(p) for p in profiles] + [
             {"uuid": e["uuid"], "name": e["name"],
              "folderId": tpl["folder"]["uuid"], "builtin": True,
              "summary": profile_data_summary(e["data"])}
@@ -298,95 +286,75 @@ def validate_profile_tree(folders: list, profiles: list) -> None:
 
 
 def profile_save_tree(folders: list, profiles: list, *,
-                      base_version: str | None = None,
-                      expected_deletes: int | None = None) -> None:
-    """Upsert the whole user-owned profile tree by uuid. List order becomes
-    `position`. Rows whose uuid is absent from the incoming lists are deleted.
-    Never touches `data`: new rows start empty, existing rows keep theirs (the
-    form saves through profile_update_data). Validates first (raises
-    ProfileTreeError before any mutation). Two opt-in guards (skipped when
-    None): `base_version` (stale → ProfileTreeConflict) and `expected_deletes`
-    (a save deleting more than declared → ProfileTreeError, the
-    truncated-payload tripwire)."""
-    validate_profile_tree(folders, profiles)
+                      base_version: str | None = None) -> None:
+    """Update name, description, placement and order of user-owned rows that
+    already exist. List order becomes `position`.
+
+    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    a payload that omits an existing row, or names one the DB doesn't have, is
+    a ProfileTreeError — absence means a bug, not an instruction. Creation is
+    profile_create / profile_create_folder / profile_duplicate; deletion is
+    profile_delete / profile_delete_folder.
+
+    A stale `base_version` raises ProfileTreeConflict, checked before
+    structural validation so a concurrent edit surfaces as 409, not 400. The
+    virtual built-ins never ride a save (the validator rejects their uuids),
+    and `data` is never touched — the form saves that through
+    profile_update_data."""
     if base_version is not None and base_version != profile_tree_version():
         raise ProfileTreeConflict("profile tree changed since it was loaded")
+    validate_profile_tree(folders, profiles)
     existing_f = {f.uuid: f for f in
                   db.session.execute(sa.select(ProfileFolder)).scalars().all()}
     existing_p = {p.uuid: p for p in
                   db.session.execute(sa.select(Profile)).scalars().all()}
-    if expected_deletes is not None:
-        incoming = {UUID(f["id"]) for f in folders} | {UUID(p["uuid"]) for p in profiles}
-        would_delete = len((set(existing_f) | set(existing_p)) - incoming)
-        if would_delete > expected_deletes:
+    incoming_f = {UUID(f["id"]) for f in folders}
+    incoming_p = {UUID(p["uuid"]) for p in profiles}
+    for label, incoming, existing in (("folder", incoming_f, existing_f),
+                                      ("profile", incoming_p, existing_p)):
+        missing = set(existing) - incoming
+        if missing:
             raise ProfileTreeError(
-                f"save would delete {would_delete} node(s) but only "
-                f"{expected_deletes} deletion(s) were declared — refusing")
-    seen_f: set[UUID] = set()
+                f"tree save omitted {len(missing)} existing {label}(s) — refusing "
+                f"(the tree save never deletes)")
+        unknown = incoming - set(existing)
+        if unknown:
+            raise ProfileTreeError(
+                f"tree save references {len(unknown)} unknown {label}(s) — refusing "
+                f"(the tree save never creates)")
     for i, f in enumerate(folders):
-        fu = UUID(f["id"])
-        seen_f.add(fu)
-        row = existing_f.get(fu)
-        if row is None:
-            row = ProfileFolder(uuid=fu)
-            db.session.add(row)
+        row = existing_f[UUID(f["id"])]
         row.name = f.get("name", "")
         row.description = f.get("description", "")
         row.parent_uuid = UUID(f["parentId"]) if f.get("parentId") else None
         row.position = i
-    for fu, row in existing_f.items():
-        if fu not in seen_f:
-            db.session.delete(row)
-    seen_p: set[UUID] = set()
     for i, p in enumerate(profiles):
-        pu = UUID(p["uuid"])
-        seen_p.add(pu)
-        row = existing_p.get(pu)
-        if row is None:
-            row = Profile(uuid=pu)
-            db.session.add(row)
+        row = existing_p[UUID(p["uuid"])]
         row.name = p.get("name", "")
         row.folder_uuid = UUID(p["folderId"]) if p.get("folderId") else None
         row.position = i
-    deleted_p = {pu for pu in existing_p if pu not in seen_p}
-    # Deleting the profile that `profile.current` points at must clear the
-    # pointer and stamp the change IN THE SAME TRANSACTION — otherwise the
-    # setting dangles: every declared-profile block silently disappears on
-    # the next turn and no context marker ever announces it. The setting row
-    # is LOCKED before the deletions (the same lock set_current_profile
-    # takes before validating), so a concurrent switch cannot validate a
-    # profile this transaction is deleting and re-dangle the pointer after
-    # the commit. Staged through the settings module's no-commit helper so
-    # tree rows and settings rows commit (or roll back) together.
-    if deleted_p:
-        from db.settings import (
-            _registry,
-            _upsert_setting_row,
-            get_setting,
-            lock_setting_row,
-        )
-
-        lock_setting_row("profile.current")
-        current_raw = str(get_setting("profile.current") or "").strip()
-        current_uuid = _to_uuid(current_raw) if current_raw else None
-        if current_uuid is not None and current_uuid in deleted_p:
-            from datetime import UTC, datetime
-
-            stamp = datetime.now(UTC).isoformat()
-            _upsert_setting_row(_registry("profile.current"), None)
-            _upsert_setting_row(
-                _registry("profile.current_changed_at"), stamp)
-    for pu in deleted_p:
-        db.session.delete(existing_p[pu])
     db.session.commit()
 
 
-# ---- per-profile data + duplication ----
+# ---- create / delete (the tree save does neither) ----
 
 def _profile_row(profile_uuid: UUID) -> Profile | None:
     return db.session.execute(
         sa.select(Profile).where(Profile.uuid == profile_uuid)
     ).scalar_one_or_none()
+
+
+def _folder_row(folder_uuid: UUID) -> ProfileFolder | None:
+    return db.session.execute(
+        sa.select(ProfileFolder).where(ProfileFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+
+
+def _folder_tree_row(f: ProfileFolder) -> dict[str, Any]:
+    return {"id": str(f.uuid), "name": f.name, "description": f.description,
+            "parentId": str(f.parent_uuid) if f.parent_uuid else None,
+            "created_at": f.created_at.isoformat() if f.created_at else None,
+            "updated_at": f.updated_at.isoformat() if f.updated_at else None}
 
 
 def _profile_tree_row(row: Profile) -> dict[str, Any]:
@@ -399,6 +367,124 @@ def _profile_tree_row(row: Profile) -> dict[str, Any]:
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
+
+def _next_position(model: Any, column: Any, parent: UUID | None) -> int:
+    """One past the last sibling under `parent`, so a new row lands at the end
+    of the folder it was created in."""
+    highest = db.session.execute(
+        sa.select(sa.func.max(model.position)).where(column == parent)
+    ).scalar_one()
+    return 0 if highest is None else highest + 1
+
+
+def profile_create(name: str, folder_uuid: UUID | None) -> dict[str, Any]:
+    """Create one empty profile at the end of its folder."""
+    row = Profile(uuid=uuid4(), name=name, data={}, folder_uuid=folder_uuid,
+                  position=_next_position(Profile, Profile.folder_uuid,
+                                          folder_uuid))
+    db.session.add(row)
+    db.session.commit()
+    return _profile_tree_row(row)
+
+
+def profile_create_folder(name: str, parent_uuid: UUID | None) -> dict[str, Any]:
+    """Create one folder at the end of its parent."""
+    row = ProfileFolder(uuid=uuid4(), name=name, description="",
+                        parent_uuid=parent_uuid,
+                        position=_next_position(ProfileFolder,
+                                                ProfileFolder.parent_uuid,
+                                                parent_uuid))
+    db.session.add(row)
+    db.session.commit()
+    return _folder_tree_row(row)
+
+
+def _clear_current_profile_pointer(doomed: set[UUID]) -> None:
+    """Stage the `profile.current` clear when one of `doomed` is the declared
+    profile. Deleting it must clear the pointer and stamp the change IN THE
+    SAME TRANSACTION as the row deletion — otherwise the setting dangles:
+    every declared-profile block silently disappears on the next turn and no
+    context marker ever announces it. The setting row is LOCKED first (the
+    same lock set_current_profile takes before validating), so a concurrent
+    switch cannot validate a profile this transaction is deleting and
+    re-dangle the pointer after the commit. Staged through the settings
+    module's no-commit helper so profile rows and settings rows commit (or
+    roll back) together — the caller commits."""
+    if not doomed:
+        return
+    from db.settings import (
+        _registry,
+        _upsert_setting_row,
+        get_setting,
+        lock_setting_row,
+    )
+
+    lock_setting_row("profile.current")
+    current_raw = str(get_setting("profile.current") or "").strip()
+    current_uuid = _to_uuid(current_raw) if current_raw else None
+    if current_uuid is not None and current_uuid in doomed:
+        from datetime import UTC, datetime
+
+        stamp = datetime.now(UTC).isoformat()
+        _upsert_setting_row(_registry("profile.current"), None)
+        _upsert_setting_row(_registry("profile.current_changed_at"), stamp)
+
+
+def profile_delete(profile_uuid: UUID) -> bool:
+    """Delete one profile and its whole data blob. Clears the
+    `profile.current` pointer in the same transaction if it named this row.
+    False if the uuid is unknown (built-ins included — they are virtual, so
+    there is nothing to delete)."""
+    row = _profile_row(profile_uuid)
+    if row is None:
+        return False
+    _clear_current_profile_pointer({profile_uuid})
+    db.session.delete(row)
+    db.session.commit()
+    return True
+
+
+def _descendant_folder_uuids(folder_uuid: UUID) -> list[UUID]:
+    """`folder_uuid` plus every folder nested under it, any depth. Cycle-guarded
+    via `seen`: a corrupt parent loop stops expanding a folder once it has
+    already been collected, rather than spinning. No size cap — a large but
+    legitimate subtree must be walked in full, or `profile_delete_folder` would
+    delete only the collected prefix and orphan the rest."""
+    out = [folder_uuid]
+    seen = {folder_uuid}
+    frontier = [folder_uuid]
+    while frontier:
+        children = db.session.execute(
+            sa.select(ProfileFolder.uuid)
+            .where(ProfileFolder.parent_uuid.in_(frontier))
+        ).scalars().all()
+        frontier = [c for c in children if c not in seen]
+        seen.update(frontier)
+        out.extend(frontier)
+    return out
+
+
+def profile_delete_folder(folder_uuid: UUID) -> bool:
+    """Delete a folder, every folder nested under it, and every profile inside
+    any of them. Clears the `profile.current` pointer in the same transaction
+    if it named one of them. False if the uuid is unknown (the virtual
+    Templates folder included)."""
+    if _folder_row(folder_uuid) is None:
+        return False
+    folder_uuids = _descendant_folder_uuids(folder_uuid)
+    doomed = set(db.session.execute(
+        sa.select(Profile.uuid).where(Profile.folder_uuid.in_(folder_uuids))
+    ).scalars().all())
+    _clear_current_profile_pointer(doomed)
+    if doomed:
+        db.session.execute(sa.delete(Profile).where(Profile.uuid.in_(doomed)))
+    db.session.execute(sa.delete(ProfileFolder).where(
+        ProfileFolder.uuid.in_(folder_uuids)))
+    db.session.commit()
+    return True
+
+
+# ---- per-profile data + duplication ----
 
 def profile_get(profile_uuid: UUID) -> dict[str, Any] | None:
     """One profile with its full data blob, for the form pane. Built-ins are

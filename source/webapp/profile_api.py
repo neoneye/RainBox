@@ -1,16 +1,18 @@
 """JSON API backing the /profile page's persistence.
 
-Bulk load/save of the whole profile tree (folders + profiles) using the
-frontend's field names (folder `id`/`parentId`, profile `uuid`/`folderId`),
-so the page sends/receives its in-browser arrays almost verbatim. The save is
-an upsert by uuid (db.profile_save_tree), validated server-side
-(db.validate_profile_tree) so a malformed tree — or one carrying a built-in
-uuid or the derived `summary` — is rejected with 400, not 500. It never
-carries `data`: the form's autosave reads/writes it per-profile
-(GET/PUT profiles/<uuid>, validated against the field registry with the
-connector-owned `dynamic` subtree preserved), and `duplicate` copies a whole
-profile — the built-in templates included, which is the only write that can
-touch them. Mirrors webapp/prompt_api.py.
+Save shape per docs/ui-tree-persistence.md: the tree PUT only updates rows that
+already exist (a payload that omits or invents one is a 400), and creation and
+deletion are their own endpoints. Every tree-structure endpoint (the tree PUT,
+folder/profile create, duplicate, folder/profile delete) carries the new tree
+`version` in its response, so the client never holds a stale token. The JSON
+uses the frontend's field names (folder `id`/`parentId`, profile
+`uuid`/`folderId`), so the page sends/receives its in-browser arrays almost
+verbatim; a payload carrying a built-in uuid or the derived `summary` is
+rejected with 400, not 500. The tree never carries `data`: the form's autosave
+reads/writes it per-profile (GET/PUT profiles/<uuid>, validated against the
+field registry with the connector-owned `dynamic` subtree preserved), and
+`duplicate` copies a whole profile — the built-in templates included, which is
+the only write that can touch them.
 """
 from uuid import UUID
 
@@ -23,26 +25,33 @@ from profile_fields import FIELDS_BY_KEY
 from .core import app
 
 
+def _parse_uuid(raw: object) -> UUID | None:
+    # Called on both URL path segments (always str) and untrusted JSON-body
+    # values, so a non-string (dict, int, list, ...) must fail cleanly rather
+    # than raising from inside the uuid module.
+    if not isinstance(raw, str):
+        return None
+    try:
+        return UUID(raw)
+    except (ValueError, TypeError):
+        return None
+
+
 @app.route("/profile/api/tree", methods=["GET", "PUT"])
 def profile_tree() -> tuple[Response, int] | Response:
     if request.method == "PUT":
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
-        # Whole-tree replace: must carry the version token from the last GET; a
-        # stale token is a 409 and the page re-hydrates instead of clobbering.
+        # The PUT must carry the version token from the last GET; a stale token
+        # is a 409 and the page re-hydrates instead of clobbering.
         version = data.get("version")
         if not isinstance(version, str) or not version:
             return jsonify({"ok": False, "error":
                             "missing tree 'version' (hydrate via GET first)"}), 400
-        # Deletions must be declared (an undeclared one is likely a truncated payload).
-        deletes = data.get("deletes", 0)
-        if not isinstance(deletes, int) or isinstance(deletes, bool) or deletes < 0:
-            return jsonify({"ok": False, "error":
-                            "'deletes' must be a non-negative integer"}), 400
         try:
             db.profile_save_tree(data.get("folders", []), data.get("profiles", []),
-                                 base_version=version, expected_deletes=deletes)
+                                 base_version=version)
         except db.ProfileTreeConflict as exc:
             return jsonify({"ok": False, "error": str(exc),
                             "version": db.profile_tree_version()}), 409
@@ -52,11 +61,92 @@ def profile_tree() -> tuple[Response, int] | Response:
     return jsonify(db.profile_load_tree())
 
 
-def _parse_uuid(raw: str) -> UUID | None:
-    try:
-        return UUID(raw)
-    except (ValueError, TypeError):
-        return None
+def _create_target_folder(data: dict) -> tuple[UUID | None, str | None]:
+    """The `folderId`/`parentId` a create should land in: None (root), a real
+    folder uuid, or an error string. A built-in uuid is rejected outright — the
+    virtual Templates folder holds shipped templates and can never hold a user
+    row (the client already redirects such creates to the root)."""
+    raw = data.get("folderId", data.get("parentId"))
+    if raw is None or raw == "":
+        return None, None
+    if not isinstance(raw, str):
+        return None, "bad folderId"
+    parsed = _parse_uuid(raw)
+    if parsed is None:
+        return None, "bad folderId"
+    if parsed in db.profile_builtin_uuids():
+        return None, "read-only built-in folder"
+    return parsed, None
+
+
+def _create_name(data: dict) -> tuple[str, str | None]:
+    raw = data.get("name")
+    if raw is not None and not isinstance(raw, str):
+        return "", "name required"
+    name = (raw or "").strip()
+    return name, None if name else "name required"
+
+
+@app.route("/profile/api/folders", methods=["POST"])
+def profile_create_folder_route() -> tuple[Response, int]:
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return jsonify({"ok": False,
+                        "error": "request body must be a JSON object"}), 400
+    name, err = _create_name(data)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    parent_uuid, err = _create_target_folder(data)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    folder = db.profile_create_folder(name, parent_uuid)
+    return jsonify({"ok": True, "folder": folder,
+                    "version": db.profile_tree_version()}), 201
+
+
+@app.route("/profile/api/profiles", methods=["POST"])
+def profile_create_route() -> tuple[Response, int]:
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return jsonify({"ok": False,
+                        "error": "request body must be a JSON object"}), 400
+    name, err = _create_name(data)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    folder_uuid, err = _create_target_folder(data)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    made = db.profile_create(name, folder_uuid)
+    return jsonify({"ok": True, "profile": made,
+                    "version": db.profile_tree_version()}), 201
+
+
+@app.route("/profile/api/folders/<folder_uuid>", methods=["DELETE"])
+def profile_delete_folder_route(folder_uuid: str) -> tuple[Response, int] | Response:
+    fu = _parse_uuid(folder_uuid)
+    if fu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    if fu in db.profile_builtin_uuids():
+        return jsonify({"ok": False, "error": "read-only built-in"}), 400
+    if not db.profile_delete_folder(fu):
+        return jsonify({"ok": False, "error": "folder not found"}), 404
+    return jsonify({"ok": True, "version": db.profile_tree_version()})
+
+
+@app.route("/profile/api/profiles/<profile_uuid>", methods=["DELETE"])
+def profile_delete_route(profile_uuid: str) -> tuple[Response, int] | Response:
+    pu = _parse_uuid(profile_uuid)
+    if pu is None:
+        return jsonify({"ok": False, "error": "bad uuid"}), 400
+    if pu in db.profile_builtin_uuids():
+        return jsonify({"ok": False, "error": "read-only built-in"}), 400
+    if not db.profile_delete(pu):
+        return jsonify({"ok": False, "error": "profile not found"}), 404
+    return jsonify({"ok": True, "version": db.profile_tree_version()})
 
 
 @app.route("/profile/api/profiles/<profile_uuid>", methods=["GET", "PUT"])
@@ -216,11 +306,13 @@ def profile_export(profile_uuid: str) -> tuple[Response, int] | Response:
 def profile_duplicate_route(profile_uuid: str) -> tuple[Response, int] | Response:
     """Copy a profile's whole data blob into a new row: a user-owned source
     yields "<name> copy" right after it; a built-in template yields a real
-    editable top-level row named after the template."""
+    editable top-level row named after the template. A create, so it returns
+    the new tree version alongside the new row."""
     pu = _parse_uuid(profile_uuid)
     if pu is None:
         return jsonify({"ok": False, "error": "bad uuid"}), 400
     new = db.profile_duplicate(pu)
     if new is None:
         return jsonify({"ok": False, "error": "profile not found"}), 404
-    return jsonify({"ok": True, "profile": new})
+    return jsonify({"ok": True, "profile": new,
+                    "version": db.profile_tree_version()})

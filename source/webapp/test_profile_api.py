@@ -1,46 +1,41 @@
 """Tests for webapp/profile_api.py.
 
 Uses the live local Postgres (rainbox_claude via conftest). HTTP goes through
-the real app (webapp.core.app); DB seeding uses the same endpoints, so each
-test cleans up the rows it created.
+the real app (webapp.core.app); DB seeding uses the same endpoints, and each
+test deletes the rows it created through the dedicated DELETE endpoints — the
+tree PUT can neither create nor delete (docs/ui-tree-persistence.md).
 """
 import json
 from uuid import uuid4
 
 import yaml
 
-import sqlalchemy as sa
-
-import db
-from db.models import Profile
 from webapp.core import app
 
 
-def _cleanup(profile_uuids):
-    a = db.make_app()
-    db.init_db(a)
-    with a.app_context():
-        db.db.session.execute(
-            sa.delete(Profile).where(Profile.uuid.in_(profile_uuids)))
-        db.db.session.commit()
+def _cleanup(client, profile_uuids):
+    for pu in profile_uuids:
+        client.delete(f"/profile/api/profiles/{pu}")
 
 
-def _seed_profile(client, name="ApiTest"):
-    """Create one root profile through the public API; returns its uuid str."""
+def _user_rows(client):
+    """The tree's user-owned rows, projected to the PUT's field names (the
+    virtual built-ins never ride a save)."""
     tree = client.get("/profile/api/tree").get_json()
-    pu = str(uuid4())
     folders = [{"id": f["id"], "name": f["name"],
                 "description": f.get("description") or "",
                 "parentId": f.get("parentId")}
                for f in tree["folders"] if not f.get("builtin")]
     profiles = [{"uuid": p["uuid"], "name": p["name"], "folderId": p.get("folderId")}
                 for p in tree["profiles"] if not p.get("builtin")]
-    profiles.append({"uuid": pu, "name": name, "folderId": None})
-    resp = client.put("/profile/api/tree", json={
-        "folders": folders, "profiles": profiles,
-        "version": tree["version"], "deletes": 0})
-    assert resp.status_code == 200, resp.get_json()
-    return pu
+    return folders, profiles, tree["version"]
+
+
+def _seed_profile(client, name="ApiTest"):
+    """Create one root profile through the public API; returns its uuid str."""
+    resp = client.post("/profile/api/profiles", json={"name": name})
+    assert resp.status_code == 201, resp.get_json()
+    return resp.get_json()["profile"]["uuid"]
 
 
 def test_tree_get_shape_includes_builtins():
@@ -59,14 +54,98 @@ def test_tree_put_guards():
                       json={"folders": [], "profiles": []}).status_code == 400
     tree = client.get("/profile/api/tree").get_json()
     resp = client.put("/profile/api/tree", json={
-        "folders": [], "profiles": [], "version": "stale-token-xyz", "deletes": 0})
+        "folders": [], "profiles": [], "version": "stale-token-xyz"})
     assert resp.status_code == 409 and resp.get_json()["version"]
     # A payload carrying a built-in uuid is refused outright.
     bp = next(p for p in tree["profiles"] if p.get("builtin"))
     resp = client.put("/profile/api/tree", json={
         "folders": [], "profiles": [{"uuid": bp["uuid"], "name": "X", "folderId": None}],
-        "version": tree["version"], "deletes": 0})
+        "version": tree["version"]})
     assert resp.status_code == 400
+
+
+def test_tree_put_refuses_to_omit_an_existing_row():
+    """The whole point of the split shape: a payload that drops a row is a
+    malformed request, not a deletion (docs/ui-tree-persistence.md)."""
+    client = app.test_client()
+    pu = _seed_profile(client)
+    try:
+        folders, profiles, version = _user_rows(client)
+        resp = client.put("/profile/api/tree", json={
+            "folders": folders,
+            "profiles": [p for p in profiles if p["uuid"] != pu],
+            "version": version})
+        assert resp.status_code == 400
+        assert "omitted" in resp.get_json()["error"]
+        # …and nothing was mutated.
+        assert any(p["uuid"] == pu for p in _user_rows(client)[1])
+    finally:
+        _cleanup(client, [pu])
+
+
+def test_tree_put_refuses_an_unknown_row():
+    client = app.test_client()
+    folders, profiles, version = _user_rows(client)
+    resp = client.put("/profile/api/tree", json={
+        "folders": folders,
+        "profiles": profiles + [{"uuid": str(uuid4()), "name": "ghost",
+                                 "folderId": None}],
+        "version": version})
+    assert resp.status_code == 400
+    assert "unknown" in resp.get_json()["error"]
+
+
+def test_create_and_delete_return_a_token_the_next_put_accepts():
+    """Every mutating endpoint hands back the fresh version, or the client's
+    next drag 409s for a reason the operator can't see."""
+    client = app.test_client()
+    folder = client.post("/profile/api/folders", json={"name": "T-folder"}).get_json()
+    made = client.post("/profile/api/profiles",
+                       json={"name": "Inside", "folderId": folder["folder"]["id"]}
+                       ).get_json()
+    assert made["version"] and made["version"] != folder["version"]
+    dup = client.post(f"/profile/api/profiles/{made['profile']['uuid']}/duplicate").get_json()
+    assert dup["version"] and dup["version"] != made["version"]
+    try:
+        folders, profiles, version = _user_rows(client)
+        assert version == dup["version"]
+        assert client.put("/profile/api/tree", json={
+            "folders": folders, "profiles": profiles,
+            "version": dup["version"]}).status_code == 200
+    finally:
+        out = client.delete(f"/profile/api/folders/{folder['folder']['id']}").get_json()
+        assert out["ok"] and out["version"]
+    # The folder delete cascaded both profiles inside it.
+    left = {p["uuid"] for p in _user_rows(client)[1]}
+    assert made["profile"]["uuid"] not in left
+    assert dup["profile"]["uuid"] not in left
+
+
+def test_create_and_delete_refuse_builtins():
+    """The Templates folder is virtual: it can neither hold a user row nor be
+    deleted, and neither can the templates in it."""
+    client = app.test_client()
+    tree = client.get("/profile/api/tree").get_json()
+    tf = next(f["id"] for f in tree["folders"] if f.get("builtin"))
+    bp = next(p["uuid"] for p in tree["profiles"] if p.get("builtin"))
+    assert client.post("/profile/api/profiles",
+                       json={"name": "X", "folderId": tf}).status_code == 400
+    assert client.post("/profile/api/folders",
+                       json={"name": "X", "parentId": tf}).status_code == 400
+    assert client.delete(f"/profile/api/folders/{tf}").status_code == 400
+    assert client.delete(f"/profile/api/profiles/{bp}").status_code == 400
+
+
+def test_create_requires_a_name():
+    client = app.test_client()
+    assert client.post("/profile/api/profiles", json={"name": " "}).status_code == 400
+    assert client.post("/profile/api/folders", json={}).status_code == 400
+
+
+def test_delete_unknown_uuid_404():
+    client = app.test_client()
+    assert client.delete(f"/profile/api/profiles/{uuid4()}").status_code == 404
+    assert client.delete(f"/profile/api/folders/{uuid4()}").status_code == 404
 
 
 def test_data_roundtrip_canonicalize_and_summary():
@@ -82,7 +161,7 @@ def test_data_roundtrip_canonicalize_and_summary():
         got = client.get(f"/profile/api/profiles/{pu}").get_json()
         assert got["data"] == {"full_name": "Ada T", "units": "metric"}  # "" canonicalized away
     finally:
-        _cleanup([pu])
+        _cleanup(client, [pu])
 
 
 def test_data_put_rejections():
@@ -96,7 +175,7 @@ def test_data_put_rejections():
         assert client.put(f"/profile/api/profiles/{pu}",
                           json={"data": "nope"}).status_code == 400
     finally:
-        _cleanup([pu])
+        _cleanup(client, [pu])
 
 
 def test_builtin_read_only_and_duplicate():
@@ -113,7 +192,7 @@ def test_builtin_read_only_and_duplicate():
         assert res["ok"] is True and res["profile"]["name"] == "Denmark"
         assert res["profile"]["folderId"] is None
     finally:
-        _cleanup([res["profile"]["uuid"]])
+        _cleanup(client, [res["profile"]["uuid"]])
 
 
 def test_duplicate_user_owned_copies_data():
@@ -129,7 +208,7 @@ def test_duplicate_user_owned_copies_data():
         got = client.get(f"/profile/api/profiles/{res['profile']['uuid']}").get_json()
         assert got["data"] == {"full_name": "Src Person"}
     finally:
-        _cleanup(created)
+        _cleanup(client, created)
 
 
 def test_bad_and_unknown_uuids():
@@ -168,7 +247,7 @@ def test_export_defaults_to_json_with_every_section():
         assert {"timezone", "language", "knowledge"} <= set(doc)
         assert doc["timezone"] == "Europe/Copenhagen"
     finally:
-        _cleanup([pu])
+        _cleanup(client, [pu])
 
 
 def test_export_honours_format_and_sections():
@@ -183,7 +262,7 @@ def test_export_honours_format_and_sections():
         assert set(doc) == {"language"}
         assert doc["language"][0]["code"] == "en-US"
     finally:
-        _cleanup([pu])
+        _cleanup(client, [pu])
 
 
 def test_export_reports_utf8_byte_sizes_for_every_format():
@@ -202,7 +281,7 @@ def test_export_reports_utf8_byte_sizes_for_every_format():
         for size in body["sizes"].values():
             assert size > 0
     finally:
-        _cleanup([pu])
+        _cleanup(client, [pu])
 
 
 def test_export_rejects_unknown_format_and_section():
@@ -216,7 +295,7 @@ def test_export_rejects_unknown_format_and_section():
         assert bad_sec.status_code == 400
         assert "secrets" in bad_sec.get_json()["error"]
     finally:
-        _cleanup([pu])
+        _cleanup(client, [pu])
 
 
 def test_export_unknown_profile_is_404():

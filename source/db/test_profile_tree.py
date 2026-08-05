@@ -122,31 +122,35 @@ def empty_tree(profile_tree_snapshot):
 
 
 def test_save_and_load_roundtrip(app_ctx, empty_tree):
-    f_root, f_child, pr = str(uuid4()), str(uuid4()), str(uuid4())
+    f_root = db.profile_create_folder("Friends", None)
+    f_child = db.profile_create_folder("Copenhagen", UUID(f_root["id"]))
+    pr = db.profile_create("Simon", UUID(f_child["id"]))
     db.profile_save_tree(
-        [{"id": f_root, "name": "Friends", "description": "top", "parentId": None},
-         {"id": f_child, "name": "Copenhagen", "parentId": f_root}],
-        [{"uuid": pr, "name": "Simon", "folderId": f_child}])
+        [{"id": f_root["id"], "name": "Friends", "description": "top", "parentId": None},
+         {"id": f_child["id"], "name": "Copenhagen", "parentId": f_root["id"]}],
+        [{"uuid": pr["uuid"], "name": "Simon", "folderId": f_child["id"]}])
     out = db.profile_load_tree()
     user_folders = [f for f in out["folders"] if not f.get("builtin")]
     user_profiles = [p for p in out["profiles"] if not p.get("builtin")]
     assert [f["name"] for f in user_folders] == ["Friends", "Copenhagen"]
-    assert user_folders[1]["parentId"] == f_root
-    assert user_profiles[0]["folderId"] == f_child
+    assert user_folders[1]["parentId"] == f_root["id"]
+    assert user_profiles[0]["folderId"] == f_child["id"]
     assert "data" not in user_profiles[0]           # blob stays out of the tree payload
     assert set(user_profiles[0]["summary"]) == set(profile_fields.SUMMARY_KEYS)
     assert out["version"]
 
 
 def test_tree_save_preserves_data(app_ctx, empty_tree):
-    pr = str(uuid4())
-    db.profile_save_tree([], [{"uuid": pr, "name": "P", "folderId": None}])
-    row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(pr))).scalar_one()
+    pr = db.profile_create("P", None)
+    row = db.db.session.execute(
+        sa.select(Profile).where(Profile.uuid == UUID(pr["uuid"]))).scalar_one()
     row.data = {"full_name": "Keep Me"}
     db.db.session.commit()
     # A structural save (rename) must not touch data.
-    db.profile_save_tree([], [{"uuid": pr, "name": "P renamed", "folderId": None}])
-    row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(pr))).scalar_one()
+    db.profile_save_tree([], [{"uuid": pr["uuid"], "name": "P renamed",
+                               "folderId": None}])
+    row = db.db.session.execute(
+        sa.select(Profile).where(Profile.uuid == UUID(pr["uuid"]))).scalar_one()
     assert row.name == "P renamed" and row.data == {"full_name": "Keep Me"}
 
 
@@ -155,12 +159,55 @@ def test_version_conflict(app_ctx, profile_tree_snapshot):
         db.profile_save_tree([], [], base_version="stale-token-xyz")
 
 
-def test_delete_tripwire(app_ctx, empty_tree):
-    f = str(uuid4())
-    db.profile_save_tree([{"id": f, "name": "F", "parentId": None}], [])
-    # Saving an empty tree would delete the folder; undeclared deletion → refused.
-    with pytest.raises(db.ProfileTreeError):
-        db.profile_save_tree([], [], expected_deletes=0)
+def test_save_tree_refuses_to_omit_an_existing_row(app_ctx, empty_tree):
+    pr = db.profile_create("Keep me", None)
+    with pytest.raises(db.ProfileTreeError, match="omitted"):
+        db.profile_save_tree([], [])
+    user = [p for p in db.profile_load_tree()["profiles"] if not p.get("builtin")]
+    assert [p["uuid"] for p in user] == [pr["uuid"]]
+
+
+def test_save_tree_refuses_an_unknown_row(app_ctx, empty_tree):
+    with pytest.raises(db.ProfileTreeError, match="unknown"):
+        db.profile_save_tree([], [{"uuid": str(uuid4()), "name": "ghost",
+                                   "folderId": None}])
+    assert [p for p in db.profile_load_tree()["profiles"]
+            if not p.get("builtin")] == []
+
+
+def test_create_places_at_end_of_folder(app_ctx, empty_tree):
+    f = db.profile_create_folder("F", None)
+    db.profile_create("A", UUID(f["id"]))
+    db.profile_create("B", UUID(f["id"]))
+    user = [p["name"] for p in db.profile_load_tree()["profiles"]
+            if not p.get("builtin")]
+    assert user == ["A", "B"]
+
+
+def test_delete_profile(app_ctx, empty_tree):
+    pr = db.profile_create("P", None)
+    assert db.profile_delete(UUID(pr["uuid"])) is True
+    assert db.profile_get(UUID(pr["uuid"])) is None
+    assert db.profile_delete(UUID(pr["uuid"])) is False
+
+
+def test_delete_folder_cascades_the_subtree(app_ctx, empty_tree):
+    outer = db.profile_create_folder("Outer", None)
+    inner = db.profile_create_folder("Inner", UUID(outer["id"]))
+    pr = db.profile_create("A", UUID(inner["id"]))
+    assert db.profile_delete_folder(UUID(outer["id"])) is True
+    out = db.profile_load_tree()
+    assert [f for f in out["folders"] if not f.get("builtin")] == []
+    assert [p for p in out["profiles"] if not p.get("builtin")] == []
+    assert db.profile_get(UUID(pr["uuid"])) is None
+
+
+def test_delete_refuses_nothing_for_a_builtin(app_ctx, empty_tree):
+    """Built-ins are virtual — there is no row, so the delete simply reports
+    'unknown' rather than pretending to remove a shipped template."""
+    builtin = db.profile_templates_entries()[0]["uuid"]
+    assert db.profile_delete(UUID(builtin)) is False
+    assert db.profile_delete_folder(db.profile_templates_folder_uuid()) is False
 
 
 def test_validate_rejects_dangling_cycle_collision_summary(app_ctx):
@@ -198,8 +245,8 @@ def test_builtins_excluded_from_version(app_ctx, empty_tree):
     assert len(out["profiles"]) == 21 and len(out["folders"]) == 1  # virtual rows only
     # The version token covers user rows only, so a builtin-free save of the
     # (empty) user tree against it is a clean no-op — nothing stale, nothing
-    # to delete.
-    db.profile_save_tree([], [], base_version=out["version"], expected_deletes=0)
+    # missing.
+    db.profile_save_tree([], [], base_version=out["version"])
 
 
 def test_tree_put_rejects_builtin_uuids(app_ctx):
@@ -311,8 +358,7 @@ def test_all_templates_carry_units_and_temperature(app_ctx):
 
 
 def test_update_data_merges_and_deletes(app_ctx, empty_tree):
-    pr = str(uuid4())
-    db.profile_save_tree([], [{"uuid": pr, "name": "P", "folderId": None}])
+    pr = db.profile_create("P", None)["uuid"]
     v = db.profile_tree_version()
     dynamic = {"location": {"value": "Copenhagen", "seen_at": "2026-07-14T10:00:00+00:00"}}
     row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(pr))).scalar_one()
@@ -331,10 +377,9 @@ def test_update_data_merges_and_deletes(app_ctx, empty_tree):
 
 
 def test_duplicate_user_owned(app_ctx, empty_tree):
-    f, src, other = str(uuid4()), str(uuid4()), str(uuid4())
-    db.profile_save_tree([{"id": f, "name": "F", "parentId": None}],
-                         [{"uuid": src, "name": "Simon", "folderId": f},
-                          {"uuid": other, "name": "After", "folderId": f}])
+    f = db.profile_create_folder("F", None)["id"]
+    src = db.profile_create("Simon", UUID(f))["uuid"]
+    other = db.profile_create("After", UUID(f))["uuid"]
     blob = {"full_name": "Simon S", "dynamic": {"screen": {"value": "3440x1440",
                                                            "seen_at": "2026-07-01T00:00:00+00:00"}}}
     row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(src))).scalar_one()
@@ -350,8 +395,7 @@ def test_duplicate_user_owned(app_ctx, empty_tree):
 
 
 def test_duplicate_builtin(app_ctx, empty_tree):
-    pr = str(uuid4())
-    db.profile_save_tree([], [{"uuid": pr, "name": "Existing", "folderId": None}])
+    db.profile_create("Existing", None)
     germany = next(e for e in db.profile_templates_entries() if e["name"] == "Germany")
     dup = db.profile_duplicate(UUID(germany["uuid"]))
     assert dup["name"] == "Germany" and dup["folderId"] is None

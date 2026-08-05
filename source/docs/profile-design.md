@@ -217,19 +217,24 @@ the click-to-rename control, so the kebab has no Rename item; it offers
 Duplicate and Delete only). Folder delete cascades with the typed-name gate
 for non-empty folders. Expand/collapse state persists in `localStorage`.
 
-Structural changes save as a debounced (250 ms, serialized) **whole-tree
-PUT** — an upsert by uuid where list order becomes `position` and rows absent
-from the payload are deleted. The same two guards as /prompt and /cron:
+The save shape is `docs/ui-tree-persistence.md`, which is the authority.
+Placement, order and names save as a debounced (250 ms, serialized) **tree
+PUT** that only ever *updates rows that already exist*. It never creates and
+never deletes — a payload that omits an existing user row, or names one the DB
+doesn't have, is a 400 and mutates nothing. Creation (`POST …/folders`,
+`POST …/profiles`, `POST …/profiles/<uuid>/duplicate`) and deletion
+(`DELETE …/folders/<uuid>`, `DELETE …/profiles/<uuid>`) are their own
+endpoints, and because the shape cannot express a deletion there is no
+`deletes` counter.
 
-- **`version`** — optimistic-concurrency token (sha256 over structural fields
-  of *user-owned* rows only; `data` and the derived summary are excluded, so
-  a form autosave never invalidates an open page's tree, and the virtual
-  built-ins are excluded by construction). Stale → **409** + the current
-  token; the page re-hydrates and toasts instead of clobbering. A failed
-  initial hydrate leaves the token null, so a PUT of the resulting empty
-  state is refused rather than wiping the real tree.
-- **`deletes`** — the declared-deletions tripwire; a save that would delete
-  more rows than declared is refused with 400.
+The **`version`** guard applies: an optimistic-concurrency token (sha256 over
+structural fields of *user-owned* rows only; `data` and the derived summary are
+excluded, so a form autosave never invalidates an open page's tree, and the
+virtual built-ins are excluded by construction), returned by *every* mutating
+endpoint so the client never holds a stale one. Stale → **409** + the current
+token; the page re-hydrates and toasts instead of clobbering. A failed initial
+hydrate leaves the token null, so a PUT of the resulting empty state is refused
+rather than wiping the real tree.
 
 Validation (`validate_profile_tree`, before any mutation): well-formed uuids,
 no duplicate/dangling/cyclic folder references, profile `folderId` must
@@ -239,6 +244,12 @@ never collide with a folder id (`/profile?id=<uuid>` must be unambiguous).
 Crucially, **the tree save never touches `data`**: new rows start empty,
 existing rows keep theirs. Person data flows only through the per-profile PUT.
 
+Deleting the profile that `profile.current` points at clears that pointer and
+stamps `profile.current_changed_at` **in the same transaction** as the row
+deletion (`db.profile_delete` / `profile_delete_folder`, both taking the
+setting-row lock first). Otherwise the setting dangles: every declared-profile
+block silently disappears on the next turn and no context marker announces it.
+
 ## HTTP API
 
 JSON, same-origin, in `webapp/profile_api.py`. uuids are the identifiers.
@@ -246,22 +257,28 @@ JSON, same-origin, in `webapp/profile_api.py`. uuids are the identifiers.
 | Endpoint | Semantics | Guards |
 |----------|-----------|--------|
 | `GET /profile/api/tree` | `{folders, profiles, version}` — user rows + merged built-ins, each profile with its `summary`, no `data` | — |
-| `PUT /profile/api/tree` | guarded whole-tree save (structural only) | `version` (409), `deletes` (400), `validate_profile_tree` (400) |
+| `PUT /profile/api/tree` | update placement, order, names and descriptions of existing user rows → `{ok, version}` | `version` (400 missing / 409 stale), `validate_profile_tree` (400), missing/unknown uuid (400) |
+| `POST /profile/api/folders` | create one folder → `{ok, folder, version}` | 400 empty name, bad or built-in `parentId` |
+| `POST /profile/api/profiles` | create one empty profile → `{ok, profile, version}` | 400 empty name, bad or built-in `folderId` |
+| `DELETE /profile/api/folders/<uuid>` | delete a folder, its nested folders and every profile inside them → `{ok, version}` | 400 malformed or built-in uuid, 404 unknown |
+| `DELETE /profile/api/profiles/<uuid>` | delete one profile and its data → `{ok, version}`; clears `profile.current` in the same transaction if it named this row | 400 malformed or built-in uuid, 404 unknown |
 | `GET /profile/api/profiles/<uuid>` | one profile's editable registry fields + `dynamic` projection (built-ins served from the shipped file); `languages` and `calibration` are **projected out** | 404 unknown |
 | `PUT /profile/api/profiles/<uuid>` | `{data}` — the form's autosave: a **complete editable snapshot**, canonicalized + validated; answers the fresh `summary` | built-in → 400, unknown fields rejected, server subtrees rejected with endpoint hints and preserved |
 | `GET /profile/api/profiles/<uuid>/languages` | `{ok, builtin, rows}` — canonical language rows | 404 unknown |
 | `PUT /profile/api/profiles/<uuid>/languages` | `{rows}` — a complete authoritative snapshot; answers canonical rows with server ids/stamps | built-in → 400, validator → 400, 404 unknown |
 | `GET /profile/api/profiles/<uuid>/calibration` | `{ok, builtin, topics}` — the canonical calibration rows | 404 unknown |
 | `PUT /profile/api/profiles/<uuid>/calibration` | `{topics}` — a complete snapshot; answers the canonical rows (the client needs server-assigned ids/stamps before its next edit) | built-in → 400, validator → 400, 404 unknown |
-| `POST /profile/api/profiles/<uuid>/duplicate` | copy the whole data blob into a new row — "<name> copy" right after a user-owned source, a top-level editable row for a built-in; language and calibration rows get fresh ids + the duplication stamp | 404 unknown |
+| `POST /profile/api/profiles/<uuid>/duplicate` | copy the whole data blob into a new row — "<name> copy" right after a user-owned source, a top-level editable row for a built-in; language and calibration rows get fresh ids + the duplication stamp → `{ok, profile, version}` | 404 unknown |
 
 ## The save flow
 
 Four independent channels, mirroring the storage split:
 
-- **Tree** (structure, names, descriptions): every mutation funnels into the
-  debounced whole-tree PUT above; the browser projects its state back to
-  structural keys only (built-ins and summaries stripped).
+- **Tree** (structure, names, descriptions): placement and naming funnel into
+  the debounced tree PUT above (the browser projects its state back to
+  structural keys only — built-ins and summaries stripped); creation and
+  deletion go to their own endpoints immediately, after flushing any pending
+  PUT so the two responses can't race the version token.
 - **Data** (the form): autosave, debounced **400 ms per profile**, one
   in-flight PUT per profile, a queued re-send always carrying the newest
   snapshot. The PUT is **last write wins** — no version token; the payload is

@@ -326,10 +326,11 @@ def lock_setting_row(key: str) -> None:
     """Take the row lock on one `app_setting` row for the rest of the current
     transaction (SELECT ... FOR UPDATE; the reconciled registry guarantees
     the row exists). The coordination point between `set_current_profile`
-    and profile deletion (db.profile.profile_save_tree): both take THIS lock
-    first, before validating or mutating, so a switch cannot validate a
-    profile that a concurrent tree save is about to delete and then write
-    the pointer after the delete commits — the classic re-dangling race.
+    and profile deletion (db.profile.profile_delete /
+    profile_delete_folder): both take THIS lock first, before validating or
+    mutating, so a switch cannot validate a profile that a concurrent delete
+    is about to remove and then write the pointer after the delete commits —
+    the classic re-dangling race.
     App context required; the caller owns commit/rollback."""
     import sqlalchemy as sa
 

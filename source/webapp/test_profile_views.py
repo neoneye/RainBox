@@ -90,7 +90,9 @@ def test_js_has_core_markers():
                    "profileSavePush", "profileDataPush", "profileFieldEdited",
                    "profileDuplicateUuid", "profileUpdatePreview",
                    "profileFlushData", "profileRenderDynamic",
-                   "/profile/api/tree", "Intl.supportedValuesOf",
+                   "profileFlushPendingSave",
+                   "/profile/api/tree", "/profile/api/folders",
+                   "Intl.supportedValuesOf",
                    "Preview unavailable", "beforeunload"]:
         assert marker in b, f"missing JS marker: {marker}"
 

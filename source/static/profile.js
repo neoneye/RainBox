@@ -1,9 +1,10 @@
 // /profile page logic (vanilla JS, no framework). The HTML shell + CSS live in
 // webapp/profile_views.py; this file is served at /static/profile.js with an
-// mtime cache-buster. Tree state hydrates from GET /profile/api/tree and saves
-// via debounced whole-tree PUTs (version-guarded, projected to structural keys
-// with the read-only built-ins left out); profile data autosaves through a
-// separate per-profile PUT. Mirrors static/prompt.js.
+// mtime cache-buster. Tree state hydrates from GET /profile/api/tree and
+// structural edits save via debounced PUTs (projected to structural keys with
+// the read-only built-ins left out); creation and deletion are their own
+// immediate requests (docs/ui-tree-persistence.md). Profile data autosaves
+// through a separate per-profile PUT. Mirrors static/prompt.js.
 
 // ---- helpers ----
 function profileEscapeHtml(s){
@@ -39,7 +40,21 @@ const PROFILE_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBo
 function profileFolderById(id){ return profileFolders.find(f => f.id === id) || null; }
 function profileByUuid(uuid){ return profileItems.find(p => p.uuid === uuid) || null; }
 function profileChildFolders(parentId){ return profileFolders.filter(f => (f.parentId || null) === (parentId || null)); }
-function profileItemsInFolder(id){ return profileItems.filter(p => (p.folderId || null) === (id || null)); }
+function profileItemsInFolder(id){
+  const target = id || null;
+  if (target === null){
+    // Root level also surfaces a profile whose folderId names a folder that
+    // isn't in profileFolders (e.g. the folder was deleted via the admin,
+    // orphaning the row). The server rejects it in every tree save, so if it
+    // stayed invisible here the operator could never reach it to move or
+    // delete it and every structural edit would 400 forever.
+    return profileItems.filter(p => {
+      const fid = p.folderId || null;
+      return fid === null || !profileFolderById(fid);
+    });
+  }
+  return profileItems.filter(p => (p.folderId || null) === target);
+}
 function profileIsExpanded(id){ return profileExpanded[id] !== false; }
 // Optimistically stamp a node as just-modified; the server sets the
 // authoritative updated_at on save and a reload reconciles.
@@ -523,18 +538,28 @@ function profileCloseFolderModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('profile-folder-modal').hidden = true;
 }
-function profileAddFolderConfirm(){
+async function profileAddFolderConfirm(){
   const name = document.getElementById('profile-folder-input').value.trim();
   if (!name) return;
   let parentId = profileAddFolderAsSub ? profileSelectedFolder : null;
   const parent = parentId ? profileFolderById(parentId) : null;
   if (parent && parent.builtin) parentId = null;  // the Templates folder can't hold user rows
-  const id = crypto.randomUUID();
-  profileFolders.push({id: id, name: name, description: '', parentId: parentId});
-  if (parentId){ profileExpanded[parentId] = true; profilePersistExpand(); }
-  profileCloseFolderModal();
-  profileSelectFolder(id);
-  profileSave();
+  try {
+    await profileFlushPendingSave();
+    const r = await fetch('/profile/api/folders', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, parentId: parentId}),
+    });
+    const data = await r.json();
+    if (!r.ok){ profileToastMsg(data.error || 'could not create folder'); return; }
+    profileFolders.push(data.folder);
+    profileTreeVersion = data.version;
+    profileCloseFolderModal();
+    if (parentId){ profileExpanded[parentId] = true; profilePersistExpand(); }
+    profileSelectFolder(data.folder.id);
+  } catch (e) {
+    profileToastMsg('could not create folder');
+  }
 }
 function profileAddProfile(){
   const input = document.getElementById('profile-new-input');
@@ -548,22 +573,31 @@ function profileCloseNewModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('profile-new-modal').hidden = true;
 }
-// A new profile starts with empty data (created server-side by the tree
-// save). It lands in the currently-selected folder — or at the root when the
-// selection is the read-only Templates folder. The tree save is flushed
-// immediately so the form's data fetch finds the row.
+// A new profile starts with empty data. It lands in the currently-selected
+// folder — or at the root when the selection is the read-only Templates
+// folder. Created by its own endpoint — the tree save can never make a row
+// (docs/ui-tree-persistence.md).
 async function profileAddProfileConfirm(){
   const name = document.getElementById('profile-new-input').value.trim();
   if (!name) return;
   let folderId = profileSelectedFolder;
   const folder = folderId ? profileFolderById(folderId) : null;
   if (folder && folder.builtin) folderId = null;
-  const uuid = crypto.randomUUID();
-  profileItems.push({uuid: uuid, name: name, folderId: folderId, summary: {}});
-  profileCloseNewModal();
-  clearTimeout(profileSaveTimer);
-  await profileSavePush();
-  profileSelectItem(uuid);
+  try {
+    await profileFlushPendingSave();
+    const r = await fetch('/profile/api/profiles', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, folderId: folderId}),
+    });
+    const data = await r.json();
+    if (!r.ok){ profileToastMsg(data.error || 'could not create'); return; }
+    profileItems.push(data.profile);
+    profileTreeVersion = data.version;
+    profileCloseNewModal();
+    profileSelectItem(data.profile.uuid);
+  } catch (e) {
+    profileToastMsg('could not create');
+  }
 }
 
 // ---- drag & drop (one node at a time; built-ins are not draggable and the
@@ -786,9 +820,9 @@ function profileInitTreeDnD(){
   });
 }
 
-// ---- delete. Uses the same whole-tree save + declared-deletes tripwire as
-// /cron: removed rows are absent from the next PUT, and profilePendingDeletes
-// tells the server how many deletions to expect. ----
+// ---- delete. The tree PUT can only update existing rows, so removal always
+// goes through the dedicated DELETE endpoints below, never through the tree
+// save. Built-ins are virtual and have no row to delete. ----
 let profileDeleteOnConfirm = null;
 let profileDeleteRequireName = null;
 function profileOpenDeleteModal(opts){
@@ -856,36 +890,54 @@ function profileConfirmDeleteFolder(id){
     onConfirm: () => profileDeleteFolderById(f.id),
   });
 }
-function profileDeleteItem(uuid){
-  const before = profileItems.length;
-  profileItems = profileItems.filter(p => p.uuid !== uuid);
-  profilePendingDeletes += before - profileItems.length;  // declare to the save's tripwire
-  if (profileSelectedItem === uuid) profileSelectedItem = null;
-  profileRenderTree();
-  profileRender();
-  profileSave();
-}
-function profileDeleteFolderById(id){
-  const f = profileFolderById(id);
-  if (!f) return;
-  // Cascade: this folder + every descendant folder + every profile inside any of them.
-  const folderIds = new Set([f.id]);
-  let grew = true;
-  while (grew){
-    grew = false;
-    profileFolders.forEach(c => {
-      if (folderIds.has(c.parentId) && !folderIds.has(c.id)){ folderIds.add(c.id); grew = true; }
-    });
+async function profileDeleteItem(uuid){
+  try {
+    await profileFlushPendingSave();
+    const r = await fetch('/profile/api/profiles/' + uuid, {method: 'DELETE'});
+    const data = await r.json();
+    if (!r.ok){ profileToastMsg(data.error || 'could not delete'); return; }
+    profileItems = profileItems.filter(p => p.uuid !== uuid);
+    profileTreeVersion = data.version;
+    if (profileSelectedItem === uuid) profileSelectedItem = null;
+    profileRenderTree();
+    profileRender();
+    profileToastMsg('deleted');
+  } catch (e) {
+    profileToastMsg('could not delete');
   }
-  const beforeF = profileFolders.length, beforeP = profileItems.length;
-  profileFolders = profileFolders.filter(x => !folderIds.has(x.id));
-  profileItems = profileItems.filter(p => !folderIds.has(p.folderId));
-  profilePendingDeletes += (beforeF - profileFolders.length) + (beforeP - profileItems.length);
-  if (profileSelectedItem && !profileByUuid(profileSelectedItem)) profileSelectedItem = null;
-  if (folderIds.has(profileSelectedFolder)) profileSelectedFolder = f.parentId || null;
-  profileRenderTree();
-  profileRender();
-  profileSave();
+}
+async function profileDeleteFolderById(id){
+  const doomedFolder = profileFolderById(id);  // captured before removal, for the parent fallback below
+  try {
+    await profileFlushPendingSave();
+    const r = await fetch('/profile/api/folders/' + id, {method: 'DELETE'});
+    const data = await r.json();
+    if (!r.ok){ profileToastMsg(data.error || 'could not delete'); return; }
+    // The server cascaded the subtree; mirror that locally instead of re-fetching.
+    const folderIds = new Set([id]);
+    let grew = true;
+    while (grew){
+      grew = false;
+      profileFolders.forEach(c => {
+        if (c.parentId && folderIds.has(c.parentId) && !folderIds.has(c.id)){
+          folderIds.add(c.id); grew = true;
+        }
+      });
+    }
+    profileFolders = profileFolders.filter(x => !folderIds.has(x.id));
+    profileItems = profileItems.filter(p => !folderIds.has(p.folderId));
+    profileTreeVersion = data.version;
+    if (profileSelectedItem && !profileByUuid(profileSelectedItem)) profileSelectedItem = null;
+    // Land on the deleted folder's parent, not the root, so the operator stays in context.
+    if (folderIds.has(profileSelectedFolder)){
+      profileSelectedFolder = (doomedFolder && doomedFolder.parentId) || null;
+    }
+    profileRenderTree();
+    profileRender();
+    profileToastMsg('deleted');
+  } catch (e) {
+    profileToastMsg('could not delete');
+  }
 }
 document.getElementById('profile-delete-input').addEventListener('input', profileDeleteUpdateState);
 document.getElementById('profile-delete-input').addEventListener('keydown', e => {
@@ -924,57 +976,106 @@ function profileToastMsg(text){
 }
 let profileSaveTimer = null;
 let profileTreeVersion = null;    // token from hydrate; PUTs echo it (stale → 409)
-let profilePendingDeletes = 0;    // deletions since the last save (declared to the server)
 let profileSaveInFlight = false;
 let profileSaveQueued = false;
+let profileSaveChain = null;      // promise for the active PUT (+ any queued follow-up), or null when idle
 let profileTreeSaveOk = true;     // last structural PUT outcome (duplicate aborts on false)
 function profileSave(){
   clearTimeout(profileSaveTimer);
   profileSaveTimer = setTimeout(profileSavePush, 250);  // coalesce bursts into one PUT
 }
-async function profileSavePush(){
-  if (profileSaveInFlight){ profileSaveQueued = true; return; }  // serialize PUTs
-  profileSaveInFlight = true;
-  try {
-    // Project the mixed GET state back to structural keys only: built-in rows
-    // and the derived summary never ride a save (the server rejects both).
-    const r = await fetch('/profile/api/tree', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        folders: profileFolders.filter(f => !f.builtin).map(f => ({
-          id: f.id, name: f.name, description: f.description || '',
-          parentId: f.parentId || null})),
-        profiles: profileItems.filter(p => !p.builtin).map(p => ({
-          uuid: p.uuid, name: p.name, folderId: p.folderId || null})),
-        version: profileTreeVersion, deletes: profilePendingDeletes}),
-    });
-    const j = await r.json().catch(() => null);
-    if (r.status === 409){
-      // Another tab/editor changed the tree; their version wins — re-hydrate.
-      await profileLoadTree();
-      profilePendingDeletes = 0;
-      profileTreeSaveOk = false;
-      if (profileSelectedItem && !profileByUuid(profileSelectedItem)) profileSelectedItem = null;
-      if (profileSelectedFolder && !profileFolderById(profileSelectedFolder)) profileSelectedFolder = null;
-      profileRenderTree();
-      profileRender();
-      profileToastMsg('Profile tree was changed elsewhere — reloaded. Your last edit was not saved.');
-    } else if (!r.ok){
-      profileTreeSaveOk = false;
-      profileToastMsg('Save refused: ' + ((j && j.error) || ('HTTP ' + r.status)));
-    } else {
-      profileTreeVersion = (j && j.version) || profileTreeVersion;
-      profilePendingDeletes = 0;
-      profileTreeSaveOk = true;
-    }
-  } catch (e) {
-    // Network error: keep local state + version; the next edit retries.
-    profileTreeSaveOk = false;
-  } finally {
-    profileSaveInFlight = false;
-    if (profileSaveQueued){ profileSaveQueued = false; profileSavePush(); }
+// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// issuing a create or delete." Nothing else orders a tree PUT against a
+// create/delete, and the two responses race — if the older PUT's response
+// lands after the create/delete's fresher token, it overwrites that token with
+// a stale one and the next save 409s for no reason the operator can see.
+// Cancels a pending debounce timer and runs that save immediately, or awaits a
+// save already in flight (including one queued behind it). A no-op when
+// nothing is pending.
+function profileFlushPendingSave(){
+  if (profileSaveTimer){
+    clearTimeout(profileSaveTimer);
+    profileSaveTimer = null;
+    return profileSavePush();
   }
+  return profileSaveChain || Promise.resolve();
+}
+// After a re-hydrate the fresh data may no longer contain the selected
+// folder/profile (e.g. the rejected edit was the move that put it there).
+// Clear whichever selection no longer resolves so render doesn't point at a
+// row that isn't in the tree anymore.
+async function profileReloadAndRepaint(message){
+  await profileLoadTree();
+  if (profileSelectedItem && !profileByUuid(profileSelectedItem)) profileSelectedItem = null;
+  if (profileSelectedFolder && !profileFolderById(profileSelectedFolder)) profileSelectedFolder = null;
+  profileRenderTree();
+  profileRender();
+  profileToastMsg(message);
+}
+// Returns the promise for this save (or, if one was already in flight, the
+// promise for that one — which folds in this call via profileSaveQueued once
+// it settles). profileFlushPendingSave relies on that: awaiting the returned/
+// chained promise always means "no tree PUT is outstanding anymore".
+function profileSavePush(){
+  if (profileSaveInFlight){ profileSaveQueued = true; return profileSaveChain; }  // serialize PUTs
+  profileSaveInFlight = true;
+  const run = (async () => {
+    try {
+      // Project the mixed GET state back to structural keys only: built-in rows
+      // and the derived summary never ride a save (the server rejects both).
+      const r = await fetch('/profile/api/tree', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          folders: profileFolders.filter(f => !f.builtin).map(f => ({
+            id: f.id, name: f.name, description: f.description || '',
+            parentId: f.parentId || null})),
+          profiles: profileItems.filter(p => !p.builtin).map(p => ({
+            uuid: p.uuid, name: p.name, folderId: p.folderId || null})),
+          version: profileTreeVersion}),
+      });
+      const j = await r.json().catch(() => null);
+      if (r.status === 409){
+        // Another tab/editor changed the tree; their version wins — re-hydrate
+        // and repaint so the screen matches what the server just accepted.
+        profileTreeSaveOk = false;
+        await profileReloadAndRepaint(
+          'Profile tree was changed elsewhere — reloaded. Your last edit was not saved.');
+        return;
+      }
+      if (!r.ok){
+        // A 400 here means our payload disagreed with the server about which
+        // rows exist — re-hydrate rather than retry the same bad shape, and
+        // repaint so the rejected edit doesn't linger on screen.
+        profileTreeSaveOk = false;
+        await profileReloadAndRepaint(
+          'Save refused: ' + ((j && j.error) || ('HTTP ' + r.status)) + ' — reloaded.');
+        return;
+      }
+      profileTreeVersion = j.version;
+      profileTreeSaveOk = true;
+    } catch (e) {
+      // Network error: we can't tell whether the server applied the change, so
+      // re-hydrate and repaint rather than leave the client's guess on screen.
+      profileTreeSaveOk = false;
+      await profileReloadAndRepaint('Save failed — reloaded.');
+    } finally {
+      profileSaveInFlight = false;
+      // A save requested while we were in flight gets its own immediate push
+      // here, not a fresh 250ms debounce — and this run doesn't resolve until
+      // that one does too, so anything awaiting it (profileFlushPendingSave)
+      // sees the whole chain settle before the token is treated as final.
+      if (profileSaveQueued){
+        profileSaveQueued = false;
+        profileSaveChain = profileSavePush();
+        await profileSaveChain;
+      } else {
+        profileSaveChain = null;
+      }
+    }
+  })();
+  profileSaveChain = run;
+  return run;
 }
 
 // ---- datalists (static arrays; timezones from the runtime — no list to maintain) ----
@@ -1991,9 +2092,8 @@ async function profileCalFlush(uuid){
 async function profileDuplicateUuid(uuid){
   // Flush pending structural edits first: the source row must exist
   // server-side, and the new row bumps the version a queued stale tree PUT
-  // would 409 on.
-  clearTimeout(profileSaveTimer);
-  await profileSavePush();
+  // would 409 on (docs/ui-tree-persistence.md).
+  await profileFlushPendingSave();
   if (!profileTreeSaveOk){
     profileToastMsg('Duplicate aborted — the tree could not be saved.');
     return;
