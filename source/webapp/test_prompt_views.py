@@ -40,7 +40,8 @@ def test_js_has_core_markers():
     b = _body()
     for marker in ["promptLoadTree", "promptRenderTree", "promptItemNode",
                    "promptCloneUuid", "promptLoadDiff", "promptSaveEdit",
-                   "promptSavePush", "/prompt/api/tree"]:
+                   "promptSavePush", "promptFlushPendingSave",
+                   "/prompt/api/tree", "/prompt/api/folders"]:
         assert marker in b, f"missing JS marker: {marker}"
 
 

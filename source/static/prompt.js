@@ -1,9 +1,10 @@
 // /prompt page logic (vanilla JS, no framework). The HTML shell + CSS live in
 // webapp/prompt_views.py; this file is served at /static/prompt.js with an
-// mtime cache-buster. Tree state hydrates from GET /prompt/api/tree and saves
-// via debounced whole-tree PUTs (version-guarded); prompt content is read-only
-// until an explicit Edit → Save (PUT /prompt/api/prompts/<uuid>) or Cancel.
-// Mirrors static/git.js.
+// mtime cache-buster. Tree state hydrates from GET /prompt/api/tree and
+// structural edits save via debounced PUTs; creation and deletion are their
+// own immediate requests (docs/ui-tree-persistence.md). Prompt content is
+// read-only until an explicit Edit → Save (PUT /prompt/api/prompts/<uuid>) or
+// Cancel. Mirrors static/git.js.
 
 // ---- helpers ----
 function promptEscapeHtml(s){
@@ -39,7 +40,21 @@ const PROMPT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox
 function promptFolderById(id){ return promptFolders.find(f => f.id === id) || null; }
 function promptByUuid(uuid){ return promptItems.find(p => p.uuid === uuid) || null; }
 function promptChildFolders(parentId){ return promptFolders.filter(f => (f.parentId || null) === (parentId || null)); }
-function promptsInFolder(id){ return promptItems.filter(p => (p.folderId || null) === (id || null)); }
+function promptsInFolder(id){
+  const target = id || null;
+  if (target === null){
+    // Root level also surfaces a prompt whose folderId names a folder that
+    // isn't in promptFolders (e.g. the folder was deleted via the admin,
+    // orphaning the row). The server rejects it in every tree save, so if it
+    // stayed invisible here the operator could never reach it to move or
+    // delete it and every structural edit would 400 forever.
+    return promptItems.filter(p => {
+      const fid = p.folderId || null;
+      return fid === null || !promptFolderById(fid);
+    });
+  }
+  return promptItems.filter(p => (p.folderId || null) === target);
+}
 function promptIsExpanded(id){ return promptExpanded[id] !== false; }
 // Optimistically stamp a node as just-modified; the server sets the
 // authoritative updated_at on save and a reload reconciles.
@@ -437,9 +452,9 @@ window.addEventListener('beforeunload', (e) => {
 // ---- clone (the only way to make a new version; via the tree kebab) ----
 async function promptCloneUuid(uuid){
   // Flush any pending structural edits first: the clone bumps the server-side
-  // tree version, which would 409 a queued stale PUT.
-  clearTimeout(promptSaveTimer);
-  await promptSavePush();
+  // tree version, and a PUT response landing after it would put the stale
+  // token back (docs/ui-tree-persistence.md).
+  await promptFlushPendingSave();
   let d = null;
   try {
     const r = await fetch('/prompt/api/prompts/' + encodeURIComponent(uuid) + '/clone',
@@ -450,6 +465,8 @@ async function promptCloneUuid(uuid){
     promptToastMsg('Clone failed: ' + ((d && d.error) || 'server unreachable'));
     return;
   }
+  // The clone shifted its later siblings' positions server-side, so re-hydrate
+  // rather than splice it in locally.
   await promptLoadTree();
   promptSelectItem(d.prompt.uuid);
 }
@@ -688,16 +705,26 @@ function promptCloseFolderModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('prompt-folder-modal').hidden = true;
 }
-function promptAddFolderConfirm(){
+async function promptAddFolderConfirm(){
   const name = document.getElementById('prompt-folder-input').value.trim();
   if (!name) return;
   const parentId = promptAddFolderAsSub ? promptSelectedFolder : null;
-  const id = crypto.randomUUID();
-  promptFolders.push({id: id, name: name, description: '', parentId: parentId});
-  if (parentId){ promptExpanded[parentId] = true; promptPersistExpand(); }
-  promptCloseFolderModal();
-  promptSelectFolder(id);
-  promptSave();
+  try {
+    await promptFlushPendingSave();
+    const r = await fetch('/prompt/api/folders', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, parentId: parentId}),
+    });
+    const data = await r.json();
+    if (!r.ok){ promptToastMsg(data.error || 'could not create folder'); return; }
+    promptFolders.push(data.folder);
+    promptTreeVersion = data.version;
+    promptCloseFolderModal();
+    if (parentId){ promptExpanded[parentId] = true; promptPersistExpand(); }
+    promptSelectFolder(data.folder.id);
+  } catch (e) {
+    promptToastMsg('could not create folder');
+  }
 }
 function promptAddPrompt(){
   const input = document.getElementById('prompt-new-input');
@@ -711,18 +738,27 @@ function promptCloseNewModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
   document.getElementById('prompt-new-modal').hidden = true;
 }
-// A new prompt is a lineage root: empty content (created server-side by the
-// tree save), no parentUuid. It lands in the currently-selected folder. The
-// tree save is flushed immediately so the editor's content fetch finds the row.
+// A new prompt is a lineage root: empty content, no parentUuid. It lands in the
+// currently-selected folder. Created by its own endpoint — the tree save can
+// never make a row (docs/ui-tree-persistence.md).
 async function promptAddPromptConfirm(){
   const name = document.getElementById('prompt-new-input').value.trim();
   if (!name) return;
-  const uuid = crypto.randomUUID();
-  promptItems.push({uuid: uuid, name: name, folderId: promptSelectedFolder, parentUuid: null});
-  promptCloseNewModal();
-  clearTimeout(promptSaveTimer);
-  await promptSavePush();
-  promptSelectItem(uuid);
+  try {
+    await promptFlushPendingSave();
+    const r = await fetch('/prompt/api/prompts', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, folderId: promptSelectedFolder}),
+    });
+    const data = await r.json();
+    if (!r.ok){ promptToastMsg(data.error || 'could not create'); return; }
+    promptItems.push(data.prompt);
+    promptTreeVersion = data.version;
+    promptCloseNewModal();
+    promptSelectItem(data.prompt.uuid);
+  } catch (e) {
+    promptToastMsg('could not create');
+  }
 }
 
 // ---- drag & drop (one node at a time) ----
@@ -942,10 +978,10 @@ function promptInitTreeDnD(){
   });
 }
 
-// ---- delete. Uses the same whole-tree save + declared-deletes tripwire as
-// /cron: removed rows are absent from the next PUT, and promptPendingDeletes
-// tells the server how many deletions to expect. Deleting a version leaves its
-// clones' parentUuid dangling (they show "(deleted)"). ----
+// ---- delete. The tree PUT can only update existing rows, so removal always
+// goes through the dedicated DELETE endpoints below, never through the tree
+// save. Deleting a version leaves its clones' parentUuid dangling (they show
+// "(deleted)") — the versions derived from it survive. ----
 let promptDeleteOnConfirm = null;
 let promptDeleteRequireName = null;
 function promptOpenDeleteModal(opts){
@@ -1017,36 +1053,54 @@ function promptConfirmDeleteFolder(id){
     onConfirm: () => promptDeleteFolderById(f.id),
   });
 }
-function promptDeleteItem(uuid){
-  const before = promptItems.length;
-  promptItems = promptItems.filter(p => p.uuid !== uuid);
-  promptPendingDeletes += before - promptItems.length;  // declare to the save's tripwire
-  if (promptSelectedItem === uuid) promptSelectedItem = null;
-  promptRenderTree();
-  promptRender();
-  promptSave();
-}
-function promptDeleteFolderById(id){
-  const f = promptFolderById(id);
-  if (!f) return;
-  // Cascade: this folder + every descendant folder + every prompt inside any of them.
-  const folderIds = new Set([f.id]);
-  let grew = true;
-  while (grew){
-    grew = false;
-    promptFolders.forEach(c => {
-      if (folderIds.has(c.parentId) && !folderIds.has(c.id)){ folderIds.add(c.id); grew = true; }
-    });
+async function promptDeleteItem(uuid){
+  try {
+    await promptFlushPendingSave();
+    const r = await fetch('/prompt/api/prompts/' + uuid, {method: 'DELETE'});
+    const data = await r.json();
+    if (!r.ok){ promptToastMsg(data.error || 'could not delete'); return; }
+    promptItems = promptItems.filter(p => p.uuid !== uuid);
+    promptTreeVersion = data.version;
+    if (promptSelectedItem === uuid) promptSelectedItem = null;
+    promptRenderTree();
+    promptRender();
+    promptToastMsg('deleted');
+  } catch (e) {
+    promptToastMsg('could not delete');
   }
-  const beforeF = promptFolders.length, beforeP = promptItems.length;
-  promptFolders = promptFolders.filter(x => !folderIds.has(x.id));
-  promptItems = promptItems.filter(p => !folderIds.has(p.folderId));
-  promptPendingDeletes += (beforeF - promptFolders.length) + (beforeP - promptItems.length);
-  if (promptSelectedItem && !promptByUuid(promptSelectedItem)) promptSelectedItem = null;
-  if (folderIds.has(promptSelectedFolder)) promptSelectedFolder = f.parentId || null;
-  promptRenderTree();
-  promptRender();
-  promptSave();
+}
+async function promptDeleteFolderById(id){
+  const doomedFolder = promptFolderById(id);  // captured before removal, for the parent fallback below
+  try {
+    await promptFlushPendingSave();
+    const r = await fetch('/prompt/api/folders/' + id, {method: 'DELETE'});
+    const data = await r.json();
+    if (!r.ok){ promptToastMsg(data.error || 'could not delete'); return; }
+    // The server cascaded the subtree; mirror that locally instead of re-fetching.
+    const folderIds = new Set([id]);
+    let grew = true;
+    while (grew){
+      grew = false;
+      promptFolders.forEach(c => {
+        if (c.parentId && folderIds.has(c.parentId) && !folderIds.has(c.id)){
+          folderIds.add(c.id); grew = true;
+        }
+      });
+    }
+    promptFolders = promptFolders.filter(x => !folderIds.has(x.id));
+    promptItems = promptItems.filter(p => !folderIds.has(p.folderId));
+    promptTreeVersion = data.version;
+    if (promptSelectedItem && !promptByUuid(promptSelectedItem)) promptSelectedItem = null;
+    // Land on the deleted folder's parent, not the root, so the operator stays in context.
+    if (folderIds.has(promptSelectedFolder)){
+      promptSelectedFolder = (doomedFolder && doomedFolder.parentId) || null;
+    }
+    promptRenderTree();
+    promptRender();
+    promptToastMsg('deleted');
+  } catch (e) {
+    promptToastMsg('could not delete');
+  }
 }
 document.getElementById('prompt-delete-input').addEventListener('input', promptDeleteUpdateState);
 document.getElementById('prompt-delete-input').addEventListener('keydown', e => {
@@ -1085,45 +1139,100 @@ function promptToastMsg(text){
 }
 let promptSaveTimer = null;
 let promptTreeVersion = null;    // token from hydrate; PUTs echo it (stale → 409)
-let promptPendingDeletes = 0;    // deletions since the last save (declared to the server)
 let promptSaveInFlight = false;
 let promptSaveQueued = false;
+let promptSaveChain = null;      // promise for the active PUT (+ any queued follow-up), or null when idle
 function promptSave(){
   clearTimeout(promptSaveTimer);
   promptSaveTimer = setTimeout(promptSavePush, 250);  // coalesce bursts into one PUT
 }
-async function promptSavePush(){
-  if (promptSaveInFlight){ promptSaveQueued = true; return; }  // serialize PUTs
-  promptSaveInFlight = true;
-  try {
-    const r = await fetch('/prompt/api/tree', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({folders: promptFolders, prompts: promptItems,
-                            version: promptTreeVersion, deletes: promptPendingDeletes}),
-    });
-    const j = await r.json().catch(() => null);
-    if (r.status === 409){
-      // Another tab/editor changed the tree; their version wins — re-hydrate.
-      await promptLoadTree();
-      promptPendingDeletes = 0;
-      if (promptSelectedItem && !promptByUuid(promptSelectedItem)) promptSelectedItem = null;
-      if (promptSelectedFolder && !promptFolderById(promptSelectedFolder)) promptSelectedFolder = null;
-      promptRenderTree();
-      promptRender();
-      promptToastMsg('Prompt tree was changed elsewhere — reloaded. Your last edit was not saved.');
-    } else if (!r.ok){
-      promptToastMsg('Save refused: ' + ((j && j.error) || ('HTTP ' + r.status)));
-    } else {
-      promptTreeVersion = (j && j.version) || promptTreeVersion;
-      promptPendingDeletes = 0;
-    }
-  } catch (e) {
-    // Network error: keep local state + version; the next edit retries.
-  } finally {
-    promptSaveInFlight = false;
-    if (promptSaveQueued){ promptSaveQueued = false; promptSavePush(); }
+// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// issuing a create or delete." Nothing else orders a tree PUT against a
+// create/delete, and the two responses race — if the older PUT's response
+// lands after the create/delete's fresher token, it overwrites that token with
+// a stale one and the next save 409s for no reason the operator can see.
+// Cancels a pending debounce timer and runs that save immediately, or awaits a
+// save already in flight (including one queued behind it). A no-op when
+// nothing is pending.
+function promptFlushPendingSave(){
+  if (promptSaveTimer){
+    clearTimeout(promptSaveTimer);
+    promptSaveTimer = null;
+    return promptSavePush();
   }
+  return promptSaveChain || Promise.resolve();
+}
+// After a re-hydrate the fresh data may no longer contain the selected
+// folder/prompt (e.g. the rejected edit was the move that put it there). Clear
+// whichever selection no longer resolves so render doesn't point at a row that
+// isn't in the tree anymore.
+async function promptReloadAndRepaint(message){
+  await promptLoadTree();
+  if (promptSelectedItem && !promptByUuid(promptSelectedItem)) promptSelectedItem = null;
+  if (promptSelectedFolder && !promptFolderById(promptSelectedFolder)) promptSelectedFolder = null;
+  promptRenderTree();
+  promptRender();
+  promptToastMsg(message);
+}
+// Returns the promise for this save (or, if one was already in flight, the
+// promise for that one — which folds in this call via promptSaveQueued once it
+// settles). promptFlushPendingSave relies on that: awaiting the returned/
+// chained promise always means "no tree PUT is outstanding anymore".
+function promptSavePush(){
+  if (promptSaveInFlight){ promptSaveQueued = true; return promptSaveChain; }  // serialize PUTs
+  promptSaveInFlight = true;
+  const run = (async () => {
+    try {
+      const r = await fetch('/prompt/api/tree', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          folders: promptFolders.map(f => ({
+            id: f.id, name: f.name, description: f.description || '',
+            parentId: f.parentId || null})),
+          prompts: promptItems.map(p => ({
+            uuid: p.uuid, name: p.name, folderId: p.folderId || null})),
+          version: promptTreeVersion,
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      if (r.status === 409){
+        // Another tab/editor changed the tree; their version wins — re-hydrate
+        // and repaint so the screen matches what the server just accepted.
+        await promptReloadAndRepaint(
+          'Prompt tree was changed elsewhere — reloaded. Your last edit was not saved.');
+        return;
+      }
+      if (!r.ok){
+        // A 400 here means our payload disagreed with the server about which
+        // rows exist — re-hydrate rather than retry the same bad shape, and
+        // repaint so the rejected edit doesn't linger on screen.
+        await promptReloadAndRepaint(
+          'Save refused: ' + ((j && j.error) || ('HTTP ' + r.status)) + ' — reloaded.');
+        return;
+      }
+      promptTreeVersion = j.version;
+    } catch (e) {
+      // Network error: we can't tell whether the server applied the change, so
+      // re-hydrate and repaint rather than leave the client's guess on screen.
+      await promptReloadAndRepaint('Save failed — reloaded.');
+    } finally {
+      promptSaveInFlight = false;
+      // A save requested while we were in flight gets its own immediate push
+      // here, not a fresh 250ms debounce — and this run doesn't resolve until
+      // that one does too, so anything awaiting it (promptFlushPendingSave)
+      // sees the whole chain settle before the token is treated as final.
+      if (promptSaveQueued){
+        promptSaveQueued = false;
+        promptSaveChain = promptSavePush();
+        await promptSaveChain;
+      } else {
+        promptSaveChain = null;
+      }
+    }
+  })();
+  promptSaveChain = run;
+  return run;
 }
 
 // ---- dirty-guarded dismissal (clicking backdrop / Esc) ----

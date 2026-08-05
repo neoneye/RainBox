@@ -1,11 +1,13 @@
 """System prompt tree: folder/prompt persistence + version lineage helpers.
 
-Backs the /prompt page. Holds the prompt folder tree (load/validate/save — the
-whole-tree bulk pattern shared with /git and /cron) plus the version-lineage
-operations: per-prompt content read/write, clone (the only way to make a new
-version; the clone's parent_uuid records what it was based on), ancestor-chain
-walk, and a 2-way unified diff of an ancestor against the current content.
-Re-exported from db for import compatibility.
+Backs the /prompt page. Saves follow docs/ui-tree-persistence.md — the tree
+save only ever updates rows that already exist, so a payload that omits or
+invents a row is an error rather than a silent create or delete; creation and
+deletion are their own functions. Also holds the version-lineage operations:
+per-prompt content read/write, clone (the way to make a new version; the
+clone's parent_uuid records what it was based on), ancestor-chain walk, and a
+2-way unified diff of an ancestor against the current content. Re-exported
+from db for import compatibility.
 """
 import difflib
 import hashlib
@@ -25,7 +27,8 @@ _PROMPT_ANCESTOR_CAP = 100
 
 class PromptTreeError(ValueError):
     """A prompt tree payload failed structural validation (bad uuid, dangling
-    parent folder, cycle, …). The PUT endpoint maps this to 400, not 500."""
+    parent folder, cycle, a row that is missing or unknown). The PUT endpoint
+    maps this to 400, not 500."""
 
 
 class PromptTreeConflict(Exception):
@@ -63,6 +66,29 @@ def prompt_tree_version() -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
+def _folder_row(folder_uuid: UUID) -> PromptFolder | None:
+    return db.session.execute(
+        sa.select(PromptFolder).where(PromptFolder.uuid == folder_uuid)
+    ).scalar_one_or_none()
+
+
+def _folder_dict(f: PromptFolder) -> dict[str, Any]:
+    return {"id": str(f.uuid), "name": f.name, "description": f.description,
+            "parentId": str(f.parent_uuid) if f.parent_uuid else None,
+            "created_at": f.created_at.isoformat() if f.created_at else None,
+            "updated_at": f.updated_at.isoformat() if f.updated_at else None}
+
+
+def _prompt_tree_dict(p: Prompt) -> dict[str, Any]:
+    """One prompt in tree-list field names — no `content` (the tree never
+    carries it; the editor fetches it per-prompt via prompt_get)."""
+    return {"uuid": str(p.uuid), "name": p.name,
+            "folderId": str(p.folder_uuid) if p.folder_uuid else None,
+            "parentUuid": str(p.parent_uuid) if p.parent_uuid else None,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None}
+
+
 def prompt_load_tree() -> dict[str, Any]:
     """The whole prompt tree in the frontend's field names, each list ordered
     by position then id so the page renders in saved order. Prompt `content`
@@ -74,21 +100,8 @@ def prompt_load_tree() -> dict[str, Any]:
         sa.select(Prompt).order_by(Prompt.position, Prompt.id)
     ).scalars().all()
     return {
-        "folders": [
-            {"id": str(f.uuid), "name": f.name, "description": f.description,
-             "parentId": str(f.parent_uuid) if f.parent_uuid else None,
-             "created_at": f.created_at.isoformat() if f.created_at else None,
-             "updated_at": f.updated_at.isoformat() if f.updated_at else None}
-            for f in folders
-        ],
-        "prompts": [
-            {"uuid": str(p.uuid), "name": p.name,
-             "folderId": str(p.folder_uuid) if p.folder_uuid else None,
-             "parentUuid": str(p.parent_uuid) if p.parent_uuid else None,
-             "created_at": p.created_at.isoformat() if p.created_at else None,
-             "updated_at": p.updated_at.isoformat() if p.updated_at else None}
-            for p in prompts
-        ],
+        "folders": [_folder_dict(f) for f in folders],
+        "prompts": [_prompt_tree_dict(p) for p in prompts],
         # Optimistic-concurrency token; the page echoes it on PUT (409 if stale).
         "version": prompt_tree_version(),
     }
@@ -165,69 +178,144 @@ def validate_prompt_tree(folders: list, prompts: list) -> None:
 
 
 def prompt_save_tree(folders: list, prompts: list, *,
-                     base_version: str | None = None,
-                     expected_deletes: int | None = None) -> None:
-    """Upsert the whole prompt tree by uuid. List order becomes `position`.
-    Rows whose uuid is absent from the incoming lists are deleted. Never
-    touches `content`: new rows start empty, existing rows keep theirs (the
-    textarea saves through prompt_update_content). Validates first (raises
-    PromptTreeError before any mutation). Two opt-in guards (skipped when
-    None): `base_version` (stale → PromptTreeConflict) and `expected_deletes`
-    (a save deleting more than declared → PromptTreeError, the
-    truncated-payload tripwire)."""
-    validate_prompt_tree(folders, prompts)
+                     base_version: str | None = None) -> None:
+    """Update name, description, placement and order of rows that already
+    exist. List order becomes `position`.
+
+    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    a payload that omits an existing row, or names one the DB doesn't have, is
+    a PromptTreeError — absence means a bug, not an instruction. Creation is
+    prompt_create / prompt_clone / prompt_create_folder; deletion is
+    prompt_delete / prompt_delete_folder.
+
+    A stale `base_version` raises PromptTreeConflict, checked before structural
+    validation so a concurrent edit surfaces as 409, not 400. Never touches
+    `content` (the editor saves that through prompt_update_content) nor
+    `parent_uuid` — the version lineage is written once, by whichever clone
+    made the row, and nothing in the UI re-parents it afterwards."""
     if base_version is not None and base_version != prompt_tree_version():
         raise PromptTreeConflict("prompt tree changed since it was loaded")
+    validate_prompt_tree(folders, prompts)
     existing_f = {f.uuid: f for f in
                   db.session.execute(sa.select(PromptFolder)).scalars().all()}
     existing_p = {p.uuid: p for p in
                   db.session.execute(sa.select(Prompt)).scalars().all()}
-    if expected_deletes is not None:
-        incoming = {UUID(f["id"]) for f in folders} | {UUID(p["uuid"]) for p in prompts}
-        would_delete = len((set(existing_f) | set(existing_p)) - incoming)
-        if would_delete > expected_deletes:
+    incoming_f = {UUID(f["id"]) for f in folders}
+    incoming_p = {UUID(p["uuid"]) for p in prompts}
+    for label, incoming, existing in (("folder", incoming_f, existing_f),
+                                      ("prompt", incoming_p, existing_p)):
+        missing = set(existing) - incoming
+        if missing:
             raise PromptTreeError(
-                f"save would delete {would_delete} node(s) but only "
-                f"{expected_deletes} deletion(s) were declared — refusing")
-    seen_f: set[UUID] = set()
+                f"tree save omitted {len(missing)} existing {label}(s) — refusing "
+                f"(the tree save never deletes)")
+        unknown = incoming - set(existing)
+        if unknown:
+            raise PromptTreeError(
+                f"tree save references {len(unknown)} unknown {label}(s) — refusing "
+                f"(the tree save never creates)")
     for i, f in enumerate(folders):
-        fu = UUID(f["id"])
-        seen_f.add(fu)
-        row = existing_f.get(fu)
-        if row is None:
-            row = PromptFolder(uuid=fu)
-            db.session.add(row)
+        row = existing_f[UUID(f["id"])]
         row.name = f.get("name", "")
         row.description = f.get("description", "")
         row.parent_uuid = UUID(f["parentId"]) if f.get("parentId") else None
         row.position = i
-    for fu, row in existing_f.items():
-        if fu not in seen_f:
-            db.session.delete(row)
-    seen_p: set[UUID] = set()
     for i, p in enumerate(prompts):
-        pu = UUID(p["uuid"])
-        seen_p.add(pu)
-        row = existing_p.get(pu)
-        if row is None:
-            row = Prompt(uuid=pu)
-            db.session.add(row)
+        row = existing_p[UUID(p["uuid"])]
         row.name = p.get("name", "")
         row.folder_uuid = UUID(p["folderId"]) if p.get("folderId") else None
-        row.parent_uuid = UUID(p["parentUuid"]) if p.get("parentUuid") else None
         row.position = i
-    for pu, row in existing_p.items():
-        if pu not in seen_p:
-            db.session.delete(row)
     db.session.commit()
 
 
-# ---- per-prompt content + version lineage ----
+# ---- create / delete (the tree save does neither) ----
 
 def _prompt_row(prompt_uuid: UUID) -> Prompt | None:
     return db.session.execute(
         sa.select(Prompt).where(Prompt.uuid == prompt_uuid)
     ).scalar_one_or_none()
+
+
+def _next_position(model: Any, column: Any, parent: UUID | None) -> int:
+    """One past the last sibling under `parent`, so a new row lands at the end
+    of the folder it was created in."""
+    highest = db.session.execute(
+        sa.select(sa.func.max(model.position)).where(column == parent)
+    ).scalar_one()
+    return 0 if highest is None else highest + 1
+
+
+def prompt_create(name: str, folder_uuid: UUID | None) -> dict[str, Any]:
+    """Create one empty prompt at the end of its folder. It starts a fresh
+    lineage (no parent_uuid) — a new *version* of an existing prompt is
+    prompt_clone."""
+    row = Prompt(uuid=uuid4(), name=name, content="", folder_uuid=folder_uuid,
+                 position=_next_position(Prompt, Prompt.folder_uuid, folder_uuid))
+    db.session.add(row)
+    db.session.commit()
+    return _prompt_tree_dict(row)
+
+
+def prompt_create_folder(name: str, parent_uuid: UUID | None) -> dict[str, Any]:
+    """Create one folder at the end of its parent."""
+    row = PromptFolder(uuid=uuid4(), name=name, description="",
+                       parent_uuid=parent_uuid,
+                       position=_next_position(PromptFolder,
+                                               PromptFolder.parent_uuid,
+                                               parent_uuid))
+    db.session.add(row)
+    db.session.commit()
+    return _folder_dict(row)
+
+
+def prompt_delete(prompt_uuid: UUID) -> bool:
+    """Delete one prompt. Descendant versions are NOT deleted — their
+    parent_uuid is simply left dangling, which prompt_ancestors already treats
+    as the end of the lineage. Losing an intermediate version must not take
+    the versions derived from it. False if the uuid is unknown."""
+    row = _prompt_row(prompt_uuid)
+    if row is None:
+        return False
+    db.session.delete(row)
+    db.session.commit()
+    return True
+
+
+def _descendant_folder_uuids(folder_uuid: UUID) -> list[UUID]:
+    """`folder_uuid` plus every folder nested under it, any depth. Cycle-guarded
+    via `seen`: a corrupt parent loop stops expanding a folder once it has
+    already been collected, rather than spinning. No size cap — a large but
+    legitimate subtree must be walked in full, or `prompt_delete_folder` would
+    delete only the collected prefix and orphan the rest."""
+    out = [folder_uuid]
+    seen = {folder_uuid}
+    frontier = [folder_uuid]
+    while frontier:
+        children = db.session.execute(
+            sa.select(PromptFolder.uuid)
+            .where(PromptFolder.parent_uuid.in_(frontier))
+        ).scalars().all()
+        frontier = [c for c in children if c not in seen]
+        seen.update(frontier)
+        out.extend(frontier)
+    return out
+
+
+def prompt_delete_folder(folder_uuid: UUID) -> bool:
+    """Delete a folder, every folder nested under it, and every prompt inside
+    any of them. False if the uuid is unknown."""
+    if _folder_row(folder_uuid) is None:
+        return False
+    folder_uuids = _descendant_folder_uuids(folder_uuid)
+    db.session.execute(sa.delete(Prompt).where(
+        Prompt.folder_uuid.in_(folder_uuids)))
+    db.session.execute(sa.delete(PromptFolder).where(
+        PromptFolder.uuid.in_(folder_uuids)))
+    db.session.commit()
+    return True
+
+
+# ---- per-prompt content + version lineage ----
 
 
 def prompt_get(prompt_uuid: UUID) -> dict[str, Any] | None:
@@ -283,8 +371,9 @@ def prompt_clone(prompt_uuid: UUID) -> dict[str, Any] | None:
     """Make a new version of a prompt: copy the content into a new row whose
     parent_uuid records the source, placed in the same folder right after it,
     named by incrementing the source name's trailing number (see _clone_name).
-    Returns the new row in tree-list field names (no content), or None if the
-    source uuid is unknown."""
+    This is one of the tree's create paths — the tree save can never make a row
+    (docs/ui-tree-persistence.md). Returns the new row in tree-list field names
+    (no content), or None if the source uuid is unknown."""
     src = _prompt_row(prompt_uuid)
     if src is None:
         return None
@@ -301,13 +390,7 @@ def prompt_clone(prompt_uuid: UUID) -> dict[str, Any] | None:
             sib.position += 1
     db.session.add(clone)
     db.session.commit()
-    return {
-        "uuid": str(clone.uuid), "name": clone.name,
-        "folderId": str(clone.folder_uuid) if clone.folder_uuid else None,
-        "parentUuid": str(clone.parent_uuid),
-        "created_at": clone.created_at.isoformat() if clone.created_at else None,
-        "updated_at": clone.updated_at.isoformat() if clone.updated_at else None,
-    }
+    return _prompt_tree_dict(clone)
 
 
 def prompt_ancestors(prompt_uuid: UUID) -> list[Prompt]:

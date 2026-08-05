@@ -60,20 +60,23 @@ Two different "parent" notions, deliberately kept apart:
   legitimately **dangle** after the parent version is deleted; the UI degrades
   to "(deleted)" and the validator does not reject it.
 
-### Tree persistence (the /git and /cron pattern)
+### Tree persistence
 
-The page hydrates from `GET /prompt/api/tree` and saves structural changes
-back as a debounced **whole-tree PUT** — an upsert by uuid where list order
-becomes `position` and rows absent from the payload are deleted. The same two
-guards as /cron protect the whole-tree-replace foot-gun:
+The save shape is `docs/ui-tree-persistence.md`, which is the authority. The
+page hydrates from `GET /prompt/api/tree` and saves placement, order and names
+as a debounced **tree PUT** that only ever *updates rows that already exist*.
+It never creates and never deletes — a payload that omits an existing row, or
+names one the DB doesn't have, is a 400 and mutates nothing. Creation
+(`POST …/folders`, `POST …/prompts`, `POST …/prompts/<uuid>/clone`) and
+deletion (`DELETE …/folders/<uuid>`, `DELETE …/prompts/<uuid>`) are their own
+endpoints, and because the shape cannot express a deletion there is no
+`deletes` counter.
 
-- **`version`** — an optimistic-concurrency token (sha256 over the structural
-  fields only). Stale token → **409**, and the page re-hydrates instead of
-  clobbering another writer. `content` is excluded from the hash, so saving a
-  prompt's text never invalidates an open page's tree.
-- **`deletes`** — the page declares how many deletions it knowingly performed;
-  a save that would delete more is refused with 400 (a truncated payload from
-  a frontend bug, not an edit).
+The **`version`** guard applies: an optimistic-concurrency token (sha256 over
+the structural fields only), returned by *every* mutating endpoint so the
+client never holds a stale one. Stale token → **409**, and the page re-hydrates
+instead of clobbering another writer. `content` is excluded from the hash, so
+saving a prompt's text never invalidates an open page's tree.
 
 Validation (`validate_prompt_tree`, before any mutation): well-formed uuids,
 no duplicate ids, no dangling/cyclic folder parents, prompt `folderId` must
@@ -81,8 +84,11 @@ resolve, and a prompt uuid must never collide with a folder id — a node is
 identified globally by uuid (`/prompt?id=<uuid>`), so a collision would make
 the deep link ambiguous. `parentUuid` (lineage) is exempt: it may dangle.
 
-Crucially, **the tree save never touches `content`**: new rows start empty,
-existing rows keep theirs. Content flows only through the per-prompt PUT.
+Two fields the tree save never touches. **`content`**: new rows start empty,
+existing rows keep theirs; content flows only through the per-prompt PUT.
+**`parent_uuid`**: the lineage is written once, by whichever clone made the
+row, and nothing in the UI re-parents it — so a payload claiming a different
+ancestor is ignored rather than obeyed.
 
 ## Versioning: clone, lineage, diff
 
@@ -126,13 +132,23 @@ payload, so a rename is a tree save, not a content save).
 JSON, same-origin, in `webapp/prompt_api.py`. uuids are the identifiers.
 
 - **`GET /prompt/api/tree`** → `{folders, prompts, version}` (no content).
-- **`PUT /prompt/api/tree`** — the guarded whole-tree save (above).
+- **`PUT /prompt/api/tree`** — update placement, order and names of existing
+  rows (above) → `{ok, version}`.
+- **`POST /prompt/api/folders`** `{name, parentId}` → `{ok, folder, version}`.
+- **`POST /prompt/api/prompts`** `{name, folderId}` → `{ok, prompt, version}` —
+  a new lineage root, empty content.
+- **`DELETE /prompt/api/folders/<uuid>`** → `{ok, version}`; cascades the
+  nested folders and every prompt inside them.
+- **`DELETE /prompt/api/prompts/<uuid>`** → `{ok, version}`; the versions
+  cloned *from* it survive, with their lineage link left dangling.
 - **`GET /prompt/api/prompts/<uuid>`** → one version incl. `content`,
   `parentUuid`/`parentName`/`parentExists` (for the "Based on" line), and
   timestamps. Also used by the /chat Settings sidebar for its read-only
   preview of a linked prompt.
-- **`PUT /prompt/api/prompts/<uuid>`** `{content}` — the editor's explicit Save.
-- **`POST /prompt/api/prompts/<uuid>/clone`** → the new version's tree row.
+- **`PUT /prompt/api/prompts/<uuid>`** `{content}` — the editor's explicit
+  Save. A content endpoint, so it deliberately carries no version token.
+- **`POST /prompt/api/prompts/<uuid>/clone`** → the new version's tree row +
+  the new `version` (it is a create).
 - **`GET /prompt/api/prompts/<uuid>/diff?against=`** → unified-diff lines +
   the ancestor list for the picker.
 
@@ -219,9 +235,10 @@ Two consequences worth knowing:
 - **Dangling `parent_uuid` is legal.** Deleting an old version must not be
   blocked by its descendants; the UI shows "(deleted)" and the diff endpoint
   reports "no available ancestor".
-- **Bulk whole-tree PUT, not per-node PATCH** — same reasoning as /cron: the
-  version token + delete tripwire remove the data-loss failure modes, and a
-  single-operator app doesn't need concurrent-editor granularity.
+- **One bulk PUT for placement, dedicated endpoints for create and delete** —
+  dragging is inherently a whole-list operation, so batching it is right; but a
+  shape that can express "delete these" turns a routine frontend bug into data
+  loss, so it doesn't get to. See `docs/ui-tree-persistence.md`.
 - **Content outside the tree payload/version.** Keeps the frequently-saved
   tree light, and means a content save can never 409 an open tree (and vice
   versa).

@@ -6,9 +6,11 @@ Every prompt row is one version with its own uuid (deep-linkable via
 clone links back to the prompt it was based on, so the ancestor chain is the
 edit history and the editor pane can 2-way diff against any ancestor.
 Persistence is real: the browser-side state (promptFolders / promptItems)
-hydrates from and saves to GET/PUT /prompt/api/tree (webapp/prompt_api.py →
-db.prompt_load_tree/prompt_save_tree); prompt content is read-only until an
-explicit Edit → Save (per-prompt PUT). Mirrors the /git page; desktop-first.
+hydrates from GET /prompt/api/tree and saves placement, order and names back
+through PUT; creation and deletion are their own endpoints, per
+docs/ui-tree-persistence.md (webapp/prompt_api.py → db/prompt.py). Prompt
+content is read-only until an explicit Edit → Save (per-prompt PUT). Mirrors
+the /git page; desktop-first.
 """
 from pathlib import Path
 
