@@ -1,7 +1,7 @@
 # Q&A relationship graph: curated edges and neighbour surfacing
 
-Treat the Q&A registry as a graph. Nodes are entries; edges are operator-verified
-relationships between them. `memory_query` surfaces a matched entry's neighbours
+Treat the Q&A registry as a graph. Nodes are entries; edges are relationships
+between them, derived automatically and adjudicated by the operator. `memory_query` surfaces a matched entry's neighbours
 as key names, so the assistant can navigate to an entry that retrieval alone
 could not reach.
 
@@ -49,7 +49,7 @@ It is a different graph and the two are complementary:
 |-----------------|------------------------------------------|--------------------------------------------|
 | An edge means   | "after A, question Q is answerable by B"  | "A stands in relation R to B"              |
 | Shape           | question-shaped                           | entity-shaped                              |
-| Validated by    | an LLM validator, automatically           | the operator, explicitly                   |
+| Validated by    | an LLM validator, automatically           | derived, then adjudicated by the operator  |
 | Direction       | derived from generated questions           | derived from content, typed by an LLM      |
 | Composition     | out of scope ("chains emerge")            | the point (see below)                      |
 
@@ -67,8 +67,10 @@ only in the other entry, which is precisely the observed case.
 
 ## Prior art
 
-Checked against the agent-memory-atlas. Graph-backed memory is well trodden;
-what is thin is a graph a person curates.
+Checked against the agent-memory-atlas, by reading rather than grepping — the
+first pass of this section was a keyword search and it got the headline claim
+wrong. Graph-backed memory is well trodden, and so, it turns out, is curating
+one.
 
 | System | What it contributes here |
 |---|---|
@@ -77,30 +79,46 @@ what is thin is a graph a person curates.
 | NOOA Memory | The cautionary decay arithmetic that makes a second hop unreachable at defaults |
 | Graphiti | The risk being avoided: entity-resolution mistakes reshaping a large part of the graph |
 | Graphify | Corroboration as a gate rather than a counter; agent-reported `dead_end` outcomes |
-| npcpy | The closest prior art for the review loop: approve / reject / edit / skip / defer, and retrieval that reads approved rows only |
+| Nova-AI | The closest prior art overall: a confirmation gate before any relation is written, `unverified`/`confirmed`/`rejected` per relation, human decisions monotonic against automatic ones, rejections that re-extraction cannot lift, and rejected rows kept visible for audit |
+| core-memory | The soft gate — pending stays retrievable, rejection is the only state that removes — plus approval that survives an index rebuild, asserted end to end |
+| npcpy | The review loop: approve / reject / edit / skip / defer with a tally, and the opposite gating choice (approved rows only), defensible because it adjudicates memories rather than routes |
+| engram-alpha | "Exposure doesn't validate": retrieval stamps observability only, so a recurring query cannot certify its own outputs |
 | Argo | The failure that voids curation: a graph rebuilt wholesale on sync, with no approver in the schema |
 | Memsem | The adjacent failure: approval states in a table no read path joins |
+| Omi, Memledger, Mnemosyne | Rejection that the *generator* must consult: two systems where a rejected value re-enters through a path that never checked, and one that pins it by a key derived from the value |
+| Tokenmizer | `CONTESTED` — when the evidence cannot say which of two supersedes the other, mark both and keep both visible |
+| Logseq | The warning against unmarked automatic writes: agent edits "land live, unmarked and indistinguishable from the user's own" |
 | Swafra | The consumption shape — rank, expand through edges, return best per source — and dangling edges on delete |
 
 The atlas patterns this design instantiates, named so the vocabulary matches:
 **Gate the Expensive Path** (free generators before the typing model),
 **Zero-LLM Capture** (candidate generation needs no model to be durable),
-**Trust-State Machine** (candidate → kept / rejected / stale),
+**Trust-State Machine** (pending → kept / rejected / contested / stale),
 **Rejected-Value Tombstone** (a rejected pair is not re-proposed),
 **Evidence Before Belief** (every edge keeps the bases it was derived from).
 
-Two observations worth stating plainly. RainBox's own atlas entry mentions
-neither graphs nor relationships, so this is new capability rather than a
-refinement of something already present. And no catalogued system combines a
-derived-candidate graph with per-edge human approval — npcpy approves memories
-but has no edges, Argo has edges but no approver. That gap is either an
-opportunity or a warning, and the delivery sequence below is arranged so the
-zero-model half proves itself before the curation half is built.
+RainBox's own atlas entry mentions neither graphs nor relationships, so this is
+new capability for this codebase rather than a refinement of something already
+present.
+
+It is **not** new to the field, and an earlier draft of this document claimed
+otherwise on the strength of a keyword search. Read properly, the atlas holds
+at least three systems that approve graph elements individually: Nova-AI gates
+every relation write and keeps a three-value status on each one, core-memory
+runs `pending | approved | rejected` with an approver and a reason, and
+engram-alpha carries durable `confirmed_at` / `approved_at` / `demoted_at`
+anchors plus a human pin. The design space is occupied, and two of those
+systems carry machinery this proposal had to be corrected to include. Nothing
+below should be read as inventing per-edge curation; the contribution is
+applying it to *navigation between existing entries* rather than to the facts
+themselves.
 
 ## Goals
 
 - Let the assistant reach an entry that the user's phrasing cannot retrieve.
-- Keep every published edge operator-approved.
+- Keep every edge operator-*reviewable*, and every operator decision durable
+  and final against later automation. Reviewed and unreviewed edges are always
+  distinguishable; rejection is the only state that removes.
 - Keep the operator's verification effort sub-quadratic in the node count, and
   ordered by observed demand.
 - Make multi-hop navigation a consequence of typed single-hop edges, not a
@@ -149,8 +167,9 @@ queue.
 
 **Vector neighbourhood.** Top-K entry-to-entry similarity using the embeddings
 already in the pgvector table. Lowest precision of the three; it exists to
-catch relationships the other two structurally cannot see, and its candidates
-are always operator-reviewed, never auto-accepted.
+catch relationships the other two structurally cannot see. Because it is the
+noisiest, its candidates carry the lowest base weight and sort last in the
+review queue — the one generator whose output most needs a human eye.
 
 A pair proposed by several generators carries all their bases and is ranked
 higher. Generation is deterministic and idempotent: same registry, same
@@ -252,13 +271,50 @@ count.
 
 ## Verification
 
+### The queue surfaces; it does not gate
+
+The obvious design publishes an edge only once the operator has kept it. That
+is wrong, and core-memory says why in one sentence: "Hard-gating every
+auto-written bead until a human clicks approve would make memory useless until
+the queue is drained. The queue exists to surface what needs review; rejection
+is the only state that removes."
+
+With a few hundred entries and roughly ten candidates each, a hard gate means
+the feature does nothing until the operator has made over a thousand decisions
+— and a queue that must be finished before anything works is a queue that gets
+abandoned. So the default inverts:
+
+- A typed candidate is **servable while pending**, marked as unreviewed.
+- **Keeping** it promotes it to reviewed and raises its weight.
+- **Rejecting** it is the only action that removes it.
+
+The deciding factor is blast radius, and it is what separates this from a
+memory claim. A wrong claim is asserted to the user as fact. A wrong edge costs
+one wasted lookup: it surfaces a key name, the assistant may follow it, and the
+recall filter still decides what content reaches the model. Cheap enough to
+serve unreviewed, which is not true of the claim store.
+
+This is the point where the atlas's two positions diverge, and both are
+defensible. npcpy hard-gates — extractions land `pending_approval` and reach no
+prompt until a person presses a key, with `build_context` reading approved rows
+only. core-memory soft-gates. npcpy is adjudicating *memories*; this design is
+adjudicating *routes*, so it follows core-memory.
+
+The `origin` field keeps the two kinds distinguishable, because Logseq shows
+what happens when they are not: its agent writes "land live, unmarked and
+indistinguishable from the user's own." A pending edge must always be legible
+as pending, in the observation and in the UI.
+
+### The review loop
+
 The operator reviews candidates in a queue, not a graph. Each row shows the
 two entries, the proposed type, the generator basis, and the LLM's one-line
 justification. Actions:
 
-- **Keep** — the edge is published.
-- **Reject** — recorded, and the pair is not proposed again unless its basis
-  changes. Rejections are training signal for prompt tuning, not deletions.
+- **Keep** — promote to reviewed; the edge gains weight and stops being marked
+  unreviewed.
+- **Reject** — the only action that removes. Recorded with the rejecter and a
+  reason, and never re-proposed (see below).
 - **Retype** — keep the pair, change the type.
 - **Skip / defer** — pass without deciding; deferred rows return later, skipped
   ones sink.
@@ -267,29 +323,45 @@ justification. Actions:
 - **Suggest more, with a hint** — free-text steer ("look for shared
   workplaces") that re-runs typing over that entry's remaining candidates.
 
-The five-way loop with defer and a bulk accept is taken from npcpy, the
-atlas's most literal implementation of memory a person adjudicates before it
-takes effect — extractions land as `pending_approval` and reach no prompt until
-someone presses a key, and its `build_context` reads approved rows only.
-Defer and bulk-accept are what make a long queue finishable rather than
-abandoned; a review loop offering only keep and reject stalls on the first row
-the operator is unsure about. Show a running tally, as npcpy does.
+Defer and bulk-accept come from npcpy's five-way loop, and they are what makes
+a long queue survivable: a review offering only keep and reject stalls on the
+first row the operator is unsure about. Show a running tally, as npcpy does.
 
-Three mechanisms keep the queue finishable:
+**A human decision is monotonic.** Nova-AI states the rule this design needs
+and mine omitted: a person's confirmation outranks any later automatic match,
+and an automatic match can never downgrade what a person confirmed. So a
+re-run may propose, retype-suggest, and mark stale, but it may never move a
+reviewed edge back to pending, and never revive a rejected pair. Direction
+matters — the safe asymmetry is that automation proposes and a person decides.
 
-**Auto-accept on corroboration, not on a single generator.** A pair proposed by
-two independent generators — say an exact subject mention *and* path proximity
-— publishes without review, flagged `auto`. Graphify's rule is the model here:
-a node cited by one useful result is `tentative` and becomes `preferred` only
-at two distinct corroborations, corroboration as a gate rather than a counter.
-Single-generator candidates always go to the queue. This is stricter than
-trusting exact subject-mention alone, and it still clears the motivating case,
-which both generators find.
+**A rejection must be visible to the generator, not just the publisher.** This
+is where systems fail in practice. Omi retains the transcript that produced a
+rejected fact, so the fact "can be re-extracted and re-enter as a fresh
+candidate". Memledger's dedup lookup filters `status != deleted`, so a deleted
+fact is re-created rather than blocked — its report calls that the one decision
+the ledger cannot explain away. The fix is Mnemosyne's: pin the rejection by a
+key derived from the thing itself, and make the *candidate generator* consult
+it before proposing. Here that key is `pair_key`, and rejection is checked in
+generation, not at publish time.
 
-**Order by demand.** The queue is sorted by recent retrieval activity on the
-source entry, using the unanswered-query and verdict telemetry from the
-follow-up proposal's variant A. Entries nobody queries sink. Stopping halfway
-through leaves the queried half done, which is the half that matters.
+**Rejected edges stay inspectable.** Nova-AI filters rejected rows out of
+reasoning while `get_senses()` still shows them, for transparency — so a person
+auditing the graph sees what the system refuses to use. Rejections are
+also the training signal for tuning the typing prompt, which requires that they
+remain readable. Follow core-memory's distinction: a *stale* edge was once
+valid and its endpoint changed, a *rejected* edge should never have existed.
+Both are retained; only the first can return on its own.
+
+**Order by demand, without letting exposure certify.** The queue sorts by
+recent retrieval activity on the source entry, using the unanswered-query and
+verdict telemetry from the follow-up proposal's variant A, so that stopping
+halfway leaves the queried half done. But engram-alpha's rule applies and cuts
+against the naive version: retrieval stamps `last_seen` for observability only,
+"because exposure would otherwise let a broad recurring query certify its own
+outputs." A surfaced edge gets followed, which raises its source's activity,
+which surfaces it more. So demand ordering reads *query* activity on the entry,
+never adoption of the edge itself, and no telemetry event may change an edge's
+weight or status. Exposure orders the queue; it never promotes.
 
 The verification surface lives on `/memory/developer`, beside the existing
 retrieval inspection panels; it is operator tooling, not a user-facing page.
@@ -300,14 +372,17 @@ After the recall filter keeps its entries, `memory_query` appends a neighbour
 block outside `recalled_memory`:
 
 ```text
-<related_keys note="verified links from the entries above; key names only, not facts">
-<uuid>  human.family.<elder>     member_of, 1 hop
-<uuid>  human.<other>.health     same_person, 2 hops
+<related_keys note="links from the entries above; key names only, not facts">
+<uuid>  human.family.<elder>     member_of, 1 hop, reviewed
+<uuid>  human.<other>.health     same_person, 2 hops, unreviewed
 </related_keys>
 ```
 
-Key names and uuids only — never target answer text, which would smuggle
-unfiltered content past the recall filter and blow the observation budget. The
+Each row is marked `reviewed` or `unreviewed`, because a pending edge is
+servable and the assistant should be able to weigh a route the operator has
+never seen. Key names and uuids only — never target answer text, which would
+smuggle unfiltered content past the recall filter and blow the observation
+budget. The
 assistant follows a neighbour with the `{"uuid": ...}` form of `memory_query`
 it already has.
 
@@ -333,7 +408,7 @@ qa_edge_candidate
 - target_sha        runtime row hash of the target at proposal time
 - proposed_type     from the typing model; null before typing
 - justification     one line from the typing model
-- status            pending | kept | rejected | auto | superseded
+- status            pending | kept | rejected | contested | superseded
 - typed_by_uuid     model that assigned the type
 - policy_version    
 - reviewed_at       
@@ -341,10 +416,20 @@ qa_edge_candidate
 qa_edge
 - pair_key          
 - source_qa_id, target_qa_id, type
-- origin            operator | auto
+- status            pending | kept | rejected | contested
+- reviewed_by       null while pending; set once and never cleared
+- reviewed_at       
+- review_note       the rejecter's reason, retained for audit
+- weight            derived; type base over basis frequency
 - source_sha, target_sha
 - created_at
 ```
+
+`status` lives on the edge rather than only on the candidate, because a
+pending edge is servable — the read path filters `status != 'rejected'` and
+marks anything not `kept` as unreviewed. A rejected row is retained rather
+than deleted: it is what stops the pair being proposed again, and it is what
+an operator auditing the graph needs to see.
 
 Freshness follows the same rule as the follow-up tables: an edge is servable
 only while both endpoint hashes match the current runtime hashes. An endpoint
@@ -432,11 +517,16 @@ capped harder.
 - A candidate is proposed for the motivating shape: an entry whose answer names
   a proper noun that is another entry's subject yields a directed candidate
   with a `subject_mention` basis.
-- A pair proposed by two independent generators auto-accepts; a pair proposed
-  by one always reaches the queue, however precise its basis.
-- Regeneration is non-destructive: after a full re-run, every kept edge is
-  still kept, every rejected pair is still rejected, and each carries the
-  reviewer stamp it had before.
+- A pending edge is servable and is marked unreviewed everywhere it appears;
+  only a rejected edge is withheld.
+- A rejected pair is invisible to the *candidate generator*, not merely absent
+  from the published set: a full regeneration proposes it nowhere.
+- A kept edge cannot be moved back to pending, and a rejected pair cannot be
+  revived, by any automatic pass.
+- Corroboration by two generators raises weight; it does not change status.
+- Regeneration is non-destructive: after a full re-run *and* an index rebuild,
+  every kept edge is still kept, every rejected pair is still rejected, and
+  each carries the reviewer and reason it had before.
 - A kept edge records an approver; nothing else can write `qa_edge`.
 - A two-hop neighbour with plausible weights actually appears in the block —
   the decay schedule must not put it below the cut arithmetically.
@@ -464,7 +554,9 @@ capped harder.
 - The queue orders by recent retrieval demand, and an empty telemetry window
   degrades to a stable deterministic order rather than an error.
 - Edge exposure records `considered`, following one records `used`, and a kept
-  result records `accepted`.
+  result records `accepted` — and none of the three changes an edge's weight,
+  status, or queue position, so a recurring query cannot promote its own
+  neighbours.
 - Developer-page probes write no live telemetry, matching existing behaviour.
 
 ## Considered and declined
@@ -484,6 +576,13 @@ capped harder.
   an edge. A wrong edge is a weak path; a wrong merge is irreversible identity
   loss, and entity resolution is the stated top risk of the most mature
   graph system in the atlas.
+- **A hard review gate before an edge may serve.** The first shape of this
+  design, and the one core-memory argues against: a queue that must be drained
+  before anything works is a queue that is abandoned, and the corroboration
+  auto-accept rule existed mainly to smuggle edges past it. A wrong route costs
+  one lookup and the recall filter still governs what content reaches the
+  model, so the blast radius does not justify the gate. npcpy's opposite choice
+  stands for memories, which are asserted as fact.
 - **Letting the LLM propose pairs.** Spending a model on search over `N²` when
   three free generators cover the ground with better precision. The model is
   spent on judgement instead.
@@ -495,21 +594,25 @@ capped harder.
   facts need.
 - **A graph database.** A few hundred nodes and a bounded traversal depth fit
   in memory at query time.
-- **Auto-accepting vector-neighbourhood candidates.** Its precision is the
-  lowest of the three generators; auto-accepting it would fill the graph with
-  plausible-but-wrong edges that the operator would then have to hunt down.
+- **Treating all three generators as equally trustworthy.** Vector
+  neighbourhood is the noisiest, so it contributes the lowest base weight and
+  sorts last for review. Under a soft gate its candidates still serve while
+  pending, which is acceptable only because they serve *marked* and ranked
+  below everything else.
 
 ## Delivery sequence
 
 1. Candidate generation and the two tables, with the three generators and no
    model involvement. Inspectable on `/memory/developer`. Nothing is served.
-2. Auto-accept for two-generator-corroborated candidates, and the
-   `related_keys` block behind a setting. This alone fixes the motivating case;
-   ship it before any typing work and confirm against the live registry.
-   Consumption lands here, deliberately ahead of curation, so the states can
-   never become a table nothing reads.
+2. The `related_keys` block behind a setting, serving pending edges marked
+   unreviewed. This alone fixes the motivating case; ship it before any typing
+   or review work and confirm against the live registry. Consumption lands
+   here, deliberately ahead of curation, so the states can never become a
+   table nothing reads — and because the gate is soft, no queue has to be
+   drained first for the feature to work.
 3. The typing model, the `unrelated` drop, and the review queue with
-   keep/reject/retype and hint-driven re-suggestion.
+   keep / reject / retype / defer / bulk-accept and hint-driven re-suggestion.
+   Rejection is wired into the generator here, not at publish time.
 4. Demand ordering, once variant A's unanswered-query events exist.
 5. Inverse-frequency edge weighting and depth-2 weighted traversal, with
    hop counts marked in `related_keys`. Pin the two-hop acceptance test first,
@@ -530,6 +633,10 @@ free of model calls, and they close the observed failure.
   edges only for `member_of` and `mentions_person`, and to measure.
 - **When the graph disagrees with the text.** An edge asserts a relationship
   the answer text may later contradict. Endpoint-hash freshness catches edits
-  but not a stale relationship in unedited text. No mechanism is proposed; the
-  operator's review is the only check, and that is a known limit rather than a
-  solved problem.
+  but not a stale relationship in unedited text. Tokenmizer supplies the shape
+  of an answer: when the evidence cannot say which of two claims supersedes the
+  other, it marks *both* `CONTESTED` and keeps both visible, rather than
+  guessing. The `contested` status above reserves room for that — a re-typing
+  pass that contradicts a kept edge marks it rather than silently flipping it,
+  and the operator resolves. What is still unresolved is what *detects* the
+  disagreement, since nothing here re-reads an unedited entry.
