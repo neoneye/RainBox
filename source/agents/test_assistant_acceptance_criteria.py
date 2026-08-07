@@ -564,6 +564,29 @@ def test_reply_audit_prompt_names_the_history_as_referent_only(room):
     assert "not evidence for what is true" in REPLY_AUDIT_SYSTEM_PROMPT
 
 
+def test_an_empty_read_is_retried_broadly_before_reporting_nothing(room):
+    """Asked for a relative's mother, the loop queried "mother's name or details",
+    got the household entry that does not name her, and reported nothing
+    stored. The entry was there the whole time, unshielded.
+
+    Measured against the live store: the relational phrasing misses, while
+    the name with family words around it — "<name> family", "<name> childhood
+    family siblings" — retrieves and keeps it. A relational query embeds toward
+    the entry where the person holds that relation, not the one where they
+    are named as somebody's child — so the name alone is the better probe,
+    and one retry is the difference between a wrong "nothing stored" and the
+    answer."""
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0")])
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    system = prompts[0]["system"]
+    assert "query the name on its own" in system
+    assert "before you report that nothing is stored" in system
+    # Bounded: one broader retry, not an open-ended search.
+    assert "one broader query" in system
+
+
 def test_criteria_history_carries_both_roles(room):
     """The criteria call sees the assistant's earlier turns too. How the
     assistant has been formatting and phrasing its replies is exactly the

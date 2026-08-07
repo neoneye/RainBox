@@ -672,9 +672,15 @@ names a relation on that subject, the person or thing asked about is
 whoever that relation reaches — one step away from the subject you carried
 over, and not the one you reached them through. Resolve the pronoun, apply
 the relation, and read about whoever you land on. If that read turns up
-nothing about them, say that nothing is stored about them: it is the answer
-to what was asked, and repeating what you know about the nearer person
-answers a question nobody asked.
+nothing about them, make one broader query
+before you report that nothing is stored. A query phrased as a relation
+("X's mother") pulls toward the entry where X holds that relation, not the
+one where X is listed as somebody's child — so drop the relation and
+query the name on its own, or the name with the family words around it.
+Only when that also comes back empty,
+say that nothing is stored about them: it is the answer to what was asked,
+and repeating what you know about the nearer person answers a question
+nobody asked.
 Interpret the user-prompt sections with this precedence:
 """ + SOURCE_PRIORITY_SECTION + """
 assistant_persona is the character you are playing: adopt its voice, manner and
