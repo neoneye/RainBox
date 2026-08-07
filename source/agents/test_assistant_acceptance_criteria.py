@@ -24,6 +24,7 @@ from agents.assistant import (
     AssistantObservation,
     AssistantStepDecision,
     AssistantTurnStep,
+    REPLY_AUDIT_SYSTEM_PROMPT,
 )
 from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
@@ -497,6 +498,70 @@ def test_request_anchor_keeps_the_referent_while_pinning_the_request(room):
     anchor = " ".join(prompt.split("<decision_request")[1].split())
     assert "never a message from conversation_history_xml, however recent" in anchor
     assert "what it refers to" in anchor
+
+
+def test_a_relation_on_the_carried_subject_moves_the_subject(room):
+    """The observed failure: a question about a relative was answered, then
+    "who is her mom" came back describing that same relative again, plus the
+    sibling list. The step resolved "her" and then answered about the person
+    it had just described, losing a generation.
+
+    "Carry that subject over" (457030d) covers a follow-up that shares its
+    subject. It does not cover one that names a relation ON that subject —
+    there the pronoun resolves to the old subject but the request is about
+    whoever the relation reaches, one step away."""
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0")])
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    system = prompts[0]["system"]
+    assert "names a relation on that subject" in system
+    assert "not the one you reached them through" in system
+
+
+def test_a_read_that_misses_the_new_subject_is_not_answered_with_the_old(room):
+    """memory_query returned a household overview — the parent and the
+    siblings, nothing about that parent's own mother — and the reply presented
+    it as the answer. Nothing stored about the person actually asked for is a
+    finding to report, not a cue to fall back to the person one step
+    nearer."""
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0")])
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    system = prompts[0]["system"]
+    assert "say that nothing is stored about them" in system
+
+
+def test_reply_audit_sees_the_conversation_it_needs_to_resolve_a_referent(room):
+    """The auditor's subject check is the one designed to catch this, and it
+    could not run: its prompt carried no history, so it wrote "the context is
+    unclear without prior turns" and passed a reply about the wrong person.
+
+    The observations stay the fresh evidence; the history is here only so a
+    request like "who is her mom" has a resolvable subject to check against."""
+    agent = _agent()
+    prompt = agent._build_reply_audit_prompt(
+        "Your mom is Ada Lovelace.",
+        messages=[
+            {"sender_type": "human", "text": "tell me about my mom"},
+            {"sender_type": "agent", "text": "Ada Lovelace, born 1815-12-10."},
+            {"sender_type": "human", "text": "who is her mom"},
+        ],
+        scratchpad=[])
+    assert "<conversation_history_xml" in prompt
+    assert "tell me about my mom" in prompt
+    # The request under audit is still the current one, not the history.
+    assert prompt.index("<current_user_request>") < prompt.index(
+        "<conversation_history_xml")
+
+
+def test_reply_audit_prompt_names_the_history_as_referent_only(room):
+    """The auditor must not start checking the reply against remembered facts
+    it reads off the transcript — that is the failure the observations exist to
+    prevent. The history is there to resolve who is being asked about."""
+    assert "resolve what the request refers to" in REPLY_AUDIT_SYSTEM_PROMPT
+    assert "not evidence for what is true" in REPLY_AUDIT_SYSTEM_PROMPT
 
 
 def test_criteria_history_carries_both_roles(room):

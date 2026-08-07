@@ -537,6 +537,15 @@ Check the message in this order:
    well written it is, and it is the hardest defect to see, because a fluent
    answer to the wrong question reads as a good reply. Quote the sentence
    that shows the mismatched subject.
+   A request that carries no subject of its own takes it from
+   conversation_history_xml: that section is there
+   to resolve what the request refers to, and
+   is not evidence for what is true about it. Read the request
+   through it before naming the subject. A request naming a relation on
+   someone — their mother, their employer — asks about whoever that relation
+   reaches, so a reply describing the person it was reached through has the
+   wrong subject, however accurate it is about them. When nothing was found
+   about the subject, saying so is a correct answer, not a missing one.
 3. Against the turn's established constraints, when the request shows any.
 4. Against the user's settings and formatting guide: units, temperature,
    clock, date order, digit grouping, currency, and the reply language and
@@ -658,6 +667,14 @@ take their subject from the exchange before them. Carry that subject over,
 then read for the facts about it. A request is not ambiguous merely because
 it is short: read it as the continuation it is, and only what the
 conversation genuinely leaves open is open.
+Resolving the pronoun is not the whole job. When the follow-up
+names a relation on that subject, the person or thing asked about is
+whoever that relation reaches — one step away from the subject you carried
+over, and not the one you reached them through. Resolve the pronoun, apply
+the relation, and read about whoever you land on. If that read turns up
+nothing about them, say that nothing is stored about them: it is the answer
+to what was asked, and repeating what you know about the nearer person
+answers a question nobody asked.
 Interpret the user-prompt sections with this precedence:
 """ + SOURCE_PRIORITY_SECTION + """
 assistant_persona is the character you are playing: adopt its voice, manner and
@@ -4282,6 +4299,12 @@ class AssistantAgent(ModelGroupAgent):
     # cannot crowd out the message itself.
     REPLY_AUDIT_MAX_OBSERVATION_CHARS: int = 2_000
 
+    # Enough prior turns to resolve who a follow-up is about, and no more: the
+    # auditor checks the message, and a long transcript both dilutes that and
+    # invites checking the reply against remembered facts read off the
+    # history instead of against the turn's observations.
+    REPLY_AUDIT_MAX_MESSAGES: int = 6
+
     def _build_reply_audit_prompt(
         self,
         message: str,
@@ -4300,6 +4323,15 @@ class AssistantAgent(ModelGroupAgent):
         rebuild, in the auditor's context, the bias that made a self-audit
         weak.
 
+        A bounded slice of the conversation rides along for one purpose: the
+        subject check. A request like "who is her mom" has no subject on its
+        own, and an auditor without the prior turns cannot tell a reply about
+        the right person from one about the wrong person — it said as much,
+        "the context is unclear without prior turns", and passed a reply that
+        had lost a generation. It stays below the request so the message under
+        audit is unambiguous, and the system prompt scopes it to reference
+        rather than evidence.
+
         Same ElementTree escaping guarantee as the other prompt builders.
         """
         root = ET.Element("reply_audit")
@@ -4308,6 +4340,14 @@ class AssistantAgent(ModelGroupAgent):
         request.text = str((current or {}).get("text") or "none")
         proposed = ET.SubElement(root, "proposed_reply")
         proposed.text = message
+        context = (messages[:-1] if messages else [])[
+            -self.REPLY_AUDIT_MAX_MESSAGES:]
+        history = ET.SubElement(root, "conversation_history_xml")
+        if context:
+            for entry in context:
+                self._append_prompt_message(history, entry)
+        else:
+            ET.SubElement(history, "none")
         if self._criteria_markdown:
             criteria = ET.SubElement(root, "acceptance_criteria_markdown")
             criteria.text = self._criteria_markdown
