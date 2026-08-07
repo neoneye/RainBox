@@ -66,6 +66,8 @@ def test_direct_room_settings_sidebar():
     assert "/chat/api/models" in body
     assert "ds-prompt" in body
     assert "ds-model" in body
+    # Only available models are offered, plus whatever the room already holds.
+    assert "models.filter(mm => mm.available || mm.uuid === settings.model_uuid)" in body
 
 
 def test_sidebar_modes_match_room_type():

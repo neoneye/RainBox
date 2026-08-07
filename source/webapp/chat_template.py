@@ -2332,7 +2332,11 @@ async function renderDirectSettings(){
     ? models.find(mm => mm.uuid === settings.default_model_uuid) : null;
   none.textContent = dfltModel ? '(default — ' + dfltModel.label + ')' : '(no model)';
   sel.appendChild(none);
-  models.forEach(mm => {
+  // An unavailable model cannot answer, so it is noise in the picker. The one
+  // exception is the model this room already holds: dropping it would leave
+  // the select showing some other model the room is not actually using, so it
+  // stays, labelled, until the operator picks something else.
+  models.filter(mm => mm.available || mm.uuid === settings.model_uuid).forEach(mm => {
     const opt = document.createElement('option');
     opt.value = mm.uuid;
     opt.textContent = mm.label + (mm.available ? '' : ' (unavailable)');

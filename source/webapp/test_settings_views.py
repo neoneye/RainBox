@@ -222,6 +222,13 @@ def test_page_injects_available_shields(client, monkeypatch):
     assert "qa-shields" in body
 
 
+def test_default_model_picker_offers_available_models_only(client):
+    """The chat.default_model picker hides unavailable models, keeping only the
+    uuid the setting already holds so the select can't show a different one."""
+    body = client.get("/settings").get_data(as_text=True)
+    assert "MODELS.filter(m => m.available || held.has(m.uuid))" in body
+
+
 def test_unlocked_shields_roundtrips_through_api(client):
     r = client.post("/settings/api/set", json={
         "key": "qa.unlocked_shields", "value": ["alice.travel"]})

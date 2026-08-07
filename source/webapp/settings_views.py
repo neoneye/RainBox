@@ -323,9 +323,15 @@ function openEdit(key){
   const isSelect = s.value_type === 'bool' || s.key === 'chat.default_model'
     || s.key === 'profile.current';
   if (s.key === 'chat.default_model'){
+    // An unavailable model cannot answer, so it is noise in the picker. The
+    // exception is whatever the setting already holds (stored or effective):
+    // dropping that would leave the select showing a different model than the
+    // one actually in force.
+    const held = new Set([origControl, s.value == null ? '' : String(s.value)]);
     field = 'Value <select id="s-edit-input">'
       + '<option value="">(unset &mdash; Ollama-first automatic choice)</option>'
-      + MODELS.map(m => '<option value="' + escapeHtml(m.uuid) + '">'
+      + MODELS.filter(m => m.available || held.has(m.uuid))
+          .map(m => '<option value="' + escapeHtml(m.uuid) + '">'
           + escapeHtml(m.label + (m.available ? '' : ' (unavailable)'))
           + '</option>').join('')
       + '</select>';
