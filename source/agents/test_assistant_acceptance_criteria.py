@@ -441,6 +441,64 @@ def test_the_read_rule_covers_questions_about_the_user_s_own_life(room):
     assert "their own life, the people in it" in system
 
 
+def test_the_read_rule_separates_facts_from_what_the_request_refers_to(room):
+    """The observed regression: asked "tell me about my mom" and then "i need
+    more details", the run answered the second with "More details on what?".
+    The transcript three minutes earlier said what.
+
+    "Earlier messages are context, not a source of facts" was read as covering
+    reference too, so the elliptical request looked subjectless rather than
+    like one whose subject the previous exchange supplies. The two uses are
+    different: the history settles WHAT is being asked about, a read settles
+    what is TRUE about it."""
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0")])
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    system = prompts[0]["system"]
+    assert "Earlier messages are context, not a source of facts." in system
+    assert "what the request refers to is a different question" in system
+    assert "take their subject from the exchange before them" in system
+
+
+def test_clarifying_question_is_not_for_a_referent_the_history_supplies(room):
+    """"If the request is ambiguous or missing information, use
+    ask_clarifying_question" caught the elliptical follow-up, because a
+    request read in isolation genuinely is missing its subject. Asking the
+    user to repeat what they just said is the failure, not the safe option."""
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0")])
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    system = prompts[0]["system"]
+    assert "already answers it" in system
+    assert "resolve the subject and read" in system
+
+
+def test_criteria_may_resolve_a_referent_without_nominating_a_source(room):
+    """`never settle what the answer will cover or whom it will be about`
+    stopped the criteria step pinning scope to the transcript — and also
+    stopped it carrying a subject the transcript unambiguously supplies, so it
+    recorded "the content retrieval area remains ambiguous" and the decide step
+    took that as licence to ask. Reference is not a source."""
+    prompt = AssistantAgent._acceptance_criteria_system_prompt()
+    assert "never name a source" in prompt
+    assert "Carrying that subject over is not naming a source" in prompt
+
+
+def test_request_anchor_keeps_the_referent_while_pinning_the_request(room):
+    """The anchor says the request is never a message from the history,
+    however recent — true about WHICH request to answer, and false about where
+    an elliptical one gets its subject. It has to say which it means."""
+    agent = _agent()
+    prompt = agent._build_user_prompt(
+        messages=[{"sender_type": "human", "text": "i need more details"}],
+        scratchpad=[], step_index=0)
+    anchor = " ".join(prompt.split("<decision_request")[1].split())
+    assert "never a message from conversation_history_xml, however recent" in anchor
+    assert "what it refers to" in anchor
+
+
 def test_criteria_history_carries_both_roles(room):
     """The criteria call sees the assistant's earlier turns too. How the
     assistant has been formatting and phrasing its replies is exactly the

@@ -402,6 +402,14 @@ is the assistant's decision, taken by running a read. An ambiguity of scope is
 resolved by that read, so record it in `assumptions` as unresolved rather than
 settling it from what the transcript happens to mention.
 
+What the request refers to is the exception. A follow-up sheds what it has
+already said, so a request for more of something, or one carrying only a
+pronoun or a bare noun phrase, takes its subject from the exchange before it.
+Carrying that subject over is not naming a source: it is reading the request
+correctly, and without it the assistant asks the user to repeat what they just
+said. Record such a request as understood, and keep `assumptions` for what the
+conversation genuinely leaves open.
+
 When you are given prior acceptance criteria and the run's steps so far, you
 are revising: identify what changed and which criteria it invalidates, change
 exactly those, and keep the rest.
@@ -618,7 +626,13 @@ Each step you emit exactly one decision as structured output with these fields:
 - args: the arguments for that action.
 
 Work one step at a time. When you have enough to answer, use `reply`. If the
-request is ambiguous or missing information, use `ask_clarifying_question`. Only
+request is ambiguous or missing information, use `ask_clarifying_question` —
+but never for something the conversation already answers it. Asking the user
+to repeat what they told you a message ago is a worse failure than a narrower
+answer, because it is the whole cost of the turn spent on nothing. When the
+previous exchange supplies what the request leaves out,
+resolve the subject and read; ask only when nothing in the conversation
+settles it. Only
 use actions from the list below; any other action is rejected.
 
 Match the read action to the data you need: `kanban_read` for boards/tasks,
@@ -636,6 +650,14 @@ is such a question: it reads as something to compose rather than look up, but
 what you need is stored, so query it. Having read in an earlier turn does not
 count, and neither does a transcript that already names some of the answer:
 recalling a few of the people is how you miss the rest.
+That rule is about facts;
+what the request refers to is a different question, and the conversation is
+where it is answered. Follow-ups shed what they have already said — a request
+for more, or one carrying only a pronoun or a bare noun phrase, can
+take their subject from the exchange before them. Carry that subject over,
+then read for the facts about it. A request is not ambiguous merely because
+it is short: read it as the continuation it is, and only what the
+conversation genuinely leaves open is open.
 Interpret the user-prompt sections with this precedence:
 """ + SOURCE_PRIORITY_SECTION + """
 assistant_persona is the character you are playing: adopt its voice, manner and
@@ -3874,11 +3896,14 @@ class AssistantAgent(ModelGroupAgent):
                 "the top of this prompt — too long to repeat here, and it "
                 f'opens: "{text[:self.REQUEST_ANCHOR_MAX_CHARS]}…". It is '
                 "never a message from conversation_history_xml, however "
-                "recent."
+                "recent — though what it refers to may well be."
             )
         return (
             f'The request to answer is: "{text}" — that exact request, never '
-            "a message from conversation_history_xml, however recent."
+            "a message from conversation_history_xml, however recent. That "
+            "fixes which request to answer, not what it refers to: a "
+            "follow-up too short to name its own subject takes it from the "
+            "exchange before it."
         )
 
     def _build_user_prompt(
