@@ -393,6 +393,54 @@ def test_system_prompt_offers_no_empty_exit_and_no_copyable_example():
     assert "formatting guide line by line" in prompt
 
 
+def test_system_prompt_forbids_naming_where_the_facts_come_from():
+    """The observed failure: asked "tell me about my friends", the criteria
+    call wrote "synthesize information from the conversation history" into
+    `processing` and pinned the scope of "friends" to the people already named
+    in the history under `assumptions`. The reply step then cited those
+    criteria as its reason to skip `memory_query` and answer from the
+    transcript, so the stored friend facts were never read.
+
+    Choosing a source is the assistant's decision, taken with a read. The
+    criteria constrain the shape of the reply, never where its content is
+    found."""
+    prompt = AssistantAgent._acceptance_criteria_system_prompt()
+    assert "never name a source" in prompt
+    assert "conversation history" in prompt          # named as the trap it is
+    assert "never settle what the answer" in prompt
+
+
+def test_criteria_never_license_skipping_a_read(room):
+    """The criteria outrank conversation_history_xml by four places, so a
+    criteria block that names the history as the source promotes it past every
+    rule above it — including the one requiring a read this turn. The
+    authority sentence has to carve the read requirement out explicitly, or
+    the ranking quietly repeals it."""
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0")])
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    system = prompts[0]["system"]
+    assert "acceptance_criteria_markdown is the established plan" in system
+    assert "never where its facts come from" in system
+    assert "does not satisfy the read requirement" in system
+
+
+def test_the_read_rule_covers_questions_about_the_user_s_own_life(room):
+    """The rule listed "remembered facts, stored data, or a live value" — and
+    a model reading "tell me about my friends" classified it as a synthesis
+    task rather than a lookup, so none of the three seemed to apply. The
+    people, history and preferences in the user's own life are the commonest
+    thing memory holds; the rule names them."""
+    agent = _agent()
+    _stub_criteria_seam(agent, [_criteria("step0")])
+    prompts = _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    system = prompts[0]["system"]
+    assert "Earlier messages are context, not a source of facts." in system
+    assert "their own life, the people in it" in system
+
+
 def test_criteria_history_carries_both_roles(room):
     """The criteria call sees the assistant's earlier turns too. How the
     assistant has been formatting and phrasing its replies is exactly the
