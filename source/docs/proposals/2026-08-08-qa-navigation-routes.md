@@ -1,10 +1,15 @@
-# Q&A navigation edges: demand-driven routes between entries
+# Q&A navigation routes: reaching an entry retrieval cannot find
 
 An entry can be present, unshielded, correctly embedded, and still unreachable
 by the question a person actually asks. This proposes a route from the entry
 retrieval *does* find to the entry that holds the answer — generated on demand
 for entries that real queries touch, approved by the operator before it serves,
 and ranked against the question being asked.
+
+Two words are used precisely throughout. An **edge** is the stored, reviewed
+relation between two entries, held once and labelled for each direction. A
+**route** is that edge traversed in one direction for one query. Edges are what
+the operator approves; routes are what the assistant is shown.
 
 All examples are fictional. No entry text, path label, or person from an
 operator overlay is reproduced here.
