@@ -3,10 +3,9 @@
 An entry can be present, unshielded, correctly embedded, and still unreachable
 by the question a person actually asks.
 
-This document is in two parts. The first is an **experiment** that decides
-which of two explanations is right, and three of its four outcomes retire most
-of the second part. The second is the design to build **only if** the
-experiment says a route between entries is what is missing.
+This document is in two parts. The first is an **experiment** on the cheapest
+candidate fix; passing it retires the second part entirely. The second is the
+design to build only if that fix proves insufficient.
 
 All examples are fictional. No entry text, path label, or person from an
 operator overlay is reproduced here.
@@ -40,113 +39,122 @@ Measured against a live registry:
 This is a reachability problem, not a ranking problem. No re-scoring reaches an
 entry that never becomes a candidate.
 
-## Two explanations
+## Two candidate explanations
 
-**Reach.** The target is retrievable in principle, and simply carries no
-phrasing near the question. More phrasings per entry would close it. This is
-the follow-up proposal's variant B, alias enrichment.
+**Reach.** The target carries no phrasing near the question. More phrasings per
+entry would close it — the follow-up proposal's variant B, alias enrichment.
 
-**Granularity.** The entry is a bundle of six people in one node, while the
-questions asked of it are single-person and single-relation. The embedding of a
-six-person household is a centroid close to no individual question — which is
-exactly why bundle-shaped queries succeed and person-shaped ones fail. If so,
-more phrasings paper over a node whose unit does not match the question's, and
-the answer is a derived person-level projection rather than either aliases or
-routes.
+**Granularity.** The entry bundles six people into one node while the questions
+asked of it are single-person. The embedding of a six-person household is a
+centroid close to no individual question, which is why bundle-shaped queries
+succeed and person-shaped ones fail. The answer would be a derived
+person-level projection.
 
-The two make opposite predictions, and one experiment separates them.
+**These are not mutually exclusive, and the experiment does not treat them as
+rivals.** A node can have poor granularity *and* still be reachable once it
+carries the right alias. The experiment tests one thing only: whether the alias
+pipeline, end to end, fixes this failure. A positive result retires the other
+work for this case. A negative result says alias enrichment is not proven
+sufficient — and says nothing about which of routes or a person projection
+should follow, because it tests neither.
 
 ## The experiment
 
-It answers two questions, and **both** must pass for alias enrichment to be the
-fix:
+It tests the **alias pipeline end to end**. Two properties must both hold, and
+a partial pass is not a pass:
 
-- **Mechanism.** If the target carried a phrasing near the failing question,
-  would retrieval find it?
-- **Feasibility.** Can a generator produce that phrasing *unprompted*, from the
-  entry's own content?
+- **Feasibility.** Can a generator produce a phrasing near the failing question
+  *unprompted*, from the entry's own content?
+- **Sufficiency.** With that phrasing stored, does the original question
+  retrieve the entry, survive the recall filter, and produce the right answer,
+  without breaking queries that already worked?
 
 Feasibility carries more weight than it looks. If a person must write the
 alias, the mechanism collapses into "add a question to the registry by hand",
-which the operator can already do and which needs no design at all. Alias
-enrichment is only interesting if generation is automatic.
+which the operator can already do and which needs no design at all.
 
 ### Phase 1 — feasibility
 
 Read-only. No writes anywhere.
 
-Take the target entry's answer. Make one structured call to a locally bound
-model asking for up to five questions a person might ask that this answer
-resolves. Record the output verbatim.
+Pin the prompt and the model, then run **several deterministic trials** asking
+for questions a person might ask that this answer resolves. One call producing
+five outputs cannot establish infeasibility: it establishes that one
+model-prompt-sample failed.
 
-- **Passes** if one output is recognisably the failing question.
-- **Fails** if the outputs are all bundle-shaped — "who are the children",
-  "where did they live". This is the plausible failure, because bundle-shaped
-  prose invites bundle-shaped questions.
+- **Passes** if a trial yields a phrasing recognisably equivalent to the
+  failing question.
+- **Inconclusive** if trials disagree, or if a different prompt or a stronger
+  local model plausibly changes the result. Inconclusive is a legitimate
+  outcome and must be recorded as one rather than rounded to failure.
+- **Fails** only when repeated trials under a pinned setup produce nothing but
+  bundle-shaped questions.
 
-A Phase 1 failure ends the experiment, and is itself the strong result: the
-phrasing gap cannot be closed automatically from this data shape.
-
-### Phase 2 — mechanism
+### Phase 2 — sufficiency
 
 Only if Phase 1 passes.
 
-Probing retrieval with the *generated* phrasing proves nothing — it shows the
-generated phrasing works. The alias must be stored and embedded, and then the
-**original failing question** re-run through real retrieval. A "near match"
-between the two is not evidence either: `_normalize_query`
+Probing retrieval with the *generated* phrasing proves only that the generated
+phrasing works. The alias must be stored and embedded, then the **original
+failing question** run through the complete pipeline. A near match between the
+two is not evidence either: `_normalize_query`
 ([memory/seed_memory.py](../../memory/seed_memory.py)) lowercases, strips
-trailing `?!.` and collapses whitespace. It does not equate paraphrases, so
+trailing `?!.` and collapses whitespace. It equates no paraphrases, so
 exact-alias matching will not fire on a near miss.
 
-Run it entirely in `rainbox_claude`:
+Run it in `rainbox_claude`: copy the overlay to a scratch directory, add the
+generated alias, set `customize.dir` in the sandbox database only, populate,
+and query. Production settings, registry, and embeddings stay untouched.
+Repointing the live setting would instead mean two repopulate cycles and a
+`qa.facts_invalidated_at` stamp that fires re-check notices in rooms.
 
-1. Copy the overlay to a scratch directory and add the generated alias to the
-   target entry.
-2. Set `customize.dir` in the sandbox database only.
-3. Populate, then query with the original failing question.
+Passing requires **all three**, in order:
 
-Production settings, registry, and embeddings are untouched, and nothing needs
-restoring. Repointing the live `customize.dir` would instead mean two
-repopulate cycles and a `qa.facts_invalidated_at` stamp that fires re-check
-notices in rooms.
+1. The target appears as a retrieval candidate for the original question.
+   Today it is not a candidate, so this is the first real difference.
+2. The recall filter **keeps** it. Candidacy is necessary and not sufficient,
+   and the sandbox carries no model-group bindings by default — so either
+   reproduce the operator's `memory_filter` binding in the sandbox, or run an
+   equivalent controlled relevance decision and say which was done.
+3. A full assistant turn on the original question returns an answer naming the
+   correct person.
 
-- **Passes** if the target appears as a retrieval candidate for the original
-  question. Candidacy is the whole difference: today it is not a candidate.
+A run that stops at candidacy is recorded as **partial**, not as a pass.
 
 ### Phase 3 — collisions
 
 A new alias competes for queries it should not win.
 
-Re-run controls — questions about the adult, the elder, and the siblings — and
-confirm each still resolves to the entry it resolved to before.
+Draw the control set from **recent real queries** in the retrieval telemetry,
+not from a handful invented for the test, and include the queries that
+currently resolve to the target and to its neighbours. For each, assert the
+**candidate set and the kept set**, not merely which entry came top — a
+collision that reorders candidates without changing the winner is the same
+defect one query later.
 
-- **Fails** if any control now returns the wrong entry. A fix that repairs one
-  question and breaks three is not a fix.
+- **Fails** if any control's kept set changes. A fix that repairs one question
+  and breaks three is not a fix.
 
 ### Decision table
 
-| Result | Reading | Consequence |
-|---|---|---|
-| Phase 1 fails | The generator cannot derive single-person questions from bundle prose | Evidence for granularity; specify a person-level projection. Neither aliases nor routes are warranted |
-| 1 passes, 2 fails | Stored and still unreachable | The retrieval-side fix is exhausted; granularity again |
-| 1 and 2 pass, 3 fails | Works but pollutes | Alias enrichment needs collision validation, not a simple adoption |
-| All pass | Reach problem; phrasing closes it | Specify variant B and shelve the design below |
+| Result | Consequence |
+|---|---|
+| Phases 1, 2 and 3 all pass, including the final answer | Alias enrichment is sufficient **for this failure class**. Specify variant B; shelve the design below |
+| Anything else — fail, partial, or inconclusive at any phase | Alias enrichment is not proven sufficient. Routes and a person-level projection remain open, and this experiment does not rank them: it tested neither |
+
+The second row is the one worth stating plainly. A deterministic incoming-mention
+route can succeed exactly where a generative alias fails, so an alias failure is
+not evidence for a person projection. Choosing between those two needs its own
+comparison, on its own evidence.
 
 ### Limits
 
 This tests one entry against two questions — the relational phrasing and the
 bare kinship term, which behaved differently in the probes. A clean result
-means "this failure class, this entry", not "alias enrichment is sufficient".
+means "this failure class, this entry", not "alias enrichment is sufficient" in
+general.
 
-The sandbox will not carry the operator's model-group bindings, so Phase 2
-measures retrieval **candidacy** rather than the full recall-filter decision.
-That is the right measurement here — the failure is that the entry never
-becomes a candidate — but a pass shows the door opens, not that the filter
-keeps it.
-
-**Record the outcome in this document before building anything below.** It is
-the premise the rest rests on.
+**Record the outcome in this document before building anything below.**
 
 ---
 
@@ -193,12 +201,25 @@ A separate `_normalize_subject` is required: casefold, remove internal
 whitespace and punctuation, preserve non-ASCII letters. `Ada Lovelace` and
 `adalovelace` collapse to one key; `Kjeld Åström` and `kjeldåström` likewise.
 
-An entry's subject keys come from its **last path segment**, which is already a
-slug. Registered questions are *not* subject keys — normalising "Who is Ada
+Registered questions are *not* subject keys — normalising "Who is Ada
 Lovelace?" yields `who is ada lovelace`, which matches no extracted token.
-Where a path segment is a poor subject (an event, a place, a topic), the
-registry gains an optional `subjects: [...]` field the operator can set; absent
-it, the path segment stands alone.
+
+The last path segment is a usable subject for `human.family.<adult>` and a
+misleading one for `human.<person>.health`, whose final segment is `health`. An
+optional override would let those entries silently become "about health"
+whenever the operator did not anticipate the problem. So:
+
+- The registry gains a `subjects: [...]` field, **required for an entry to be
+  graph-eligible**. An entry without it is skipped by generation and listed on
+  the developer page as ineligible, with its inferred segment shown.
+- The loader validates: a list of non-empty strings, normalised at load, with
+  a collision between two entries' subject keys reported rather than silently
+  resolved to one owner. Subject state is part of the KB cache and is
+  invalidated by `sync_kb` like the rest.
+
+This trades operator effort for the absence of silent, invisible failure. The
+alternative — inferring subjects per namespace — needs a rule per namespace
+shape and fails the same way the first time a new shape appears.
 
 Mention extraction is capitalisation-based with a stop-list, multi-word
 longest-first, and deliberately recall-oriented: a token resolving to no
@@ -228,9 +249,13 @@ same_subject                                    (symmetric)
 narrower            / broader                   (path descent)
 ```
 
-The edge also carries a **reviewed one-line summary** of what the destination
-offers — written by the typing model, corrected or replaced by the operator at
-review. This is the evidence the route scorer needs; a path plus a label is too
+The edge carries a **reviewed one-line summary per direction**, `summary_ab`
+and `summary_ba`. One summary cannot serve both: the edge is bidirectional and
+each direction has a different destination, so a single field would describe
+the wrong entry for one of them. Each is written by the typing model and
+corrected or replaced by the operator at review.
+
+This is the evidence the route scorer ranks against. A path plus a label is too
 little to judge a route against a question, and the target's answer itself
 cannot be shown to the scorer without leaking unfiltered content.
 
@@ -245,27 +270,64 @@ entries, and nothing here rewrites the registry.
 
 ## Route scoring has its own policy
 
-Routes are scored against the current query before any are surfaced. Scoring
-must **not** reuse `apply_filter_scores`
+Routes are scored against the current query before any are surfaced. This is
+the gate that decides whether private target metadata is exposed and whether an
+unfiltered full-entry read becomes reachable, so it is specified to the same
+depth as the follow-up proposal's validator rather than named as a future
+function.
+
+Scoring must **not** reuse `apply_filter_scores`
 ([agents/query_filter_router.py](../../agents/query_filter_router.py)): with
-fewer than `TOP_K_FILTER` candidates that function sets `kept=True` for every
-candidate regardless of score. That behaviour is correct for recall — an
-over-aggressive scorer must not empty a small result set — and wrong here,
-where the ordinary case is two or three routes and keeping them all is exactly
-the failure requirement 2 exists to prevent.
+fewer than `TOP_K_FILTER` candidates it sets `kept=True` for every candidate
+regardless of score. That is correct for recall — an over-aggressive scorer
+must not empty a small result set — and fatal here, where two or three routes
+is the ordinary case and keeping them all is the failure the gate exists to
+prevent.
 
-`apply_route_policy` is absolute and fail-closed:
+**Input.** One row per route: target path, direction label with its role, and
+that direction's reviewed summary. Never the target's answer. Bounded by a
+fixed character limit; over it, the lowest-weight routes are dropped before the
+call rather than truncated inside it.
 
-- A route is surfaced only if its relevance to the query meets a fixed
-  threshold. There is no small-list exemption.
-- Scoring input is the target path, the direction label with its role, and the
-  reviewed summary.
-- If the scorer is unavailable, times out, or errors, **no routes are
-  surfaced**. Degrading to "show everything" would defeat the gate; degrading
-  to silence costs only the feature.
-- One call per turn, and only when a kept entry has at least one edge. Bound by
-  the same timeout budget as the recall filter, on the same locally bound
-  model.
+**Schema.** Strict, `extra="forbid"`:
+
+```text
+RouteDecision
+- items[]
+  - route_id          echoed; unknown or duplicate ids are discarded
+  - answers_query     1..5, anchored: 1 = a different subject entirely,
+                      5 = this destination is what the question asks for
+```
+
+A single anchored dimension, deliberately. The recall filter's three scales
+exist to separate direct answers from useful context, and *context* is exactly
+what must not be surfaced here: a route that is merely topically adjacent is
+the health-and-projects noise requirement 2 rules out. Indirect relevance is
+never sufficient.
+
+**Policy.** `apply_route_policy` is absolute and admits no small-list
+exemption: a route is surfaced only at `answers_query >= ROUTE_KEEP_THRESHOLD`,
+initially 4, carried by `ROUTE_POLICY_VERSION`. Any threshold change increments
+that version.
+
+**Model.** A dedicated `route_scorer` binding, not the `memory_filter` group —
+that group may legitimately contain remote members, and this call sees paths
+and summaries for entries the recall filter did not retrieve. Policy validation
+**rejects any non-local member** at configuration time rather than at call
+time.
+
+**Failure is closed.** Scorer unavailable, timed out, over its input limit, or
+returning an unparseable result surfaces **no routes**. Degrading to "show
+everything" defeats the gate; degrading to silence costs only the feature.
+
+**Calibration.** A fixture set of fictional routes with expected verdicts, run
+before adopting a different scorer model, on the same discipline as the recall
+filter's. Anchored endpoints are what make the absolute threshold portable
+between models; the fixtures are what prove it did port.
+
+**Cost.** One call per turn, and only when a kept entry has at least one edge.
+Same timeout budget as the recall filter. A turn that surfaces no routes makes
+no call.
 
 Surviving routes render as:
 
@@ -285,17 +347,33 @@ it does.
 
 ## Following a route
 
-Only reviewed edges are surfaced, so the untruncated read is of an
-operator-approved destination. Two further constraints:
+Surfacing a route mints an opaque single-use **`route_token`** and shows it
+beside the key. Following is `memory_query {"route_token": "..."}`, and the
+token binds:
 
-- The step that surfaces routes records their uuids in its observation data.
-  A follow is honoured only when its uuid was surfaced by the immediately
-  preceding step in the same run — the same binding the follow-up proposal uses
-  for hint adoption. A model-supplied uuid that no route offered is an ordinary
-  `memory_query`, not a route follow.
-- Serving *unreviewed* routes would require `_query_memory_full` to carry the
-  originating query and apply a relevance decision before returning. That work
-  is a precondition of soft-gating, not an optimisation.
+```text
+run uuid + surfacing step uuid
+directional edge decision (pair, direction, endpoint hashes)
+the query it was scored against
+target uuid
+```
+
+The server resolves the token, re-checks that the decision is still current and
+both endpoints still visible, then returns the target. A token is spent once.
+
+The weaker rule — "honour a uuid the preceding step surfaced" — was considered
+and does not gate anything. `memory_query {"uuid": ...}` still returns the full
+entry unfiltered, so a uuid held from an earlier step or an earlier turn reaches
+the same content with no route scoring involved. That rule distinguishes
+telemetry, not authorisation.
+
+Plain uuid mode stays as the escape hatch for reading a fact already recalled
+in full. It is not the route-follow protocol, and routes are not reachable
+through it.
+
+Serving *unreviewed* routes would additionally require `_query_memory_full` to
+carry the originating query and apply a relevance decision before returning.
+That work is a precondition of soft-gating, not an optimisation.
 
 The decide prompt gains one line: when the answer concerns someone reached
 through another entry, check the related keys before reporting that nothing is
@@ -321,68 +399,90 @@ that needs a pair no generator produced is a generator gap, and belongs in the
 gap report rather than in the review loop.
 
 A human decision is monotonic **for the content it was made against**. A re-run
-may propose, suggest a relabel, and mark stale; it may not move a kept edge
-back to pending or revive a rejected pair under unchanged content. If either
-endpoint's hash changes, the decision no longer applies to the text that
-exists, and the pair becomes proposable again.
+may propose candidates and suggest a relabel; it may not move a kept edge back
+to pending or revive a rejected pair under unchanged content, and it writes to
+the decision table never. If either endpoint's hash changes, the decision stops
+being servable by computation — no transition is written — and the pair becomes
+proposable again, because the text the operator judged no longer exists.
 
 ## Storage
 
 ```text
+qa_edge_generation                one row per (touched entry, inputs)
+- source_qa_id
+- source_sha            runtime row hash of the touched entry
+- index_fingerprint     digest of the subject-index and sibling state used
+- generator_version
+- state                 running | complete | failed
+- candidate_count       0 is a real, durable result
+- locked_at             per-entry advisory lock, pg_advisory_xact_lock on
+                        source_qa_id
+- started_at, finished_at, error_code
+UNIQUE (source_qa_id, source_sha, index_fingerprint, generator_version)
+
 qa_edge_candidate
-- pair_key           HMAC-SHA256 over the CANONICAL endpoint order
-                     (uuids sorted), domain "qa-edge-pair"
-- endpoint_a, endpoint_b       stored in canonical order
-- bases              JSONB list of {generator, detail}
-- sha_a, sha_b       runtime row hashes at proposal time
-- index_fingerprint  digest of the subject-index and sibling state this
-                     candidate set was derived from
-- label_ab, label_ba, role     null before typing
-- summary            one line from the typing model
-- typing_verdict     typed | unrelated
+- generation_id         FK -> qa_edge_generation, ON DELETE CASCADE
+- pair_key              digest over the CANONICAL endpoint order
+- endpoint_a, endpoint_b        stored in canonical order
+- bases                 JSONB list of {generator, detail}
+- sha_a, sha_b          runtime row hashes at proposal time
+- label_ab, label_ba, role      null before typing
+- summary_ab, summary_ba
+- typing_verdict        typed | unrelated
 - typed_by_uuid, policy_version
 - queued_at
 
 qa_edge_decision
 - pair_key
-- sha_a, sha_b       the hashes the decision was made against
-- status             kept | rejected
-- label_ab, label_ba, role, summary    as approved
+- sha_a, sha_b          the hashes the decision was made against
+- status                kept | rejected
+- label_ab, label_ba, role, summary_ab, summary_ba    as approved
 - reviewed_by, reviewed_at, review_note
 - created_at
 UNIQUE (pair_key, sha_a, sha_b)
 ```
 
-Identity is the **canonical** pair, so the same logical edge discovered from
-either endpoint is one row. Without that, `HMAC(a,b)` and `HMAC(b,a)` are
-different keys, demand from the two endpoints creates duplicates with reversed
-labels, and a rejection in one orientation fails to block the other.
+**The generation row is what makes "current" answerable.** Without it, an entry
+whose honest result is *no candidates* has nothing to distinguish "generated,
+found none" from "never generated", so it regenerates on every query; a crash
+midway leaves partial candidates that look complete; and two assistant runs can
+generate the same source concurrently. The row carries the completeness the
+fingerprint describes, which is why the fingerprint belongs on the attempt
+rather than on its results. A per-entry advisory lock — the same
+`pg_advisory_xact_lock` pattern already used in `db/memory.py` — makes the
+attempt single-flight.
 
-Decisions are **per content revision**, which is why they are a separate table
-keyed on the endpoint hashes. A rejection under the old text is retained for
-audit while a new candidate and a new decision exist under the new text; a
-single row keyed on the pair alone cannot hold both.
+Identity is the **canonical** pair, endpoints sorted, so the same logical edge
+discovered from either endpoint is one row and a rejection blocks both
+orientations. `pair_key` is a plain domain-separated digest over those two
+columns, **not** an HMAC: the endpoint columns are already stored, so keying
+adds no protection against a database reader while making every pair identity
+and tombstone dependent on the Flask `SECRET_KEY` surviving rotation.
 
-`index_fingerprint` exists because candidate output depends on more than the
-source entry. Adding a sibling, renaming another entry's path, or adding a
-subject alias changes what the generators would produce while the touched
-entry's own hash is unchanged. A candidate set whose fingerprint is stale is
-recomputed on the next demand event.
+Decisions are **per content revision**, which is why they are their own table
+keyed on endpoint hashes. A rejection under the old text is retained for audit
+while a new candidate and decision exist under the new text.
 
-Generation writes only to `qa_edge_candidate`; review is the sole writer of
-`qa_edge_decision`. A re-run may add candidates and mark decisions stale. It
-may not delete a kept decision. A graph rebuilt wholesale on sync — no
-per-element lifecycle, no approver recorded — cannot demonstrate that any human
-reviewed it, and the property is worth asserting across a full regeneration
-*and* an index rebuild.
+**Staleness is derived, not stored.** A decision is servable only while
+`sha_a`/`sha_b` match current runtime hashes and both endpoints are visible;
+otherwise it is stale by computation. There is no stale *transition* and
+generation never writes to the decision table — a re-run may add candidates,
+and it may not delete a kept decision or revive a rejected pair under unchanged
+content. A graph rebuilt wholesale on sync, with no per-element lifecycle and
+no approver recorded, cannot demonstrate that any human reviewed it; the
+property is worth asserting across a full regeneration *and* an index rebuild.
 
-An edge serves only while both endpoint hashes match current runtime hashes and
-both endpoints are visible. Deletion or a shield lock hides it immediately.
+Deletion or a shield lock hides an edge immediately.
 
-Both tables live in `db/models.py`, created by `init_db`, with `status`,
-`typing_verdict` and the label vocabulary enforced by CHECK constraints.
-RainBox already has active/candidate flows, rejected-value tombstones and a
-review UI for claims; edge review reuses those states and that idiom.
+All three tables live in `db/models.py`, created by `init_db`, with `state`,
+`status`, `typing_verdict` and the label vocabulary enforced by CHECK
+constraints. RainBox already has active/candidate flows, rejected-value
+tombstones and a review UI for claims; edge review reuses those states and that
+idiom.
+
+**Dynamic entries are excluded.** Handler-backed entries have no static answer
+to scan, and neither generation nor typing may invoke a handler to obtain
+material. They are ineligible as sources and, in this version, as targets.
 
 ## Privacy
 
@@ -390,6 +490,12 @@ The typing model receives entry content, which here means the operator's
 private overlay: it must be explicitly bound and local, prompts and logs never
 record raw entry text, an unshielded source is typed only against unshielded
 targets, and cross-shield edges are refused.
+
+Shield visibility binds the whole pipeline, not only the final scoring step. A
+locked entry must not leak through a candidate's `bases`, through an
+`unrelated` row on the developer page, through a summary, or through a count —
+the index is built over visible entries for the acting shield set, and every
+inspection surface re-checks at read time.
 
 The **route scorer** is a second, repeated disclosure and needs stating
 separately. It runs on live turns, and it sees target paths and summaries for
@@ -407,24 +513,38 @@ the read-path work are unaffected.
 
 ## Telemetry
 
-`RetrievalEvent` with `target_type="qa_edge"`:
+`RetrievalEvent` currently constrains `target_type IN ('qa_entry',
+'memory_claim','skill')` and `stage` to a fixed list
+([db/models.py](../../db/models.py)), so `qa_edge` and a dead-end stage raise
+`IntegrityError` today. This needs a guarded constraint migration — the model
+declaration for fresh databases and the drop/recreate block in `db/__init__.py`
+for existing ones — and it belongs in the delivery step that first writes an
+event, not in a later one.
 
-- `considered` — a route was surfaced. Recorded from the step's observation
-  data.
-- `used` — the next `memory_query` in the same run read a uuid that step
-  surfaced. Computable because the surfacing step records the uuids.
+Events target the **decision revision**, `(pair_key, sha_a, sha_b)`, not the
+pair alone. Keying on the pair would pool events from before and after a
+content change into one series, which is precisely when route quality is most
+likely to have changed.
+
+- `considered` — a route was surfaced. Written from the surfacing step's
+  observation data.
+- `used` — a `route_token` minted by that step was redeemed. Exact, because the
+  token is single-use and carries the step uuid.
 
 Nothing further is claimed. `accepted` is not reused: it is defined against a
-recall-filter decision and the uuid read makes none. A `resolved` signal would
+recall-filter decision and the route read makes none. A `resolved` signal would
 require knowing which memories a reply drew on, and replies carry no citation
 structure — inferring it from reply text is not a measurement. If route utility
 needs a stronger signal than `used`, reply-level provenance has to be built
-first, and that is a separate piece of work.
+first, as its own work.
 
-The **dead end** signal is an explicit action, not an inference: the assistant
-may mark a followed route unhelpful, writing one row with the route's
-`pair_key` and the step uuid. Dead-end counts order the review queue for
-re-review. They change no edge's status.
+**Dead end** is an explicit action, `mark_route_dead_end`, with args
+`{"route_token": "..."}`. It is accepted only for a token redeemed earlier in
+the same run, so the assistant cannot mark a route it never followed. It writes
+one `RetrievalEvent` at `stage="dead_end"` against the decision revision, with
+the acting agent as actor, deduplicated per (run, revision), and FIFO-bounded
+like the other streams. Dead-end counts order the review queue for re-review;
+they change no edge's status.
 
 Telemetry may order the generation and review queues. It may never change an
 edge's status, or a recurring query certifies its own routes.
@@ -444,14 +564,33 @@ Then:
 
 - The inverted index yields the elder from the adult; a generator reading only
   the adult's answer yields nothing, and the test asserts both.
+- A source whose honest result is zero candidates records a complete generation
+  with `candidate_count = 0`, and a second demand event for unchanged inputs
+  does not regenerate it.
+- A generation interrupted mid-write is not servable and does not read as
+  complete; the next demand event redoes it.
+- Two concurrent demand events for one source produce one generation.
+- An entry without a `subjects` field is ineligible and reported, never treated
+  as being about its last path segment.
+- Two entries whose subject keys collide are reported rather than resolved
+  silently to one owner.
+- A dynamic entry is skipped, and no handler is invoked during generation or
+  typing.
 - A candidate set is recomputed when the subject index or sibling set changes,
   even though the source entry's hash is unchanged.
 - Two or three routes are scored and only the relevant one is surfaced —
-  asserted against the route policy directly, since the recall filter's
+  asserted against `apply_route_policy` directly, since the recall filter's
   small-list keep-all would pass all of them.
-- Route scoring unavailable surfaces no routes.
-- A route whose uuid was not surfaced by the preceding step is not treated as a
-  follow.
+- A route scoring below the threshold is not surfaced even when it is the only
+  route for that source.
+- Route scoring unavailable, timed out, or unparseable surfaces no routes.
+- A `route_scorer` group containing a non-local member is rejected at
+  configuration time.
+- A `route_token` is single-use, bound to its run, step, decision revision and
+  query; a replayed or foreign token is refused.
+- A plain uuid read cannot reach a route that scoring did not surface.
+- Each direction is scored against its own summary, and the summary written for
+  the opposite destination is never used.
 - `_normalize_subject` maps a spaced, capitalised, non-ASCII name to a
   concatenated lowercase slug, and is distinct from `_normalize_query`.
 - A token resolving to two subjects produces two candidates; one resolving to
@@ -468,11 +607,30 @@ Then:
   with its reviewer and reason.
 - `related_keys` carries key names and uuids only, respects the caps, and a
   path containing fence-like text cannot forge structure.
-- `considered` and `used` are recorded; neither changes an edge's status.
+- `considered` and `used` are recorded against the decision revision, and
+  neither changes an edge's status.
+- The `RetrievalEvent` constraint migration accepts `qa_edge` and `dead_end` on
+  both a fresh database and an upgraded one, while still rejecting unknown
+  values.
+- `mark_route_dead_end` is refused for a token the run never redeemed, and is
+  deduplicated per run and revision.
 - Developer-page probes write no live telemetry.
 
 ## Considered and declined
 
+- **A single summary per edge.** The edge is bidirectional and each direction
+  has a different destination, so one field would hand the scorer evidence
+  about the wrong entry half the time.
+- **Honouring any uuid the preceding step surfaced.** Plain uuid mode returns
+  the full entry unfiltered, so a uuid held from an earlier step or turn
+  reaches the same content ungated. That rule is telemetry, not authorisation;
+  a single-use `route_token` is.
+- **An optional `subjects` field.** Entries like `human.<person>.health` would
+  silently become about `health`. Requiring it for graph eligibility trades
+  operator effort for the absence of an invisible failure.
+- **HMAC for pair identity.** The endpoint columns are stored anyway, so keying
+  adds no protection from a database reader while tying every pair identity and
+  tombstone to `SECRET_KEY` surviving rotation.
 - **Reusing `apply_filter_scores` for routes.** Its small-list keep-all is
   correct for recall and fatal here: the ordinary route case is two or three
   candidates, all of which it keeps regardless of score.
@@ -510,17 +668,20 @@ Then:
 
 0. **Run the experiment.** Record the outcome above. Three of its four results
    stop the work here or redirect it.
-1. The inverted mention index and `_normalize_subject`, as pure functions over
-   a loaded registry. Unit-tested against fixtures with spaced, slugged and
-   non-ASCII names. Nothing stored.
-2. The two tables, demand-driven candidate materialisation after a kept recall,
-   and the typing call. Inspectable on `/memory/developer`. Nothing served.
+1. The `subjects` field with loader validation, the inverted mention index and
+   `_normalize_subject`, as pure functions over a loaded registry. Unit-tested
+   against fixtures with spaced, slugged and non-ASCII names. Nothing stored.
+2. The three tables, the generation row with its lock and durable empty
+   completion, demand-driven materialisation after a kept recall, and the
+   typing call. Inspectable on `/memory/developer`. Nothing served.
 3. The review queue: keep / reject / relabel / defer / bulk / hint.
-4. `apply_route_policy`, route scoring, and the `related_keys` block behind a
-   setting. The lifecycle acceptance test passes here or the feature does not
-   ship.
-5. Telemetry and the dead-end action, then a go/no-go on evidence of `used`
-   against a stated threshold.
+4. The `route_scorer` binding with its local-only validation, its calibration
+   fixtures, `apply_route_policy`, the `route_token`, and the `related_keys`
+   block behind a setting. The lifecycle acceptance test passes here or the
+   feature does not ship.
+5. The `RetrievalEvent` constraint migration, `considered`/`used`, and
+   `mark_route_dead_end`, then a go/no-go on evidence of `used` against a
+   stated threshold.
 
 Steps 1 and 2 are inert and cheap. Step 4 is where the design either works
 against the live registry or is abandoned.
