@@ -105,6 +105,54 @@ def test_matched_question_is_the_best_overlapping_one(kb):
     assert ranked[0].matched_question == "Demoscene / computer parties"
 
 
+def test_entry_corpus_is_tokenized_once_across_queries(kb, monkeypatch):
+    """The corpus side of the index (per-entry tokens + document frequencies)
+    does not depend on the query, so a second query must tokenize only itself."""
+    from memory import retrieval
+
+    real_tokenize = retrieval._tokenize
+    calls: list[str] = []
+
+    def counting(text):
+        calls.append(text)
+        return real_tokenize(text)
+
+    monkeypatch.setattr(retrieval, "_tokenize", counting)
+    _fulltext_ranked("demoscene parties")
+    assert len(calls) > 1, "first query must tokenize the entry corpus"
+    calls.clear()
+    _fulltext_ranked("food allergy")
+    assert calls == ["food allergy"]
+
+
+def test_index_rebuilds_when_the_registry_is_replaced(kb, monkeypatch):
+    """rebuild_kb/sync_kb swap in a fresh registry; the cached index must not
+    outlive it or every query answers from the old JSONL."""
+    _fulltext_ranked("demoscene")
+    monkeypatch.setattr(qkb, "_entries_by_id", {
+        "qa-backup": {"kind": "static", "path": "system.backup",
+                      "questions": ["Backup schedule"], "answer": ""},
+    })
+    assert [m.qa_id for m in _fulltext_ranked("backup")] == ["qa-backup"]
+
+
+def test_index_rebuilds_when_a_shield_is_unlocked(monkeypatch):
+    """Document frequencies are computed over the visible entries only, so the
+    index is per unlocked-shield set — a Settings toggle takes effect on the
+    next query, with no repopulate."""
+    monkeypatch.setattr(qkb, "_entries_by_id", {
+        "qa-open": {"kind": "static", "path": "system.backup",
+                    "questions": ["Backup schedule"], "answer": ""},
+        "qa-shielded": {"kind": "static", "path": "private.notes",
+                        "shield": "locked.topic",
+                        "questions": ["Private diary"], "answer": ""},
+    })
+    monkeypatch.setattr(qkb, "_unlocked_shields", lambda: set())
+    assert _fulltext_ranked("diary") == []
+    monkeypatch.setattr(qkb, "_unlocked_shields", lambda: {"locked.topic"})
+    assert [m.qa_id for m in _fulltext_ranked("diary")] == ["qa-shielded"]
+
+
 def test_hybrid_interleaves_both_signals(kb, monkeypatch):
     monkeypatch.setattr(qkb, "_semantic_ranked", lambda q, vs, **_: [
         Match(qa_id="qa-name", method="semantic", score=0.9, matched_question="Who is Simon?"),

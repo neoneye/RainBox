@@ -813,13 +813,67 @@ TOP_K_FULLTEXT: int = 5
 _FULLTEXT_QUESTION_BOOST: float = 2.0
 
 
+# (qa_id, [(question, its tokens)...], union of question tokens, answer tokens)
+_FulltextDoc = tuple[str, list[tuple[str, set[str]]], set[str], set[str]]
+# (the registry it was built from, its unlocked shields, docs, idf) — see
+# _fulltext_index for why the registry object itself is the cache key.
+_fulltext_index_cache: tuple[
+    dict[str, dict[str, Any]], frozenset[str], list[_FulltextDoc], dict[str, float]
+] | None = None
+
+
+def _fulltext_index(
+    unlocked: set[str],
+) -> tuple[list[_FulltextDoc], dict[str, float]]:
+    """The query-independent half of `_fulltext_ranked`: every visible entry
+    tokenized, plus the IDF table over that document set. Cached, because
+    nothing here varies with the query — only the query's own tokenization does.
+
+    The cache key is the *identity* of the `_entries_by_id` dict plus the
+    unlocked-shield set, which needs no invalidation hooks at the write sites:
+    the registry is only ever replaced wholesale (`_load_kb`, `rebuild_kb`,
+    `_sync_locked` all rebind it, never mutate in place), so a new registry is
+    a new object and misses. Holding the reference is what makes `is` sound —
+    the old dict cannot be freed and have its id recycled under us. Shields are
+    part of the key because locked entries are excluded from the document set,
+    so document frequencies differ per unlocked set (and hidden entries must
+    not leak into visible scores); a Settings toggle therefore takes effect on
+    the next query."""
+    global _fulltext_index_cache
+    key = frozenset(unlocked)
+    cached = _fulltext_index_cache
+    if cached is not None and cached[0] is _entries_by_id and cached[1] == key:
+        return cached[2], cached[3]
+
+    from math import log
+
+    from memory.retrieval import _tokenize
+
+    docs: list[_FulltextDoc] = []
+    df: dict[str, int] = {}
+    for qa_id, entry in _entries_by_id.items():
+        if _entry_locked(entry, unlocked):
+            continue
+        per_question = [(q, _tokenize(q)) for q in (entry.get("questions") or [])]
+        q_tokens: set[str] = set().union(*(t for _, t in per_question), set())
+        a_tokens = _tokenize(str(entry.get("answer") or ""))
+        docs.append((qa_id, per_question, q_tokens, a_tokens))
+        for tok in q_tokens | a_tokens:
+            df[tok] = df.get(tok, 0) + 1
+    n_docs = len(docs)
+    idf = {tok: log(1.0 + n_docs / count) for tok, count in df.items()}
+    _fulltext_index_cache = (_entries_by_id, key, docs, idf)
+    return docs, idf
+
+
 def _fulltext_ranked(query: str, *,
                      unlocked_shields: set[str] | None = None) -> list[Match]:
     """Lexical ranking over the in-memory registry: IDF-weighted token overlap
     against every entry's questions AND answer text (answers live only in the
-    registry — the vector store indexes questions). The KB is small (a few
-    hundred entries), so scoring it per query in Python is cheap and works
-    with the embedding server down.
+    registry — the vector store indexes questions). Works with the embedding
+    server down. The tokenized corpus and its IDF table come from
+    `_fulltext_index` (built once per registry); a query costs only its own
+    tokenization plus a scan of the entries.
 
     `Match.score` is IDF-weighted QUERY COVERAGE in 0..1 — an absolute
     measure, not max-normalized (max-normalizing handed the best hit a
@@ -838,22 +892,9 @@ def _fulltext_ranked(query: str, *,
     if not query_tokens or not _entries_by_id:
         return []
     unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
-
-    # (qa_id, [(question, its tokens)...], union of question tokens, answer tokens)
-    docs: list[tuple[str, list[tuple[str, set[str]]], set[str], set[str]]] = []
-    df: dict[str, int] = {}
-    for qa_id, entry in _entries_by_id.items():
-        if _entry_locked(entry, unlocked):
-            continue
-        per_question = [(q, _tokenize(q)) for q in (entry.get("questions") or [])]
-        q_tokens: set[str] = set().union(*(t for _, t in per_question), set())
-        a_tokens = _tokenize(str(entry.get("answer") or ""))
-        docs.append((qa_id, per_question, q_tokens, a_tokens))
-        for tok in q_tokens | a_tokens:
-            df[tok] = df.get(tok, 0) + 1
+    docs, idf = _fulltext_index(unlocked)
 
     n_docs = len(docs)
-    idf = {tok: log(1.0 + n_docs / count) for tok, count in df.items()}
     # A query token absent from the whole KB is "rarest possible" (df would be
     # 1 on first appearance) — it weighs into the coverage denominator so an
     # entry can't score 1.0 on a query the KB only half-covers.
