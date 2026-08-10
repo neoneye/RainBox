@@ -133,7 +133,7 @@ def _capture_decides(agent, decisions):
     prompts = []
 
     def fake_completion(*, system_prompt, user_prompt, response_model,
-                        validator=None):
+                        validator=None, **_kw):
         assert queue, "more decide calls than scripted"
         prompts.append({"system": system_prompt, "user": user_prompt})
         return queue.pop(0)

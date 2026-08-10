@@ -74,15 +74,28 @@ class TestRecordLlmCall:
 
 class TestRecentThroughputs:
     def test_throughput_is_tokens_per_second_of_prefill(self, model):
-        add_call(model, prompt_tokens=2000, prefill_ms=1000)
-        assert db.recent_throughputs(model) == [2000.0]
+        add_call(model, prompt_tokens=2000, prefill_ms=1000,
+                 reusable_prefix_tokens=0)
+        assert db.recent_throughputs(model) == [(2000.0, 0.0)]
+
+    def test_the_reuse_fraction_rides_along(self, model):
+        """cold_rate needs it to tell a cold measurement from a warm one."""
+        add_call(model, prompt_tokens=1000, prefill_ms=500,
+                 reusable_prefix_tokens=900)
+        assert db.recent_throughputs(model) == [(2000.0, 0.9)]
+
+    def test_an_unmeasured_prefix_leaves_the_fraction_unknown(self, model):
+        add_call(model, prompt_tokens=1000, prefill_ms=500,
+                 reusable_prefix_tokens=None)
+        assert db.recent_throughputs(model) == [(2000.0, None)]
 
     def test_rows_without_timing_are_skipped(self, model):
         """An OpenAI-compat provider reports no prefill duration at all, so
         those calls can be counted but can't inform a cold baseline."""
         add_call(model, prefill_ms=None)
-        add_call(model, prompt_tokens=1000, prefill_ms=500)
-        assert db.recent_throughputs(model) == [2000.0]
+        add_call(model, prompt_tokens=1000, prefill_ms=500,
+                 reusable_prefix_tokens=0)
+        assert db.recent_throughputs(model) == [(2000.0, 0.0)]
 
     def test_a_zero_prefill_is_skipped_rather_than_dividing_by_zero(self, model):
         add_call(model, prefill_ms=0)
@@ -103,7 +116,13 @@ class TestRecentThroughputs:
     def test_another_models_calls_are_not_borrowed(self, model):
         add_call(model)
         add_call(f"{model}-other", prompt_tokens=9999, prefill_ms=1)
-        assert all(t < 5000 for t in db.recent_throughputs(model))
+        try:
+            assert all(t < 5000 for t, _reuse in db.recent_throughputs(model))
+        finally:
+            db.db.session.query(LlmCall).filter(
+                LlmCall.model == f"{model}-other"
+            ).delete(synchronize_session=False)
+            db.db.session.commit()
 
 
 class TestRecentPrefixChains:
@@ -280,20 +299,14 @@ class TestRollup:
         assert row["p50_latency_ms"] == pytest.approx(300, abs=1)
         assert row["p90_latency_ms"] >= row["p50_latency_ms"]
 
-    def test_seconds_saved_uses_the_models_own_cold_rate(self, model):
-        """Time saved is the whole point of the cache; it has to be measured
-        against how slowly this model actually prefills, not a constant."""
-        # 20 cold calls at 1000 tok/s establish the baseline.
-        for i in range(20):
-            add_call(
-                model,
-                started_at=NOW - timedelta(seconds=i),
-                prompt_tokens=1000,
-                prefill_ms=1000,
-                cached_tokens_estimated=0,
-            )
-        add_call(model, prompt_tokens=2000, prefill_ms=10,
-                 cached_tokens_estimated=2000)
+    def test_seconds_saved_sums_what_each_call_banked(self, model):
+        """Each row records the prefill time it avoided, judged against its
+        model's cold rate at the time. The rollup sums those rather than
+        re-deriving them, so a saving already banked doesn't shift when the
+        baseline moves."""
+        add_call(model, saved_ms=2000)
+        add_call(model, saved_ms=500)
+        add_call(model, saved_ms=None)  # never judged; contributes nothing
         row = next(
             r
             for r in db.activity_rollup(
@@ -304,8 +317,7 @@ class TestRollup:
             )
             if r["key"] == model
         )
-        # 2000 cached tokens at ~1000 tok/s cold ≈ 2 seconds not spent.
-        assert row["seconds_saved"] == pytest.approx(2.0, abs=0.5)
+        assert row["seconds_saved"] == pytest.approx(2.5)
 
     def test_calls_with_no_cache_verdict_are_counted_separately(self, model):
         """A model still calibrating produces rows with no cache verdict at

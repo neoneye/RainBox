@@ -329,7 +329,7 @@ def test_ranked_markdown_is_injected_into_every_later_decide_without_scores(room
     ]
 
     def fake_completion(*, system_prompt, user_prompt, response_model,
-                        validator=None):
+                        validator=None, **_kw):
         decide_prompts.append({
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,

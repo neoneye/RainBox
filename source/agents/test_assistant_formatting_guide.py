@@ -71,7 +71,8 @@ def _run_capture(room):
                            send=lambda _: None)
     captured = {}
 
-    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None):
+    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None,
+                        **_kw):
         captured["system_prompt"] = system_prompt
         captured["user_prompt"] = user_prompt
         return AssistantStepDecision(
@@ -295,7 +296,8 @@ def _run_scripted(room, decisions):
     prompts = []
     remaining = list(decisions)
 
-    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None):
+    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None,
+                        **_kw):
         prompts.append(user_prompt)
         return remaining.pop(0)
 

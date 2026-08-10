@@ -299,7 +299,8 @@ def test_decide_next_step_calls_structured_completion_with_decision_model(app_ct
     agent = _agent()
     captured: dict = {}
 
-    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None):
+    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None,
+                        **_kw):
         captured["system_prompt"] = system_prompt
         captured["user_prompt"] = user_prompt
         captured["response_model"] = response_model

@@ -159,6 +159,24 @@ class TestCalibratingState:
             assert model not in body[marker : marker + 400]
 
 
+class TestCallerPanel:
+    """Attribution is the panel that turns the dashboard from interesting
+    into actionable, so it is always on screen."""
+
+    def test_the_caller_panel_shows_without_switching_the_grouping(
+        self, client, model
+    ):
+        add_call(model, caller="unit-test.caller")
+        body = client.get("/activity?range=24h&by=model").get_data(as_text=True)
+        assert "By caller" in body
+        assert "unit-test.caller" in body
+
+    def test_it_is_not_printed_twice_when_already_selected(self, client, model):
+        add_call(model, caller="unit-test.caller")
+        body = client.get("/activity?range=24h&by=caller").get_data(as_text=True)
+        assert body.count("By caller") == 1
+
+
 class TestEstimateHonesty:
     def test_the_page_says_the_cached_band_is_an_estimate(self, client, model):
         """Local backends report no cache field, so the orange band is

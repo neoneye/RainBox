@@ -124,28 +124,78 @@ class TestPercentile:
         assert percentile([1.0, 2.0, 3.0], 100) == 3.0
 
 
+def cold(throughput, n=1):
+    """Samples from calls with nothing to reuse — necessarily cold."""
+    return [(throughput, 0.0)] * n
+
+
+def warm(throughput, n=1):
+    """Samples from calls whose prompt almost entirely repeated an earlier
+    one, so the runtime had every opportunity to serve them from cache."""
+    return [(throughput, 0.99)] * n
+
+
 class TestColdRate:
     def test_too_few_samples_means_we_admit_we_dont_know(self):
         """Reporting a hit rate off three calls would be a confident guess.
         The page says 'calibrating' instead, and that starts here."""
-        assert cold_rate([1000.0] * (MIN_CALIBRATION_CALLS - 1)) is None
+        assert cold_rate(cold(1000.0, MIN_CALIBRATION_CALLS - 1)) is None
 
-    def test_enough_samples_yields_the_slow_tail(self):
-        # 19 fast (cached) calls and 20 slow (cold) ones: the cold baseline
-        # must come from the slow end, not the average.
-        samples = [80_000.0] * 19 + [1_000.0] * 20
-        rate = cold_rate(samples)
+    def test_calls_with_nothing_to_reuse_define_the_baseline(self):
+        """A prompt that repeats nothing rainbox sent before *cannot* have
+        been served from cache, whatever the runtime did. Those calls are
+        cold by construction, which makes them the trustworthy sample — no
+        clustering guesswork required."""
+        rate = cold_rate(warm(90_000.0, 20) + cold(1_000.0, 3))
+        assert rate == pytest.approx(1_000.0)
+
+    def test_warm_calls_do_not_pollute_the_baseline(self):
+        """The bug this replaced: with 23 warm samples and one cold one, any
+        low percentile lands inside the warm cluster and the baseline comes
+        out ~50x too fast — scoring 99%-cached calls as 20% cached, exactly
+        when the cache is working best."""
+        rate = cold_rate(warm(90_000.0, 40) + cold(1_100.0, 3))
         assert rate is not None
-        assert 900.0 <= rate <= 1_100.0
+        assert rate < 5_000.0
 
     def test_a_lone_outlier_does_not_drag_the_baseline_down(self):
-        """p5, not min — one pathologically slow call (a cold model load, a
-        busy machine) must not redefine the model's cold rate and silently
-        inflate every later hit estimate."""
-        samples = [1_000.0] * 39 + [1.0]
-        rate = cold_rate(samples)
+        """A stalled call is not a cold regime; the median of the cold
+        samples ignores it."""
+        rate = cold_rate(cold(1_000.0, 39) + cold(1.0, 1))
         assert rate is not None
         assert rate > 500.0
+
+    def test_uniformly_cold_calls_give_their_own_rate(self):
+        rate = cold_rate(cold(1_000.0, 25))
+        assert rate == pytest.approx(1_000.0)
+
+    def test_a_single_cold_call_is_too_thin_to_trust(self):
+        """One measurement could be anything — a model load, a busy moment.
+        Fall through to the regime split rather than anchoring on it."""
+        rate = cold_rate(warm(90_000.0, 25) + cold(1_100.0, 1))
+        # The split still finds the slow cluster, so a rate is available.
+        assert rate is not None
+        assert rate < 5_000.0
+
+    def test_all_warm_and_nothing_definitely_cold_admits_it_cannot_tell(self):
+        """The live failure this test exists for: an Ollama already warm from
+        an earlier session served every call from cache, so the samples hold
+        one cluster and no cold measurement at all. Reading that cluster as
+        the cold rate reports 0% cached on calls that were ~99% cached.
+        Better to say nothing."""
+        assert cold_rate(warm(90_000.0, 24)) is None
+
+    def test_a_split_needs_a_real_gap_not_just_ordinary_spread(self):
+        """Prefill throughput varies call to call; jitter is not a boundary.
+        With no definitely-cold samples and no real gap, we cannot tell which
+        regime we are looking at."""
+        samples = [(t, 0.99) for t in (900.0, 950.0, 1_000.0, 1_050.0, 1_100.0)] * 5
+        assert cold_rate(samples) is None
+
+    def test_an_unknown_reuse_fraction_is_not_assumed_cold(self):
+        """A provider that reports no token count leaves the reuse fraction
+        unknown. Unknown is not evidence of coldness."""
+        assert cold_rate([(90_000.0, None)] * 24) is None
 
 
 class TestCachedTokensEstimate:

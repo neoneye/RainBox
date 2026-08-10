@@ -55,18 +55,45 @@ prefill takes half as long, so a boolean would throw away most of the
 signal. Estimate continuously, in tokens:
 
 ```
-cold_rate(model)  = 5th-percentile prefill throughput (tok/s) over that
-                    model's most recent 200 calls
-cached_est        = clamp(prompt_eval_count
-                          - prompt_eval_duration_s * cold_rate(model),
-                          0, prompt_eval_count)
+cached_est = clamp(prompt_eval_count
+                     - prompt_eval_duration_s * cold_rate(model),
+                   0, prompt_eval_count)
 ```
 
-Below 20 recorded calls for a model, `cold_rate` is not yet meaningful:
-A reports "calibrating" rather than a confident wrong number.
+Anything under 2% of the prompt is reported as zero. The baseline carries
+error, so without a floor every uncached call scores a sliver of phantom
+cache, and across thousands of calls the totals grow a fake hit rate.
 
 Tokens — not a ratio — because that is the unit the stacked chart needs,
 and it makes A directly comparable with B.
+
+**Finding `cold_rate` is the hard part**, and a percentile does not work.
+When the cache is doing its job nearly every sample is warm, so any low
+percentile lands *inside* the warm cluster and returns a baseline ~50x too
+fast — scoring genuine hits as misses exactly when the cache is most
+effective. Measured live: one cold call among 23 warm ones put a 5th
+percentile at 85k tok/s and scored 99%-cached calls as 20% cached.
+
+What works is B. A prompt that repeats almost nothing rainbox sent before
+*cannot* have been served from cache, whatever the runtime did, so those
+calls are cold by construction:
+
+1. Take calls whose reusable fraction is under 20%. With at least three,
+   their median throughput is the baseline. No guesswork.
+2. Failing that, split the sorted throughputs at their largest
+   multiplicative gap — at least 5x to be a regime boundary, at most 200x to
+   not be a stalled call — and take the median below the split.
+3. Failing that, return nothing. One indistinguishable cluster could be
+   all-cold or all-warm, and calling it cold reports 0% on a perfectly
+   working cache. Also measured live, against an Ollama left warm from an
+   earlier session.
+
+Under 20 recorded calls for a model, A is withheld regardless.
+
+**Banking the saving.** Each row stores `saved_ms`, the prefill time it
+avoided, computed once against the baseline in force when it was judged.
+Rollups sum that column rather than re-deriving it, so a saving already
+banked doesn't shift as the baseline moves.
 
 ### B — reusable prefix (deterministic)
 
@@ -132,6 +159,7 @@ New table `llm_call`, one row per LLM call:
 | `cached_tokens_reported` | int null | metric C |
 | `cached_tokens_estimated` | int null | metric A; null while calibrating |
 | `reusable_prefix_tokens` | int null | metric B |
+| `saved_ms` | int null | prefill time this call banked |
 | `prefix_chain` | JSONB | metric B's block hashes |
 
 Indexes: `started_at`, `(model, started_at)`, `(caller, started_at)`.
@@ -195,14 +223,16 @@ Dimensions: Model · Caller · Provider.
 4. **Time saved** — `cached_tokens / cold_rate(model)`, summed. Converts
    the hit rate into seconds, which is the number that justifies spending
    an afternoon restructuring prompts.
-5. **By model** — calls, hit rate, avg cold vs warm prefill, tokens and
-   seconds saved.
-6. **By caller** — the same, grouped by tag. The panel that says where to
-   go fix something.
-7. **Recent calls** — last 50: model, caller, hit/miss, prefix reuse %,
-   prefill ms, ok/error.
+5. **By _dimension_** — whatever the selector is grouping by: calls, hit
+   rate, reusable, avg prefill, P50 latency, seconds saved.
+6. **By caller** — a fixed panel, shown whatever the selector says (and
+   suppressed only when the selector is already showing it). Attribution is
+   the table that names a file to go and edit, so it should not be one
+   dropdown away.
+7. **Recent calls** — last 50: model, caller, cached, prefix reuse,
+   prefill ms, total ms, ok/error.
 
-Panels 2, 5 and 6 honour the metric selector; 1, 3, 4 and 7 are fixed.
+Panels 2 and 5 honour the metric selector; 1, 3, 4, 6 and 7 are fixed.
 
 Throughout, **cache hit rate** means `sum(cached tokens) / sum(prompt
 tokens)` over the selected range — a token-weighted ratio, not the
@@ -243,11 +273,17 @@ reports real numbers, those are charted instead and the label changes.
 
 ## Risks
 
-**The estimate is a heuristic.** `cold_rate` from a 5th percentile is
-wrong if a model's *only* calls were all cache hits — everything looks
-cold, and the hit rate reads near zero. The calibrating gate hides the
-worst of it; metric B is unaffected and stays trustworthy, which is why
-both are shown side by side rather than blended into one number.
+**The estimate is still an estimate.** A model whose recent calls hold no
+cold measurement and no separable regime gets no verdict at all — the page
+says "calibrating" rather than guessing. That is the honest failure mode,
+but it does mean a model can sit unjudged for a while. Metric B is
+unaffected and stays exact throughout, which is why the two are shown side
+by side rather than blended into one number.
+
+**A light-only palette.** The page pins a white background, because a
+browser in dark mode would otherwise paint a black canvas behind near-black
+text. Every other rainbox page has this bug; fixing it app-wide is separate
+work.
 
 **Recording on the hot path.** One INSERT per LLM call, against calls that
 take seconds. Negligible, but the handler is defensive anyway: any

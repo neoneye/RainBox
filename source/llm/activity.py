@@ -260,6 +260,7 @@ class ActivityRecorder(BaseEventHandler):
             "cached_tokens_reported": usage["cached_tokens_reported"],
             "cached_tokens_estimated": None,
             "reusable_prefix_tokens": None,
+            "saved_ms": None,
             "prefix_chain": start.get("prefix_chain"),
         }
         self._add_cache_metrics(row, start, model)
@@ -273,10 +274,18 @@ class ActivityRecorder(BaseEventHandler):
         history lookups fail — a call with unknown cache behaviour is still
         worth recording."""
         try:
-            throughputs = self.history.recent_throughputs(model)
+            rate = cold_rate(self.history.recent_throughputs(model))
             row["cached_tokens_estimated"] = cached_tokens_estimate(
-                row["prompt_tokens"], row["prefill_ms"], cold_rate(throughputs)
+                row["prompt_tokens"], row["prefill_ms"], rate
             )
+            # Bank the saving now, against the baseline as it stands. Summing
+            # a stored figure keeps every rollup consistent with the estimate
+            # the row was judged by, however the baseline drifts later.
+            cached = row["cached_tokens_reported"]
+            if cached is None:
+                cached = row["cached_tokens_estimated"]
+            if cached and rate:
+                row["saved_ms"] = int(round(cached / rate * 1000))
         except Exception:
             logger.debug("cold-rate lookup failed for %r", model, exc_info=True)
         try:

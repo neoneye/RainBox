@@ -252,11 +252,34 @@ class TestCacheMetrics:
         assert rows[0]["cached_tokens_estimated"] is None
 
     def test_a_warm_call_against_a_cold_baseline_reads_as_cached(self):
-        history = FakeHistory(throughputs=[1926.0] * MIN_CALIBRATION_CALLS)
+        # Samples are (throughput, reusable fraction); a zero fraction marks
+        # a call that had nothing to reuse and so measured the cold rate.
+        history = FakeHistory(
+            throughputs=[(1926.0, 0.0)] * MIN_CALIBRATION_CALLS
+        )
         recorder, rows = make_recorder(history)
         recorder.handle(start_event())
         recorder.handle(end_event())  # 4032 tokens in 49 ms
         assert rows[0]["cached_tokens_estimated"] > 3900
+
+    def test_the_time_saved_is_banked_on_the_row(self):
+        """Rollups sum this rather than re-deriving it, so it has to be
+        written at judgement time."""
+        history = FakeHistory(
+            throughputs=[(1926.0, 0.0)] * MIN_CALIBRATION_CALLS
+        )
+        recorder, rows = make_recorder(history)
+        recorder.handle(start_event())
+        recorder.handle(end_event())
+        # ~4000 cached tokens at ~1926 tok/s is a bit over two seconds.
+        assert 1800 <= rows[0]["saved_ms"] <= 2300
+
+    def test_an_unjudged_call_banks_no_saving(self):
+        recorder, rows = make_recorder(FakeHistory(throughputs=[]))
+        recorder.handle(start_event())
+        recorder.handle(end_event())
+        assert rows[0]["cached_tokens_estimated"] is None
+        assert rows[0]["saved_ms"] is None
 
     def test_reusable_prefix_is_measured_against_recent_chains(self):
         prompt = "shared preamble " * 500

@@ -38,10 +38,25 @@ BLOCK_CHARS: int = 1000
 # "calibrating" rather than a confident wrong number.
 MIN_CALIBRATION_CALLS: int = 20
 
-# Which percentile of observed prefill throughput counts as "cold". Not the
-# minimum: a single pathological call (a model load, a busy machine) would
-# redefine the baseline and inflate every later estimate.
-COLD_RATE_PERCENTILE: float = 5.0
+# How much faster warm prefill has to be than cold before the two count as
+# separate regimes rather than ordinary call-to-call jitter. Measured
+# separation on real hardware is ~50x, so 5x is a comfortable floor.
+MIN_REGIME_GAP: float = 5.0
+
+# Beyond this, a gap is not a cache regime — cache speedup is bounded by
+# hardware, and a thousandfold difference is a stalled call or a measurement
+# artifact. Ignoring it keeps one pathological sample from becoming the
+# baseline.
+MAX_REGIME_GAP: float = 200.0
+
+# A call whose prompt repeated less than this fraction of anything sent
+# before had almost nothing available to serve from cache, so its prefill
+# throughput is a cold measurement by construction.
+COLD_REUSE_MAX: float = 0.2
+
+# How many such calls before their median is trusted as the baseline. One
+# could be a model load or a busy moment.
+MIN_COLD_SAMPLES: int = 3
 
 # Estimated savings below this fraction of the prompt are reported as zero.
 # Because the baseline is a p5 it sits a little slower than a typical cold
@@ -123,19 +138,59 @@ def percentile(values: list[float], q: float) -> float | None:
     return ordered[low] + (ordered[high] - ordered[low]) * (pos - low)
 
 
-def cold_rate(throughputs: list[float]) -> float | None:
-    """A model's cold prefill rate in tokens/sec, from its recent observed
-    throughputs. None until the model has enough calls to have plausibly
-    shown a cold one.
+def cold_rate(samples: list[tuple[float, float | None]]) -> float | None:
+    """A model's cold prefill rate in tokens/sec, or None when the evidence
+    doesn't support one.
 
-    Throughput is bimodal by roughly fifty times — the probe measured ~1.9k
-    tok/s cold against ~82k tok/s warm — so the slow tail of the distribution
-    is the cold regime, and a low percentile finds it without needing to know
-    the hardware.
+    Each sample is `(prefill throughput, reusable fraction)` — the second
+    being how much of that call's prompt repeated text rainbox had already
+    sent, from `reusable_prefix_tokens`.
+
+    Prefill throughput is sharply bimodal: measured at ~1.1k tok/s cold
+    against ~90k tok/s warm for the same prompt. The problem is telling which
+    cluster you are looking at, and a percentile cannot. When the cache is
+    working nearly every sample is warm, so a low percentile lands *inside*
+    the warm cluster and reports a baseline ~50x too fast — scoring genuine
+    hits as misses exactly when the cache is most effective. Observed live:
+    one cold call among 23 warm ones put a 5th percentile at 85k tok/s and
+    scored 99%-cached calls as 20% cached.
+
+    The reuse fraction settles it without guesswork. A prompt that repeats
+    almost nothing sent before *cannot* have been served from cache, whatever
+    the runtime did, so those calls are cold by construction and their median
+    is the baseline.
+
+    Failing enough of those, fall back to splitting the sorted throughputs at
+    their largest multiplicative gap — large enough to be a regime boundary,
+    small enough not to be a stalled call. And failing that, return None:
+    one indistinguishable cluster could be all-cold or all-warm, and calling
+    it cold would report 0% on a perfectly working cache. Observed live, on
+    an Ollama already warm from an earlier session. `reusable_prefix_tokens`
+    needs no baseline and stays trustworthy throughout.
     """
-    if len(throughputs) < MIN_CALIBRATION_CALLS:
+    if len(samples) < MIN_CALIBRATION_CALLS:
         return None
-    return percentile(throughputs, COLD_RATE_PERCENTILE)
+
+    definitely_cold = sorted(
+        t
+        for t, reuse in samples
+        if t > 0 and reuse is not None and reuse < COLD_REUSE_MAX
+    )
+    if len(definitely_cold) >= MIN_COLD_SAMPLES:
+        return percentile(definitely_cold, 50.0)
+
+    ordered = sorted(t for t, _reuse in samples if t > 0)
+    if not ordered:
+        return None
+    split_at: int | None = None
+    widest = 1.0
+    for i in range(len(ordered) - 1):
+        ratio = ordered[i + 1] / ordered[i]
+        if MIN_REGIME_GAP <= ratio <= MAX_REGIME_GAP and ratio > widest:
+            widest, split_at = ratio, i
+    if split_at is None:
+        return None
+    return percentile(ordered[: split_at + 1], 50.0)
 
 
 def cached_tokens_estimate(

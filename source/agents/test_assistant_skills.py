@@ -57,7 +57,8 @@ def test_active_skill_injected_candidate_inert(app_ctx, tmp_path, monkeypatch):
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
     captured: dict = {}
 
-    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None):
+    def fake_completion(*, system_prompt, user_prompt, response_model, validator=None,
+                        **_kw):
         captured["user_prompt"] = user_prompt
         return AssistantStepDecision(
             reason="answer", action=AssistantActionName.REPLY, args={"message": "ok"}

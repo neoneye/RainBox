@@ -90,18 +90,37 @@ def record_llm_call(row: dict) -> LlmCall:
     return call
 
 
-def recent_throughputs(model: str | None, limit: int = THROUGHPUT_WINDOW) -> list[float]:
-    """Recent prefill throughputs (tokens/sec) for one model, newest first."""
+def recent_throughputs(
+    model: str | None, limit: int = THROUGHPUT_WINDOW
+) -> list[tuple[float, float | None]]:
+    """Recent `(prefill throughput, reusable fraction)` pairs for one model,
+    newest first.
+
+    The reuse fraction rides along because it is what lets `cold_rate` tell a
+    cold measurement from a warm one: a prompt that repeated nothing sent
+    before had nothing to serve from cache, so its throughput is a cold
+    reading by construction. NULL where the call reported no token count.
+    """
     if not model:
         return []
     throughput = _prefill_throughput()
+    reuse = sa.case(
+        (
+            sa.and_(
+                LlmCall.prompt_tokens > 0,
+                LlmCall.reusable_prefix_tokens.is_not(None),
+            ),
+            LlmCall.reusable_prefix_tokens * 1.0 / LlmCall.prompt_tokens,
+        ),
+        else_=None,
+    )
     rows = db.session.execute(
-        sa.select(throughput)
+        sa.select(throughput, reuse)
         .where(LlmCall.model == model, throughput.is_not(None))
         .order_by(LlmCall.started_at.desc())
         .limit(limit)
     ).all()
-    return [float(r[0]) for r in rows]
+    return [(float(r[0]), None if r[1] is None else float(r[1])) for r in rows]
 
 
 def recent_prefix_chains(
@@ -166,13 +185,16 @@ def activity_summary(
 
 
 def _seconds_saved(start: datetime, end: datetime, model: str | None) -> float:
-    """Prefill seconds the cache avoided, per model against that model's own
-    cold rate. Summed across models, because a fast small model and a slow
-    large one save very different amounts of time per cached token."""
-    total = 0.0
-    for row in activity_rollup(start, end, dimension="model", model=model):
-        total += row["seconds_saved"]
-    return total
+    """Prefill seconds the cache avoided. Each call banked its own figure
+    against its model's cold rate, so this is a plain sum — a fast small
+    model and a slow large one save very different amounts of time per
+    cached token, and the per-row figures already account for that."""
+    total = db.session.execute(
+        sa.select(sa.func.coalesce(sa.func.sum(LlmCall.saved_ms), 0)).where(
+            *_window(start, end, model)
+        )
+    ).scalar()
+    return int(total or 0) / 1000.0
 
 
 def activity_series(
@@ -306,9 +328,10 @@ def activity_rollup(
             sa.func.avg(decode_tps),
             sa.func.percentile_cont(0.5).within_group(decode_tps.asc()),
             sa.func.percentile_cont(0.9).within_group(decode_tps.asc()),
-            # The slow tail of prefill throughput: this model's cold rate.
-            sa.func.percentile_cont(0.05).within_group(prefill_tps.asc()),
             sa.func.avg(prefill_tps),
+            # Summed, not recomputed: each row banked its own saving against
+            # the baseline in force when it was judged.
+            sa.func.coalesce(sa.func.sum(LlmCall.saved_ms), 0),
         )
         .where(*_window(start, end, model))
         .group_by(dim_col)
@@ -320,7 +343,7 @@ def activity_rollup(
         (
             key, calls, failures, judged, prompt_tokens, completion_tokens,
             cached_tokens, reusable, avg_lat, p50_lat, p90_lat, p99_lat,
-            avg_tps, p50_tps, p90_tps, cold_rate, avg_prefill_tps,
+            avg_tps, p50_tps, p90_tps, avg_prefill_tps, saved_ms,
         ) = r
         prompt_tokens = int(prompt_tokens)
         cached_tokens = int(cached_tokens)
@@ -346,11 +369,8 @@ def activity_rollup(
                 "avg_throughput_tps": _f(avg_tps),
                 "p50_throughput_tps": _f(p50_tps),
                 "p90_throughput_tps": _f(p90_tps),
-                "cold_rate_tps": _f(cold_rate),
                 "avg_prefill_tps": _f(avg_prefill_tps),
-                "seconds_saved": (cached_tokens / float(cold_rate))
-                if cold_rate
-                else 0.0,
+                "seconds_saved": int(saved_ms) / 1000.0,
             }
         )
     return out

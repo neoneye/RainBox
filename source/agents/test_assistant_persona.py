@@ -178,7 +178,7 @@ def test_persona_survives_a_mid_run_criteria_refresh(persona_room, monkeypatch):
     ]
 
     def fake_completion(*, system_prompt, user_prompt, response_model,
-                        validator=None):
+                        validator=None, **_kw):
         return decisions.pop(0)
 
     agent._structured_completion = fake_completion

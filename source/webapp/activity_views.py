@@ -318,7 +318,19 @@ def build_context(args: Any, now: datetime) -> dict:
     summary = db.activity_summary(start, end)
     buckets = db.activity_series(start, end, bucket_seconds)
     by_model = db.activity_rollup(start, end, dimension="model")
-    grouped = db.activity_rollup(start, end, dimension=dimension)
+    grouped = (
+        by_model
+        if dimension == "model"
+        else db.activity_rollup(start, end, dimension=dimension)
+    )
+    # The caller breakdown is a fixed panel, not just a grouping option: it is
+    # the one that points at a file to go edit. Skipped when the selector is
+    # already showing it, to avoid printing the same table twice.
+    by_caller = (
+        grouped
+        if dimension == "caller"
+        else db.activity_rollup(start, end, dimension="caller")
+    )
     recent = db.recent_llm_calls(limit=50)
 
     _label, _field, kind = _METRICS[metric]
@@ -336,6 +348,7 @@ def build_context(args: Any, now: datetime) -> dict:
         "summary": summary,
         "chart": build_chart(buckets, metric, bucket_seconds),
         "by_model": by_model,
+        "by_caller": by_caller,
         "grouped": grouped,
         "recent": recent,
         "any_reported": any(
@@ -359,7 +372,11 @@ ACTIVITY_TEMPLATE = """
 <title>Activity &mdash; rainbox</title>
 {% include "_nav.html" %}
 <style>
-  body { margin: 0; font-family: system-ui, sans-serif; color: #1a1a2e; }
+  /* Explicit light canvas: the palette below is a light one, and a browser
+     in dark mode would otherwise paint a black page behind near-black text.
+     The nav pins its own background for the same reason. */
+  body { margin: 0; font-family: system-ui, sans-serif; color: #1a1a2e;
+         background: #fff; }
   .pp-act { max-width: 1180px; margin: 1rem auto; padding: 0 1rem 3rem; }
   .pp-act h1 { margin: 0.2rem 0 0.2rem; }
   .pp-act .sub { color: #6c757d; margin: 0 0 1.2rem; }
@@ -563,7 +580,7 @@ ACTIVITY_TEMPLATE = """
         <th class="num">Hit rate</th>
         <th class="num">Reusable</th>
         <th class="num">Prompt tokens</th>
-        <th class="num">Cold prefill</th>
+        <th class="num">Avg prefill</th>
         <th class="num">P50 latency</th>
         <th class="num">Saved</th>
       </tr>
@@ -576,8 +593,8 @@ ACTIVITY_TEMPLATE = """
         <td class="num {{ 'warn' if row.judged_calls == 0 }}">{{ hit_rate_cell(row) }}</td>
         <td class="num">{{ pct(row.reusable_rate) }}</td>
         <td class="num">{{ si(row.prompt_tokens) }}</td>
-        <td class="num">{{ (row.cold_rate_tps|round|int ~ ' tok/s')
-                           if row.cold_rate_tps else '—' }}</td>
+        <td class="num">{{ (row.avg_prefill_tps|round|int ~ ' tok/s')
+                           if row.avg_prefill_tps else '—' }}</td>
         <td class="num">{{ ms(row.p50_latency_ms) }}</td>
         <td class="num">{{ duration(row.seconds_saved) }}</td>
       </tr>
@@ -592,6 +609,37 @@ ACTIVITY_TEMPLATE = """
     </p>
     {% endif %}
   </div>
+
+  {% if dimension != 'caller' %}
+  <div class="panel">
+    <h2>By caller</h2>
+    <p class="note">Which part of rainbox is producing cache-hostile prompts.
+       Always shown, whatever the grouping above is set to &mdash; this is the
+       table that says where to go and fix something.</p>
+    <table>
+      <tr>
+        <th>Caller</th>
+        <th class="num">Calls</th>
+        <th class="num">Hit rate</th>
+        <th class="num">Reusable</th>
+        <th class="num">Prompt tokens</th>
+        <th class="num">P50 latency</th>
+        <th class="num">Saved</th>
+      </tr>
+      {% for row in by_caller %}
+      <tr>
+        <td class="name">{{ row.key }}</td>
+        <td class="num">{{ row.calls }}</td>
+        <td class="num {{ 'warn' if row.judged_calls == 0 }}">{{ hit_rate_cell(row) }}</td>
+        <td class="num">{{ pct(row.reusable_rate) }}</td>
+        <td class="num">{{ si(row.prompt_tokens) }}</td>
+        <td class="num">{{ ms(row.p50_latency_ms) }}</td>
+        <td class="num">{{ duration(row.seconds_saved) }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
 
   <div class="panel">
     <h2>Recent calls</h2>

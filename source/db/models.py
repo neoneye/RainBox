@@ -1674,6 +1674,12 @@ class LlmCall(db.Model):
     cached_tokens_reported: Mapped[int | None] = mapped_column()
     cached_tokens_estimated: Mapped[int | None] = mapped_column()
     reusable_prefix_tokens: Mapped[int | None] = mapped_column()
+    # Prefill milliseconds this call did not spend, because the cache
+    # supplied `cached_tokens_*`. Computed once at record time against the
+    # cold baseline as it stood then, rather than re-derived per query — the
+    # baseline moves as more calls arrive, and a saving already banked should
+    # not silently change afterwards. NULL when the call was not judged.
+    saved_ms: Mapped[int | None] = mapped_column()
     # Cumulative hashes of the outgoing prompt's fixed-size character blocks.
     # The prompt text itself is never stored — the chain is enough to measure
     # a shared prefix against later calls, and nothing else.

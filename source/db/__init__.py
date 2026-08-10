@@ -304,6 +304,10 @@ def init_db(app: Flask) -> None:
         # without taking a single exclusive lock (see its docstring).
         _add_column_if_missing("model_config", "size_bytes",
                                "size_bytes BIGINT")
+        # llm_call gained saved_ms after its first cut: the prefill time each
+        # call banked, so rollups sum a stored figure instead of re-deriving
+        # it from a baseline that moves.
+        _add_column_if_missing("llm_call", "saved_ms", "saved_ms INTEGER")
         _add_column_if_missing("model_config", "provider",
                                "provider TEXT NOT NULL DEFAULT "
                                f"'{PREFERRED_PROVIDER_ID}'")
