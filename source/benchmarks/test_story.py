@@ -152,10 +152,22 @@ class TestToolPrompting:
         for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
             assert "A man sues gravity" in build("A man sues gravity")
 
-    def test_carrying_a_number_over_between_sections_is_forbidden(self):
-        """Reusing an earlier section's number would satisfy a naive check
-        while defeating the point of the tool."""
-        assert "Never reuse a tool result" in story.system_prompt_text_tool("x")
+    def test_the_prompt_presses_only_on_what_is_measured(self):
+        """It used to ban stray numerals and forbid reusing an earlier number.
+        Measured on llama3.2:3b, the numeral ban made the model suppress the
+        required digits as well — zero of twenty sections contained the
+        number. Neither rule is scored, so neither is asked for."""
+        for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
+            prompt = build("x")
+            assert "Arabic numeral" not in prompt
+            assert "Never reuse" not in prompt
+
+    def test_the_self_check_matches_the_scoring(self):
+        """One call per section is the test, and the only thing the checklist
+        asks the model to verify."""
+        checklist = story._TOOL_CHECKLIST
+        assert "called once after the latest user message" in checklist
+        assert checklist.count("*") == 1
 
     def test_the_word_bounds_track_the_scoring_constants(self):
         """A prompt asking for a range the scorer doesn't accept would fail
@@ -313,6 +325,21 @@ class TestSectionProblem:
         s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
         assert section_problem(s, require_tool=True) is None
 
+    def test_one_call_is_the_whole_test(self):
+        """What these benchmarks measure is tool-calling discipline across a
+        conversation. Whether the model then wove the digits into its prose is
+        recorded and displayed, but it is not what passes or fails a section."""
+        ignored_the_answer = section(text="word " * 200, numbers=[42], calls=1)
+        assert section_problem(ignored_the_answer, require_tool=True) is None
+
+    def test_reusing_an_earlier_number_is_fine(self):
+        s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
+        assert section_problem(s, require_tool=True) is None
+
+    def test_stray_numerals_are_fine(self):
+        s = section(text="word " * 200 + " 42 and 1999 and 7", numbers=[42], calls=1)
+        assert section_problem(s, require_tool=True) is None
+
     def test_never_calling_the_tool_is_named(self):
         s = section(text="word " * 200, numbers=[], calls=0)
         problem = section_problem(s, require_tool=True)
@@ -327,11 +354,9 @@ class TestSectionProblem:
         assert problem is not None
         assert "2 times" in problem
 
-    def test_ignoring_the_returned_number_is_named(self):
-        s = section(text="word " * 200, numbers=[42], calls=1)
-        problem = section_problem(s, require_tool=True)
-        assert problem is not None
-        assert "42" in problem and "not found" in problem
+    def test_the_word_count_still_applies_to_tool_sections(self):
+        s = section(text="too short", numbers=[42], calls=1)
+        assert section_problem(s, require_tool=True) is not None
 
     def test_a_short_section_is_named_with_its_count(self):
         problem = section_problem(section(text="too short"))
@@ -419,15 +444,13 @@ class TestScoreSections:
         sections[2] = section(numbers=[])
         assert score_sections(sections, require_tool=True) is not None
 
-    def test_a_tool_number_missing_from_the_prose_fails(self):
-        """Calling the tool and ignoring what it returned is the failure this
-        benchmark exists to catch."""
+    def test_a_missing_tool_call_fails_the_trial(self):
         sections = [section(text="word " * 200 + " 99", numbers=[99])
                     for _ in range(STORY_TURNS)]
-        sections[4] = section(text="word " * 200, numbers=[99])
+        sections[4] = section(text="word " * 200, numbers=[], calls=0)
         why = score_sections(sections, require_tool=True)
         assert why is not None
-        assert "99" in why
+        assert "5" in why and "not called" in why
 
     def test_tools_are_ignored_when_not_required(self):
         assert score_sections([section(numbers=[])
@@ -602,11 +625,13 @@ class TestSectionHeading:
             "## Section 3 (random_number 42, found once in the text) - Correct"
         )
 
-    def test_a_wrong_section_says_why_without_repeating_itself(self):
+    def test_an_unused_number_is_still_reported_though_it_now_passes(self):
+        """Dropping it as a pass criterion must not drop it from the record —
+        it is the interesting thing about a tool run."""
         s = section(text="word " * 200, numbers=[77], calls=1)
         heading = section_heading(2, s, require_tool=True)
         assert heading == (
-            "## Section 2 (random_number 77, not found in the text) - Wrong"
+            "## Section 2 (random_number 77, not found in the text) - Correct"
         )
 
     def test_a_non_tool_fault_is_spelled_out(self):

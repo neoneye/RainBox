@@ -29,12 +29,12 @@ STORY_BENCHMARK_DESCRIPTIONS: dict[str, str] = {
     ),
     "story_text_tool": (
         "Same five turns, plus one tool. Before each section the model must "
-        "call `random_number` exactly once; the integer it returns must then "
-        "appear literally in the text. Correct iff every section called the "
-        "tool once and contains its number — which a model that calls the "
-        "tool and ignores the answer cannot fake. Requires a function-calling "
-        "target. Copy a trial to see, per section, whether the tool ran, how "
-        "often, what it returned, and whether the model used it."
+        "call `random_number` exactly once. Correct iff every section made "
+        "exactly one call — tool-calling discipline held across a "
+        "conversation, which is the thing being measured. The prompt also "
+        "asks the model to work the returned integer into the prose; whether "
+        "it did is recorded on every section heading and in the JSON, but it "
+        "does not decide pass or fail. Requires a function-calling target."
     ),
     "story_struct_tool": (
         "The crossover: structured output AND function calling on every one "

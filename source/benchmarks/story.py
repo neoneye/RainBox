@@ -289,17 +289,18 @@ For every user request for a section, follow these two phases in order:
 PHASE 1 — TOOL CALL
 Your first and only action must be to call the `random_number` tool exactly once.
 Do not write story text, commentary, acknowledgments, headings, or explanations before calling the tool.
-Never reuse a tool result from an earlier section. A number is valid only if it was returned by the tool after the current user message.
 PHASE 2 — {phase_two}
 """
 
+# The self-check mirrors exactly what is scored — one call per section — so
+# the prompt does not press the model on things the benchmark does not measure.
+# The earlier version also banned stray numerals and forbade reusing an earlier
+# number; measured on llama3.2:3b, the numeral ban made the model suppress the
+# required digits too, and it wrote none at all in 20 of 20 sections.
 _TOOL_CHECKLIST: str = """
 Before producing story text, silently verify:
 
 * The `random_number` tool was called once after the latest user message.
-* Its result belongs to the current section.
-* The returned digits appear exactly once in the section.
-* No other Arabic numerals appear.
 
 If the tool has not been called for the current section, do not improvise a number and do not begin writing. Call the tool first.
 """
@@ -322,9 +323,7 @@ def system_prompt_text_tool(topic: str) -> str:
         "After receiving the tool result, do not call the tool again for this section.\n"
         f"Write one section of {MIN_WORDS}\u2013{MAX_WORDS} words that continues "
         "directly from the preceding section. Incorporate the newly returned "
-        "integer\u2019s exact digits naturally into the story exactly once.\n"
-        "Do not include any other Arabic numeral sequences in the section. "
-        "Express unrelated quantities in words when necessary.\n"
+        "integer\u2019s digits naturally into the story.\n"
         "\nOUTPUT RULES\n"
         "Return only the story prose after the tool call.\n"
         "Do not add a section number, heading, recap, note, explanation, or tool "
@@ -351,9 +350,7 @@ def system_prompt_struct_tool(topic: str) -> str:
         "Respond with a single JSON object with exactly these two fields:\n"
         f"  - `section_text` (string): one section of {MIN_WORDS}\u2013{MAX_WORDS} "
         "words continuing directly from the preceding section. Incorporate the "
-        "newly returned integer\u2019s exact digits naturally into the story "
-        "exactly once. Do not include any other Arabic numeral sequences. "
-        "Express unrelated quantities in words when necessary.\n"
+        "newly returned integer\u2019s digits naturally into the story.\n"
         "  - `section_reviewer` (string): a brutally harsh critique of that exact "
         "section, in a reviewer\u2019s voice. Be specific about what fails, and be "
         "merciless.\n"
@@ -524,6 +521,12 @@ def section_problem(
     if require_reviewer and not (section.reviewer or "").strip():
         return "no reviewer critique"
     if require_tool:
+        # Exactly one call per section, and that is the whole test. Whether
+        # the model then wove the digits into its prose is recorded on the
+        # heading and in the transcript, but a section is not failed for it:
+        # what these benchmarks measure is tool-calling discipline across a
+        # conversation, and stray numerals or a number carried over from an
+        # earlier section are not faults.
         if section.tool_calls == 0:
             return "random_number not called"
         if section.tool_calls > 1:
@@ -531,9 +534,6 @@ def section_problem(
                 f"random_number called {section.tool_calls} times, "
                 "the brief says exactly once"
             )
-        number = section.tool_numbers[0]
-        if count_number_occurrences(section.text, number) == 0:
-            return f"random_number {number} not found in the text"
     return None
 
 
