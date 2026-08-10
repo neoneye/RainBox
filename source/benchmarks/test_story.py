@@ -5,6 +5,7 @@ No provider and no database: the conversation driver takes an LLM-shaped
 callable, so a fake can record exactly what each turn was handed.
 """
 
+import re
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -95,6 +96,65 @@ class TestTopics:
     def test_the_topic_heads_the_copyable_story(self):
         out = assemble_story([section(text="prose")], topic="A djinn bound to a phone")
         assert "A djinn bound to a phone" in out.splitlines()[0]
+
+
+class TestToolPrompting:
+    """The tool instruction has to survive contact with a small model.
+
+    Observed live: the rule illustrated itself with "if the tool returns 4242,
+    the section must contain 4242", and a model duly wrote 4242 into its
+    section without calling the tool at all. An example in a prompt is
+    something models copy, not something they generalise from.
+    """
+
+    def test_no_prompt_shows_a_number_the_tool_could_have_returned(self):
+        """The precise hazard: a number in the prompt that looks like a tool
+        result. A model copies it, never calls the tool, and the section then
+        contains a plausible-looking number that means nothing. Ordered step
+        markers and the word-count target are outside the tool's range and so
+        cannot be mistaken for one."""
+        prompts = [
+            story._TOOL_RULE,
+            story._TOOL_REMINDER,
+            story.system_prompt_text_tool("A river changes course"),
+            story.system_prompt_struct_tool("A river changes course"),
+        ]
+        for text in prompts:
+            for found in re.findall(r"\d+", text):
+                assert not (
+                    story.RANDOM_NUMBER_MIN <= int(found) <= story.RANDOM_NUMBER_MAX
+                ), f"{found} could be parroted as a tool result"
+
+    def test_the_tool_range_cannot_collide_with_the_word_target(self):
+        """If the tool could return the word-count number, a model parroting
+        the target would score as a correct tool use by luck."""
+        assert story.TARGET_WORDS < story.RANDOM_NUMBER_MIN
+        assert not (
+            story.RANDOM_NUMBER_MIN <= story.MAX_WORDS <= story.RANDOM_NUMBER_MAX
+        )
+
+    def test_the_rule_names_the_tool(self):
+        assert "random_number" in story.system_prompt_text_tool("x")
+
+    def test_the_tool_reminder_rides_on_every_user_turn(self):
+        """The system prompt is fixed for the trial and sits far from the
+        model's attention by turn five. The user message is the last thing it
+        reads, so the obligation is repeated there."""
+        bench = story.BenchmarkStoryTextTool(uuid4(), num_trials=1)
+        for turn in range(STORY_TURNS):
+            message = bench.user_message(turn)
+            assert "random_number" in message, turn
+
+    def test_a_non_tool_benchmark_does_not_mention_the_tool(self):
+        bench = story.BenchmarkStoryText(uuid4(), num_trials=1)
+        for turn in range(STORY_TURNS):
+            assert "random_number" not in bench.user_message(turn)
+
+    def test_the_reminder_forbids_inventing_a_number(self):
+        blob = story.system_prompt_text_tool("x") + story.BenchmarkStoryTextTool(
+            uuid4(), num_trials=1
+        ).user_message(0)
+        assert "invent" in blob.lower() or "make up" in blob.lower()
 
 
 class TestCountWords:

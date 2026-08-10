@@ -62,6 +62,23 @@ only if the number the tool returned appears verbatim in the section text,
 which is checkable rather than a matter of taste, and proves the model
 actually consumed the tool result instead of calling it and ignoring it.
 
+**No example number, anywhere.** The rule first illustrated itself with a
+concrete value — "if the tool returns N, the section must contain N" — and
+a model wrote that very value into its section without calling the tool at
+all. An example in a prompt is something models copy, not something they
+generalise from. A test now asserts that no prompt contains any number
+inside the tool's range, and the range (1000–9999) is kept clear of the
+word-count target so a parroted "200" can never score as a tool result by
+luck.
+
+**The obligation is repeated on every user turn.** A rule stated once in a
+system prompt is thousands of tokens behind the model by turn five. The
+user message is the last thing it reads, so the tool variants append a
+one-line reminder there. This costs nothing in cache terms — the user
+message is new content on every turn regardless. Measured on llama3.2:3b,
+this took the tool from being invoked erratically to exactly once in 9 of
+10 sections, and produced the first fully correct trial.
+
 **`story_struct_tool`** — the crossover: `FunctionAgent` with `output_cls=
 StorySection` and the same tool. Verified working on the installed
 llama_index (0.14.22): the result carries `.structured_response`, and

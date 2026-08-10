@@ -212,6 +212,12 @@ TURN_TIMEOUT: float = 180.0
 # without bound.
 MAX_STORY_CHARS: int = 40_000
 
+# The tool's range. Deliberately clear of the word-count target named in
+# the prompt: if the tool could return that number, a model parroting the
+# target would score as a correct tool use by luck.
+RANDOM_NUMBER_MIN: int = 1000
+RANDOM_NUMBER_MAX: int = 9999
+
 
 def system_prompt_text(topic: str) -> str:
     """The plain-text brief. Fixed for a whole trial, so the system message is
@@ -252,13 +258,23 @@ def system_prompt_struct(topic: str) -> str:
     )
 
 
+# Deliberately free of any example number. The rule used to illustrate itself
+# with a concrete one, and a model wrote that very number into its section
+# without calling the tool at all — an example in a prompt is something models
+# copy, not something they generalise from.
 _TOOL_RULE: str = (
-    "\n\nBefore writing each section you MUST call the `random_number` tool "
-    "exactly once. It returns an integer. Those digits MUST then appear "
-    "literally in the section you write — as a room number, a year, a count "
-    "of something, a number on a form, whatever the brief allows. Write the "
-    "digits, not words: if the tool returns 4242, the section must contain "
-    "4242."
+    "\n\nEvery section has a required number, and you do not know it until "
+    "you ask.\n\n"
+    "For each section, in this order:\n"
+    "  1. Call the `random_number` tool. Call it once — not zero times, not "
+    "twice.\n"
+    "  2. Read the integer it returns.\n"
+    "  3. Write the section, working those exact digits into the text where "
+    "the brief allows — a room number, a year, a count of something, a "
+    "reference on a form.\n\n"
+    "Never invent the number, never carry over a number from an earlier "
+    "section, and never write it out in words. If you did not call the tool "
+    "for this section, you cannot know the number, and the section is wrong."
 )
 
 
@@ -268,6 +284,12 @@ def system_prompt_text_tool(topic: str) -> str:
 
 def system_prompt_struct_tool(topic: str) -> str:
     return system_prompt_struct(topic) + _TOOL_RULE
+
+
+_TOOL_REMINDER: str = (
+    " Call `random_number` first, once, and work the integer it returns into "
+    "this section."
+)
 
 
 def _first_user_message() -> str:
@@ -504,7 +526,7 @@ def _random_number_tool() -> tuple[Callable[[], int], list[int]]:
 
     def random_number() -> int:
         """Returns the random number that must appear in the next section."""
-        value = random.randint(1000, 9999)
+        value = random.randint(RANDOM_NUMBER_MIN, RANDOM_NUMBER_MAX)
         returned.append(value)
         return value
 
@@ -543,6 +565,18 @@ class _StoryBenchmarkBase:
 
     def _system_prompt(self, topic: str) -> str:
         raise NotImplementedError
+
+    def user_message(self, turn: int) -> str:
+        """What the model is asked for on this turn.
+
+        Tool variants append the reminder here rather than relying on the
+        system prompt alone: by turn five the rule is thousands of tokens
+        back, and the user message is the last thing the model reads.
+        Repeating it costs nothing in cache terms — the user message is new
+        content on every turn anyway.
+        """
+        base = _first_user_message() if turn == 0 else _next_user_message(turn)
+        return base + (_TOOL_REMINDER if self.require_tool else "")
 
     def _take_turn(
         self, ctx: Any, history: list[ChatMessage], user_msg: str, topic: str
@@ -590,9 +624,7 @@ class _StoryBenchmarkBase:
                 for turn in range(STORY_TURNS):
                     if should_stop is not None and should_stop():
                         break
-                    user_msg = (
-                        _first_user_message() if turn == 0 else _next_user_message(turn)
-                    )
+                    user_msg = self.user_message(turn)
                     # Attribute the call on /activity. Benchmarks build their
                     # LLM directly rather than through the agent base class, so
                     # without this every one of them lands as "unknown" —
