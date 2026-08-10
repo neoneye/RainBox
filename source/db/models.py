@@ -1619,6 +1619,72 @@ class PersonaRevision(db.Model):
     __table_args__ = (Index("persona_revision_of", "persona_uuid", "id"),)
 
 
+class LlmCall(db.Model):
+    """One LLM request, recorded by the always-on instrumentation handler in
+    `llm.activity` — the durable per-call record behind the /activity page.
+
+    Every call rainbox makes lands here (assistant, chat, cron, kanban,
+    benchmarks), not just the assistant steps that `assistant_step` already
+    traces. Rows are observational: nothing reads them back into a decision,
+    so a missing row degrades a chart, never behaviour.
+
+    Cache accounting is three columns because the three numbers mean
+    different things and must not be blended:
+
+    - `cached_tokens_reported` — what the provider said. Local providers say
+      nothing (Ollama's prompt_eval_count is identical on a hit and a miss),
+      so this is NULL except on backends that expose `cached_tokens` /
+      `prompt_cache_hit_tokens`. Authoritative when present.
+    - `cached_tokens_estimated` — inferred from prefill throughput against
+      the model's cold-prefill baseline. NULL while that model is still
+      calibrating. An estimate, and labelled as one wherever it is shown.
+    - `reusable_prefix_tokens` — how much of this prompt *could* have been
+      reused, computed from `prefix_chain` against recent calls to the same
+      model. Owes nothing to the provider, so it is exact.
+
+    A high reusable count with a low cached count means the runtime evicted
+    the cache; a low reusable count means rainbox's own prompt assembly broke
+    the shared prefix.
+    """
+
+    __tablename__ = "llm_call"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    # The ModelConfig this call resolved to, when the caller knew it. Plain
+    # column, no FK: a call's record must outlive the config being deleted.
+    model_uuid: Mapped[UUID | None] = mapped_column()
+    # Which part of rainbox issued the call, from instrument_tags({"caller":
+    # ...}) at the call site. "unknown" for a site that isn't tagged yet.
+    caller: Mapped[str] = mapped_column(Text, default="unknown")
+    ok: Mapped[bool] = mapped_column(default=True)
+    error_category: Mapped[str | None] = mapped_column(Text)
+    prompt_tokens: Mapped[int | None] = mapped_column()
+    completion_tokens: Mapped[int | None] = mapped_column()
+    # Prompt-evaluation (prefill) time — the half the KV cache accelerates.
+    # This, not any token count, is the only cache signal a local provider
+    # gives us.
+    prefill_ms: Mapped[int | None] = mapped_column()
+    decode_ms: Mapped[int | None] = mapped_column()
+    total_ms: Mapped[int | None] = mapped_column()
+    cached_tokens_reported: Mapped[int | None] = mapped_column()
+    cached_tokens_estimated: Mapped[int | None] = mapped_column()
+    reusable_prefix_tokens: Mapped[int | None] = mapped_column()
+    # Cumulative hashes of the outgoing prompt's fixed-size character blocks.
+    # The prompt text itself is never stored — the chain is enough to measure
+    # a shared prefix against later calls, and nothing else.
+    prefix_chain: Mapped[list | None] = mapped_column(JSONB)
+    __table_args__ = (
+        Index("llm_call_by_started", "started_at"),
+        Index("llm_call_by_model", "model", "started_at"),
+        Index("llm_call_by_caller", "caller", "started_at"),
+    )
+
+
 def psycopg_dsn() -> str:
     """The DATABASE_URL as a plain libpq DSN (no SQLAlchemy `+psycopg` driver
     tag), for opening a raw psycopg connection — used by the chat SSE stream to

@@ -50,6 +50,7 @@ from db import (
     KanbanColumn,
     KanbanTask,
     KanbanTaskEvent,
+    LlmCall,
     MemoryClaim,
     MemoryEmbedding,
     MemoryEvidence,
@@ -1337,3 +1338,37 @@ admin.add_view(KanbanBoardView(KanbanBoard, db, category="Kanban"))
 admin.add_view(KanbanColumnView(KanbanColumn, db, category="Kanban"))
 admin.add_view(KanbanTaskView(KanbanTask, db, category="Kanban"))
 admin.add_view(KanbanTaskEventView(KanbanTaskEvent, db, category="Kanban"))
+
+
+class LlmCallView(ModelView):
+    """Observational telemetry — machine-written, so read-only in the admin.
+
+    Newest first: an operator opening this table is almost always checking
+    what the last handful of calls recorded, not paging through history.
+    `prefix_chain` is excluded — a list of block hashes is unreadable in a
+    grid and says nothing a human can act on.
+    """
+
+    can_create = False
+    can_edit = False
+    column_exclude_list = ["prefix_chain"]
+    column_list = (
+        "started_at",
+        "provider",
+        "model",
+        "caller",
+        "ok",
+        "error_category",
+        "prompt_tokens",
+        "completion_tokens",
+        "cached_tokens_reported",
+        "cached_tokens_estimated",
+        "reusable_prefix_tokens",
+        "prefill_ms",
+        "decode_ms",
+        "total_ms",
+    )
+    column_default_sort = ("started_at", True)
+
+
+admin.add_view(LlmCallView(LlmCall, db, category="Activity"))
