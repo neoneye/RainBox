@@ -279,28 +279,38 @@ _TOOL_RULE: str = (
 
 
 def system_prompt_text_tool(topic: str) -> str:
-    return system_prompt_text(topic) + _TOOL_RULE
+    return _TOOL_PREFIX + system_prompt_text(topic) + _TOOL_RULE
 
 
 def system_prompt_struct_tool(topic: str) -> str:
-    return system_prompt_struct(topic) + _TOOL_RULE
+    return _TOOL_PREFIX + system_prompt_struct(topic) + _TOOL_RULE
 
 
-_TOOL_REMINDER: str = (
-    " Call `random_number` first, once, and work the integer it returns into "
-    "this section."
+# The user turns are deliberately bare. Everything about how to write a
+# section lives in the system prompt, which is identical on every turn; the
+# user message says only that another one is wanted. Being identical from turn
+# two onward also makes the suffix itself cache-friendly.
+#
+# These two strings and _TOOL_PREFIX are the knobs this suite is for. Changing
+# them changes what is being measured, so change them deliberately.
+FIRST_USER_MESSAGE: str = "Write first section"
+NEXT_USER_MESSAGE: str = "Write next section"
+
+# Prefixed to the tool variants' system prompt, ahead of everything else. The
+# obligation is stated as the first thing the model reads, in the plainest
+# terms available: what this is, and what it must do on every single call.
+_TOOL_PREFIX: str = (
+    "This is a benchmark of tool calling. In every inference call you MUST "
+    "call the `random_number` tool once.\n\n"
 )
 
 
 def _first_user_message() -> str:
-    return "Begin. Write section 1, establishing the piece."
+    return FIRST_USER_MESSAGE
 
 
 def _next_user_message(turn: int) -> str:
-    return (
-        f"Write section {turn + 1}, continuing directly from the last one. "
-        "Raise the stakes."
-    )
+    return NEXT_USER_MESSAGE
 
 
 class StorySection(BaseModel):
@@ -603,16 +613,13 @@ class _StoryBenchmarkBase:
         raise NotImplementedError
 
     def user_message(self, turn: int) -> str:
-        """What the model is asked for on this turn.
+        """What the model is asked for on this turn — nothing but that.
 
-        Tool variants append the reminder here rather than relying on the
-        system prompt alone: by turn five the rule is thousands of tokens
-        back, and the user message is the last thing the model reads.
-        Repeating it costs nothing in cache terms — the user message is new
-        content on every turn anyway.
+        The tool obligation used to be repeated here. It now sits at the very
+        top of the system prompt instead, so the user turn carries no
+        instructions at all and the two levers can be judged separately.
         """
-        base = _first_user_message() if turn == 0 else _next_user_message(turn)
-        return base + (_TOOL_REMINDER if self.require_tool else "")
+        return _first_user_message() if turn == 0 else _next_user_message(turn)
 
     def _take_turn(
         self, ctx: Any, history: list[ChatMessage], user_msg: str, topic: str

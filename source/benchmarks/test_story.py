@@ -115,7 +115,9 @@ class TestToolPrompting:
         cannot be mistaken for one."""
         prompts = [
             story._TOOL_RULE,
-            story._TOOL_REMINDER,
+            story._TOOL_PREFIX,
+            story.FIRST_USER_MESSAGE,
+            story.NEXT_USER_MESSAGE,
             story.system_prompt_text_tool("A river changes course"),
             story.system_prompt_struct_tool("A river changes course"),
         ]
@@ -136,25 +138,44 @@ class TestToolPrompting:
     def test_the_rule_names_the_tool(self):
         assert "random_number" in story.system_prompt_text_tool("x")
 
-    def test_the_tool_reminder_rides_on_every_user_turn(self):
-        """The system prompt is fixed for the trial and sits far from the
-        model's attention by turn five. The user message is the last thing it
-        reads, so the obligation is repeated there."""
+    def test_the_obligation_leads_the_system_prompt(self):
+        """Stated as the first thing the model reads, rather than repeated on
+        each user turn — the two placements are different experiments and this
+        branch is testing the first."""
+        for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
+            prompt = build("A man sues gravity")
+            assert prompt.startswith("This is a benchmark of tool calling.")
+            assert "MUST call the `random_number` tool once" in prompt
+
+    def test_the_user_turns_carry_no_instructions_at_all(self):
+        """Everything about how to write lives in the system prompt, which is
+        byte-identical every turn. The user message says only that another
+        section is wanted."""
         bench = story.BenchmarkStoryTextTool(uuid4(), num_trials=1)
         for turn in range(STORY_TURNS):
-            message = bench.user_message(turn)
-            assert "random_number" in message, turn
+            assert "random_number" not in bench.user_message(turn), turn
+
+    def test_the_user_turns_are_bare(self):
+        bench = story.BenchmarkStoryTextTool(uuid4(), num_trials=1)
+        assert bench.user_message(0) == "Write first section"
+        for turn in range(1, STORY_TURNS):
+            assert bench.user_message(turn) == "Write next section"
+
+    def test_every_turn_after_the_first_is_identical(self):
+        """An unchanging suffix is the friendliest possible shape for the
+        cache, and keeps the only variable the history itself."""
+        bench = story.BenchmarkStoryText(uuid4(), num_trials=1)
+        later = {bench.user_message(t) for t in range(1, STORY_TURNS)}
+        assert len(later) == 1
 
     def test_a_non_tool_benchmark_does_not_mention_the_tool(self):
         bench = story.BenchmarkStoryText(uuid4(), num_trials=1)
         for turn in range(STORY_TURNS):
             assert "random_number" not in bench.user_message(turn)
 
-    def test_the_reminder_forbids_inventing_a_number(self):
-        blob = story.system_prompt_text_tool("x") + story.BenchmarkStoryTextTool(
-            uuid4(), num_trials=1
-        ).user_message(0)
-        assert "invent" in blob.lower() or "make up" in blob.lower()
+    def test_the_rule_still_forbids_inventing_a_number(self):
+        prompt = story.system_prompt_text_tool("x")
+        assert "invent" in prompt.lower() or "make up" in prompt.lower()
 
 
 class TestTranscript:
@@ -194,7 +215,9 @@ class TestTranscript:
         assert len(turns) == STORY_TURNS
         for i, turn in enumerate(turns, start=1):
             assert turn["section"] == i
-            assert turn["user"].startswith("Begin." if i == 1 else f"Write section {i}")
+            assert turn["user"] == (
+                "Write first section" if i == 1 else "Write next section"
+            )
             assert turn["assistant"]
 
     def test_a_turn_reports_its_own_verdict(self, offline, monkeypatch):
