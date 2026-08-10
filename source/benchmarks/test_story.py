@@ -114,8 +114,8 @@ class TestToolPrompting:
         markers and the word-count target are outside the tool's range and so
         cannot be mistaken for one."""
         prompts = [
-            story._TOOL_RULE,
-            story._TOOL_PREFIX,
+            story._TOOL_PROTOCOL,
+            story._TOOL_CHECKLIST,
             story.FIRST_USER_MESSAGE,
             story.NEXT_USER_MESSAGE,
             story.system_prompt_text_tool("A river changes course"),
@@ -138,14 +138,35 @@ class TestToolPrompting:
     def test_the_rule_names_the_tool(self):
         assert "random_number" in story.system_prompt_text_tool("x")
 
-    def test_the_obligation_leads_the_system_prompt(self):
-        """Stated as the first thing the model reads, rather than repeated on
-        each user turn — the two placements are different experiments and this
-        branch is testing the first."""
+    def test_the_tool_call_is_stated_as_a_phase_before_any_writing(self):
+        """The protocol's whole idea: the call is phase one, not a step folded
+        into the writing. A model that starts composing has already failed the
+        instruction, which is a clearer thing to ask of it."""
         for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
             prompt = build("A man sues gravity")
-            assert prompt.startswith("This is a benchmark of tool calling.")
-            assert "MUST call the `random_number` tool once" in prompt
+            assert "PHASE 1 \u2014 TOOL CALL" in prompt
+            assert "first and only action must be to call the `random_number`" in prompt
+            assert prompt.index("PHASE 1") < prompt.index("PHASE 2")
+
+    def test_the_brief_is_in_the_prompt(self):
+        for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
+            assert "A man sues gravity" in build("A man sues gravity")
+
+    def test_carrying_a_number_over_between_sections_is_forbidden(self):
+        """Reusing an earlier section's number would satisfy a naive check
+        while defeating the point of the tool."""
+        assert "Never reuse a tool result" in story.system_prompt_text_tool("x")
+
+    def test_the_word_bounds_track_the_scoring_constants(self):
+        """A prompt asking for a range the scorer doesn't accept would fail
+        models for obeying it."""
+        prompt = story.system_prompt_text_tool("x")
+        assert f"{MIN_WORDS}\u2013{MAX_WORDS} words" in prompt
+
+    def test_the_structured_variant_still_asks_for_both_fields(self):
+        prompt = story.system_prompt_struct_tool("x")
+        assert "section_text" in prompt
+        assert "section_reviewer" in prompt
 
     def test_the_user_turns_carry_no_instructions_at_all(self):
         """Everything about how to write lives in the system prompt, which is
@@ -174,8 +195,8 @@ class TestToolPrompting:
             assert "random_number" not in bench.user_message(turn)
 
     def test_the_rule_still_forbids_inventing_a_number(self):
-        prompt = story.system_prompt_text_tool("x")
-        assert "invent" in prompt.lower() or "make up" in prompt.lower()
+        prompt = story.system_prompt_text_tool("x").lower()
+        assert "improvise a number" in prompt
 
 
 class TestTranscript:

@@ -278,12 +278,97 @@ _TOOL_RULE: str = (
 )
 
 
+# The operator's two-phase protocol, verbatim apart from the brief and the
+# word bounds, which are templated so they cannot drift from MIN_WORDS and
+# MAX_WORDS. It supersedes the earlier one-line rule and the "this is a
+# benchmark" prefix: it names the tool call as phase one and forbids writing
+# anything before it, rather than asking for the call as part of the writing.
+_TOOL_PROTOCOL: str = """
+MANDATORY TOOL PROTOCOL
+For every user request for a section, follow these two phases in order:
+PHASE 1 — TOOL CALL
+Your first and only action must be to call the `random_number` tool exactly once.
+Do not write story text, commentary, acknowledgments, headings, or explanations before calling the tool.
+Never reuse a tool result from an earlier section. A number is valid only if it was returned by the tool after the current user message.
+PHASE 2 — {phase_two}
+"""
+
+_TOOL_CHECKLIST: str = """
+Before producing story text, silently verify:
+
+* The `random_number` tool was called once after the latest user message.
+* Its result belongs to the current section.
+* The returned digits appear exactly once in the section.
+* No other Arabic numerals appear.
+
+If the tool has not been called for the current section, do not improvise a number and do not begin writing. Call the tool first.
+"""
+
+
+def _serialized_preamble(topic: str) -> str:
+    return (
+        "You are writing a serialized story based on this brief:\n"
+        f"{topic}\n"
+        "Each user message requests exactly one new section of the story, even "
+        "if the message only says \u201ccontinue,\u201d \u201cnext,\u201d or "
+        "something similar.\n"
+    )
+
+
 def system_prompt_text_tool(topic: str) -> str:
-    return _TOOL_PREFIX + system_prompt_text(topic) + _TOOL_RULE
+    """Free text, under the two-phase tool protocol."""
+    phase_two = (
+        "STORY TEXT\n"
+        "After receiving the tool result, do not call the tool again for this section.\n"
+        f"Write one section of {MIN_WORDS}\u2013{MAX_WORDS} words that continues "
+        "directly from the preceding section. Incorporate the newly returned "
+        "integer\u2019s exact digits naturally into the story exactly once.\n"
+        "Do not include any other Arabic numeral sequences in the section. "
+        "Express unrelated quantities in words when necessary.\n"
+        "\nOUTPUT RULES\n"
+        "Return only the story prose after the tool call.\n"
+        "Do not add a section number, heading, recap, note, explanation, or tool "
+        "commentary.\n"
+        "Maintain consistent voice, characters, setting, and continuity. Let the "
+        "plot develop across sections.\n"
+    )
+    return (
+        _serialized_preamble(topic)
+        + _TOOL_PROTOCOL.format(phase_two=phase_two)
+        + _TOOL_CHECKLIST
+    )
 
 
 def system_prompt_struct_tool(topic: str) -> str:
-    return _TOOL_PREFIX + system_prompt_struct(topic) + _TOOL_RULE
+    """The same protocol, with the structured object as phase two.
+
+    The reviewer field is folded into the output rules rather than bolted on
+    after them, so the model reads one description of what to emit.
+    """
+    phase_two = (
+        "STRUCTURED OUTPUT\n"
+        "After receiving the tool result, do not call the tool again for this section.\n"
+        "Respond with a single JSON object with exactly these two fields:\n"
+        f"  - `section_text` (string): one section of {MIN_WORDS}\u2013{MAX_WORDS} "
+        "words continuing directly from the preceding section. Incorporate the "
+        "newly returned integer\u2019s exact digits naturally into the story "
+        "exactly once. Do not include any other Arabic numeral sequences. "
+        "Express unrelated quantities in words when necessary.\n"
+        "  - `section_reviewer` (string): a brutally harsh critique of that exact "
+        "section, in a reviewer\u2019s voice. Be specific about what fails, and be "
+        "merciless.\n"
+        "\nOUTPUT RULES\n"
+        "Return only the JSON object after the tool call \u2014 no prose outside "
+        "it, no markdown fences, no extra fields, no tool commentary.\n"
+        "Do not add a section number, heading, recap, note, or explanation.\n"
+        "Maintain consistent voice, characters, setting, and continuity. Let the "
+        "plot develop across sections.\n"
+    )
+    return (
+        _serialized_preamble(topic)
+        + _TOOL_PROTOCOL.format(phase_two=phase_two)
+        + _TOOL_CHECKLIST
+    )
 
 
 # The user turns are deliberately bare. Everything about how to write a
