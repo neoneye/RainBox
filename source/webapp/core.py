@@ -81,6 +81,12 @@ _log = logging.getLogger(__name__)
 app = make_app()
 init_db(app)
 
+# Record every LLM call this process makes to `llm_call` (the /activity page).
+# After init_db, because the recorder's sink writes through db.session.
+from llm.activity import install_activity_recorder  # noqa: E402
+
+install_activity_recorder()
+
 # Shared top nav, registered as an includable template so every page can do
 # {% include "_nav.html" %} and stay in sync. Active link is derived from
 # request.endpoint. The "Admin Panel" button is pushed right by the spacer.
@@ -173,6 +179,7 @@ NAV_TEMPLATE = """
       </div>
     </details>
     <a href="{{ url_for('find_page') }}" class="{{ 'pp-active' if request.endpoint == 'find_page' }}">Find</a>
+    <a href="{{ url_for('activity_page') }}" class="{{ 'pp-active' if request.endpoint == 'activity_page' }}">Activity</a>
     <a href="{{ url_for('doctor_page') }}" class="{{ 'pp-active' if request.endpoint == 'doctor_page' }}">Doctor</a>
     <a href="{{ url_for('demo_multimodal') }}" class="{{ 'pp-active' if request.endpoint == 'demo_multimodal' }}">Multimodal</a>
     <span class="pp-spacer"></span>

@@ -292,6 +292,54 @@ class ActivityRecorder(BaseEventHandler):
             logger.debug("prefix history lookup failed for %r", model, exc_info=True)
 
 
+class _DatabaseHistory:
+    """The recorder's per-model lookups, answered from `llm_call` itself.
+
+    Queried per call rather than cached in the process: two indexed reads of
+    a couple of hundred rows are nothing beside an inference that takes
+    seconds, and going to the database means every worker process shares one
+    baseline instead of each slowly calibrating its own.
+    """
+
+    def recent_throughputs(self, model: str | None) -> list[float]:
+        import db
+
+        return db.recent_throughputs(model)
+
+    def recent_prefix_chains(self, model: str | None) -> list[list[str]]:
+        import db
+
+        return db.recent_prefix_chains(model)
+
+
+def _database_sink(row: dict) -> None:
+    import db
+
+    db.record_llm_call(row)
+
+
+_installed: ActivityRecorder | None = None
+
+
+def install_activity_recorder() -> ActivityRecorder | None:
+    """Register the recorder on the global dispatcher, once per process.
+
+    Called from the webapp bootstrap and from the agent worker bootstrap —
+    the two places that own a Flask app context, which the database sink
+    needs. Idempotent, so importing either twice is harmless.
+    """
+    global _installed
+    if _installed is not None:
+        return _installed
+    from llama_index.core.instrumentation import get_dispatcher
+
+    recorder = ActivityRecorder(sink=_database_sink, history=_DatabaseHistory())
+    get_dispatcher().add_event_handler(recorder)
+    _installed = recorder
+    logger.info("LLM activity recording enabled")
+    return recorder
+
+
 def _caller_from(tags: Any) -> str:
     if isinstance(tags, dict):
         caller = tags.get("caller")

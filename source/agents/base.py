@@ -289,6 +289,7 @@ class ModelGroupAgent(Agent):
         user_prompt: str,
         response_model: type[BaseModel],
         validator: Callable[[BaseModel], None] | None = None,
+        purpose: str | None = None,
     ) -> BaseModel:
         """Run one structured-output call (system + user message -> a parsed
         `response_model`), falling back through the model group's members in
@@ -303,8 +304,15 @@ class ModelGroupAgent(Agent):
 
         An optional `validator` callable is invoked on each successful response
         before returning it; if it raises, the model is treated as failed and
-        the loop falls back to the next candidate."""
+        the loop falls back to the next candidate.
+
+        `purpose` names what this particular call is for, when an agent makes
+        several different ones (the assistant decides a step, asks for a second
+        opinion, audits its own reply). It only affects attribution on the
+        /activity page — "assistant.decide" is actionable where a bare
+        "assistant" is not."""
         from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+        from llama_index.core.instrumentation.dispatcher import instrument_tags
         from llama_index.core.llms import ChatMessage, MessageRole
         from llm import capture_reasoning, prepare_llm
 
@@ -349,6 +357,10 @@ class ModelGroupAgent(Agent):
                 sllm = the_llm.as_structured_llm(
                     response_model, callback_manager=CallbackManager([token_counter])
                 )
+                # Attribute this call on /activity. The tag rides the
+                # instrumentation events the activity recorder reads, so no
+                # row has to be threaded through by hand.
+                caller_tag = f"{self.name}.{purpose}" if purpose else self.name
                 # Consume the structured output as a *stream* (same parsed
                 # result as .chat()) so the underlying tokens are received
                 # incrementally — this is what lets a caller see how much a
@@ -366,7 +378,7 @@ class ModelGroupAgent(Agent):
                 # result, so instrumentation is the only place it's visible.
                 # Recorded per attempt, even on failure (the partial reasoning
                 # of a timed-out call is exactly what one wants to inspect).
-                with capture_reasoning() as tally:
+                with instrument_tags({"caller": caller_tag}), capture_reasoning() as tally:
                     try:
                         for last in sllm.stream_chat(messages):
                             # Prefer the instrumentation capture: it holds the

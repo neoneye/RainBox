@@ -55,6 +55,13 @@ def main() -> None:
     app = db.make_app()
     app.app_context().push()
 
+    # Record every LLM call this worker makes to `llm_call` (the /activity
+    # page). Installed after the app context exists, because the recorder's
+    # sink writes through db.session.
+    from llm.activity import install_activity_recorder
+
+    install_activity_recorder()
+
     def send(msg: dict[str, Any]) -> None:
         sock.sendall((json.dumps(msg) + "\n").encode("utf-8"))
 

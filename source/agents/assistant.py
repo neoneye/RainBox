@@ -3545,6 +3545,7 @@ class AssistantAgent(ModelGroupAgent):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_model=AssistantStepDecision,
+            purpose="decide",
         )
         return cast(AssistantStepDecision, result)
 
@@ -4914,7 +4915,7 @@ class AssistantAgent(ModelGroupAgent):
             return None
         result = self._structured_completion(
             system_prompt=system_prompt, user_prompt=user_prompt,
-            response_model=AcceptanceCriteria)
+            response_model=AcceptanceCriteria, purpose="acceptance_criteria")
         return cast(AcceptanceCriteria, result)
 
     def _set_acceptance_criteria(self, criteria: AcceptanceCriteria) -> None:

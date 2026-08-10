@@ -35,6 +35,7 @@ from db.profile_calibration import *  # noqa: F401,F403  re-export knowledge-cal
 from db.profile_languages import *  # noqa: F401,F403  re-export multilingual profile subtree ops
 from db.settings import *  # noqa: F401,F403  re-export app_setting registry/accessors
 from db.find_uuid import *  # noqa: F401,F403  re-export the cross-table fuzzy uuid lookup
+from db.activity import *  # noqa: F401,F403  re-export llm_call recording + /activity aggregation
 
 logger = logging.getLogger(__name__)
 

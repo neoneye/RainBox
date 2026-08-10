@@ -1119,6 +1119,12 @@ def cron_tick(now: datetime | None = None) -> int:
 
     if now is None:
         now = datetime.now(UTC)
+    # Housekeeping rides along on the scheduler's pass: /activity's llm_call
+    # rows past their retention horizon. Self-limits to once a day and
+    # swallows its own failures, so it can't hold up a firing.
+    from db.activity import maybe_prune_llm_calls
+
+    maybe_prune_llm_calls(now)
     db.session.execute(
         sa.update(CronRun)
         .where(CronRun.status == "pending",
