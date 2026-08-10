@@ -97,6 +97,11 @@ llama_index (0.14.22): the result carries `.structured_response`, and
 A trial is correct when all of:
 
 - all five turns completed without an exception or timeout;
+- no section reproduces an earlier one. granite4 sent section 1 verbatim
+  five times and stopped calling the tool from section 3 onward; nothing
+  in the scorer noticed the repetition itself. Exact match after folding
+  case and whitespace, deliberately not fuzzy, so a model that merely
+  keeps a consistent voice is never accused of repeating itself;
 - every section is within the word band (`MIN_WORDS`–`MAX_WORDS`, quoted
   into every prompt): wide enough that a model isn't failed for style,
   narrow enough that a one-line reply or a runaway wall of text is;

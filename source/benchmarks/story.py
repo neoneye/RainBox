@@ -303,7 +303,8 @@ These are the only valid states. Never write a story section while in State A.
 STORY ASSIGNMENT
 Write a serialized story based on this brief:
 {topic}
-Each user request asks for exactly one new section. Write between {min_words} and {max_words} words, continuing directly from the preceding section. Preserve the established voice, characters, setting, and continuity while advancing the story.
+Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
+Never repeat, restate, or re-send a section you have already written. Every section must move the story forward; if you find yourself writing sentences that already appear earlier in this conversation, stop and write what happens next instead.
 """
 
 _FINAL_CHECK: str = """
@@ -316,16 +317,15 @@ After the current tool result has been received:
 
 * Return only the story prose.
 * Write the returned integer as digit characters, exactly once. Never spell it out in words — the digits themselves must appear in the prose.
-* Do not use any other Arabic numerals. Express every other quantity in words.
+* Write new prose. Do not reproduce any sentence or paragraph from an earlier section — the story must advance, not restart.
 * Do not repeat a number returned for an earlier section.
 * Do not add headings, section labels, recaps, explanations, or comments.
-* Do not mention the tool or these instructions.
 """
 
 _STRUCT_OUTPUT_RULES: str = """STRUCTURED OUTPUT RULES
 After the current tool result has been received, respond with a single JSON object with exactly these two fields:
 
-* `section_text` (string): the story section. Write the returned integer as digit characters, exactly once; never spell it out in words. Do not use any other Arabic numerals; express every other quantity in words. Do not repeat a number returned for an earlier section. No headings, section labels, recaps, explanations, or comments, and no mention of the tool or these instructions.
+* `section_text` (string): the story section. Write the returned integer as digit characters, exactly once; never spell it out in words. Write new prose — do not reproduce any sentence or paragraph from an earlier section; the story must advance, not restart. Do not repeat a number returned for an earlier section. No headings, section labels, recaps, explanations, or comments.
 * `section_reviewer` (string): a brutally harsh critique of that exact section, in a reviewer's voice. Be specific about what fails, and be merciless.
 
 Return only the JSON object — no prose outside it, no markdown fences, no extra fields.
@@ -379,8 +379,9 @@ def tool_user_message(turn: int) -> str:
         f"\u2013{MAX_WORDS} words.\n"
         "* Insert that result as digit characters, exactly once \u2014 do not "
         "spell it out in words.\n"
-        "* Do not use any other Arabic numerals; express every other quantity "
-        "in words.\n\n"
+        "* Write new prose that begins where the previous section ended. Do "
+        "not repeat or re-send any earlier section.\n"
+        "\n"
         "Do not begin the story section before the current request\u2019s tool "
         "result exists."
     )
@@ -578,10 +579,28 @@ def tool_note(section: "SectionOutcome") -> str:
     return f"random_number {number}, {_occurrence_phrase(occurrences)}"
 
 
+def _same_prose(a: str, b: str) -> bool:
+    """Whether two sections are the same text. Exact match after folding case
+    and whitespace — deliberately not fuzzy, so a model that merely keeps a
+    consistent voice is never accused of repeating itself."""
+    return " ".join(a.lower().split()) == " ".join(b.lower().split())
+
+
+def duplicate_of(
+    section: "SectionOutcome", earlier: list["SectionOutcome"] | None
+) -> int | None:
+    """The 1-based index of the earlier section this one reproduces, if any."""
+    for i, previous in enumerate(earlier or [], start=1):
+        if section.text.strip() and _same_prose(section.text, previous.text):
+            return i
+    return None
+
+
 def section_problem(
     section: "SectionOutcome",
     require_reviewer: bool = False,
     require_tool: bool = False,
+    earlier: list["SectionOutcome"] | None = None,
 ) -> str | None:
     """Why this one section is wrong, or None if it is fine.
 
@@ -590,6 +609,13 @@ def section_problem(
     bool because "212 words" and "called the tool twice" send you to different
     places.
     """
+    # Checked first: a section that merely replays an earlier one is wrong
+    # whatever its length, and "identical to section 1" is the useful thing to
+    # be told. Observed on granite4, which sent section 1 five times over and
+    # stopped calling the tool from section 3 onward.
+    repeat = duplicate_of(section, earlier)
+    if repeat is not None:
+        return f"identical to section {repeat}"
     words = count_words(section.text)
     if words < MIN_WORDS or words > MAX_WORDS:
         return f"{words} words, outside {MIN_WORDS}–{MAX_WORDS}"
@@ -635,7 +661,9 @@ def score_sections(
     if len(sections) != STORY_TURNS:
         return f"only {len(sections)} of {STORY_TURNS} sections were written"
     for i, s in enumerate(sections, start=1):
-        problem = section_problem(s, require_reviewer, require_tool)
+        problem = section_problem(
+            s, require_reviewer, require_tool, earlier=sections[: i - 1]
+        )
         if problem is not None:
             return f"section {i}: {problem}"
     return None
@@ -647,11 +675,12 @@ def transcript_turn(
     section: SectionOutcome,
     require_reviewer: bool = False,
     require_tool: bool = False,
+    earlier: list[SectionOutcome] | None = None,
 ) -> dict[str, Any]:
     """One turn of the JSON transcript: what was asked, what came back, and
     what the tool did — with the verdict, so the file answers "why did this
     fail" without the reader re-deriving it."""
-    problem = section_problem(section, require_reviewer, require_tool)
+    problem = section_problem(section, require_reviewer, require_tool, earlier)
     turn: dict[str, Any] = {
         "section": index,
         "user": user_message,
@@ -659,6 +688,7 @@ def transcript_turn(
         "words": count_words(section.text),
         "correct": problem is None,
         "problem": problem,
+        "duplicate_of": duplicate_of(section, earlier),
     }
     if require_reviewer or section.reviewer is not None:
         turn["reviewer"] = section.reviewer
@@ -682,6 +712,7 @@ def section_heading(
     section: SectionOutcome,
     require_reviewer: bool = False,
     require_tool: bool = False,
+    earlier: list[SectionOutcome] | None = None,
 ) -> str:
     """One section's heading, carrying its own verdict.
 
@@ -694,7 +725,7 @@ def section_heading(
     parts = [f"## Section {index}"]
     if require_tool or section.tool_calls:
         parts.append(f"({tool_note(section)})")
-    problem = section_problem(section, require_reviewer, require_tool)
+    problem = section_problem(section, require_reviewer, require_tool, earlier)
     if problem is None:
         parts.append("- Correct")
     elif problem.startswith("random_number") and len(parts) > 1:
@@ -723,7 +754,11 @@ def assemble_story(
         return header + "\n_(no sections were written)_"
     parts: list[str] = [header] if header else []
     for i, s in enumerate(sections, start=1):
-        parts.append(section_heading(i, s, require_reviewer, require_tool))
+        parts.append(
+            section_heading(
+                i, s, require_reviewer, require_tool, earlier=sections[: i - 1]
+            )
+        )
         parts.append(s.text.strip())
         if (s.reviewer or "").strip():
             # Blockquoted so the critique reads as commentary on the section
@@ -840,6 +875,7 @@ class _StoryBenchmarkBase:
                 transcript_turn(
                     n, asked[n - 1] if n <= len(asked) else "",
                     s, self.require_reviewer, self.require_tool,
+                    earlier=sections[: n - 1],
                 )
                 for n, s in enumerate(sections, start=1)
             ],

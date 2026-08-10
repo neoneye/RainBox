@@ -33,6 +33,12 @@ GOOD_WORDS: int = (MIN_WORDS + MAX_WORDS) // 2
 GOOD_TEXT: str = "word " * GOOD_WORDS
 
 
+def good_text(seed: object = "") -> str:
+    """A valid section that differs from every other one — repeating a
+    section verbatim is itself a fault now, so fixtures must vary."""
+    return f"{GOOD_TEXT}{seed}"
+
+
 class TestTopics:
     """One brief per trial, drawn from a wide list, so a single model sweep
     leaves a pile of different pieces rather than twelve near-identical ones."""
@@ -416,65 +422,70 @@ def section(text=GOOD_TEXT, reviewer="dreadful", numbers=None, calls=None):
 
 class TestScoreSections:
     def test_a_full_set_of_good_sections_passes(self):
-        assert score_sections([section() for _ in range(STORY_TURNS)]) is None
+        assert score_sections([section(text=good_text(i)) for i in range(STORY_TURNS)]) is None
 
     def test_a_short_conversation_fails(self):
         """A model that stopped answering partway did not write the piece,
         however good the sections it managed were."""
         short = STORY_TURNS - 2
-        why = score_sections([section() for _ in range(short)])
+        why = score_sections([section(text=good_text(i)) for i in range(short)])
         assert why is not None
         assert str(short) in why and str(STORY_TURNS) in why
 
     def test_a_section_under_the_floor_fails(self):
-        sections = [section() for _ in range(STORY_TURNS)]
+        sections = [section(text=good_text(i)) for i in range(STORY_TURNS)]
         sections[3] = section(text="too short")
         why = score_sections(sections)
         assert why is not None
         assert "4" in why  # reported 1-based
 
     def test_a_runaway_section_fails(self):
-        sections = [section() for _ in range(STORY_TURNS)]
+        sections = [section(text=good_text(i)) for i in range(STORY_TURNS)]
         sections[0] = section(text="word " * (MAX_WORDS + 50))
         assert score_sections(sections) is not None
 
     def test_the_word_band_is_inclusive_at_both_ends(self):
-        assert score_sections([section(text="w " * MIN_WORDS)
-                               for _ in range(STORY_TURNS)]) is None
-        assert score_sections([section(text="w " * MAX_WORDS)
-                               for _ in range(STORY_TURNS)]) is None
+        assert score_sections([section(text="w " * MIN_WORDS + str(i))
+                               for i in range(STORY_TURNS)]) is None
+        assert score_sections([section(text="w " * (MAX_WORDS - 1) + " " + str(i))
+                               for i in range(STORY_TURNS)]) is None
 
     def test_a_missing_reviewer_fails_when_one_is_required(self):
-        sections = [section() for _ in range(STORY_TURNS)]
+        sections = [section(text=good_text(i)) for i in range(STORY_TURNS)]
         sections[3] = section(reviewer="   ")
         assert score_sections(sections, require_reviewer=True) is not None
 
     def test_the_reviewer_is_ignored_when_not_required(self):
-        sections = [section(reviewer=None) for _ in range(STORY_TURNS)]
+        sections = [section(text=good_text(i), reviewer=None) for i in range(STORY_TURNS)]
         assert score_sections(sections, require_reviewer=False) is None
 
     def test_an_uncalled_tool_fails(self):
-        sections = [section(text=GOOD_TEXT + ' 7', numbers=[7])
-                    for _ in range(STORY_TURNS)]
+        sections = [section(text=good_text(i) + ' 7', numbers=[7])
+                    for i in range(STORY_TURNS)]
         sections[2] = section(numbers=[])
         assert score_sections(sections, require_tool=True) is not None
 
     def test_a_missing_tool_call_fails_the_trial(self):
-        sections = [section(text=GOOD_TEXT + " 99", numbers=[99])
-                    for _ in range(STORY_TURNS)]
+        sections = [section(text=good_text(i) + " 99", numbers=[99])
+                    for i in range(STORY_TURNS)]
         sections[4] = section(text=GOOD_TEXT, numbers=[], calls=0)
         why = score_sections(sections, require_tool=True)
         assert why is not None
         assert "5" in why and "not called" in why
 
     def test_tools_are_ignored_when_not_required(self):
-        assert score_sections([section(numbers=[])
-                               for _ in range(STORY_TURNS)],
+        assert score_sections([section(text=good_text(i), numbers=[])
+                               for i in range(STORY_TURNS)],
                               require_tool=False) is None
 
 
 class RecordingLlm:
-    """Stands in for a prepared LLM, keeping every message list it was sent."""
+    """Stands in for a prepared LLM, keeping every message list it was sent.
+
+    Its reply varies per turn: a model that returned the same text five times
+    would now be scored as repeating itself, which is not what these tests are
+    about.
+    """
 
     def __init__(self, reply: str = GOOD_TEXT):
         self.reply = reply.strip()
@@ -482,8 +493,9 @@ class RecordingLlm:
 
     def chat(self, messages):
         self.calls.append(list(messages))
+        content = f"{self.reply} {len(self.calls)}"
         return SimpleNamespace(
-            message=SimpleNamespace(content=self.reply), raw=None
+            message=SimpleNamespace(content=content), raw=None
         )
 
 
@@ -547,7 +559,9 @@ class TestConversationShape:
         llm, _ = self._run_once(offline, monkeypatch)
         second_turn = llm.calls[1]
         assert second_turn[2].role == MessageRole.ASSISTANT
-        assert second_turn[2].content == llm.reply
+        # The fake varies its reply per turn; turn two must carry back exactly
+        # what turn one produced.
+        assert second_turn[2].content == f"{llm.reply} 1"
 
     def test_a_clean_run_scores_correct(self, offline, monkeypatch):
         _llm, result = self._run_once(offline, monkeypatch)
@@ -794,9 +808,72 @@ class TestDigitsNotWords:
         assert "digit characters" in block
         assert "spell" in block
 
-    def test_the_words_rule_is_scoped_to_other_quantities(self):
-        """"Express quantities in words" without a carve-out is what caused
-        this; the rule has to exempt the returned integer in the same breath."""
+    def test_nothing_asks_for_quantities_in_words_any_more(self):
+        """The rule that caused the spelling-out is gone entirely, rather than
+        carved out. What remains is the positive instruction: this integer, in
+        digits. Stray numerals are not a fault and are no longer mentioned."""
+        for text in (story.system_prompt_text_tool("x"),
+                     story.system_prompt_struct_tool("x"),
+                     story.tool_user_message(0)):
+            assert "Arabic numeral" not in text
+            assert "in words" not in text.replace("spell it out in words", "")
+
+    def test_the_prompts_no_longer_forbid_mentioning_the_tool(self):
         for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
-            prompt = build("x").lower()
-            assert "every other quantity in words" in prompt
+            assert "mention the tool" not in build("x")
+
+
+class TestDuplicateSections:
+    """Granite4 emitted section 1 verbatim five times, and by section 3 had
+    stopped calling the tool — replaying its own output rather than
+    generating. Nothing in the scorer noticed the repetition itself.
+    """
+
+    def test_a_verbatim_repeat_is_caught(self):
+        first = section(text=GOOD_TEXT + " once upon a time")
+        again = section(text=GOOD_TEXT + " once upon a time")
+        problem = section_problem(again, earlier=[first])
+        assert problem is not None
+        assert "identical to section 1" in problem
+
+    def test_it_names_the_section_it_duplicates(self):
+        a = section(text=GOOD_TEXT + " alpha")
+        b = section(text=GOOD_TEXT + " bravo")
+        c = section(text=GOOD_TEXT + " bravo")
+        assert "identical to section 2" in section_problem(c, earlier=[a, b])
+
+    def test_whitespace_and_case_do_not_hide_it(self):
+        first = section(text=GOOD_TEXT + " Once Upon A Time")
+        again = section(text=GOOD_TEXT + "  once   upon a time\n")
+        assert section_problem(again, earlier=[first]) is not None
+
+    def test_different_prose_is_not_flagged(self):
+        first = section(text=GOOD_TEXT + " the door opened")
+        second = section(text=GOOD_TEXT + " the door closed")
+        assert section_problem(second, earlier=[first]) is None
+
+    def test_the_first_section_cannot_duplicate_anything(self):
+        assert section_problem(section(), earlier=[]) is None
+
+    def test_the_trial_reason_points_at_the_repeat(self):
+        sections = [section(text=GOOD_TEXT + f" {i}") for i in range(STORY_TURNS)]
+        sections[3] = section(text=GOOD_TEXT + " 0")
+        why = score_sections(sections)
+        assert why is not None
+        assert "section 4" in why and "identical to section 1" in why
+
+    def test_the_heading_says_so(self):
+        first = section(text=GOOD_TEXT + " same")
+        again = section(text=GOOD_TEXT + " same")
+        assert "identical to section 1" in section_heading(2, again, earlier=[first])
+
+    def test_the_transcript_records_it(self):
+        first = section(text=GOOD_TEXT + " same")
+        again = section(text=GOOD_TEXT + " same")
+        turn = story.transcript_turn(2, "ask", again, earlier=[first])
+        assert turn["duplicate_of"] == 1
+        assert turn["correct"] is False
+
+    def test_a_fresh_section_records_no_duplicate(self):
+        turn = story.transcript_turn(1, "ask", section())
+        assert turn["duplicate_of"] is None
