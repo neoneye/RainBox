@@ -172,7 +172,54 @@ class BenchmarkRunner:
                     refreshed.append(cached)
             self._state["targets"] = refreshed
 
-    def start(self, app: Flask, target_uuids: list[str] | None = None) -> bool:
+    def _worker_request(
+        self, target_uuid: str, skip_warmup: bool,
+        bench_indices: list[int] | None,
+    ) -> dict[str, Any]:
+        """The JSON the child process is fed. `bench_indices` is None for a
+        whole row, or the positions of the cells to run."""
+        return {
+            "target_uuid": target_uuid,
+            "skip_warmup": skip_warmup,
+            "spec_set": self.spec_set,
+            "bench_indices": bench_indices,
+        }
+
+    def _validate_bench_indices(
+        self, bench_indices: list[int] | None
+    ) -> list[int] | None:
+        """Indices pick a spec by position and arrive from a query string."""
+        if bench_indices is None:
+            return None
+        for i in bench_indices:
+            if not 0 <= i < len(self.specs):
+                raise ValueError(
+                    f"benchmark index {i} out of range for {self.spec_set}"
+                )
+        return sorted(set(bench_indices))
+
+    def _reset_for_run(
+        self, target_index: int, bench_indices: list[int] | None
+    ) -> None:
+        """Clear the cells about to be re-run, and only those.
+
+        Re-running one cell must not wipe the results beside it: the operator
+        paid for those in minutes of model time and did not ask to lose them.
+        """
+        chosen = self._validate_bench_indices(bench_indices)
+        target = self._state["targets"][target_index]
+        for i, (name, _cls, kwargs) in enumerate(self.specs):
+            if chosen is None or i in chosen:
+                target["benchmarks"][i] = _empty_benchmark_entry(
+                    name, kwargs.get("num_trials", 5)
+                )
+
+    def start(
+        self,
+        app: Flask,
+        target_uuids: list[str] | None = None,
+        bench_indices: list[int] | None = None,
+    ) -> bool:
         """Kick off a run in the background.
 
         target_uuids=None means run every target in the /models tree.
@@ -180,10 +227,16 @@ class BenchmarkRunner:
         state keep their previous values (so the page shows accumulated
         results across multiple per-target Start clicks).
 
+        bench_indices=None runs every benchmark for those targets; a list runs
+        only those cells, leaving the rest of the row as it was. The story
+        suite runs four benchmarks in order and the interesting one is often
+        last, so waiting through the others to reach it is minutes of nothing.
+
         Returns False if a run is already in progress."""
         with self._lock:
             if self._state["running"]:
                 return False
+            chosen = self._validate_bench_indices(bench_indices)
             all_targets = self._collect_targets()
             run_set: set[str] | None = (
                 set(target_uuids) if target_uuids is not None else None
@@ -214,7 +267,21 @@ class BenchmarkRunner:
                 uuid_str = t["uuid"]
                 should_run = run_set is None or uuid_str in run_set
                 if should_run:
-                    new_targets_state.append(_fresh_entry(i, t))
+                    cached = existing.get(uuid_str)
+                    if chosen is None or cached is None:
+                        new_targets_state.append(_fresh_entry(i, t))
+                    else:
+                        # Keep the untouched cells; blank only what re-runs.
+                        kept = dict(cached)
+                        kept["index"] = i
+                        kept["benchmarks"] = list(cached["benchmarks"])
+                        kept["status"] = "pending"
+                        for bi, (name, _c, kw) in enumerate(self.specs):
+                            if bi in chosen:
+                                kept["benchmarks"][bi] = _empty_benchmark_entry(
+                                    name, kw.get("num_trials", 5)
+                                )
+                        new_targets_state.append(kept)
                     run_targets.append({**t, "state_index": i})
                 else:
                     cached = existing.get(uuid_str)
@@ -236,7 +303,8 @@ class BenchmarkRunner:
             }
             self._stop_event.clear()
         self._thread = threading.Thread(
-            target=self._run, args=(app, run_targets), name="benchmark-runner", daemon=True
+            target=self._run, args=(app, run_targets, chosen),
+            name="benchmark-runner", daemon=True,
         )
         self._thread.start()
         return True
@@ -415,7 +483,10 @@ class BenchmarkRunner:
                 ev.get("topic", ""), ev.get("transcript"),
             )
 
-    def _run(self, app: Flask, targets: list[dict[str, Any]]) -> None:
+    def _run(
+        self, app: Flask, targets: list[dict[str, Any]],
+        bench_indices: list[int] | None = None,
+    ) -> None:
         # Each target runs in its own child process (benchmarks.worker). The
         # child streams progress events back; stop() sets _stop_event, which
         # makes stream_target_subprocess SIGKILL the active child — closing its
@@ -440,9 +511,9 @@ class BenchmarkRunner:
                     # target on the same model, so skip the child's warmup.
                     skip_warmup = target["model_name"] == prev_model_name
                     prev_model_name = target["model_name"]
-                    request = {"target_uuid": target["uuid"],
-                               "skip_warmup": skip_warmup,
-                               "spec_set": self.spec_set}
+                    request = self._worker_request(
+                        target["uuid"], skip_warmup, bench_indices
+                    )
                     killed = stream_target_subprocess(
                         _BENCHMARK_WORKER_MODULE,
                         request,

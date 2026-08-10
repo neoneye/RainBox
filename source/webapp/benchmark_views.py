@@ -1,6 +1,6 @@
 import json
 
-from flask import Response, render_template_string, request
+from flask import Response, abort, render_template_string, request
 
 from benchmarks.runner import BENCHMARK_SPECS
 
@@ -37,7 +37,12 @@ BENCHMARK_TEMPLATE: str = """
   td.target .target-lines{flex:1 1 auto;min-width:0}
   td.target .target-lines .provider{color:#1e40af}
   td.target .target-actions{flex:0 0 auto}
-  td.bench{font-family:ui-monospace,monospace;font-size:90%}
+  td.bench{font-family:ui-monospace,monospace;font-size:90%;position:relative}
+  button.cell-start{float:right;margin-left:0.4em;font-size:75%;line-height:1;
+        padding:2px 5px;cursor:pointer;border:1px solid #cbd5e1;border-radius:4px;
+        background:#fff;color:#475569}
+  button.cell-start:hover:enabled{border-color:#9aa3af;color:#1a1a2e}
+  button.cell-start:disabled{opacity:0.35;cursor:default}
   progress{width:100%;height:12px}
   .ok{color:#080}
   .err{color:#a00}
@@ -213,6 +218,14 @@ document.addEventListener('click', async function (e) {
   }
 });
 
+// Every cell gets its own start, because the interesting benchmark is often
+// the last column and waiting through the others is minutes of nothing. The
+// row and sweep buttons still do what they always did.
+function cellStart(b, uuid, bi, running) {
+  return `<button class="cell-start" data-uuid="${escapeHtml(uuid)}" data-bench="${bi}"` +
+         `${running ? ' disabled' : ''} title="Run just this benchmark">&#9654;</button>`;
+}
+
 function renderBench(b, ti, bi) {
   if (b.status === 'done') {
     return `<div>${fmtCounts(b)}</div>${benchDetails(b)}${benchStories(b, ti, bi)}`;
@@ -313,7 +326,7 @@ function render(state) {
     const startBtn = `<button class="row-start" data-uuid="${escapeHtml(t.uuid)}" ${running ? 'disabled' : ''}>Start</button>`;
     const benchCells = benchmarkNames.map((bname, i) => {
       const b = t.benchmarks[i];
-      return `<td class="bench">${renderBench(b, t.index, i)}</td>`;
+      return `<td class="bench">${cellStart(b, t.uuid, i, running)}${renderBench(b, t.index, i)}</td>`;
     }).join('');
     const rank = rankByIndex.get(t.index);
     const rankBadge = rank ? `<span class="rank rank-${rank}">${rankLabel[rank - 1]}</span>` : '';
@@ -358,12 +371,15 @@ document.getElementById('start-btn').addEventListener('click', async () => {
   } catch (e) { alert(e); }
 });
 document.getElementById('grid-body').addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('button.row-start');
+  const btn = ev.target.closest('button.row-start, button.cell-start');
   if (!btn) return;
   const uuid = btn.dataset.uuid;
   if (!uuid) return;
   try {
-    const url = '{{ start_url }}' + '?target_uuid=' + encodeURIComponent(uuid);
+    let url = '{{ start_url }}' + '?target_uuid=' + encodeURIComponent(uuid);
+    if (btn.dataset.bench !== undefined) {
+      url += '&bench=' + encodeURIComponent(btn.dataset.bench);
+    }
     await call(url, 'POST');
     startPolling(); poll();
   } catch (e) { alert(e); }
@@ -446,7 +462,20 @@ def benchmark_basic_state() -> Response:
 def benchmark_basic_start() -> Response:
     target_uuid = request.args.get("target_uuid") or request.form.get("target_uuid")
     target_uuids = [target_uuid] if target_uuid else None
-    started = benchmark_runner.start(app, target_uuids=target_uuids)
+    # `bench` selects one cell; absent runs the whole row.
+    raw_bench = request.args.get("bench") or request.form.get("bench")
+    bench_indices = None
+    if raw_bench not in (None, ""):
+        try:
+            bench_indices = [int(raw_bench)]
+        except ValueError:
+            abort(400, "bench must be an integer")
+    try:
+        started = benchmark_runner.start(
+            app, target_uuids=target_uuids, bench_indices=bench_indices
+        )
+    except ValueError as e:
+        abort(400, str(e))
     return app.response_class(
         json.dumps({"started": started}),
         mimetype="application/json",

@@ -1,7 +1,12 @@
 # /benchmark_story — conversation benchmarks that exercise the prompt cache
 
 Four benchmarks on their own page, in the shape of `/benchmark_basic`: a
-table of targets × benchmarks, live polling, per-row Start. Each trial is a
+table of targets × benchmarks, live polling, and Start at three
+granularities — the whole sweep, one target's row, or a single cell.
+The last matters here: the suite runs its four benchmarks in order and the
+interesting one is often last, so reaching it otherwise means sitting
+through minutes of the others. Re-running a cell clears that cell only;
+the results beside it cost model time and are not ours to discard. Each trial is a
 five-turn conversation that writes a short piece a section at a time, to a
 brief drawn at random from a list of 100.
 

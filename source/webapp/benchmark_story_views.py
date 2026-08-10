@@ -121,7 +121,20 @@ def benchmark_story_state() -> Response:
 def benchmark_story_start() -> Response:
     target_uuid = request.args.get("target_uuid") or request.form.get("target_uuid")
     target_uuids = [target_uuid] if target_uuid else None
-    started = story_benchmark_runner.start(app, target_uuids=target_uuids)
+    # `bench` selects one cell; absent runs the whole row.
+    raw_bench = request.args.get("bench") or request.form.get("bench")
+    bench_indices = None
+    if raw_bench not in (None, ""):
+        try:
+            bench_indices = [int(raw_bench)]
+        except ValueError:
+            abort(400, "bench must be an integer")
+    try:
+        started = story_benchmark_runner.start(
+            app, target_uuids=target_uuids, bench_indices=bench_indices
+        )
+    except ValueError as e:
+        abort(400, str(e))
     return app.response_class(
         json.dumps({"started": started}),
         mimetype="application/json",

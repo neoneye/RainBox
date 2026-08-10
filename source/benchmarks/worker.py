@@ -5,7 +5,11 @@ subprocess so the row can be SIGKILLed mid-trial (a runaway model otherwise
 pegs CPU/GPU until the provider times out).
 
 Protocol — read one JSON request on stdin:
-    {"target_uuid": str, "skip_warmup": bool}
+    {"target_uuid": str, "skip_warmup": bool, "spec_set": str,
+     "bench_indices": list[int] | None}
+`bench_indices` picks individual cells to run; None runs the whole row. The
+emitted `bi` is always the benchmark's position in the full spec set, so the
+page maps it to the right column either way.
 and write NDJSON progress events to stdout, one per line:
     {"t": "target_status", "status": "warming_up" | "running" | "done"}
     {"t": "warmup_elapsed", "elapsed": float}
@@ -44,6 +48,14 @@ def main() -> None:
     target_uuid = UUID(req["target_uuid"])
     skip_warmup = bool(req.get("skip_warmup", False))
     specs = SPEC_SETS[req.get("spec_set", "general")]
+    # Which cells to run. None means the whole row. The original position is
+    # kept as `bi` throughout, because that is the column the page maps it to.
+    chosen = req.get("bench_indices")
+    selected = (
+        list(enumerate(specs))
+        if chosen is None
+        else [(bi, spec) for bi, spec in enumerate(specs) if bi in set(chosen)]
+    )
 
     app = make_app()
     with app.app_context():
@@ -58,7 +70,7 @@ def main() -> None:
                 emit({"t": "warmup_failed", "error": f"{type(e).__name__}: {e}"})
 
         emit({"t": "target_status", "status": "running"})
-        for bi, (_name, cls, kwargs) in enumerate(specs):
+        for bi, (_name, cls, kwargs) in selected:
             emit({"t": "bench_status", "bi": bi, "status": "running"})
             status = "done"
             err: str | None = None

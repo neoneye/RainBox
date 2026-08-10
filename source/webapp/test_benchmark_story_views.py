@@ -252,3 +252,59 @@ def _bench_entry():
     from benchmarks.runner import _empty_benchmark_entry
 
     return _empty_benchmark_entry("story_text", 3)
+
+
+class TestPerCellStart:
+    """A cell has to be runnable on its own: the story suite runs four
+    benchmarks in order and the one worth watching is often last."""
+
+    def test_every_cell_offers_a_start(self, client):
+        body = client.get("/benchmark_story").get_data(as_text=True)
+        assert "cell-start" in body
+        assert 'data-bench="${bi}"' in body
+
+    def test_the_row_and_sweep_buttons_survive(self, client):
+        body = client.get("/benchmark_story").get_data(as_text=True)
+        assert "row-start" in body
+        assert 'id="start-btn"' in body
+
+    def test_one_click_handler_serves_both(self, client):
+        """A second listener would double-fire when the markup is rebuilt by
+        polling."""
+        body = client.get("/benchmark_story").get_data(as_text=True)
+        assert "button.row-start, button.cell-start" in body
+
+    def test_the_endpoint_accepts_a_bench_index(self, client, monkeypatch):
+        seen = {}
+
+        def fake_start(app, target_uuids=None, bench_indices=None):
+            seen["targets"] = target_uuids
+            seen["benches"] = bench_indices
+            return True
+
+        monkeypatch.setattr(story_benchmark_runner, "start", fake_start)
+        r = client.post("/benchmark_story/start?target_uuid=abc&bench=2")
+        assert r.status_code == 200
+        assert seen == {"targets": ["abc"], "benches": [2]}
+
+    def test_no_bench_index_still_runs_the_whole_row(self, client, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(
+            story_benchmark_runner,
+            "start",
+            lambda app, target_uuids=None, bench_indices=None: seen.update(
+                benches=bench_indices
+            )
+            or True,
+        )
+        client.post("/benchmark_story/start?target_uuid=abc")
+        assert seen["benches"] is None
+
+    def test_a_junk_bench_index_is_refused(self, client):
+        r = client.post("/benchmark_story/start?target_uuid=abc&bench=nope")
+        assert r.status_code == 400
+
+    def test_an_out_of_range_bench_index_is_refused(self, client):
+        """It selects a spec by position, so it cannot be trusted raw."""
+        r = client.post("/benchmark_story/start?target_uuid=abc&bench=99")
+        assert r.status_code == 400
