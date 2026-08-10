@@ -8,6 +8,8 @@ objects — without a database, a provider, or a network.
 
 from types import SimpleNamespace
 
+import pytest
+
 from llama_index.core.base.llms.types import ChatResponse
 from llama_index.core.llms import ChatMessage
 from llama_index.core.instrumentation.events.llm import (
@@ -341,6 +343,76 @@ class TestRobustness:
         assert len(rows) == 1
         assert rows[0]["prompt_tokens"] == 4032
         assert rows[0]["cached_tokens_estimated"] is None
+
+
+class TestRecorderInstallation:
+    """Where the recorder gets registered decides what /activity can see.
+
+    It was registered in the webapp and agent-worker bootstraps only, so every
+    LLM call made from a *child* process — the benchmark suites, the
+    edit-document worker, the /model test button — went unrecorded and the
+    dashboard silently under-reported. Registering at the one place every LLM
+    is constructed closes that off, including for entry points not written
+    yet.
+    """
+
+    @pytest.fixture(autouse=True)
+    def fresh_dispatcher(self, monkeypatch):
+        from llama_index.core.instrumentation import get_dispatcher
+
+        import llm.activity as activity
+
+        dispatcher = get_dispatcher()
+        original = list(dispatcher.event_handlers)
+        # Importing `webapp` anywhere in the session installs a recorder, so
+        # clear them out rather than assuming a clean dispatcher — otherwise
+        # this class passes or fails on test ordering.
+        dispatcher.event_handlers[:] = [
+            h for h in original if not isinstance(h, ActivityRecorder)
+        ]
+        monkeypatch.setattr(activity, "_installed", None)
+        yield
+        dispatcher.event_handlers[:] = original
+        activity._installed = None
+
+    def _prepared(self, monkeypatch):
+        """Build an LLM without touching a provider or the network."""
+        import providers
+
+        class FakeProvider:
+            id = "ollama"
+
+            def base_url(self):
+                return "http://localhost:11434"
+
+            def ensure_loaded(self, model, context_window):
+                pass
+
+        monkeypatch.setattr(providers, "get", lambda _id: FakeProvider())
+        import llm
+
+        return llm.prepare_llm("ollama", "llama3.2:3b", {"context_window": 4096})
+
+    def _recorders(self):
+        from llama_index.core.instrumentation import get_dispatcher
+
+        return [
+            h
+            for h in get_dispatcher().event_handlers
+            if isinstance(h, ActivityRecorder)
+        ]
+
+    def test_building_an_llm_registers_the_recorder(self, monkeypatch):
+        assert self._recorders() == []
+        self._prepared(monkeypatch)
+        assert len(self._recorders()) == 1
+
+    def test_building_many_llms_does_not_stack_recorders(self, monkeypatch):
+        """A benchmark builds a fresh LLM every turn. Registering per call
+        would multiply every recorded row by the number of turns."""
+        for _ in range(5):
+            self._prepared(monkeypatch)
+        assert len(self._recorders()) == 1
 
 
 class TestProviderForBaseUrl:

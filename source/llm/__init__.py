@@ -43,6 +43,17 @@ def prepare_llm(
     endpoint. This is a pure constructor — it makes no capability decisions at
     runtime; thinking and structured-output settling happen on /model when the
     config is saved."""
+    # Record this call on /activity. Registered here, at the one place every
+    # LLM in rainbox is constructed, rather than in each process's bootstrap:
+    # the benchmark suites, the edit-document worker and the /model test
+    # button all run in child processes that build their own app context, and
+    # a per-bootstrap registration silently missed every one of them — the
+    # dashboard under-reported without ever looking broken. Idempotent, so the
+    # cost here is one boolean check.
+    from llm.activity import install_activity_recorder
+
+    install_activity_recorder()
+
     provider = providers.get(provider_id)
     desired_ctx = int(arguments.get("context_window") or 3900)
     provider.ensure_loaded(model, desired_ctx)
