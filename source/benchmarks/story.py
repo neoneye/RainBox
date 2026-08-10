@@ -253,7 +253,7 @@ def system_prompt_struct(topic: str) -> str:
 
 
 _TOOL_RULE: str = (
-    "\n\nBefore writing each section you MUST call the `omen_number` tool "
+    "\n\nBefore writing each section you MUST call the `random_number` tool "
     "exactly once. It returns an integer. Those digits MUST then appear "
     "literally in the section you write — as a room number, a year, a count "
     "of something, a number on a form, whatever the brief allows. Write the "
@@ -294,12 +294,24 @@ class StorySection(BaseModel):
 
 @dataclass
 class SectionOutcome:
-    """What one turn produced, before any judgement is passed on it."""
+    """What one turn produced, before any judgement is passed on it.
+
+    `tool_numbers` holds every number the tool returned during the turn, in
+    order, and `tool_calls` how many times it ran. Both, rather than a single
+    number and a bool, because "called twice" and "called once and ignored the
+    answer" are different faults and the artifact has to tell them apart.
+    """
 
     text: str
     reviewer: str | None = None
-    tool_number: int | None = None
-    tool_called: bool = False
+    tool_numbers: list[int] = field(default_factory=list)
+    tool_calls: int = 0
+
+    @property
+    def tool_number(self) -> int | None:
+        """The number the section was supposed to use — the first, when the
+        model behaved and called once."""
+        return self.tool_numbers[0] if self.tool_numbers else None
 
 
 @dataclass
@@ -320,20 +332,88 @@ def count_words(text: str) -> int:
     return len(text.split())
 
 
-def tool_number_present(text: str, number: int) -> bool:
-    """Whether `number` appears in `text` as a number in its own right.
+def _number_forms(number: int) -> set[str]:
+    """The written forms of a number a model might reasonably use."""
+    return {str(number), f"{number:,}"}
+
+
+def count_number_occurrences(text: str, number: int) -> int:
+    """How many times `number` appears in `text` as a number in its own right.
 
     Bounded on both sides so 14242 doesn't satisfy a demand for 4242 — without
     that, a model could pass by emitting any long number that happens to
     contain the digits. A thousands separator is accepted because models write
-    4,242 as readily as 4242 and it is the same number.
+    4,242 as readily as 4242 and it is the same number; the grouped form is
+    counted first so one "4,242" is not also counted as a plain "242".
     """
-    plain = str(number)
-    grouped = f"{number:,}"
-    for form in {plain, grouped}:
-        if re.search(rf"(?<![\d,]){re.escape(form)}(?![\d,]*\d)", text):
-            return True
-    return False
+    total = 0
+    for form in sorted(_number_forms(number), key=len, reverse=True):
+        matches = re.findall(rf"(?<![\d,]){re.escape(form)}(?![\d,]*\d)", text)
+        total += len(matches)
+        if matches:
+            break
+    return total
+
+
+def tool_number_present(text: str, number: int) -> bool:
+    """Whether `number` appears in `text` as a number in its own right."""
+    return count_number_occurrences(text, number) > 0
+
+
+def _occurrence_phrase(count: int) -> str:
+    if count == 0:
+        return "not found in the text"
+    if count == 1:
+        return "found once in the text"
+    return f"found {count} times in the text"
+
+
+def tool_note(section: "SectionOutcome") -> str:
+    """The parenthetical the artifact puts on a heading, describing what the
+    model did with the tool. This is the whole troubleshooting story for a
+    failing tool trial: called how often, what came back, and whether it was
+    used."""
+    if section.tool_calls == 0:
+        return "random_number not called"
+    if section.tool_calls > 1:
+        numbers = ", ".join(str(n) for n in section.tool_numbers)
+        return f"random_number called {section.tool_calls} times: {numbers}"
+    number = section.tool_numbers[0]
+    return (
+        f"random_number {number}, "
+        f"{_occurrence_phrase(count_number_occurrences(section.text, number))}"
+    )
+
+
+def section_problem(
+    section: "SectionOutcome",
+    require_reviewer: bool = False,
+    require_tool: bool = False,
+) -> str | None:
+    """Why this one section is wrong, or None if it is fine.
+
+    Per-section rather than per-trial so the artifact can mark every heading,
+    not just report the first thing that went wrong. A string rather than a
+    bool because "212 words" and "called the tool twice" send you to different
+    places.
+    """
+    words = count_words(section.text)
+    if words < MIN_WORDS or words > MAX_WORDS:
+        return f"{words} words, outside {MIN_WORDS}–{MAX_WORDS}"
+    if require_reviewer and not (section.reviewer or "").strip():
+        return "no reviewer critique"
+    if require_tool:
+        if section.tool_calls == 0:
+            return "random_number not called"
+        if section.tool_calls > 1:
+            return (
+                f"random_number called {section.tool_calls} times, "
+                "the brief says exactly once"
+            )
+        number = section.tool_numbers[0]
+        if count_number_occurrences(section.text, number) == 0:
+            return f"random_number {number} not found in the text"
+    return None
 
 
 def score_sections(
@@ -343,44 +423,65 @@ def score_sections(
 ) -> str | None:
     """Why this trial is not correct, or None if it is.
 
-    A string rather than a bool so the page can say what went wrong: "section
-    4 was 12 words" is actionable where a red cell is not.
+    Reports the first bad section; every section's own verdict is on its
+    heading in the copyable artifact.
     """
     if len(sections) != STORY_TURNS:
         return f"only {len(sections)} of {STORY_TURNS} sections were written"
     for i, s in enumerate(sections, start=1):
-        words = count_words(s.text)
-        if words < MIN_WORDS or words > MAX_WORDS:
-            return (
-                f"section {i} was {words} words, outside {MIN_WORDS}–{MAX_WORDS}"
-            )
-        if require_reviewer and not (s.reviewer or "").strip():
-            return f"section {i} had no reviewer critique"
-        if require_tool:
-            if not s.tool_called or s.tool_number is None:
-                return f"section {i} did not call the omen tool"
-            if not tool_number_present(s.text, s.tool_number):
-                return (
-                    f"section {i} omitted its omen number {s.tool_number}"
-                )
+        problem = section_problem(s, require_reviewer, require_tool)
+        if problem is not None:
+            return f"section {i}: {problem}"
     return None
 
 
-def assemble_story(sections: list[SectionOutcome], topic: str = "") -> str:
+def section_heading(
+    index: int,
+    section: SectionOutcome,
+    require_reviewer: bool = False,
+    require_tool: bool = False,
+) -> str:
+    """One section's heading, carrying its own verdict.
+
+    "## Section 3 (random_number 42, found once in the text) - Correct"
+
+    The tool note and the verdict are what make a failing trial diagnosable
+    from the clipboard alone: whether the tool ran, how often, what it
+    returned, and whether the model used it.
+    """
+    parts = [f"## Section {index}"]
+    if require_tool or section.tool_calls:
+        parts.append(f"({tool_note(section)})")
+    problem = section_problem(section, require_reviewer, require_tool)
+    if problem is None:
+        parts.append("- Correct")
+    elif problem.startswith("random_number") and len(parts) > 1:
+        # The note already spelled this out; repeating it reads as noise.
+        parts.append("- Wrong")
+    else:
+        parts.append(f"- Wrong: {problem}")
+    return " ".join(parts)
+
+
+def assemble_story(
+    sections: list[SectionOutcome],
+    topic: str = "",
+    require_reviewer: bool = False,
+    require_tool: bool = False,
+) -> str:
     """The piece as markdown, for the page's copy-to-clipboard button.
 
     Headed by the brief: a piece pasted somewhere else a week later should say
-    what it was asked to be, or it reads as nonsense.
+    what it was asked to be, or it reads as nonsense. Every section heading
+    carries its own verdict, so a failed trial can be read rather than
+    re-run.
     """
     header = f"# {topic}\n" if topic else ""
     if not sections:
         return header + "\n_(no sections were written)_"
     parts: list[str] = [header] if header else []
     for i, s in enumerate(sections, start=1):
-        heading = f"## Section {i}"
-        if s.tool_number is not None:
-            heading += f"  ·  omen {s.tool_number}"
-        parts.append(heading)
+        parts.append(section_heading(i, s, require_reviewer, require_tool))
         parts.append(s.text.strip())
         if (s.reviewer or "").strip():
             # Blockquoted so the critique reads as commentary on the section
@@ -393,22 +494,21 @@ def assemble_story(sections: list[SectionOutcome], topic: str = "") -> str:
     return out
 
 
-def _omen_tool() -> tuple[Callable[[], int], dict[str, Any]]:
-    """A tool returning a random integer, plus the record of what it returned.
+def _random_number_tool() -> tuple[Callable[[], int], list[int]]:
+    """A tool returning a random integer, plus the list it appends to.
 
-    The record is a dict rather than a closure variable so the caller can read
-    it after the agent run and see both whether the tool fired and what number
-    the model was given.
+    Every call is recorded, so a model that loops is visible as such rather
+    than looking like a single well-behaved call.
     """
-    seen: dict[str, Any] = {"called": False, "number": None}
+    returned: list[int] = []
 
-    def omen_number() -> int:
-        """Returns the omen number that must appear in the next section."""
-        seen["called"] = True
-        seen["number"] = random.randint(1000, 9999)
-        return seen["number"]
+    def random_number() -> int:
+        """Returns the random number that must appear in the next section."""
+        value = random.randint(1000, 9999)
+        returned.append(value)
+        return value
 
-    return omen_number, seen
+    return random_number, returned
 
 
 def _run_agent_turn(agent: FunctionAgent, user_msg: str, history: list[ChatMessage]):
@@ -529,7 +629,11 @@ class _StoryBenchmarkBase:
                 trial_index=i,
                 topic=topic,
                 sections=sections,
-                story=assemble_story(sections, topic),
+                story=assemble_story(
+                    sections, topic,
+                    require_reviewer=self.require_reviewer,
+                    require_tool=self.require_tool,
+                ),
                 turns_completed=len(sections),
                 word_counts=[count_words(s.text) for s in sections],
                 correct=error is None and reason is None,
@@ -623,7 +727,7 @@ class BenchmarkStoryStruct(_StoryBenchmarkBase):
 class BenchmarkStoryTextTool(_StoryBenchmarkBase):
     """Ten turns of free text, each gated on a tool call.
 
-    Correct only if the integer `omen_number` returned appears in the section
+    Correct only if the integer `random_number` returned appears in the section
     the model then wrote — which a model that calls the tool and ignores the
     result cannot fake. Requires a function-calling target."""
 
@@ -648,13 +752,13 @@ class BenchmarkStoryTextTool(_StoryBenchmarkBase):
         return FunctionAgent(**kwargs)
 
     def _take_turn(self, ctx, history, user_msg, topic) -> SectionOutcome:
-        tool, seen = _omen_tool()
+        tool, returned = _random_number_tool()
         agent = self._build_agent(ctx, tool, topic)
         result = _run_agent_turn(agent, user_msg, history)
         return SectionOutcome(
             text=str(result).strip(),
-            tool_number=seen["number"],
-            tool_called=bool(seen["called"]),
+            tool_numbers=list(returned),
+            tool_calls=len(returned),
         )
 
 
@@ -673,7 +777,7 @@ class BenchmarkStoryStructTool(BenchmarkStoryTextTool):
         return system_prompt_struct_tool(topic)
 
     def _take_turn(self, ctx, history, user_msg, topic) -> SectionOutcome:
-        tool, seen = _omen_tool()
+        tool, returned = _random_number_tool()
         agent = self._build_agent(ctx, tool, topic, output_cls=StorySection)
         result = _run_agent_turn(agent, user_msg, history)
         parsed = getattr(result, "structured_response", None)
@@ -686,8 +790,8 @@ class BenchmarkStoryStructTool(BenchmarkStoryTextTool):
         return SectionOutcome(
             text=section.section_text.strip(),
             reviewer=section.section_reviewer.strip(),
-            tool_number=seen["number"],
-            tool_called=bool(seen["called"]),
+            tool_numbers=list(returned),
+            tool_calls=len(returned),
         )
 
 

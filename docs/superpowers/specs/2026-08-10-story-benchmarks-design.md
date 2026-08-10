@@ -56,7 +56,7 @@ the section.
 The second field exists to make the schema carry two genuinely different
 registers, so a model can't satisfy it by renaming its prose.
 
-**`story_text_tool`** — a `FunctionAgent` with one tool, `omen_number()`,
+**`story_text_tool`** — a `FunctionAgent` with one tool, `random_number()`,
 returning a random integer. The section must contain that number. Correct
 only if the number the tool returned appears verbatim in the section text,
 which is checkable rather than a matter of taste, and proves the model
@@ -76,8 +76,10 @@ A trial is correct when all of:
   band is wide enough that a model isn't failed for style, narrow enough
   that a one-line reply or a runaway wall of text is);
 - structured variants: `section_reviewer` non-empty on every turn;
-- tool variants: for every turn, the tool was called and the integer it
-  returned appears in that turn's section text.
+- tool variants: for every turn, the tool was called **exactly once** and
+  the integer it returned appears in that turn's section text. Exactly
+  once because the brief says so, and because a model that loops on the
+  tool is doing something worth seeing rather than quietly passing.
 
 Trials that raise are `failures`; trials that complete but miss a criterion
 are `mistakes`. Same three-way split the other suites use.
@@ -89,16 +91,33 @@ calls, so three trials is fifteen calls per benchmark and 60 per target —
 still several times the general suite's cost. Three also means three
 different briefs per benchmark, which is the point of the topic list.
 
-## The story artifact
+## The story artifact, and diagnosing a failure
 
-Each trial's story is assembled into markdown and carried back to the page,
-where a **Copy story** button puts it on the clipboard. Half the value of a
-benchmark that writes fiction is reading the fiction.
+Each trial's piece is assembled into markdown and carried back to the page,
+where a **Copy** button puts it on the clipboard. Half the value of a
+benchmark that writes fiction is reading the fiction; the other half is
+being able to tell why a trial failed without running it again.
+
+Every section heading therefore carries its own verdict, and for the tool
+variants the whole tool story:
+
+```
+## Section 3 (random_number 42, found once in the text) - Correct
+## Section 2 (random_number 77, not found in the text) - Wrong
+## Section 3 (random_number not called) - Wrong
+## Section 4 (random_number called 2 times: 11, 22) - Wrong
+## Section 1 (random_number 42, found once in the text) - Wrong: 2 words, outside 100-350
+```
+
+Judgement is per section rather than per trial, so a run that fails on
+section four still shows that one through three were fine. The trial's own
+reason names the first bad section.
 
 Format: the brief as an `#` title — a piece pasted somewhere a week later
 should say what it was asked to be — then `## Section N` headers with the
 text beneath, the reviewer's verdict as a blockquote for the structured
-variants, and the omen number in the heading for the tool variants.
+variants, and — for the tool variants — the tool's own story in the
+heading.
 
 This needs a new event on the worker protocol. Today the child emits only
 `{correct, had_error, elapsed}` per trial; it gains

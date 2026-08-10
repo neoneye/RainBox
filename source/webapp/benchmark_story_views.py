@@ -29,10 +29,12 @@ STORY_BENCHMARK_DESCRIPTIONS: dict[str, str] = {
     ),
     "story_text_tool": (
         "Same five turns, plus one tool. Before each section the model must "
-        "call `omen_number`, which returns a random integer that must then "
+        "call `random_number` exactly once; the integer it returns must then "
         "appear literally in the text. Correct iff every section called the "
-        "tool and contains its number — which a model that calls the tool and "
-        "ignores the answer cannot fake. Requires a function-calling target."
+        "tool once and contains its number — which a model that calls the "
+        "tool and ignores the answer cannot fake. Requires a function-calling "
+        "target. Copy a trial to see, per section, whether the tool ran, how "
+        "often, what it returned, and whether the model used it."
     ),
     "story_struct_tool": (
         "The crossover: structured output AND function calling on every one "
@@ -54,7 +56,8 @@ STORY_INTRO = (
     "rather than a dozen variations on one theme. "
     "Three trials each, so budget roughly 10–20 minutes per target for the "
     "full set. Hover a Copy button to see which brief it holds; click to put "
-    "the piece on the clipboard."
+    "the piece on the clipboard — every section heading carries its own "
+    "verdict, so a failed trial can be read rather than re-run."
 )
 
 

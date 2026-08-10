@@ -14,6 +14,9 @@ from llama_index.core.llms import MessageRole
 from benchmarks import story
 from benchmarks.story import (
     MAX_WORDS,
+    count_number_occurrences,
+    section_heading,
+    section_problem,
     MIN_WORDS,
     STORY_TURNS,
     SectionOutcome,
@@ -106,6 +109,64 @@ class TestCountWords:
         assert count_words("   \n ") == 0
 
 
+class TestCountNumberOccurrences:
+    """How many times the tool's number appears, not merely whether it does —
+    "found once" and "found four times" are different stories about what the
+    model did with the tool result."""
+
+    def test_counts_each_appearance(self):
+        assert count_number_occurrences("42 and 42 and 42", 42) == 3
+
+    def test_absent_is_zero(self):
+        assert count_number_occurrences("nothing here", 42) == 0
+
+    def test_a_longer_number_containing_it_does_not_count(self):
+        assert count_number_occurrences("chamber 14242 was empty", 4242) == 0
+
+    def test_a_thousands_separator_counts_once_not_twice(self):
+        """4,242 must not match both the grouped and the plain form."""
+        assert count_number_occurrences("the year 4,242 arrived", 4242) == 1
+
+
+class TestSectionProblem:
+    """Every section is judged on its own, so the artifact can say which one
+    went wrong and why — rather than reporting only the first failure."""
+
+    def test_a_good_tool_section_has_no_problem(self):
+        s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
+        assert section_problem(s, require_tool=True) is None
+
+    def test_never_calling_the_tool_is_named(self):
+        s = section(text="word " * 200, numbers=[], calls=0)
+        problem = section_problem(s, require_tool=True)
+        assert problem is not None
+        assert "not called" in problem
+
+    def test_calling_the_tool_twice_is_named(self):
+        """The brief says exactly once. Twice means the model is looping, and
+        the artifact should say so rather than silently passing."""
+        s = section(text="word " * 200 + " 42 77", numbers=[42, 77], calls=2)
+        problem = section_problem(s, require_tool=True)
+        assert problem is not None
+        assert "2 times" in problem
+
+    def test_ignoring_the_returned_number_is_named(self):
+        s = section(text="word " * 200, numbers=[42], calls=1)
+        problem = section_problem(s, require_tool=True)
+        assert problem is not None
+        assert "42" in problem and "not found" in problem
+
+    def test_a_short_section_is_named_with_its_count(self):
+        problem = section_problem(section(text="too short"))
+        assert problem is not None
+        assert "2 words" in problem
+
+    def test_a_missing_reviewer_is_named(self):
+        problem = section_problem(section(reviewer=" "), require_reviewer=True)
+        assert problem is not None
+        assert "reviewer" in problem.lower()
+
+
 class TestToolNumberPresent:
     def test_the_number_is_found_in_the_prose(self):
         assert tool_number_present("the clock struck 4242 times", 4242) is True
@@ -126,9 +187,13 @@ class TestToolNumberPresent:
         assert tool_number_present("the year 4,242 arrived", 4242) is True
 
 
-def section(text="word " * 200, reviewer="dreadful", number=None, called=True):
+def section(text="word " * 200, reviewer="dreadful", numbers=None, calls=None):
+    numbers = [] if numbers is None else numbers
     return SectionOutcome(
-        text=text.strip(), reviewer=reviewer, tool_number=number, tool_called=called
+        text=text.strip(),
+        reviewer=reviewer,
+        tool_numbers=list(numbers),
+        tool_calls=len(numbers) if calls is None else calls,
     )
 
 
@@ -172,22 +237,23 @@ class TestScoreSections:
         assert score_sections(sections, require_reviewer=False) is None
 
     def test_an_uncalled_tool_fails(self):
-        sections = [section(number=7) for _ in range(STORY_TURNS)]
-        sections[2] = section(number=None, called=False)
+        sections = [section(text='word ' * 200 + ' 7', numbers=[7])
+                    for _ in range(STORY_TURNS)]
+        sections[2] = section(numbers=[])
         assert score_sections(sections, require_tool=True) is not None
 
     def test_a_tool_number_missing_from_the_prose_fails(self):
         """Calling the tool and ignoring what it returned is the failure this
         benchmark exists to catch."""
-        sections = [section(text="word " * 200 + " 99", number=99)
+        sections = [section(text="word " * 200 + " 99", numbers=[99])
                     for _ in range(STORY_TURNS)]
-        sections[4] = section(text="word " * 200, number=99)
+        sections[4] = section(text="word " * 200, numbers=[99])
         why = score_sections(sections, require_tool=True)
         assert why is not None
         assert "99" in why
 
     def test_tools_are_ignored_when_not_required(self):
-        assert score_sections([section(number=None, called=False)
+        assert score_sections([section(numbers=[])
                                for _ in range(STORY_TURNS)],
                               require_tool=False) is None
 
@@ -350,6 +416,36 @@ class TestCallerAttribution:
         }
 
 
+class TestSectionHeading:
+    """The heading is the troubleshooting surface for a failed tool trial."""
+
+    def test_the_shape_the_operator_asked_for(self):
+        s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
+        assert section_heading(3, s, require_tool=True) == (
+            "## Section 3 (random_number 42, found once in the text) - Correct"
+        )
+
+    def test_a_wrong_section_says_why_without_repeating_itself(self):
+        s = section(text="word " * 200, numbers=[77], calls=1)
+        heading = section_heading(2, s, require_tool=True)
+        assert heading == (
+            "## Section 2 (random_number 77, not found in the text) - Wrong"
+        )
+
+    def test_a_non_tool_fault_is_spelled_out(self):
+        """The note can't explain a word-count problem, so the verdict must."""
+        s = section(text="too short", numbers=[42], calls=1)
+        assert "Wrong: 2 words" in section_heading(1, s, require_tool=True)
+
+    def test_a_repeated_call_is_reported_with_every_number(self):
+        s = section(text="word " * 200, numbers=[11, 22], calls=2)
+        heading = section_heading(1, s, require_tool=True)
+        assert "called 2 times: 11, 22" in heading
+
+    def test_a_non_tool_benchmark_gets_a_plain_heading(self):
+        assert section_heading(1, section()) == "## Section 1 - Correct"
+
+
 class TestAssembleStory:
     def test_each_section_gets_a_numbered_heading(self):
         out = assemble_story([section(text="one"), section(text="two")])
@@ -366,9 +462,9 @@ class TestAssembleStory:
         out = assemble_story([section(text="prose", reviewer=None)])
         assert ">" not in out
 
-    def test_the_omen_number_is_noted_when_there_was_one(self):
-        out = assemble_story([section(text="prose", number=4242)])
-        assert "4242" in out
+    def test_the_random_number_is_noted_in_the_heading(self):
+        out = assemble_story([section(text="prose", numbers=[4242])])
+        assert "random_number 4242" in out
 
     def test_no_sections_says_so_rather_than_producing_a_blank(self):
         """The copy button must never hand over an empty clipboard with no
