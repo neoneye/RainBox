@@ -195,6 +195,7 @@ class ActivityRecorder(BaseEventHandler):
     history: Any
     max_pending: int = Field(default=_MAX_PENDING)
     _pending: dict[str, dict] = PrivateAttr(default_factory=dict)
+    _warned: bool = PrivateAttr(default=False)
 
     @classmethod
     def class_name(cls) -> str:
@@ -273,7 +274,25 @@ class ActivityRecorder(BaseEventHandler):
         try:
             self.sink(row)
         except Exception:
-            logger.debug("activity sink rejected a row", exc_info=True)
+            # Once, at WARNING, with the traceback: this used to be a DEBUG
+            # line, which hid the real cause and left only the confusing
+            # knock-on error downstream. Once, because a persistent fault
+            # would otherwise log on every LLM call the process makes.
+            if not self._warned:
+                self._warned = True
+                logger.warning(
+                    "activity recording failed; further failures will be "
+                    "silent until the process restarts. The call itself was "
+                    "unaffected.",
+                    exc_info=True,
+                )
+
+    def _warn_once(self, message: str) -> None:
+        """Report the first failure with its traceback, then stay quiet —
+        a broken database would otherwise log on every LLM call."""
+        if not self._warned:
+            self._warned = True
+            logger.warning(message, exc_info=True)
 
     def _add_cache_metrics(self, row: dict, start: dict, model: Any) -> None:
         """Fill in the two derived cache columns, leaving them None if the
@@ -293,7 +312,7 @@ class ActivityRecorder(BaseEventHandler):
             if cached and rate:
                 row["saved_ms"] = int(round(cached / rate * 1000))
         except Exception:
-            logger.debug("cold-rate lookup failed for %r", model, exc_info=True)
+            self._warn_once("cold-rate lookup failed for %r" % (model,))
         try:
             chain = start.get("prefix_chain")
             if chain:
@@ -304,7 +323,7 @@ class ActivityRecorder(BaseEventHandler):
                     row["prompt_tokens"],
                 )
         except Exception:
-            logger.debug("prefix history lookup failed for %r", model, exc_info=True)
+            self._warn_once("prefix history lookup failed for %r" % (model,))
 
 
 class _DatabaseHistory:

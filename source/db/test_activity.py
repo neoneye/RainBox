@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+import sqlalchemy as sa
 
 import db
 from db import LlmCall
@@ -72,6 +73,61 @@ class TestRecordLlmCall:
             add_call(model, promt_tokens=5)
 
 
+class TestSessionIsolation:
+    """Telemetry must not share a transaction with the work it observes.
+
+    The recorder runs inside whatever call happens to be in flight. Sharing
+    `db.session` meant a failed insert poisoned the caller's transaction, so
+    the next unrelated query anywhere in the process died with a
+    PendingRollbackError naming an llm_call INSERT — which is how a benchmark
+    run reported a database error instead of a benchmark result.
+    """
+
+    def test_recording_does_not_commit_the_callers_pending_work(self, model):
+        """The caller's half-finished transaction is not ours to commit."""
+        pending = LlmCall(model=f"{model}-pending", caller="not-ready")
+        db.db.session.add(pending)
+        try:
+            add_call(model)
+            db.db.session.rollback()  # the caller changes its mind
+            left = (
+                db.db.session.query(LlmCall)
+                .filter(LlmCall.model == f"{model}-pending")
+                .count()
+            )
+            assert left == 0, "the recorder committed someone else's row"
+        finally:
+            db.db.session.query(LlmCall).filter(
+                LlmCall.model == f"{model}-pending"
+            ).delete(synchronize_session=False)
+            db.db.session.commit()
+
+    def test_recording_works_even_when_the_callers_transaction_is_broken(
+        self, model
+    ):
+        """A caller that has already blown up should not also lose its
+        telemetry — that is exactly the call worth having a record of."""
+        try:
+            db.db.session.execute(sa.text("select * from table_that_is_not_there"))
+        except Exception:
+            pass  # the session is now in a failed transaction
+        add_call(model)
+        db.db.session.rollback()
+        assert (
+            db.db.session.query(LlmCall).filter(LlmCall.model == model).count() == 1
+        )
+
+    def test_a_failed_recording_leaves_the_callers_session_usable(self, model):
+        """The defect that made this fatal: one bad insert, and every later
+        query anywhere in the process raised PendingRollbackError."""
+        clash = uuid4()
+        add_call(model, uuid=clash)
+        with pytest.raises(Exception):  # same primary key twice
+            add_call(model, uuid=clash)
+        # The caller's session must be unharmed by our failure.
+        assert db.db.session.query(LlmCall).filter(LlmCall.model == model).count() == 1
+
+
 class TestRecentThroughputs:
     def test_throughput_is_tokens_per_second_of_prefill(self, model):
         add_call(model, prompt_tokens=2000, prefill_ms=1000,
@@ -134,6 +190,50 @@ class TestRecentPrefixChains:
     def test_empty_chains_are_not_offered_as_candidates(self, model):
         add_call(model, prefix_chain=[])
         assert db.recent_prefix_chains(model) == []
+
+    def test_a_json_null_chain_does_not_abort_the_query(self, model):
+        """The bug behind the benchmark failure. A call recorded with no chain
+        stored the JSON scalar `null`, which is not SQL NULL — so it slipped
+        past an IS NOT NULL filter and reached jsonb_array_length, which
+        raises "cannot get array length of a scalar". That aborted the
+        transaction, and everything downstream died with a
+        PendingRollbackError naming an unrelated INSERT.
+        """
+        add_call(model, prefix_chain=["real"])
+        db.db.session.execute(
+            sa.text(
+                "insert into llm_call (uuid, started_at, caller, ok, model,"
+                " prefix_chain) values (:u, now(), 'x', true, :m, 'null'::jsonb)"
+            ),
+            {"u": uuid4(), "m": model},
+        )
+        db.db.session.commit()
+        assert db.recent_prefix_chains(model) == [["real"]]
+
+    def test_a_json_object_chain_is_ignored_too(self, model):
+        """Anything that isn't an array is not a prefix chain."""
+        add_call(model, prefix_chain=["real"])
+        db.db.session.execute(
+            sa.text(
+                "insert into llm_call (uuid, started_at, caller, ok, model,"
+                " prefix_chain) values (:u, now(), 'x', true, :m, '{}'::jsonb)"
+            ),
+            {"u": uuid4(), "m": model},
+        )
+        db.db.session.commit()
+        assert db.recent_prefix_chains(model) == [["real"]]
+
+    def test_a_missing_chain_is_stored_as_sql_null_not_json_null(self, model):
+        """Fixing the reader is not enough — stop creating the bad rows."""
+        add_call(model, prefix_chain=None)
+        kind = db.db.session.execute(
+            sa.text(
+                "select jsonb_typeof(prefix_chain) from llm_call"
+                " where model = :m"
+            ),
+            {"m": model},
+        ).scalar()
+        assert kind is None, f"stored JSON {kind!r} instead of SQL NULL"
 
     def test_the_window_is_small_because_the_runtime_holds_few_prefixes(self, model):
         for i in range(12):

@@ -1689,7 +1689,12 @@ class LlmCall(db.Model):
     # Cumulative hashes of the outgoing prompt's fixed-size character blocks.
     # The prompt text itself is never stored — the chain is enough to measure
     # a shared prefix against later calls, and nothing else.
-    prefix_chain: Mapped[list | None] = mapped_column(JSONB)
+    #
+    # none_as_null because the JSONB adapter otherwise stores a Python None as
+    # the JSON scalar `null`, which is not SQL NULL: such a row slips past an
+    # IS NOT NULL filter and reaches jsonb_array_length, which raises on a
+    # scalar and aborts the whole transaction.
+    prefix_chain: Mapped[list | None] = mapped_column(JSONB(none_as_null=True))
     __table_args__ = (
         Index("llm_call_by_started", "started_at"),
         Index("llm_call_by_model", "model", "started_at"),

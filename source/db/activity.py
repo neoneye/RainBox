@@ -15,10 +15,12 @@ denominator and flattering the hit rate.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.orm import Session
 
 from db.models import LlmCall, db
 
@@ -78,16 +80,39 @@ def _decode_throughput():
     )
 
 
-def record_llm_call(row: dict) -> LlmCall:
-    """Insert one recorded call. Rejects unknown keys loudly — a mistyped
-    column name would otherwise vanish and quietly under-report."""
+@contextmanager
+def telemetry_session():
+    """A short-lived session of our own, on the same engine.
+
+    The recorder runs inside whatever call happens to be in flight, so it must
+    not touch `db.session`. Sharing it went wrong in both directions: our
+    commit would commit the caller's half-finished work, and a failed insert
+    of ours left the caller's transaction aborted — after which the next
+    unrelated query anywhere in the process raised PendingRollbackError
+    naming an llm_call INSERT. A benchmark run reported a database error
+    instead of a benchmark result.
+
+    One connection checkout per LLM call is nothing beside the call itself.
+    """
+    session = Session(bind=db.engine)
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def record_llm_call(row: dict) -> None:
+    """Insert one recorded call, on its own transaction.
+
+    Rejects unknown keys loudly — a mistyped column name would otherwise
+    vanish and quietly under-report.
+    """
     unknown = set(row) - _WRITABLE_COLUMNS
     if unknown:
         raise TypeError(f"llm_call has no column(s): {sorted(unknown)}")
-    call = LlmCall(**row)
-    db.session.add(call)
-    db.session.commit()
-    return call
+    with telemetry_session() as session:
+        session.add(LlmCall(**row))
+        session.commit()
 
 
 def recent_throughputs(
@@ -114,12 +139,13 @@ def recent_throughputs(
         ),
         else_=None,
     )
-    rows = db.session.execute(
-        sa.select(throughput, reuse)
-        .where(LlmCall.model == model, throughput.is_not(None))
-        .order_by(LlmCall.started_at.desc())
-        .limit(limit)
-    ).all()
+    with telemetry_session() as session:
+        rows = session.execute(
+            sa.select(throughput, reuse)
+            .where(LlmCall.model == model, throughput.is_not(None))
+            .order_by(LlmCall.started_at.desc())
+            .limit(limit)
+        ).all()
     return [(float(r[0]), None if r[1] is None else float(r[1])) for r in rows]
 
 
@@ -130,16 +156,23 @@ def recent_prefix_chains(
     first. Empty chains are omitted — they can't match anything."""
     if not model:
         return []
-    rows = db.session.execute(
-        sa.select(LlmCall.prefix_chain)
-        .where(
-            LlmCall.model == model,
-            LlmCall.prefix_chain.is_not(None),
-            sa.func.jsonb_array_length(LlmCall.prefix_chain) > 0,
-        )
-        .order_by(LlmCall.started_at.desc())
-        .limit(limit)
-    ).all()
+    with telemetry_session() as session:
+        rows = session.execute(
+            sa.select(LlmCall.prefix_chain)
+            .where(
+                LlmCall.model == model,
+                # `jsonb_typeof` is total; `jsonb_array_length` raises on
+                # anything that is not an array, and Postgres does not promise
+                # to evaluate a guard clause first — so the raising function
+                # is kept out of SQL entirely and empties are dropped below.
+                # Rows written before `none_as_null` hold a JSON `null`, which
+                # this excludes along with any other non-array.
+                sa.func.jsonb_typeof(LlmCall.prefix_chain) == "array",
+            )
+            .order_by(LlmCall.started_at.desc())
+            .limit(limit)
+        ).all()
+    # Empty arrays can't match anything, so they are not candidates.
     return [r[0] for r in rows if r[0]]
 
 
