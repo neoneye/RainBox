@@ -42,6 +42,10 @@ BENCHMARK_TEMPLATE: str = """
   .ok{color:#080}
   .err{color:#a00}
   .muted{color:#888}
+  .stories{margin-top:0.25em;font-size:80%;color:#555}
+  .stories button{font:inherit;padding:0 0.4em;margin-left:0.15em;cursor:pointer;
+                  border:1px solid #cbd5e1;border-radius:5px;background:#fff}
+  .stories button:hover{border-color:#9aa3af}
   details.drill > summary{cursor:pointer;font-size:80%;color:#555}
   details.drill > div{font-size:80%;color:#444}
   .pill{display:inline-block;font-size:75%;padding:0 0.4em;border-radius:0.8em;margin-left:0.3em;background:#eee;color:#555}
@@ -97,6 +101,8 @@ BENCHMARK_TEMPLATE: str = """
 
 <script>
 const benchmarkNames = {{ benchmark_names_json|safe }};
+// Whether trials of this spec set carry a readable artifact to copy.
+const SHOW_ARTIFACTS = {{ 'true' if show_artifacts else 'false' }};
 
 async function call(path, method='GET') {
   const r = await fetch(path, {method});
@@ -127,13 +133,69 @@ function benchDetails(b) {
     `<div>reasoning: <b>${b.reasoning_chars ?? 0}</b> &middot; content: <b>${b.content_chars ?? 0}</b></div>` +
     `</details>`;
 }
+// Copy buttons for trials that produced something worth reading (the story
+// benchmarks). The text lives in a data attribute rather than a global map so
+// a re-render can never hand back a stale story from an earlier run.
+function benchStories(b) {
+  if (!SHOW_ARTIFACTS || !b.stories || !b.stories.length) return '';
+  const buttons = b.stories.map(function (s) {
+    const mark = s.correct ? '' : ' ×';
+    return `<button type="button" class="copy-story" data-story="${escapeHtml(s.text)}"` +
+           ` title="Copy trial ${s.trial + 1} to the clipboard">` +
+           `#${s.trial + 1}${mark}</button>`;
+  }).join(' ');
+  return `<div class="stories">copy: ${buttons}</div>`;
+}
+
+// Copy via a hidden textarea when the async Clipboard API is unavailable or
+// refuses (it rejects on an unfocused document, and is absent entirely over
+// plain http to a non-localhost host).
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+// One delegated listener, so buttons rebuilt by polling keep working.
+document.addEventListener('click', function (e) {
+  const btn = e.target.closest && e.target.closest('button.copy-story');
+  if (!btn) return;
+  const text = btn.dataset.story || '';
+  const old = btn.dataset.label || btn.textContent;
+  btn.dataset.label = old;
+  function say(msg) {
+    btn.textContent = msg;
+    setTimeout(function () { btn.textContent = old; }, 1400);
+  }
+  // Always report the outcome: a silent no-op leaves the operator pasting
+  // whatever was on the clipboard before, which looks like the wrong story
+  // rather than like a failure.
+  const api = navigator.clipboard && navigator.clipboard.writeText;
+  if (api) {
+    navigator.clipboard.writeText(text).then(
+      function () { say('copied'); },
+      function () { say(legacyCopy(text) ? 'copied' : 'copy failed'); }
+    );
+  } else {
+    say(legacyCopy(text) ? 'copied' : 'copy failed');
+  }
+});
+
 function renderBench(b) {
   if (b.status === 'done') {
-    return `<div>${fmtCounts(b)}</div>${benchDetails(b)}`;
+    return `<div>${fmtCounts(b)}</div>${benchDetails(b)}${benchStories(b)}`;
   }
   if (b.status === 'error') {
     const errText = b.error ? `<div class="err" style="font-size:85%">${escapeHtml(b.error)}</div>` : '';
-    return `<div>${fmtCounts(b)}<span class="pill error" style="margin-left:0.4em">error</span></div>${errText}${benchDetails(b)}`;
+    return `<div>${fmtCounts(b)}<span class="pill error" style="margin-left:0.4em">error</span></div>${errText}${benchDetails(b)}${benchStories(b)}`;
   }
   if (b.status === 'pending') {
     return `<div class="muted">pending</div>`;
@@ -303,10 +365,15 @@ poll().then(() => { /* timer already started inside poll() if needed */ });
 def render_benchmark_page(
     page_title: str, page_intro: str, specs: list, descriptions: dict[str, str],
     state_endpoint: str, start_endpoint: str, stop_endpoint: str,
+    show_artifacts: bool = False,
 ) -> str:
     """Render the shared benchmark-suite page (table of targets × specs with
     live polling) for one spec set + runner. Used by /benchmark_basic and
-    /benchmark_kanban; the endpoints differ, the page mechanics don't."""
+    /benchmark_kanban; the endpoints differ, the page mechanics don't.
+
+    `show_artifacts` turns on the per-trial copy buttons for spec sets whose
+    trials produce something worth reading — the story suite. Off elsewhere,
+    where there is nothing to copy."""
     from flask import url_for
 
     return render_template_string(
@@ -319,6 +386,7 @@ def render_benchmark_page(
         state_url=url_for(state_endpoint),
         start_url=url_for(start_endpoint),
         stop_url=url_for(stop_endpoint),
+        show_artifacts=show_artifacts,
     )
 
 

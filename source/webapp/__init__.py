@@ -16,6 +16,7 @@ from . import model_group_views  # noqa: F401,E402
 from . import benchmark_views  # noqa: F401,E402
 from . import benchmark_editdocument_views  # noqa: F401,E402
 from . import benchmark_kanban_views  # noqa: F401,E402
+from . import benchmark_story_views  # noqa: F401,E402
 from . import agent_views  # noqa: F401,E402
 from . import chat_views  # noqa: F401,E402
 from . import chat_api  # noqa: F401,E402

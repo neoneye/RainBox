@@ -19,6 +19,12 @@ from benchmarks.basic import (
     BenchmarkToolRoute,
 )
 from benchmarks.kanban import BenchmarkKanbanOpStructured, BenchmarkKanbanOpTools
+from benchmarks.story import (
+    BenchmarkStoryStruct,
+    BenchmarkStoryStructTool,
+    BenchmarkStoryText,
+    BenchmarkStoryTextTool,
+)
 from benchmarks.subproc import stream_target_subprocess
 
 logger = logging.getLogger(__name__)
@@ -51,11 +57,23 @@ KANBAN_BENCHMARK_SPECS: list[tuple[str, type, dict[str, Any]]] = [
      {"num_trials": 5, "context_format": "json"}),
 ]
 
+# Ten-turn conversations across the text/structured × no-tools/tools matrix
+# (docs/superpowers/specs/2026-08-10-story-benchmarks-design.md). Three trials
+# rather than the usual five: each trial is ten LLM calls, so this set already
+# costs 120 calls per target.
+STORY_BENCHMARK_SPECS: list[tuple[str, type, dict[str, Any]]] = [
+    ("story_text", BenchmarkStoryText, {"num_trials": 3}),
+    ("story_struct", BenchmarkStoryStruct, {"num_trials": 3}),
+    ("story_text_tool", BenchmarkStoryTextTool, {"num_trials": 3}),
+    ("story_struct_tool", BenchmarkStoryStructTool, {"num_trials": 3}),
+]
+
 # Spec sets by name: each BenchmarkRunner instance (and its worker child)
 # runs exactly one set; the name travels in the worker request JSON.
 SPEC_SETS: dict[str, list[tuple[str, type, dict[str, Any]]]] = {
     "general": BENCHMARK_SPECS,
     "kanban": KANBAN_BENCHMARK_SPECS,
+    "story": STORY_BENCHMARK_SPECS,
 }
 
 
@@ -72,6 +90,10 @@ def _empty_benchmark_entry(name: str, total: int) -> dict[str, Any]:
         "error": None,
         "reasoning_chars": None,
         "content_chars": None,
+        # Per-trial artifacts the page can hand to the operator — the story
+        # benchmarks put their assembled markdown here. Empty for spec sets
+        # whose trials produce nothing worth reading.
+        "stories": [],
     }
 
 
@@ -313,6 +335,17 @@ class BenchmarkRunner:
             else:
                 entry["mistakes"] += 1
 
+    def _record_story(
+        self, target_index: int, bench_index: int, trial: int, text: str, correct: bool
+    ) -> None:
+        """Keep a trial's readable artifact for the page's copy button. Half
+        the value of a benchmark that writes fiction is reading the fiction."""
+        with self._lock:
+            entry = self._state["targets"][target_index]["benchmarks"][bench_index]
+            entry.setdefault("stories", []).append(
+                {"trial": trial, "text": text, "correct": correct}
+            )
+
     def _finish(self, aborted: bool) -> None:
         with self._lock:
             self._state["running"] = False
@@ -352,6 +385,10 @@ class BenchmarkRunner:
         elif kind == "trial":
             self._record_trial(
                 ti, ev["bi"], ev["correct"], ev["had_error"], ev["elapsed"]
+            )
+        elif kind == "story":
+            self._record_story(
+                ti, ev["bi"], ev["trial"], ev["text"], ev.get("correct", False)
             )
 
     def _run(self, app: Flask, targets: list[dict[str, Any]]) -> None:

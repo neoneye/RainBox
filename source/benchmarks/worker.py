@@ -76,6 +76,18 @@ def main() -> None:
                             "had_error": trial.error is not None,
                             "elapsed": trial.elapsed,
                         })
+                        # Trials that produce something worth reading (the
+                        # story benchmarks) ship it back so the page can offer
+                        # a copy button. Other suites have no `story` attr.
+                        story = getattr(trial, "story", None)
+                        if story:
+                            emit({
+                                "t": "story",
+                                "bi": _bi,
+                                "trial": trial.trial_index,
+                                "text": story,
+                                "correct": bool(trial.correct),
+                            })
 
                     result = bench.run(on_trial=on_trial)
                     if result.aborted:
