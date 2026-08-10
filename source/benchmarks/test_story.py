@@ -336,12 +336,11 @@ class TestSectionProblem:
         s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
         assert section_problem(s, require_tool=True) is None
 
-    def test_one_call_is_the_whole_test(self):
-        """What these benchmarks measure is tool-calling discipline across a
-        conversation. Whether the model then wove the digits into its prose is
-        recorded and displayed, but it is not what passes or fails a section."""
+    def test_calling_the_tool_and_ignoring_the_answer_fails(self):
+        """Both halves are required: the call, and the result reaching the
+        page. A call whose answer is discarded proves nothing about tool use."""
         ignored_the_answer = section(text="word " * 200, numbers=[42], calls=1)
-        assert section_problem(ignored_the_answer, require_tool=True) is None
+        assert section_problem(ignored_the_answer, require_tool=True) is not None
 
     def test_reusing_an_earlier_number_is_fine(self):
         s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
@@ -636,13 +635,11 @@ class TestSectionHeading:
             "## Section 3 (random_number 42, found once in the text) - Correct"
         )
 
-    def test_an_unused_number_is_still_reported_though_it_now_passes(self):
-        """Dropping it as a pass criterion must not drop it from the record —
-        it is the interesting thing about a tool run."""
+    def test_an_unused_number_is_reported_and_fails(self):
         s = section(text="word " * 200, numbers=[77], calls=1)
         heading = section_heading(2, s, require_tool=True)
         assert heading == (
-            "## Section 2 (random_number 77, not found in the text) - Correct"
+            "## Section 2 (random_number 77, not found in the text) - Wrong"
         )
 
     def test_a_non_tool_fault_is_spelled_out(self):
@@ -690,3 +687,87 @@ class TestAssembleStory:
         out = assemble_story([section(text="w " * 20000) for _ in range(10)])
         assert len(out) <= MAX_STORY_CHARS + 200  # cap plus the truncation note
         assert "truncated" in out
+
+
+class TestNumberInWords:
+    """A model told to "express quantities in words" spells out the tool's
+    number too. Observed on gemma4:e4b: every section used the returned
+    integer faithfully, written out, and a digits-only check called all five
+    a failure to use the tool at all — the opposite of what happened.
+    """
+
+    def test_the_plain_form(self):
+        assert story.number_in_words("...sixty-six dollars", 66) is True
+
+    def test_a_four_digit_number_as_gemma_writes_it(self):
+        text = "allocating exactly seven thousand five hundred sixty-six dollars."
+        assert story.number_in_words(text, 7566) is True
+
+    def test_a_zero_in_the_tens_place(self):
+        assert story.number_in_words("seven thousand six hundred eight", 7608) is True
+
+    def test_a_zero_in_the_hundreds_place(self):
+        assert story.number_in_words("eight thousand eight", 8008) is True
+
+    def test_the_british_and(self):
+        assert story.number_in_words(
+            "eight thousand eight hundred and three", 8803
+        ) is True
+
+    def test_a_comma_between_groups(self):
+        assert story.number_in_words(
+            "eight thousand, five hundred twenty-four", 8524
+        ) is True
+
+    def test_a_different_number_is_not_a_match(self):
+        assert story.number_in_words(
+            "seven thousand five hundred sixty-five", 7566
+        ) is False
+
+    def test_prose_with_no_number_at_all(self):
+        assert story.number_in_words("the room was silent", 7566) is False
+
+    def test_case_is_ignored(self):
+        assert story.number_in_words("Seven Thousand Five Hundred Sixty-Six", 7566) is True
+
+
+class TestNumberIsUsed:
+    """The criterion the operator wants back: the returned number has to turn
+    up in the section, in digits."""
+
+    def test_digits_present_passes(self):
+        s = section(text="word " * 200 + " 4242", numbers=[4242], calls=1)
+        assert section_problem(s, require_tool=True) is None
+
+    def test_no_trace_of_the_number_fails(self):
+        s = section(text="word " * 200, numbers=[4242], calls=1)
+        problem = section_problem(s, require_tool=True)
+        assert problem is not None
+        assert "4242" in problem
+
+    def test_words_instead_of_digits_fails_but_says_so(self):
+        """The prompt asks for digits, so this is a real miss — but a section
+        that spelled the number out is a different animal from one that
+        ignored the tool, and the message has to distinguish them."""
+        s = section(
+            text="word " * 200 + " four thousand two hundred forty-two",
+            numbers=[4242], calls=1,
+        )
+        problem = section_problem(s, require_tool=True)
+        assert problem is not None
+        assert "words" in problem.lower()
+
+    def test_the_heading_reports_the_word_form(self):
+        s = section(
+            text="word " * 200 + " four thousand two hundred forty-two",
+            numbers=[4242], calls=1,
+        )
+        assert "as words" in section_heading(1, s, require_tool=True)
+
+    def test_the_transcript_records_the_word_form(self):
+        s = section(
+            text="four thousand two hundred forty-two", numbers=[4242], calls=1
+        )
+        turn = story.transcript_turn(1, "ask", s, require_tool=True)
+        assert turn["number_as_words"] is True
+        assert turn["number_occurrences"] == 0

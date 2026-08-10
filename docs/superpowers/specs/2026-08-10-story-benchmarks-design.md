@@ -98,21 +98,24 @@ A trial is correct when all of:
   band is wide enough that a model isn't failed for style, narrow enough
   that a one-line reply or a runaway wall of text is);
 - structured variants: `section_reviewer` non-empty on every turn;
-- tool variants: for every turn, the tool was called **exactly once**.
-  That is the whole tool test — tool-calling discipline held across a
-  conversation. Exactly once, because a model that loops on the tool is
-  doing something worth seeing rather than quietly passing.
+- tool variants: for every turn, the tool was called **exactly once** and
+  the integer it returned appears in that turn's section as digits.
+  Exactly once, because a model that loops on the tool is doing something
+  worth seeing; and present, because a call whose answer is discarded
+  proves nothing about tool use.
 
-Whether the model then wove the returned digits into its prose is
-recorded on every section heading and in the JSON transcript, but does
-not decide pass or fail. It began as a criterion, on the reasoning that
-it proved the model had consumed the tool result rather than calling it
-and ignoring the answer. In practice it measured a different and less
-interesting thing — whether a model likes writing digits in prose — and
-pressing on it backfired: a prompt that also banned stray numerals made
-llama3.2:3b suppress the required digits too, in 20 of 20 sections.
-Stray numerals and a number carried over from an earlier section are
-likewise not faults.
+Stray numerals and a number carried over from an earlier section are not
+faults.
+
+**Words are not digits, but they are not nothing either.** A model told to
+express quantities in words spells out the tool's number along with
+everything else: gemma4:e4b returned "seven thousand five hundred
+sixty-six" for 7566 in every section of a trial. A digits-only check
+records that as *the number never appeared*, which is the opposite of what
+happened — the model used the result faithfully, in the wrong format. The
+section still fails, because the brief asks for digits, but the heading
+and the transcript say "written as words, digits not found" so the two
+cases are never confused. `number_as_words` is on every turn of the JSON.
 
 Trials that raise are `failures`; trials that complete but miss a criterion
 are `mistakes`. Same three-way split the other suites use.
