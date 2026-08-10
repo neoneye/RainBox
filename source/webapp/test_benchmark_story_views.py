@@ -55,8 +55,7 @@ def state_with_a_story():
                         "reasoning_chars": None,
                         "content_chars": None,
                         "stories": (
-                            [{"trial": 0, "text": "## Section 1\n\nthe door",
-                              "correct": True}]
+                            [{"trial": 0, "correct": True, "topic": "A brief"}]
                             if name == "story_text"
                             else []
                         ),
@@ -138,14 +137,59 @@ class TestStateEndpoint:
 
         json.dumps(story_benchmark_runner.get_state())
 
-    def test_a_recorded_story_is_carried_on_the_state(self, state_with_a_story):
+    def test_the_state_carries_a_descriptor_not_the_text(self, state_with_a_story):
+        """The page polls this about once a second; the artifacts do not ride
+        along."""
         state = state_with_a_story.get_state()
         bench = state["targets"][0]["benchmarks"][0]
-        assert bench["stories"][0]["text"].startswith("## Section 1")
+        assert bench["stories"][0]["topic"] == "A brief"
+        assert "text" not in bench["stories"][0]
+        assert "transcript" not in bench["stories"][0]
 
     def test_benchmarks_without_a_story_carry_an_empty_list(self, state_with_a_story):
         state = state_with_a_story.get_state()
         assert state["targets"][0]["benchmarks"][1]["stories"] == []
+
+
+class TestArtifactEndpoint:
+    """Artifacts are fetched, not polled — so the endpoint has to behave."""
+
+    @pytest.fixture
+    def recorded(self):
+        runner = story_benchmark_runner
+        runner._record_story(
+            0, 0, 0, "## Section 1 - Correct\n\nthe door", True,
+            topic="A brief", transcript={"benchmark": "story_text", "turns": []},
+        )
+        yield
+        runner._artifacts.clear()
+
+    def test_markdown_is_served_as_text(self, client, recorded):
+        r = client.get("/benchmark_story/artifact?target=0&bench=0&trial=0")
+        assert r.status_code == 200
+        assert "the door" in r.get_data(as_text=True)
+
+    def test_json_is_served_as_a_download(self, client, recorded):
+        """A file to open in an editor next to the code, not a tab to squint
+        at."""
+        r = client.get(
+            "/benchmark_story/artifact?target=0&bench=0&trial=0&format=json"
+        )
+        assert r.status_code == 200
+        assert r.mimetype == "application/json"
+        assert "attachment" in r.headers["Content-Disposition"]
+        assert r.get_json()["benchmark"] == "story_text"
+
+    def test_a_missing_trial_is_a_404_not_a_500(self, client):
+        r = client.get("/benchmark_story/artifact?target=9&bench=9&trial=9")
+        assert r.status_code == 404
+
+    def test_junk_indices_are_refused(self, client):
+        r = client.get("/benchmark_story/artifact?target=x&bench=0&trial=0")
+        assert r.status_code == 400
+
+    def test_missing_indices_are_refused(self, client):
+        assert client.get("/benchmark_story/artifact").status_code == 400
 
 
 class TestRunnerWiring:
@@ -173,13 +217,23 @@ class TestRunnerWiring:
         runner._apply_event(
             0,
             {"t": "story", "bi": 1, "trial": 2, "text": "boo", "correct": False,
-             "topic": "A user manual for grief"},
+             "topic": "A user manual for grief",
+             "transcript": {"benchmark": "story_text"}},
         )
+        # The state carries only a descriptor — the page polls it every second.
         stored = runner._state["targets"][0]["benchmarks"][1]["stories"]
         assert stored == [
-            {"trial": 2, "text": "boo", "correct": False,
-             "topic": "A user manual for grief"}
+            {"trial": 2, "correct": False, "topic": "A user manual for grief"}
         ]
+        # The bulky artifacts live beside it, fetched on request.
+        artifact = runner.get_artifact(0, 1, 2)
+        assert artifact["markdown"] == "boo"
+        assert artifact["transcript"] == {"benchmark": "story_text"}
+
+    def test_an_unrecorded_trial_has_no_artifact(self):
+        from benchmarks.runner import BenchmarkRunner
+
+        assert BenchmarkRunner(spec_set="story").get_artifact(0, 0, 0) is None
 
     def test_a_story_event_without_a_topic_still_records(self):
         """Older workers, and any suite that grows an artifact later, send no

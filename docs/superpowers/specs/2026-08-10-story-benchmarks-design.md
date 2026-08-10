@@ -136,12 +136,26 @@ text beneath, the reviewer's verdict as a blockquote for the structured
 variants, and — for the tool variants — the tool's own story in the
 heading.
 
+**And the same trial as JSON**, which is the artifact to reach for when a
+run failed and the markdown doesn't say enough. The system prompt once —
+it is identical every turn by design, and repeating it five times would
+bury the part that varies — then per turn: the exact user request, the
+assistant's response, the word count, the tool's call count and returned
+numbers, how many times the number appears in the text, and the turn's
+verdict.
+
 This needs a new event on the worker protocol. Today the child emits only
 `{correct, had_error, elapsed}` per trial; it gains
-`{"t": "story", "bi", "trial", "text", "correct"}`, and the runner keeps the
-texts on the benchmark entry so the polling page can offer them. Stories are
-capped at 40 KB each so a runaway model can't grow the state dict without
-bound.
+`{"t": "story", "bi", "trial", "text", "topic", "transcript", "correct"}`.
+
+**Artifacts are not carried in the polled state.** The page refreshes about
+once a second, and a sweep's transcripts run to hundreds of kilobytes per
+target — shipping them on every poll would be absurd. The runner holds them
+beside the state, keyed `(target, benchmark, trial)`; the state carries only
+`{trial, topic, correct}`. `/benchmark_story/artifact` serves one on
+request: plain text for the copy button, and JSON as an attachment so it
+lands as a file to open in an editor. Stories are capped at 40 KB each so a
+runaway model can't grow the store without bound.
 
 ## Components
 

@@ -342,6 +342,10 @@ class StoryTrial:
     topic: str
     sections: list[SectionOutcome]
     story: str
+    # The same run as JSON: system prompt, then each turn's request and
+    # response. The markdown is for reading the piece; this is for working out
+    # why a trial went wrong.
+    transcript: dict[str, Any]
     turns_completed: int
     word_counts: list[int]
     correct: bool
@@ -455,6 +459,38 @@ def score_sections(
         if problem is not None:
             return f"section {i}: {problem}"
     return None
+
+
+def transcript_turn(
+    index: int,
+    user_message: str,
+    section: SectionOutcome,
+    require_reviewer: bool = False,
+    require_tool: bool = False,
+) -> dict[str, Any]:
+    """One turn of the JSON transcript: what was asked, what came back, and
+    what the tool did — with the verdict, so the file answers "why did this
+    fail" without the reader re-deriving it."""
+    problem = section_problem(section, require_reviewer, require_tool)
+    turn: dict[str, Any] = {
+        "section": index,
+        "user": user_message,
+        "assistant": section.text,
+        "words": count_words(section.text),
+        "correct": problem is None,
+        "problem": problem,
+    }
+    if require_reviewer or section.reviewer is not None:
+        turn["reviewer"] = section.reviewer
+    if require_tool or section.tool_calls:
+        turn["tool_calls"] = section.tool_calls
+        turn["tool_numbers"] = list(section.tool_numbers)
+        turn["number_occurrences"] = (
+            count_number_occurrences(section.text, section.tool_numbers[0])
+            if section.tool_numbers
+            else 0
+        )
+    return turn
 
 
 def section_heading(
@@ -590,6 +626,41 @@ class _StoryBenchmarkBase:
 
     # --- the driver ---
 
+    def _build_transcript(
+        self, index: int, topic: str, system_prompt: str, asked: list[str],
+        sections: list[SectionOutcome], model_name: str,
+        error: str | None, reason: str | None,
+    ) -> dict[str, Any]:
+        """The whole trial as plain data.
+
+        The system prompt appears once rather than once per turn: it is
+        identical every time by design, and repeating it five times would bury
+        the part that actually varies.
+        """
+        return {
+            "benchmark": self.name,
+            "model": model_name,
+            "topic": topic,
+            "trial": index,
+            "correct": error is None and reason is None,
+            "error": error,
+            "reason": reason,
+            "requires": {
+                "turns": STORY_TURNS,
+                "words": [MIN_WORDS, MAX_WORDS],
+                "reviewer": self.require_reviewer,
+                "random_number_tool": self.require_tool,
+            },
+            "system_prompt": system_prompt,
+            "turns": [
+                transcript_turn(
+                    n, asked[n - 1] if n <= len(asked) else "",
+                    s, self.require_reviewer, self.require_tool,
+                )
+                for n, s in enumerate(sections, start=1)
+            ],
+        }
+
     def run(
         self,
         on_trial: Callable[[StoryTrial], None] | None = None,
@@ -612,8 +683,10 @@ class _StoryBenchmarkBase:
 
             t0 = time.monotonic()
             sections: list[SectionOutcome] = []
+            asked: list[str] = []
             error: str | None = None
             timed_out = False
+            system_prompt = self._system_prompt(topic)
             try:
                 ctx = self._make_context(provider_id, model_name, args)
                 # The history the model sees. Each turn appends the user ask
@@ -625,6 +698,7 @@ class _StoryBenchmarkBase:
                     if should_stop is not None and should_stop():
                         break
                     user_msg = self.user_message(turn)
+                    asked.append(user_msg)
                     # Attribute the call on /activity. Benchmarks build their
                     # LLM directly rather than through the agent base class, so
                     # without this every one of them lands as "unknown" —
@@ -661,6 +735,10 @@ class _StoryBenchmarkBase:
                 trial_index=i,
                 topic=topic,
                 sections=sections,
+                transcript=self._build_transcript(
+                    i, topic, system_prompt, asked, sections,
+                    model_name, error, reason,
+                ),
                 story=assemble_story(
                     sections, topic,
                     require_reviewer=self.require_reviewer,

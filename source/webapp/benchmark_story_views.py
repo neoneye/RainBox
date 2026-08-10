@@ -9,7 +9,7 @@ reading.
 
 import json
 
-from flask import Response, request
+from flask import Response, abort, request
 
 from benchmarks.runner import STORY_BENCHMARK_SPECS
 
@@ -56,8 +56,10 @@ STORY_INTRO = (
     "rather than a dozen variations on one theme. "
     "Three trials each, so budget roughly 10–20 minutes per target for the "
     "full set. Hover a Copy button to see which brief it holds; click to put "
-    "the piece on the clipboard — every section heading carries its own "
-    "verdict, so a failed trial can be read rather than re-run."
+    "the piece on the clipboard, or take the json for the full exchange: "
+    "system prompt, every request and response, and what the tool did on "
+    "each turn. Every section heading carries its own verdict, so a failed "
+    "trial can be read rather than re-run."
 )
 
 
@@ -68,6 +70,41 @@ def benchmark_story_page() -> str:
         STORY_BENCHMARK_SPECS, STORY_BENCHMARK_DESCRIPTIONS,
         "benchmark_story_state", "benchmark_story_start", "benchmark_story_stop",
         show_artifacts=True,
+        artifact_endpoint="benchmark_story_artifact",
+    )
+
+
+@app.route("/benchmark_story/artifact")
+def benchmark_story_artifact() -> Response:
+    """One trial's piece, as markdown to read or JSON to troubleshoot.
+
+    Served on request rather than carried in the polled state: a sweep's
+    transcripts run to hundreds of kilobytes, and the page refreshes about
+    once a second.
+
+    The JSON is sent as an attachment so it lands as a file — the point is to
+    open it in an editor next to the code, not to squint at it in a tab.
+    """
+    try:
+        target = int(request.args.get("target", ""))
+        bench = int(request.args.get("bench", ""))
+        trial = int(request.args.get("trial", ""))
+    except ValueError:
+        abort(400, "target, bench and trial must be integers")
+
+    artifact = story_benchmark_runner.get_artifact(target, bench, trial)
+    if artifact is None:
+        abort(404, "no artifact recorded for that trial")
+
+    if request.args.get("format") == "json":
+        name = f"story-{bench}-{target}-trial{trial + 1}.json"
+        return app.response_class(
+            json.dumps(artifact["transcript"], indent=2, ensure_ascii=False),
+            mimetype="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+    return app.response_class(
+        artifact["markdown"] or "", mimetype="text/plain; charset=utf-8"
     )
 
 

@@ -157,6 +157,79 @@ class TestToolPrompting:
         assert "invent" in blob.lower() or "make up" in blob.lower()
 
 
+class TestTranscript:
+    """The JSON artifact: what was asked, what came back, what the tool did.
+
+    The markdown is for reading the piece; this is for working out why a trial
+    failed. It carries the system prompt once and then each turn's exchange,
+    rather than replaying the whole growing history five times.
+    """
+
+    def _trial(self, monkeypatch, cls=None):
+        monkeypatch.setattr(story, "prepare_llm", lambda *_a, **_k: RecordingLlm())
+        bench = (cls or story.BenchmarkStoryText)(uuid4(), num_trials=1)
+        return bench.run().trials[0]
+
+    def test_it_is_json_serialisable(self, offline, monkeypatch):
+        import json
+
+        json.dumps(self._trial(monkeypatch).transcript)
+
+    def test_it_names_the_benchmark_model_and_brief(self, offline, monkeypatch):
+        t = self._trial(monkeypatch)
+        assert t.transcript["benchmark"] == "story_text"
+        assert t.transcript["model"] == "fake-model"
+        assert t.transcript["topic"] == t.topic
+
+    def test_the_system_prompt_appears_once(self, offline, monkeypatch):
+        """Verbatim, because a prompt you have to reconstruct is a prompt you
+        will reconstruct wrongly."""
+        t = self._trial(monkeypatch)
+        assert t.transcript["system_prompt"].startswith("You are a writer")
+        assert t.topic in t.transcript["system_prompt"]
+
+    def test_every_turn_carries_its_request_and_response(self, offline, monkeypatch):
+        t = self._trial(monkeypatch)
+        turns = t.transcript["turns"]
+        assert len(turns) == STORY_TURNS
+        for i, turn in enumerate(turns, start=1):
+            assert turn["section"] == i
+            assert turn["user"].startswith("Begin." if i == 1 else f"Write section {i}")
+            assert turn["assistant"]
+
+    def test_a_turn_reports_its_own_verdict(self, offline, monkeypatch):
+        turn = self._trial(monkeypatch).transcript["turns"][0]
+        assert turn["correct"] is True
+        assert turn["problem"] is None
+        assert turn["words"] > 0
+
+    def test_the_trial_verdict_is_there_too(self, offline, monkeypatch):
+        t = self._trial(monkeypatch)
+        assert t.transcript["correct"] is True
+        assert t.transcript["reason"] is None
+        assert t.transcript["error"] is None
+
+    def test_tool_activity_is_recorded_per_turn(self):
+        """The whole point for the tool benchmarks: how many times it ran,
+        what it returned, and whether the answer was used."""
+        s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
+        turn = story.transcript_turn(1, "ask", s, require_tool=True)
+        assert turn["tool_calls"] == 1
+        assert turn["tool_numbers"] == [42]
+        assert turn["number_occurrences"] == 1
+
+    def test_a_skipped_tool_call_is_visible_as_zero(self):
+        s = section(text="word " * 200, numbers=[], calls=0)
+        turn = story.transcript_turn(1, "ask", s, require_tool=True)
+        assert turn["tool_calls"] == 0
+        assert turn["tool_numbers"] == []
+
+    def test_the_reviewer_field_rides_along_for_structured_runs(self):
+        s = section(text="word " * 200, reviewer="derivative tripe")
+        turn = story.transcript_turn(1, "ask", s, require_reviewer=True)
+        assert turn["reviewer"] == "derivative tripe"
+
+
 class TestCountWords:
     def test_plain_prose(self):
         assert count_words("the door opened slowly") == 4

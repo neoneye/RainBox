@@ -46,6 +46,8 @@ BENCHMARK_TEMPLATE: str = """
   .stories button{font:inherit;padding:0 0.4em;margin-left:0.15em;cursor:pointer;
                   border:1px solid #cbd5e1;border-radius:5px;background:#fff}
   .stories button:hover{border-color:#9aa3af}
+  .stories a.json-story{margin-left:0.25em;color:#2563eb;text-decoration:none}
+  .stories a.json-story:hover{text-decoration:underline}
   details.drill > summary{cursor:pointer;font-size:80%;color:#555}
   details.drill > div{font-size:80%;color:#444}
   .pill{display:inline-block;font-size:75%;padding:0 0.4em;border-radius:0.8em;margin-left:0.3em;background:#eee;color:#555}
@@ -103,6 +105,7 @@ BENCHMARK_TEMPLATE: str = """
 const benchmarkNames = {{ benchmark_names_json|safe }};
 // Whether trials of this spec set carry a readable artifact to copy.
 const SHOW_ARTIFACTS = {{ 'true' if show_artifacts else 'false' }};
+const ARTIFACT_URL = {{ artifact_url|tojson }};
 
 async function call(path, method='GET') {
   const r = await fetch(path, {method});
@@ -133,19 +136,30 @@ function benchDetails(b) {
     `<div>reasoning: <b>${b.reasoning_chars ?? 0}</b> &middot; content: <b>${b.content_chars ?? 0}</b></div>` +
     `</details>`;
 }
-// Copy buttons for trials that produced something worth reading (the story
-// benchmarks). The text lives in a data attribute rather than a global map so
-// a re-render can never hand back a stale story from an earlier run.
-function benchStories(b) {
-  if (!SHOW_ARTIFACTS || !b.stories || !b.stories.length) return '';
+// Per-trial artifacts. Two buttons each: the piece as markdown on the
+// clipboard, and the run as a JSON file — system prompt, every request and
+// response, and what the tool did — which is the one to reach for when a
+// trial failed and it is not obvious why.
+//
+// Neither payload is in the polled state; both are fetched from the artifact
+// endpoint on click. A sweep's transcripts are hundreds of kilobytes and the
+// page refreshes about once a second.
+function artifactHref(ti, bi, trial, format) {
+  return `${ARTIFACT_URL}?target=${ti}&bench=${bi}&trial=${trial}` +
+         (format ? `&format=${format}` : '');
+}
+function benchStories(b, ti, bi) {
+  if (!SHOW_ARTIFACTS || !b.stories || !b.stories.length || !ARTIFACT_URL) return '';
   const buttons = b.stories.map(function (s) {
     const mark = s.correct ? '' : ' ×';
     const brief = s.topic ? escapeHtml(s.topic) : `trial ${s.trial + 1}`;
-    return `<button type="button" class="copy-story" data-story="${escapeHtml(s.text)}"` +
-           ` title="Copy to clipboard — ${brief}">` +
-           `#${s.trial + 1}${mark}</button>`;
+    return `<button type="button" class="copy-story"` +
+           ` data-href="${artifactHref(ti, bi, s.trial, '')}"` +
+           ` title="Copy the piece — ${brief}">#${s.trial + 1}${mark}</button>` +
+           `<a class="json-story" download href="${artifactHref(ti, bi, s.trial, 'json')}"` +
+           ` title="Download the full exchange as JSON — ${brief}">json</a>`;
   }).join(' ');
-  return `<div class="stories">copy: ${buttons}</div>`;
+  return `<div class="stories">trial: ${buttons}</div>`;
 }
 
 // Copy via a hidden textarea when the async Clipboard API is unavailable or
@@ -166,12 +180,21 @@ function legacyCopy(text) {
 }
 
 // One delegated listener, so buttons rebuilt by polling keep working.
-document.addEventListener('click', function (e) {
+document.addEventListener('click', async function (e) {
   const btn = e.target.closest && e.target.closest('button.copy-story');
   if (!btn) return;
-  const text = btn.dataset.story || '';
   const old = btn.dataset.label || btn.textContent;
   btn.dataset.label = old;
+  let text = '';
+  try {
+    const r = await fetch(btn.dataset.href);
+    if (!r.ok) throw new Error(r.status);
+    text = await r.text();
+  } catch (err) {
+    btn.textContent = 'fetch failed';
+    setTimeout(function () { btn.textContent = old; }, 1400);
+    return;
+  }
   function say(msg) {
     btn.textContent = msg;
     setTimeout(function () { btn.textContent = old; }, 1400);
@@ -190,13 +213,13 @@ document.addEventListener('click', function (e) {
   }
 });
 
-function renderBench(b) {
+function renderBench(b, ti, bi) {
   if (b.status === 'done') {
-    return `<div>${fmtCounts(b)}</div>${benchDetails(b)}${benchStories(b)}`;
+    return `<div>${fmtCounts(b)}</div>${benchDetails(b)}${benchStories(b, ti, bi)}`;
   }
   if (b.status === 'error') {
     const errText = b.error ? `<div class="err" style="font-size:85%">${escapeHtml(b.error)}</div>` : '';
-    return `<div>${fmtCounts(b)}<span class="pill error" style="margin-left:0.4em">error</span></div>${errText}${benchDetails(b)}${benchStories(b)}`;
+    return `<div>${fmtCounts(b)}<span class="pill error" style="margin-left:0.4em">error</span></div>${errText}${benchDetails(b)}${benchStories(b, ti, bi)}`;
   }
   if (b.status === 'pending') {
     return `<div class="muted">pending</div>`;
@@ -290,7 +313,7 @@ function render(state) {
     const startBtn = `<button class="row-start" data-uuid="${escapeHtml(t.uuid)}" ${running ? 'disabled' : ''}>Start</button>`;
     const benchCells = benchmarkNames.map((bname, i) => {
       const b = t.benchmarks[i];
-      return `<td class="bench">${renderBench(b)}</td>`;
+      return `<td class="bench">${renderBench(b, t.index, i)}</td>`;
     }).join('');
     const rank = rankByIndex.get(t.index);
     const rankBadge = rank ? `<span class="rank rank-${rank}">${rankLabel[rank - 1]}</span>` : '';
@@ -367,6 +390,7 @@ def render_benchmark_page(
     page_title: str, page_intro: str, specs: list, descriptions: dict[str, str],
     state_endpoint: str, start_endpoint: str, stop_endpoint: str,
     show_artifacts: bool = False,
+    artifact_endpoint: str | None = None,
 ) -> str:
     """Render the shared benchmark-suite page (table of targets × specs with
     live polling) for one spec set + runner. Used by /benchmark_basic and
@@ -388,6 +412,7 @@ def render_benchmark_page(
         start_url=url_for(start_endpoint),
         stop_url=url_for(stop_endpoint),
         show_artifacts=show_artifacts,
+        artifact_url=url_for(artifact_endpoint) if artifact_endpoint else '',
     )
 
 

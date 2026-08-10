@@ -109,6 +109,12 @@ class BenchmarkRunner:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        # Per-trial artifacts, keyed (target_index, bench_index, trial).
+        # Deliberately NOT in `_state`: the page polls that once a second,
+        # and a few hundred KB of story text per target would ride along
+        # every time. The state carries a descriptor; the text is fetched
+        # on demand.
+        self._artifacts: dict[tuple[int, int, int], dict[str, Any]] = {}
         self._state: dict[str, Any] = {
             "running": False,
             "started_at": None,
@@ -337,15 +343,31 @@ class BenchmarkRunner:
 
     def _record_story(
         self, target_index: int, bench_index: int, trial: int, text: str,
-        correct: bool, topic: str = "",
+        correct: bool, topic: str = "", transcript: dict | None = None,
     ) -> None:
-        """Keep a trial's readable artifact for the page's copy button. Half
-        the value of a benchmark that writes fiction is reading the fiction."""
+        """Store a trial's artifacts and put a small descriptor on the state.
+
+        Half the value of a benchmark that writes fiction is reading the
+        fiction; the other half is the JSON transcript, which is what tells
+        you why a trial failed. Both are held here rather than in the polled
+        state so the page stays cheap to refresh.
+        """
         with self._lock:
+            self._artifacts[(target_index, bench_index, trial)] = {
+                "markdown": text,
+                "transcript": transcript,
+            }
             entry = self._state["targets"][target_index]["benchmarks"][bench_index]
             entry.setdefault("stories", []).append(
-                {"trial": trial, "text": text, "correct": correct, "topic": topic}
+                {"trial": trial, "correct": correct, "topic": topic}
             )
+
+    def get_artifact(
+        self, target_index: int, bench_index: int, trial: int
+    ) -> dict[str, Any] | None:
+        """One trial's stored artifacts, or None if it was never recorded."""
+        with self._lock:
+            return self._artifacts.get((target_index, bench_index, trial))
 
     def _finish(self, aborted: bool) -> None:
         with self._lock:
@@ -390,7 +412,7 @@ class BenchmarkRunner:
         elif kind == "story":
             self._record_story(
                 ti, ev["bi"], ev["trial"], ev["text"], ev.get("correct", False),
-                ev.get("topic", ""),
+                ev.get("topic", ""), ev.get("transcript"),
             )
 
     def _run(self, app: Flask, targets: list[dict[str, Any]]) -> None:
