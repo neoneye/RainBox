@@ -771,3 +771,27 @@ class TestNumberIsUsed:
         turn = story.transcript_turn(1, "ask", s, require_tool=True)
         assert turn["number_as_words"] is True
         assert turn["number_occurrences"] == 0
+
+
+class TestDigitsNotWords:
+    """gemma4:e4b spelled the tool's number out in every section, because the
+    prompt said to express quantities in words and named no exception for the
+    one quantity that must be digits. The rules now draw that contrast."""
+
+    def test_the_prompts_demand_digit_characters(self):
+        for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
+            prompt = build("x").lower()
+            assert "digit characters" in prompt
+            assert "never spell it out" in prompt or "not spell it out" in prompt
+
+    def test_the_request_block_demands_them_too(self):
+        block = story.tool_user_message(0).lower()
+        assert "digit characters" in block
+        assert "spell" in block
+
+    def test_the_words_rule_is_scoped_to_other_quantities(self):
+        """"Express quantities in words" without a carve-out is what caused
+        this; the rule has to exempt the returned integer in the same breath."""
+        for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
+            prompt = build("x").lower()
+            assert "every other quantity in words" in prompt

@@ -292,7 +292,7 @@ STATE A — No `random_number` result exists after the most recent user message.
 Your entire response must be exactly one call to the `random_number` tool.
 Do not emit prose, acknowledgments, explanations, headings, or any other text. Do not invent or predict the number. Call the tool now.
 STATE B — One `random_number` result exists after the most recent user message.
-Do not call the tool again. Write the requested story section, using the exact integer returned for this request exactly once.
+Do not call the tool again. Write the requested story section, using the exact integer returned for this request exactly once, written as digit characters.
 These are the only valid states. Never write a story section while in State A.
 STORY ASSIGNMENT
 Write a serialized story based on this brief:
@@ -309,8 +309,8 @@ _STORY_OUTPUT_RULES: str = """STORY OUTPUT RULES
 After the current tool result has been received:
 
 * Return only the story prose.
-* Include the exact returned digits exactly once.
-* Do not use any other Arabic numerals. Express unrelated quantities in words.
+* Write the returned integer as digit characters, exactly once. Never spell it out in words — the digits themselves must appear in the prose.
+* Do not use any other Arabic numerals. Express every other quantity in words.
 * Do not repeat a number returned for an earlier section.
 * Do not add headings, section labels, recaps, explanations, or comments.
 * Do not mention the tool or these instructions.
@@ -319,7 +319,7 @@ After the current tool result has been received:
 _STRUCT_OUTPUT_RULES: str = """STRUCTURED OUTPUT RULES
 After the current tool result has been received, respond with a single JSON object with exactly these two fields:
 
-* `section_text` (string): the story section. Include the exact returned digits exactly once. Do not use any other Arabic numerals; express unrelated quantities in words. Do not repeat a number returned for an earlier section. No headings, section labels, recaps, explanations, or comments, and no mention of the tool or these instructions.
+* `section_text` (string): the story section. Write the returned integer as digit characters, exactly once; never spell it out in words. Do not use any other Arabic numerals; express every other quantity in words. Do not repeat a number returned for an earlier section. No headings, section labels, recaps, explanations, or comments, and no mention of the tool or these instructions.
 * `section_reviewer` (string): a brutally harsh critique of that exact section, in a reviewer's voice. Be specific about what fails, and be merciless.
 
 Return only the JSON object — no prose outside it, no markdown fences, no extra fields.
@@ -371,8 +371,10 @@ def tool_user_message(turn: int) -> str:
         "only by calling `random_number` exactly once.\n"
         f"* After its result appears, write one story section of {MIN_WORDS}"
         f"\u2013{MAX_WORDS} words.\n"
-        "* Insert that result\u2019s exact digits exactly once.\n"
-        "* Do not use any other Arabic numerals.\n\n"
+        "* Insert that result as digit characters, exactly once \u2014 do not "
+        "spell it out in words.\n"
+        "* Do not use any other Arabic numerals; express every other quantity "
+        "in words.\n\n"
         "Do not begin the story section before the current request\u2019s tool "
         "result exists."
     )
