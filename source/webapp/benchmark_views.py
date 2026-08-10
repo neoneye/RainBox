@@ -140,8 +140,9 @@ function benchStories(b) {
   if (!SHOW_ARTIFACTS || !b.stories || !b.stories.length) return '';
   const buttons = b.stories.map(function (s) {
     const mark = s.correct ? '' : ' ×';
+    const brief = s.topic ? escapeHtml(s.topic) : `trial ${s.trial + 1}`;
     return `<button type="button" class="copy-story" data-story="${escapeHtml(s.text)}"` +
-           ` title="Copy trial ${s.trial + 1} to the clipboard">` +
+           ` title="Copy to clipboard — ${brief}">` +
            `#${s.trial + 1}${mark}</button>`;
   }).join(' ');
   return `<div class="stories">copy: ${buttons}</div>`;

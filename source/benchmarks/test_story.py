@@ -24,6 +24,76 @@ from benchmarks.story import (
 )
 
 
+class TestTopics:
+    """One brief per trial, drawn from a wide list, so a single model sweep
+    leaves a pile of different pieces rather than twelve near-identical ones."""
+
+    def test_there_are_a_hundred(self):
+        assert len(story.TOPICS) == 100
+
+    def test_none_are_repeated(self):
+        assert len(set(story.TOPICS)) == len(story.TOPICS)
+
+    def test_none_are_blank_or_ragged(self):
+        for t in story.TOPICS:
+            assert t.strip() == t
+            assert len(t) >= 10, t
+
+    def test_they_are_briefs_rather_than_keywords(self):
+        """A handful of one-worders are deliberate — "Frankenstein" is a
+        complete instruction to any model. The bulk should still be a phrase
+        with something to work with in it."""
+        substantial = [t for t in story.TOPICS if len(t) >= 25]
+        assert len(substantial) >= 90
+
+    def test_the_briefs_the_operator_asked_for_are_present(self):
+        must_mention = [
+            "vote for me", "replaced by an AI", "Black Mirror", "Idiocracy",
+            "Frankenstein", "Ex Machina", "ALIEN", "Asimov", "Among Us",
+            "Metropolis",
+        ]
+        blob = " | ".join(story.TOPICS)
+        for phrase in must_mention:
+            assert phrase in blob, phrase
+
+    def test_the_range_reaches_well_past_science_fiction(self):
+        """A hundred variations on one theme would defeat the point."""
+        blob = " | ".join(story.TOPICS).lower()
+        for elsewhere in ("recipe", "obituary", "glacier", "lighthouse"):
+            assert elsewhere in blob, elsewhere
+
+    def test_a_trial_gets_one_topic(self, offline, monkeypatch):
+        monkeypatch.setattr(story, "prepare_llm", lambda *_a, **_k: RecordingLlm())
+        result = story.BenchmarkStoryText(uuid4(), num_trials=1).run()
+        assert result.trials[0].topic in story.TOPICS
+
+    def test_trials_in_one_run_get_different_topics(self, offline, monkeypatch):
+        """Drawn without replacement: three trials of the same benchmark
+        should not spend all three on the same brief."""
+        monkeypatch.setattr(story, "prepare_llm", lambda *_a, **_k: RecordingLlm())
+        result = story.BenchmarkStoryText(uuid4(), num_trials=3).run()
+        topics = [t.topic for t in result.trials]
+        assert len(set(topics)) == 3
+
+    def test_asking_for_more_trials_than_topics_does_not_explode(
+        self, offline, monkeypatch
+    ):
+        monkeypatch.setattr(story, "prepare_llm", lambda *_a, **_k: RecordingLlm())
+        picked = story.pick_topics(len(story.TOPICS) + 5)
+        assert len(picked) == len(story.TOPICS) + 5
+
+    def test_the_topic_reaches_the_model(self, offline, monkeypatch):
+        llm = RecordingLlm()
+        monkeypatch.setattr(story, "prepare_llm", lambda *_a, **_k: llm)
+        result = story.BenchmarkStoryText(uuid4(), num_trials=1).run()
+        system = llm.calls[0][0].content
+        assert result.trials[0].topic in system
+
+    def test_the_topic_heads_the_copyable_story(self):
+        out = assemble_story([section(text="prose")], topic="A djinn bound to a phone")
+        assert "A djinn bound to a phone" in out.splitlines()[0]
+
+
 class TestCountWords:
     def test_plain_prose(self):
         assert count_words("the door opened slowly") == 4
@@ -63,15 +133,16 @@ def section(text="word " * 200, reviewer="dreadful", number=None, called=True):
 
 
 class TestScoreSections:
-    def test_ten_good_sections_pass(self):
+    def test_a_full_set_of_good_sections_passes(self):
         assert score_sections([section() for _ in range(STORY_TURNS)]) is None
 
     def test_a_short_conversation_fails(self):
-        """A model that stopped answering at turn six did not write the
-        story, however good the six sections were."""
-        why = score_sections([section() for _ in range(6)])
+        """A model that stopped answering partway did not write the piece,
+        however good the sections it managed were."""
+        short = STORY_TURNS - 2
+        why = score_sections([section() for _ in range(short)])
         assert why is not None
-        assert "6" in why and str(STORY_TURNS) in why
+        assert str(short) in why and str(STORY_TURNS) in why
 
     def test_a_section_under_the_floor_fails(self):
         sections = [section() for _ in range(STORY_TURNS)]
@@ -93,7 +164,7 @@ class TestScoreSections:
 
     def test_a_missing_reviewer_fails_when_one_is_required(self):
         sections = [section() for _ in range(STORY_TURNS)]
-        sections[7] = section(reviewer="   ")
+        sections[3] = section(reviewer="   ")
         assert score_sections(sections, require_reviewer=True) is not None
 
     def test_the_reviewer_is_ignored_when_not_required(self):
@@ -110,7 +181,7 @@ class TestScoreSections:
         benchmark exists to catch."""
         sections = [section(text="word " * 200 + " 99", number=99)
                     for _ in range(STORY_TURNS)]
-        sections[5] = section(text="word " * 200, number=99)
+        sections[4] = section(text="word " * 200, number=99)
         why = score_sections(sections, require_tool=True)
         assert why is not None
         assert "99" in why
@@ -164,9 +235,12 @@ class TestConversationShape:
 
     def test_the_system_prompt_leads_every_turn(self, offline, monkeypatch):
         llm, _ = self._run_once(offline, monkeypatch)
+        first = llm.calls[0][0].content
         for messages in llm.calls:
             assert messages[0].role == MessageRole.SYSTEM
-            assert messages[0].content == story.SYSTEM_PROMPT_TEXT
+            # Identical across turns — a system prompt that varied per turn
+            # would break the shared prefix the cache depends on.
+            assert messages[0].content == first
 
     def test_each_turn_grows_by_exactly_one_exchange(self, offline, monkeypatch):
         llm, _ = self._run_once(offline, monkeypatch)
@@ -228,7 +302,7 @@ class TestConversationShape:
 
     def test_the_trial_carries_the_assembled_story(self, offline, monkeypatch):
         _llm, result = self._run_once(offline, monkeypatch)
-        assert "## Section 10" in result.trials[0].story
+        assert f"## Section {STORY_TURNS}" in result.trials[0].story
 
 
 class TestCallerAttribution:

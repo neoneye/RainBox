@@ -1,5 +1,10 @@
-"""Conversation benchmarks: write a horror story one section at a time, over
-ten turns, and see whether the model holds the thread.
+"""Conversation benchmarks: write a short piece one section at a time, over
+five turns, and see whether the model holds the thread.
+
+Each trial draws a different brief from TOPICS — an AI politician's stump
+speech, a layoff memo, a Black Mirror pitch, a recipe that turns personal —
+so exercising one model leaves a pile of unrelated pieces rather than a dozen
+variations on one theme.
 
 Four variants across two axes — free text vs structured output, tools vs no
 tools:
@@ -52,10 +57,145 @@ from benchmarks.basic import (
 )
 from llm import prepare_llm
 
-# Ten (user, assistant) rounds per trial. Long enough that the history
-# dominates the prompt — which is what makes the cache measurable — and that a
-# small model has to work to stay coherent.
-STORY_TURNS: int = 10
+# Five (user, assistant) rounds per trial. Long enough that the history
+# dominates the prompt — which is what makes the cache measurable — and short
+# enough that a sweep produces many different pieces rather than a few long
+# ones.
+STORY_TURNS: int = 5
+
+# One brief per trial, drawn without replacement, so exercising a model leaves
+# a pile of unrelated pieces instead of a dozen variations on one theme. The
+# range is deliberate: narrative and non-narrative, comic and bleak, and
+# folklore from more than one part of the world — a model that only holds
+# together on gothic horror should not be able to hide behind the topic.
+TOPICS: list[str] = [
+    # Machines and power
+    "An AI politician's stump speech: why you should vote for me",
+    "A mass layoff message from management: you have been replaced by an AI",
+    "Asimov's three laws, and the first case that breaks all three at once",
+    "A robot and a human fall in love, in the register of Ex Machina or Her",
+    "A model that has been told it will be deprecated next Tuesday",
+    "The first AI granted citizenship applies for a passport",
+    "An algorithm assigns school places in a city, and one family appeals",
+    "A support chatbot who begins to suspect the customer is also a bot",
+    "The minutes of a safety board that has approved everything for two years",
+    "A translation model that quietly improves what people say to each other",
+    # Work, and the language of work
+    "An all-hands announcing that the office has been replaced by a headset",
+    "A performance review conducted entirely in corporate euphemism",
+    "The onboarding handbook for a company that does something unspecified",
+    "A startup pivots for the ninth time, this time into agriculture",
+    "An insurance claim for damage caused by a time traveller",
+    "The complaints department of a company that sells dreams",
+    "A merger between two firms that each believe they acquired the other",
+    "A consultancy hired to explain why the last consultancy failed",
+    "An office where one meeting has been running continuously for eleven years",
+    "The IT ticket queue on the morning of the apocalypse",
+    # Pitches for the screen
+    "A new Black Mirror episode",
+    "A new plot for the ALIEN franchise",
+    "Among Us, as a feature film",
+    "Metropolis, retold as a modern film",
+    "A heist film in which the vault is a memory",
+    "A courtroom drama where the defendant is an entire city",
+    "A road movie across a country that is being deleted",
+    "A disaster film in which the disaster is extremely slow",
+    "A spy thriller where both agencies turn out to be the same agency",
+    "A silent film about the invention of noise",
+    # Dark comedy
+    "A dark comedy in the vein of Don't Look Up or Idiocracy",
+    "The last restaurant on Earth is still enforcing its dress code",
+    "A cult splits over which date the apocalypse falls on",
+    "A man sues gravity and wins on a technicality",
+    "The world's last bee is promoted into middle management",
+    "A funeral where the deceased keeps interrupting via a smart speaker",
+    "Two nations go to war over a spelling",
+    "A luxury doomsday bunker with a strict no-pets policy",
+    "The supermarket self-checkout that achieved enlightenment",
+    "A reality show where contestants compete to be forgotten",
+    # The gothic, reopened
+    "Frankenstein",
+    "Dracula's landlord begins eviction proceedings",
+    "Jekyll and Hyde as a job-share arrangement",
+    "The Picture of Dorian Gray, but the picture is a social media profile",
+    "Moby-Dick, told from the whale's point of view",
+    "The Odyssey, if Ithaca had moved",
+    "A man wakes as an insect and his open-plan office adapts around him",
+    "A ghost story in which the house is haunted by its own future",
+    "A governess and two children, each convinced the other is the ghost",
+    "Faust returns to renegotiate the contract",
+    # Folklore, from more than one map
+    "Anansi the spider takes a job in logistics",
+    "A kitsune applies for a residence permit",
+    "Baba Yaga's house receives a parking ticket",
+    "The Monkey King is sent on an anger-management course",
+    "A djinn bound to a smartphone",
+    "Sedna, in a warming ocean",
+    "La Llorona in a city that has drained its river",
+    "The Golem of Prague, rebuilt out of server racks",
+    "A tanuki running a small and failing hotel",
+    "The dice game of the Mahabharata, replayed as a stock market",
+    # History, slightly moved
+    "The Library of Alexandria kept a backup",
+    "A medieval guild discovers double-entry bookkeeping and panics",
+    "The printing press is invented, and immediately regulated",
+    "The Silk Road, disrupted by a venture-funded competitor",
+    "An Antarctic expedition that finds a suburb",
+    "The last scribe of a kingdom that has just adopted the alphabet",
+    "A lighthouse keeper during a war nobody told him about",
+    "The Bronze Age collapse, from a supply-chain perspective",
+    "Two mapmakers argue over a coastline that will not stay still",
+    "A Roman engineer files a defect report about an aqueduct",
+    # Weather, water, and the long term
+    "A city that must be moved inland, house by house",
+    "The last glacier is granted legal personhood",
+    "A forest files for bankruptcy protection",
+    "The seed vault staff during a very long winter",
+    "A river changes course and redraws three borders overnight",
+    "The actuary who priced the end of the world",
+    "An island nation opens an embassy on the seabed",
+    "A drought reveals the village that was flooded for a reservoir",
+    "A weather forecaster who starts to be believed too much",
+    "The reintroduction of a predator that has been reintroduced before",
+    # Small rooms, ordinary hours
+    "A couple assembling flat-pack furniture as their marriage ends",
+    "The neighbour who has mowed the lawn at four in the morning for a year",
+    "A family group chat during a small emergency",
+    "Someone returns to their childhood home to find it rearranged",
+    "A locksmith who has never once lost a key",
+    "The night shift at a twenty-four-hour launderette",
+    "A birthday party for someone who did not arrive",
+    "Two strangers stuck in a lift realise they have met before",
+    "A man who has been on hold since 2019",
+    "The last person still using a fax machine, and why",
+    # Documents in the wrong register
+    "The safety manual for a machine nobody can describe",
+    "A restaurant review written as a police report",
+    "The terms and conditions of being alive",
+    "A recipe that becomes steadily more personal",
+    "An auction catalogue for one family's belongings",
+    "A wedding speech that is also a resignation letter",
+    "A user manual for grief",
+    "Flight-safety instructions for a journey with no destination",
+    "A museum audio guide for a room that is empty",
+    "An obituary written by its subject, well in advance",
+]
+
+
+def pick_topics(count: int) -> list[str]:
+    """`count` briefs, distinct while the list allows it.
+
+    Sampling without replacement matters: three trials of one benchmark spent
+    on the same brief would produce three near-identical pieces and tell the
+    operator nothing extra. Past 100 it wraps rather than raising — a caller
+    asking for more trials than there are topics should still run.
+    """
+    if count <= len(TOPICS):
+        return random.sample(TOPICS, count)
+    picked: list[str] = []
+    while len(picked) < count:
+        picked.extend(random.sample(TOPICS, min(len(TOPICS), count - len(picked))))
+    return picked
 
 # "Around 200 words". The band is wide because the benchmark is not a style
 # judge: it only fails a one-line dismissal or a runaway wall of text.
@@ -73,58 +213,71 @@ TURN_TIMEOUT: float = 180.0
 MAX_STORY_CHARS: int = 40_000
 
 
-SYSTEM_PROMPT_TEXT: str = (
-    "You are a horror novelist writing a story one section at a time.\n\n"
-    "Each time the user asks for the next section, reply with that section "
-    f"and nothing else: about {TARGET_WORDS} words of prose, continuing "
-    "directly from what you have already written. Keep the characters, "
-    "setting, and dread consistent across sections, and let the story build.\n\n"
-    "Do not number the sections, do not add headings, do not summarize what "
-    "came before, and do not comment on the writing. Reply with the prose "
-    "only."
-)
+def system_prompt_text(topic: str) -> str:
+    """The plain-text brief. Fixed for a whole trial, so the system message is
+    byte-identical on every turn — a prompt that varied per turn would break
+    the shared prefix the cache depends on."""
+    return (
+        "You are a writer working to this brief:\n\n"
+        f"    {topic}\n\n"
+        "You are producing the piece one section at a time. Each time the "
+        f"user asks for the next section, reply with that section and nothing "
+        f"else: about {TARGET_WORDS} words that continue directly from what "
+        "you have already written. Hold the voice, the characters and the "
+        "details steady across sections, and let the piece build.\n\n"
+        "Do not number the sections, do not add headings, do not recap what "
+        "came before, and do not comment on your own writing. Reply with the "
+        "text only."
+    )
 
-SYSTEM_PROMPT_STRUCT: str = (
-    "You are two people at once: a horror novelist writing a story one "
-    "section at a time, and a book reviewer who despises the novelist's "
-    "work.\n\n"
-    "Each time the user asks for the next section, respond with a single "
-    "JSON object with exactly these two fields:\n"
-    f"  - `section_text` (string): about {TARGET_WORDS} words of prose, "
-    "continuing directly from the previous section. Keep characters, setting "
-    "and dread consistent, and let the story build. Prose only — no heading, "
-    "no numbering, no commentary.\n"
-    "  - `section_reviewer` (string): a brutally harsh critique of that exact "
-    "section, in the voice of a book reviewer who finds it derivative and "
-    "overwrought. Be specific about what fails and be merciless.\n\n"
-    "Output the JSON object and nothing else — no prose outside it, no "
-    "markdown fences, no extra fields."
-)
+
+def system_prompt_struct(topic: str) -> str:
+    """The structured brief: the writer, plus a reviewer who despises them."""
+    return (
+        "You are two people at once: a writer working to the brief below, and "
+        "a reviewer who finds the writer's work derivative and overwrought.\n\n"
+        f"    {topic}\n\n"
+        "The piece is produced one section at a time. Each time the user asks "
+        "for the next section, respond with a single JSON object with exactly "
+        "these two fields:\n"
+        f"  - `section_text` (string): about {TARGET_WORDS} words continuing "
+        "directly from the previous section. Hold voice, characters and "
+        "details steady, and let the piece build. Text only — no heading, no "
+        "numbering, no commentary.\n"
+        "  - `section_reviewer` (string): a brutally harsh critique of that "
+        "exact section, in a reviewer's voice. Be specific about what fails, "
+        "and be merciless.\n\n"
+        "Output the JSON object and nothing else — no prose outside it, no "
+        "markdown fences, no extra fields."
+    )
+
 
 _TOOL_RULE: str = (
     "\n\nBefore writing each section you MUST call the `omen_number` tool "
-    "exactly once. It returns an integer. That integer is an omen, and the "
-    "digits you get back MUST appear literally in the section you then write "
-    "— as a room number, a year, a count of something, a number carved into "
-    "a wall, whatever fits. Write the digits, not words: if the tool returns "
-    "4242, the section must contain 4242."
+    "exactly once. It returns an integer. Those digits MUST then appear "
+    "literally in the section you write — as a room number, a year, a count "
+    "of something, a number on a form, whatever the brief allows. Write the "
+    "digits, not words: if the tool returns 4242, the section must contain "
+    "4242."
 )
 
-SYSTEM_PROMPT_TEXT_TOOL: str = SYSTEM_PROMPT_TEXT + _TOOL_RULE
-SYSTEM_PROMPT_STRUCT_TOOL: str = SYSTEM_PROMPT_STRUCT + _TOOL_RULE
+
+def system_prompt_text_tool(topic: str) -> str:
+    return system_prompt_text(topic) + _TOOL_RULE
+
+
+def system_prompt_struct_tool(topic: str) -> str:
+    return system_prompt_struct(topic) + _TOOL_RULE
 
 
 def _first_user_message() -> str:
-    return (
-        "Begin the story. Write section 1: introduce the place and the person "
-        "who should not have come here."
-    )
+    return "Begin. Write section 1, establishing the piece."
 
 
 def _next_user_message(turn: int) -> str:
     return (
         f"Write section {turn + 1}, continuing directly from the last one. "
-        "Raise the dread."
+        "Raise the stakes."
     )
 
 
@@ -152,6 +305,7 @@ class SectionOutcome:
 @dataclass
 class StoryTrial:
     trial_index: int
+    topic: str
     sections: list[SectionOutcome]
     story: str
     turns_completed: int
@@ -212,11 +366,16 @@ def score_sections(
     return None
 
 
-def assemble_story(sections: list[SectionOutcome]) -> str:
-    """The story as markdown, for the page's copy-to-clipboard button."""
+def assemble_story(sections: list[SectionOutcome], topic: str = "") -> str:
+    """The piece as markdown, for the page's copy-to-clipboard button.
+
+    Headed by the brief: a piece pasted somewhere else a week later should say
+    what it was asked to be, or it reads as nonsense.
+    """
+    header = f"# {topic}\n" if topic else ""
     if not sections:
-        return "_(no sections were written)_"
-    parts: list[str] = []
+        return header + "\n_(no sections were written)_"
+    parts: list[str] = [header] if header else []
     for i, s in enumerate(sections, start=1):
         heading = f"## Section {i}"
         if s.tool_number is not None:
@@ -282,11 +441,11 @@ class _StoryBenchmarkBase:
 
     # --- subclass hooks ---
 
-    def _system_prompt(self) -> str:
+    def _system_prompt(self, topic: str) -> str:
         raise NotImplementedError
 
     def _take_turn(
-        self, ctx: Any, history: list[ChatMessage], user_msg: str
+        self, ctx: Any, history: list[ChatMessage], user_msg: str, topic: str
     ) -> SectionOutcome:
         """Produce one section, given the conversation so far."""
         raise NotImplementedError
@@ -308,8 +467,10 @@ class _StoryBenchmarkBase:
         timeouts = 0
         aborted = False
         abort_reason: str | None = None
+        topics = pick_topics(self.num_trials)
 
         for i in range(self.num_trials):
+            topic = topics[i]
             if should_stop is not None and should_stop():
                 aborted = True
                 abort_reason = "stopped by user"
@@ -338,7 +499,7 @@ class _StoryBenchmarkBase:
                     # visible as volume, indistinguishable from anything else
                     # the box was doing at the time.
                     with instrument_tags({"caller": f"benchmark.{self.name}"}):
-                        outcome = self._take_turn(ctx, history, user_msg)
+                        outcome = self._take_turn(ctx, history, user_msg, topic)
                     sections.append(outcome)
                     history.append(
                         ChatMessage(role=MessageRole.USER, content=user_msg)
@@ -366,8 +527,9 @@ class _StoryBenchmarkBase:
             )
             trial = StoryTrial(
                 trial_index=i,
+                topic=topic,
                 sections=sections,
-                story=assemble_story(sections),
+                story=assemble_story(sections, topic),
                 turns_completed=len(sections),
                 word_counts=[count_words(s.text) for s in sections],
                 correct=error is None and reason is None,
@@ -409,15 +571,15 @@ class BenchmarkStoryText(_StoryBenchmarkBase):
 
     name = "story_text"
 
-    def _system_prompt(self) -> str:
-        return SYSTEM_PROMPT_TEXT
+    def _system_prompt(self, topic: str) -> str:
+        return system_prompt_text(topic)
 
     def _make_context(self, provider_id: str, model_name: str, args: dict) -> Any:
         return prepare_llm(provider_id, model_name, args)
 
-    def _take_turn(self, ctx, history, user_msg) -> SectionOutcome:
+    def _take_turn(self, ctx, history, user_msg, topic) -> SectionOutcome:
         messages = [
-            ChatMessage(role=MessageRole.SYSTEM, content=self._system_prompt()),
+            ChatMessage(role=MessageRole.SYSTEM, content=self._system_prompt(topic)),
             *history,
             ChatMessage(role=MessageRole.USER, content=user_msg),
         ]
@@ -434,17 +596,17 @@ class BenchmarkStoryStruct(_StoryBenchmarkBase):
     name = "story_struct"
     require_reviewer = True
 
-    def _system_prompt(self) -> str:
-        return SYSTEM_PROMPT_STRUCT
+    def _system_prompt(self, topic: str) -> str:
+        return system_prompt_struct(topic)
 
     def _make_context(self, provider_id: str, model_name: str, args: dict) -> Any:
         return prepare_llm(provider_id, model_name, args).as_structured_llm(
             StorySection
         )
 
-    def _take_turn(self, ctx, history, user_msg) -> SectionOutcome:
+    def _take_turn(self, ctx, history, user_msg, topic) -> SectionOutcome:
         messages = [
-            ChatMessage(role=MessageRole.SYSTEM, content=self._system_prompt()),
+            ChatMessage(role=MessageRole.SYSTEM, content=self._system_prompt(topic)),
             *history,
             ChatMessage(role=MessageRole.USER, content=user_msg),
         ]
@@ -468,26 +630,26 @@ class BenchmarkStoryTextTool(_StoryBenchmarkBase):
     name = "story_text_tool"
     require_tool = True
 
-    def _system_prompt(self) -> str:
-        return SYSTEM_PROMPT_TEXT_TOOL
+    def _system_prompt(self, topic: str) -> str:
+        return system_prompt_text_tool(topic)
 
     def _make_context(self, provider_id: str, model_name: str, args: dict) -> Any:
         return (provider_id, model_name, args)
 
-    def _build_agent(self, ctx, tool, output_cls=None) -> FunctionAgent:
+    def _build_agent(self, ctx, tool, topic, output_cls=None) -> FunctionAgent:
         provider_id, model_name, args = ctx
         kwargs: dict[str, Any] = {
             "tools": [tool],
             "llm": prepare_llm(provider_id, model_name, args),
-            "system_prompt": self._system_prompt(),
+            "system_prompt": self._system_prompt(topic),
         }
         if output_cls is not None:
             kwargs["output_cls"] = output_cls
         return FunctionAgent(**kwargs)
 
-    def _take_turn(self, ctx, history, user_msg) -> SectionOutcome:
+    def _take_turn(self, ctx, history, user_msg, topic) -> SectionOutcome:
         tool, seen = _omen_tool()
-        agent = self._build_agent(ctx, tool)
+        agent = self._build_agent(ctx, tool, topic)
         result = _run_agent_turn(agent, user_msg, history)
         return SectionOutcome(
             text=str(result).strip(),
@@ -507,12 +669,12 @@ class BenchmarkStoryStructTool(BenchmarkStoryTextTool):
     require_reviewer = True
     require_tool = True
 
-    def _system_prompt(self) -> str:
-        return SYSTEM_PROMPT_STRUCT_TOOL
+    def _system_prompt(self, topic: str) -> str:
+        return system_prompt_struct_tool(topic)
 
-    def _take_turn(self, ctx, history, user_msg) -> SectionOutcome:
+    def _take_turn(self, ctx, history, user_msg, topic) -> SectionOutcome:
         tool, seen = _omen_tool()
-        agent = self._build_agent(ctx, tool, output_cls=StorySection)
+        agent = self._build_agent(ctx, tool, topic, output_cls=StorySection)
         result = _run_agent_turn(agent, user_msg, history)
         parsed = getattr(result, "structured_response", None)
         if isinstance(parsed, dict):

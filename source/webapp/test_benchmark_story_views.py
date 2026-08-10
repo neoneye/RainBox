@@ -171,10 +171,27 @@ class TestRunnerWiring:
             {"benchmarks": [_bench_entry(), _bench_entry()]}
         ]
         runner._apply_event(
-            0, {"t": "story", "bi": 1, "trial": 2, "text": "boo", "correct": False}
+            0,
+            {"t": "story", "bi": 1, "trial": 2, "text": "boo", "correct": False,
+             "topic": "A user manual for grief"},
         )
         stored = runner._state["targets"][0]["benchmarks"][1]["stories"]
-        assert stored == [{"trial": 2, "text": "boo", "correct": False}]
+        assert stored == [
+            {"trial": 2, "text": "boo", "correct": False,
+             "topic": "A user manual for grief"}
+        ]
+
+    def test_a_story_event_without_a_topic_still_records(self):
+        """Older workers, and any suite that grows an artifact later, send no
+        topic — the runner must not require one."""
+        from benchmarks.runner import BenchmarkRunner
+
+        runner = BenchmarkRunner(spec_set="story")
+        runner._state["targets"] = [{"benchmarks": [_bench_entry()]}]
+        runner._apply_event(
+            0, {"t": "story", "bi": 0, "trial": 0, "text": "boo", "correct": True}
+        )
+        assert runner._state["targets"][0]["benchmarks"][0]["stories"][0]["topic"] == ""
 
 
 def _bench_entry():

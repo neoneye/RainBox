@@ -336,14 +336,15 @@ class BenchmarkRunner:
                 entry["mistakes"] += 1
 
     def _record_story(
-        self, target_index: int, bench_index: int, trial: int, text: str, correct: bool
+        self, target_index: int, bench_index: int, trial: int, text: str,
+        correct: bool, topic: str = "",
     ) -> None:
         """Keep a trial's readable artifact for the page's copy button. Half
         the value of a benchmark that writes fiction is reading the fiction."""
         with self._lock:
             entry = self._state["targets"][target_index]["benchmarks"][bench_index]
             entry.setdefault("stories", []).append(
-                {"trial": trial, "text": text, "correct": correct}
+                {"trial": trial, "text": text, "correct": correct, "topic": topic}
             )
 
     def _finish(self, aborted: bool) -> None:
@@ -388,7 +389,8 @@ class BenchmarkRunner:
             )
         elif kind == "story":
             self._record_story(
-                ti, ev["bi"], ev["trial"], ev["text"], ev.get("correct", False)
+                ti, ev["bi"], ev["trial"], ev["text"], ev.get("correct", False),
+                ev.get("topic", ""),
             )
 
     def _run(self, app: Flask, targets: list[dict[str, Any]]) -> None:

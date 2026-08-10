@@ -86,6 +86,7 @@ def main() -> None:
                                 "bi": _bi,
                                 "trial": trial.trial_index,
                                 "text": story,
+                                "topic": getattr(trial, "topic", ""),
                                 "correct": bool(trial.correct),
                             })
 

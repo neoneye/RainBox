@@ -2,7 +2,8 @@
 
 Four benchmarks on their own page, in the shape of `/benchmark_basic`: a
 table of targets × benchmarks, live polling, per-row Start. Each trial is a
-ten-turn conversation that writes a horror story a section at a time.
+five-turn conversation that writes a short piece a section at a time, to a
+brief drawn at random from a list of 100.
 
 ## Why a conversation
 
@@ -22,8 +23,22 @@ the runtime evicting between calls.
 
 ## The four benchmarks
 
-All four share one shape — system prompt, then ten (user, assistant) rounds,
-each asking for the next ~200-word section of a horror story.
+All four share one shape — system prompt, then five (user, assistant) rounds,
+each asking for the next ~200-word section of the piece.
+
+**The brief varies, the theme does not.** Each trial draws one topic from
+`TOPICS`, sampled without replacement so three trials of a benchmark spend
+themselves on three different pieces. A hundred briefs spanning narrative and
+non-narrative, comic and bleak, and folklore from more than one part of the
+world: an AI politician's stump speech, a layoff memo, a Black Mirror pitch,
+Moby-Dick from the whale's side, a recipe that turns personal. A model that
+only holds together on gothic horror should not be able to hide behind the
+topic, and one sweep should leave a pile of unrelated pieces rather than a
+dozen variations on one theme.
+
+The topic is fixed for a whole trial, so the system message is byte-identical
+on every turn — a prompt that varied per turn would break the very prefix the
+suite exists to exercise.
 
 | name | response | tools |
 | --- | --- | --- |
@@ -56,7 +71,7 @@ llama_index (0.14.22): the result carries `.structured_response`, and
 
 A trial is correct when all of:
 
-- all ten turns completed without an exception or timeout;
+- all five turns completed without an exception or timeout;
 - every section is between 100 and 350 words (the ask is "around 200"; the
   band is wide enough that a model isn't failed for style, narrow enough
   that a one-line reply or a runaway wall of text is);
@@ -69,12 +84,10 @@ are `mistakes`. Same three-way split the other suites use.
 
 ## Trial count
 
-**Three**, not the five the other suites use. Each trial here is ten LLM
-calls, so three trials is thirty calls per benchmark and 120 per target —
-already several times the general suite's cost. Five would make a full
-sweep an hour-plus per target for no extra signal, since the thing being
-measured (does the conversation hold together, does the cache engage) is
-visible in the first trial.
+**Three**, not the five the other suites use. Each trial here is five LLM
+calls, so three trials is fifteen calls per benchmark and 60 per target —
+still several times the general suite's cost. Three also means three
+different briefs per benchmark, which is the point of the topic list.
 
 ## The story artifact
 
@@ -82,9 +95,10 @@ Each trial's story is assembled into markdown and carried back to the page,
 where a **Copy story** button puts it on the clipboard. Half the value of a
 benchmark that writes fiction is reading the fiction.
 
-Format: `## Section N` headers, the prose beneath, and for the structured
-variants the reviewer's verdict as a blockquote under each section. Tool
-variants note the omen number per section.
+Format: the brief as an `#` title — a piece pasted somewhere a week later
+should say what it was asked to be — then `## Section N` headers with the
+text beneath, the reviewer's verdict as a blockquote for the structured
+variants, and the omen number in the heading for the tool variants.
 
 This needs a new event on the worker protocol. Today the child emits only
 `{correct, had_error, elapsed}` per trial; it gains
@@ -137,12 +151,12 @@ under the existing Benchmark dropdown.
 
 ## Risks
 
-**Runtime.** 120 calls per target at ~10–20 s each is 20–40 minutes per
+**Runtime.** 60 calls per target at ~10–20 s each is 10–20 minutes per
 target. That is inherent to benchmarking conversations, not a defect, but
 the page intro states it so nobody starts a full sweep unaware. Stop
 SIGKILLs the child as it does today.
 
-**Small models drift.** A 3B model asked for ten sections will repeat
-itself and may drop the schema by turn six. That is a legitimate result —
+**Small models drift.** A 3B model asked for five sections may repeat itself
+and drop the schema partway. That is a legitimate result —
 the benchmark is measuring exactly that — but it means low scores on small
 targets are expected and not a bug in the harness.

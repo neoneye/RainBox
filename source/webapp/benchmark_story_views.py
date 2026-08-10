@@ -18,39 +18,43 @@ from .core import app, story_benchmark_runner
 
 STORY_BENCHMARK_DESCRIPTIONS: dict[str, str] = {
     "story_text": (
-        "Ten turns of plain text. Each turn asks for the next ~200-word "
-        "section of a horror story, resending the whole conversation. "
-        "Correct iff all ten sections arrive within 100–350 words."
+        "Five turns of plain text. Each turn asks for the next ~200-word "
+        "section, resending the whole conversation. Correct iff all five "
+        "sections arrive within 100–350 words."
     ),
     "story_struct": (
-        "Same ten turns, structured output: `section_text` (the prose) plus "
+        "Same five turns, structured output: `section_text` (the piece) plus "
         "`section_reviewer`, a brutally harsh critique of that same section. "
         "Correct iff every section is in range and every critique is present."
     ),
     "story_text_tool": (
-        "Same ten turns, plus one tool. Before each section the model must "
+        "Same five turns, plus one tool. Before each section the model must "
         "call `omen_number`, which returns a random integer that must then "
-        "appear literally in the prose. Correct iff every section called the "
+        "appear literally in the text. Correct iff every section called the "
         "tool and contains its number — which a model that calls the tool and "
         "ignores the answer cannot fake. Requires a function-calling target."
     ),
     "story_struct_tool": (
         "The crossover: structured output AND function calling on every one "
-        "of the ten turns. The hardest of the four for a local model."
+        "of the five turns. The hardest of the four for a local model."
     ),
 }
 
 STORY_INTRO = (
-    "Ten-turn conversations that write a horror story a section at a time, "
+    "Five-turn conversations that write a short piece a section at a time, "
     "across the text/structured × no-tools/tools matrix. Every turn resends "
     "the system prompt and the whole history and appends one message, so each "
     "prompt is a strict prefix extension of the last — the shape a KV cache "
     "is built for. That makes this suite both a capability test and the "
     "workload that puts a real number on the /activity dashboard: check the "
     "reusable-prefix rate there after a run. "
-    "Three trials rather than five, because each trial is ten LLM calls — "
-    "budget roughly 20–40 minutes per target for the full set. Use the Copy "
-    "buttons on a finished cell to read what the model actually wrote."
+    "Each trial draws a different brief from a list of 100 — an AI "
+    "politician's stump speech, a layoff memo, a Black Mirror pitch, a recipe "
+    "that turns personal — so one sweep leaves a dozen unrelated pieces "
+    "rather than a dozen variations on one theme. "
+    "Three trials each, so budget roughly 10–20 minutes per target for the "
+    "full set. Hover a Copy button to see which brief it holds; click to put "
+    "the piece on the clipboard."
 )
 
 
