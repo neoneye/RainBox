@@ -29,7 +29,10 @@ the runtime evicting between calls.
 ## The four benchmarks
 
 All four share one shape — system prompt, then five (user, assistant) rounds,
-each asking for the next ~200-word section of the piece.
+each asking for the next short section of the piece. The ask and the band
+the scorer accepts come from `TARGET_WORDS`, `MIN_WORDS` and `MAX_WORDS`,
+which every prompt is templated from — a target outside the band would
+fail models for obeying the instruction.
 
 **The brief varies, the theme does not.** Each trial draws one topic from
 `TOPICS`, sampled without replacement so three trials of a benchmark spend
@@ -56,7 +59,7 @@ suite exists to exercise.
 the section.
 
 **`story_struct`** — `as_structured_llm(StorySection)` each turn.
-`StorySection` has two fields: `section_text` (~200 words of the story) and
+`StorySection` has two fields: `section_text` (the prose) and
 `section_reviewer`, a brutally harsh book-reviewer critique of that section.
 The second field exists to make the schema carry two genuinely different
 registers, so a model can't satisfy it by renaming its prose.
@@ -94,9 +97,9 @@ llama_index (0.14.22): the result carries `.structured_response`, and
 A trial is correct when all of:
 
 - all five turns completed without an exception or timeout;
-- every section is between 100 and 350 words (the ask is "around 200"; the
-  band is wide enough that a model isn't failed for style, narrow enough
-  that a one-line reply or a runaway wall of text is);
+- every section is within the word band (`MIN_WORDS`–`MAX_WORDS`, quoted
+  into every prompt): wide enough that a model isn't failed for style,
+  narrow enough that a one-line reply or a runaway wall of text is;
 - structured variants: `section_reviewer` non-empty on every turn;
 - tool variants: for every turn, the tool was called **exactly once** and
   the integer it returned appears in that turn's section as digits.

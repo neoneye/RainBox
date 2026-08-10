@@ -199,9 +199,15 @@ def pick_topics(count: int) -> list[str]:
 
 # "Around 200 words". The band is wide because the benchmark is not a style
 # judge: it only fails a one-line dismissal or a runaway wall of text.
-TARGET_WORDS: int = 200
-MIN_WORDS: int = 100
-MAX_WORDS: int = 350
+# The ask, and the band the scorer accepts. Short sections keep a five-turn
+# trial quick and make each one a tighter test of instruction-following: a
+# model that rambles is now caught by the cap rather than absorbed by it.
+# TARGET_WORDS must sit inside the band — the prompts quote it as the ask and
+# the scorer judges against the bounds, so a target outside them would fail
+# models for obeying the instruction.
+TARGET_WORDS: int = 120
+MIN_WORDS: int = 80
+MAX_WORDS: int = 160
 
 # One turn's budget. A ten-turn trial can therefore take a few minutes on a
 # slow local model, which is expected.
@@ -411,7 +417,7 @@ class StorySection(BaseModel):
     """One section of the story, plus its own worst review."""
 
     section_text: str = Field(
-        description=f"About {TARGET_WORDS} words of horror prose continuing the story."
+        description=f"About {TARGET_WORDS} words of prose continuing the story."
     )
     section_reviewer: str = Field(
         description="A brutally harsh book-reviewer critique of this section."

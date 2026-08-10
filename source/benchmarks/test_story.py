@@ -27,6 +27,11 @@ from benchmarks.story import (
     tool_number_present,
 )
 
+# A length comfortably inside whatever the band currently is, so moving
+# MIN_WORDS/MAX_WORDS doesn't mean sweeping the file for magic numbers.
+GOOD_WORDS: int = (MIN_WORDS + MAX_WORDS) // 2
+GOOD_TEXT: str = "word " * GOOD_WORDS
+
 
 class TestTopics:
     """One brief per trial, drawn from a wide list, so a single model sweep
@@ -279,20 +284,20 @@ class TestTranscript:
     def test_tool_activity_is_recorded_per_turn(self):
         """The whole point for the tool benchmarks: how many times it ran,
         what it returned, and whether the answer was used."""
-        s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
+        s = section(text=GOOD_TEXT + " 42", numbers=[42], calls=1)
         turn = story.transcript_turn(1, "ask", s, require_tool=True)
         assert turn["tool_calls"] == 1
         assert turn["tool_numbers"] == [42]
         assert turn["number_occurrences"] == 1
 
     def test_a_skipped_tool_call_is_visible_as_zero(self):
-        s = section(text="word " * 200, numbers=[], calls=0)
+        s = section(text=GOOD_TEXT, numbers=[], calls=0)
         turn = story.transcript_turn(1, "ask", s, require_tool=True)
         assert turn["tool_calls"] == 0
         assert turn["tool_numbers"] == []
 
     def test_the_reviewer_field_rides_along_for_structured_runs(self):
-        s = section(text="word " * 200, reviewer="derivative tripe")
+        s = section(text=GOOD_TEXT, reviewer="derivative tripe")
         turn = story.transcript_turn(1, "ask", s, require_reviewer=True)
         assert turn["reviewer"] == "derivative tripe"
 
@@ -333,25 +338,25 @@ class TestSectionProblem:
     went wrong and why — rather than reporting only the first failure."""
 
     def test_a_good_tool_section_has_no_problem(self):
-        s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
+        s = section(text=GOOD_TEXT + " 42", numbers=[42], calls=1)
         assert section_problem(s, require_tool=True) is None
 
     def test_calling_the_tool_and_ignoring_the_answer_fails(self):
         """Both halves are required: the call, and the result reaching the
         page. A call whose answer is discarded proves nothing about tool use."""
-        ignored_the_answer = section(text="word " * 200, numbers=[42], calls=1)
+        ignored_the_answer = section(text=GOOD_TEXT, numbers=[42], calls=1)
         assert section_problem(ignored_the_answer, require_tool=True) is not None
 
     def test_reusing_an_earlier_number_is_fine(self):
-        s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
+        s = section(text=GOOD_TEXT + " 42", numbers=[42], calls=1)
         assert section_problem(s, require_tool=True) is None
 
     def test_stray_numerals_are_fine(self):
-        s = section(text="word " * 200 + " 42 and 1999 and 7", numbers=[42], calls=1)
+        s = section(text=GOOD_TEXT + " 42 and 1999 and 7", numbers=[42], calls=1)
         assert section_problem(s, require_tool=True) is None
 
     def test_never_calling_the_tool_is_named(self):
-        s = section(text="word " * 200, numbers=[], calls=0)
+        s = section(text=GOOD_TEXT, numbers=[], calls=0)
         problem = section_problem(s, require_tool=True)
         assert problem is not None
         assert "not called" in problem
@@ -359,7 +364,7 @@ class TestSectionProblem:
     def test_calling_the_tool_twice_is_named(self):
         """The brief says exactly once. Twice means the model is looping, and
         the artifact should say so rather than silently passing."""
-        s = section(text="word " * 200 + " 42 77", numbers=[42, 77], calls=2)
+        s = section(text=GOOD_TEXT + " 42 77", numbers=[42, 77], calls=2)
         problem = section_problem(s, require_tool=True)
         assert problem is not None
         assert "2 times" in problem
@@ -399,7 +404,7 @@ class TestToolNumberPresent:
         assert tool_number_present("the year 4,242 arrived", 4242) is True
 
 
-def section(text="word " * 200, reviewer="dreadful", numbers=None, calls=None):
+def section(text=GOOD_TEXT, reviewer="dreadful", numbers=None, calls=None):
     numbers = [] if numbers is None else numbers
     return SectionOutcome(
         text=text.strip(),
@@ -449,15 +454,15 @@ class TestScoreSections:
         assert score_sections(sections, require_reviewer=False) is None
 
     def test_an_uncalled_tool_fails(self):
-        sections = [section(text='word ' * 200 + ' 7', numbers=[7])
+        sections = [section(text=GOOD_TEXT + ' 7', numbers=[7])
                     for _ in range(STORY_TURNS)]
         sections[2] = section(numbers=[])
         assert score_sections(sections, require_tool=True) is not None
 
     def test_a_missing_tool_call_fails_the_trial(self):
-        sections = [section(text="word " * 200 + " 99", numbers=[99])
+        sections = [section(text=GOOD_TEXT + " 99", numbers=[99])
                     for _ in range(STORY_TURNS)]
-        sections[4] = section(text="word " * 200, numbers=[], calls=0)
+        sections[4] = section(text=GOOD_TEXT, numbers=[], calls=0)
         why = score_sections(sections, require_tool=True)
         assert why is not None
         assert "5" in why and "not called" in why
@@ -471,7 +476,7 @@ class TestScoreSections:
 class RecordingLlm:
     """Stands in for a prepared LLM, keeping every message list it was sent."""
 
-    def __init__(self, reply: str = "word " * 200):
+    def __init__(self, reply: str = GOOD_TEXT):
         self.reply = reply.strip()
         self.calls: list[list] = []
 
@@ -630,13 +635,13 @@ class TestSectionHeading:
     """The heading is the troubleshooting surface for a failed tool trial."""
 
     def test_the_shape_the_operator_asked_for(self):
-        s = section(text="word " * 200 + " 42", numbers=[42], calls=1)
+        s = section(text=GOOD_TEXT + " 42", numbers=[42], calls=1)
         assert section_heading(3, s, require_tool=True) == (
             "## Section 3 (random_number 42, found once in the text) - Correct"
         )
 
     def test_an_unused_number_is_reported_and_fails(self):
-        s = section(text="word " * 200, numbers=[77], calls=1)
+        s = section(text=GOOD_TEXT, numbers=[77], calls=1)
         heading = section_heading(2, s, require_tool=True)
         assert heading == (
             "## Section 2 (random_number 77, not found in the text) - Wrong"
@@ -648,7 +653,7 @@ class TestSectionHeading:
         assert "Wrong: 2 words" in section_heading(1, s, require_tool=True)
 
     def test_a_repeated_call_is_reported_with_every_number(self):
-        s = section(text="word " * 200, numbers=[11, 22], calls=2)
+        s = section(text=GOOD_TEXT, numbers=[11, 22], calls=2)
         heading = section_heading(1, s, require_tool=True)
         assert "called 2 times: 11, 22" in heading
 
@@ -736,11 +741,11 @@ class TestNumberIsUsed:
     up in the section, in digits."""
 
     def test_digits_present_passes(self):
-        s = section(text="word " * 200 + " 4242", numbers=[4242], calls=1)
+        s = section(text=GOOD_TEXT + " 4242", numbers=[4242], calls=1)
         assert section_problem(s, require_tool=True) is None
 
     def test_no_trace_of_the_number_fails(self):
-        s = section(text="word " * 200, numbers=[4242], calls=1)
+        s = section(text=GOOD_TEXT, numbers=[4242], calls=1)
         problem = section_problem(s, require_tool=True)
         assert problem is not None
         assert "4242" in problem
@@ -750,7 +755,7 @@ class TestNumberIsUsed:
         that spelled the number out is a different animal from one that
         ignored the tool, and the message has to distinguish them."""
         s = section(
-            text="word " * 200 + " four thousand two hundred forty-two",
+            text=GOOD_TEXT + " four thousand two hundred forty-two",
             numbers=[4242], calls=1,
         )
         problem = section_problem(s, require_tool=True)
@@ -759,7 +764,7 @@ class TestNumberIsUsed:
 
     def test_the_heading_reports_the_word_form(self):
         s = section(
-            text="word " * 200 + " four thousand two hundred forty-two",
+            text=GOOD_TEXT + " four thousand two hundred forty-two",
             numbers=[4242], calls=1,
         )
         assert "as words" in section_heading(1, s, require_tool=True)
