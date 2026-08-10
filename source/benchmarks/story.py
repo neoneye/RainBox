@@ -40,6 +40,7 @@ from typing import Any, Callable
 from uuid import UUID
 
 from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.core.instrumentation.dispatcher import instrument_tags
 from llama_index.core.llms import ChatMessage, MessageRole
 from pydantic import BaseModel, Field
 
@@ -331,7 +332,13 @@ class _StoryBenchmarkBase:
                     user_msg = (
                         _first_user_message() if turn == 0 else _next_user_message(turn)
                     )
-                    outcome = self._take_turn(ctx, history, user_msg)
+                    # Attribute the call on /activity. Benchmarks build their
+                    # LLM directly rather than through the agent base class, so
+                    # without this every one of them lands as "unknown" —
+                    # visible as volume, indistinguishable from anything else
+                    # the box was doing at the time.
+                    with instrument_tags({"caller": f"benchmark.{self.name}"}):
+                        outcome = self._take_turn(ctx, history, user_msg)
                     sections.append(outcome)
                     history.append(
                         ChatMessage(role=MessageRole.USER, content=user_msg)

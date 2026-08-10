@@ -231,6 +231,51 @@ class TestConversationShape:
         assert "## Section 10" in result.trials[0].story
 
 
+class TestCallerAttribution:
+    """Benchmarks call prepare_llm directly, so they miss the instrument_tags
+    wrapping in agents/base.py and land on /activity as "unknown" — visible as
+    volume, but indistinguishable from everything else the box was doing."""
+
+    def test_each_turn_is_tagged_with_its_benchmark(self, offline, monkeypatch):
+        from llama_index.core.instrumentation.dispatcher import (
+            active_instrument_tags,
+        )
+
+        seen: list[dict] = []
+
+        class TagSpy:
+            """Reads the tags the dispatcher attaches while a call is in
+            flight, which is what the activity recorder later reads."""
+
+            def __init__(self, llm):
+                self.llm = llm
+
+            def chat(self, messages):
+                seen.append(dict(active_instrument_tags.get() or {}))
+                return self.llm.chat(messages)
+
+        monkeypatch.setattr(
+            story, "prepare_llm", lambda *_a, **_k: TagSpy(RecordingLlm())
+        )
+        story.BenchmarkStoryText(uuid4(), num_trials=1).run()
+        assert seen
+        assert all(t.get("caller") == "benchmark.story_text" for t in seen)
+
+    def test_each_benchmark_reports_its_own_name(self, offline, monkeypatch):
+        names = {
+            cls.name
+            for cls in (
+                story.BenchmarkStoryText,
+                story.BenchmarkStoryStruct,
+                story.BenchmarkStoryTextTool,
+                story.BenchmarkStoryStructTool,
+            )
+        }
+        assert names == {
+            "story_text", "story_struct", "story_text_tool", "story_struct_tool"
+        }
+
+
 class TestAssembleStory:
     def test_each_section_gets_a_numbered_heading(self):
         out = assemble_story([section(text="one"), section(text="two")])
