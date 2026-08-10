@@ -114,8 +114,12 @@ class TestToolPrompting:
         markers and the word-count target are outside the tool's range and so
         cannot be mistaken for one."""
         prompts = [
-            story._TOOL_PROTOCOL,
-            story._TOOL_CHECKLIST,
+            story._STATE_MACHINE,
+            story._FINAL_CHECK,
+            story._STORY_OUTPUT_RULES,
+            story._STRUCT_OUTPUT_RULES,
+            story.tool_user_message(0),
+            story.tool_user_message(3),
             story.FIRST_USER_MESSAGE,
             story.NEXT_USER_MESSAGE,
             story.system_prompt_text_tool("A river changes course"),
@@ -138,61 +142,68 @@ class TestToolPrompting:
     def test_the_rule_names_the_tool(self):
         assert "random_number" in story.system_prompt_text_tool("x")
 
-    def test_the_tool_call_is_stated_as_a_phase_before_any_writing(self):
-        """The protocol's whole idea: the call is phase one, not a step folded
-        into the writing. A model that starts composing has already failed the
-        instruction, which is a clearer thing to ask of it."""
+    def test_the_two_states_are_mutually_exclusive_and_ordered(self):
+        """Tool call and prose are cast as states rather than phases of one
+        reply, which is how a FunctionAgent actually runs: the model is
+        re-invoked after the tool returns, so "which state am I in" is a
+        question it can answer from the messages in front of it."""
         for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
             prompt = build("A man sues gravity")
-            assert "PHASE 1 \u2014 TOOL CALL" in prompt
-            assert "first and only action must be to call the `random_number`" in prompt
-            assert prompt.index("PHASE 1") < prompt.index("PHASE 2")
+            assert "STATE A" in prompt and "STATE B" in prompt
+            assert prompt.index("STATE A") < prompt.index("STATE B")
+            assert "Never write a story section while in State A" in prompt
 
     def test_the_brief_is_in_the_prompt(self):
         for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
             assert "A man sues gravity" in build("A man sues gravity")
 
-    def test_the_prompt_presses_only_on_what_is_measured(self):
-        """It used to ban stray numerals and forbid reusing an earlier number.
-        Measured on llama3.2:3b, the numeral ban made the model suppress the
-        required digits as well — zero of twenty sections contained the
-        number. Neither rule is scored, so neither is asked for."""
+    def test_the_final_check_is_about_the_tool_call(self):
+        """Which is the one thing scored."""
         for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
-            prompt = build("x")
-            assert "Arabic numeral" not in prompt
-            assert "Never reuse" not in prompt
-
-    def test_the_self_check_matches_the_scoring(self):
-        """One call per section is the test, and the only thing the checklist
-        asks the model to verify."""
-        checklist = story._TOOL_CHECKLIST
-        assert "called once after the latest user message" in checklist
-        assert checklist.count("*") == 1
+            assert "FINAL MANDATORY CHECK" in build("x")
+            assert "confirm silently that a `random_number` result appears" in build("x")
 
     def test_the_word_bounds_track_the_scoring_constants(self):
         """A prompt asking for a range the scorer doesn't accept would fail
-        models for obeying it."""
-        prompt = story.system_prompt_text_tool("x")
-        assert f"{MIN_WORDS}\u2013{MAX_WORDS} words" in prompt
+        models for obeying it. Both the system prompt and the per-request
+        block state the range, in different phrasings."""
+        for text in (story.system_prompt_text_tool("x"),
+                     story.system_prompt_struct_tool("x"),
+                     story.tool_user_message(0)):
+            assert str(MIN_WORDS) in text and str(MAX_WORDS) in text
 
     def test_the_structured_variant_still_asks_for_both_fields(self):
         prompt = story.system_prompt_struct_tool("x")
         assert "section_text" in prompt
         assert "section_reviewer" in prompt
 
-    def test_the_user_turns_carry_no_instructions_at_all(self):
-        """Everything about how to write lives in the system prompt, which is
-        byte-identical every turn. The user message says only that another
-        section is wanted."""
-        bench = story.BenchmarkStoryTextTool(uuid4(), num_trials=1)
-        for turn in range(STORY_TURNS):
-            assert "random_number" not in bench.user_message(turn), turn
-
-    def test_the_user_turns_are_bare(self):
-        bench = story.BenchmarkStoryTextTool(uuid4(), num_trials=1)
+    def test_a_non_tool_turn_stays_bare(self):
+        bench = story.BenchmarkStoryText(uuid4(), num_trials=1)
         assert bench.user_message(0) == "Write first section"
         for turn in range(1, STORY_TURNS):
             assert bench.user_message(turn) == "Write next section"
+
+    def test_a_tool_turn_opens_a_named_transaction(self):
+        bench = story.BenchmarkStoryTextTool(uuid4(), num_trials=1)
+        assert bench.user_message(2).startswith(
+            "NEW SECTION REQUEST: section-charlie"
+        )
+
+    def test_every_request_id_is_distinct_within_a_trial(self):
+        """Reusing an id would undercut "this is a new and independent
+        transaction" — the model would see the same header twice."""
+        bench = story.BenchmarkStoryTextTool(uuid4(), num_trials=1)
+        ids = [story.request_id(t) for t in range(STORY_TURNS)]
+        assert len(set(ids)) == STORY_TURNS
+
+    def test_request_ids_carry_no_digits(self):
+        """A numeric id would land in the conversation as digits and could be
+        taken — by the model, or by the occurrence check — for a tool result."""
+        for turn in range(STORY_TURNS):
+            assert not re.search(r"\d", story.request_id(turn))
+
+    def test_the_ids_do_not_run_out(self):
+        assert story.request_id(200)
 
     def test_every_turn_after_the_first_is_identical(self):
         """An unchanging suffix is the friendliest possible shape for the
@@ -208,7 +219,7 @@ class TestToolPrompting:
 
     def test_the_rule_still_forbids_inventing_a_number(self):
         prompt = story.system_prompt_text_tool("x").lower()
-        assert "improvise a number" in prompt
+        assert "do not invent or predict the number" in prompt
 
 
 class TestTranscript:

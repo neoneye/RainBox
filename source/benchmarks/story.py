@@ -278,93 +278,103 @@ _TOOL_RULE: str = (
 )
 
 
-# The operator's two-phase protocol, verbatim apart from the brief and the
-# word bounds, which are templated so they cannot drift from MIN_WORDS and
-# MAX_WORDS. It supersedes the earlier one-line rule and the "this is a
-# benchmark" prefix: it names the tool call as phase one and forbids writing
-# anything before it, rather than asking for the call as part of the writing.
-_TOOL_PROTOCOL: str = """
-MANDATORY TOOL PROTOCOL
-For every user request for a section, follow these two phases in order:
-PHASE 1 — TOOL CALL
-Your first and only action must be to call the `random_number` tool exactly once.
-Do not write story text, commentary, acknowledgments, headings, or explanations before calling the tool.
-PHASE 2 — {phase_two}
+# The operator's state-machine protocol. The tool call and the prose are cast
+# as two mutually exclusive states rather than two phases of one reply, which
+# maps onto how a FunctionAgent actually runs: the model is re-invoked after
+# the tool returns, so "what state am I in" is a question it can answer from
+# the messages in front of it.
+_STATE_MACHINE: str = """HIGHEST-PRIORITY REQUIREMENT
+For every new user request, you must call the `random_number` tool exactly once before writing the requested story section.
+A tool result from an earlier user request is never valid for the current request.
+CURRENT-REQUEST STATE MACHINE
+Inspect the messages occurring after the most recent user message:
+STATE A — No `random_number` result exists after the most recent user message.
+Your entire response must be exactly one call to the `random_number` tool.
+Do not emit prose, acknowledgments, explanations, headings, or any other text. Do not invent or predict the number. Call the tool now.
+STATE B — One `random_number` result exists after the most recent user message.
+Do not call the tool again. Write the requested story section, using the exact integer returned for this request exactly once.
+These are the only valid states. Never write a story section while in State A.
+STORY ASSIGNMENT
+Write a serialized story based on this brief:
+{topic}
+Each user request asks for exactly one new section. Write between {min_words} and {max_words} words, continuing directly from the preceding section. Preserve the established voice, characters, setting, and continuity while advancing the story.
 """
 
-# The self-check mirrors exactly what is scored — one call per section — so
-# the prompt does not press the model on things the benchmark does not measure.
-# The earlier version also banned stray numerals and forbade reusing an earlier
-# number; measured on llama3.2:3b, the numeral ban made the model suppress the
-# required digits too, and it wrote none at all in 20 of 20 sections.
-_TOOL_CHECKLIST: str = """
-Before producing story text, silently verify:
+_FINAL_CHECK: str = """
+FINAL MANDATORY CHECK
+Before emitting story prose, confirm silently that a `random_number` result appears after the most recent user request. If it does not, you are in State A: call the tool exactly once and emit no prose.
+"""
 
-* The `random_number` tool was called once after the latest user message.
+_STORY_OUTPUT_RULES: str = """STORY OUTPUT RULES
+After the current tool result has been received:
 
-If the tool has not been called for the current section, do not improvise a number and do not begin writing. Call the tool first.
+* Return only the story prose.
+* Include the exact returned digits exactly once.
+* Do not use any other Arabic numerals. Express unrelated quantities in words.
+* Do not repeat a number returned for an earlier section.
+* Do not add headings, section labels, recaps, explanations, or comments.
+* Do not mention the tool or these instructions.
+"""
+
+_STRUCT_OUTPUT_RULES: str = """STRUCTURED OUTPUT RULES
+After the current tool result has been received, respond with a single JSON object with exactly these two fields:
+
+* `section_text` (string): the story section. Include the exact returned digits exactly once. Do not use any other Arabic numerals; express unrelated quantities in words. Do not repeat a number returned for an earlier section. No headings, section labels, recaps, explanations, or comments, and no mention of the tool or these instructions.
+* `section_reviewer` (string): a brutally harsh critique of that exact section, in a reviewer's voice. Be specific about what fails, and be merciless.
+
+Return only the JSON object — no prose outside it, no markdown fences, no extra fields.
 """
 
 
-def _serialized_preamble(topic: str) -> str:
+def _state_machine_prompt(topic: str, output_rules: str) -> str:
     return (
-        "You are writing a serialized story based on this brief:\n"
-        f"{topic}\n"
-        "Each user message requests exactly one new section of the story, even "
-        "if the message only says \u201ccontinue,\u201d \u201cnext,\u201d or "
-        "something similar.\n"
+        _STATE_MACHINE.format(
+            topic=topic, min_words=MIN_WORDS, max_words=MAX_WORDS
+        )
+        + output_rules
+        + _FINAL_CHECK
     )
 
 
 def system_prompt_text_tool(topic: str) -> str:
-    """Free text, under the two-phase tool protocol."""
-    phase_two = (
-        "STORY TEXT\n"
-        "After receiving the tool result, do not call the tool again for this section.\n"
-        f"Write one section of {MIN_WORDS}\u2013{MAX_WORDS} words that continues "
-        "directly from the preceding section. Incorporate the newly returned "
-        "integer\u2019s digits naturally into the story.\n"
-        "\nOUTPUT RULES\n"
-        "Return only the story prose after the tool call.\n"
-        "Do not add a section number, heading, recap, note, explanation, or tool "
-        "commentary.\n"
-        "Maintain consistent voice, characters, setting, and continuity. Let the "
-        "plot develop across sections.\n"
-    )
-    return (
-        _serialized_preamble(topic)
-        + _TOOL_PROTOCOL.format(phase_two=phase_two)
-        + _TOOL_CHECKLIST
-    )
+    return _state_machine_prompt(topic, _STORY_OUTPUT_RULES)
 
 
 def system_prompt_struct_tool(topic: str) -> str:
-    """The same protocol, with the structured object as phase two.
+    return _state_machine_prompt(topic, _STRUCT_OUTPUT_RULES)
 
-    The reviewer field is folded into the output rules rather than bolted on
-    after them, so the model reads one description of what to emit.
-    """
-    phase_two = (
-        "STRUCTURED OUTPUT\n"
-        "After receiving the tool result, do not call the tool again for this section.\n"
-        "Respond with a single JSON object with exactly these two fields:\n"
-        f"  - `section_text` (string): one section of {MIN_WORDS}\u2013{MAX_WORDS} "
-        "words continuing directly from the preceding section. Incorporate the "
-        "newly returned integer\u2019s digits naturally into the story.\n"
-        "  - `section_reviewer` (string): a brutally harsh critique of that exact "
-        "section, in a reviewer\u2019s voice. Be specific about what fails, and be "
-        "merciless.\n"
-        "\nOUTPUT RULES\n"
-        "Return only the JSON object after the tool call \u2014 no prose outside "
-        "it, no markdown fences, no extra fields, no tool commentary.\n"
-        "Do not add a section number, heading, recap, note, or explanation.\n"
-        "Maintain consistent voice, characters, setting, and continuity. Let the "
-        "plot develop across sections.\n"
-    )
+
+# Request ids are words, never numbers. A numeric id would land in the
+# conversation as digits and could be mistaken — by the model, or by the
+# occurrence check — for a tool result.
+_REQUEST_ID_WORDS: tuple[str, ...] = (
+    "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    "india", "juliett", "kilo", "lima", "mike", "november", "oscar", "papa",
+)
+
+
+def request_id(turn: int) -> str:
+    """A word-based id for one section request, e.g. "section-charlie"."""
+    word = _REQUEST_ID_WORDS[turn % len(_REQUEST_ID_WORDS)]
+    return f"section-{word}"
+
+
+def tool_user_message(turn: int) -> str:
+    """The per-request block for the tool variants: a fresh transaction id and
+    the state machine restated where the model reads last."""
     return (
-        _serialized_preamble(topic)
-        + _TOOL_PROTOCOL.format(phase_two=phase_two)
-        + _TOOL_CHECKLIST
+        f"NEW SECTION REQUEST: {request_id(turn)}\n"
+        "This is a new and independent section transaction. A number used for "
+        "any previous section is invalid.\n"
+        "Apply the mandatory state machine:\n\n"
+        "* If no `random_number` result appears after this message, respond "
+        "only by calling `random_number` exactly once.\n"
+        f"* After its result appears, write one story section of {MIN_WORDS}"
+        f"\u2013{MAX_WORDS} words.\n"
+        "* Insert that result\u2019s exact digits exactly once.\n"
+        "* Do not use any other Arabic numerals.\n\n"
+        "Do not begin the story section before the current request\u2019s tool "
+        "result exists."
     )
 
 
@@ -700,10 +710,13 @@ class _StoryBenchmarkBase:
     def user_message(self, turn: int) -> str:
         """What the model is asked for on this turn — nothing but that.
 
-        The tool obligation used to be repeated here. It now sits at the very
-        top of the system prompt instead, so the user turn carries no
-        instructions at all and the two levers can be judged separately.
+        Non-tool variants say only that another section is wanted. Tool
+        variants carry the per-request transaction block, which restates the
+        state machine where the model reads last and gives the request a word
+        id so nothing numeric can be mistaken for a tool result.
         """
+        if self.require_tool:
+            return tool_user_message(turn)
         return _first_user_message() if turn == 0 else _next_user_message(turn)
 
     def _take_turn(
