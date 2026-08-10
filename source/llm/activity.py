@@ -217,11 +217,16 @@ class ActivityRecorder(BaseEventHandler):
     def _on_start(self, event: LLMChatStartEvent) -> None:
         model_dict = event.model_dict or {}
         text = prompt_text(event.messages)
+        # Captured here, on the Start event, because this handler runs
+        # synchronously inside the caller's own stack — by the End event the
+        # frames that made the call may be long gone.
+        derived_caller, origin = call_origin()
         self._pending[str(event.span_id)] = {
             "started_at": datetime.now(UTC),
             "model": model_dict.get("model"),
             "provider": provider_for_base_url(model_dict.get("base_url")),
-            "caller": _caller_from(event.tags),
+            "caller": _caller_from(event.tags, derived_caller),
+            "origin": origin,
             "prefix_chain": prefix_chain(text),
             "prompt_chars": len(text),
         }
@@ -248,6 +253,7 @@ class ActivityRecorder(BaseEventHandler):
             "provider": start.get("provider"),
             "model": model,
             "caller": start.get("caller") or _caller_from(event.tags),
+            "origin": start.get("origin"),
             "ok": True,
             "error_category": None,
             "prompt_tokens": usage["prompt_tokens"],
@@ -349,12 +355,102 @@ def install_activity_recorder() -> ActivityRecorder | None:
     return recorder
 
 
-def _caller_from(tags: Any) -> str:
+# Frames from these package roots are plumbing, not a call site. The recorder
+# runs inside the caller's own stack, so without this every row would trace
+# back to the instrumentation that recorded it.
+_PLUMBING_PREFIXES: tuple[str, ...] = (
+    "llm.activity",
+    "llama_index",
+    "llama_index_instrumentation",
+    "workflows",
+    "openai",
+    "httpx",
+    "httpcore",
+    "anyio",
+    "asyncio",
+    "concurrent",
+    "threading",
+)
+
+
+def _is_plumbing(module: str) -> bool:
+    return any(
+        module == p or module.startswith(p + ".") for p in _PLUMBING_PREFIXES
+    )
+
+
+def _module_from_filename(filename: str) -> str:
+    """A dotted name for a frame whose module is `__main__` or similar.
+
+    Worker entry points run as `__main__`, which names nothing useful. Their
+    file path does: /…/source/benchmarks/worker.py -> benchmarks.worker.
+    """
+    from pathlib import Path
+
+    parts = Path(filename).with_suffix("").parts
+    return ".".join(parts[-2:]) if len(parts) >= 2 else (parts[-1] if parts else "")
+
+
+def call_origin(frames: list[Any] | None = None) -> tuple[str | None, str | None]:
+    """(caller, origin) for the code that made the current LLM call.
+
+    Derived from the stack rather than from a tag, because a tag has to be
+    remembered at every call site and an origin cannot be forgotten. `caller`
+    is a dotted `module.function` suitable for grouping; `origin` is the
+    precise `path:line in function` to open.
+
+    Returns (None, None) when the stack is nothing but library frames — which
+    shouldn't happen, but is not worth raising over inside telemetry.
+    """
+    if frames is None:
+        frames = _live_frames()
+    for frame in frames:
+        module = getattr(frame, "module", "") or ""
+        if not module or _is_plumbing(module):
+            continue
+        filename = getattr(frame, "filename", "") or ""
+        if module.startswith("__"):
+            module = _module_from_filename(filename)
+        function = getattr(frame, "function", "") or "?"
+        lineno = getattr(frame, "lineno", 0)
+        short_path = "/".join(filename.rsplit("/", 2)[-2:]) if filename else module
+        return f"{module}.{function}", f"{short_path}:{lineno} in {function}"
+    return None, None
+
+
+def _live_frames() -> list[Any]:
+    """The current stack, innermost first, as objects `call_origin` can read."""
+    import sys
+    from types import SimpleNamespace
+
+    out: list[Any] = []
+    depth = 2  # skip _live_frames and call_origin
+    while True:
+        try:
+            f = sys._getframe(depth)
+        except ValueError:
+            break
+        out.append(
+            SimpleNamespace(
+                module=f.f_globals.get("__name__", ""),
+                function=f.f_code.co_name,
+                lineno=f.f_lineno,
+                filename=f.f_code.co_filename,
+            )
+        )
+        depth += 1
+    return out
+
+
+def _caller_from(tags: Any, derived: str | None = None) -> str:
+    """The explicit tag if a call site set one, else the name derived from the
+    stack. "unknown" only when neither is available — which means the label is
+    almost never a dead end for debugging."""
     if isinstance(tags, dict):
         caller = tags.get("caller")
         if isinstance(caller, str) and caller:
             return caller
-    return "unknown"
+    return derived or "unknown"
 
 
 def _elapsed_ms(started_at: datetime | None) -> int | None:

@@ -177,6 +177,24 @@ class TestCallerPanel:
         assert body.count("By caller") == 1
 
 
+class TestOriginColumn:
+    """The reason to open a row: which line of code made this call."""
+
+    def test_the_recent_calls_table_shows_where_a_call_came_from(
+        self, client, model
+    ):
+        add_call(model, origin="benchmarks/story.py:412 in _take_turn")
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert "Origin" in body
+        assert "benchmarks/story.py:412 in _take_turn" in body
+
+    def test_a_call_with_no_origin_shows_a_dash_not_a_blank_cell(
+        self, client, model
+    ):
+        add_call(model, origin=None)
+        assert client.get("/activity?range=24h").status_code == 200
+
+
 class TestEstimateHonesty:
     def test_the_page_says_the_cached_band_is_an_estimate(self, client, model):
         """Local backends report no cache field, so the orange band is

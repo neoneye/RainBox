@@ -308,6 +308,9 @@ def init_db(app: Flask) -> None:
         # call banked, so rollups sum a stored figure instead of re-deriving
         # it from a baseline that moves.
         _add_column_if_missing("llm_call", "saved_ms", "saved_ms INTEGER")
+        # llm_call gained origin: the file:line that made the call, so an
+        # odd-looking row can be traced back to code.
+        _add_column_if_missing("llm_call", "origin", "origin TEXT")
         _add_column_if_missing("model_config", "provider",
                                "provider TEXT NOT NULL DEFAULT "
                                f"'{PREFERRED_PROVIDER_ID}'")

@@ -1366,6 +1366,7 @@ class LlmCallView(ModelView):
         "provider",
         "model",
         "caller",
+        "origin",
         "ok",
         "error_category",
         "prompt_tokens",

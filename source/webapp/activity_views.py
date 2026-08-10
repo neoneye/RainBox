@@ -411,6 +411,7 @@ ACTIVITY_TEMPLATE = """
   .pp-act td.num, .pp-act th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .pp-act td.name { font-weight: 600; }
   .pp-act .muted { color: #6c757d; }
+  .pp-act td.origin { font-family: ui-monospace, monospace; font-size: 0.8rem; }
   .pp-act .warn { color: #b06f00; }
   .pp-act .bad { color: #c0392b; }
   .pp-act .empty { color: #6c757d; padding: 2rem 0; text-align: center; }
@@ -649,6 +650,7 @@ ACTIVITY_TEMPLATE = """
         <th>Started</th>
         <th>Model</th>
         <th>Caller</th>
+        <th>Origin</th>
         <th class="num">Prompt</th>
         <th class="num">Cached</th>
         <th class="num">Reusable</th>
@@ -662,6 +664,7 @@ ACTIVITY_TEMPLATE = """
                              if call.started_at else '—' }}</td>
         <td class="name">{{ call.model or '—' }}</td>
         <td class="muted">{{ call.caller }}</td>
+        <td class="muted origin">{{ call.origin or '—' }}</td>
         <td class="num">{{ si(call.prompt_tokens) }}</td>
         <td class="num">{{ si(call.cached_tokens_reported
                               if call.cached_tokens_reported is not none

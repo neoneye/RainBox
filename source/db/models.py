@@ -1661,6 +1661,12 @@ class LlmCall(db.Model):
     # Which part of rainbox issued the call, from instrument_tags({"caller":
     # ...}) at the call site. "unknown" for a site that isn't tagged yet.
     caller: Mapped[str] = mapped_column(Text, default="unknown")
+    # Where the call was made from: "benchmarks/story.py:412 in _take_turn".
+    # Derived from the stack, not from a tag — a tag has to be remembered at
+    # each call site and this cannot be forgotten, so a row is never a dead
+    # end when something looks wrong. NULL only if the stack held nothing but
+    # library frames.
+    origin: Mapped[str | None] = mapped_column(Text)
     ok: Mapped[bool] = mapped_column(default=True)
     error_category: Mapped[str | None] = mapped_column(Text)
     prompt_tokens: Mapped[int | None] = mapped_column()

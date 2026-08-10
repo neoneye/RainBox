@@ -17,7 +17,12 @@ from llama_index.core.instrumentation.events.llm import (
     LLMChatStartEvent,
 )
 
-from llm.activity import ActivityRecorder, prompt_text, provider_for_base_url
+from llm.activity import (
+    ActivityRecorder,
+    call_origin,
+    prompt_text,
+    provider_for_base_url,
+)
 from llm.activity_metrics import MIN_CALIBRATION_CALLS, prefix_chain
 
 
@@ -211,13 +216,17 @@ class TestCallerAttribution:
         recorder.handle(end_event(tags={"caller": "assistant.decide"}))
         assert rows[0]["caller"] == "assistant.decide"
 
-    def test_an_untagged_call_is_recorded_as_unknown(self):
-        """Call sites get tagged incrementally; an untagged one must still be
-        counted, just not attributed."""
+    def test_an_untagged_call_is_named_by_the_code_that_made_it(self):
+        """Untagged used to mean "unknown", which lumped every unattributed
+        subsystem into one useless bucket. It now falls back to the calling
+        function — here, this very test."""
         recorder, rows = make_recorder()
         recorder.handle(start_event())
         recorder.handle(end_event())
-        assert rows[0]["caller"] == "unknown"
+        caller = rows[0]["caller"]
+        assert caller != "unknown"
+        assert caller.endswith("test_an_untagged_call_is_named_by_the_code_that_made_it")
+        assert "test_activity_recorder.py:" in rows[0]["origin"]
 
 
 class TestPairing:
@@ -343,6 +352,118 @@ class TestRobustness:
         assert len(rows) == 1
         assert rows[0]["prompt_tokens"] == 4032
         assert rows[0]["cached_tokens_estimated"] is None
+
+
+class TestCallOrigin:
+    """Where a call came from, derived from the stack rather than from a tag.
+
+    A tag has to be remembered at each call site; an origin cannot be
+    forgotten. It is what turns "something made 200 calls" into "this function
+    made 200 calls", which is the difference between noticing a problem and
+    being able to go and fix it.
+    """
+
+    def test_the_first_application_frame_wins(self):
+        caller, origin = call_origin(
+            [
+                _frame("llm.activity", "_on_start", 210),
+                _frame("llama_index_instrumentation.dispatcher", "event", 147),
+                _frame("llama_index.core.llms.callbacks", "wrapped_llm_chat", 161),
+                _frame("benchmarks.story", "_take_turn", 412),
+                _frame("benchmarks.runner", "_run", 88),
+            ]
+        )
+        assert caller == "benchmarks.story._take_turn"
+        assert origin == "benchmarks/story.py:412 in _take_turn"
+
+    def test_library_frames_are_skipped_however_many_there_are(self):
+        caller, _origin = call_origin(
+            [
+                _frame("llm.activity", "handle", 1),
+                _frame("llama_index_instrumentation.dispatcher", "event", 2),
+                _frame("llama_index.core.llms.callbacks", "wrapped", 3),
+                _frame("openai._base_client", "post", 4),
+                _frame("httpx._client", "send", 5),
+                _frame("agents.query_handlers", "answer", 6),
+            ]
+        )
+        assert caller == "agents.query_handlers.answer"
+
+    def test_our_own_instrumentation_never_reports_itself(self):
+        """Otherwise every row would trace back to the recorder."""
+        caller, _origin = call_origin(
+            [_frame("llm.activity", "_on_start", 1), _frame("llm", "prepare_llm", 2)]
+        )
+        assert caller != "llm.activity._on_start"
+
+    def test_a_stack_of_nothing_but_libraries_yields_nothing(self):
+        assert call_origin([_frame("llama_index.core", "x", 1)]) == (None, None)
+
+    def test_an_empty_stack_is_not_a_crash(self):
+        assert call_origin([]) == (None, None)
+
+    def test_a_dunder_module_is_named_by_its_file(self):
+        """A worker entry point runs as __main__, which names nothing."""
+        caller, origin = call_origin(
+            [_frame("__main__", "main", 42, filename="/x/benchmarks/worker.py")]
+        )
+        assert caller == "benchmarks.worker.main"
+        assert "benchmarks/worker.py:42" in origin
+
+
+def _frame(module, function, lineno, filename=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        module=module,
+        function=function,
+        lineno=lineno,
+        filename=filename or ("/src/" + module.replace(".", "/") + ".py"),
+    )
+
+
+class TestOriginOnTheRow:
+    def test_an_untagged_call_is_named_by_its_code_not_left_unknown(
+        self, monkeypatch
+    ):
+        """"unknown" is the answer that makes the dashboard useless for
+        debugging: it groups every untagged subsystem into one bucket."""
+        import llm.activity as activity
+
+        monkeypatch.setattr(
+            activity,
+            "call_origin",
+            lambda: ("benchmarks.story._take_turn", "benchmarks/story.py:412 in x"),
+        )
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        recorder.handle(end_event())
+        assert rows[0]["caller"] == "benchmarks.story._take_turn"
+        assert rows[0]["origin"] == "benchmarks/story.py:412 in x"
+
+    def test_an_explicit_tag_still_wins_over_the_derived_name(self, monkeypatch):
+        """The tag is the curated label; the origin is the precise pointer.
+        Both are kept, and the tag is what the page groups by."""
+        import llm.activity as activity
+
+        monkeypatch.setattr(
+            activity, "call_origin", lambda: ("benchmarks.story._take_turn", "s.py:1")
+        )
+        recorder, rows = make_recorder()
+        recorder.handle(start_event(tags={"caller": "benchmark.story_text"}))
+        recorder.handle(end_event(tags={"caller": "benchmark.story_text"}))
+        assert rows[0]["caller"] == "benchmark.story_text"
+        assert rows[0]["origin"] == "s.py:1"
+
+    def test_a_call_from_nowhere_recognisable_is_still_recorded(self, monkeypatch):
+        import llm.activity as activity
+
+        monkeypatch.setattr(activity, "call_origin", lambda: (None, None))
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        recorder.handle(end_event())
+        assert rows[0]["caller"] == "unknown"
+        assert rows[0]["origin"] is None
 
 
 class TestRecorderInstallation:

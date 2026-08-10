@@ -360,7 +360,10 @@ class ModelGroupAgent(Agent):
                 # Attribute this call on /activity. The tag rides the
                 # instrumentation events the activity recorder reads, so no
                 # row has to be threaded through by hand.
-                caller_tag = f"{self.name}.{purpose}" if purpose else self.name
+                caller_tag = (
+                    f"agent.{self.name}.{purpose}" if purpose
+                    else f"agent.{self.name}"
+                )
                 # Consume the structured output as a *stream* (same parsed
                 # result as .chat()) so the underlying tokens are received
                 # incrementally — this is what lets a caller see how much a

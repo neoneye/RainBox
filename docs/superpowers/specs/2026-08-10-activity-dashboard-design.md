@@ -148,7 +148,8 @@ New table `llm_call`, one row per LLM call:
 | `provider` | text | `ollama` / `jan` / `lm_studio` |
 | `model` | text | |
 | `model_uuid` | UUID null | when the caller knows its ModelConfig |
-| `caller` | text | from `instrument_tags`; `unknown` if untagged |
+| `caller` | text | curated label, or the calling function |
+| `origin` | text null | `file:line in function` that made the call |
 | `ok` | bool | |
 | `error_category` | text null | PlanExe's `classify_error` vocabulary |
 | `prompt_tokens` | int null | |
@@ -184,10 +185,23 @@ body is wrapped: a recording failure must never break an LLM call. Agent
 workers already push an app context (`agents/__main__.py:56`), so
 `db.session` is available wherever the handler runs.
 
-**Caller tags.** `instrument_tags({"caller": "..."})` around call sites
-(verified present in llama_index 0.14.22). Untagged calls record as
-`unknown`, so the per-caller panel degrades gracefully while sites are
-tagged incrementally.
+**Attribution, two ways.** A curated label for grouping, and a precise
+pointer for debugging — because they answer different questions.
+
+`caller` is the label. Call sites set it with `instrument_tags({"caller":
+...})` under a consistent `<subsystem>.<unit>[.<operation>]` scheme:
+`agent.assistant.decide`, `benchmark.story_text`. That is what the by-caller
+panel groups on.
+
+`origin` is `file:line in function`, derived from the stack inside the Start
+handler — which runs synchronously in the caller's own frames, so the real
+call site is visible there. It cannot be forgotten the way a tag can, and it
+is what turns "something made 200 calls" into a line to open.
+
+An untagged call therefore falls back to its calling function
+(`benchmarks.story._take_turn`) rather than to `unknown`, which used to lump
+every unattributed subsystem into one bucket that told you nothing.
+`unknown` now means only that the stack held nothing but library frames.
 
 **`db/activity.py` — queries.** Pure aggregation over `llm_call`: bucketed
 series for the chart, per-dimension rollups for the tables, percentiles for
