@@ -38,7 +38,10 @@ def test_enqueue_posts_working_notice_for_assistant(app_ctx):
         _maybe_trigger_chat_agents(room.uuid, human.uuid, msg.uuid)
         rows = _assistant_progress_rows(room.uuid)
         assert len(rows) == 1
-        assert rows[0]["text"] == ASSISTANT_WORKING_NOTICE
+        # The bubble is the signal; its elapsed line is the content. It carries
+        # no prose of its own — "Working on it…" only repeated what the bubble's
+        # existence already said, with no idea how long it had been saying it.
+        assert rows[0]["text"] == ASSISTANT_WORKING_NOTICE == ""
     finally:
         db.db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == room.uuid).delete()

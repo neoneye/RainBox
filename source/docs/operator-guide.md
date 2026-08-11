@@ -266,7 +266,8 @@ A handled model error or interrupted worker should produce all of the following:
   error, and configured timeout when available;
 - the run has an immediate fallback summary even if the summarizer model fails;
 - `/chat` shows an operational “I stopped before completing this request”
-  notice linking to the run, and no longer shows “Working on it”.
+  notice linking to the run, and the working bubble with its climbing
+  “Worked for …” line is gone.
 
 The supervisor performs this cleanup when it reaps a worker and at startup for
 runs abandoned by a previous supervisor. If the process was running older code,

@@ -105,11 +105,16 @@ DIRECT_CHAT_UUID: UUID = UUID("7c2f0d5e-8b4a-4c3d-9e6f-1a2b3c4d5e6f")
 ASSISTANT_UUID: UUID = UUID("cad11db6-a8e6-4cdd-a37e-a98bbc53e74d")
 ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25")
 
-# The assistant's in-flight progress bubble. Posted at enqueue time (the moment a
-# human message triggers the assistant) so it appears immediately — before the
-# agent process has spawned and imported its stack. kind="progress", so it is
-# reaped when the real reply lands and never enters the model transcript.
-ASSISTANT_WORKING_NOTICE: str = "💭 Working on it…"
+# The in-flight progress bubble, posted at enqueue time (the moment a human
+# message triggers a turn) so it appears immediately — before the agent process
+# has spawned and imported its stack. kind="progress", so it is reaped when the
+# real reply lands and never enters the model transcript.
+#
+# It carries no text: /chat counts the row's age up inside the bubble ("Worked
+# for 21s"), which says everything a "Working on it…" line said and also says
+# how long. The bubble is replaced by real status once a run has some — the
+# assistant rewrites this row with its step and cost (see _publish_progress).
+ASSISTANT_WORKING_NOTICE: str = ""
 
 agent_config: dict[str, AgentConfigEntry] = {
     "dreamer": {"uuid": DREAMER_UUID, "description": "generates ideas", "next": CRITIC_UUID},
