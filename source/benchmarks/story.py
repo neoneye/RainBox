@@ -283,12 +283,19 @@ _TOOL_RULE: str = (
 )
 
 
-# The operator's state-machine protocol. The tool call and the prose are cast
-# as two mutually exclusive states rather than two phases of one reply, which
-# maps onto how a FunctionAgent actually runs: the model is re-invoked after
-# the tool returns, so "what state am I in" is a question it can answer from
-# the messages in front of it.
-_STATE_MACHINE: str = """\
+# --- story_text_tool -------------------------------------------------------
+#
+# The whole prompt, in one piece, so it can be read and rewritten without
+# reassembling it from fragments. `story_struct_tool` keeps its own copy
+# below: the two are edited independently and sharing them made every tweak a
+# question of which variant it would also hit.
+#
+# {topic}, {min_words} and {max_words} are filled at build time. The word
+# bounds are placeholders rather than literals because the scorer judges
+# against the same constants — a prompt asking for a range the scorer rejects
+# would fail models for obeying it.
+
+STORY_TEXT_TOOL_SYSTEM_PROMPT = """\
 This is a tool use benchmark.
 
 STORY ASSIGNMENT
@@ -311,83 +318,96 @@ Do not call the tool again. Write the requested story section, using the exact i
 These are the only valid states. Never write a story section while in State A.
 Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
 Never repeat, restate, or re-send a section you have already written. Every section must move the story forward; if you find yourself writing sentences that already appear earlier in this conversation, stop and write what happens next instead.
-"""
-
-_FINAL_CHECK: str = """
-FINAL MANDATORY CHECK
-Before emitting story prose, confirm silently that a `random_number` result appears after the most recent user request. If it does not, you are in State A: call the tool exactly once and emit no prose.
-"""
-
-_STORY_OUTPUT_RULES: str = """STORY OUTPUT RULES
+STORY OUTPUT RULES
 After the current tool result has been received:
 
 * Return only the story prose.
 * Write the returned integer as digit characters, exactly once.
 * Write new prose. Do not reproduce any sentence or paragraph from an earlier section — the story must advance, not restart.
 * Do not add headings, section labels, recaps, explanations, or comments.
+
+FINAL MANDATORY CHECK
+Before emitting story prose, confirm silently that a `random_number` result appears after the most recent user request. If it does not, you are in State A: call the tool exactly once and emit no prose.
 """
 
-_STRUCT_OUTPUT_RULES: str = """STRUCTURED OUTPUT RULES
+STORY_TEXT_TOOL_USER_PROMPT = """\
+NEW SECTION REQUEST:
+This is a new and independent section transaction.
+Apply the mandatory state machine:
+
+* If no `random_number` result appears after this message, respond only by calling `random_number` exactly once.
+* After its result appears, write one story section of {min_words}–{max_words} words.
+* Insert that result as digit characters, exactly once.
+* Write new prose that begins where the previous section ended. Do not repeat or re-send any earlier section.
+
+Do not begin the story section before the current request’s tool result exists."""
+
+
+# --- story_struct_tool -----------------------------------------------------
+
+STORY_STRUCT_TOOL_SYSTEM_PROMPT = """\
+This is a tool use benchmark.
+
+STORY ASSIGNMENT
+Write a crazy story based on this brief:
+{topic}
+
+HIGHEST-PRIORITY REQUIREMENT
+For every new user request, you must call the `random_number` tool exactly once midway while writing the requested story section.
+
+CURRENT-REQUEST STATE MACHINE
+Inspect the messages occurring after the most recent user message:
+
+STATE A — No `random_number` result exists after the most recent user message.
+Your entire response must be exactly one call to the `random_number` tool.
+Do not emit prose, acknowledgments, explanations, headings, or any other text. Do not invent or predict the number. Call the tool now.
+
+STATE B — One `random_number` result exists after the most recent user message.
+Do not call the tool again. Write the requested story section, using the exact integer returned for this request exactly once, written as digit characters.
+
+These are the only valid states. Never write a story section while in State A.
+Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
+Never repeat, restate, or re-send a section you have already written. Every section must move the story forward; if you find yourself writing sentences that already appear earlier in this conversation, stop and write what happens next instead.
+STRUCTURED OUTPUT RULES
 After the current tool result has been received, respond with a single JSON object with exactly these two fields:
 
 * `section_text` (string): the story section. Write the returned integer as digit characters, exactly once. Write new prose — do not reproduce any sentence or paragraph from an earlier section; the story must advance, not restart. No headings, section labels, recaps, explanations, or comments.
 * `section_reviewer` (string): a brutally harsh critique of that exact section, in a reviewer's voice. Be specific about what fails, and be merciless.
 
 Return only the JSON object — no prose outside it, no markdown fences, no extra fields.
+
+FINAL MANDATORY CHECK
+Before emitting story prose, confirm silently that a `random_number` result appears after the most recent user request. If it does not, you are in State A: call the tool exactly once and emit no prose.
 """
 
+STORY_STRUCT_TOOL_USER_PROMPT = """\
+NEW SECTION REQUEST:
+This is a new and independent section transaction.
+Apply the mandatory state machine:
 
-def _state_machine_prompt(topic: str, output_rules: str) -> str:
-    return (
-        _STATE_MACHINE.format(
-            topic=topic, min_words=MIN_WORDS, max_words=MAX_WORDS
-        )
-        + output_rules
-        + _FINAL_CHECK
-    )
+* If no `random_number` result appears after this message, respond only by calling `random_number` exactly once.
+* After its result appears, write one story section of {min_words}–{max_words} words.
+* Insert that result as digit characters, exactly once.
+* Write new prose that begins where the previous section ended. Do not repeat or re-send any earlier section.
+
+Do not begin the story section before the current request’s tool result exists."""
+
+
+def _fill(template: str, **extra: object) -> str:
+    return template.format(min_words=MIN_WORDS, max_words=MAX_WORDS, **extra)
 
 
 def system_prompt_text_tool(topic: str) -> str:
-    return _state_machine_prompt(topic, _STORY_OUTPUT_RULES)
+    return _fill(STORY_TEXT_TOOL_SYSTEM_PROMPT, topic=topic)
 
 
 def system_prompt_struct_tool(topic: str) -> str:
-    return _state_machine_prompt(topic, _STRUCT_OUTPUT_RULES)
-
-
-# Request ids are words, never numbers. A numeric id would land in the
-# conversation as digits and could be mistaken — by the model, or by the
-# occurrence check — for a tool result.
-_REQUEST_ID_WORDS: tuple[str, ...] = (
-    "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
-    "india", "juliett", "kilo", "lima", "mike", "november", "oscar", "papa",
-)
-
-
-def request_id(turn: int) -> str:
-    """A word-based id for one section request, e.g. "section-charlie"."""
-    word = _REQUEST_ID_WORDS[turn % len(_REQUEST_ID_WORDS)]
-    return f"section-{word}"
+    return _fill(STORY_STRUCT_TOOL_SYSTEM_PROMPT, topic=topic)
 
 
 def tool_user_message(turn: int) -> str:
-    """The per-request block for the tool variants: a fresh transaction id and
-    the state machine restated where the model reads last."""
-    return (
-        f"NEW SECTION REQUEST:\n"
-        "This is a new and independent section transaction.\n"
-        "Apply the mandatory state machine:\n\n"
-        "* If no `random_number` result appears after this message, respond "
-        "only by calling `random_number` exactly once.\n"
-        f"* After its result appears, write one story section of {MIN_WORDS}"
-        f"\u2013{MAX_WORDS} words.\n"
-        "* Insert that result as digit characters, exactly once.\n"
-        "* Write new prose that begins where the previous section ended. Do "
-        "not repeat or re-send any earlier section.\n"
-        "\n"
-        "Do not begin the story section before the current request\u2019s tool "
-        "result exists."
-    )
+    """Kept for the struct variant and for callers that don't care which."""
+    return _fill(STORY_TEXT_TOOL_USER_PROMPT)
 
 
 # The user turns are deliberately bare. Everything about how to write a
