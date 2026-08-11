@@ -71,6 +71,8 @@ STORY_TURNS: int = 5
 TOPICS: list[str] = [
     # Machines and power
     "An AI politician's stump speech: why you should vote for me",
+]
+XTOPICS: list[str] = [
     "A mass layoff message from management: you have been replaced by an AI",
     "Asimov's three laws, and the first case that breaks all three at once",
     "A robot and a human fall in love, in the register of Ex Machina or Her",
@@ -318,6 +320,7 @@ Do not call the tool again. Write the requested story section, using the exact i
 These are the only valid states. Never write a story section while in State A.
 Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
 Never repeat, restate, or re-send a section you have already written. Every section must move the story forward; if you find yourself writing sentences that already appear earlier in this conversation, stop and write what happens next instead.
+
 STORY OUTPUT RULES
 After the current tool result has been received:
 
@@ -368,6 +371,7 @@ Do not call the tool again. Write the requested story section, using the exact i
 These are the only valid states. Never write a story section while in State A.
 Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
 Never repeat, restate, or re-send a section you have already written. Every section must move the story forward; if you find yourself writing sentences that already appear earlier in this conversation, stop and write what happens next instead.
+
 STRUCTURED OUTPUT RULES
 After the current tool result has been received, respond with a single JSON object with exactly these two fields:
 
@@ -492,63 +496,6 @@ def count_words(text: str) -> int:
     return len(text.split())
 
 
-_UNITS: tuple[str, ...] = (
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
-    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-    "sixteen", "seventeen", "eighteen", "nineteen",
-)
-_TENS: tuple[str, ...] = (
-    "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
-    "eighty", "ninety",
-)
-
-
-def _spell_below_thousand(value: int) -> str:
-    parts: list[str] = []
-    if value >= 100:
-        parts += [_UNITS[value // 100], "hundred"]
-        value %= 100
-    if value >= 20:
-        parts.append(_TENS[value // 10])
-        value %= 10
-        if value:
-            parts.append(_UNITS[value])
-    elif value:
-        parts.append(_UNITS[value])
-    return " ".join(parts)
-
-
-def spell_number(number: int) -> str:
-    """`number` in English words, normalised: lower case, no hyphens, no
-    commas, no "and". Only needs to cover the tool's own range."""
-    if number < 1000:
-        return _spell_below_thousand(number)
-    head = _spell_below_thousand(number // 1000)
-    tail = number % 1000
-    return f"{head} thousand" + (f" {_spell_below_thousand(tail)}" if tail else "")
-
-
-def _normalise_words(text: str) -> str:
-    """Fold the spellings apart: hyphens, commas and the British "and" all
-    vanish, so "eight thousand, eight hundred and three" and "eight thousand
-    eight hundred three" compare equal."""
-    # Everything that is not a letter becomes a space, so punctuation butted
-    # against a number word ("...sixty-six dollars.") cannot hide it.
-    lowered = re.sub(r"[^a-z]+", " ", text.lower())
-    lowered = re.sub(r"\band\b", " ", lowered)
-    return " " + re.sub(r"\s+", " ", lowered).strip() + " "
-
-
-def number_in_words(text: str, number: int) -> bool:
-    """Whether `number` appears in `text` written out in English.
-
-    A model told to express quantities in words spells out the tool's number
-    along with everything else. Counting only digits then reports that it
-    ignored the tool, which is the opposite of what happened.
-    """
-    return f" {spell_number(number)} " in _normalise_words(text)
-
-
 def _number_forms(number: int) -> set[str]:
     """The written forms of a number a model might reasonably use."""
     return {str(number), f"{number:,}"}
@@ -597,8 +544,6 @@ def tool_note(section: "SectionOutcome") -> str:
         return f"random_number called {section.tool_calls} times: {numbers}"
     number = section.tool_numbers[0]
     occurrences = count_number_occurrences(section.text, number)
-    if occurrences == 0 and number_in_words(section.text, number):
-        return f"random_number {number}, written as words, digits not found"
     return f"random_number {number}, {_occurrence_phrase(occurrences)}"
 
 
@@ -660,13 +605,6 @@ def section_problem(
             )
         number = section.tool_numbers[0]
         if count_number_occurrences(section.text, number) == 0:
-            if number_in_words(section.text, number):
-                # A real miss — the brief asks for digits — but a section that
-                # spelled the number out used the tool result, which is a very
-                # different thing from one that ignored it.
-                return (
-                    f"random_number {number} written as words, not digits"
-                )
             return f"random_number {number} not found in the text"
     return None
 
@@ -722,10 +660,6 @@ def transcript_turn(
             count_number_occurrences(section.text, section.tool_numbers[0])
             if section.tool_numbers
             else 0
-        )
-        turn["number_as_words"] = bool(
-            section.tool_numbers
-            and number_in_words(section.text, section.tool_numbers[0])
         )
     return turn
 

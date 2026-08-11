@@ -732,48 +732,6 @@ class TestAssembleStory:
         assert "truncated" in out
 
 
-class TestNumberInWords:
-    """A model told to "express quantities in words" spells out the tool's
-    number too. Observed on gemma4:e4b: every section used the returned
-    integer faithfully, written out, and a digits-only check called all five
-    a failure to use the tool at all — the opposite of what happened.
-    """
-
-    def test_the_plain_form(self):
-        assert story.number_in_words("...sixty-six dollars", 66) is True
-
-    def test_a_four_digit_number_as_gemma_writes_it(self):
-        text = "allocating exactly seven thousand five hundred sixty-six dollars."
-        assert story.number_in_words(text, 7566) is True
-
-    def test_a_zero_in_the_tens_place(self):
-        assert story.number_in_words("seven thousand six hundred eight", 7608) is True
-
-    def test_a_zero_in_the_hundreds_place(self):
-        assert story.number_in_words("eight thousand eight", 8008) is True
-
-    def test_the_british_and(self):
-        assert story.number_in_words(
-            "eight thousand eight hundred and three", 8803
-        ) is True
-
-    def test_a_comma_between_groups(self):
-        assert story.number_in_words(
-            "eight thousand, five hundred twenty-four", 8524
-        ) is True
-
-    def test_a_different_number_is_not_a_match(self):
-        assert story.number_in_words(
-            "seven thousand five hundred sixty-five", 7566
-        ) is False
-
-    def test_prose_with_no_number_at_all(self):
-        assert story.number_in_words("the room was silent", 7566) is False
-
-    def test_case_is_ignored(self):
-        assert story.number_in_words("Seven Thousand Five Hundred Sixty-Six", 7566) is True
-
-
 class TestNumberIsUsed:
     """The criterion the operator wants back: the returned number has to turn
     up in the section, in digits."""
@@ -794,35 +752,6 @@ class TestNumberIsUsed:
         assert problem is not None
         assert "4242" in problem
 
-    def test_words_instead_of_digits_fails_but_says_so(self):
-        """The prompt asks for digits, so this is a real miss — but a section
-        that spelled the number out is a different animal from one that
-        ignored the tool, and the message has to distinguish them."""
-        s = section(
-            text=GOOD_TEXT + " four thousand two hundred forty-two",
-            numbers=[4242], calls=1,
-        )
-        problem = section_problem(s, require_tool=True)
-        assert problem is not None
-        assert "words" in problem.lower()
-
-    def test_the_heading_reports_the_word_form(self):
-        s = section(
-            text=GOOD_TEXT + " four thousand two hundred forty-two",
-            numbers=[4242], calls=1,
-        )
-        assert "as words" in section_heading(1, s, require_tool=True)
-
-    def test_the_transcript_records_the_word_form(self):
-        s = section(
-            text="four thousand two hundred forty-two", numbers=[4242], calls=1
-        )
-        turn = story.transcript_turn(1, "ask", s, require_tool=True)
-        assert turn["number_as_words"] is True
-        assert turn["number_occurrences"] == 0
-
-
-@PROMPT_WORDING
 class TestDigitsNotWords:
     """gemma4:e4b spelled the tool's number out in every section, because the
     prompt said to express quantities in words and named no exception for the
