@@ -180,6 +180,13 @@ CHAT_TEMPLATE: str = """
   .msg-debug{opacity:0.8;background:#f6f4fb;border:1px dashed #c4b5e0;border-radius:8px;padding:6px 10px}
   .msg-debug .msg-text{font-size:0.85rem;color:#555}
   .msg-kind{font-size:0.66rem;text-transform:uppercase;letter-spacing:0.03em;padding:1px 6px;border-radius:999px;margin-left:0.5em;vertical-align:middle;background:#fde68a;color:#92400e}
+  /* "Worked for 21s" on a working bubble, counting up in the browser. Its own
+     line under the status text, quieter than the status itself. */
+  .msg-worked{font-size:0.78rem;color:#6b6280;font-variant-numeric:tabular-nums;margin-top:4px}
+  /* A working bubble whose turn has a run to inspect: the whole bubble goes
+     to /assistant, so the operator doesn't have to hit the inline link. */
+  .msg-progress-linked{cursor:pointer}
+  .msg-progress-linked:hover{border-color:#8b78c8;background:#f0ecfa}
   /* assistant trace step (rendered from assistant_run/assistant_step rows) */
   .astep-head{font-weight:600;color:#4338ca}
   .astep-reason{color:#555;margin:2px 0}
@@ -960,6 +967,43 @@ async function proposalAct(wrap, url, cap, stepLink) {
   }
 }
 
+// How long a working bubble has been working, as the operator reads it:
+// seconds alone under a minute, then minutes and seconds, then hours — the
+// unit that changes every second is always the last one, so the line reads as
+// a running clock at any length.
+function formatWorkedFor(seconds){
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return 'Worked for ' + s + 's';
+  const m = Math.floor(s / 60), rs = s % 60;
+  if (m < 60) return 'Worked for ' + m + 'm ' + rs + 's';
+  return 'Worked for ' + Math.floor(m / 60) + 'h ' + (m % 60) + 'm ' + rs + 's';
+}
+
+// The "Worked for 21s" line on a working bubble. It counts from the row's own
+// created_at, not from when this page happened to see it: a reload, a second
+// tab, or a browser opened mid-turn all have to show the same elapsed time.
+function workedForLine(m){
+  const line = document.createElement('div');
+  line.className = 'msg-worked';
+  const since = Date.parse(m.created_at || '');
+  if (isNaN(since)) return line;  // no clock to count from; render nothing
+  line.dataset.workedSince = String(since);
+  line.textContent = formatWorkedFor((Date.now() - since) / 1000);
+  return line;
+}
+
+// One timer for every working bubble on the page, rather than one per bubble:
+// the rows are rebuilt on each status update, and per-row intervals would have
+// to be cancelled at exactly the moments a rebuild makes easy to miss. This
+// reads the DOM instead, so a bubble that is gone simply stops being counted.
+setInterval(() => {
+  const lines = log.querySelectorAll('.msg-worked[data-worked-since]');
+  lines.forEach((line) => {
+    line.textContent = formatWorkedFor(
+      (Date.now() - Number(line.dataset.workedSince)) / 1000);
+  });
+}, 1000);
+
 // The shape a row's DOM was built for. Two rows of the same id with the same
 // key differ in text only, which upsertMessage can refresh in place; anything
 // here changing needs a rebuilt node. `kind` decides the badge and whether the
@@ -1051,6 +1095,8 @@ function makeMessage(m){
     msg.appendChild(toggleTop);
   }
   msg.appendChild(body);
+  // Working bubbles say how long they have been at it, counting up.
+  if (m.kind === 'progress') msg.appendChild(workedForLine(m));
   // Write-proposal card (confirm / reject) — only on messages that carry meta.write_intent.
   const proposalCard = renderProposalCard(m);
   if (proposalCard) msg.appendChild(proposalCard);
@@ -1126,6 +1172,25 @@ function makeMessage(m){
   // direct rooms also get "Retry" (re-ask the model from this turn).
   actions.appendChild(buildMessageMenu(m));
   msg.appendChild(actions);
+  // A working bubble backed by a run takes a click anywhere on it to that
+  // run's trace: the operator watching the seconds tick is exactly the one who
+  // wants to see what they are paying for, and asking them to hit the inline
+  // link inside a two-line bubble is a smaller target than the bubble itself.
+  // The row's own controls keep their clicks, a modified click opens a tab as
+  // any link would, and a click that ends a text selection isn't a click.
+  const progressRunUuid = m.kind === 'progress'
+    ? (m.meta || {}).assistant_run_uuid : null;
+  if (progressRunUuid){
+    const href = '/assistant?id=' + encodeURIComponent(progressRunUuid);
+    msg.classList.add('msg-progress-linked');
+    msg.title = 'Open the assistant run behind this';
+    msg.addEventListener('click', (e) => {
+      if (e.target.closest('a, button, input, textarea')) return;
+      if (String(window.getSelection() || '')) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey){ window.open(href, '_blank'); return; }
+      window.location.href = href;
+    });
+  }
   if (toggleTop){
     const apply = (expanded) => {
       toggleTop.textContent = expanded ? ('Collapse to hide ' + collapseNoun) : ('Expand to view ' + collapseNoun);

@@ -5524,9 +5524,13 @@ class AssistantAgent(ModelGroupAgent):
             steps = db.list_assistant_steps(self._run.uuid)
             stats = db.assistant_run_stats(
                 steps, db.list_second_opinion_reviews(self._run.uuid))
+            # The run rides in meta as well as in the text's inspect link: the
+            # chat client sends a click anywhere on the working bubble to
+            # /assistant, and reads the run from there rather than from prose.
             db.upsert_progress(
                 self._run.room_uuid, self.agent_uuid,
-                self._progress_text(len(steps), stats))
+                self._progress_text(len(steps), stats),
+                meta=self._run_meta())
         except Exception:
             logger.warning("assistant: progress row update failed",
                            exc_info=True)

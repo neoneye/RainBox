@@ -583,7 +583,12 @@ A run narrates itself to the room through **one** `kind="progress"` row,
 rewritten in place as it works (`_set_activity` → `_publish_progress` →
 `db.upsert_progress`): which step it is on, what it is doing, what it has cost
 (`db.assistant_run_stats` — LLM calls, in/out tokens, throughput), and a link
-to `/assistant`. It replaced a `thinking` bubble and a `debug-assistant` bubble
+to `/assistant`. The row also carries `meta.assistant_run_uuid`, which /chat
+uses to send a click anywhere on the bubble to that run — and under the status
+text the bubble counts up ("Worked for 21s", "Worked for 5m 43s") from the
+row's `created_at`, which is why a turn that reuses the row a dead run left
+behind restarts that clock (`db.upsert_progress(restart=True)`). It replaced a
+`thinking` bubble and a `debug-assistant` bubble
 per step, which buried the conversation under a dozen rows per turn while the
 same state was already on the step rows. Like any progress row it is reaped
 when the real reply lands, so a finished turn leaves the answer, not the

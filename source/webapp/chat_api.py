@@ -100,8 +100,11 @@ def _maybe_trigger_chat_agents(
                 # its row behind, and two working bubbles in a room is a bug
                 # report waiting to happen. The agent rewrites this same row
                 # with its live state once it starts.
+                # restart: a reused row is a fresh turn, and the bubble counts
+                # its elapsed time from the row's age.
                 db.upsert_progress(
-                    room_uuid, ASSISTANT_UUID, ASSISTANT_WORKING_NOTICE)
+                    room_uuid, ASSISTANT_UUID, ASSISTANT_WORKING_NOTICE,
+                    restart=True)
 
 
 @app.route("/chat/api/rooms", methods=["GET", "POST"])
@@ -321,7 +324,8 @@ def _maybe_trigger_direct_chat(
     # room shows nothing at all between the send and the first token — and
     # nothing forever if the supervisor is down. Posted as the direct-chat
     # agent, so its own first answer row (or its failure notice) reaps it.
-    db.upsert_progress(room_uuid, DIRECT_CHAT_UUID, ASSISTANT_WORKING_NOTICE)
+    db.upsert_progress(room_uuid, DIRECT_CHAT_UUID, ASSISTANT_WORKING_NOTICE,
+                       restart=True)
 
 
 @app.route("/chat/api/rooms/<room_uuid>/messages", methods=["GET", "POST"])

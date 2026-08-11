@@ -5,6 +5,7 @@ cleans up rows it created so artifacts don't accumulate.
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import psycopg
@@ -191,3 +192,53 @@ def test_notify_tags_event_and_kind_on_insert_and_update(room_with_two_agents):
     assert notifies[1]["kind"] == "message"
     assert notifies[2]["event"] == "insert"
     assert notifies[2]["kind"] == "thinking"
+
+
+def test_rows_carry_an_iso_created_at(room_with_two_agents):
+    """The chat bubble counts up "Worked for 21s" from this, so it needs the
+    real instant with a timezone — `timestamp` is minute-resolution display
+    text and can't say how long a turn has been running."""
+    room_uuid, _human, agent_a, _agent_b = room_with_two_agents
+    msg = db.post_progress(room_uuid, agent_a, "working")
+    row = db.get_room_message(room_uuid, msg.id)
+    assert row is not None
+    parsed = datetime.fromisoformat(row["created_at"])
+    assert parsed.tzinfo is not None
+    assert abs((datetime.now(timezone.utc) - parsed).total_seconds()) < 60
+
+
+def test_upsert_progress_keeps_the_clock_running(room_with_two_agents):
+    """A status update mid-turn is the same turn: rewriting the row must not
+    reset the elapsed time the operator is watching."""
+    room_uuid, _human, agent_a, _agent_b = room_with_two_agents
+    first = db.post_progress(room_uuid, agent_a, "step 1")
+    started = first.created_at
+    db.upsert_progress(room_uuid, agent_a, "step 2")
+    rows = _progress_rows_for(room_uuid, agent_a)
+    assert len(rows) == 1
+    assert rows[0].created_at == started
+
+
+def test_upsert_progress_restart_resets_the_clock(room_with_two_agents):
+    """A new turn that reuses the row a dead run left behind starts a new
+    clock — otherwise the bubble opens by claiming hours of work."""
+    room_uuid, _human, agent_a, _agent_b = room_with_two_agents
+    stale = db.post_progress(room_uuid, agent_a, "left behind")
+    stale.created_at = datetime.now(timezone.utc) - timedelta(hours=3)
+    db.db.session.commit()
+    db.upsert_progress(room_uuid, agent_a, "working on it", restart=True)
+    rows = _progress_rows_for(room_uuid, agent_a)
+    assert len(rows) == 1
+    assert (datetime.now(timezone.utc) - rows[0].created_at).total_seconds() < 60
+
+
+def test_upsert_progress_stores_meta(room_with_two_agents):
+    """The run behind the bubble, so the chat client can make the whole bubble
+    jump to /assistant while the turn is still working."""
+    room_uuid, _human, agent_a, _agent_b = room_with_two_agents
+    run_uuid = str(uuid4())
+    db.post_progress(room_uuid, agent_a, "step 1")
+    db.upsert_progress(room_uuid, agent_a, "step 2",
+                       meta={"assistant_run_uuid": run_uuid})
+    rows = _progress_rows_for(room_uuid, agent_a)
+    assert rows[0].meta == {"assistant_run_uuid": run_uuid}

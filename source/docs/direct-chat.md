@@ -45,8 +45,12 @@ is the responder becomes a direct room.
    here rather than in the agent because steps 2-3 (spawn, import, model
    resolution) happen before the agent can post anything, and a cold model
    adds more: without it the room shows nothing between the send and the
-   first token, and nothing at all when the supervisor is down. The agent's
-   own first answer row — or its failure notice — reaps it, both being
+   first token, and nothing at all when the supervisor is down. Like every
+   working bubble it counts up under its text ("Worked for 21s", "Worked for
+   5m 43s") from its `created_at`, which the trigger restarts when it reuses a
+   row an earlier turn left behind. It is not clickable the way the
+   assistant's is: a direct turn is one model call with no run to inspect. The
+   agent's own first answer row — or its failure notice — reaps it, both being
    terminal kinds. The human-only guard (sender must be `user_type='human'`)
    is what prevents loops: the model's reply is posted directly by the agent,
    never through this endpoint's trigger path.

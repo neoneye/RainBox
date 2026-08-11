@@ -10,6 +10,7 @@ import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -850,6 +851,10 @@ def list_room_messages(room_uuid: UUID, after_id: int = 0) -> list[dict[str, Any
                 "kind": r.kind,
                 "streaming": r.streaming,
                 "timestamp": r.created_at.strftime("%Y-%m-%d %H:%M"),
+                # The same instant, unrounded and with its timezone: `timestamp`
+                # is display text, while a client counting a working bubble's
+                # elapsed time needs to subtract this from its own clock.
+                "created_at": r.created_at.isoformat(),
                 "feedback": latest_feedback.get(r.uuid),
                 "meta": meta,
             }
@@ -1035,7 +1040,14 @@ def post_progress(room_uuid: UUID, sender_uuid: UUID, text: str) -> ChatMessage:
     return post_chat_message(room_uuid, sender_uuid, text, kind="progress")
 
 
-def upsert_progress(room_uuid: UUID, sender_uuid: UUID, text: str) -> ChatMessage:
+def upsert_progress(
+    room_uuid: UUID,
+    sender_uuid: UUID,
+    text: str,
+    *,
+    meta: dict | None = None,
+    restart: bool = False,
+) -> ChatMessage:
     """Rewrite the sender's live status row in this room, inserting one if it
     has none.
 
@@ -1049,7 +1061,17 @@ def upsert_progress(room_uuid: UUID, sender_uuid: UUID, text: str) -> ChatMessag
 
     Like every progress row it is reaped when the sender posts its real reply
     (see post_chat_message), so a finished turn leaves the answer, not the
-    bookkeeping."""
+    bookkeeping.
+
+    `meta` is merged into the row's own (the run behind the bubble, so the chat
+    client can send a click on it to /assistant while the turn still works).
+
+    `restart` says this is the *start* of a turn rather than an update within
+    one, and resets `created_at`. The row survives a run that died without
+    replying, and the caller reuses it precisely so a room never shows two
+    working bubbles — but its age is what the client counts "Worked for" from,
+    so a reused row must start its clock over instead of reporting the dead
+    run's hours."""
     rows = (
         db.session.query(ChatMessage)
         .filter(
@@ -1061,12 +1083,17 @@ def upsert_progress(room_uuid: UUID, sender_uuid: UUID, text: str) -> ChatMessag
         .all()
     )
     if not rows:
-        return post_chat_message(room_uuid, sender_uuid, text, kind="progress")
+        return post_chat_message(room_uuid, sender_uuid, text, kind="progress",
+                                 meta=meta)
     live, stale = rows[0], rows[1:]
     deleted_ids = [m.id for m in stale]
     for m in stale:
         db.session.delete(m)
     live.text = text
+    if meta:
+        live.meta = {**(live.meta or {}), **meta}
+    if restart:
+        live.created_at = datetime.now(UTC)
     db.session.add(live)
     db.session.flush()
     _chat_notify(

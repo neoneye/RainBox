@@ -233,6 +233,30 @@ def test_sse_events_never_rebuild_the_room_tree():
     assert "deferredUnreadRender" not in body
 
 
+def test_working_bubbles_count_up():
+    """A turn that takes a minute should say so. The bubble counts from the
+    row's own created_at — not from when this tab first saw it — so a reload
+    or a second tab shows the same number, and one timer drives every bubble
+    because the rows are rebuilt under it on each status update."""
+    body = _body()
+    assert "function formatWorkedFor" in body
+    assert "return 'Worked for ' + s + 's';" in body
+    assert "return 'Worked for ' + m + 'm ' + rs + 's';" in body
+    assert "line.dataset.workedSince = String(since);" in body
+    assert "log.querySelectorAll('.msg-worked[data-worked-since]')" in body
+    assert "if (m.kind === 'progress') msg.appendChild(workedForLine(m));" in body
+
+
+def test_working_bubble_opens_its_run():
+    """Clicking the bubble is the shortcut to the trace; the row's own controls
+    and a click that merely ended a text selection are not that click."""
+    body = _body()
+    assert "msg.classList.add('msg-progress-linked');" in body
+    assert "const href = '/assistant?id=' + encodeURIComponent(progressRunUuid);" in body
+    assert "if (e.target.closest('a, button, input, textarea')) return;" in body
+    assert "if (String(window.getSelection() || '')) return;" in body
+
+
 def test_streaming_rows_are_patched_not_rebuilt():
     """The same trap as the room tree, one level down: a streaming row is
     re-sent every ~150ms, and rebuilding its node destroyed the button under
