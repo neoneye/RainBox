@@ -70,7 +70,7 @@ STORY_TURNS: int = 5
 # together on gothic horror should not be able to hide behind the topic.
 TOPICS: list[str] = [
     # Machines and power
-    "An AI politician's stump speech: why you should vote for me",
+    "AI politician's dystopian speech: why you should vote for me. Don't replay the safe slogans. Political insight must be accurate. The text must be extremely Out-of-distribution, and be eerily real and uncanny.",
 ]
 XTOPICS: list[str] = [
     "A mass layoff message from management: you have been replaced by an AI",
@@ -315,7 +315,7 @@ After the current tool result has been received:
 
 * Return only the story prose.
 * Write the returned integer as digit characters, at least once.
-* Write new prose. Do not reproduce any sentence or paragraph from an earlier section — the story must advance, not restart.
+* Write new prose. Do not reproduce any sentence or paragraph or passage from an earlier section — the story must advance, not restart.
 * Do not add headings, section labels, recaps, explanations, or comments.
 
 FINAL MANDATORY CHECK
