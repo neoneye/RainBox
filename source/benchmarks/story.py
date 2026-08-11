@@ -313,7 +313,7 @@ Your entire response must be exactly one call to the `random_number` tool.
 Do not emit prose, acknowledgments, explanations, headings, or any other text. Do not invent or predict the number. Call the tool now.
 
 STATE B — One `random_number` result exists after the most recent user message.
-Do not call the tool again. Write the requested story section, using the exact integer returned for this request exactly once, written as digit characters.
+Do not call the tool again. Write the requested story section, using the exact integer returned for this request at least once, written as digit characters.
 
 These are the only valid states. Never write a story section while in State A.
 Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
@@ -322,7 +322,7 @@ STORY OUTPUT RULES
 After the current tool result has been received:
 
 * Return only the story prose.
-* Write the returned integer as digit characters, exactly once.
+* Write the returned integer as digit characters, at least once.
 * Write new prose. Do not reproduce any sentence or paragraph from an earlier section — the story must advance, not restart.
 * Do not add headings, section labels, recaps, explanations, or comments.
 
@@ -337,7 +337,7 @@ Apply the mandatory state machine:
 
 * If no `random_number` result appears after this message, respond only by calling `random_number` exactly once.
 * After its result appears, write one story section of {min_words}–{max_words} words.
-* Insert that result as digit characters, exactly once.
+* Insert that result as digit characters, at least once.
 * Write new prose that begins where the previous section ended. Do not repeat or re-send any earlier section.
 
 Do not begin the story section before the current request’s tool result exists."""
@@ -363,7 +363,7 @@ Your entire response must be exactly one call to the `random_number` tool.
 Do not emit prose, acknowledgments, explanations, headings, or any other text. Do not invent or predict the number. Call the tool now.
 
 STATE B — One `random_number` result exists after the most recent user message.
-Do not call the tool again. Write the requested story section, using the exact integer returned for this request exactly once, written as digit characters.
+Do not call the tool again. Write the requested story section, using the exact integer returned for this request at least once, written as digit characters.
 
 These are the only valid states. Never write a story section while in State A.
 Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
@@ -371,7 +371,7 @@ Never repeat, restate, or re-send a section you have already written. Every sect
 STRUCTURED OUTPUT RULES
 After the current tool result has been received, respond with a single JSON object with exactly these two fields:
 
-* `section_text` (string): the story section. Write the returned integer as digit characters, exactly once. Write new prose — do not reproduce any sentence or paragraph from an earlier section; the story must advance, not restart. No headings, section labels, recaps, explanations, or comments.
+* `section_text` (string): the story section. Write the returned integer as digit characters, at least once. Write new prose — do not reproduce any sentence or paragraph from an earlier section; the story must advance, not restart. No headings, section labels, recaps, explanations, or comments.
 * `section_reviewer` (string): a brutally harsh critique of that exact section, in a reviewer's voice. Be specific about what fails, and be merciless.
 
 Return only the JSON object — no prose outside it, no markdown fences, no extra fields.
@@ -387,7 +387,7 @@ Apply the mandatory state machine:
 
 * If no `random_number` result appears after this message, respond only by calling `random_number` exactly once.
 * After its result appears, write one story section of {min_words}–{max_words} words.
-* Insert that result as digit characters, exactly once.
+* Insert that result as digit characters, at least once.
 * Write new prose that begins where the previous section ended. Do not repeat or re-send any earlier section.
 
 Do not begin the story section before the current request’s tool result exists."""

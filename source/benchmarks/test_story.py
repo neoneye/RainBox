@@ -778,6 +778,12 @@ class TestNumberIsUsed:
     """The criterion the operator wants back: the returned number has to turn
     up in the section, in digits."""
 
+    def test_the_number_may_appear_more_than_once(self):
+        """Repeats are fine — the prompt asks for at least once, and a model
+        that works the number in twice has still used the tool result."""
+        s = section(text=GOOD_TEXT + " 4242 and later 4242", numbers=[4242], calls=1)
+        assert section_problem(s, require_tool=True) is None
+
     def test_digits_present_passes(self):
         s = section(text=GOOD_TEXT + " 4242", numbers=[4242], calls=1)
         assert section_problem(s, require_tool=True) is None
