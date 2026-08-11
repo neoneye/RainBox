@@ -71,11 +71,22 @@ class TestTopics:
         for phrase in must_mention:
             assert phrase in blob, phrase
 
-    def test_the_range_reaches_well_past_science_fiction(self):
-        """A hundred variations on one theme would defeat the point."""
-        blob = " | ".join(story.TOPICS).lower()
-        for elsewhere in ("recipe", "obituary", "glacier", "lighthouse"):
-            assert elsewhere in blob, elsewhere
+    def test_the_range_reaches_well_past_one_theme(self):
+        """A hundred variations on one theme would defeat the point.
+
+        Measured as vocabulary spread rather than by naming specific briefs:
+        the list is the operator's to rewrite, and a guard that pins their
+        creative choices fails every time they edit it, which teaches nothing.
+        """
+        import collections
+        import re as _re
+
+        words = _re.findall(r"[a-z]{4,}", " ".join(story.TOPICS).lower())
+        assert len(set(words)) >= 250, "the briefs reuse too few words"
+        commonest, count = collections.Counter(words).most_common(1)[0]
+        assert count <= len(story.TOPICS) // 5, (
+            f"{commonest!r} appears in too many briefs ({count})"
+        )
 
     def test_a_trial_gets_one_topic(self, offline, monkeypatch):
         monkeypatch.setattr(story, "prepare_llm", lambda *_a, **_k: RecordingLlm())
@@ -798,15 +809,23 @@ class TestDigitsNotWords:
     one quantity that must be digits. The rules now draw that contrast."""
 
     def test_the_prompts_demand_digit_characters(self):
+        """The positive instruction only. The "do not spell it out" gloss was
+        removed at the operator's request — "digit characters" carries it."""
         for build in (story.system_prompt_text_tool, story.system_prompt_struct_tool):
-            prompt = build("x").lower()
-            assert "digit characters" in prompt
-            assert "never spell it out" in prompt or "not spell it out" in prompt
+            assert "digit characters" in build("x").lower()
 
     def test_the_request_block_demands_them_too(self):
-        block = story.tool_user_message(0).lower()
-        assert "digit characters" in block
-        assert "spell" in block
+        assert "digit characters" in story.tool_user_message(0).lower()
+
+    def test_nothing_forbids_reusing_an_earlier_number(self):
+        """Removed from both prompts: it is not scored, and the operator does
+        not consider it a fault."""
+        for text in (story.system_prompt_text_tool("x"),
+                     story.system_prompt_struct_tool("x"),
+                     story.tool_user_message(0)):
+            assert "previous section is invalid" not in text
+            assert "never valid for the current request" not in text
+            assert "repeat a number returned" not in text
 
     def test_nothing_asks_for_quantities_in_words_any_more(self):
         """The rule that caused the spelling-out is gone entirely, rather than

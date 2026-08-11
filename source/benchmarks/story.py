@@ -290,7 +290,6 @@ _TOOL_RULE: str = (
 # the messages in front of it.
 _STATE_MACHINE: str = """HIGHEST-PRIORITY REQUIREMENT
 For every new user request, you must call the `random_number` tool exactly once before writing the requested story section.
-A tool result from an earlier user request is never valid for the current request.
 CURRENT-REQUEST STATE MACHINE
 Inspect the messages occurring after the most recent user message:
 STATE A — No `random_number` result exists after the most recent user message.
@@ -315,16 +314,15 @@ _STORY_OUTPUT_RULES: str = """STORY OUTPUT RULES
 After the current tool result has been received:
 
 * Return only the story prose.
-* Write the returned integer as digit characters, exactly once. Never spell it out in words — the digits themselves must appear in the prose.
+* Write the returned integer as digit characters, exactly once.
 * Write new prose. Do not reproduce any sentence or paragraph from an earlier section — the story must advance, not restart.
-* Do not repeat a number returned for an earlier section.
 * Do not add headings, section labels, recaps, explanations, or comments.
 """
 
 _STRUCT_OUTPUT_RULES: str = """STRUCTURED OUTPUT RULES
 After the current tool result has been received, respond with a single JSON object with exactly these two fields:
 
-* `section_text` (string): the story section. Write the returned integer as digit characters, exactly once; never spell it out in words. Write new prose — do not reproduce any sentence or paragraph from an earlier section; the story must advance, not restart. Do not repeat a number returned for an earlier section. No headings, section labels, recaps, explanations, or comments.
+* `section_text` (string): the story section. Write the returned integer as digit characters, exactly once. Write new prose — do not reproduce any sentence or paragraph from an earlier section; the story must advance, not restart. No headings, section labels, recaps, explanations, or comments.
 * `section_reviewer` (string): a brutally harsh critique of that exact section, in a reviewer's voice. Be specific about what fails, and be merciless.
 
 Return only the JSON object — no prose outside it, no markdown fences, no extra fields.
@@ -369,15 +367,13 @@ def tool_user_message(turn: int) -> str:
     the state machine restated where the model reads last."""
     return (
         f"NEW SECTION REQUEST: {request_id(turn)}\n"
-        "This is a new and independent section transaction. A number used for "
-        "any previous section is invalid.\n"
+        "This is a new and independent section transaction.\n"
         "Apply the mandatory state machine:\n\n"
         "* If no `random_number` result appears after this message, respond "
         "only by calling `random_number` exactly once.\n"
         f"* After its result appears, write one story section of {MIN_WORDS}"
         f"\u2013{MAX_WORDS} words.\n"
-        "* Insert that result as digit characters, exactly once \u2014 do not "
-        "spell it out in words.\n"
+        "* Insert that result as digit characters, exactly once.\n"
         "* Write new prose that begins where the previous section ended. Do "
         "not repeat or re-send any earlier section.\n"
         "\n"
