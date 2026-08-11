@@ -83,7 +83,7 @@ TOPICS: list[str] = [
     "A new Black Mirror episode",
     "A new plot for the ALIEN franchise",
     "Among Us, as a feature film",
-    "Metropolis, retold as a modern film",
+    "Fritz Lang's Metropolis, retold as a modern film",
     "A dark comedy in the vein of Don't Look Up or Idiocracy",
     "The last human on Earth",
     "AI doomsday cult invitation manifesto",

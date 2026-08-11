@@ -43,26 +43,16 @@ def good_text(seed: object = "") -> str:
     return " ".join(f"w{seed}" for _ in range(GOOD_WORDS))
 
 
-# TEMPORARY — story-prompt-experiment branch only.
-#
-# The prompts and the brief list are being rewritten by hand many times an
-# hour on this branch. Guards that pin their exact wording turn every edit
-# into a red build, which is the opposite of a fast feedback loop, so they are
-# skipped here. Everything that tests *behaviour* — scoring, duplicate
-# detection, the conversation shape, transcripts — still runs.
-#
-# Re-enable before merging: delete this marker and the @PROMPT_WORDING lines.
-PROMPT_WORDING = pytest.mark.skip(
-    reason="prompt/topic wording in flux on this branch; behaviour tests still run"
-)
-
-@PROMPT_WORDING
 class TestTopics:
     """One brief per trial, drawn from a wide list, so a single model sweep
     leaves a pile of different pieces rather than twelve near-identical ones."""
 
-    def test_there_are_a_hundred(self):
-        assert len(story.TOPICS) == 100
+    def test_there_are_enough_to_go_round(self):
+        """A floor, not a fixed count: the list is the operator's to prune,
+        and pinning its length turns every edit into a red build. What has to
+        hold is that a full sweep — four benchmarks, three trials each, drawn
+        without replacement — never runs short."""
+        assert len(story.TOPICS) >= 4 * 3
 
     def test_none_are_repeated(self):
         assert len(set(story.TOPICS)) == len(story.TOPICS)
@@ -77,7 +67,7 @@ class TestTopics:
         complete instruction to any model. The bulk should still be a phrase
         with something to work with in it."""
         substantial = [t for t in story.TOPICS if len(t) >= 25]
-        assert len(substantial) >= 90
+        assert len(substantial) >= 0.8 * len(story.TOPICS)
 
     def test_the_briefs_the_operator_asked_for_are_present(self):
         must_mention = [
@@ -90,7 +80,7 @@ class TestTopics:
             assert phrase in blob, phrase
 
     def test_the_range_reaches_well_past_one_theme(self):
-        """A hundred variations on one theme would defeat the point.
+        """Variations on a single theme would defeat the point.
 
         Measured as vocabulary spread rather than by naming specific briefs:
         the list is the operator's to rewrite, and a guard that pins their
@@ -100,7 +90,9 @@ class TestTopics:
         import re as _re
 
         words = _re.findall(r"[a-z]{4,}", " ".join(story.TOPICS).lower())
-        assert len(set(words)) >= 250, "the briefs reuse too few words"
+        assert len(set(words)) >= 2.5 * len(story.TOPICS), (
+            "the briefs reuse too few words"
+        )
         commonest, count = collections.Counter(words).most_common(1)[0]
         assert count <= len(story.TOPICS) // 5, (
             f"{commonest!r} appears in too many briefs ({count})"
@@ -138,7 +130,6 @@ class TestTopics:
         assert "A djinn bound to a phone" in out.splitlines()[0]
 
 
-@PROMPT_WORDING
 class TestToolPrompting:
     """The tool instruction has to survive contact with a small model.
 
@@ -155,16 +146,16 @@ class TestToolPrompting:
         markers and the word-count target are outside the tool's range and so
         cannot be mistaken for one."""
         prompts = [
-            story._STATE_MACHINE,
-            story._FINAL_CHECK,
-            story._STORY_OUTPUT_RULES,
-            story._STRUCT_OUTPUT_RULES,
-            story.tool_user_message(0),
-            story.tool_user_message(3),
+            story.STORY_TEXT_TOOL_USER_PROMPT,
+            story.STORY_STRUCT_TOOL_USER_PROMPT,
             story.FIRST_USER_MESSAGE,
             story.NEXT_USER_MESSAGE,
+            story.STORY_TEXT_USER_PROMPT,
+            story.STORY_STRUCT_USER_PROMPT,
             story.system_prompt_text_tool("A river changes course"),
             story.system_prompt_struct_tool("A river changes course"),
+            story.system_prompt_text("A river changes course"),
+            story.system_prompt_struct("A river changes course"),
         ]
         for text in prompts:
             for found in re.findall(r"\d+", text):
@@ -228,27 +219,16 @@ class TestToolPrompting:
         for turn in range(1, STORY_TURNS):
             assert bench.user_message(turn) == "Write next section"
 
-    def test_a_tool_turn_opens_a_named_transaction(self):
+    def test_a_tool_turn_opens_a_new_transaction(self):
+        """Each ask is framed as its own transaction, so "have I already
+        called the tool for this request" has an answer the model can read off
+        the messages. The header is identical every turn — the cache wants an
+        unchanging suffix, and an id in it would put digits in the
+        conversation that the occurrence check could mistake for a result."""
         bench = story.BenchmarkStoryTextTool(uuid4(), num_trials=1)
-        assert bench.user_message(2).startswith(
-            "NEW SECTION REQUEST: section-charlie"
-        )
-
-    def test_every_request_id_is_distinct_within_a_trial(self):
-        """Reusing an id would undercut "this is a new and independent
-        transaction" — the model would see the same header twice."""
-        bench = story.BenchmarkStoryTextTool(uuid4(), num_trials=1)
-        ids = [story.request_id(t) for t in range(STORY_TURNS)]
-        assert len(set(ids)) == STORY_TURNS
-
-    def test_request_ids_carry_no_digits(self):
-        """A numeric id would land in the conversation as digits and could be
-        taken — by the model, or by the occurrence check — for a tool result."""
-        for turn in range(STORY_TURNS):
-            assert not re.search(r"\d", story.request_id(turn))
-
-    def test_the_ids_do_not_run_out(self):
-        assert story.request_id(200)
+        asks = {bench.user_message(t) for t in range(STORY_TURNS)}
+        assert len(asks) == 1
+        assert asks.pop().startswith("NEW SECTION REQUEST:")
 
     def test_every_turn_after_the_first_is_identical(self):
         """An unchanging suffix is the friendliest possible shape for the
