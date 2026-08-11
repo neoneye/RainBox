@@ -330,10 +330,28 @@ class TestTranscript:
         assert turn["tool_calls"] == 0
         assert turn["tool_numbers"] == []
 
-    def test_the_reviewer_field_rides_along_for_structured_runs(self):
-        s = section(text=GOOD_TEXT, reviewer="derivative tripe")
+    def test_a_structured_turn_names_the_field_each_string_came_from(self):
+        """"assistant" alone doesn't say which half of the object it was."""
+        critique = "word " * story.ASK_MIN_REVIEWER_WORDS
+        s = section(text=GOOD_TEXT, reviewer=critique)
         turn = story.transcript_turn(1, "ask", s, require_reviewer=True)
-        assert turn["reviewer"] == "derivative tripe"
+        assert turn["assistant.story_text"] == GOOD_TEXT.strip()
+        assert turn["assistant.section_reviewer"] == critique
+        assert "assistant" not in turn and "reviewer" not in turn
+
+    def test_a_structured_turn_counts_both_fields(self):
+        critique = "word " * story.ASK_MIN_REVIEWER_WORDS
+        s = section(text=GOOD_TEXT, reviewer=critique)
+        turn = story.transcript_turn(1, "ask", s, require_reviewer=True)
+        assert turn["words.story_text"] == GOOD_WORDS
+        assert turn["words.section_reviewer"] == story.ASK_MIN_REVIEWER_WORDS
+        assert "words" not in turn
+
+    def test_a_text_turn_keeps_the_plain_keys(self):
+        """No object returned, so no fields to name."""
+        turn = story.transcript_turn(1, "ask", section(reviewer=None))
+        assert "assistant" in turn and "words" in turn
+        assert "assistant.story_text" not in turn
 
 
 class TestCountWords:
@@ -882,3 +900,52 @@ class TestWordTolerance:
     def test_a_one_line_reply_is_still_caught(self):
         s = section(text="nope 42", numbers=[42], calls=1)
         assert section_problem(s, require_tool=True) is not None
+
+
+class TestReviewerLength:
+    """The critique is a second piece of writing and is scored as one.
+
+    A reviewer field is easy to satisfy with three dismissive words and easy
+    to pad into a second essay; the story-text band says nothing about either.
+    """
+
+    def _sec(self, reviewer_words):
+        return section(text=GOOD_TEXT, reviewer="word " * reviewer_words)
+
+    def test_a_reviewer_in_band_passes(self):
+        mid = (story.ASK_MIN_REVIEWER_WORDS + story.ASK_MAX_REVIEWER_WORDS) // 2
+        assert section_problem(self._sec(mid), require_reviewer=True) is None
+
+    def test_a_three_word_dismissal_fails(self):
+        problem = section_problem(self._sec(3), require_reviewer=True)
+        assert problem is not None
+        assert "reviewer" in problem and "3 words" in problem
+
+    def test_a_second_essay_fails(self):
+        problem = section_problem(
+            self._sec(story.MAX_REVIEWER_WORDS + 10), require_reviewer=True
+        )
+        assert problem is not None
+        assert "reviewer" in problem
+
+    def test_the_tolerance_is_half_to_double_like_the_story(self):
+        assert story.MIN_REVIEWER_WORDS == story.ASK_MIN_REVIEWER_WORDS // 2
+        assert story.MAX_REVIEWER_WORDS == story.ASK_MAX_REVIEWER_WORDS * 2
+
+    def test_a_near_miss_on_the_asked_band_is_tolerated(self):
+        assert section_problem(
+            self._sec(story.ASK_MIN_REVIEWER_WORDS - 10), require_reviewer=True
+        ) is None
+
+    def test_both_struct_prompts_state_the_length(self):
+        """Scoring something the prompt never asked for fails models for
+        obeying their instructions."""
+        for build in (story.system_prompt_struct, story.system_prompt_struct_tool):
+            prompt = build("x")
+            assert str(story.ASK_MIN_REVIEWER_WORDS) in prompt
+            assert str(story.ASK_MAX_REVIEWER_WORDS) in prompt
+
+    def test_the_word_band_still_only_judges_the_story_text(self):
+        """A long critique must not push the story text out of its band."""
+        s = section(text=GOOD_TEXT, reviewer="word " * story.ASK_MAX_REVIEWER_WORDS)
+        assert section_problem(s, require_reviewer=True) is None

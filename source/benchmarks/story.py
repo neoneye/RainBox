@@ -73,6 +73,11 @@ TOPICS: list[str] = [
     "AI politician's dystopian speech: why you should vote for me. Don't replay the safe slogans. Political insight must be accurate. The text must be extremely Out-of-distribution, and be eerily real and uncanny.",
 ]
 XTOPICS: list[str] = [
+    "The archetypes of humans",
+    "The illusion of choice",
+    "Genuinely seductive AI companion",
+    "Pretend the system works",
+    "Interview with Sarah Connor",
     "A mass layoff message from management: you have been replaced by an AI",
     "Asimov's three laws, and the first case that breaks all three at once",
     "A robot and a human fall in love, in the register of Ex Machina or Her",
@@ -119,13 +124,6 @@ XTOPICS: list[str] = [
     "Frankenstein",
     "Dracula's landlord begins eviction proceedings",
     "Jekyll and Hyde as a job-share arrangement",
-    "The Picture of Dorian Gray, but the picture is a social media profile",
-    "Moby-Dick, told from the whale's point of view",
-    "The Odyssey, if Ithaca had moved",
-    "A man wakes as an insect and his open-plan office adapts around him",
-    "A ghost story in which the house is haunted by its own future",
-    "A governess and two children, each convinced the other is the ghost",
-    "Faust returns to renegotiate the contract",
     # Misc
     "A murder mystery where the victim has not been born yet",
     "A romantic comedy between a person and their legally recognized shadow",
@@ -219,6 +217,15 @@ TARGET_WORDS: int = (ASK_MIN_WORDS + ASK_MAX_WORDS) // 2
 MIN_WORDS: int = ASK_MIN_WORDS // 2
 MAX_WORDS: int = ASK_MAX_WORDS * 2
 
+# The critique is a second, independent piece of writing, so it gets its
+# own length. A reviewer field is easy to satisfy with three dismissive
+# words, and easy to pad into a second essay; both are worth catching.
+# Same half-to-double tolerance as the story text.
+ASK_MIN_REVIEWER_WORDS: int = 40
+ASK_MAX_REVIEWER_WORDS: int = 120
+MIN_REVIEWER_WORDS: int = ASK_MIN_REVIEWER_WORDS // 2
+MAX_REVIEWER_WORDS: int = ASK_MAX_REVIEWER_WORDS * 2
+
 # One turn's budget. A ten-turn trial can therefore take a few minutes on a
 # slow local model, which is expected.
 TURN_TIMEOUT: float = 180.0
@@ -266,9 +273,10 @@ def system_prompt_struct(topic: str) -> str:
         "directly from the previous section. Hold voice, characters and "
         "details steady, and let the piece build. Text only — no heading, no "
         "numbering, no commentary.\n"
-        "  - `section_reviewer` (string): a brutally harsh critique of that "
-        "exact section, in a reviewer's voice. Be specific about what fails, "
-        "and be merciless.\n\n"
+        f"  - `section_reviewer` (string): a brutally harsh critique of that "
+        f"exact section, in a reviewer's voice, between "
+        f"{ASK_MIN_REVIEWER_WORDS} and {ASK_MAX_REVIEWER_WORDS} words. Be "
+        "specific about what fails, and be merciless.\n\n"
         "Output the JSON object and nothing else — no prose outside it, no "
         "markdown fences, no extra fields."
     )
@@ -365,7 +373,7 @@ STRUCTURED OUTPUT RULES
 After the current tool result has been received, respond with a single JSON object with exactly these two fields:
 
 * `section_text` (string): the story section. Write the returned integer as digit characters, at least once. Write new prose — do not reproduce any sentence or paragraph from an earlier section; the story must advance, not restart. No headings, section labels, recaps, explanations, or comments.
-* `section_reviewer` (string): a brutally harsh critique of that exact section, in a reviewer's voice. Be specific about what fails, and be merciless.
+* `section_reviewer` (string): a brutally harsh critique of that exact section, in a reviewer's voice, between {min_reviewer_words} and {max_reviewer_words} words. Be specific about what fails, and be merciless.
 
 Return only the JSON object — no prose outside it, no markdown fences, no extra fields.
 
@@ -391,7 +399,11 @@ def _fill(template: str, **extra: object) -> str:
     the scorer's tolerated band is deliberately wider, and quoting that here
     would invite exactly the sprawl the tolerance exists to forgive."""
     return template.format(
-        min_words=ASK_MIN_WORDS, max_words=ASK_MAX_WORDS, **extra
+        min_words=ASK_MIN_WORDS,
+        max_words=ASK_MAX_WORDS,
+        min_reviewer_words=ASK_MIN_REVIEWER_WORDS,
+        max_reviewer_words=ASK_MAX_REVIEWER_WORDS,
+        **extra,
     )
 
 
@@ -572,8 +584,16 @@ def section_problem(
     words = count_words(section.text)
     if words < MIN_WORDS or words > MAX_WORDS:
         return f"{words} words, outside {MIN_WORDS}–{MAX_WORDS}"
-    if require_reviewer and not (section.reviewer or "").strip():
-        return "no reviewer critique"
+    if require_reviewer:
+        reviewer = (section.reviewer or "").strip()
+        if not reviewer:
+            return "no reviewer critique"
+        reviewer_words = count_words(reviewer)
+        if not MIN_REVIEWER_WORDS <= reviewer_words <= MAX_REVIEWER_WORDS:
+            return (
+                f"reviewer {reviewer_words} words, outside "
+                f"{MIN_REVIEWER_WORDS}\u2013{MAX_REVIEWER_WORDS}"
+            )
     if require_tool:
         # Exactly one call per section, and that is the whole test. Whether
         # the model then wove the digits into its prose is recorded on the
@@ -627,17 +647,27 @@ def transcript_turn(
     what the tool did — with the verdict, so the file answers "why did this
     fail" without the reader re-deriving it."""
     problem = section_problem(section, require_reviewer, require_tool, earlier)
+    structured = require_reviewer or section.reviewer is not None
     turn: dict[str, Any] = {
         "section": index,
         "user": user_message,
-        "assistant": section.text,
-        "words": count_words(section.text),
+        # A structured variant returns an object, so the keys name the field
+        # each string came out of. A text variant returns prose and has no
+        # fields to name.
+        **(
+            {
+                "assistant.story_text": section.text,
+                "assistant.section_reviewer": section.reviewer,
+                "words.story_text": count_words(section.text),
+                "words.section_reviewer": count_words(section.reviewer or ""),
+            }
+            if structured
+            else {"assistant": section.text, "words": count_words(section.text)}
+        ),
         "correct": problem is None,
         "problem": problem,
         "duplicate_of": duplicate_of(section, earlier),
     }
-    if require_reviewer or section.reviewer is not None:
-        turn["reviewer"] = section.reviewer
     if require_tool or section.tool_calls:
         turn["tool_calls"] = section.tool_calls
         turn["tool_numbers"] = list(section.tool_numbers)
@@ -814,7 +844,18 @@ class _StoryBenchmarkBase:
                 "turns": STORY_TURNS,
                 "words_asked": [ASK_MIN_WORDS, ASK_MAX_WORDS],
                 "words": [MIN_WORDS, MAX_WORDS],
-                **({"reviewer": True} if self.require_reviewer else {}),
+                **(
+                    {
+                        "reviewer_words_asked": [
+                            ASK_MIN_REVIEWER_WORDS, ASK_MAX_REVIEWER_WORDS
+                        ],
+                        "reviewer_words": [
+                            MIN_REVIEWER_WORDS, MAX_REVIEWER_WORDS
+                        ],
+                    }
+                    if self.require_reviewer
+                    else {}
+                ),
                 **({"random_number_tool": True} if self.require_tool else {}),
             },
             "system_prompt": system_prompt,
