@@ -206,9 +206,18 @@ def pick_topics(count: int) -> list[str]:
 # TARGET_WORDS must sit inside the band — the prompts quote it as the ask and
 # the scorer judges against the bounds, so a target outside them would fail
 # models for obeying the instruction.
-TARGET_WORDS: int = 120
-MIN_WORDS: int = 40
-MAX_WORDS: int = 320
+# What the prompt asks the model for.
+ASK_MIN_WORDS: int = 80
+ASK_MAX_WORDS: int = 160
+TARGET_WORDS: int = (ASK_MIN_WORDS + ASK_MAX_WORDS) // 2
+
+# What the scorer accepts: half the floor, double the ceiling. The point of
+# this suite is whether the tool was invoked correctly across a conversation,
+# not whether a model can count words — so length is a sanity check against a
+# one-line reply or a runaway wall of text, and near-misses on the asked range
+# are tolerated rather than failing an otherwise clean trial.
+MIN_WORDS: int = ASK_MIN_WORDS // 2
+MAX_WORDS: int = ASK_MAX_WORDS * 2
 
 # One turn's budget. A ten-turn trial can therefore take a few minutes on a
 # slow local model, which is expected.
@@ -398,7 +407,12 @@ Do not begin the story section before the current request’s tool result exists
 
 
 def _fill(template: str, **extra: object) -> str:
-    return template.format(min_words=MIN_WORDS, max_words=MAX_WORDS, **extra)
+    """Fill a prompt template. The bounds are what the model is *asked* for —
+    the scorer's tolerated band is deliberately wider, and quoting that here
+    would invite exactly the sprawl the tolerance exists to forgive."""
+    return template.format(
+        min_words=ASK_MIN_WORDS, max_words=ASK_MAX_WORDS, **extra
+    )
 
 
 def system_prompt_text_tool(topic: str) -> str:
@@ -823,6 +837,7 @@ class _StoryBenchmarkBase:
             "reason": reason,
             "requires": {
                 "turns": STORY_TURNS,
+                "words_asked": [ASK_MIN_WORDS, ASK_MAX_WORDS],
                 "words": [MIN_WORDS, MAX_WORDS],
                 "reviewer": self.require_reviewer,
                 "random_number_tool": self.require_tool,

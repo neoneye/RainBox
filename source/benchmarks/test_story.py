@@ -207,7 +207,11 @@ class TestToolPrompting:
         for text in (story.system_prompt_text_tool("x"),
                      story.system_prompt_struct_tool("x"),
                      story.tool_user_message(0)):
-            assert str(MIN_WORDS) in text and str(MAX_WORDS) in text
+            # The prompt quotes what is asked, not the wider band the scorer
+            # tolerates — quoting the tolerance would invite the sprawl it
+            # exists to forgive.
+            assert str(story.ASK_MIN_WORDS) in text
+            assert str(story.ASK_MAX_WORDS) in text
 
     def test_the_structured_variant_still_asks_for_both_fields(self):
         prompt = story.system_prompt_struct_tool("x")
@@ -845,3 +849,36 @@ class TestDuplicateSections:
     def test_a_fresh_section_records_no_duplicate(self):
         turn = story.transcript_turn(1, "ask", section())
         assert turn["duplicate_of"] is None
+
+
+class TestWordTolerance:
+    """The prompt asks for one range; the scorer accepts a wider one.
+
+    The suite is about whether the tool was invoked correctly across a
+    conversation. Length is a sanity check against a one-line reply or a
+    runaway wall of text, so a near-miss on the asked range should not sink an
+    otherwise clean trial.
+    """
+
+    def test_the_tolerated_band_is_half_to_double_the_asked_one(self):
+        assert story.MIN_WORDS == story.ASK_MIN_WORDS // 2
+        assert story.MAX_WORDS == story.ASK_MAX_WORDS * 2
+
+    def test_a_section_over_the_asked_ceiling_still_passes(self):
+        s = section(text="w " * (story.ASK_MAX_WORDS + 40) + " 42",
+                    numbers=[42], calls=1)
+        assert section_problem(s, require_tool=True) is None
+
+    def test_a_section_under_the_asked_floor_still_passes(self):
+        s = section(text="w " * (story.ASK_MIN_WORDS - 20) + " 42",
+                    numbers=[42], calls=1)
+        assert section_problem(s, require_tool=True) is None
+
+    def test_a_runaway_wall_of_text_is_still_caught(self):
+        s = section(text="w " * (story.MAX_WORDS + 10) + " 42",
+                    numbers=[42], calls=1)
+        assert section_problem(s, require_tool=True) is not None
+
+    def test_a_one_line_reply_is_still_caught(self):
+        s = section(text="nope 42", numbers=[42], calls=1)
+        assert section_problem(s, require_tool=True) is not None
