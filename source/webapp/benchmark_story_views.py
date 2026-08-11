@@ -27,7 +27,9 @@ STORY_BENCHMARK_DESCRIPTIONS: dict[str, str] = {
     "story_struct": (
         "Same five turns, structured output: `section_text` (the piece) plus "
         "`section_reviewer`, a brutally harsh critique of that same section. "
-        "Correct iff every section is in range and every critique is present."
+        "Each request carries a random number that must appear in "
+        "`section_text` — not in the critique. Correct iff both fields are "
+        "within their word bands and every section contains its number."
     ),
     "story_text_tool": (
         "Same five turns, plus one tool. Before each section the model must "

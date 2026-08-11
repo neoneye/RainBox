@@ -1009,3 +1009,35 @@ class TestGivenNumber:
         monkeypatch.setattr(story, "prepare_llm", lambda *_a, **_k: RecordingLlm())
         result = story.BenchmarkStoryText(uuid4(), num_trials=1).run()
         assert result.correct == 1
+
+
+class TestStructGivenNumber:
+    """story_struct hands the number over too, naming the field it belongs in
+    — the critique is a separate piece of writing and is not where it goes."""
+
+    def test_the_request_names_section_text(self):
+        bench = story.BenchmarkStoryStruct(uuid4(), num_trials=1)
+        message = bench.user_message(0, 4242)
+        assert "4242" in message
+        assert "section_text" in message
+
+    def test_the_text_variant_does_not_name_a_field(self):
+        """There is no object, so there is no field to name."""
+        bench = story.BenchmarkStoryText(uuid4(), num_trials=1)
+        assert "section_text" not in bench.user_message(0, 4242)
+
+    def test_the_number_is_scored_against_the_story_not_the_critique(self):
+        """A model that drops the number into its critique instead of the
+        prose has not done what was asked."""
+        s = section(text=GOOD_TEXT, reviewer="dreadful 4242 " * 20)
+        s.given_number = 4242
+        assert section_problem(s, require_reviewer=True) is not None
+
+    def test_the_number_in_the_story_text_passes(self):
+        s = section(text=GOOD_TEXT + " 4242", reviewer="word " * 60)
+        s.given_number = 4242
+        assert section_problem(s, require_reviewer=True) is None
+
+    def test_the_tool_variants_are_untouched(self):
+        for cls in (story.BenchmarkStoryTextTool, story.BenchmarkStoryStructTool):
+            assert cls.require_number is False

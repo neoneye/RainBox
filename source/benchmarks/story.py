@@ -439,9 +439,15 @@ Insert the number {number} into the section, written as digit characters, at lea
 """
 
 
-def story_text_user_message(turn: int, number: int) -> str:
+STORY_STRUCT_USER_PROMPT = """\
+{request}
+Insert the number {number} into section_text, written as digit characters, at least once.
+"""
+
+
+def number_user_message(template: str, turn: int, number: int) -> str:
     request = FIRST_USER_MESSAGE if turn == 0 else NEXT_USER_MESSAGE
-    return STORY_TEXT_USER_PROMPT.format(request=request, number=number)
+    return template.format(request=request, number=number)
 
 
 def _first_user_message() -> str:
@@ -827,6 +833,9 @@ class _StoryBenchmarkBase:
     # fetch one. Same output shape as the tool variants, so the two are
     # comparable and differ only in how the number arrived.
     require_number: bool = False
+    # The request string used when a number is handed over. Each variant keeps
+    # its own so the wording can name the right field.
+    number_user_prompt: str = ""
     require_tool: bool = False
 
     def __init__(self, target_uuid: UUID, num_trials: int = 3):
@@ -849,7 +858,7 @@ class _StoryBenchmarkBase:
         if self.require_tool:
             return tool_user_message(turn)
         if self.require_number and number is not None:
-            return story_text_user_message(turn, number)
+            return number_user_message(self.number_user_prompt, turn, number)
         return _first_user_message() if turn == 0 else _next_user_message(turn)
 
     def _take_turn(
@@ -1046,6 +1055,7 @@ class BenchmarkStoryText(_StoryBenchmarkBase):
 
     name = "story_text"
     require_number = True
+    number_user_prompt = STORY_TEXT_USER_PROMPT
 
     def _system_prompt(self, topic: str) -> str:
         return system_prompt_text(topic)
@@ -1071,6 +1081,8 @@ class BenchmarkStoryStruct(_StoryBenchmarkBase):
 
     name = "story_struct"
     require_reviewer = True
+    require_number = True
+    number_user_prompt = STORY_STRUCT_USER_PROMPT
 
     def _system_prompt(self, topic: str) -> str:
         return system_prompt_struct(topic)
