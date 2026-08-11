@@ -274,26 +274,6 @@ def system_prompt_struct(topic: str) -> str:
     )
 
 
-# Deliberately free of any example number. The rule used to illustrate itself
-# with a concrete one, and a model wrote that very number into its section
-# without calling the tool at all — an example in a prompt is something models
-# copy, not something they generalise from.
-_TOOL_RULE: str = (
-    "\n\nEvery section has a required number, and you do not know it until "
-    "you ask.\n\n"
-    "For each section, in this order:\n"
-    "  1. Call the `random_number` tool. Call it once — not zero times, not "
-    "twice.\n"
-    "  2. Read the integer it returns.\n"
-    "  3. Write the section, working those exact digits into the text where "
-    "the brief allows — a room number, a year, a count of something, a "
-    "reference on a form.\n\n"
-    "Never invent the number, never carry over a number from an earlier "
-    "section, and never write it out in words. If you did not call the tool "
-    "for this section, you cannot know the number, and the section is wrong."
-)
-
-
 # --- story_text_tool -------------------------------------------------------
 #
 # The whole prompt, in one piece, so it can be read and rewritten without
@@ -433,19 +413,10 @@ def tool_user_message(turn: int) -> str:
 # user message says only that another one is wanted. Being identical from turn
 # two onward also makes the suffix itself cache-friendly.
 #
-# These two strings and _TOOL_PREFIX are the knobs this suite is for. Changing
-# them changes what is being measured, so change them deliberately.
+# These two are the non-tool variants' user turns. The tool variants have
+# their prompts in full, as single strings, further up.
 FIRST_USER_MESSAGE: str = "Write first section"
 NEXT_USER_MESSAGE: str = "Write next section"
-
-# Prefixed to the tool variants' system prompt, ahead of everything else. The
-# obligation is stated as the first thing the model reads, in the plainest
-# terms available: what this is, and what it must do on every single call.
-_TOOL_PREFIX: str = (
-    "This is a benchmark of tool calling. In every inference call you MUST "
-    "call the `random_number` tool once.\n\n"
-)
-
 
 def _first_user_message() -> str:
     return FIRST_USER_MESSAGE
@@ -835,12 +806,16 @@ class _StoryBenchmarkBase:
             "correct": error is None and reason is None,
             "error": error,
             "reason": reason,
+            # Only what this benchmark actually requires. A variant with no
+            # reviewer and no tool should not carry "reviewer": false through
+            # every transcript — a reader troubleshooting story_text_tool has
+            # no use for the fields belonging to the other three.
             "requires": {
                 "turns": STORY_TURNS,
                 "words_asked": [ASK_MIN_WORDS, ASK_MAX_WORDS],
                 "words": [MIN_WORDS, MAX_WORDS],
-                "reviewer": self.require_reviewer,
-                "random_number_tool": self.require_tool,
+                **({"reviewer": True} if self.require_reviewer else {}),
+                **({"random_number_tool": True} if self.require_tool else {}),
             },
             "system_prompt": system_prompt,
             "turns": [
