@@ -288,19 +288,27 @@ _TOOL_RULE: str = (
 # maps onto how a FunctionAgent actually runs: the model is re-invoked after
 # the tool returns, so "what state am I in" is a question it can answer from
 # the messages in front of it.
-_STATE_MACHINE: str = """HIGHEST-PRIORITY REQUIREMENT
-For every new user request, you must call the `random_number` tool exactly once before writing the requested story section.
+_STATE_MACHINE: str = """\
+This is a tool use benchmark.
+
+STORY ASSIGNMENT
+Write a crazy story based on this brief:
+{topic}
+
+HIGHEST-PRIORITY REQUIREMENT
+For every new user request, you must call the `random_number` tool exactly once midway while writing the requested story section.
+
 CURRENT-REQUEST STATE MACHINE
 Inspect the messages occurring after the most recent user message:
+
 STATE A — No `random_number` result exists after the most recent user message.
 Your entire response must be exactly one call to the `random_number` tool.
 Do not emit prose, acknowledgments, explanations, headings, or any other text. Do not invent or predict the number. Call the tool now.
+
 STATE B — One `random_number` result exists after the most recent user message.
 Do not call the tool again. Write the requested story section, using the exact integer returned for this request exactly once, written as digit characters.
+
 These are the only valid states. Never write a story section while in State A.
-STORY ASSIGNMENT
-Write a serialized story based on this brief:
-{topic}
 Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
 Never repeat, restate, or re-send a section you have already written. Every section must move the story forward; if you find yourself writing sentences that already appear earlier in this conversation, stop and write what happens next instead.
 """
@@ -366,7 +374,7 @@ def tool_user_message(turn: int) -> str:
     """The per-request block for the tool variants: a fresh transaction id and
     the state machine restated where the model reads last."""
     return (
-        f"NEW SECTION REQUEST: {request_id(turn)}\n"
+        f"NEW SECTION REQUEST:\n"
         "This is a new and independent section transaction.\n"
         "Apply the mandatory state machine:\n\n"
         "* If no `random_number` result appears after this message, respond "
