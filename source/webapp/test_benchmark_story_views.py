@@ -81,10 +81,22 @@ class TestPage:
     def test_it_appears_in_the_benchmark_nav(self, client):
         assert ">Story<" in client.get("/benchmark_story").get_data(as_text=True)
 
-    def test_the_intro_warns_how_long_a_sweep_takes(self, client):
-        """120 calls per target is not a thing to start unaware."""
+    def test_the_intro_leads_with_the_cache(self, client):
+        """That is what the suite is for; the story is the vehicle."""
         body = client.get("/benchmark_story").get_data(as_text=True)
-        assert "minutes per target" in body
+        assert "prompt cache" in body
+        assert "prefix extension" in body
+
+    def test_the_intro_explains_the_number_mechanism(self, client):
+        """Why the run is checkable at all, rather than a matter of taste."""
+        body = client.get("/benchmark_story").get_data(as_text=True)
+        assert "fresh random integer" in body
+        assert "fetched by tool call" in body
+
+    def test_the_intro_quotes_no_timing(self, client):
+        """It varies far too much by model to be worth stating."""
+        body = client.get("/benchmark_story").get_data(as_text=True)
+        assert "minutes per target" not in body
 
     def test_the_intro_points_at_the_activity_dashboard(self, client):
         body = client.get("/benchmark_story").get_data(as_text=True)

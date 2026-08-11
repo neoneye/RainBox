@@ -18,8 +18,12 @@ prompt cache has nothing to work with there.
 A multi-turn conversation is the opposite. Turn *n* resends the system
 prompt and every earlier (user, assistant) pair, then appends one new user
 message — so each turn's prompt is a strict **prefix extension** of the last
-one. That is the ideal case for a KV cache, and it is what most of rainbox
-actually does (the assistant's ReAct loop, chat, kanban workers).
+one. That is the ideal case for a KV cache.
+
+Note that rainbox does *not* currently produce this shape: it rebuilds the
+system prompt on every call, which breaks the prefix at the first token and
+throws the cache away. So this suite is not a model of production traffic —
+it is the best case, the number to measure real traffic against.
 
 So these benchmarks are two things at once: a capability test, and the
 workload that puts a real, interpretable number on the /activity dashboard.
@@ -29,7 +33,10 @@ the runtime evicting between calls.
 ## The four benchmarks
 
 All four share one shape — system prompt, then five (user, assistant) rounds,
-each asking for the next ~200-word section of the piece.
+each asking for the next short section of the piece. The ask and the band
+the scorer accepts come from `TARGET_WORDS`, `MIN_WORDS` and `MAX_WORDS`,
+which every prompt is templated from — a target outside the band would
+fail models for obeying the instruction.
 
 **The brief varies, the theme does not.** Each trial draws one topic from
 `TOPICS`, sampled without replacement so three trials of a benchmark spend
@@ -56,7 +63,7 @@ suite exists to exercise.
 the section.
 
 **`story_struct`** — `as_structured_llm(StorySection)` each turn.
-`StorySection` has two fields: `section_text` (~200 words of the story) and
+`StorySection` has two fields: `section_text` (the prose) and
 `section_reviewer`, a brutally harsh book-reviewer critique of that section.
 The second field exists to make the schema carry two genuinely different
 registers, so a model can't satisfy it by renaming its prose.
@@ -94,14 +101,23 @@ llama_index (0.14.22): the result carries `.structured_response`, and
 A trial is correct when all of:
 
 - all five turns completed without an exception or timeout;
-- every section is between 100 and 350 words (the ask is "around 200"; the
-  band is wide enough that a model isn't failed for style, narrow enough
-  that a one-line reply or a runaway wall of text is);
+- no section reproduces an earlier one. granite4 sent section 1 verbatim
+  five times and stopped calling the tool from section 3 onward; nothing
+  in the scorer noticed the repetition itself. Exact match after folding
+  case and whitespace, deliberately not fuzzy, so a model that merely
+  keeps a consistent voice is never accused of repeating itself;
+- every section is within the word band (`MIN_WORDS`–`MAX_WORDS`, quoted
+  into every prompt): wide enough that a model isn't failed for style,
+  narrow enough that a one-line reply or a runaway wall of text is;
 - structured variants: `section_reviewer` non-empty on every turn;
 - tool variants: for every turn, the tool was called **exactly once** and
-  the integer it returned appears in that turn's section text. Exactly
-  once because the brief says so, and because a model that loops on the
-  tool is doing something worth seeing rather than quietly passing.
+  the integer it returned appears in that turn's section as digits.
+  Exactly once, because a model that loops on the tool is doing something
+  worth seeing; and present, because a call whose answer is discarded
+  proves nothing about tool use.
+
+Stray numerals and a number carried over from an earlier section are not
+faults.
 
 Trials that raise are `failures`; trials that complete but miss a criterion
 are `mistakes`. Same three-way split the other suites use.

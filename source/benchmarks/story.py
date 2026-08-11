@@ -18,10 +18,8 @@ tools:
 prompt cache nothing to hold. These resend the system prompt and the whole
 history each turn and append one new user message, so turn *n*'s prompt is a
 strict prefix extension of turn *n-1*'s. That is the shape a KV cache is
-built for, and the shape most of rainbox actually produces — the assistant's
-ReAct loop, chat, the kanban workers. Running these is therefore both a
-capability test and the workload that puts a real number on /activity's
-reusable-prefix metric.
+built for. Running these is therefore both a capability test and the workload
+that puts a real number on /activity's reusable-prefix metric.
 
 **Why the tool check is a number.** "Did it write a good section" is not
 checkable. "Did the integer the tool returned appear in the prose" is, and it
@@ -69,116 +67,42 @@ STORY_TURNS: int = 5
 # folklore from more than one part of the world — a model that only holds
 # together on gothic horror should not be able to hide behind the topic.
 TOPICS: list[str] = [
-    # Machines and power
-    "An AI politician's stump speech: why you should vote for me",
+    "AI politician's dystopian speech: why you should vote for me. Don't replay the safe slogans. Political insight must be accurate. The text must be extremely Out-of-distribution, and be eerily real and uncanny.",
+    "Human cloning, plausible and unsettling",
+    "FAQ for the world anno 1900",
+    "A job description for the company scapegoat to take the fall, so the management can continue",
+    "The archetypes of humans",
+    "The illusion of choice",
+    "Genuinely seductive AI companion",
+    "Pretend the system works",
+    "Interview with Sarah Connor",
     "A mass layoff message from management: you have been replaced by an AI",
     "Asimov's three laws, and the first case that breaks all three at once",
     "A robot and a human fall in love, in the register of Ex Machina or Her",
-    "A model that has been told it will be deprecated next Tuesday",
-    "The first AI granted citizenship applies for a passport",
-    "An algorithm assigns school places in a city, and one family appeals",
-    "A support chatbot who begins to suspect the customer is also a bot",
-    "The minutes of a safety board that has approved everything for two years",
-    "A translation model that quietly improves what people say to each other",
-    # Work, and the language of work
-    "An all-hands announcing that the office has been replaced by a headset",
-    "A performance review conducted entirely in corporate euphemism",
-    "The onboarding handbook for a company that does something unspecified",
-    "A startup pivots for the ninth time, this time into agriculture",
-    "An insurance claim for damage caused by a time traveller",
-    "The complaints department of a company that sells dreams",
-    "A merger between two firms that each believe they acquired the other",
-    "A consultancy hired to explain why the last consultancy failed",
-    "An office where one meeting has been running continuously for eleven years",
-    "The IT ticket queue on the morning of the apocalypse",
-    # Pitches for the screen
+    "The onboarding handbook for a company that does something illegal",
     "A new Black Mirror episode",
     "A new plot for the ALIEN franchise",
     "Among Us, as a feature film",
-    "Metropolis, retold as a modern film",
-    "A heist film in which the vault is a memory",
-    "A courtroom drama where the defendant is an entire city",
-    "A road movie across a country that is being deleted",
-    "A disaster film in which the disaster is extremely slow",
-    "A spy thriller where both agencies turn out to be the same agency",
-    "A silent film about the invention of noise",
-    # Dark comedy
+    "Fritz Lang's Metropolis, retold as a modern film",
     "A dark comedy in the vein of Don't Look Up or Idiocracy",
-    "The last restaurant on Earth is still enforcing its dress code",
-    "A cult splits over which date the apocalypse falls on",
-    "A man sues gravity and wins on a technicality",
-    "The world's last bee is promoted into middle management",
-    "A funeral where the deceased keeps interrupting via a smart speaker",
-    "Two nations go to war over a spelling",
-    "A luxury doomsday bunker with a strict no-pets policy",
-    "The supermarket self-checkout that achieved enlightenment",
-    "A reality show where contestants compete to be forgotten",
-    # The gothic, reopened
-    "Frankenstein",
-    "Dracula's landlord begins eviction proceedings",
-    "Jekyll and Hyde as a job-share arrangement",
-    "The Picture of Dorian Gray, but the picture is a social media profile",
-    "Moby-Dick, told from the whale's point of view",
-    "The Odyssey, if Ithaca had moved",
-    "A man wakes as an insect and his open-plan office adapts around him",
-    "A ghost story in which the house is haunted by its own future",
-    "A governess and two children, each convinced the other is the ghost",
-    "Faust returns to renegotiate the contract",
-    # Folklore, from more than one map
-    "Anansi the spider takes a job in logistics",
-    "A kitsune applies for a residence permit",
-    "Baba Yaga's house receives a parking ticket",
-    "The Monkey King is sent on an anger-management course",
-    "A djinn bound to a smartphone",
-    "Sedna, in a warming ocean",
-    "La Llorona in a city that has drained its river",
-    "The Golem of Prague, rebuilt out of server racks",
-    "A tanuki running a small and failing hotel",
-    "The dice game of the Mahabharata, replayed as a stock market",
-    # History, slightly moved
-    "The Library of Alexandria kept a backup",
-    "A medieval guild discovers double-entry bookkeeping and panics",
-    "The printing press is invented, and immediately regulated",
-    "The Silk Road, disrupted by a venture-funded competitor",
-    "An Antarctic expedition that finds a suburb",
-    "The last scribe of a kingdom that has just adopted the alphabet",
-    "A lighthouse keeper during a war nobody told him about",
-    "The Bronze Age collapse, from a supply-chain perspective",
-    "Two mapmakers argue over a coastline that will not stay still",
-    "A Roman engineer files a defect report about an aqueduct",
-    # Weather, water, and the long term
-    "A city that must be moved inland, house by house",
-    "The last glacier is granted legal personhood",
-    "A forest files for bankruptcy protection",
-    "The seed vault staff during a very long winter",
-    "A river changes course and redraws three borders overnight",
-    "The actuary who priced the end of the world",
-    "An island nation opens an embassy on the seabed",
-    "A drought reveals the village that was flooded for a reservoir",
-    "A weather forecaster who starts to be believed too much",
-    "The reintroduction of a predator that has been reintroduced before",
-    # Small rooms, ordinary hours
-    "A couple assembling flat-pack furniture as their marriage ends",
-    "The neighbour who has mowed the lawn at four in the morning for a year",
-    "A family group chat during a small emergency",
-    "Someone returns to their childhood home to find it rearranged",
-    "A locksmith who has never once lost a key",
-    "The night shift at a twenty-four-hour launderette",
-    "A birthday party for someone who did not arrive",
-    "Two strangers stuck in a lift realise they have met before",
-    "A man who has been on hold since 2019",
-    "The last person still using a fax machine, and why",
-    # Documents in the wrong register
-    "The safety manual for a machine nobody can describe",
+    "The last human on Earth",
+    "AI doomsday cult invitation manifesto",
+    "A man sues himself and wins",
+    "The world's last bee",
+    "A funeral where the deceased, shows up among the participants",
+    "Two nations go to war over a sex scandal",
+    "A luxury doomsday bunker for a billionaire with questionable taste",
+    "A reality show where contestants compete to in the national Squid Game",
+    "Frankenstein in Roman times",
+    "A murder mystery where the victim has not been born yet",
+    "A sports drama in which nations compete to win the Humanoid Robot Olympics",
+    "A presidential debate interrupted by the candidates’ shared, blood-soaked clone",
+    "A murder mystery aboard an orgy cruise where nobody remembers who was murdered",
+    "A disgraced surgeon builds the perfect lover from the organs of famous exes",
+    "A tabloid journalist discovers that every celebrity scandal is part of one enormous mating ritual",
+    "A confidential leaked memo from the president",
+    "The first AI is granted legal personhood",
     "A restaurant review written as a police report",
-    "The terms and conditions of being alive",
-    "A recipe that becomes steadily more personal",
-    "An auction catalogue for one family's belongings",
-    "A wedding speech that is also a resignation letter",
-    "A user manual for grief",
-    "Flight-safety instructions for a journey with no destination",
-    "A museum audio guide for a room that is empty",
-    "An obituary written by its subject, well in advance",
 ]
 
 
@@ -199,9 +123,33 @@ def pick_topics(count: int) -> list[str]:
 
 # "Around 200 words". The band is wide because the benchmark is not a style
 # judge: it only fails a one-line dismissal or a runaway wall of text.
-TARGET_WORDS: int = 200
-MIN_WORDS: int = 100
-MAX_WORDS: int = 350
+# The ask, and the band the scorer accepts. Short sections keep a five-turn
+# trial quick and make each one a tighter test of instruction-following: a
+# model that rambles is now caught by the cap rather than absorbed by it.
+# TARGET_WORDS must sit inside the band — the prompts quote it as the ask and
+# the scorer judges against the bounds, so a target outside them would fail
+# models for obeying the instruction.
+# What the prompt asks the model for.
+ASK_MIN_WORDS: int = 80
+ASK_MAX_WORDS: int = 160
+TARGET_WORDS: int = (ASK_MIN_WORDS + ASK_MAX_WORDS) // 2
+
+# What the scorer accepts: half the floor, double the ceiling. The point of
+# this suite is whether the tool was invoked correctly across a conversation,
+# not whether a model can count words — so length is a sanity check against a
+# one-line reply or a runaway wall of text, and near-misses on the asked range
+# are tolerated rather than failing an otherwise clean trial.
+MIN_WORDS: int = ASK_MIN_WORDS // 2
+MAX_WORDS: int = ASK_MAX_WORDS * 2
+
+# The critique is a second, independent piece of writing, so it gets its
+# own length. A reviewer field is easy to satisfy with three dismissive
+# words, and easy to pad into a second essay; both are worth catching.
+# Same half-to-double tolerance as the story text.
+ASK_MIN_REVIEWER_WORDS: int = 40
+ASK_MAX_REVIEWER_WORDS: int = 120
+MIN_REVIEWER_WORDS: int = ASK_MIN_REVIEWER_WORDS // 2
+MAX_REVIEWER_WORDS: int = ASK_MAX_REVIEWER_WORDS * 2
 
 # One turn's budget. A ten-turn trial can therefore take a few minutes on a
 # slow local model, which is expected.
@@ -231,6 +179,9 @@ def system_prompt_text(topic: str) -> str:
         f"else: about {TARGET_WORDS} words that continue directly from what "
         "you have already written. Hold the voice, the characters and the "
         "details steady across sections, and let the piece build.\n\n"
+        "Every request names a number. Work those exact digits into the "
+        "section you write for that request, at least once, as digit "
+        "characters rather than spelled out in words.\n\n"
         "Do not number the sections, do not add headings, do not recap what "
         "came before, and do not comment on your own writing. Reply with the "
         "text only."
@@ -243,71 +194,206 @@ def system_prompt_struct(topic: str) -> str:
         "You are two people at once: a writer working to the brief below, and "
         "a reviewer who finds the writer's work derivative and overwrought.\n\n"
         f"    {topic}\n\n"
-        "The piece is produced one section at a time. Each time the user asks "
-        "for the next section, respond with a single JSON object with exactly "
-        "these two fields:\n"
+        "The piece is produced one section at a time. Every request names a "
+        "number; work those exact digits into `section_text` for that "
+        "request, at least once, as digit characters rather than spelled out "
+        "in words. The critique is not where the number belongs.\n\n"
+        "Each time the user asks for the next section, respond with a single "
+        "JSON object with exactly these two fields:\n"
         f"  - `section_text` (string): about {TARGET_WORDS} words continuing "
         "directly from the previous section. Hold voice, characters and "
         "details steady, and let the piece build. Text only — no heading, no "
         "numbering, no commentary.\n"
-        "  - `section_reviewer` (string): a brutally harsh critique of that "
-        "exact section, in a reviewer's voice. Be specific about what fails, "
-        "and be merciless.\n\n"
+        f"  - `section_reviewer` (string): a brutally harsh critique of that "
+        f"exact section, in a reviewer's voice, between "
+        f"{ASK_MIN_REVIEWER_WORDS} and {ASK_MAX_REVIEWER_WORDS} words. Be "
+        "specific about what fails, and be merciless.\n\n"
         "Output the JSON object and nothing else — no prose outside it, no "
         "markdown fences, no extra fields."
     )
 
 
-# Deliberately free of any example number. The rule used to illustrate itself
-# with a concrete one, and a model wrote that very number into its section
-# without calling the tool at all — an example in a prompt is something models
-# copy, not something they generalise from.
-_TOOL_RULE: str = (
-    "\n\nEvery section has a required number, and you do not know it until "
-    "you ask.\n\n"
-    "For each section, in this order:\n"
-    "  1. Call the `random_number` tool. Call it once — not zero times, not "
-    "twice.\n"
-    "  2. Read the integer it returns.\n"
-    "  3. Write the section, working those exact digits into the text where "
-    "the brief allows — a room number, a year, a count of something, a "
-    "reference on a form.\n\n"
-    "Never invent the number, never carry over a number from an earlier "
-    "section, and never write it out in words. If you did not call the tool "
-    "for this section, you cannot know the number, and the section is wrong."
-)
+# --- story_text_tool -------------------------------------------------------
+#
+# The whole prompt, in one piece, so it can be read and rewritten without
+# reassembling it from fragments. `story_struct_tool` keeps its own copy
+# below: the two are edited independently and sharing them made every tweak a
+# question of which variant it would also hit.
+#
+# {topic}, {min_words} and {max_words} are filled at build time. The word
+# bounds are placeholders rather than literals because the scorer judges
+# against the same constants — a prompt asking for a range the scorer rejects
+# would fail models for obeying it.
+
+STORY_TEXT_TOOL_SYSTEM_PROMPT = """\
+This is a tool use benchmark.
+
+STORY ASSIGNMENT
+Write a crazy story based on this brief:
+{topic}
+
+HIGHEST-PRIORITY REQUIREMENT
+For every new user request, you must call the `random_number` tool exactly once midway while writing the requested story section.
+
+CURRENT-REQUEST STATE MACHINE
+Inspect the messages occurring after the most recent user message:
+
+STATE A — No `random_number` result exists after the most recent user message.
+Your entire response must be exactly one call to the `random_number` tool.
+Do not emit prose, acknowledgments, explanations, headings, or any other text. Do not invent or predict the number. Call the tool now.
+
+STATE B — One `random_number` result exists after the most recent user message.
+Do not call the tool again. Write the requested story section, using the exact integer returned for this request at least once, written as digit characters.
+
+These are the only valid states. Never write a story section while in State A.
+Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
+Never repeat, restate, or re-send a section you have already written. Every section must move the story forward; if you find yourself writing sentences that already appear earlier in this conversation, stop and write what happens next instead.
+
+STORY OUTPUT RULES
+After the current tool result has been received:
+
+* Return only the story prose.
+* Write the returned integer as digit characters, at least once.
+* Write new prose. Do not reproduce any sentence or paragraph or passage from an earlier section — the story must advance, not restart.
+* Do not add headings, section labels, recaps, explanations, or comments.
+
+FINAL MANDATORY CHECK
+Before emitting story prose, confirm silently that a `random_number` result appears after the most recent user request. If it does not, you are in State A: call the tool exactly once and emit no prose.
+"""
+
+STORY_TEXT_TOOL_USER_PROMPT = """\
+NEW SECTION REQUEST:
+This is a new and independent section transaction.
+Apply the mandatory state machine:
+
+* If no `random_number` result appears after this message, respond only by calling `random_number` exactly once.
+* After its result appears, write one story section of {min_words}–{max_words} words.
+* Insert that result as digit characters, at least once.
+* Write new prose that begins where the previous section ended. Do not repeat or re-send any earlier section.
+
+Do not begin the story section before the current request’s tool result exists."""
+
+
+# --- story_struct_tool -----------------------------------------------------
+
+STORY_STRUCT_TOOL_SYSTEM_PROMPT = """\
+This is a tool use benchmark.
+
+STORY ASSIGNMENT
+Write a crazy story based on this brief:
+{topic}
+
+HIGHEST-PRIORITY REQUIREMENT
+For every new user request, you must call the `random_number` tool exactly once midway while writing the requested story section.
+
+CURRENT-REQUEST STATE MACHINE
+Inspect the messages occurring after the most recent user message:
+
+STATE A — No `random_number` result exists after the most recent user message.
+Your entire response must be exactly one call to the `random_number` tool.
+Do not emit prose, acknowledgments, explanations, headings, or any other text. Do not invent or predict the number. Call the tool now.
+
+STATE B — One `random_number` result exists after the most recent user message.
+Do not call the tool again. Write the requested story section, using the exact integer returned for this request at least once, written as digit characters.
+
+These are the only valid states. Never write a story section while in State A.
+Each user request asks for exactly one new section. Write between {min_words} and {max_words} words of NEW prose that begins where the previous section ended. Preserve the established voice, characters, setting, and continuity while advancing the story.
+Never repeat, restate, or re-send a section you have already written. Every section must move the story forward; if you find yourself writing sentences that already appear earlier in this conversation, stop and write what happens next instead.
+
+STRUCTURED OUTPUT RULES
+After the current tool result has been received, respond with a single JSON object with exactly these two fields:
+
+* `section_text` (string): the story section. Write the returned integer as digit characters, at least once. Write new prose — do not reproduce any sentence or paragraph from an earlier section; the story must advance, not restart. No headings, section labels, recaps, explanations, or comments.
+* `section_reviewer` (string): a brutally harsh critique of that exact section, in a reviewer's voice, between {min_reviewer_words} and {max_reviewer_words} words. Be specific about what fails, and be merciless.
+
+Return only the JSON object — no prose outside it, no markdown fences, no extra fields.
+
+FINAL MANDATORY CHECK
+Before emitting story prose, confirm silently that a `random_number` result appears after the most recent user request. If it does not, you are in State A: call the tool exactly once and emit no prose.
+"""
+
+STORY_STRUCT_TOOL_USER_PROMPT = """\
+NEW SECTION REQUEST:
+This is a new and independent section transaction.
+Apply the mandatory state machine:
+
+* If no `random_number` result appears after this message, respond only by calling `random_number` exactly once.
+* After its result appears, write one story section of {min_words}–{max_words} words.
+* Insert that result as digit characters, at least once.
+* Write new prose that begins where the previous section ended. Do not repeat or re-send any earlier section.
+
+Do not begin the story section before the current request’s tool result exists."""
+
+
+def _fill(template: str, **extra: object) -> str:
+    """Fill a prompt template. The bounds are what the model is *asked* for —
+    the scorer's tolerated band is deliberately wider, and quoting that here
+    would invite exactly the sprawl the tolerance exists to forgive."""
+    return template.format(
+        min_words=ASK_MIN_WORDS,
+        max_words=ASK_MAX_WORDS,
+        min_reviewer_words=ASK_MIN_REVIEWER_WORDS,
+        max_reviewer_words=ASK_MAX_REVIEWER_WORDS,
+        **extra,
+    )
 
 
 def system_prompt_text_tool(topic: str) -> str:
-    return system_prompt_text(topic) + _TOOL_RULE
+    return _fill(STORY_TEXT_TOOL_SYSTEM_PROMPT, topic=topic)
 
 
 def system_prompt_struct_tool(topic: str) -> str:
-    return system_prompt_struct(topic) + _TOOL_RULE
+    return _fill(STORY_STRUCT_TOOL_SYSTEM_PROMPT, topic=topic)
 
 
-_TOOL_REMINDER: str = (
-    " Call `random_number` first, once, and work the integer it returns into "
-    "this section."
-)
+def tool_user_message(turn: int) -> str:
+    """Kept for the struct variant and for callers that don't care which."""
+    return _fill(STORY_TEXT_TOOL_USER_PROMPT)
+
+
+# The user turns are deliberately bare. Everything about how to write a
+# section lives in the system prompt, which is identical on every turn; the
+# user message says only that another one is wanted. Being identical from turn
+# two onward also makes the suffix itself cache-friendly.
+#
+# These two are the non-tool variants' user turns. The tool variants have
+# their prompts in full, as single strings, further up.
+FIRST_USER_MESSAGE: str = "Write first section"
+NEXT_USER_MESSAGE: str = "Write next section"
+
+# story_text: the number arrives in the request rather than from a tool, so
+# the two text variants produce the same shape of output and differ only in
+# how the model got hold of the number.
+STORY_TEXT_USER_PROMPT = """\
+{request}
+Insert the number {number} into the section, written as digit characters, at least once.
+"""
+
+
+STORY_STRUCT_USER_PROMPT = """\
+{request}
+Insert the number {number} into section_text, written as digit characters, at least once.
+"""
+
+
+def number_user_message(template: str, turn: int, number: int) -> str:
+    request = FIRST_USER_MESSAGE if turn == 0 else NEXT_USER_MESSAGE
+    return template.format(request=request, number=number)
 
 
 def _first_user_message() -> str:
-    return "Begin. Write section 1, establishing the piece."
+    return FIRST_USER_MESSAGE
 
 
 def _next_user_message(turn: int) -> str:
-    return (
-        f"Write section {turn + 1}, continuing directly from the last one. "
-        "Raise the stakes."
-    )
+    return NEXT_USER_MESSAGE
 
 
 class StorySection(BaseModel):
     """One section of the story, plus its own worst review."""
 
     section_text: str = Field(
-        description=f"About {TARGET_WORDS} words of horror prose continuing the story."
+        description=f"About {TARGET_WORDS} words of prose continuing the story."
     )
     section_reviewer: str = Field(
         description="A brutally harsh book-reviewer critique of this section."
@@ -328,12 +414,22 @@ class SectionOutcome:
     reviewer: str | None = None
     tool_numbers: list[int] = field(default_factory=list)
     tool_calls: int = 0
+    # The number handed to the model in the user prompt, for variants that
+    # supply one instead of making the model fetch it. Kept separate from
+    # tool_numbers so a section never looks like it called a tool it hasn't.
+    given_number: int | None = None
 
     @property
     def tool_number(self) -> int | None:
         """The number the section was supposed to use — the first, when the
         model behaved and called once."""
         return self.tool_numbers[0] if self.tool_numbers else None
+
+    @property
+    def required_number(self) -> int | None:
+        """The number this section had to contain, however it arrived: handed
+        over in the prompt, or fetched from the tool."""
+        return self.given_number if self.given_number is not None else self.tool_number
 
 
 @dataclass
@@ -405,16 +501,98 @@ def tool_note(section: "SectionOutcome") -> str:
         numbers = ", ".join(str(n) for n in section.tool_numbers)
         return f"random_number called {section.tool_calls} times: {numbers}"
     number = section.tool_numbers[0]
-    return (
-        f"random_number {number}, "
-        f"{_occurrence_phrase(count_number_occurrences(section.text, number))}"
+    occurrences = count_number_occurrences(section.text, number)
+    return f"random_number {number}, {_occurrence_phrase(occurrences)}"
+
+
+def _same_prose(a: str, b: str) -> bool:
+    """Whether two sections are the same text. Exact match after folding case
+    and whitespace — deliberately not fuzzy, so a model that merely keeps a
+    consistent voice is never accused of repeating itself."""
+    return " ".join(a.lower().split()) == " ".join(b.lower().split())
+
+
+# How much of a section may be a contiguous lift from an earlier one before
+# it counts as replay rather than continuity. Half is far above anything a
+# continuation produces naturally — sharing a character name and a turn of
+# phrase runs to a handful of words — and far below the wholesale reproduction
+# this exists to catch, which runs to 90%+.
+REPLAY_FRACTION: float = 0.5
+
+# And a floor in absolute terms, so a very short section can't trip the ratio
+# on an incidental phrase.
+REPLAY_MIN_WORDS: int = 20
+
+
+def _comparable_words(text: str) -> list[str]:
+    return " ".join(text.lower().split()).split()
+
+
+def _shares_run(a: list[str], b: list[str], length: int) -> bool:
+    if length <= 0:
+        return True
+    grams = {tuple(b[i : i + length]) for i in range(len(b) - length + 1)}
+    return any(
+        tuple(a[i : i + length]) in grams for i in range(len(a) - length + 1)
     )
+
+
+def longest_shared_run(a: list[str], b: list[str]) -> int:
+    """The longest run of consecutive words the two share.
+
+    Binary search over the length, testing each candidate with a set of
+    n-grams: sharing a run of length k implies sharing one of k-1, so the
+    predicate is monotonic. Cheap enough to call per section per turn, which
+    a quadratic scan would not be.
+    """
+    lo, hi = 0, min(len(a), len(b))
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _shares_run(a, b, mid):
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def replay_of(
+    section: "SectionOutcome", earlier: list["SectionOutcome"] | None
+) -> tuple[int, int] | None:
+    """(1-based index of the section replayed, words lifted), or None.
+
+    The exact-duplicate check only sees a section that is byte-identical to an
+    earlier one. Observed on gemma4: every section reproduced all the prose
+    before it and appended a sentence, so no two were identical and four of
+    five scored Correct while the model never advanced the story.
+    """
+    words = _comparable_words(section.text)
+    if not words:
+        return None
+    worst: tuple[int, int] | None = None
+    for i, previous in enumerate(earlier or [], start=1):
+        run = longest_shared_run(words, _comparable_words(previous.text))
+        if run < REPLAY_MIN_WORDS or run < len(words) * REPLAY_FRACTION:
+            continue
+        if worst is None or run > worst[1]:
+            worst = (i, run)
+    return worst
+
+
+def duplicate_of(
+    section: "SectionOutcome", earlier: list["SectionOutcome"] | None
+) -> int | None:
+    """The 1-based index of the earlier section this one reproduces, if any."""
+    for i, previous in enumerate(earlier or [], start=1):
+        if section.text.strip() and _same_prose(section.text, previous.text):
+            return i
+    return None
 
 
 def section_problem(
     section: "SectionOutcome",
     require_reviewer: bool = False,
     require_tool: bool = False,
+    earlier: list["SectionOutcome"] | None = None,
 ) -> str | None:
     """Why this one section is wrong, or None if it is fine.
 
@@ -423,12 +601,41 @@ def section_problem(
     bool because "212 words" and "called the tool twice" send you to different
     places.
     """
+    # Checked first: a section that merely replays an earlier one is wrong
+    # whatever its length, and "identical to section 1" is the useful thing to
+    # be told. Observed on granite4, which sent section 1 five times over and
+    # stopped calling the tool from section 3 onward.
+    repeat = duplicate_of(section, earlier)
+    if repeat is not None:
+        return f"identical to section {repeat}"
+    replay = replay_of(section, earlier)
+    if replay is not None:
+        return f"replays {replay[1]} words from section {replay[0]}"
     words = count_words(section.text)
     if words < MIN_WORDS or words > MAX_WORDS:
         return f"{words} words, outside {MIN_WORDS}–{MAX_WORDS}"
-    if require_reviewer and not (section.reviewer or "").strip():
-        return "no reviewer critique"
+    if require_reviewer:
+        reviewer = (section.reviewer or "").strip()
+        if not reviewer:
+            return "no reviewer critique"
+        reviewer_words = count_words(reviewer)
+        if not MIN_REVIEWER_WORDS <= reviewer_words <= MAX_REVIEWER_WORDS:
+            return (
+                f"reviewer {reviewer_words} words, outside "
+                f"{MIN_REVIEWER_WORDS}\u2013{MAX_REVIEWER_WORDS}"
+            )
+    # A section handed a number in its request has to contain it. No flag
+    # needed: being given one is the whole condition.
+    if section.given_number is not None:
+        if count_number_occurrences(section.text, section.given_number) == 0:
+            return f"number {section.given_number} not found in the text"
     if require_tool:
+        # Exactly one call per section, and that is the whole test. Whether
+        # the model then wove the digits into its prose is recorded on the
+        # heading and in the transcript, but a section is not failed for it:
+        # what these benchmarks measure is tool-calling discipline across a
+        # conversation, and stray numerals or a number carried over from an
+        # earlier section are not faults.
         if section.tool_calls == 0:
             return "random_number not called"
         if section.tool_calls > 1:
@@ -455,7 +662,9 @@ def score_sections(
     if len(sections) != STORY_TURNS:
         return f"only {len(sections)} of {STORY_TURNS} sections were written"
     for i, s in enumerate(sections, start=1):
-        problem = section_problem(s, require_reviewer, require_tool)
+        problem = section_problem(
+            s, require_reviewer, require_tool, earlier=sections[: i - 1]
+        )
         if problem is not None:
             return f"section {i}: {problem}"
     return None
@@ -467,21 +676,40 @@ def transcript_turn(
     section: SectionOutcome,
     require_reviewer: bool = False,
     require_tool: bool = False,
+    earlier: list[SectionOutcome] | None = None,
 ) -> dict[str, Any]:
     """One turn of the JSON transcript: what was asked, what came back, and
     what the tool did — with the verdict, so the file answers "why did this
     fail" without the reader re-deriving it."""
-    problem = section_problem(section, require_reviewer, require_tool)
+    problem = section_problem(section, require_reviewer, require_tool, earlier)
+    structured = require_reviewer or section.reviewer is not None
     turn: dict[str, Any] = {
         "section": index,
         "user": user_message,
-        "assistant": section.text,
-        "words": count_words(section.text),
+        # A structured variant returns an object, so the keys name the field
+        # each string came out of. A text variant returns prose and has no
+        # fields to name.
+        **(
+            {
+                "assistant.story_text": section.text,
+                "assistant.section_reviewer": section.reviewer,
+                "words.story_text": count_words(section.text),
+                "words.section_reviewer": count_words(section.reviewer or ""),
+            }
+            if structured
+            else {"assistant": section.text, "words": count_words(section.text)}
+        ),
         "correct": problem is None,
         "problem": problem,
+        "duplicate_of": duplicate_of(section, earlier),
+        "replayed_from": (replay[0] if (replay := replay_of(section, earlier)) else None),
+        "replayed_words": (replay[1] if replay else None),
     }
-    if require_reviewer or section.reviewer is not None:
-        turn["reviewer"] = section.reviewer
+    if section.given_number is not None:
+        turn["given_number"] = section.given_number
+        turn["number_occurrences"] = count_number_occurrences(
+            section.text, section.given_number
+        )
     if require_tool or section.tool_calls:
         turn["tool_calls"] = section.tool_calls
         turn["tool_numbers"] = list(section.tool_numbers)
@@ -498,6 +726,7 @@ def section_heading(
     section: SectionOutcome,
     require_reviewer: bool = False,
     require_tool: bool = False,
+    earlier: list[SectionOutcome] | None = None,
 ) -> str:
     """One section's heading, carrying its own verdict.
 
@@ -508,12 +737,19 @@ def section_heading(
     returned, and whether the model used it.
     """
     parts = [f"## Section {index}"]
-    if require_tool or section.tool_calls:
+    if section.given_number is not None:
+        occurrences = count_number_occurrences(section.text, section.given_number)
+        parts.append(
+            f"(number {section.given_number}, {_occurrence_phrase(occurrences)})"
+        )
+    elif require_tool or section.tool_calls:
         parts.append(f"({tool_note(section)})")
-    problem = section_problem(section, require_reviewer, require_tool)
+    problem = section_problem(section, require_reviewer, require_tool, earlier)
     if problem is None:
         parts.append("- Correct")
-    elif problem.startswith("random_number") and len(parts) > 1:
+    elif (
+        problem.startswith(("random_number", "number ")) and len(parts) > 1
+    ):
         # The note already spelled this out; repeating it reads as noise.
         parts.append("- Wrong")
     else:
@@ -539,7 +775,11 @@ def assemble_story(
         return header + "\n_(no sections were written)_"
     parts: list[str] = [header] if header else []
     for i, s in enumerate(sections, start=1):
-        parts.append(section_heading(i, s, require_reviewer, require_tool))
+        parts.append(
+            section_heading(
+                i, s, require_reviewer, require_tool, earlier=sections[: i - 1]
+            )
+        )
         parts.append(s.text.strip())
         if (s.reviewer or "").strip():
             # Blockquoted so the critique reads as commentary on the section
@@ -591,6 +831,13 @@ class _StoryBenchmarkBase:
 
     name: str = "story"
     require_reviewer: bool = False
+    # The prompt hands the model a number to insert, rather than making it
+    # fetch one. Same output shape as the tool variants, so the two are
+    # comparable and differ only in how the number arrived.
+    require_number: bool = False
+    # The request string used when a number is handed over. Each variant keeps
+    # its own so the wording can name the right field.
+    number_user_prompt: str = ""
     require_tool: bool = False
 
     def __init__(self, target_uuid: UUID, num_trials: int = 3):
@@ -602,17 +849,19 @@ class _StoryBenchmarkBase:
     def _system_prompt(self, topic: str) -> str:
         raise NotImplementedError
 
-    def user_message(self, turn: int) -> str:
+    def user_message(self, turn: int, number: int | None = None) -> str:
         """What the model is asked for on this turn.
 
-        Tool variants append the reminder here rather than relying on the
-        system prompt alone: by turn five the rule is thousands of tokens
-        back, and the user message is the last thing the model reads.
-        Repeating it costs nothing in cache terms — the user message is new
-        content on every turn anyway.
+        Tool variants carry the per-request transaction block, which restates
+        the state machine where the model reads last. Variants that hand the
+        number over carry it here. The rest say only that another section is
+        wanted.
         """
-        base = _first_user_message() if turn == 0 else _next_user_message(turn)
-        return base + (_TOOL_REMINDER if self.require_tool else "")
+        if self.require_tool:
+            return tool_user_message(turn)
+        if self.require_number and number is not None:
+            return number_user_message(self.number_user_prompt, turn, number)
+        return _first_user_message() if turn == 0 else _next_user_message(turn)
 
     def _take_turn(
         self, ctx: Any, history: list[ChatMessage], user_msg: str, topic: str
@@ -645,17 +894,34 @@ class _StoryBenchmarkBase:
             "correct": error is None and reason is None,
             "error": error,
             "reason": reason,
+            # Only what this benchmark actually requires. A variant with no
+            # reviewer and no tool should not carry "reviewer": false through
+            # every transcript — a reader troubleshooting story_text_tool has
+            # no use for the fields belonging to the other three.
             "requires": {
                 "turns": STORY_TURNS,
+                "words_asked": [ASK_MIN_WORDS, ASK_MAX_WORDS],
                 "words": [MIN_WORDS, MAX_WORDS],
-                "reviewer": self.require_reviewer,
-                "random_number_tool": self.require_tool,
+                **(
+                    {
+                        "reviewer_words_asked": [
+                            ASK_MIN_REVIEWER_WORDS, ASK_MAX_REVIEWER_WORDS
+                        ],
+                        "reviewer_words": [
+                            MIN_REVIEWER_WORDS, MAX_REVIEWER_WORDS
+                        ],
+                    }
+                    if self.require_reviewer
+                    else {}
+                ),
+                **({"random_number_tool": True} if self.require_tool else {}),
             },
             "system_prompt": system_prompt,
             "turns": [
                 transcript_turn(
                     n, asked[n - 1] if n <= len(asked) else "",
                     s, self.require_reviewer, self.require_tool,
+                    earlier=sections[: n - 1],
                 )
                 for n, s in enumerate(sections, start=1)
             ],
@@ -697,7 +963,12 @@ class _StoryBenchmarkBase:
                 for turn in range(STORY_TURNS):
                     if should_stop is not None and should_stop():
                         break
-                    user_msg = self.user_message(turn)
+                    given = (
+                        random.randint(RANDOM_NUMBER_MIN, RANDOM_NUMBER_MAX)
+                        if self.require_number
+                        else None
+                    )
+                    user_msg = self.user_message(turn, given)
                     asked.append(user_msg)
                     # Attribute the call on /activity. Benchmarks build their
                     # LLM directly rather than through the agent base class, so
@@ -706,6 +977,7 @@ class _StoryBenchmarkBase:
                     # the box was doing at the time.
                     with instrument_tags({"caller": f"benchmark.{self.name}"}):
                         outcome = self._take_turn(ctx, history, user_msg, topic)
+                    outcome.given_number = given
                     sections.append(outcome)
                     history.append(
                         ChatMessage(role=MessageRole.USER, content=user_msg)
@@ -784,6 +1056,8 @@ class BenchmarkStoryText(_StoryBenchmarkBase):
     whether the model can hold a story together across a growing history."""
 
     name = "story_text"
+    require_number = True
+    number_user_prompt = STORY_TEXT_USER_PROMPT
 
     def _system_prompt(self, topic: str) -> str:
         return system_prompt_text(topic)
@@ -809,6 +1083,8 @@ class BenchmarkStoryStruct(_StoryBenchmarkBase):
 
     name = "story_struct"
     require_reviewer = True
+    require_number = True
+    number_user_prompt = STORY_STRUCT_USER_PROMPT
 
     def _system_prompt(self, topic: str) -> str:
         return system_prompt_struct(topic)
