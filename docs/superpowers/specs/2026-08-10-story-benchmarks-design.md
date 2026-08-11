@@ -18,8 +18,12 @@ prompt cache has nothing to work with there.
 A multi-turn conversation is the opposite. Turn *n* resends the system
 prompt and every earlier (user, assistant) pair, then appends one new user
 message — so each turn's prompt is a strict **prefix extension** of the last
-one. That is the ideal case for a KV cache, and it is what most of rainbox
-actually does (the assistant's ReAct loop, chat, kanban workers).
+one. That is the ideal case for a KV cache.
+
+Note that rainbox does *not* currently produce this shape: it rebuilds the
+system prompt on every call, which breaks the prefix at the first token and
+throws the cache away. So this suite is not a model of production traffic —
+it is the best case, the number to measure real traffic against.
 
 So these benchmarks are two things at once: a capability test, and the
 workload that puts a real, interpretable number on the /activity dashboard.

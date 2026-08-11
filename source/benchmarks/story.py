@@ -18,10 +18,8 @@ tools:
 prompt cache nothing to hold. These resend the system prompt and the whole
 history each turn and append one new user message, so turn *n*'s prompt is a
 strict prefix extension of turn *n-1*'s. That is the shape a KV cache is
-built for, and the shape most of rainbox actually produces — the assistant's
-ReAct loop, chat, the kanban workers. Running these is therefore both a
-capability test and the workload that puts a real number on /activity's
-reusable-prefix metric.
+built for. Running these is therefore both a capability test and the workload
+that puts a real number on /activity's reusable-prefix metric.
 
 **Why the tool check is a number.** "Did it write a good section" is not
 checkable. "Did the integer the tool returned appear in the prose" is, and it
