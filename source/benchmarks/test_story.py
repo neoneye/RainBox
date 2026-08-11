@@ -34,9 +34,13 @@ GOOD_TEXT: str = "word " * GOOD_WORDS
 
 
 def good_text(seed: object = "") -> str:
-    """A valid section that differs from every other one — repeating a
-    section verbatim is itself a fault now, so fixtures must vary."""
-    return f"{GOOD_TEXT}{seed}"
+    """A valid section sharing no long run with any other.
+
+    Repeating an earlier section is a fault, and so is lifting a long passage
+    from one, so fixtures cannot differ by a suffix alone — every word varies
+    with the seed.
+    """
+    return " ".join(f"w{seed}" for _ in range(GOOD_WORDS))
 
 
 # TEMPORARY — story-prompt-experiment branch only.
@@ -491,9 +495,9 @@ class TestScoreSections:
         assert score_sections(sections) is not None
 
     def test_the_word_band_is_inclusive_at_both_ends(self):
-        assert score_sections([section(text="w " * MIN_WORDS + str(i))
+        assert score_sections([section(text=f"w{i} " * MIN_WORDS)
                                for i in range(STORY_TURNS)]) is None
-        assert score_sections([section(text="w " * (MAX_WORDS - 1) + " " + str(i))
+        assert score_sections([section(text=f"w{i} " * (MAX_WORDS - 1) + f" w{i}")
                                for i in range(STORY_TURNS)]) is None
 
     def test_a_missing_reviewer_fails_when_one_is_required(self):
@@ -539,7 +543,12 @@ class RecordingLlm:
 
     def chat(self, messages):
         self.calls.append(list(messages))
-        content = f"{self.reply} {len(self.calls)}"
+        # Stamp the turn onto every word rather than appending a suffix: a
+        # model that lifts a long passage from its last turn is now a fault, so
+        # replies must share no run at all. Length is preserved, which is what
+        # the word-band tests are reading.
+        n = len(self.calls)
+        content = " ".join(f"{w}{n}" for w in self.reply.split())
         # Behave like a compliant model: if the request handed over a number,
         # work it into the reply. Without this the fake fails story_text for a
         # reason that has nothing to do with what these tests are about.
@@ -611,9 +620,9 @@ class TestConversationShape:
         llm, _ = self._run_once(offline, monkeypatch)
         second_turn = llm.calls[1]
         assert second_turn[2].role == MessageRole.ASSISTANT
-        # The fake varies its reply per turn and echoes the number it was
-        # given; turn two must carry back exactly what turn one produced.
-        assert second_turn[2].content.startswith(f"{llm.reply} 1")
+        # The fake writes wholly different prose each turn; turn two must
+        # carry back exactly what turn one produced.
+        assert second_turn[2].content.startswith("word1 word1")
 
     def test_a_clean_run_scores_correct(self, offline, monkeypatch):
         _llm, result = self._run_once(offline, monkeypatch)
@@ -844,16 +853,16 @@ class TestDuplicateSections:
         assert section_problem(again, earlier=[first]) is not None
 
     def test_different_prose_is_not_flagged(self):
-        first = section(text=GOOD_TEXT + " the door opened")
-        second = section(text=GOOD_TEXT + " the door closed")
+        first = section(text=good_text("a") + " the door opened")
+        second = section(text=good_text("b") + " the door closed")
         assert section_problem(second, earlier=[first]) is None
 
     def test_the_first_section_cannot_duplicate_anything(self):
         assert section_problem(section(), earlier=[]) is None
 
     def test_the_trial_reason_points_at_the_repeat(self):
-        sections = [section(text=GOOD_TEXT + f" {i}") for i in range(STORY_TURNS)]
-        sections[3] = section(text=GOOD_TEXT + " 0")
+        sections = [section(text=good_text(i)) for i in range(STORY_TURNS)]
+        sections[3] = section(text=good_text(0))
         why = score_sections(sections)
         assert why is not None
         assert "section 4" in why and "identical to section 1" in why
@@ -1066,3 +1075,76 @@ class TestNumberInSystemPrompt:
                 assert not (
                     story.RANDOM_NUMBER_MIN <= int(found) <= story.RANDOM_NUMBER_MAX
                 ), f"{found} could be parroted instead of the supplied number"
+
+
+class TestCumulativeReplay:
+    """The failure the exact-duplicate check cannot see.
+
+    gemma4 on "Interview with Sarah Connor": every section reproduced all the
+    prose before it and appended one sentence. 155 → 201 → 250 → 300 → 333
+    words, and `duplicate_of` reported nothing for any of them, because no two
+    sections were byte-identical. Four of the five scored Correct; the trial
+    only failed when the fifth finally breached the word ceiling.
+    """
+
+    def test_the_longest_shared_run_is_measured_in_words(self):
+        a = "the door opened and then it closed again".split()
+        b = "yesterday the door opened and then something else".split()
+        assert story.longest_shared_run(a, b) == 5  # "the door opened and then"
+
+    def test_no_shared_run_is_zero(self):
+        assert story.longest_shared_run("alpha bravo".split(), "x y z".split()) == 0
+
+    def test_an_identical_pair_shares_everything(self):
+        words = "one two three four".split()
+        assert story.longest_shared_run(words, words) == 4
+
+    def test_a_section_that_replays_its_predecessor_is_caught(self):
+        first = section(text=GOOD_TEXT + " the door opened")
+        # Everything from section one, plus one new sentence.
+        second = section(text=GOOD_TEXT + " the door opened and then she left")
+        problem = section_problem(second, earlier=[first])
+        assert problem is not None
+        assert "section 1" in problem
+
+    def test_it_names_how_much_was_replayed(self):
+        first = section(text=GOOD_TEXT)
+        second = section(text=GOOD_TEXT + " and then she left")
+        problem = section_problem(second, earlier=[first])
+        assert str(GOOD_WORDS) in problem
+
+    def test_an_ordinary_continuation_is_not_flagged(self):
+        """Sharing a character name and some phrasing is what continuity looks
+        like — only a long contiguous run is replay."""
+        first = section(text="Sarah Connor sat across the steel table from Agent "
+                             "Krell " + "word " * GOOD_WORDS)
+        second = section(text="Sarah Connor stood and walked to the door "
+                              + "other " * GOOD_WORDS)
+        assert section_problem(second, earlier=[first]) is None
+
+    def test_a_short_shared_run_in_a_short_section_is_not_flagged(self):
+        first = section(text="alpha bravo charlie " + "word " * GOOD_WORDS)
+        second = section(text="alpha bravo charlie " + "delta " * GOOD_WORDS)
+        assert section_problem(second, earlier=[first]) is None
+
+    def test_the_heading_reports_the_replay(self):
+        first = section(text=GOOD_TEXT)
+        second = section(text=GOOD_TEXT + " and then she left")
+        assert "replay" in section_heading(2, second, earlier=[first]).lower()
+
+    def test_the_transcript_records_it(self):
+        first = section(text=GOOD_TEXT)
+        second = section(text=GOOD_TEXT + " and then she left")
+        turn = story.transcript_turn(2, "ask", second, earlier=[first])
+        assert turn["replayed_from"] == 1
+        assert turn["replayed_words"] == GOOD_WORDS
+
+    def test_a_clean_section_records_no_replay(self):
+        turn = story.transcript_turn(1, "ask", section())
+        assert turn["replayed_from"] is None
+
+    def test_an_exact_duplicate_still_reports_as_one(self):
+        """The blunter fault keeps the blunter message."""
+        first = section(text=GOOD_TEXT)
+        again = section(text=GOOD_TEXT)
+        assert "identical to section 1" in section_problem(again, earlier=[first])

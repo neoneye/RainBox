@@ -512,6 +512,72 @@ def _same_prose(a: str, b: str) -> bool:
     return " ".join(a.lower().split()) == " ".join(b.lower().split())
 
 
+# How much of a section may be a contiguous lift from an earlier one before
+# it counts as replay rather than continuity. Half is far above anything a
+# continuation produces naturally — sharing a character name and a turn of
+# phrase runs to a handful of words — and far below the wholesale reproduction
+# this exists to catch, which runs to 90%+.
+REPLAY_FRACTION: float = 0.5
+
+# And a floor in absolute terms, so a very short section can't trip the ratio
+# on an incidental phrase.
+REPLAY_MIN_WORDS: int = 20
+
+
+def _comparable_words(text: str) -> list[str]:
+    return " ".join(text.lower().split()).split()
+
+
+def _shares_run(a: list[str], b: list[str], length: int) -> bool:
+    if length <= 0:
+        return True
+    grams = {tuple(b[i : i + length]) for i in range(len(b) - length + 1)}
+    return any(
+        tuple(a[i : i + length]) in grams for i in range(len(a) - length + 1)
+    )
+
+
+def longest_shared_run(a: list[str], b: list[str]) -> int:
+    """The longest run of consecutive words the two share.
+
+    Binary search over the length, testing each candidate with a set of
+    n-grams: sharing a run of length k implies sharing one of k-1, so the
+    predicate is monotonic. Cheap enough to call per section per turn, which
+    a quadratic scan would not be.
+    """
+    lo, hi = 0, min(len(a), len(b))
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _shares_run(a, b, mid):
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def replay_of(
+    section: "SectionOutcome", earlier: list["SectionOutcome"] | None
+) -> tuple[int, int] | None:
+    """(1-based index of the section replayed, words lifted), or None.
+
+    The exact-duplicate check only sees a section that is byte-identical to an
+    earlier one. Observed on gemma4: every section reproduced all the prose
+    before it and appended a sentence, so no two were identical and four of
+    five scored Correct while the model never advanced the story.
+    """
+    words = _comparable_words(section.text)
+    if not words:
+        return None
+    worst: tuple[int, int] | None = None
+    for i, previous in enumerate(earlier or [], start=1):
+        run = longest_shared_run(words, _comparable_words(previous.text))
+        if run < REPLAY_MIN_WORDS or run < len(words) * REPLAY_FRACTION:
+            continue
+        if worst is None or run > worst[1]:
+            worst = (i, run)
+    return worst
+
+
 def duplicate_of(
     section: "SectionOutcome", earlier: list["SectionOutcome"] | None
 ) -> int | None:
@@ -542,6 +608,9 @@ def section_problem(
     repeat = duplicate_of(section, earlier)
     if repeat is not None:
         return f"identical to section {repeat}"
+    replay = replay_of(section, earlier)
+    if replay is not None:
+        return f"replays {replay[1]} words from section {replay[0]}"
     words = count_words(section.text)
     if words < MIN_WORDS or words > MAX_WORDS:
         return f"{words} words, outside {MIN_WORDS}–{MAX_WORDS}"
@@ -633,6 +702,8 @@ def transcript_turn(
         "correct": problem is None,
         "problem": problem,
         "duplicate_of": duplicate_of(section, earlier),
+        "replayed_from": (replay[0] if (replay := replay_of(section, earlier)) else None),
+        "replayed_words": (replay[1] if replay else None),
     }
     if section.given_number is not None:
         turn["given_number"] = section.given_number
