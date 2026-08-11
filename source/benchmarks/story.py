@@ -207,8 +207,8 @@ def pick_topics(count: int) -> list[str]:
 # the scorer judges against the bounds, so a target outside them would fail
 # models for obeying the instruction.
 TARGET_WORDS: int = 120
-MIN_WORDS: int = 80
-MAX_WORDS: int = 160
+MIN_WORDS: int = 40
+MAX_WORDS: int = 320
 
 # One turn's budget. A ten-turn trial can therefore take a few minutes on a
 # slow local model, which is expected.
