@@ -111,9 +111,12 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   leads the prompt — with the request buried at the bottom under a long
   profile/history, weaker models answered the surrounding context instead of
   the request — and the supporting context follows. In order: the
-  **current request** (a bare `<current_user_request>` tag, no attributes: the
-  section order carries the emphasis and the time anchor is
-  current_local_time at the end), the **response-language classification**
+  **current request** (`<current_user_request>`, bare unless it was shortened:
+  the section order carries the emphasis and the time anchor is
+  current_local_time at the end; see
+  [Long requests](#long-requests) for the shortening attributes and the
+  `<request_summary_markdown>` section that follows the request when they are
+  present), the **response-language classification**
   (a bare `<reply_language_markdown>`: the suffix states the format and the
   system prompt names the section as reference data, so neither a `format` nor
   an `authority` attribute repeats what is already said —
@@ -181,6 +184,59 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   freshly assembled profile blocks are the model-side signal). Switching the
   active profile preserves room history — it is a soft signal, never
   redaction, and not an audience boundary. See `qa-system.md`.
+
+## Long requests
+
+The request is the one prompt section whose size the operator sets directly —
+a pasted log or backtrace is a request too — and it renders into every prompt
+of every step plus the criteria, classifier, second-opinion and audit calls,
+so an uncapped paste is multiplied by the whole turn.
+
+Past `CURRENT_REQUEST_MAX_CHARS = 8000` the request travels with its **middle**
+dropped: `_truncate_middle` keeps half the budget from each end and writes the
+dropped count into the seam. Both ends, because both carry content — a pasted
+log opens with the command and closes with the failure — and the marker is in
+band rather than only in the tag's attributes because the model reads the
+section as prose, and without it a backtrace appears to step from one frame
+straight to an unrelated one. Characters, not bytes: every other cap here
+counts characters, and slicing UTF-8 by byte splits codepoints.
+
+A shortened request carries `truncated="middle"`, `original_chars` and
+`included_chars`. Those are code-owned facts, so they live in attributes; the
+description of what was dropped is model-written, so it renders as its own
+`<request_summary_markdown>` section directly after the request, with its
+authority declared in a code-owned system-prompt paragraph
+(`TRUNCATED_REQUEST_SECTION`, carried by every prompt that renders the
+request). `_append_current_user_request` is the single renderer all five
+builders call, so the cap, the attributes and the summary cannot drift apart
+between the decide loop and the calls that judge its output.
+
+The description comes from a code-driven **summary call** that runs before
+everything else on the turn — before the language classifier, whose own prompt
+carries the request. It reads at `REQUEST_SUMMARY_INPUT_MAX_CHARS = 60 000`,
+far above the prompt cap because this call exists to see what the others
+cannot; its own middle is dropped the same way past that, and its system
+prompt tells it to report the gap rather than describe what it never saw. It
+makes one structured call (`RequestSummary`: `content_type`, `summary`,
+`key_details`) on the assistant's own model group, records its own trace row
+outside the step budget, and fails open — a failed or unbound call leaves the
+turn running on the shortened request alone. Requests inside the cap skip it
+entirely: latency on the rare turn, not on all of them.
+
+The reviewer and the auditor both judge the reply against the request, so both
+are told a shortening is not itself a defect: the reply was written against the
+same shortened copy, and a part that falls in the dropped middle is not
+something it failed to cover.
+
+History messages get the same cut at a tighter
+`HISTORY_MESSAGE_MAX_CHARS = 2000` — an old message is context rather than the
+task, and a paste from an earlier turn would otherwise arrive in every prompt
+of every later turn, where no summary call will ever describe it.
+
+The path is lossy by design for now: the dropped middle is gone for the run.
+Giving the assistant tools to grep and page through the full text — turning
+"find the real exception in this log" into a program it writes rather than a
+summarization it trusts — is the next step, not part of this.
 
 ## Response-language classifier experiment
 
@@ -718,6 +774,7 @@ scripted decisions from `agents/assistant_fakes.py`. Coverage:
 `agents/test_assistant_actions.py` (read actions),
 `agents/test_assistant_writes.py` (tiers, intents, undo),
 `agents/test_assistant_control.py` (stop/redirect),
+`agents/test_assistant_long_request.py` (the middle cut, the summary call),
 `agents/test_assistant_remember_candidate.py`, `test_assistant_skills.py`,
 `test_assistant_profile.py`, `test_assistant_facts_marker.py`,
 `test_assistant_progress.py`, `test_kanban_query.py`,

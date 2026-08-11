@@ -1378,7 +1378,7 @@ def test_request_anchor_points_at_a_long_request_instead_of_quoting_it():
         scratchpad=[], step_index=0)
 
     decision = " ".join(prompt.split("<decision_request")[1].split())
-    assert "the whole current_user_request at the top of this prompt" in decision
+    assert "the current_user_request section at the top of this prompt" in decision
     assert "too long to repeat here" in decision
     assert len(decision) < len(long_request)
 

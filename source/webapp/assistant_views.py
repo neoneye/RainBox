@@ -35,6 +35,9 @@ _ACTION_DESCRIPTIONS.update({
         "determine which language(s) the reply should use"
     ),
     "reply_audit": "check the finished reply before it is sent",
+    "request_summary": (
+        "describe a request too long to fit in the prompt whole"
+    ),
 })
 # Consulted first for a `code_driven` row. `acceptance_criteria` is the one
 # action that is both: the catalog summary describes the revision the model can

@@ -90,7 +90,10 @@ The user prompt follows the same section convention as the decide prompt
 ElementTree so dynamic content cannot close or forge a section tag:
 
 1. `<current_user_request>` — the user message the program is judged
-   against (bare tag, no attributes)
+   against (bare tag unless the request was too long to travel whole; see
+   `assistant-design.md` §Long requests, which also covers the
+   `<request_summary_markdown>` section that follows it and why a shortened
+   request is never itself a ground to reject)
 2. `<acceptance_criteria_markdown>` — this turn's established reply constraints
    (present when the criteria call succeeded; see `assistant-design.md`
    §Acceptance criteria). The criteria are part of what "serves the request" means: a
