@@ -92,6 +92,35 @@ def test_create_direct_room_members(client):
             _cleanup_room(room_uuid)
 
 
+def test_agents_list_omits_the_direct_chat_responder(client):
+    """The responder is placed by the room type, never picked from a list:
+    picking it into an agents room builds a room with no responder at all."""
+    test_client, _app = client
+    resp = test_client.get("/chat/api/agents")
+    assert resp.status_code == 200
+    assert str(DIRECT_CHAT_UUID) not in {a["uuid"] for a in resp.get_json()}
+
+
+def test_create_agents_room_rejects_the_direct_chat_responder(client):
+    test_client, _app = client
+    resp = test_client.post(
+        "/chat/api/rooms",
+        json={"name": f"mistyped-{uuid4().hex[:6]}", "room_type": "agents",
+              "member_uuids": [str(DIRECT_CHAT_UUID)]},
+    )
+    assert resp.status_code == 400
+
+
+def test_add_member_rejects_the_direct_chat_responder(client, agents_room):
+    test_client, _app = client
+    room_uuid, _human = agents_room
+    resp = test_client.post(
+        f"/chat/api/rooms/{room_uuid}/members",
+        json={"user_uuid": str(DIRECT_CHAT_UUID)},
+    )
+    assert resp.status_code == 400
+
+
 def test_create_room_rejects_bad_room_type(client):
     test_client, _app = client
     resp = test_client.post(

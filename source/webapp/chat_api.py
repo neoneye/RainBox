@@ -123,6 +123,12 @@ def chat_rooms() -> Response | tuple[Response, int]:
             member_uuids = [DIRECT_CHAT_UUID]
         else:
             member_uuids = [_parse_uuid(raw) for raw in data.get("member_uuids", [])]
+            # The responder belongs to the room *type*, not to a member list:
+            # an agents room built around it answers nothing, since only direct
+            # rooms enqueue it. The picker doesn't offer it; refuse it here too.
+            if DIRECT_CHAT_UUID in member_uuids:
+                abort(400, "the direct-chat responder cannot be a member of an "
+                           "agents room; create the room with room_type='direct'")
         room = db.create_chatroom(name, human.uuid, member_uuids, room_type=room_type)
         # A create is a tree mutation, so it hands back the fresh tree version —
         # without it the client's next drag 409s (docs/ui-tree-persistence.md).
@@ -253,6 +259,11 @@ def chat_room_members(room_uuid: str) -> Response:
         uuser = _parse_uuid(raw)
         if db.get_chat_user(uuser) is None:
             abort(404, "user not found")
+        # Same rule as room creation: the direct-chat responder is placed by
+        # the room type at creation and is not a member anyone adds.
+        if uuser == DIRECT_CHAT_UUID:
+            abort(400, "the direct-chat responder is a fixture of direct rooms, "
+                       "not a member to add")
         added = db.add_room_member(ruuid, uuser)
         return jsonify(
             {"room_uuid": str(ruuid), "user_uuid": str(uuser), "added": added}
@@ -281,9 +292,14 @@ def remove_chat_room_member(room_uuid: str, user_uuid: str) -> Response:
 
 @app.route("/chat/api/agents")
 def chat_agents() -> Response:
-    """Agent users selectable as members when creating a room."""
+    """Agent users selectable as members — when creating a room, and in the
+    Members sidebar. The direct-chat responder is left out: a direct room gets
+    it automatically and an agents room must not have it (nothing enqueues it
+    there, so the room would sit silent and its Settings sidebar would offer
+    the persona picker instead of the model and system prompt)."""
     return jsonify(
-        [{"uuid": str(u.uuid), "name": u.name} for u in db.list_agent_chat_users()]
+        [{"uuid": str(u.uuid), "name": u.name}
+         for u in db.list_agent_chat_users() if u.uuid != DIRECT_CHAT_UUID]
     )
 
 

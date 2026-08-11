@@ -166,6 +166,39 @@ def _backfill_chatroom_positions() -> None:
     db.session.commit()
 
 
+def _retype_direct_chat_only_rooms() -> None:
+    """One-time repair: a room whose only agent member is the direct-chat
+    responder IS a direct room, so type it as one.
+
+    The /chat member picker used to offer that responder, so an operator could
+    build an `agents` room around it — a room that answers nothing (the
+    responder is enqueued for direct rooms only) and whose Settings sidebar
+    offers the persona picker instead of the model and system prompt it needs.
+    The picker no longer offers it and the API refuses it, so nothing re-creates
+    the state; this repairs the rooms made before that.
+
+    A room that also holds real responders keeps its type: there the direct-chat
+    member is an inert extra the operator can remove in Members, and retyping
+    would strand the responders that room was built for. Idempotent — after it
+    runs, no agents room matches."""
+    from agents.config import DIRECT_CHAT_UUID
+    db.session.execute(
+        sa.text(
+            "UPDATE chatroom SET room_type = 'direct' "
+            "WHERE room_type = 'agents' AND uuid IN ("
+            "  SELECT m.room_uuid FROM chatroom_member m"
+            "  JOIN chat_user u ON u.uuid = m.user_uuid"
+            "  WHERE u.user_type <> 'human'"
+            "  GROUP BY m.room_uuid"
+            "  HAVING COUNT(*) = 1"
+            "     AND BOOL_AND(m.user_uuid = CAST(:direct AS uuid))"
+            ")"
+        ),
+        {"direct": str(DIRECT_CHAT_UUID)},
+    )
+    db.session.commit()
+
+
 def _backfill_code_driven_steps() -> None:
     """One-time: flag the code-driven step rows written before the column
     existed, so historical runs stop rendering a synthesized decision in place
@@ -451,6 +484,7 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("chatroom", "position",
                                "position INTEGER NOT NULL DEFAULT 0")
         _backfill_chatroom_positions()
+        _retype_direct_chat_only_rooms()
         # The write-intent → producing-step identity pointer (the sole step
         # reference). Additive nullable column on DBs that predate it; fresh DBs
         # get the FK via create_all.

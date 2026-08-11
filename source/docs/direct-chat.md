@@ -23,6 +23,19 @@ submitted `member_uuids` are ignored. Everything else about the room —
 folder placement, renaming, deletion, the left-panel tree — is shared with
 agents rooms.
 
+The responder goes with the room *type*, never with a member list, and the
+API holds that line at every door: `GET /chat/api/agents` (the source for both
+the create-room picker and the Members sidebar) omits it, and both
+`POST /chat/api/rooms` with `room_type: "agents"` and
+`POST /chat/api/rooms/<uuid>/members` reject it with a 400. An agents room
+built around it would answer nothing — only a direct room enqueues it, and
+`DirectChatAgent.handle()` refuses a room of another type — while its Settings
+sidebar, which branches on `room_type`, would offer the persona picker instead
+of the model and system prompt the room actually needs. Rooms made that way
+before the doors were closed are repaired once at startup by
+`db._retype_direct_chat_only_rooms()`: an agents room whose only agent member
+is the responder becomes a direct room.
+
 ## A turn, end to end
 
 1. The operator posts. `POST /chat/api/rooms/<uuid>/messages` stores the row,
