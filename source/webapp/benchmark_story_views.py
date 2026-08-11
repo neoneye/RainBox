@@ -18,9 +18,11 @@ from .core import app, story_benchmark_runner
 
 STORY_BENCHMARK_DESCRIPTIONS: dict[str, str] = {
     "story_text": (
-        "Five turns of plain text. Each turn asks for the next short section, "
-        "resending the whole conversation. Correct iff all five sections "
-        "arrive within the word band."
+        "Five turns of plain text. Each request carries a random number the "
+        "model must work into that section, so the output has the same shape "
+        "as the tool variants and the two differ only in how the number "
+        "arrived — handed over here, fetched there. Correct iff every section "
+        "is within the word band and contains its number as digits."
     ),
     "story_struct": (
         "Same five turns, structured output: `section_text` (the piece) plus "

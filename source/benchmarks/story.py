@@ -430,6 +430,20 @@ def tool_user_message(turn: int) -> str:
 FIRST_USER_MESSAGE: str = "Write first section"
 NEXT_USER_MESSAGE: str = "Write next section"
 
+# story_text: the number arrives in the request rather than from a tool, so
+# the two text variants produce the same shape of output and differ only in
+# how the model got hold of the number.
+STORY_TEXT_USER_PROMPT = """\
+{request}
+Insert the number {number} into the section, written as digit characters, at least once.
+"""
+
+
+def story_text_user_message(turn: int, number: int) -> str:
+    request = FIRST_USER_MESSAGE if turn == 0 else NEXT_USER_MESSAGE
+    return STORY_TEXT_USER_PROMPT.format(request=request, number=number)
+
+
 def _first_user_message() -> str:
     return FIRST_USER_MESSAGE
 
@@ -463,12 +477,22 @@ class SectionOutcome:
     reviewer: str | None = None
     tool_numbers: list[int] = field(default_factory=list)
     tool_calls: int = 0
+    # The number handed to the model in the user prompt, for variants that
+    # supply one instead of making the model fetch it. Kept separate from
+    # tool_numbers so a section never looks like it called a tool it hasn't.
+    given_number: int | None = None
 
     @property
     def tool_number(self) -> int | None:
         """The number the section was supposed to use — the first, when the
         model behaved and called once."""
         return self.tool_numbers[0] if self.tool_numbers else None
+
+    @property
+    def required_number(self) -> int | None:
+        """The number this section had to contain, however it arrived: handed
+        over in the prompt, or fetched from the tool."""
+        return self.given_number if self.given_number is not None else self.tool_number
 
 
 @dataclass
@@ -594,6 +618,11 @@ def section_problem(
                 f"reviewer {reviewer_words} words, outside "
                 f"{MIN_REVIEWER_WORDS}\u2013{MAX_REVIEWER_WORDS}"
             )
+    # A section handed a number in its request has to contain it. No flag
+    # needed: being given one is the whole condition.
+    if section.given_number is not None:
+        if count_number_occurrences(section.text, section.given_number) == 0:
+            return f"number {section.given_number} not found in the text"
     if require_tool:
         # Exactly one call per section, and that is the whole test. Whether
         # the model then wove the digits into its prose is recorded on the
@@ -668,6 +697,11 @@ def transcript_turn(
         "problem": problem,
         "duplicate_of": duplicate_of(section, earlier),
     }
+    if section.given_number is not None:
+        turn["given_number"] = section.given_number
+        turn["number_occurrences"] = count_number_occurrences(
+            section.text, section.given_number
+        )
     if require_tool or section.tool_calls:
         turn["tool_calls"] = section.tool_calls
         turn["tool_numbers"] = list(section.tool_numbers)
@@ -695,12 +729,19 @@ def section_heading(
     returned, and whether the model used it.
     """
     parts = [f"## Section {index}"]
-    if require_tool or section.tool_calls:
+    if section.given_number is not None:
+        occurrences = count_number_occurrences(section.text, section.given_number)
+        parts.append(
+            f"(number {section.given_number}, {_occurrence_phrase(occurrences)})"
+        )
+    elif require_tool or section.tool_calls:
         parts.append(f"({tool_note(section)})")
     problem = section_problem(section, require_reviewer, require_tool, earlier)
     if problem is None:
         parts.append("- Correct")
-    elif problem.startswith("random_number") and len(parts) > 1:
+    elif (
+        problem.startswith(("random_number", "number ")) and len(parts) > 1
+    ):
         # The note already spelled this out; repeating it reads as noise.
         parts.append("- Wrong")
     else:
@@ -782,6 +823,10 @@ class _StoryBenchmarkBase:
 
     name: str = "story"
     require_reviewer: bool = False
+    # The prompt hands the model a number to insert, rather than making it
+    # fetch one. Same output shape as the tool variants, so the two are
+    # comparable and differ only in how the number arrived.
+    require_number: bool = False
     require_tool: bool = False
 
     def __init__(self, target_uuid: UUID, num_trials: int = 3):
@@ -793,16 +838,18 @@ class _StoryBenchmarkBase:
     def _system_prompt(self, topic: str) -> str:
         raise NotImplementedError
 
-    def user_message(self, turn: int) -> str:
-        """What the model is asked for on this turn — nothing but that.
+    def user_message(self, turn: int, number: int | None = None) -> str:
+        """What the model is asked for on this turn.
 
-        Non-tool variants say only that another section is wanted. Tool
-        variants carry the per-request transaction block, which restates the
-        state machine where the model reads last and gives the request a word
-        id so nothing numeric can be mistaken for a tool result.
+        Tool variants carry the per-request transaction block, which restates
+        the state machine where the model reads last. Variants that hand the
+        number over carry it here. The rest say only that another section is
+        wanted.
         """
         if self.require_tool:
             return tool_user_message(turn)
+        if self.require_number and number is not None:
+            return story_text_user_message(turn, number)
         return _first_user_message() if turn == 0 else _next_user_message(turn)
 
     def _take_turn(
@@ -905,7 +952,12 @@ class _StoryBenchmarkBase:
                 for turn in range(STORY_TURNS):
                     if should_stop is not None and should_stop():
                         break
-                    user_msg = self.user_message(turn)
+                    given = (
+                        random.randint(RANDOM_NUMBER_MIN, RANDOM_NUMBER_MAX)
+                        if self.require_number
+                        else None
+                    )
+                    user_msg = self.user_message(turn, given)
                     asked.append(user_msg)
                     # Attribute the call on /activity. Benchmarks build their
                     # LLM directly rather than through the agent base class, so
@@ -914,6 +966,7 @@ class _StoryBenchmarkBase:
                     # the box was doing at the time.
                     with instrument_tags({"caller": f"benchmark.{self.name}"}):
                         outcome = self._take_turn(ctx, history, user_msg, topic)
+                    outcome.given_number = given
                     sections.append(outcome)
                     history.append(
                         ChatMessage(role=MessageRole.USER, content=user_msg)
@@ -992,6 +1045,7 @@ class BenchmarkStoryText(_StoryBenchmarkBase):
     whether the model can hold a story together across a growing history."""
 
     name = "story_text"
+    require_number = True
 
     def _system_prompt(self, topic: str) -> str:
         return system_prompt_text(topic)

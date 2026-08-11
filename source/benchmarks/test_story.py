@@ -540,6 +540,12 @@ class RecordingLlm:
     def chat(self, messages):
         self.calls.append(list(messages))
         content = f"{self.reply} {len(self.calls)}"
+        # Behave like a compliant model: if the request handed over a number,
+        # work it into the reply. Without this the fake fails story_text for a
+        # reason that has nothing to do with what these tests are about.
+        asked = re.search(r"Insert the number (\d+)", messages[-1].content or "")
+        if asked:
+            content = f"{content} {asked.group(1)}"
         return SimpleNamespace(
             message=SimpleNamespace(content=content), raw=None
         )
@@ -605,9 +611,9 @@ class TestConversationShape:
         llm, _ = self._run_once(offline, monkeypatch)
         second_turn = llm.calls[1]
         assert second_turn[2].role == MessageRole.ASSISTANT
-        # The fake varies its reply per turn; turn two must carry back exactly
-        # what turn one produced.
-        assert second_turn[2].content == f"{llm.reply} 1"
+        # The fake varies its reply per turn and echoes the number it was
+        # given; turn two must carry back exactly what turn one produced.
+        assert second_turn[2].content.startswith(f"{llm.reply} 1")
 
     def test_a_clean_run_scores_correct(self, offline, monkeypatch):
         _llm, result = self._run_once(offline, monkeypatch)
@@ -949,3 +955,57 @@ class TestReviewerLength:
         """A long critique must not push the story text out of its band."""
         s = section(text=GOOD_TEXT, reviewer="word " * story.ASK_MAX_REVIEWER_WORDS)
         assert section_problem(s, require_reviewer=True) is None
+
+
+class TestGivenNumber:
+    """story_text hands the number over in the request instead of making the
+    model fetch it. Same output shape as the tool variants, so the two are
+    comparable and differ only in how the model got hold of the number.
+    """
+
+    def test_the_request_carries_the_number(self):
+        bench = story.BenchmarkStoryText(uuid4(), num_trials=1)
+        assert "4242" in bench.user_message(0, 4242)
+
+    def test_a_section_containing_it_passes(self):
+        s = section(text=GOOD_TEXT + " 4242")
+        s.given_number = 4242
+        assert section_problem(s) is None
+
+    def test_a_section_missing_it_fails(self):
+        s = section(text=GOOD_TEXT)
+        s.given_number = 4242
+        problem = section_problem(s)
+        assert problem is not None
+        assert "4242" in problem
+
+    def test_the_heading_reports_it(self):
+        s = section(text=GOOD_TEXT + " 4242")
+        s.given_number = 4242
+        assert "(number 4242, found once in the text)" in section_heading(1, s)
+
+    def test_the_transcript_records_it(self):
+        s = section(text=GOOD_TEXT + " 4242")
+        s.given_number = 4242
+        turn = story.transcript_turn(1, "ask", s)
+        assert turn["given_number"] == 4242
+        assert turn["number_occurrences"] == 1
+
+    def test_a_variant_without_one_is_unaffected(self):
+        """The tool variants and story_struct hand over nothing, and must not
+        suddenly acquire a number requirement."""
+        turn = story.transcript_turn(1, "ask", section())
+        assert "given_number" not in turn
+        assert section_problem(section()) is None
+
+    def test_every_turn_gets_a_fresh_number(self, offline, monkeypatch):
+        monkeypatch.setattr(story, "prepare_llm", lambda *_a, **_k: RecordingLlm())
+        trial = story.BenchmarkStoryText(uuid4(), num_trials=1).run().trials[0]
+        given = [s.given_number for s in trial.sections]
+        assert all(n is not None for n in given)
+        assert len(set(given)) == STORY_TURNS
+
+    def test_a_compliant_run_is_correct(self, offline, monkeypatch):
+        monkeypatch.setattr(story, "prepare_llm", lambda *_a, **_k: RecordingLlm())
+        result = story.BenchmarkStoryText(uuid4(), num_trials=1).run()
+        assert result.correct == 1
