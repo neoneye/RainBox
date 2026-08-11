@@ -544,11 +544,28 @@ function scrollLogToBottom(){
   requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
 }
 
-// Insert a message node, or replace it in place if its id is already shown.
+// Insert a message node, or update it in place if its id is already shown.
 // Used for live streaming updates (the same row's text grows over time).
+//
+// A streaming row re-arrives about every 150 milliseconds (the writer's flush
+// throttle, chat/streaming.py) with nothing new but text, so the cheap-looking
+// "rebuild the node" costs more than it looks: it destroys the very button the
+// operator is pressing. A click only fires when its mousedown and its mouseup
+// land on the SAME element, so every press that straddles a flush is swallowed
+// — which is why "Expand to view thoughts" did nothing until the model stopped
+// thinking. So while a row streams and its shape is unchanged, refresh the text
+// alone: the buttons, their listeners, and any text the operator selected all
+// survive. Only streaming rows take that path — a settled row is rebuilt, which
+// is what discards the edit textarea startEditMessage leaves in the node.
 function upsertMessage(m){
   const existing = log.querySelector('[data-message-id="' + m.id + '"]');
   const pinned = isNearBottom();
+  if (existing && m.streaming && existing.dataset.renderKey === messageRenderKey(m)){
+    existing._row = m;  // what the copy button reads, so it copies live text
+    fillMessageBody(existing.querySelector('.msg-text'), m);
+    if (pinned) log.scrollTop = log.scrollHeight;
+    return;
+  }
   const node = makeMessage(m);
   if (existing){
     existing.replaceWith(node);
@@ -739,13 +756,16 @@ function prettyPrintJsonBlocks(rootEl){
 // into a container (typically the .msg-actions row) rather than the
 // .msg directly so the copy + feedback buttons share one parent and one
 // margin-top.
+// `source` is the text to copy, or a function returning it — a getter for
+// callers whose text changes after the button is built (a streaming row).
 function addCopyButton(container, source){
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'copy-btn';
   btn.title = 'Copy';
   btn.innerHTML = LUCIDE_COPY_SVG;
-  btn.addEventListener('click', () => copyText(source, btn));
+  btn.addEventListener('click',
+    () => copyText(typeof source === 'function' ? source() : source, btn));
   container.appendChild(btn);
 }
 
@@ -940,6 +960,37 @@ async function proposalAct(wrap, url, cap, stepLink) {
   }
 }
 
+// The shape a row's DOM was built for. Two rows of the same id with the same
+// key differ in text only, which upsertMessage can refresh in place; anything
+// here changing needs a rebuilt node. `kind` decides the badge and whether the
+// row collapses, `content_type` decides the body's markup, and settling out of
+// `streaming` is what earns a row its edit / delete / feedback / retry
+// affordances.
+function messageRenderKey(m){
+  return [m.kind || 'message', m.content_type || 'markdown',
+          m.streaming ? 'live' : 'settled'].join('|');
+}
+
+// Render a message's text into its body element: a JSON code block for
+// content_type 'json' (textContent, never innerHTML, keeps it safe), markdown
+// otherwise. Split out of makeMessage so a streaming update can refresh the
+// text without touching anything else in the row.
+function fillMessageBody(body, m){
+  if (m.content_type === 'json'){
+    // debug-assistant rows are content_type:json — the full step state,
+    // inspected as JSON (no markdown rendering to hide anything).
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.textContent = prettyJson(m.text);
+    highlightJson(code);
+    pre.appendChild(code);
+    body.replaceChildren(pre);
+  } else {
+    body.innerHTML = renderMarkdown(m.text);
+    prettyPrintJsonBlocks(body);
+  }
+}
+
 function makeMessage(m){
   const msg = document.createElement('div');
   // Anything other than a real "message" (e.g. the router's "debug-router"
@@ -955,8 +1006,12 @@ function makeMessage(m){
   // A row still streaming gets a live cursor (CSS) and no feedback buttons yet.
   if (m.streaming) msg.classList.add('msg-streaming');
   // Tag the DOM node with its message id so the SSE handler can remove it
-  // when the server reports it was deleted (used for progress rows).
+  // when the server reports it was deleted (used for progress rows), and with
+  // the shape it was built for so a streaming update knows whether it can
+  // refresh the text in place. `_row` is the newest row the node is showing.
   msg.dataset.messageId = String(m.id);
+  msg.dataset.renderKey = messageRenderKey(m);
+  msg._row = m;
 
   const head = document.createElement('div');
   head.className = 'msg-head';
@@ -981,20 +1036,7 @@ function makeMessage(m){
 
   const body = document.createElement('div');
   body.className = 'msg-text';
-  if (m.content_type === 'json'){
-    // Render JSON in a code block. textContent (not innerHTML) keeps it safe.
-    // debug-assistant rows are content_type:json — the full step state, inspected
-    // as JSON (no markdown rendering to hide anything).
-    const pre = document.createElement('pre');
-    const code = document.createElement('code');
-    code.textContent = prettyJson(m.text);
-    highlightJson(code);
-    pre.appendChild(code);
-    body.appendChild(pre);
-  } else {
-    body.innerHTML = renderMarkdown(m.text);
-    prettyPrintJsonBlocks(body);
-  }
+  fillMessageBody(body, m);
 
   msg.appendChild(head);
   // Collapsible rows (thinking / debug-*) are collapsed by default. A toggle
@@ -1023,8 +1065,10 @@ function makeMessage(m){
   const actions = document.createElement('div');
   actions.className = 'msg-actions';
   // Copy = the message's stored text, uniformly for every row (debug-assistant
-  // text is now the full trace, so no per-kind special-casing).
-  addCopyButton(actions, m.text);
+  // text is now the full trace, so no per-kind special-casing). Read through
+  // the node rather than closing over this render's text: a streaming row is
+  // refreshed in place, so `m` here goes stale while `_row` stays current.
+  addCopyButton(actions, () => (msg._row || m).text);
   // Edit (pencil) + delete (trash): direct rooms only — the operator can
   // rewrite or remove their own and the model's earlier turns. Agent rooms
   // never show them (the server refuses too). Editing applies to real

@@ -233,6 +233,25 @@ def test_sse_events_never_rebuild_the_room_tree():
     assert "deferredUnreadRender" not in body
 
 
+def test_streaming_rows_are_patched_not_rebuilt():
+    """The same trap as the room tree, one level down: a streaming row is
+    re-sent every ~150ms, and rebuilding its node destroyed the button under
+    the operator's finger — a click needs mousedown and mouseup on ONE element,
+    so "Expand to view thoughts" did nothing until the model stopped thinking.
+    Only the text changes between flushes, so only the text is refreshed."""
+    body = _body()
+    assert "function messageRenderKey" in body
+    assert "function fillMessageBody" in body
+    assert ("if (existing && m.streaming && "
+            "existing.dataset.renderKey === messageRenderKey(m)){") in body
+    assert "fillMessageBody(existing.querySelector('.msg-text'), m);" in body
+    # A settled row still rebuilds — that is what clears the edit textarea.
+    assert "existing.replaceWith(node);" in body
+    # The copy button reads the row through the node, so a patched row doesn't
+    # leave it copying the text this render happened to close over.
+    assert "addCopyButton(actions, () => (msg._row || m).text);" in body
+
+
 def test_live_messages_do_not_move_a_reader_who_scrolled_back():
     """Arriving rows used to yank the log to the bottom, resetting anyone
     reading older history. Following the tail is now conditional on already
