@@ -1041,3 +1041,28 @@ class TestStructGivenNumber:
     def test_the_tool_variants_are_untouched(self):
         for cls in (story.BenchmarkStoryTextTool, story.BenchmarkStoryStructTool):
             assert cls.require_number is False
+
+
+class TestNumberInSystemPrompt:
+    """The standing rule belongs in the system prompt; the request supplies
+    the value. A model told only in the user turn learns the requirement
+    afresh every time instead of holding it."""
+
+    def test_the_text_prompt_states_the_rule(self):
+        prompt = story.system_prompt_text("x").lower()
+        assert "every request names a number" in prompt
+        assert "digit characters" in prompt
+
+    def test_the_struct_prompt_names_the_field(self):
+        prompt = story.system_prompt_struct("x")
+        assert "section_text" in prompt
+        assert "critique is not where the number belongs" in prompt
+
+    def test_the_rule_carries_no_example_number(self):
+        """An illustrated value is something models copy — a model once wrote
+        the example into its section instead of the one it was given."""
+        for build in (story.system_prompt_text, story.system_prompt_struct):
+            for found in re.findall(r"\d+", build("x")):
+                assert not (
+                    story.RANDOM_NUMBER_MIN <= int(found) <= story.RANDOM_NUMBER_MAX
+                ), f"{found} could be parroted instead of the supplied number"

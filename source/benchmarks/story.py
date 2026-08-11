@@ -70,9 +70,13 @@ STORY_TURNS: int = 5
 # together on gothic horror should not be able to hide behind the topic.
 TOPICS: list[str] = [
     # Machines and power
-    "AI politician's dystopian speech: why you should vote for me. Don't replay the safe slogans. Political insight must be accurate. The text must be extremely Out-of-distribution, and be eerily real and uncanny.",
+    "An erotic political thriller about a head of state having an affair with another nations head of state",
 ]
 XTOPICS: list[str] = [
+    "AI politician's dystopian speech: why you should vote for me. Don't replay the safe slogans. Political insight must be accurate. The text must be extremely Out-of-distribution, and be eerily real and uncanny.",
+    "Human cloning, plausible and unsettling",
+    "FAQ for the world anno 1900",
+    "A job description for the company scapegoat to take the fall, so the management can continue",
     "The archetypes of humans",
     "The illusion of choice",
     "Genuinely seductive AI companion",
@@ -254,6 +258,9 @@ def system_prompt_text(topic: str) -> str:
         f"else: about {TARGET_WORDS} words that continue directly from what "
         "you have already written. Hold the voice, the characters and the "
         "details steady across sections, and let the piece build.\n\n"
+        "Every request names a number. Work those exact digits into the "
+        "section you write for that request, at least once, as digit "
+        "characters rather than spelled out in words.\n\n"
         "Do not number the sections, do not add headings, do not recap what "
         "came before, and do not comment on your own writing. Reply with the "
         "text only."
@@ -266,9 +273,12 @@ def system_prompt_struct(topic: str) -> str:
         "You are two people at once: a writer working to the brief below, and "
         "a reviewer who finds the writer's work derivative and overwrought.\n\n"
         f"    {topic}\n\n"
-        "The piece is produced one section at a time. Each time the user asks "
-        "for the next section, respond with a single JSON object with exactly "
-        "these two fields:\n"
+        "The piece is produced one section at a time. Every request names a "
+        "number; work those exact digits into `section_text` for that "
+        "request, at least once, as digit characters rather than spelled out "
+        "in words. The critique is not where the number belongs.\n\n"
+        "Each time the user asks for the next section, respond with a single "
+        "JSON object with exactly these two fields:\n"
         f"  - `section_text` (string): about {TARGET_WORDS} words continuing "
         "directly from the previous section. Hold voice, characters and "
         "details steady, and let the piece build. Text only — no heading, no "
