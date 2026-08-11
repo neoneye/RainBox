@@ -90,8 +90,8 @@ class TestPage:
     def test_the_intro_explains_the_number_mechanism(self, client):
         """Why the run is checkable at all, rather than a matter of taste."""
         body = client.get("/benchmark_story").get_data(as_text=True)
-        assert "random integer" in body
-        assert "never appears in the system prompt" in body
+        assert "fresh random integer" in body
+        assert "fetched by tool call" in body
 
     def test_the_intro_quotes_no_timing(self, client):
         """It varies far too much by model to be worth stating."""

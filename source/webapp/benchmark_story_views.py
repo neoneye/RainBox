@@ -18,65 +18,36 @@ from .core import app, story_benchmark_runner
 
 STORY_BENCHMARK_DESCRIPTIONS: dict[str, str] = {
     "story_text": (
-        "Plain text. The request hands the model a fresh random number and it "
-        "must appear in that section, as digits. Correct iff every section is "
-        "within the word band, contains its number, and is not a copy of an "
-        "earlier one."
+        "Plain text. The request supplies a random number that must appear in "
+        "the section as digits. Correct iff every section is in the word band, "
+        "contains its number, and repeats no earlier section."
     ),
     "story_struct": (
-        "Structured output: `section_text` (the piece) plus `section_reviewer`, "
-        "a brutally harsh critique of that same section. The request hands over "
-        "the number and it belongs in `section_text`, not in the critique. "
-        "Correct iff both fields are within their own word bands and every "
-        "section contains its number."
+        "Structured output: `section_text` plus `section_reviewer`, a harsh "
+        "critique of it. The number belongs in `section_text`, not the "
+        "critique. Each field has its own word band."
     ),
     "story_text_tool": (
-        "Plain text, but the model has to fetch the number rather than being "
-        "given it: before each section it must call `random_number` exactly "
-        "once and work the returned integer into the prose. Correct iff every "
-        "section made exactly one call and contains its number. Identical to "
-        "story_text apart from where the number comes from, so the gap between "
-        "their scores isolates tool calling. Requires a function-calling "
-        "target."
+        "Same as story_text, except the model must call `random_number` "
+        "exactly once per section to obtain the number instead of being given "
+        "it. The gap between the two scores is the cost of the tool call. "
+        "Requires a function-calling target."
     ),
     "story_struct_tool": (
-        "The crossover: fetch the number by tool call AND return the two-field "
-        "object, on every one of the five turns. Usually the hardest of the "
-        "four for a local model, and the one where a model that manages either "
-        "task alone can still come apart doing both."
+        "The crossover: tool call and structured output on every turn. "
+        "Usually the hardest of the four for a local model."
     ),
 }
 
 STORY_INTRO = (
-    "A workload built to exercise the prompt cache. Every turn resends the "
-    "system prompt and the whole conversation so far and appends one new "
-    "message, so each prompt is a strict prefix extension of the last — the "
-    "shape a KV cache is built for. One-shot benchmarks give a cache nothing "
-    "to hold; five-turn conversations give it everything. "
-    "Run a target here, then read the reusable-prefix rate on /activity: that "
-    "number is only meaningful against a workload that should reuse almost "
-    "everything, and this is that workload. "
-    "\n\n"
-    "Each section also has to carry a fresh random integer, which is what "
-    "makes the run checkable at all. \"Did it write a good section\" is a "
-    "matter of taste; \"do the digits the model was handed appear in the "
-    "section it then wrote\" is not. The number is generated per turn, never "
-    "appears in the system prompt, and differs every section — so it cannot be "
-    "satisfied from memory, by copying an example, or by reusing an earlier "
-    "one. Two of the benchmarks hand the number over in the request; the other "
-    "two make the model call a tool to get it. Everything else about them is "
-    "the same, so the difference between their scores is the cost of the tool "
-    "call and nothing else. "
-    "\n\n"
-    "Three trials each, each on a different brief. A section is also failed "
-    "for running far outside the word band or for reproducing an earlier "
-    "section verbatim — a model that stops advancing and replays itself is a "
-    "thing worth catching, not a clean run. "
-    "Hover a Copy button to see which brief it holds; click to put the piece "
-    "on the clipboard, or take the json for the full exchange: system prompt, "
-    "every request and response, and what the number did on each turn. Every "
-    "section heading carries its own verdict, so a failed trial can be read "
-    "rather than re-run."
+    "Five-turn conversations built to exercise the prompt cache: every turn "
+    "resends the system prompt and the whole history, so each prompt is a "
+    "strict prefix extension of the last. Read the reusable-prefix rate on "
+    "/activity after a run. Every section must carry a fresh random integer — "
+    "supplied in the request, or fetched by tool call — which is what makes "
+    "the output checkable rather than a matter of taste. Three trials each, on "
+    "a different brief. Copy a trial for the piece, or take the json for the "
+    "full exchange; every section heading carries its own verdict."
 )
 
 
