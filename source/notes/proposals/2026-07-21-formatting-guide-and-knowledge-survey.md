@@ -3,7 +3,7 @@
 **Status (2026-07-22): Phases 0–2 implemented and merged — code, UI, tests,
 the live eval harness (`evals/profile_guidance.py`), and the executable
 release gate (`evals/profile_gate.py`). Phase 3 is tooled but not run: the
-operator-facing runbook is `docs/profile-guidance.md` (seed cases → four
+operator-facing runbook is `notes/profile-guidance.md` (seed cases → four
 variants → gate → flip the default-off switches); no gate verdict exists
 yet. Phase 4 (chat-agent parity) is not started, and the declarative-forms
 follow-up proposal is not yet written. See "Implementation status" below for
@@ -88,16 +88,16 @@ declining what is stored.
 ## Implementation status
 
 **Phases 0–2 are implemented.** The current-state documentation lives in
-`docs/profile-guidance.md` (feature overview + the verification/enablement
-runbook), `docs/profile-design.md`, `docs/assistant-design.md`,
-`docs/settings-design.md`, and `docs/eval-loop.md`.
+`notes/profile-guidance.md` (feature overview + the verification/enablement
+runbook), `notes/profile-design.md`, `notes/assistant-design.md`,
+`notes/settings-design.md`, and `notes/eval-loop.md`.
 
 | Work | Status | Result |
 |---|---|---|
 | Phase 0 — live baseline harness | **Implemented** | `evals/profile_guidance.py`: seeded versioned case inventory, four variants, three repetitions at production sampling, per-repetition records for the gate. |
 | Phase 1 — formatting guide | **Implemented** | `user_profile/formatting.py` + `number_format`, injected behind `assistant.formatting_guide` (default off). |
 | Phase 2 — knowledge calibration | **Implemented** | `db/profile_calibration.py` storage/API, `/profile` fieldset editor, `user_profile/calibration.py` renderer with the degrade-then-drop ladder, behind `assistant.knowledge_calibration` (default off). |
-| Phase 3 — measure and decide | **Tooled, not run** | The gate (`evals/profile_gate.py`) enforces the Resolved-decisions contract and records a durable `profile-gate` verdict; no verdict has been produced yet. Runbook: `docs/profile-guidance.md` §4–5. |
+| Phase 3 — measure and decide | **Tooled, not run** | The gate (`evals/profile_gate.py`) enforces the Resolved-decisions contract and records a durable `profile-gate` verdict; no verdict has been produced yet. Runbook: `notes/profile-guidance.md` §4–5. |
 | Phase 4 — chat-agent parity | **Not started** | `agents/chat_context.py` still injects no identity/formatting/calibration; gated on a positive Phase 3 result. |
 | Declarative-forms follow-up | **Needs its own proposal** | Not yet written. Schema/migration plan and completed disclosure review. |
 
@@ -133,7 +133,7 @@ Expected implementation surface:
 - Phase 1: `profile_fields.py`, `data/profile_templates.json`,
   `static/profile.js`, new `user_profile/formatting.py`, exports in
   `user_profile/__init__.py`, `db/settings.py`, `webapp/settings_views.py`,
-  `agents/assistant.py`, `docs/operator-guide.md`, and their tests (including
+  `agents/assistant.py`, `notes/operator-guide.md`, and their tests (including
   the existing marker suite, generalized from facts to profile context);
 - Phase 2: shared mutation logic in `db/profile.py`, new
   `db/profile_calibration.py`, exports in `db/__init__.py`,
@@ -1286,6 +1286,6 @@ These are experiments, not commitments:
   the memory-derived `<operator_profile>` digest.
 - [`2026-07-07-operator-profiles-and-working-context.md`](2026-07-07-operator-profiles-and-working-context.md)
   — the proposed audience lens; explicitly not an authorization boundary.
-- `docs/profile-design.md` and `docs/assistant-design.md` — current storage and
+- `notes/profile-design.md` and `notes/assistant-design.md` — current storage and
   prompt assembly.
-- `docs/eval-loop.md` — the measurement path.
+- `notes/eval-loop.md` — the measurement path.

@@ -145,7 +145,7 @@ def test_export_sidebar():
 
 def test_room_rename_goes_through_confirm_modal():
     """The room title is a click-to-rename control; renaming happens in a
-    modal (docs/ui-modal-rename.md), so a typed-but-unconfirmed name can't be
+    modal (notes/ui-modal-rename.md), so a typed-but-unconfirmed name can't be
     silently lost."""
     body = _body()
     assert '<button type="button" id="room-title-name" title="Click to rename">' in body

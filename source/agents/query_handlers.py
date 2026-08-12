@@ -577,7 +577,7 @@ def list_chatrooms(ctx: QueryContext) -> str:
 
 def get_todo_list(ctx: QueryContext) -> str:
     """Surface TODO/FIXME markers from tracked source as a poor-man's todo list."""
-    out = _git("grep", "-nE", "TODO|FIXME", "--", ":^memory/", ":^docs/", timeout=10.0)
+    out = _git("grep", "-nE", "TODO|FIXME", "--", ":^memory/", ":^notes/", timeout=10.0)
     if out.startswith("("):
         return "(git grep failed or no matches)"
     lines = out.splitlines()

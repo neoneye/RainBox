@@ -93,7 +93,7 @@ source/
 │   └── question_answer.jsonl    # was memory/question_answer.jsonl
 │
 └── webapp/, tools/, providers/, mcp_servers/,
-    kokoro_service/, whisper_service/, agent_profiles/, static/, docs/   # unchanged
+    kokoro_service/, whisper_service/, agent_profiles/, static/, notes/   # unchanged
 ```
 
 Every package gets an `__init__.py` (real packages; also keeps pytest
@@ -131,7 +131,7 @@ whose `PYTHONPATH` is prefixed by the source root (`ROOT = dirname(abspath(__fil
 of the spawning module's root anchor). This makes child imports independent of
 the parent's CWD — strictly more robust than today's `sys.path[0]` reliance.
 
-`backup_db.py` / `backup_remote.py` CLI invocations (docs/backup.md, any cron
+`backup_db.py` / `backup_remote.py` CLI invocations (notes/backup.md, any cron
 job payloads, operator shell habits) change to `python -m backup.dump` /
 `python -m backup.remote`. The implementation plan must grep cron payloads and
 docs for the old script names.

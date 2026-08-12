@@ -3,7 +3,7 @@
 Uses the live local Postgres (rainbox_claude via conftest). HTTP goes through
 the real app (webapp.core.app); DB seeding uses the same endpoints, and each
 test deletes the rows it created through the dedicated DELETE endpoints — the
-tree PUT can neither create nor delete (docs/ui-tree-persistence.md).
+tree PUT can neither create nor delete (notes/ui-tree-persistence.md).
 """
 from uuid import uuid4
 
@@ -47,7 +47,7 @@ def test_tree_put_stale_version_409():
 
 def test_tree_put_refuses_to_omit_an_existing_row():
     """The whole point of the split shape: a payload that drops a row is a
-    malformed request, not a deletion (docs/ui-tree-persistence.md)."""
+    malformed request, not a deletion (notes/ui-tree-persistence.md)."""
     client = app.test_client()
     pu = _seed_prompt(client)
     try:

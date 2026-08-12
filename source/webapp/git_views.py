@@ -68,7 +68,7 @@ GIT_TEMPLATE = """
   .git-menu .item:hover{background:#eef0f6}
   .git-menu .item.danger{color:#b91c1c}
   /* Click-to-rename name display: doubles as the pane heading; clicking opens
-     the rename modal (docs/ui-modal-rename.md). */
+     the rename modal (notes/ui-modal-rename.md). */
   #git-node-rename{margin:0 0 8px}
   #git-node-rename button{font:inherit;font-size:1.1rem;font-weight:600;color:#1a1a2e;background:none;
     text-align:left;border:1px solid transparent;border-radius:6px;padding:4px 8px;margin-left:-8px;cursor:pointer}

@@ -111,7 +111,7 @@ MODELS_TEMPLATE: str = """
   .pp-sort-picker{font-size:85%;color:#555}
   .pp-sort-picker select{font-size:inherit;margin-left:0.2em}
   /* Click-to-rename name display: doubles as the detail heading; clicking
-     opens the rename modal (docs/ui-modal-rename.md). */
+     opens the rename modal (notes/ui-modal-rename.md). */
   .pp-rename-display{font:inherit;font-size:1.5em;font-weight:600;color:#1a1a2e;background:none;
     text-align:left;border:1px solid transparent;border-radius:6px;padding:0.15em 0.3em;margin-left:-0.3em;cursor:pointer}
   .pp-rename-display:hover{border-color:#cbd5e1;background:#f8fafc}
@@ -723,7 +723,7 @@ MODELS_TEMPLATE: str = """
 </div>
 
 <script>
-  // ---- rename modal (docs/ui-modal-rename.md) ----
+  // ---- rename modal (notes/ui-modal-rename.md) ----
   // The display name is shown as a click-to-rename control; editing happens in
   // this modal, so a typed-but-unconfirmed name can't be silently lost.
   // Confirming fills the enclosing form's hidden display_name and submits it
@@ -763,7 +763,7 @@ MODELS_TEMPLATE: str = """
     ppRenameForm.submit();
   }
   // Backdrop / Esc dismiss only while the typed name still equals the stored
-  // one (docs/ui-modals.md dirty guard); Cancel always closes.
+  // one (notes/ui-modals.md dirty guard); Cancel always closes.
   function ppDismissRenameIfClean(){
     if (document.getElementById('pp-rename-modal').hidden) return;
     if (document.getElementById('pp-rename-input').value === (ppRenameOriginal || '')) ppCloseRenameModal();

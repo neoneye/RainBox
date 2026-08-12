@@ -1,4 +1,4 @@
-"""The first LLM kanban worker (docs/kanban-design.md roadmap item 2; spec:
+"""The first LLM kanban worker (notes/kanban-design.md roadmap item 2; spec:
 docs/superpowers/specs/2026-06-11-kanban-llm-worker-design.md).
 
 KanbanWorkerAgent executes ONE claimed card per inbox item with ONE

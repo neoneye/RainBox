@@ -118,7 +118,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'research'`
 Deterministic pipeline (plan -> split -> research subtasks -> synthesize)
 over pluggable web search providers and local LLMs. Public seam:
 `run_deep_research(query, config, progress_cb)`. See
-source/docs/deep-research.md.
+source/notes/deep-research.md.
 
 Lazy re-exports keep `import research` cheap (pipeline pulls db + llm).
 """
@@ -2679,8 +2679,8 @@ git commit -m "feat(research): CLI entrypoint"
 ### Task 11: Full-suite check + subsystem doc
 
 **Files:**
-- Create: `source/docs/deep-research.md`
-- Modify: `source/docs/README.md` (add one line under "## Subsystem designs")
+- Create: `source/notes/deep-research.md`
+- Modify: `source/notes/README.md` (add one line under "## Subsystem designs")
 
 - [ ] **Step 1: Run the full main suite**
 
@@ -2689,7 +2689,7 @@ cd /Users/neoneye/git/rainbox/source
 venv/bin/python -m pytest -q --ignore=whisper_service --ignore=kokoro_service --ignore=telegram_service
 ```
 
-Expected: no new failures beyond the pre-existing known failures listed in `source/docs/testing.md`. If a research test collides or breaks another suite, fix before proceeding.
+Expected: no new failures beyond the pre-existing known failures listed in `source/notes/testing.md`. If a research test collides or breaks another suite, fix before proceeding.
 
 - [ ] **Step 2: Write the subsystem doc**
 
@@ -2773,7 +2773,7 @@ in `research/fixtures/`; no live network or LLM.
 
 - [ ] **Step 3: Add the docs-index line**
 
-In `source/docs/README.md`, under `## Subsystem designs`, after the
+In `source/notes/README.md`, under `## Subsystem designs`, after the
 `llm-providers.md` line, add:
 
 ```markdown
@@ -2785,7 +2785,7 @@ In `source/docs/README.md`, under `## Subsystem designs`, after the
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/deep-research.md docs/README.md
+git add notes/deep-research.md notes/README.md
 git commit -m "docs(research): deep research subsystem doc"
 ```
 

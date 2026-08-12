@@ -293,7 +293,7 @@ In the assistant's `memory_query`, hybrid claim retrieval produces
 *candidates*, not the final injection set: the claims join the seed-KB
 candidates in one shared **recall filter** LLM call (Likert scoring on the
 `memory_filter` model binding; keep/drop decided in code — see
-`docs/qa-system.md`), and only kept claims are injected. When no scorer is
+`notes/qa-system.md`), and only kept claims are injected. When no scorer is
 bound or the call fails, claims pass through unfiltered.
 
 ### Prompt Injection
@@ -450,7 +450,7 @@ The assistant's always-on blocks emit telemetry too: the user-profile block
 (`source="user_profile.retrieval"`) and skill retrieval
 (`source="skills.retrieval"`) each record `considered` per ranked item and
 `injected` per item that fit the prompt budget. See
-`docs/relevance-telemetry.md` for the full producer catalog.
+`notes/relevance-telemetry.md` for the full producer catalog.
 
 ### Feedback And Downvotes
 
@@ -563,11 +563,11 @@ changed underneath the operator. See
 > claim (`POST /memory/api/claims/<uuid>/<action>`) or resolve a conflict.
 > The trust model above governs *how* writes happen, not *who* may trigger
 > them. This is Finding 8b of
-> `docs/proposals/2026-06-25-security-review-mitigations.md` (open); the plan
+> `notes/proposals/2026-06-25-security-review-mitigations.md` (open); the plan
 > is an operator-auth boundary plus treating sensitivity changes as
 > high-sensitivity audited actions.
 
-A user-created **folder tree** (the full `docs/ui-left-panel-tree.md` pattern)
+A user-created **folder tree** (the full `notes/ui-left-panel-tree.md` pattern)
 is a possible future addition; the page's grouping layer is kept swappable so it
 can be added as an additional grouping mode without a rewrite.
 
@@ -685,7 +685,7 @@ while the semantics settle.
 
 (Case-set comparison invariants — refusing candidates that omit baseline cases
 or add unmatched ones — are done: both the gate and the optimizer enforce
-equivalent case sets by default. See `docs/eval-loop.md`.)
+equivalent case sets by default. See `notes/eval-loop.md`.)
 
 ### 1. Add Candidate Extraction, But Keep Human Confirmation
 

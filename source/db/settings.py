@@ -14,7 +14,7 @@ Read precedence: **DB value (if set) → env var → registry default.**
 `get_setting()` touches db.session, so it must run inside a Flask app context
 (the cron scheduler and web app both have one). Standalone CLI tools should NOT
 call it — they pass explicit args instead. See the proposal:
-docs/proposals/2026-06-07-user-configuration-in-postgres.md.
+notes/proposals/2026-06-07-user-configuration-in-postgres.md.
 """
 import json
 import logging
@@ -317,7 +317,7 @@ def set_setting(key: str, value: object) -> None:
 
     Secrets are env-only: a `secret=True` setting must never hold a value in
     `app_setting` (it would land in cleartext in Postgres and in every backup —
-    see the threat model in docs/backup.md). Clearing one (value=None) is fine."""
+    see the threat model in notes/backup.md). Clearing one (value=None) is fine."""
     _upsert_setting_row(_registry(key), value)
     db.session.commit()
 

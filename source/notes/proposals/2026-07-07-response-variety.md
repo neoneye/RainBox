@@ -174,12 +174,12 @@ behavior is unchanged (the too-close check is additive).
 
 ## See also
 
-- `docs/qa-system.md` — entry schema and `_resolve_match`, the seam this
+- `notes/qa-system.md` — entry schema and `_resolve_match`, the seam this
   extends.
 - `2026-07-07-operator-profiles-and-working-context.md` — the pulse and
   the three directions reuse its working-context sources (and under a
   no-PII profile the greeting degrades to just the greeting word).
 - `agents/query_handlers.py` (`get_status_casual`, `generate_joke`) — the
   memoryless prior art phase 1 upgrades.
-- `docs/llm-providers.md` — model groups/overrides, where the
+- `notes/llm-providers.md` — model groups/overrides, where the
   high-temperature "creative" binding lives.

@@ -98,27 +98,27 @@ In a browser:
 - `http://127.0.0.1:5000/modelgroups` — define named, priority-ordered groups of models/overrides (`Edit priority list` opens `/modelgrouppriorities`). A group can carry a **function-calling constraint** (a checkbox on the new-group form): then only models/overrides that resolve to `is_function_calling_model=true` may be members (the priority editor disables the rest, and the server rejects them).
 - `http://127.0.0.1:5000/agentmodel` — bind each code-defined agent to a model group (the prioritized fallback list it should run); editable without code changes. Agents that need tool calls (those with `requires_function_calling` in `agents/config.py`, e.g. `tool_demo` and `mcp`) are only offered function-calling groups, so they can't be misconfigured onto a structured-output-only group.
 - `http://127.0.0.1:5000/benchmark_basic` — run the benchmark suite per model/override with live progress and a score column.
-- `http://127.0.0.1:5000/benchmark_kanban` — the kanban 2×2 decision matrix (markdown vs JSON context × structured output vs function calling). Verdict 2026-06-11: markdown + structured output won on both reliability and speed (see docs/kanban-design.md).
+- `http://127.0.0.1:5000/benchmark_kanban` — the kanban 2×2 decision matrix (markdown vs JSON context × structured output vs function calling). Verdict 2026-06-11: markdown + structured output won on both reliability and speed (see notes/kanban-design.md).
 - `http://127.0.0.1:5000/benchmark_editdocument` — per-model scoreboard for `EditDocumentAgentV1` through `EditDocumentAgentV6`. Picker switches between the six agents. Columns are the seeded tests in `benchmarks/editdocument.py` (currently `append_task`, `remove_task`, `check_task`); rows are every available model in the `/model` tree. Each cell runs the agent end-to-end with the target model pinned (no fallback) and scores by byte-for-byte equality between the applied patches and a reference expected document. Cell details reveal expected / applied / patches plus any agent status/comment/thinking fields the selected version reports.
 - `http://127.0.0.1:5000/chat` — group chat between the human operator and the agents. Split view: rooms on the left (create one and pick which agents join), messages on the right, live via SSE. The active room is remembered in a `?room=<uuid>` URL parameter. Agent messages have feedback buttons; feedback is persisted and can feed the eval loop.
 - `http://127.0.0.1:5000/admin/` — Flask-Admin: browse the `inbox`, `journal`, model tables, chat tables, memory tables (`memory_claim`, `memory_evidence`), feedback/eval tables (`feedback_event`, `eval_case`, `eval_run`, `eval_result`), and retrieval telemetry (`retrieval_event`) directly.
 
 Current architecture/operator docs:
 
-- [`docs/memory-architecture.md`](docs/memory-architecture.md) — memory provenance, retrieval, feedback, evals, and directions.
-- [`docs/relevance-telemetry.md`](docs/relevance-telemetry.md) — retrieval event semantics and telemetry limits.
-- [`docs/eval-loop.md`](docs/eval-loop.md) — feedback-to-eval architecture.
-- [`docs/eval-playbook.md`](docs/eval-playbook.md) — practical eval workflow.
-- [`docs/memory-commands.md`](docs/memory-commands.md) — user-facing memory command reference.
-- [`docs/operator-guide.md`](docs/operator-guide.md) — day-to-day app operation.
-- [`docs/data-model.md`](docs/data-model.md) — table map for supervisor, chat, memory, telemetry, eval, config, and cron data.
-- [`docs/backup.md`](docs/backup.md) — encrypted database backups (age + zstd), scheduling, remote git upload, and restore.
-- [`docs/find-uuid-design.md`](docs/find-uuid-design.md) — the cross-table uuid resolver behind `/find` and the assistant's `find_uuid` action: exact/substring/fuzzy/mention matching, sources, ranking, Q&A shields.
-- [`docs/supervisor-design.md`](docs/supervisor-design.md) — the core runtime: inbox→journal queue, spawn-on-demand agents, heartbeat watchdog, recovery, routing.
-- [`docs/settings-design.md`](docs/settings-design.md) — typed operator settings: registry, DB → env → default provenance, the /settings page.
-- [`docs/git-design.md`](docs/git-design.md) — the /git page: repo pointers, guarded tree save, read-only inspection.
-- [`docs/profile-design.md`](docs/profile-design.md) — person profiles: field registry, sparse data JSONB, locale templates.
-- [`docs/evals-design.md`](docs/evals-design.md) — the evals framework internals: case model, scoring, gate/optimizer/monitor mechanics.
+- [`notes/memory-architecture.md`](notes/memory-architecture.md) — memory provenance, retrieval, feedback, evals, and directions.
+- [`notes/relevance-telemetry.md`](notes/relevance-telemetry.md) — retrieval event semantics and telemetry limits.
+- [`notes/eval-loop.md`](notes/eval-loop.md) — feedback-to-eval architecture.
+- [`notes/eval-playbook.md`](notes/eval-playbook.md) — practical eval workflow.
+- [`notes/memory-commands.md`](notes/memory-commands.md) — user-facing memory command reference.
+- [`notes/operator-guide.md`](notes/operator-guide.md) — day-to-day app operation.
+- [`notes/data-model.md`](notes/data-model.md) — table map for supervisor, chat, memory, telemetry, eval, config, and cron data.
+- [`notes/backup.md`](notes/backup.md) — encrypted database backups (age + zstd), scheduling, remote git upload, and restore.
+- [`notes/find-uuid-design.md`](notes/find-uuid-design.md) — the cross-table uuid resolver behind `/find` and the assistant's `find_uuid` action: exact/substring/fuzzy/mention matching, sources, ranking, Q&A shields.
+- [`notes/supervisor-design.md`](notes/supervisor-design.md) — the core runtime: inbox→journal queue, spawn-on-demand agents, heartbeat watchdog, recovery, routing.
+- [`notes/settings-design.md`](notes/settings-design.md) — typed operator settings: registry, DB → env → default provenance, the /settings page.
+- [`notes/git-design.md`](notes/git-design.md) — the /git page: repo pointers, guarded tree save, read-only inspection.
+- [`notes/profile-design.md`](notes/profile-design.md) — person profiles: field registry, sparse data JSONB, locale templates.
+- [`notes/evals-design.md`](notes/evals-design.md) — the evals framework internals: case model, scoring, gate/optimizer/monitor mechanics.
 
 To see the `chat_structured` agent reply, assign it a model group at `/agentmodel`, keep its provider running, and post a message in a room it's a member of (`main.py` must be running so the supervisor can spawn it).
 
@@ -472,4 +472,4 @@ So the current shape is:
 real chat -> memory retrieval -> feedback -> eval case -> eval run -> comparison/gate -> safer change
 ```
 
-This is still early. Retrieval is lexical, not semantic; attribution can say a memory entered the prompt, not that it truly caused the final wording; automatic candidate extraction is not implemented; and eval comparison still needs strict case-set hardening so candidates cannot add unmatched easy cases to inflate their means. The detailed architecture and next steps live in [`docs/memory-architecture.md`](docs/memory-architecture.md).
+This is still early. Retrieval is lexical, not semantic; attribution can say a memory entered the prompt, not that it truly caused the final wording; automatic candidate extraction is not implemented; and eval comparison still needs strict case-set hardening so candidates cannot add unmatched easy cases to inflate their means. The detailed architecture and next steps live in [`notes/memory-architecture.md`](notes/memory-architecture.md).

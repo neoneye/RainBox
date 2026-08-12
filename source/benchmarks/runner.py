@@ -41,7 +41,7 @@ BENCHMARK_SPECS: list[tuple[str, type, dict[str, Any]]] = [
     ("tool_route", BenchmarkToolRoute, {"num_trials": 5}),
 ]
 
-# The kanban "first slice" (docs/kanban-design.md roadmap item 1): the 2×2
+# The kanban "first slice" (notes/kanban-design.md roadmap item 1): the 2×2
 # decision matrix — board context format × invocation mechanism — whose
 # results pick the defaults for the first LLM kanban worker. Its own page
 # (/benchmark_kanban) so the general suite stays fast and the matrix reads

@@ -182,7 +182,7 @@ point in time and is never edited afterwards, so a changed mind adds a row and
 the newest wins. `under_blocked` is the right-answer-wrong-reasons miss.
 
 Design and rationale:
-`docs/proposals/2026-07-28-second-opinion-review-records.md`.
+`notes/proposals/2026-07-28-second-opinion-review-records.md`.
 
 ## Overview and assessment
 

@@ -448,11 +448,11 @@ Expected: suite at baseline; the app boots, webserver on :5000. In a browser (or
 
 ---
 
-### Task 10: Remaining tests + docs/README pass
+### Task 10: Remaining tests + notes/README pass
 
 **Files:**
 - Move tests: `test_chat_feedback_api.py`, `test_cron_admin.py`, `test_cron_api.py`, `test_cron_views.py`, `test_kanban_admin.py`, `test_kanban_api.py`, `test_kanban_views.py`, `test_models_views.py`, `test_settings_views.py`, `test_stt_whisper_views.py`, `test_tts_kokoro_views.py`, `test_voice_echo_views.py`, `test_sync_models_from_providers.py` → `webapp/` (names unchanged); `test_providers.py`, `test_lm_studio.py`, `test_ollama_provider.py`, `test_jan_provider.py` → `providers/` (names unchanged)
-- Modify: `README.md`, `docs/*.md` references.
+- Modify: `README.md`, `notes/*.md` references.
 
 - [ ] **Step 1: Move the webapp and providers tests** (plain `git mv`, no renames). Then confirm the root is clean:
 
@@ -465,10 +465,10 @@ Expected: no `test_*.py` matches; only `main.py` and `conftest.py` remain.
 - [ ] **Step 2: Update doc references**
 
 ```bash
-grep -rln "agent_config\|backup_db\|backup_remote\|memory/question_answer\|chat_transcript\|memory_ops\|memory_retrieval\|eval_runner\|benchmark_runner\|query_agent\|agent\.py\|db_models\|patch_apply" README.md docs/*.md docs/proposals/*.md
+grep -rln "agent_config\|backup_db\|backup_remote\|memory/question_answer\|chat_transcript\|memory_ops\|memory_retrieval\|eval_runner\|benchmark_runner\|query_agent\|agent\.py\|db_models\|patch_apply" README.md notes/*.md notes/proposals/*.md
 ```
 
-Update each hit to the new path/name. CLI examples in `docs/backup.md` and `docs/operator-guide.md` become `python -m backup.dump` / `python -m backup.remote`. Leave `docs/proposals/*` mostly alone (they're dated historical documents) except where they give commands an operator might still copy-paste.
+Update each hit to the new path/name. CLI examples in `notes/backup.md` and `notes/operator-guide.md` become `python -m backup.dump` / `python -m backup.remote`. Leave `notes/proposals/*` mostly alone (they're dated historical documents) except where they give commands an operator might still copy-paste.
 
 - [ ] **Step 3: Trim the README inventory**
 
@@ -529,6 +529,6 @@ With LM Studio running: open `/chat`, post a message in a room a responder agent
 
 ## Self-review notes (already applied)
 
-- Spec coverage: layout (Tasks 2–9), spawn mechanics (6, 7, 9), data rename (4), test colocation (each task + 10), docs/README (10), verification DoD (9, 11). The spec's "no `*.py` at root except main/conftest" check is Task 10 Step 1.
+- Spec coverage: layout (Tasks 2–9), spawn mechanics (6, 7, 9), data rename (4), test colocation (each task + 10), notes/README (10), verification DoD (9, 11). The spec's "no `*.py` at root except main/conftest" check is Task 10 Step 1.
 - The `memory/` data dir must move before the package is created — ordering encoded in Task 4 Step 1.
 - `query_handlers._REPO_DIR` and `QA_JSONL_PATH` are touched twice (Task 4 for the dir rename, Task 9 for the `__file__` depth change) — both steps cross-reference each other.

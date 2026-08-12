@@ -1,4 +1,4 @@
-"""Authority matrix for the kanban dispatcher (docs/kanban-design.md:
+"""Authority matrix for the kanban dispatcher (notes/kanban-design.md:
 'Models propose, code disposes' — authority lives here, not in prompts)."""
 
 from uuid import UUID, uuid4

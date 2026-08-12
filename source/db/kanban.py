@@ -1,13 +1,13 @@
 """Kanban persistence + agent operations.
 
-The kanban board is a database-backed coordination primitive (docs/plan.md):
+The kanban board is a database-backed coordination primitive (notes/plan.md):
 agents keep track of progress here because editing markdown todo lists is too
 fragile for small models — instead of "rewrite the document correctly", an
 agent calls narrow, uuid-addressed operations (claim / move / append event /
 complete) that either succeed atomically or fail loudly. Those primitives are
 deliberately mechanism-agnostic: they work equally as function-calling tools
 or as fields of a structured-output reply (the undecided question in
-docs/kanban-design.md), because the DB layer is the same either way.
+notes/kanban-design.md), because the DB layer is the same either way.
 
 Two write surfaces:
 - **Bulk per-board save** (`kanban_save_board`) for the /kanban page — guarded
@@ -430,7 +430,7 @@ def kanban_save_tree(
     exist. List order becomes `position`. A board's `name` is not touched here
     — it lives in the board's own contents save.
 
-    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    Per notes/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
     a payload that omits an existing row, or names one the DB doesn't have, is
     a KanbanError — absence means a bug, not an instruction. Creation is
     kanban_create_board / kanban_create_folder; deletion is
@@ -740,9 +740,9 @@ def _event_line(e: dict[str, Any]) -> str:
 
 def _focus_events(tasks: list[dict], roles: dict[str, str]) -> dict[str, list[dict]]:
     """Recent events for every task in a 'full' column under focus — the
-    worker's resumable memory (docs/kanban-design.md 'Events are the working
+    worker's resumable memory (notes/kanban-design.md 'Events are the working
     memory')."""
-    # N+1 is acceptable: boards are bounded by the LLM context budget (docs/kanban-design.md).
+    # N+1 is acceptable: boards are bounded by the LLM context budget (notes/kanban-design.md).
     out: dict[str, list[dict]] = {}
     for t in tasks:
         if roles.get(t["columnUuid"]) == "full":
@@ -754,7 +754,7 @@ def _focus_events(tasks: list[dict], roles: dict[str, str]) -> dict[str, list[di
 
 
 def kanban_board_markdown(board_uuid: UUID, focus: str | None = None) -> str | None:
-    """Serialize one board to the markdown contract (docs/kanban-design.md).
+    """Serialize one board to the markdown contract (notes/kanban-design.md).
     Carries the SAME ids as the JSON twin, under the same role names: the
     board line is `Board id:`, each `##` column heading ends with its
     backticked columnId, and each task bullet has its taskId and — when

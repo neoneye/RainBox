@@ -1,6 +1,6 @@
 """System prompt tree: folder/prompt persistence + version lineage helpers.
 
-Backs the /prompt page. Saves follow docs/ui-tree-persistence.md — the tree
+Backs the /prompt page. Saves follow notes/ui-tree-persistence.md — the tree
 save only ever updates rows that already exist, so a payload that omits or
 invents a row is an error rather than a silent create or delete; creation and
 deletion are their own functions. Also holds the version-lineage operations:
@@ -182,7 +182,7 @@ def prompt_save_tree(folders: list, prompts: list, *,
     """Update name, description, placement and order of rows that already
     exist. List order becomes `position`.
 
-    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    Per notes/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
     a payload that omits an existing row, or names one the DB doesn't have, is
     a PromptTreeError — absence means a bug, not an instruction. Creation is
     prompt_create / prompt_clone / prompt_create_folder; deletion is
@@ -372,7 +372,7 @@ def prompt_clone(prompt_uuid: UUID) -> dict[str, Any] | None:
     parent_uuid records the source, placed in the same folder right after it,
     named by incrementing the source name's trailing number (see _clone_name).
     This is one of the tree's create paths — the tree save can never make a row
-    (docs/ui-tree-persistence.md). Returns the new row in tree-list field names
+    (notes/ui-tree-persistence.md). Returns the new row in tree-list field names
     (no content), or None if the source uuid is unknown."""
     src = _prompt_row(prompt_uuid)
     if src is None:

@@ -1,6 +1,6 @@
 """Person-profile tree: folder/profile persistence + data validation.
 
-Backs the /profile page. Saves follow docs/ui-tree-persistence.md — the tree
+Backs the /profile page. Saves follow notes/ui-tree-persistence.md — the tree
 save only ever updates rows that already exist, so a payload that omits or
 invents a row is an error rather than a silent create or delete; creation and
 deletion are their own functions. Also holds the per-profile data operations:
@@ -290,7 +290,7 @@ def profile_save_tree(folders: list, profiles: list, *,
     """Update name, description, placement and order of user-owned rows that
     already exist. List order becomes `position`.
 
-    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    Per notes/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
     a payload that omits an existing row, or names one the DB doesn't have, is
     a ProfileTreeError — absence means a bug, not an instruction. Creation is
     profile_create / profile_create_folder / profile_duplicate; deletion is

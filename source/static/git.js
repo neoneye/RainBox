@@ -2,7 +2,7 @@
 // webapp/git_views.py; this file is served at /static/git.js with an mtime
 // cache-buster. State hydrates from GET /git/api/tree and structural edits
 // save via debounced PUTs; creation and deletion are their own immediate
-// requests (docs/ui-tree-persistence.md).
+// requests (notes/ui-tree-persistence.md).
 
 // ---- helpers ----
 function gitEscapeHtml(s){
@@ -98,7 +98,7 @@ function gitRender(){
 // while a repo is selected (the repo detail pane shows instead).
 // Depth-first list of everything under parentId (null = whole tree), in the
 // same order as the left tree, each row tagged with its nesting `depth` — like
-// /cron's cronFlattenTree (docs/ui-left-panel-tree.md §7).
+// /cron's cronFlattenTree (notes/ui-left-panel-tree.md §7).
 function gitFlattenTree(parentId){
   parentId = parentId || null;
   const out = [];
@@ -185,7 +185,7 @@ async function gitLoadRepoDetail(uuid){
 }
 // The selected folder's / repo's name, shown as a click-to-rename control that
 // doubles as the pane heading. All editing happens in the rename modal —
-// Cancel / Rename are the only ways out (docs/ui-modal-rename.md). Renaming
+// Cancel / Rename are the only ways out (notes/ui-modal-rename.md). Renaming
 // changes the display name only; for a repo it never touches the directory on
 // disk.
 function gitRenderRename(){
@@ -205,7 +205,7 @@ function gitRenderRename(){
   el.appendChild(btn);
 }
 
-// ---- rename modal (docs/ui-modal-rename.md) ----
+// ---- rename modal (notes/ui-modal-rename.md) ----
 let gitRenameState = null;   // {kind: 'repo'|'folder', id, original}
 function gitOpenRenameModal(kind, node){
   gitRenameState = {kind: kind, id: kind === 'repo' ? node.uuid : node.id,
@@ -881,7 +881,7 @@ function gitSave(){
   clearTimeout(gitSaveTimer);
   gitSaveTimer = setTimeout(gitSavePush, 250);  // coalesce bursts into one PUT
 }
-// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// Per notes/ui-tree-persistence.md: "Flush or await a pending tree PUT before
 // issuing a create or delete." Nothing else orders a tree PUT against a
 // create/delete, and the two responses race — if the older PUT's response
 // lands after the create/delete's fresher token, it overwrites that token with

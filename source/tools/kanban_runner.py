@@ -4,7 +4,7 @@ One place owns the board protocol, so individual agents don't each reimplement
 it: an agent that receives a kanban inbox payload ({task_uuid, board_uuid,
 source: "kanban"} — produced by db.kanban_enqueue_task) hands it to
 `run_kanban_task` together with a `work` callback that does the agent's actual
-job. The adapter then runs the canonical loop from docs/kanban-design.md:
+job. The adapter then runs the canonical loop from notes/kanban-design.md:
 
     claim (lease) → 'started' event → work() → complete(ok) / fail
 

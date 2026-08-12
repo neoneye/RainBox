@@ -24,7 +24,7 @@ share one process and one `agent_config`, which is why the app must run via
 `python main.py`: the web endpoints only *enqueue*; the supervisor thread is
 what makes anything execute. The same loop also hosts the cron scheduler
 (`db.cron_tick()` throttled to `CRON_TICK_INTERVAL` = 5 s, self-guarded so a
-cron bug cannot take down the thread — see `docs/cron-design.md`).
+cron bug cannot take down the thread — see `notes/cron-design.md`).
 
 ## The queue: inbox → journal
 

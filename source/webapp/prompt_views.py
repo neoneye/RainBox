@@ -8,7 +8,7 @@ edit history and the editor pane can 2-way diff against any ancestor.
 Persistence is real: the browser-side state (promptFolders / promptItems)
 hydrates from GET /prompt/api/tree and saves placement, order and names back
 through PUT; creation and deletion are their own endpoints, per
-docs/ui-tree-persistence.md (webapp/prompt_api.py → db/prompt.py). Prompt
+notes/ui-tree-persistence.md (webapp/prompt_api.py → db/prompt.py). Prompt
 content is read-only until an explicit Edit → Save (per-prompt PUT). Mirrors
 the /git page; desktop-first.
 """

@@ -251,6 +251,6 @@ the three with direct behavioral payoff.
   unaffected, but the identity card quoted by section 1 follows it.
 - `2026-06-25-security-review-mitigations.md` — Findings 1/8a (why profiles
   are not a boundary yet) and the phases accounts would ride on.
-- `docs/assistant-design.md` — where the block slots into prompt assembly.
-- `docs/qa-system.md`, `docs/memory-architecture.md` — the retrieval layers
+- `notes/assistant-design.md` — where the block slots into prompt assembly.
+- `notes/qa-system.md`, `notes/memory-architecture.md` — the retrieval layers
   the filters extend.

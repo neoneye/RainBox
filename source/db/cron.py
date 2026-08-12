@@ -2,7 +2,7 @@
 
 Split out of db.py. Holds the cron folder/job/run tree (load/validate/save),
 schedule computation, and job firing/tick (fire_cron_job, cron_tick, ...).
-Saves follow docs/ui-tree-persistence.md — the tree save only ever updates
+Saves follow notes/ui-tree-persistence.md — the tree save only ever updates
 rows that already exist, so a payload that omits or invents a row is an error
 rather than a silent create or delete; creation and deletion are their own
 functions. Firing posts to chat (db.chat) and enqueues workspace-shell
@@ -369,7 +369,7 @@ def cron_save_tree(
     place, so `created_at` is preserved and `updated_at`/onupdate only fires on
     real changes.
 
-    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    Per notes/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
     a payload that omits an existing row, or names one the DB doesn't have, is
     a CronTreeError — absence means a bug, not an instruction. Creation is
     cron_create_job / cron_create_folder / cron_create_one_shot_message;

@@ -2,8 +2,8 @@
 
 **Date:** 2026-06-22
 **Status:** approved, ready for implementation
-**Related:** `docs/memory-architecture.md` (§8 "Build A Memory Review UI"),
-`docs/memory-commands.md`, `docs/ui-left-panel-tree.md`, `docs/ui-modals.md`,
+**Related:** `notes/memory-architecture.md` (§8 "Build A Memory Review UI"),
+`notes/memory-commands.md`, `notes/ui-left-panel-tree.md`, `notes/ui-modals.md`,
 the `/cron` page (the mature reference for chrome).
 
 ## Goal
@@ -210,5 +210,5 @@ to 409.
 4. `static/memory.js` (hydrate, grouping-agnostic render, facet grouping,
    selection, filter, detail, modals, secret reveal, 409 re-hydrate).
 5. Live-browser verification pass; fix CSS/layout divergences against `/cron`.
-6. Update `docs/memory-architecture.md` §8 / `docs/memory-commands.md` operator
+6. Update `notes/memory-architecture.md` §8 / `notes/memory-commands.md` operator
    notes to point at `/memory` (current-state docs, not change history).

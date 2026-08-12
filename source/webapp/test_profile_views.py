@@ -1,7 +1,7 @@
 """Tests for webapp/profile_views.py (+ the profile.js reference).
 
 Marker-string tests prove presence, not behaviour — the real tree/form
-behaviours are verified in a browser per docs/ui-left-panel-tree.md §8.
+behaviours are verified in a browser per notes/ui-left-panel-tree.md §8.
 """
 from pathlib import Path
 
@@ -195,7 +195,7 @@ def test_no_backslash_escapes_in_template():
 
 
 def test_tree_save_declares_no_deletes():
-    """Per docs/ui-tree-persistence.md the tree PUT cannot delete, so the
+    """Per notes/ui-tree-persistence.md the tree PUT cannot delete, so the
     client must not carry a deletes counter — deletion goes to DELETE."""
     b = _body()
     assert "deletes" not in b

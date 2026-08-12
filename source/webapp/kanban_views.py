@@ -2,12 +2,12 @@
 
 Multiple kanban boards backed by Postgres (kanban_board/column/task/
 task_event via db.kanban + webapp/kanban_api.py) — the database-backed
-coordination primitive from docs/plan.md: agents track progress here because
+coordination primitive from notes/plan.md: agents track progress here because
 markdown todo-list editing is too fragile for small models. Each task carries
 a uuid and is assigned to an agent (agents/config.py uuid — stable across role
 renames). A board serializes to markdown server-side (the page's "Markdown"
 button; GET /kanban/api/board/<uuid>/markdown) so LLMs get context about what
-they are working on, with tasks referenced by uuid. See docs/kanban-design.md
+they are working on, with tasks referenced by uuid. See notes/kanban-design.md
 for the markdown contract, wire shapes, and agent operations.
 
 The assignee picker is populated at render time from agent_config as
@@ -125,7 +125,7 @@ KANBAN_TEMPLATE = """
   .kb-main{overflow:auto;min-height:0;min-width:0;padding:14px 16px;display:flex;flex-direction:column}
   .kb-board-head{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px}
   .kb-board-title{font-weight:700;font-size:1.4rem;margin-right:6px}
-  /* Click-to-rename name display (docs/ui-modal-rename.md): the pane heading
+  /* Click-to-rename name display (notes/ui-modal-rename.md): the pane heading
      is a button that reads as the name; a hover border + tooltip reveal it
      opens the rename modal. The root "All boards" pseudo-node is not
      renamable and keeps a plain .kb-board-title heading. */
@@ -240,7 +240,7 @@ KANBAN_TEMPLATE = """
 <div id="ui-modal-backdrop" class="ui-modal-backdrop" hidden></div>
 
 <!-- Board create/edit (edit mode hides the name row — renames go through the
-     click-to-rename heading and its modal, docs/ui-modal-rename.md) -->
+     click-to-rename heading and its modal, notes/ui-modal-rename.md) -->
 <div id="kb-board-modal" class="ui-modal" hidden>
   <h3 id="kb-board-modal-title">New board</h3>
   <div class="kb-row" id="kb-b-name-row">
@@ -271,7 +271,7 @@ KANBAN_TEMPLATE = """
 </div>
 
 <!-- Rename (board / folder) — opened by the click-to-rename heading in the
-     main pane (docs/ui-modal-rename.md) -->
+     main pane (notes/ui-modal-rename.md) -->
 <div id="kb-rename-modal" class="ui-modal" hidden>
   <h3 id="kb-rename-title">Rename</h3>
   <div class="kb-row">

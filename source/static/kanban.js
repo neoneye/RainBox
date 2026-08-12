@@ -110,7 +110,7 @@ async function kbLoadIndex(){
 
 // Debounced, serialized tree PUT — same shape as the board kbSave chain. The
 // PUT only updates rows that already exist; creation and deletion are their
-// own immediate requests (docs/ui-tree-persistence.md). On ANY failure — 409,
+// own immediate requests (notes/ui-tree-persistence.md). On ANY failure — 409,
 // 400 or network — we re-hydrate so the client converges to server truth
 // instead of drifting.
 let kbTreeSaveTimer = null;
@@ -125,7 +125,7 @@ function kbTreeSavePush(){
   kbTreeSaveChain = kbTreeSaveChain.then(kbDoSaveTree);
   return kbTreeSaveChain;
 }
-// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// Per notes/ui-tree-persistence.md: "Flush or await a pending tree PUT before
 // issuing a create or delete." Nothing else orders them against each other,
 // and the two responses race — if the older PUT's response lands after the
 // create/delete's fresher token, it overwrites that token with a stale one and
@@ -733,7 +733,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') kbDismissIfC
 
 // Board create/edit share one modal; kbEditingBoard picks the mode. Edit mode
 // is description-only — the name renames through the click-to-rename heading
-// (docs/ui-modal-rename.md), one rename path, not two.
+// (notes/ui-modal-rename.md), one rename path, not two.
 function kbNewBoard(){
   kbEditingBoard = false;
   document.getElementById('kb-board-modal-title').textContent = 'New board';
@@ -1193,7 +1193,7 @@ function kbFlattenTree(rootId){
 function kbRenderFolderView(){
   if (kbSelectedFolder === null) return;
   const f = kbSelectedFolder === 'all' ? null : kbFolderById(kbSelectedFolder);
-  // The heading IS the rename affordance (docs/ui-modal-rename.md): a real
+  // The heading IS the rename affordance (notes/ui-modal-rename.md): a real
   // folder renders as a click-to-rename button; the root "All boards"
   // pseudo-node is not renamable and stays a plain heading.
   const head = document.getElementById('kb-folder-view-name');
@@ -1419,7 +1419,7 @@ function kbNeighbor(orderedIds, siblingId, after){
   const i = orderedIds.indexOf(siblingId);
   return (i >= 0 && i + 1 < orderedIds.length) ? orderedIds[i + 1] : null;
 }
-// ---- rename modal (docs/ui-modal-rename.md) ----
+// ---- rename modal (notes/ui-modal-rename.md) ----
 // One modal for boards and folders, opened by the click-to-rename heading in
 // the main pane. Rename/Cancel are the only ways out once the name differs.
 function kbOpenRenameModal(kind, id, original){

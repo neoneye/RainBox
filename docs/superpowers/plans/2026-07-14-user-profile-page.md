@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement `source/docs/proposals/2026-07-14-user-profile-page.md` — a `/profile` left-panel-tree page where each leaf is an editable person profile (registry-driven form over a JSONB `data` blob, autosaved), plus 20 shipped read-only locale templates.
+**Goal:** Implement `source/notes/proposals/2026-07-14-user-profile-page.md` — a `/profile` left-panel-tree page where each leaf is an editable person profile (registry-driven form over a JSONB `data` blob, autosaved), plus 20 shipped read-only locale templates.
 
 **Architecture:** Rule-for-rule port of the `/prompt` page (tree-with-editor-pane variant) with the editor pane replaced by a registry-driven form. Two new tables (`profile_folder`, `profile`) mirror `PromptFolder`/`Prompt` minus version lineage, plus `data JSONB`. A Python field registry (`profile_fields.py`) is the single source of truth for validation and form rendering. The 20 built-in templates are **not DB rows** — they ship in `data/profile_templates.json` and are merged virtually into the tree GET.
 
@@ -11,7 +11,7 @@
 **Reference implementations (already in repo — the port sources):**
 - `webapp/prompt_views.py`, `webapp/prompt_api.py`, `db/prompt.py`, `static/prompt.js`
 - `db/test_prompt_tree.py`, `webapp/test_prompt_api.py`, `webapp/test_prompt_views.py`
-- `docs/ui-left-panel-tree.md` (tree pattern, §8 gotchas), `docs/ui-modal-rename.md`
+- `notes/ui-left-panel-tree.md` (tree pattern, §8 gotchas), `notes/ui-modal-rename.md`
 
 ## Global Constraints
 
@@ -657,7 +657,7 @@ def test_bad_and_unknown_uuids():
 """Tests for webapp/profile_views.py (+ the profile.js reference).
 
 Marker-string tests prove presence, not behaviour — the real tree/form
-behaviours are verified in a browser per docs/ui-left-panel-tree.md §8."""
+behaviours are verified in a browser per notes/ui-left-panel-tree.md §8."""
 from pathlib import Path
 
 from webapp.core import app
@@ -1168,7 +1168,7 @@ def test_tree_rows_are_real_links():
 ### Task 10: Browser acceptance + docs
 
 - [ ] **Step 1:** Run the app against `rainbox_claude` (`DATABASE_URL=postgresql+psycopg://localhost/rainbox_claude python source/main.py` or the project's run skill) and verify in a real browser (headless Chrome + CDP is fine) per tree-doc §8: drag a profile to the root strip; kebab on the selected row only; type-to-confirm folder delete; create → edit fields → autosave status reaches "Saved ✓"; reload → values round-trip; duplicate right after an edit copies the edit; half-typed timezone shows "Preview unavailable…" and the form keeps working; built-ins: disabled fields, hint line, kebab = Duplicate only, not draggable, tree save leaves them untouched; deep link `?id=<template-uuid>` works.
-- [ ] **Step 2:** Docs (current state only): add `/profile` to `docs/ui-left-panel-tree.md`'s page list (§0 intro + reference note that its leaf pane is a form) and to `docs/ui-modal-rename.md` "Where it applies"; flip the proposal's status line to `**Status: implemented.**`.
+- [ ] **Step 2:** Docs (current state only): add `/profile` to `notes/ui-left-panel-tree.md`'s page list (§0 intro + reference note that its leaf pane is a form) and to `notes/ui-modal-rename.md` "Where it applies"; flip the proposal's status line to `**Status: implemented.**`.
 - [ ] **Step 3:** Full test suite for the touched areas: `pytest source/db source/webapp -x -q` (pre-existing failures per memory are not ours — compare against `main` if anything fails). Commit: `docs: /profile joins the tree + rename-modal docs; proposal implemented`
 
 ## Self-review notes

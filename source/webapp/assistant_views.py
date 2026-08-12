@@ -8,7 +8,7 @@ the selected run's summary, details, and `AssistantStep` timeline with each
 lifecycle actions the existing endpoints already own — confirm / reject / undo a
 write-intent, and stop / redirect a live run (`webapp/chat_api.py`). The selected
 run carries a kebab (Copy run id / Copy journal id / Stop). See
-docs/ui-left-panel-tree.md.
+notes/ui-left-panel-tree.md.
 """
 
 import json
@@ -769,7 +769,7 @@ ASSISTANT_TEMPLATE = """
   })();
 
   // --- live refresh ----------------------------------------------------------
-  // Rides the same chat_events SSE stream as /chat (docs/chat-frontend-rules.md:
+  // Rides the same chat_events SSE stream as /chat (notes/chat-frontend-rules.md:
   // no polling, hidden tab stays silent and catches up on refocus). The step
   // helpers in db/assistant.py NOTIFY with {assistant_run_uuid} on run/step/
   // model-checkpoint writes; on an event for THIS run the page refetches its

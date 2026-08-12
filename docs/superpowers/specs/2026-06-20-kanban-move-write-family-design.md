@@ -179,7 +179,7 @@ that dispatcher; the assistant's capability registry is its own code-owned
 authority boundary (Phase 4: "authority is code-owned"), and the safety for this
 write is reversibility + trace, not the worker ceiling. The board's `moved`
 events (forward and undo) keep the kanban audit log complete. A one-line note
-will be added to `docs/kanban-design.md`'s permission section so the two models
+will be added to `notes/kanban-design.md`'s permission section so the two models
 do not read as contradictory.
 
 ## Testing (TDD, model-free)

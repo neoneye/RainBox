@@ -914,7 +914,7 @@ Registry fields should be boring and explicit:
 - timeout and output cap
 - validator/dispatcher function
 - whether it is exposed to the assistant prompt
-- docs/prompt description
+- notes/prompt description
 
 Registry record shape:
 

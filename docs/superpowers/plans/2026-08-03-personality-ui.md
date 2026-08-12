@@ -4,15 +4,15 @@
 
 **Goal:** Add a `/personality` page — a folder tree of assistant personalities, one free-text body each, where every save that changes the text appends a revision so any edit can be rolled back.
 
-**Architecture:** Server-rendered Jinja shell + vanilla-JS client holding the whole tree in memory, a near-verbatim port of `/prompt`. Persistence follows `docs/ui-tree-persistence.md`: the tree PUT only updates rows that already exist, while creation and deletion are dedicated endpoints, so no payload can delete anything. Text lives in `personality.content` with an append-only `personality_revision` log behind it; restore appends rather than rewinds.
+**Architecture:** Server-rendered Jinja shell + vanilla-JS client holding the whole tree in memory, a near-verbatim port of `/prompt`. Persistence follows `notes/ui-tree-persistence.md`: the tree PUT only updates rows that already exist, while creation and deletion are dedicated endpoints, so no payload can delete anything. Text lives in `personality.content` with an append-only `personality_revision` log behind it; restore appends rather than rewinds.
 
 **Tech Stack:** Python 3 + Flask + Flask-SQLAlchemy (Postgres), vanilla JS (no framework), CodeMirror 5 from jsDelivr, Jinja2 `render_template_string`, `pytest`.
 
 ## Global Constraints
 
 - Spec: `docs/superpowers/specs/2026-08-03-personality-ui-design.md`. Read it before Task 1.
-- Save shape is fixed by `docs/ui-tree-persistence.md` — the tree PUT never creates and never deletes; no `expected_deletes` parameter anywhere in this feature.
-- Tree/CSS conventions: `docs/ui-left-panel-tree.md` (especially §8 gotchas), `docs/ui-modals.md`, `docs/ui-kebab-menu.md`, `docs/ui-modal-rename.md`.
+- Save shape is fixed by `notes/ui-tree-persistence.md` — the tree PUT never creates and never deletes; no `expected_deletes` parameter anywhere in this feature.
+- Tree/CSS conventions: `notes/ui-left-panel-tree.md` (especially §8 gotchas), `notes/ui-modals.md`, `notes/ui-kebab-menu.md`, `notes/ui-modal-rename.md`.
 - Reference columns are plain UUID columns — **no FK constraints**; integrity lives in `validate_personality_tree`.
 - New tables need **no** migration: `db.init_db` calls `db.create_all()`, which creates new tables (it only skips ALTERs to existing ones).
 - Tests run against `rainbox_claude` automatically (`source/conftest.py`). Never point ad-hoc scripts at `rainbox_production`.
@@ -48,8 +48,8 @@
 | `db/test_personality_tree.py` | Models, tree ops, revision semantics | Create |
 | `webapp/test_personality_api.py` | Endpoint behavior + status codes | Create |
 | `webapp/test_personality_views.py` | Page shell + JS markers | Create |
-| `docs/personality-design.md` | The page's design doc | Create |
-| `docs/README.md` | Index the new design doc | Modify (one line) |
+| `notes/personality-design.md` | The page's design doc | Create |
+| `notes/README.md` | Index the new design doc | Modify (one line) |
 
 ---
 
@@ -324,7 +324,7 @@ Expected: FAIL — `AttributeError: module 'db' has no attribute 'personality_lo
 ```python
 """Personality tree: folder/personality persistence + append-only revisions.
 
-Backs the /personality page. Saves follow docs/ui-tree-persistence.md — the
+Backs the /personality page. Saves follow notes/ui-tree-persistence.md — the
 tree save only ever updates rows that already exist, so a payload that omits
 or invents a row is an error rather than a silent create or delete; creation
 and deletion are their own functions. The revision half lives in
@@ -521,7 +521,7 @@ def personality_save_tree(folders: list, personalities: list, *,
     """Update name, description, placement and order of rows that already
     exist. List order becomes `position`.
 
-    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    Per notes/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
     a payload that omits an existing row, or names one the DB doesn't have, is
     a PersonalityTreeError — absence means a bug, not an instruction. Creation
     is personality_create / personality_create_folder; deletion is
@@ -1088,7 +1088,7 @@ Expected: FAIL — every request 404s; the route doesn't exist.
 ```python
 """JSON API backing the /personality page.
 
-Save shape per docs/ui-tree-persistence.md: the tree PUT only updates rows
+Save shape per notes/ui-tree-persistence.md: the tree PUT only updates rows
 that already exist (a payload that omits or invents one is a 400), and
 creation/deletion are their own endpoints. Every mutating response carries the
 new tree `version`, so the client never holds a stale token. Personality text
@@ -1470,7 +1470,7 @@ Expected: FAIL — `GET /personality` 404s.
 - [ ] **Step 3: Create `webapp/personality_views.py`**
 
 Copy `webapp/prompt_views.py` and adapt. Start from the real file so the CSS
-is byte-identical where it should be — §8 of `docs/ui-left-panel-tree.md`
+is byte-identical where it should be — §8 of `notes/ui-left-panel-tree.md`
 exists because `/git` hand-wrote its CSS and a dozen divergences piled up:
 
 ```bash
@@ -1492,7 +1492,7 @@ A personality's uuid is stable for its whole life (deep-linkable via
 /personality?id=<uuid>) and every save that changes the text appends a
 revision, so the History view can diff any earlier state against the current
 one and restore it — by appending, never by rewinding. Persistence follows
-docs/ui-tree-persistence.md: the tree PUT only updates existing rows, while
+notes/ui-tree-persistence.md: the tree PUT only updates existing rows, while
 creation and deletion are their own endpoints (webapp/personality_api.py →
 db/personality.py). Text is read-only until an explicit Edit → Save.
 Mirrors the /prompt page; desktop-first.
@@ -1641,7 +1641,7 @@ def test_js_has_core_markers():
 
 
 def test_tree_save_declares_no_deletes():
-    """Per docs/ui-tree-persistence.md the tree PUT cannot delete, so the
+    """Per notes/ui-tree-persistence.md the tree PUT cannot delete, so the
     client must not carry a deletes counter — deletion goes to DELETE."""
     b = _body()
     assert "deletes" not in b
@@ -1677,7 +1677,7 @@ Replace the first comment block of `static/personality.js` with:
 // live in webapp/personality_views.py; this file is served at
 // /static/personality.js with an mtime cache-buster. State hydrates from
 // GET /personality/api/tree and structural edits save via debounced PUTs.
-// Per docs/ui-tree-persistence.md the PUT can only update rows that already
+// Per notes/ui-tree-persistence.md the PUT can only update rows that already
 // exist: creating and deleting go to their own endpoints, so no payload of
 // ours can destroy a personality or its history. Ported from static/prompt.js.
 ```
@@ -2318,13 +2318,13 @@ git commit -m "feat: personality admin views and uuid resolution"
 ## Task 10: Browser verification, design doc, full regression
 
 **Files:**
-- Create: `docs/personality-design.md`
-- Modify: `docs/README.md`
+- Create: `notes/personality-design.md`
+- Modify: `notes/README.md`
 
 **Interfaces:**
 - Consumes: everything above.
 
-**Why a browser pass is mandatory:** `docs/ui-left-panel-tree.md` §8 records
+**Why a browser pass is mandatory:** `notes/ui-left-panel-tree.md` §8 records
 that `/git` shipped with a broken root-drop strip *because* its JS was a
 faithful copy — the fault was in CSS layout, invisible to both marker tests
 and code review. This task is where that class of bug gets caught.
@@ -2377,15 +2377,15 @@ Expected: 276 (the standard 260px tree + 16px padding), matching `/chat`'s
 
 - [ ] **Step 5: Write the design doc**
 
-Create `docs/personality-design.md`, following the shape of
-`docs/prompt-design.md`: status line and date, the idea, a "Where things live"
+Create `notes/personality-design.md`, following the shape of
+`notes/prompt-design.md`: status line and date, the idea, a "Where things live"
 file table, the data model with the three tables, the revision rules (append
 on change, newest mirrors `content`, restore appends), the HTTP API table, the
 frontend description, deliberate tradeoffs, and open questions (prompt wiring,
 active-personality selection, usage back-references). Describe the page as it
 is now — no migration notes, no "ported from" history.
 
-Then index it in `docs/README.md` next to the prompt entry:
+Then index it in `notes/README.md` next to the prompt entry:
 
 ```markdown
 - [personality-design.md](personality-design.md) — the /personality page:
@@ -2406,7 +2406,7 @@ failures unrelated to this feature; do not "fix" those here, but do report them.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add source/docs/personality-design.md source/docs/README.md
+git add source/notes/personality-design.md source/notes/README.md
 git commit -m "docs: /personality design doc"
 ```
 

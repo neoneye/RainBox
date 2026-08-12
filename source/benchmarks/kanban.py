@@ -1,5 +1,5 @@
 """Kanban operation benchmarks — the roadmap's "first slice" from
-docs/kanban-design.md.
+notes/kanban-design.md.
 
 The decision they inform: which board serialization do the target local
 models read ids out of reliably (markdown vs JSON), and which invocation

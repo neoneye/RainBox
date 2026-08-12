@@ -226,7 +226,7 @@ bootstrap rather than making DB access implicit.)
 
 This creates an intentional CLI/web difference: a manual `python backup_db.py`
 run ignores values edited in the UI and uses only flags/env. Document that in
-`docs/backup.md` and the operator guide so it is not surprising. A future
+`notes/backup.md` and the operator guide so it is not surprising. A future
 `--use-db-settings` flag is possible, but not part of this slice; it would need
 to bootstrap the app context explicitly and still keep flags as the clearest
 per-run override.
@@ -255,7 +255,7 @@ The database is exactly the asset the backup feature assumes can leak (that's wh
 backups are encrypted to a public key). So:
 
 - **Never store the age private key / identity.** That would defeat the entire
-  point of [docs/backup.md](../backup.md): rainbox must not hold the decryption
+  point of [notes/backup.md](../backup.md): rainbox must not hold the decryption
   key. The `backup.age_recipient` value is a **public** key — safe to store.
   Add an explicit note (and ideally a guard) so no one "helpfully" adds a
   `backup.age_identity` setting.
@@ -336,10 +336,10 @@ DB value for app-context callers, while standalone tools are untouched.
    set/get/precedence, unset-semantics for string vs bool, strict bool parsing,
    invalid DB value falls back with a warning, validation, secret redaction,
    metadata reconciliation; tear down rows per the test-cleanup convention).
-3. Update `docs/backup.md` / `docs/operator-guide.md` to call out the
+3. Update `notes/backup.md` / `notes/operator-guide.md` to call out the
    standalone CLI behavior: env/flags only, no DB settings.
 4. (Later) the **Kokoro URL** moves cleanly the same way.
-5. (Later) build the `/settings` page; document in `docs/operator-guide.md`.
+5. (Later) build the `/settings` page; document in `notes/operator-guide.md`.
 
 ### Provider base URLs are NOT a simple move
 
@@ -379,7 +379,7 @@ existing model rows persist copied endpoint arguments.
 
 ## See also
 
-- `docs/backup.md` — the consumer; the age-recipient secret rule comes from here.
+- `notes/backup.md` — the consumer; the age-recipient secret rule comes from here.
 - `db_model_config.py` — existing in-Postgres config (the pattern to extend).
 - `db.py` (`make_app`, `init_db`, `seed_*`) — where bootstrap config and seeding
   live.

@@ -10,7 +10,7 @@ mirrors the Kokoro demo page's look and feel. All Python — no bash helpers.
 
 ## Architecture
 
-Same split as Kokoro/Whisper (see `docs/voice-and-services.md`):
+Same split as Kokoro/Whisper (see `notes/voice-and-services.md`):
 
 - **`voice_tts_dotstts/`** — standalone Flask service, own Python 3.12 venv,
   pinned `requirements.txt`, port **5007** (kokoro 5005, whisper 5006). The

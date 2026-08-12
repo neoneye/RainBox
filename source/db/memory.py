@@ -184,7 +184,7 @@ def find_equivalent_claim(
     """Return an existing *live* claim (active/candidate by default) in the same
     scope/room whose text normalizes equal to `text`, or None. Used to avoid
     storing the same belief twice — the exact-normalized-duplicate rule from
-    docs/memory-architecture.md §3. A rejected/expired claim does not match, so
+    notes/memory-architecture.md §3. A rejected/expired claim does not match, so
     re-remembering something previously forgotten still creates a fresh claim."""
     norm = normalize_claim_text(text)
     if not norm:

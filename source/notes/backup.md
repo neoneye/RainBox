@@ -42,7 +42,7 @@ value **overrides** the env var), then fire the backup job via the cron API —
 producing a dump of the whole database encrypted to a key *they* control,
 optionally pushed off-machine if `backup.git_push` is on. The destination has
 no approved-roots check. This is Finding 3 of
-`docs/proposals/2026-06-25-security-review-mitigations.md` (status: open); the
+`notes/proposals/2026-06-25-security-review-mitigations.md` (status: open); the
 planned fixes are an operator-auth boundary, elevated confirmation + audit for
 backup-setting changes, and approved destination roots.
 
@@ -177,7 +177,7 @@ shows whether each value comes from DB/env/default, with a Clear button to drop
 the DB value and fall back); they're also visible read-only in Flask-Admin under
 **Config → App settings**. `RAINBOX_BACKUP_AGE_RECIPIENTS_FILE` has no setting —
 it's a host-path escape hatch, env/CLI only. See
-`docs/proposals/2026-06-07-user-configuration-in-postgres.md`.
+`notes/proposals/2026-06-07-user-configuration-in-postgres.md`.
 
 **Database** to dump comes from `DATABASE_URL` (default
 `postgresql+psycopg://localhost/rainbox_production`), via `db.psycopg_dsn()`.
@@ -428,12 +428,12 @@ worker; see the note in `fire_cron_job` (`db/cron.py`).
 
 ## See also
 
-- `docs/cron-design.md` — the cron scheduler/firing this hooks into.
-- `docs/operator-guide.md` — running the app, general troubleshooting.
-- `docs/proposals/2026-06-25-security-review-mitigations.md` — the open
+- `notes/cron-design.md` — the cron scheduler/firing this hooks into.
+- `notes/operator-guide.md` — running the app, general troubleshooting.
+- `notes/proposals/2026-06-25-security-review-mitigations.md` — the open
   control-plane findings and the plan to close them (auth, audited backup
   settings, approved destination roots).
-- `docs/proposals/2026-06-07-user-configuration-in-postgres.md` — the
+- `notes/proposals/2026-06-07-user-configuration-in-postgres.md` — the
   `app_setting` design the backup settings live in.
 - [age-encryption.org](https://age-encryption.org) — the encryption tool/format.
 - Tests: `backup/test_dump.py` (the dump + encryption), `backup/test_remote.py`

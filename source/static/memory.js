@@ -3,7 +3,7 @@
  * Hydrates from GET /memory/api/claims and mutates via
  * POST /memory/api/claims/<uuid>/<action>. The left panel groups claims by
  * STATUS facets (no folders, no drag-drop, no whole-tree save — see
- * docs/ui-left-panel-tree.md for what we deliberately drop, and the design
+ * notes/ui-left-panel-tree.md for what we deliberately drop, and the design
  * spec). Chrome (selection, kebab, detail pane, modals, toast) mirrors /cron.
  *
  * The grouping is a single swappable seam (`groupClaims`) so a future

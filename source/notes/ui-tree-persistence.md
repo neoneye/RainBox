@@ -1,6 +1,6 @@
 # Tree persistence — the standard
 
-How a left-panel tree page (`docs/ui-left-panel-tree.md`) saves its folders and
+How a left-panel tree page (`notes/ui-left-panel-tree.md`) saves its folders and
 items. This doc is the authority on the **save shape**; the tree doc covers
 everything else (rendering, selection, drag-drop, modals).
 
@@ -94,7 +94,7 @@ its own rule, below.
   reason the operator can't see.
 - **Re-hydrate on any tree-save failure**, 409 or network error alike, so the
   client converges on server truth instead of drifting.
-- Delete is confirmed in a modal (`docs/ui-modals.md`); a non-empty folder
+- Delete is confirmed in a modal (`notes/ui-modals.md`); a non-empty folder
   shows its subtree counts and requires typing its name.
 - **Surface orphaned rows instead of hiding them.** A row whose parent no
   longer resolves (e.g. its folder was deleted out from under it by another

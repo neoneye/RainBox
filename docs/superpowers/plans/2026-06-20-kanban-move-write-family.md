@@ -283,7 +283,7 @@ git commit -m "fix(assistant): confirm path refuses non-confirm-tier capabilitie
 
 **Files:**
 - Modify: `agents/assistant.py` (add `KANBAN_MOVE` enum value ~line 68; add `_action_move_kanban_task` near the other actions, before the `CAPABILITIES` dict ~line 287; add a `CAPABILITIES` entry ~line 375)
-- Modify: `docs/kanban-design.md` (one-line note in the permission section)
+- Modify: `notes/kanban-design.md` (one-line note in the permission section)
 - Test: `agents/test_kanban_move_action.py` (create)
 
 **Interfaces:**
@@ -461,7 +461,7 @@ def _action_move_kanban_task(
     ),
 ```
 
-(d) In `docs/kanban-design.md`, in the agent-permission section, add one line:
+(d) In `notes/kanban-design.md`, in the agent-permission section, add one line:
 
 ```markdown
 > Note: the personal **assistant**'s `kanban_move` capability is code-owned and
@@ -477,7 +477,7 @@ Expected: PASS (4 passed).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agents/assistant.py agents/test_kanban_move_action.py docs/kanban-design.md
+git add agents/assistant.py agents/test_kanban_move_action.py notes/kanban-design.md
 git commit -m "feat(assistant): kanban_move log-and-undo capability + action"
 ```
 

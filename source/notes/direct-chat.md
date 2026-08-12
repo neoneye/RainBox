@@ -110,7 +110,7 @@ actually sends:
 
 Linking keeps the free text stored, so Unlink restores it.
 
-Personas (`docs/persona-design.md`) bind to a persona-capable room member
+Personas (`notes/persona-design.md`) bind to a persona-capable room member
 (today, the assistant); a direct room's only members are the operator and
 this direct-chat responder, so it never has one, and its Settings panel keeps
 the model + prompt-source controls above as its only voice — the two

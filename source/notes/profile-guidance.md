@@ -242,7 +242,7 @@ the next turn; nothing else depends on them.
 
 ## See also
 
-- `docs/proposals/2026-07-21-formatting-guide-and-knowledge-survey.md` — the
+- `notes/proposals/2026-07-21-formatting-guide-and-knowledge-survey.md` — the
   full design, precedence contract, and release-gate rationale.
 - `profile-design.md`, `assistant-design.md`, `settings-design.md`,
   `eval-loop.md` — the subsystem docs this feature touches.

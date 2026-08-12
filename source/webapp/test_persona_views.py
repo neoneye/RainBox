@@ -47,7 +47,7 @@ def test_js_has_core_markers():
 
 
 def test_tree_save_declares_no_deletes():
-    """Per docs/ui-tree-persistence.md the tree PUT cannot delete, so the
+    """Per notes/ui-tree-persistence.md the tree PUT cannot delete, so the
     client must not carry a deletes counter — deletion goes to DELETE."""
     b = _body()
     assert "deletes" not in b
@@ -79,7 +79,7 @@ def test_content_editing_is_explicit():
 
 
 def test_create_and_delete_flush_pending_save():
-    """Per docs/ui-tree-persistence.md the client must flush or await a
+    """Per notes/ui-tree-persistence.md the client must flush or await a
     pending tree PUT before issuing a create or delete, so the older PUT's
     response can't land after the create/delete's fresher token and stomp it
     with a stale one."""

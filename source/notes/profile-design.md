@@ -40,7 +40,7 @@ built-in templates (read-only) and the connector-owned `dynamic` subtree
 
 ## Data model
 
-Two tables in the repo's SQLAlchemy-2.0 conventions (`docs/data-model.md`).
+Two tables in the repo's SQLAlchemy-2.0 conventions (`notes/data-model.md`).
 Reference columns are **plain UUID columns — no DB foreign keys**; integrity
 is enforced in `validate_profile_tree` before any write.
 
@@ -210,14 +210,14 @@ hides built-in row ages since the shipped stamps are schema filler.
 ## Tree + persistence (the /prompt and /cron pattern)
 
 The left panel follows the app-wide tree conventions
-(`docs/ui-left-panel-tree.md`): nested lists with guide lines, one selected
+(`notes/ui-left-panel-tree.md`): nested lists with guide lines, one selected
 node, drag-and-drop with a drag-only "Move to top level" strip, kebab menus,
-and modal-confirmed rename (`docs/ui-modal-rename.md` — the pane heading is
+and modal-confirmed rename (`notes/ui-modal-rename.md` — the pane heading is
 the click-to-rename control, so the kebab has no Rename item; it offers
 Duplicate and Delete only). Folder delete cascades with the typed-name gate
 for non-empty folders. Expand/collapse state persists in `localStorage`.
 
-The save shape is `docs/ui-tree-persistence.md`, which is the authority.
+The save shape is `notes/ui-tree-persistence.md`, which is the authority.
 Placement, order and names save as a debounced (250 ms, serialized) **tree
 PUT** that only ever *updates rows that already exist*. It never creates and
 never deletes — a payload that omits an existing user row, or names one the DB

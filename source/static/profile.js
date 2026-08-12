@@ -3,7 +3,7 @@
 // mtime cache-buster. Tree state hydrates from GET /profile/api/tree and
 // structural edits save via debounced PUTs (projected to structural keys with
 // the read-only built-ins left out); creation and deletion are their own
-// immediate requests (docs/ui-tree-persistence.md). Profile data autosaves
+// immediate requests (notes/ui-tree-persistence.md). Profile data autosaves
 // through a separate per-profile PUT. Mirrors static/prompt.js.
 
 // ---- helpers ----
@@ -112,7 +112,7 @@ function profileRender(){
 }
 // Depth-first list of everything under parentId (null = whole tree), in the
 // same order as the left tree, each row tagged with its nesting `depth` — like
-// /cron's cronFlattenTree (docs/ui-left-panel-tree.md §7). At the root the
+// /cron's cronFlattenTree (notes/ui-left-panel-tree.md §7). At the root the
 // user's own content comes first and the built-in Templates folder last,
 // matching the tree render.
 function profileFlattenTree(parentId){
@@ -177,7 +177,7 @@ function profileRenderContents(){
   });
 }
 // The selected folder's / profile's name, shown as a click-to-rename control
-// (docs/ui-modal-rename.md). Built-ins are unrenamable, so they get a plain
+// (notes/ui-modal-rename.md). Built-ins are unrenamable, so they get a plain
 // heading with no rename affordance.
 function profileRenderRename(){
   const el = document.getElementById('profile-node-rename');
@@ -576,7 +576,7 @@ function profileCloseNewModal(){
 // A new profile starts with empty data. It lands in the currently-selected
 // folder — or at the root when the selection is the read-only Templates
 // folder. Created by its own endpoint — the tree save can never make a row
-// (docs/ui-tree-persistence.md).
+// (notes/ui-tree-persistence.md).
 async function profileAddProfileConfirm(){
   const name = document.getElementById('profile-new-input').value.trim();
   if (!name) return;
@@ -984,7 +984,7 @@ function profileSave(){
   clearTimeout(profileSaveTimer);
   profileSaveTimer = setTimeout(profileSavePush, 250);  // coalesce bursts into one PUT
 }
-// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// Per notes/ui-tree-persistence.md: "Flush or await a pending tree PUT before
 // issuing a create or delete." Nothing else orders a tree PUT against a
 // create/delete, and the two responses race — if the older PUT's response
 // lands after the create/delete's fresher token, it overwrites that token with
@@ -2092,7 +2092,7 @@ async function profileCalFlush(uuid){
 async function profileDuplicateUuid(uuid){
   // Flush pending structural edits first: the source row must exist
   // server-side, and the new row bumps the version a queued stale tree PUT
-  // would 409 on (docs/ui-tree-persistence.md).
+  // would 409 on (notes/ui-tree-persistence.md).
   await profileFlushPendingSave();
   if (!profileTreeSaveOk){
     profileToastMsg('Duplicate aborted — the tree could not be saved.');

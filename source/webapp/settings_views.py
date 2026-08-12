@@ -4,12 +4,12 @@ Operator-editable configuration backed by the `db_settings` registry (the source
 of truth) and the `app_setting` table (persisted values). The page renders one
 row per registry setting with its effective value, provenance (DB / env /
 default), and a typed editor; secret settings are shown env-managed/read-only
-(they are never persisted to the DB — see the threat model in docs/backup.md).
+(they are never persisted to the DB — see the threat model in notes/backup.md).
 
 Writes go through `db.set_setting`, so the registry's coercion/validation runs and
 a bad value (or an attempt to store a secret) is rejected with a 400 carrying the
 error message. This is the editable counterpart to the read-only Flask-Admin
-AppSetting view. See docs/proposals/2026-06-07-user-configuration-in-postgres.md.
+AppSetting view. See notes/proposals/2026-06-07-user-configuration-in-postgres.md.
 """
 import logging
 

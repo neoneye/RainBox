@@ -1,6 +1,6 @@
 """Git repository tree: folder/repo persistence + live repo inspection.
 
-Backs the /git page. Saves follow docs/ui-tree-persistence.md — the tree save
+Backs the /git page. Saves follow notes/ui-tree-persistence.md — the tree save
 only ever updates rows that already exist, so a payload that omits or invents a
 row is an error rather than a silent create or delete; creation and deletion
 are their own functions. Also holds read-only filesystem helpers
@@ -182,7 +182,7 @@ def git_save_tree(folders: list, repos: list, *,
     """Update name, description, placement and order of rows that already
     exist. List order becomes `position`.
 
-    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    Per notes/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
     a payload that omits an existing row, or names one the DB doesn't have, is
     a GitTreeError — absence means a bug, not an instruction. Creation is
     git_create_repo / git_create_folder; deletion is git_delete_repo /

@@ -6,7 +6,7 @@ form's fieldsets are generated server-side from profile_fields.PROFILE_FIELDS,
 so the page can never drift from the validator. Persistence is real: the
 browser-side state hydrates from GET /profile/api/tree and saves placement,
 order and names back through PUT; creation and deletion are their own
-endpoints, per docs/ui-tree-persistence.md (webapp/profile_api.py →
+endpoints, per notes/ui-tree-persistence.md (webapp/profile_api.py →
 db/profile.py). Field edits autosave through a per-profile PUT. The built-in
 locale templates render read-only from the same tree GET. Mirrors the /prompt
 page; desktop-first.

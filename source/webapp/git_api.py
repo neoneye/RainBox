@@ -1,6 +1,6 @@
 """JSON API backing the /git page's persistence + live repo inspection.
 
-Save shape per docs/ui-tree-persistence.md: the tree PUT only updates rows that
+Save shape per notes/ui-tree-persistence.md: the tree PUT only updates rows that
 already exist (a payload that omits or invents one is a 400), and creation and
 deletion are their own endpoints. Every tree-structure endpoint (the tree PUT,
 folder/repo create, folder/repo delete) carries the new tree `version` in its

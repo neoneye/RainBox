@@ -34,7 +34,7 @@ prompt is this chat actually using?"* (the room's Settings sidebar links here).
 
 ## Data model
 
-Two tables in the repo's SQLAlchemy-2.0 conventions (`docs/data-model.md`).
+Two tables in the repo's SQLAlchemy-2.0 conventions (`notes/data-model.md`).
 Reference columns are **plain UUID columns — no DB foreign keys**; integrity
 is enforced in `validate_prompt_tree` before any write.
 
@@ -62,7 +62,7 @@ Two different "parent" notions, deliberately kept apart:
 
 ### Tree persistence
 
-The save shape is `docs/ui-tree-persistence.md`, which is the authority. The
+The save shape is `notes/ui-tree-persistence.md`, which is the authority. The
 page hydrates from `GET /prompt/api/tree` and saves placement, order and names
 as a debounced **tree PUT** that only ever *updates rows that already exist*.
 It never creates and never deletes — a payload that omits an existing row, or
@@ -119,11 +119,11 @@ persist on its own. The toolbar's **Edit** button starts an edit:
   rest of the page is grayed out and non-clickable until the edit is resolved.
 - **Save** PUTs the content (`PUT /prompt/api/prompts/<uuid>`, last write
   wins) and toasts; **Cancel** restores the snapshot taken at Edit time.
-- Esc / backdrop-click follow the `docs/ui-modals.md` dirty guard: they cancel
+- Esc / backdrop-click follow the `notes/ui-modals.md` dirty guard: they cancel
   only while the text is unchanged. Closing the tab with unsaved changes
   triggers the browser's leave-page warning.
 
-Renaming a prompt or folder follows `docs/ui-modal-rename.md`: the name is a
+Renaming a prompt or folder follows `notes/ui-modal-rename.md`: the name is a
 click-to-rename display opening a Cancel/Rename modal (names live in the tree
 payload, so a rename is a tree save, not a content save).
 
@@ -155,10 +155,10 @@ JSON, same-origin, in `webapp/prompt_api.py`. uuids are the identifiers.
 ## Frontend
 
 Layout and behavior follow the app-wide conventions: the left-panel tree
-(`docs/ui-left-panel-tree.md` — nested lists, guide lines, one selected node,
-drag-and-drop with a "Move to top level" strip), modals (`docs/ui-modals.md`),
-kebab menus (`docs/ui-kebab-menu.md`), and modal-confirmed rename
-(`docs/ui-modal-rename.md`).
+(`notes/ui-left-panel-tree.md` — nested lists, guide lines, one selected node,
+drag-and-drop with a "Move to top level" strip), modals (`notes/ui-modals.md`),
+kebab menus (`notes/ui-kebab-menu.md`), and modal-confirmed rename
+(`notes/ui-modal-rename.md`).
 
 - **Left panel:** an "All prompts" node, **+ Folder** / **+ Prompt** actions
   (creation lives here, not in the kebabs), then the tree. Kebab per node:
@@ -177,7 +177,7 @@ kebab menus (`docs/ui-kebab-menu.md`), and modal-confirmed rename
 
 ## How direct chat uses a prompt
 
-A direct room (`Chatroom.room_type = 'direct'`, see `docs/direct-chat.md`)
+A direct room (`Chatroom.room_type = 'direct'`, see `notes/direct-chat.md`)
 has two mutually exclusive system-prompt sources on its row:
 
 - **`prompt_uuid`** — a link to a `/prompt` version, or
@@ -238,7 +238,7 @@ Two consequences worth knowing:
 - **One bulk PUT for placement, dedicated endpoints for create and delete** —
   dragging is inherently a whole-list operation, so batching it is right; but a
   shape that can express "delete these" turns a routine frontend bug into data
-  loss, so it doesn't get to. See `docs/ui-tree-persistence.md`.
+  loss, so it doesn't get to. See `notes/ui-tree-persistence.md`.
 - **Content outside the tree payload/version.** Keeps the frequently-saved
   tree light, and means a content save can never 409 an open tree (and vice
   versa).

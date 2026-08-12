@@ -6,7 +6,7 @@ A persona's uuid is stable for its whole life (deep-linkable via
 /persona?id=<uuid>) and every save that changes the text appends a
 revision, so the History view can diff any earlier state against the current
 one and restore it — by appending, never by rewinding. Persistence follows
-docs/ui-tree-persistence.md: the tree PUT only updates existing rows, while
+notes/ui-tree-persistence.md: the tree PUT only updates existing rows, while
 creation and deletion are their own endpoints (webapp/persona_api.py →
 db/persona.py). Text is read-only until an explicit Edit → Save.
 Mirrors the /prompt page; desktop-first.

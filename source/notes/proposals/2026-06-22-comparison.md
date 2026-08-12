@@ -169,7 +169,7 @@ RainBox today is a local, Postgres-backed assistant workbench:
   deterministic runners score candidates against baselines without a live LLM and
   gate on regressions (`source/evals/runner.py`, `source/evals/compare.py`).
 - Encrypted backup support (age public-key + zstd, fail-closed, optional git
-  push — `source/docs/backup.md`) and a `rainbox doctor` operator health check
+  push — `source/notes/backup.md`) and a `rainbox doctor` operator health check
   (`source/tools/doctor.py`) probing embedder reachability, model groups,
   capabilities, skills, and MCP.
 
@@ -1014,17 +1014,17 @@ external project in isolation.
 RainBox local:
 
 - `source/README.md`
-- `source/docs/memory-architecture.md`
-- `source/docs/operator-guide.md`
-- `source/docs/proposals/2026-06-20-status.md`
-- `source/docs/proposals/2026-06-20-improvements-v3.md`
+- `source/notes/memory-architecture.md`
+- `source/notes/operator-guide.md`
+- `source/notes/proposals/2026-06-20-status.md`
+- `source/notes/proposals/2026-06-20-improvements-v3.md`
 - `source/agents/assistant.py`
 - `source/db/models.py`
 - `source/agents/mcp.py`
 - `source/tools/workspace_command_runner.py`
 - `source/tools/command_policy.py`
-- `source/docs/proposals/2026-06-09-planexe-personas.md`
-- `source/docs/proposals/2026-06-23-status.md`
+- `source/notes/proposals/2026-06-09-planexe-personas.md`
+- `source/notes/proposals/2026-06-23-status.md`
 
 External / local comparators:
 

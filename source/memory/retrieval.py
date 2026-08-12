@@ -184,7 +184,7 @@ def retrieve_memories(
 
 # --- hybrid retrieval (Phase 3) ----------------------------------------------
 
-# Merge weights for the minimal hybrid blend (docs/proposals/2026-06-19-...,
+# Merge weights for the minimal hybrid blend (notes/proposals/2026-06-19-...,
 # "Draft: memory embedding storage and ranking"). Confidence/scope are
 # tie-breakers after the score, not hidden multipliers.
 _W_VECTOR = 0.55

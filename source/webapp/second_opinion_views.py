@@ -2,7 +2,7 @@
 surface, and where the operator records their own assessment of each one.
 
 It answers the two questions the review records exist for
-(docs/proposals/2026-07-28-second-opinion-review-records.md):
+(notes/proposals/2026-07-28-second-opinion-review-records.md):
 
 - *Why did this run go wrong?* Filter by verdict and follow a row into its
   trace. `skipped` / `error` separate "the gate never ran" from "the gate

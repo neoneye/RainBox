@@ -92,7 +92,7 @@ paths are the current source of truth; the v2 prose schemas are historical.
 - Worker authority model `observe`/`work`/`shape` (`kanban_dispatcher`) governs
   *autonomous worker agents*; the assistant's `kanban_move` is code-owned and
   bypasses it (safety = reversibility + trace), documented in
-  `docs/kanban-design.md`.
+  `notes/kanban-design.md`.
 - Write fns available for the next families: `kanban_append_event`
   (comment/note), `kanban_complete_task`, `kanban_create_board` /
   `kanban_save_board` (task creation), `kanban_get_task`, `kanban_move_task`.
@@ -188,7 +188,7 @@ batches:
   log-and-undo ledger and the code-owned-capability authority stance.
 - **Touches:** `agents/assistant.py` (new capabilities + `_action_*`),
   `db/kanban.py` (`kanban_append_event`, `kanban_complete_task`, task creation
-  via `kanban_save_board`), the surface-lock test, `docs/kanban-design.md`.
+  via `kanban_save_board`), the surface-lock test, `notes/kanban-design.md`.
 - **Sub-cards (pick order in the spec):** comment/note (append-only → confirm-tier
   or log-and-undo with "undo = retraction note"); complete/mark-done (reversible →
   log-and-undo; mind verified→Done vs unverified→Review); create task

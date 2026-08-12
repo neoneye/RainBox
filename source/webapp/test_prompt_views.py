@@ -112,7 +112,7 @@ def test_tree_rows_are_real_links():
 
 
 def test_tree_save_declares_no_deletes():
-    """Per docs/ui-tree-persistence.md the tree PUT cannot delete, so the
+    """Per notes/ui-tree-persistence.md the tree PUT cannot delete, so the
     client must not carry a deletes counter — deletion goes to DELETE."""
     b = _body()
     assert "deletes" not in b

@@ -2,7 +2,7 @@
 AGENT-originated board operations (humans use the page's bulk save, which is
 a different, version-guarded surface).
 
-docs/kanban-design.md: "Models propose, code disposes." A model (or the code
+notes/kanban-design.md: "Models propose, code disposes." A model (or the code
 driving it) proposes an op dict {op, taskId, ...}; this module validates the
 shape (malformed input raises, it is never silently dropped), resolves the
 agent's authority from the agent_config registry, and only then routes to

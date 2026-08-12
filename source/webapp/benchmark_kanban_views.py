@@ -1,5 +1,5 @@
 """The /benchmark_kanban page — the kanban "first slice" decision matrix
-(docs/kanban-design.md roadmap item 1) on its own page, so the general
+(notes/kanban-design.md roadmap item 1) on its own page, so the general
 /benchmark suite stays fast and the 2×2 comparison (board context format ×
 invocation mechanism) reads as one experiment.
 
@@ -42,7 +42,7 @@ KANBAN_INTRO = (
     "Each trial is a synthetic board serialized with the production renderers "
     "plus one operation instruction; correct iff the op and the uuids match "
     "exactly. The winning cell picks the DEFAULTS for the first LLM kanban "
-    "worker (docs/kanban-design.md). Tool trials are capped at 60s; after 2 "
+    "worker (notes/kanban-design.md). Tool trials are capped at 60s; after 2 "
     "timeouts the benchmark is abandoned and marked failed."
 )
 

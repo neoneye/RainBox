@@ -169,7 +169,7 @@ def _all_rooms_payload(extra_overrides=None):
 
 def _all_folders_payload():
     """Every existing folder in the PUT's field names. The save can neither
-    create nor delete (docs/ui-tree-persistence.md), so a payload that omits a
+    create nor delete (notes/ui-tree-persistence.md), so a payload that omits a
     folder is refused just like one that omits a room."""
     return [{"id": f["id"], "name": f["name"], "parentId": f["parentId"]}
             for f in db.list_chatroom_folders()]

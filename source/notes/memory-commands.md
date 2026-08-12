@@ -163,9 +163,9 @@ provenance-safe lifecycle actions (activate / reject / reactivate / correct /
 sensitivity / expiry). It also surfaces conflict candidates with resolution
 actions (supersede / reject / not_conflict / scoped_exception) and tombstones
 that have suppressed a model re-assertion. See "Memory Review UI" in
-`docs/memory-architecture.md`.
+`notes/memory-architecture.md`.
 
 The raw tables are also browsable in Flask-Admin (`MemoryClaim`,
 `MemoryEvidence`, `MemoryEmbedding`, `MemoryRejectedValue`).
 
-For architecture details, see `docs/memory-architecture.md`.
+For architecture details, see `notes/memory-architecture.md`.

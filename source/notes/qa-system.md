@@ -37,7 +37,7 @@ Within one file, a duplicate `id` or a duplicate `path` is an operator mistake
 and is rejected — repopulate fails hard with a `file:line` message naming the
 first occurrence. Reuse *across* files is the override mechanism and is fine.
 (The overlay schema is under active design — see the
-`docs/proposals/2026-07-*-qa-overlay-*` proposals.)
+`notes/proposals/2026-07-*-qa-overlay-*` proposals.)
 
 ### Entry schema
 
@@ -149,7 +149,7 @@ A shield hides sensitive entries from the LLM until the operator unlocks them.
 > the settings API has no authentication — any local HTTP caller can unlock
 > every shield with one `POST /settings/api/set`. Shields gate what reaches
 > the *LLM*, not what a local attacker can read. This is Finding 8a of
-> `docs/proposals/2026-06-25-security-review-mitigations.md` (open); the plan
+> `notes/proposals/2026-06-25-security-review-mitigations.md` (open); the plan
 > is auth plus treating shield changes as high-sensitivity, audited actions.
 
 ## Consumers
@@ -381,5 +381,5 @@ blocked until an authenticated operator control plane exists.
 | Constants | `TOP_K_NODES=50`, `TOP_K_VECTOR=5`, `TOP_K_FULLTEXT=5`, `MIN_SCORE=0.60`, `MIN_MARGIN=0.05`, `TOP_K_FILTER=5`, `FILTER_KEEP_THRESHOLD=4`, `FILTER_KEEP_TOP_N=2`, `FILTER_KEEP_TOP_FLOOR=2` |
 | Inspection page | `/memory/developer` (`webapp/memory_developer_views.py`, `static/memory_developer.js`) |
 | Tests | `memory/test_seed_memory_errors.py`, `memory/test_seed_shields.py`, `memory/test_seed_documents.py`, `memory/test_seed_sync.py` |
-| Overlay schema proposals | `docs/proposals/2026-07-04-qa-overlay-person-schema.md`, `docs/proposals/2026-07-07-qa-overlay-first-person-voice.md` |
-| Security review | `docs/proposals/2026-06-25-security-review-mitigations.md` (Finding 8a: shields) |
+| Overlay schema proposals | `notes/proposals/2026-07-04-qa-overlay-person-schema.md`, `notes/proposals/2026-07-07-qa-overlay-first-person-voice.md` |
+| Security review | `notes/proposals/2026-06-25-security-review-mitigations.md` (Finding 8a: shields) |

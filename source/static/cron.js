@@ -2,7 +2,7 @@
 // webapp/cron_views.py; this file is served at /static/cron.js with an
 // mtime cache-buster. State hydrates from GET /cron/api/tree and structural
 // edits save via debounced PUTs; creation, duplication and deletion are their
-// own immediate requests (docs/ui-tree-persistence.md, docs/cron-design.md).
+// own immediate requests (notes/ui-tree-persistence.md, notes/cron-design.md).
 
 // ---- helpers ----
 function ppOpt(value, label){
@@ -393,7 +393,7 @@ function cronAddOrUpdate(){
   // The builder is create-only now (editing happens on the Job-details page via
   // the Edit schedule / Edit action overlays), so this always creates a job —
   // through its own endpoint; the tree save can never make a row
-  // (docs/ui-tree-persistence.md).
+  // (notes/ui-tree-persistence.md).
   row.enabled = true;
   cronCreateJob(row, err);
 }
@@ -436,7 +436,7 @@ function cronEdit(uuid){
   cronRender();
 }
 // ---- Job-details edit overlays (Edit schedule / Edit action) ----
-// All modals share one #ui-modal-backdrop (docs/ui-modals.md): every open shows
+// All modals share one #ui-modal-backdrop (notes/ui-modals.md): every open shows
 // it, every close hides it.
 function cronOpenEditModal(id){
   document.getElementById('ui-modal-backdrop').hidden = false;
@@ -723,7 +723,7 @@ function cronCancelEdit(){
   cronRender();       // resets Add/Cancel buttons + section visibility
 }
 // Deletion goes through the dedicated endpoint — the tree PUT can only update
-// existing rows, never remove one (docs/ui-tree-persistence.md).
+// existing rows, never remove one (notes/ui-tree-persistence.md).
 async function cronDelete(uuid){
   try {
     await cronFlushPendingSave();
@@ -910,7 +910,7 @@ function cronRenderFolderDesc(){
 // The selected node's (folder's or job's) name at the top of the right pane,
 // shown as a click-to-rename control that doubles as the pane heading. All
 // editing happens in the rename modal — Cancel / Rename are the only ways out
-// (docs/ui-modal-rename.md), so a half-typed name can't be silently lost.
+// (notes/ui-modal-rename.md), so a half-typed name can't be silently lost.
 function cronRenderRename(){
   const el = document.getElementById('cron-node-rename');
   el.innerHTML = '';
@@ -928,7 +928,7 @@ function cronRenderRename(){
   el.appendChild(btn);
 }
 
-// ---- rename modal (docs/ui-modal-rename.md) ----
+// ---- rename modal (notes/ui-modal-rename.md) ----
 let cronRenameState = null;   // {kind: 'job'|'folder', id, original}
 function cronOpenRenameModal(kind, node){
   cronRenameState = {kind: kind, id: kind === 'job' ? node.uuid : node.id,
@@ -1374,7 +1374,7 @@ function cronConfirmDeleteFolder(id){
   });
 }
 // Duplication is a create, so it runs server-side through its own endpoint —
-// the tree save can never make a row (docs/ui-tree-persistence.md). Both
+// the tree save can never make a row (notes/ui-tree-persistence.md). Both
 // re-hydrate afterwards: the copy shifted its later siblings' positions, and
 // a folder copy brought a whole fresh subtree with it.
 async function cronDuplicateJob(uuid){
@@ -1694,7 +1694,7 @@ function cronSave(){
   clearTimeout(cronSaveTimer);
   cronSaveTimer = setTimeout(cronSavePush, 250);
 }
-// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// Per notes/ui-tree-persistence.md: "Flush or await a pending tree PUT before
 // issuing a create or delete." Nothing else orders a tree PUT against a
 // create/delete, and the two responses race — if the older PUT's response
 // lands after the create/delete's fresher token, it overwrites that token with
@@ -1781,7 +1781,7 @@ function cronSavePush(){
   return run;
 }
 
-// ---- dirty-guarded dismissal (docs/ui-modals.md) --------------------------
+// ---- dirty-guarded dismissal (notes/ui-modals.md) --------------------------
 // Cancel buttons always close (handled by each modal's own close fn). The
 // accidental exits — clicking the shared backdrop or pressing Esc — only
 // dismiss when the open modal is "clean" (the user hasn't entered/changed

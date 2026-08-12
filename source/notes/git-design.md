@@ -27,7 +27,7 @@ subcommands, both `rev-parse` reads.
 
 ## Data model
 
-Two tables in the repo's SQLAlchemy-2.0 conventions (`docs/data-model.md`).
+Two tables in the repo's SQLAlchemy-2.0 conventions (`notes/data-model.md`).
 Reference columns are **plain UUID columns — no DB foreign keys**; integrity
 is enforced in `validate_git_tree` before any write.
 
@@ -53,10 +53,10 @@ stale cached snapshot.
 ## Tree persistence (the shared pattern)
 
 The left panel is the app-wide left-panel tree — see
-`docs/ui-left-panel-tree.md` for the mechanics (flat arrays + parent
+`notes/ui-left-panel-tree.md` for the mechanics (flat arrays + parent
 pointers, recursive render, drag-and-drop with a "Move to top level" strip,
 real-anchor rows so CMD/Ctrl-click opens a new tab, kebab menus). The save
-shape is `docs/ui-tree-persistence.md`, which is the authority: the page
+shape is `notes/ui-tree-persistence.md`, which is the authority: the page
 hydrates from `GET /git/api/tree` and saves placement, order and names as a
 debounced (250 ms, serialized) **tree PUT** that only ever *updates rows that
 already exist*. It never creates and never deletes — a payload that omits an
@@ -131,12 +131,12 @@ relative or symlinked one, and never one that only the browser checked.
 - **Deleting a node removes only the RainBox row** — the delete modals say so
   explicitly; the repository on disk is untouched.
 - **`path` is immutable after add.** Rename edits the display name only
-  (`docs/ui-modal-rename.md`); moving a repo on disk means delete + re-add.
+  (`notes/ui-modal-rename.md`); moving a repo on disk means delete + re-add.
 
 ## Frontend
 
 `static/git.js` follows the shared tree conventions
-(`docs/ui-left-panel-tree.md`); differences from the /cron reference:
+(`notes/ui-left-panel-tree.md`); differences from the /cron reference:
 
 - **No enable/disable layer** — repos have no on/off state, so no dimming or
   effective-enabled logic; repo leaves render **without an icon** (every leaf
@@ -157,7 +157,7 @@ relative or symlinked one, and never one that only the browser checked.
 - **Deep-linking**: `?id=<uuid>` selects that folder or repo on load; the
   selection is mirrored back into the URL via `history.replaceState`; unknown
   id falls back to *All repositories*.
-- Modals follow `docs/ui-modals.md` (shared backdrop, dirty-guarded Esc /
+- Modals follow `notes/ui-modals.md` (shared backdrop, dirty-guarded Esc /
   backdrop dismissal, typed-name gate on non-empty-folder delete); toasts
   replace native alerts.
 

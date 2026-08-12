@@ -35,7 +35,7 @@ would point at, so editing a persona never means re-linking it.
 
 ## Data model
 
-Three tables in the repo's SQLAlchemy-2.0 conventions (`docs/data-model.md`).
+Three tables in the repo's SQLAlchemy-2.0 conventions (`notes/data-model.md`).
 Reference columns are **plain UUID columns — no DB foreign keys**; integrity
 is enforced in `validate_persona_tree` before any write.
 
@@ -90,7 +90,7 @@ no "latest revision" query.
 
 The page hydrates from `GET /persona/api/tree` and saves structural
 changes back as a debounced whole-tree PUT. This is the first page built to
-`docs/ui-tree-persistence.md`'s standard: **the tree PUT only updates rows
+`notes/ui-tree-persistence.md`'s standard: **the tree PUT only updates rows
 that already exist** — a payload that omits an existing row, or names one the
 database doesn't have, is a 400 (`PersonaTreeError`), not a silent delete
 or create. Creation and deletion are their own endpoints
@@ -136,9 +136,9 @@ diff and restore routes, never a diff or restore against a stranger's text.
 
 ## Frontend
 
-Layout and behavior follow `docs/ui-left-panel-tree.md` (tree),
-`docs/ui-tree-persistence.md` (saving), `docs/ui-modals.md`,
-`docs/ui-kebab-menu.md` and `docs/ui-modal-rename.md`.
+Layout and behavior follow `notes/ui-left-panel-tree.md` (tree),
+`notes/ui-tree-persistence.md` (saving), `notes/ui-modals.md`,
+`notes/ui-kebab-menu.md` and `notes/ui-modal-rename.md`.
 
 - **Left panel:** an "All personas" node → `<hr>` → **+ Folder** /
   **+ Persona** → the tree → the drag-only "Move to top level" strip
@@ -161,7 +161,7 @@ Layout and behavior follow `docs/ui-left-panel-tree.md` (tree),
   never persist on its own. **Save** PUTs the content and toasts
   "saved — version N"; a save of identical text toasts "no changes" and
   appends nothing. **Cancel** restores the snapshot taken at Edit time. Esc
-  and backdrop-click follow the `docs/ui-modals.md` dirty guard — they cancel
+  and backdrop-click follow the `notes/ui-modals.md` dirty guard — they cancel
   only while the text is unchanged.
 - **History view** replaces the editor: one row per revision — Saved at /
   Size / first line — newest labeled *current*, each with **Diff** and
@@ -221,7 +221,7 @@ binding fresh on every turn — no caching, no re-linking needed after an edit.
 A non-member, an unlinked member, a deleted persona, a pin whose revision is
 gone, and a persona that was never saved all resolve to no persona block,
 matching `resolve_room_system_prompt`'s fail-obvious shape (see
-`docs/direct-chat.md`): the member visibly has no voice rather than quietly
+`notes/direct-chat.md`): the member visibly has no voice rather than quietly
 using text the operator thought they had replaced. Following members get the
 persona's current `content` (the newest revision, by the invariant above);
 either way the resolution stamps the `PersonaRevision.uuid` that produced the

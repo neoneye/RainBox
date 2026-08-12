@@ -16,7 +16,7 @@
 - **A deleted persona sends no block** — never stale text. Same for a persona that has never been saved (no revisions).
 - A pinned revision must belong to the linked persona.
 - The persona ranks with `formatting_guide` in `<source_priority>`: it changes voice, never which actions exist, never the working rules, never whether to answer.
-- **`webapp/chat_template.py` is a non-raw Python string.** A `\n` written inside its inline JS is interpreted by Python and silently breaks the script; marker tests do not catch it. Write `\\n` (see `docs/chat-frontend-rules.md`).
+- **`webapp/chat_template.py` is a non-raw Python string.** A `\n` written inside its inline JS is interpreted by Python and silently breaks the script; marker tests do not catch it. Write `\\n` (see `notes/chat-frontend-rules.md`).
 - `chatroom_member` is an existing table: `db.create_all()` does **not** add columns to it. New columns need `_add_column_if_missing` in `db/__init__.py`.
 - The binding is **per member, not per room** — a room may later hold a math assistant and a physics assistant, each with its own persona. Only persona-capable members (today `PERSONA_CAPABLE_UUIDS = (ASSISTANT_UUID,)`) can carry one.
 - `PUT /chat/api/rooms/<uuid>/settings` is **not** touched by this feature; it stays direct-room-only.
@@ -48,7 +48,7 @@
 | `agents/test_assistant_persona.py` | Prompt-shape + turn-log tests | Create |
 | `webapp/chat_template.py` | Agents-room Settings panel, persona + version pickers | Modify |
 | `webapp/test_chat_views.py` | Marker tests for the panel | Modify |
-| `docs/persona-design.md`, `docs/direct-chat.md` | Current-state docs | Modify |
+| `notes/persona-design.md`, `notes/direct-chat.md` | Current-state docs | Modify |
 
 ---
 
@@ -1357,7 +1357,7 @@ git commit -m "feat: persona picker in the chat sidebar"
 ## Task 6: Browser verification + docs
 
 **Files:**
-- Modify: `docs/persona-design.md`, `docs/direct-chat.md`, `docs/data-model.md`
+- Modify: `notes/persona-design.md`, `notes/direct-chat.md`, `notes/data-model.md`
 
 - [ ] **Step 1: Start the UI server**
 
@@ -1410,7 +1410,7 @@ with app.app_context():
 
 - [ ] **Step 4: Update the docs**
 
-In `docs/persona-design.md`: replace the "not wired to the assistant yet"
+In `notes/persona-design.md`: replace the "not wired to the assistant yet"
 framing with how it now works — a room *member* links a persona
 (`chatroom_member.persona_uuid`, optionally pinned via
 `persona_revision_uuid`), resolution is fresh per turn,
@@ -1420,11 +1420,11 @@ used. Move "where a persona lands in the assistant's prompt" out of Open
 questions — it is answered now. Keep the usage-back-references question: it is
 still open and now matters more.
 
-In `docs/direct-chat.md`: one sentence noting that personas are an agents-room
+In `notes/direct-chat.md`: one sentence noting that personas are an agents-room
 mechanism and direct rooms keep their own prompt source, so the two never
 compete.
 
-In `docs/data-model.md`: add the two `chatroom_member` columns to that table's
+In `notes/data-model.md`: add the two `chatroom_member` columns to that table's
 field list, in the style of the surrounding entries, noting that the binding is
 per member so a room can hold more than one assistant.
 
@@ -1441,7 +1441,7 @@ do not "fix" a failure unrelated to this feature, report it.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add source/docs/persona-design.md source/docs/direct-chat.md source/docs/data-model.md
+git add source/notes/persona-design.md source/notes/direct-chat.md source/notes/data-model.md
 git commit -m "docs: the room persona binding"
 ```
 

@@ -2,7 +2,7 @@
 
 **Status:** Implemented — all three rollout steps. Nothing is backfilled, so
 the queries below see only reviews written from 2026-07-28 onward. Current
-behaviour lives in `docs/second-opinion-design.md`; this document is the
+behaviour lives in `notes/second-opinion-design.md`; this document is the
 design rationale.
 **Date:** 2026-07-28
 **Last updated:** 2026-07-28

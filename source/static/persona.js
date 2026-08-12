@@ -2,7 +2,7 @@
 // live in webapp/persona_views.py; this file is served at
 // /static/persona.js with an mtime cache-buster. State hydrates from
 // GET /persona/api/tree and structural edits save via debounced PUTs.
-// Per docs/ui-tree-persistence.md the PUT can only update rows that already
+// Per notes/ui-tree-persistence.md the PUT can only update rows that already
 // exist: creating and deleting go to their own endpoints, so no payload of
 // ours can destroy a persona or its history. Ported from static/prompt.js.
 
@@ -114,7 +114,7 @@ function personaRender(){
 }
 // Depth-first list of everything under parentId (null = whole tree), in the
 // same order as the left tree, each row tagged with its nesting `depth` — like
-// /cron's cronFlattenTree (docs/ui-left-panel-tree.md §7).
+// /cron's cronFlattenTree (notes/ui-left-panel-tree.md §7).
 function personaFlattenTree(parentId){
   parentId = parentId || null;
   const out = [];
@@ -1017,7 +1017,7 @@ function personaSave(){
   clearTimeout(personaSaveTimer);
   personaSaveTimer = setTimeout(personaSavePush, 250);  // coalesce bursts into one PUT
 }
-// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// Per notes/ui-tree-persistence.md: "Flush or await a pending tree PUT before
 // issuing a create or delete." Nothing else orders a tree PUT against a
 // create/delete, and the two responses race — if the older PUT's response
 // lands after the create/delete's fresher token, it overwrites that token

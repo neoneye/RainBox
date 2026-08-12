@@ -497,7 +497,7 @@ def test_cron_api_tree_round_trip(app_ctx, empty_tree):
 
 def test_cron_api_tree_put_refuses_to_omit_an_existing_row(app_ctx, empty_tree):
     """The whole point of the split shape: a payload that drops a row is a
-    malformed request, not a deletion (docs/ui-tree-persistence.md)."""
+    malformed request, not a deletion (notes/ui-tree-persistence.md)."""
     from webapp.core import app as flask_app
 
     client = flask_app.test_client()

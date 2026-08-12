@@ -343,7 +343,7 @@ class CronRun(db.Model):
 
 class KanbanBoard(db.Model):
     """A kanban board: the database-backed coordination surface agents and
-    humans share (docs/plan.md "Kanban board" — chosen over markdown todo
+    humans share (notes/plan.md "Kanban board" — chosen over markdown todo
     lists precisely because reliable mutation needs uuid-addressed rows, not
     document editing). Columns/tasks reference boards by plain uuid columns
     (no FKs, app-side validation — the cron-tables pattern)."""
@@ -881,7 +881,7 @@ class FeedbackEvent(db.Model):
 class RetrievalEvent(db.Model):
     """Event-row record of one retrieval-pipeline decision affecting one
     candidate (qa entry or memory claim). Event-row source of truth per
-    docs/relevance-telemetry.md — counters and rollups are derived, never
+    notes/relevance-telemetry.md — counters and rollups are derived, never
     primary."""
 
     __tablename__ = "retrieval_event"
@@ -1248,7 +1248,7 @@ class SecondOpinionReview(db.Model):
     the action run, but neither is an approval, and a run that went wrong
     because the gate never ran is a different bug from one the gate approved.
 
-    See docs/proposals/2026-07-28-second-opinion-review-records.md.
+    See notes/proposals/2026-07-28-second-opinion-review-records.md.
     """
 
     __tablename__ = "second_opinion_review"
@@ -1314,7 +1314,7 @@ class SecondOpinionAssessment(db.Model):
 
     Append-only, and a separate table rather than columns on the review: the
     review row records what a model said at a point in time and must not be
-    edited after the fact (the same discipline docs/relevance-telemetry.md sets
+    edited after the fact (the same discipline notes/relevance-telemetry.md sets
     for retrieval_event). Changing your mind appends a row; the newest wins.
 
     - agree         the verdict was right
@@ -1409,7 +1409,7 @@ class AppSetting(db.Model):
     `description` are a *seeded cache* of the code-side registry in db.settings
     (reconciled on startup) — never an independent source of truth. No `uuid`:
     rows are addressed by `key` and never FK-referenced or deep-linked. See
-    docs/proposals/2026-06-07-user-configuration-in-postgres.md."""
+    notes/proposals/2026-06-07-user-configuration-in-postgres.md."""
 
     __tablename__ = "app_setting"
     id: Mapped[int] = mapped_column(primary_key=True)

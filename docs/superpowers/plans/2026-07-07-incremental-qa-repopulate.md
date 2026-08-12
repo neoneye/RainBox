@@ -881,8 +881,8 @@ JS: the `customize.dir` row adds `<button data-rebuild-full>Rebuild (full)</butt
 ### Task 7: Docs
 
 **Files:**
-- Modify: `source/docs/qa-system.md` (repopulate/lifecycle sections, ~lines 61–62, 111–112, 190–215)
-- Modify: `source/docs/proposals/2026-07-07-incremental-qa-repopulate.md` (status line)
+- Modify: `source/notes/qa-system.md` (repopulate/lifecycle sections, ~lines 61–62, 111–112, 190–215)
+- Modify: `source/notes/proposals/2026-07-07-incremental-qa-repopulate.md` (status line)
 
 - [x] **Step 1:** Rewrite the qa-system.md lifecycle section to describe the sync: row stamps (`row_sha256`, `kb_epoch`), the diff, the metadata-only fast path, per-row failure isolation, automatic reconcile in `_ensure_populated` behind the stat snapshot, the two buttons, `QUERY_AGENT_REBUILD_KB=1`, and facts stamping only on change. Present tense, current state only.
 

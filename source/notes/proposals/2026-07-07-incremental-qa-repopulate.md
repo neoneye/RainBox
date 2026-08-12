@@ -1,6 +1,6 @@
 # Incremental Q&A repopulate
 
-**Status: implemented** — see `docs/qa-system.md` ("Sync (incremental
+**Status: implemented** — see `notes/qa-system.md` ("Sync (incremental
 reconcile)") for the current mechanics; the rest of this file is the design
 rationale. Make "Repopulate Q&A memory" a cheap reconcile instead
 of a wipe-and-re-embed, by stamping each embedded row with a SHA-256 of its
@@ -172,7 +172,7 @@ changing content, and mtime says *which file* changed, not *which rows*.)
 
 ## See also
 
-- `docs/qa-system.md` — the current registry/repopulate mechanics this
+- `notes/qa-system.md` — the current registry/repopulate mechanics this
   changes.
 - `db/memory.py::upsert_memory_embedding` + `sync_memory_embeddings` — the
   in-house precedent (hash-keyed reconcile for memory embeddings).

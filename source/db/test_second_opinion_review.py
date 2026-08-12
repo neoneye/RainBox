@@ -2,7 +2,7 @@
 the pre-execution review gate's judgment as a first-class row, and the
 operator's later assessment of that judgment.
 
-See docs/proposals/2026-07-28-second-opinion-review-records.md.
+See notes/proposals/2026-07-28-second-opinion-review-records.md.
 """
 
 from uuid import uuid4

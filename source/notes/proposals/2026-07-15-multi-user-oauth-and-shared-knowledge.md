@@ -16,7 +16,7 @@ This is that larger design.
 Today the app is single-operator by construction:
 
 - No authentication at all — every route on `127.0.0.1:5000` is open, and
-  `chat_user` holds exactly one human row by design (`docs/data-model.md`).
+  `chat_user` holds exactly one human row by design (`notes/data-model.md`).
 - The Telegram bridge (`telegram_service/bridge.py`) funnels **every** allowed
   Telegram sender through that one human uuid — two family members chatting
   from two phones are indistinguishable, and both speak with the operator's
@@ -146,7 +146,7 @@ Add nullable `account_uuid` to `chat_user`. Each account gets its own human
   the `rainbox-dev` default.
 - Client config (`client_id`, `client_secret`, redirect URL) is env-only
   (secrets never land in `app_setting`, per the existing threat model in
-  `docs/backup.md`).
+  `notes/backup.md`).
 
 **Login rules** (fail-closed, in order):
 

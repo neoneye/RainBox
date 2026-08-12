@@ -3,7 +3,7 @@ exists, written *before* the assistant skeleton so the harness can fail if a
 later PR breaks them.
 
 These are the "can be written before Phase 1" cases from the eval catalog in
-docs/proposals/2026-06-19-improvements-v2.md:
+notes/proposals/2026-06-19-improvements-v2.md:
 
 - memory exact answer + forbidden secret memory not injected (one end-to-end
   retrieval scenario, distinct from the granular unit tests in

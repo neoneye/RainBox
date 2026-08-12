@@ -5,7 +5,7 @@ Layout: base skills ship in `data/skills/*.md`; the operator overlay lives in
 pattern as the Q&A overlay). The loader is robust — a malformed or conflicting
 skill is skipped with a warning rather than breaking a live assistant turn.
 
-Resolution rules (docs/proposals/2026-06-19-improvements-v2.md, "Draft: skills
+Resolution rules (notes/proposals/2026-06-19-improvements-v2.md, "Draft: skills
 metadata and dedup"):
 
 1. Load base, then overlay.

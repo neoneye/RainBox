@@ -107,7 +107,7 @@ CHAT_TEMPLATE: str = """
   .room-main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
   .room-title{padding:0.6em 1em;border-bottom:1px solid #eee;font-weight:600;display:flex;align-items:center;gap:0.6em}
   /* Click-to-rename room name: doubles as the title; clicking opens the
-     rename modal (docs/ui-modal-rename.md). margin-right:auto pushes the
+     rename modal (notes/ui-modal-rename.md). margin-right:auto pushes the
      sidebar-mode select to the bar's right edge. */
   .room-title button#room-title-name{font:inherit;font-size:1.05em;font-weight:600;color:#1a1a2e;background:none;
         text-align:left;border:1px solid transparent;border-radius:6px;padding:0.2em 0.4em;cursor:pointer;
@@ -470,7 +470,7 @@ function childFolders(parentId){ return folders.filter(f => (f.parentId || null)
 // `folders` (e.g. the folder was deleted via the admin, orphaning the row). The
 // server rejects it in every tree save, so if it stayed invisible here the
 // operator could never reach it to move or delete it and every structural edit
-// would 400 forever (docs/ui-tree-persistence.md).
+// would 400 forever (notes/ui-tree-persistence.md).
 function roomsInFolder(id){
   const target = id || null;
   if (target === null){
@@ -1833,7 +1833,7 @@ function wireRootDrop(el, atStart){
   });
 }
 
-// ---- persistence: debounced PUT of the tree (docs/ui-tree-persistence.md) ----
+// ---- persistence: debounced PUT of the tree (notes/ui-tree-persistence.md) ----
 // The PUT only ever updates rows that already exist; creation and deletion are
 // their own immediate requests. Any failure re-hydrates so the client converges
 // on server truth instead of drifting.
@@ -1849,7 +1849,7 @@ function saveTreePush(){
   saveChain = saveChain.then(doSaveTree);
   return saveChain;
 }
-// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// Per notes/ui-tree-persistence.md: "Flush or await a pending tree PUT before
 // issuing a create or delete." Nothing else orders them against each other,
 // and the two responses race — a PUT landing after the create/delete would put
 // a stale token back, and 409 the next save for no visible reason.
@@ -2254,7 +2254,7 @@ async function send(){
 
 form.addEventListener('submit', send);
 
-// ---- room rename modal (docs/ui-modal-rename.md) ----
+// ---- room rename modal (notes/ui-modal-rename.md) ----
 // The title bar shows the room name as a click-to-rename control; all editing
 // happens in the modal, so a typed-but-unconfirmed name can't be silently lost.
 let chatRenameOriginal = null;   // the stored name at open (null = modal closed)

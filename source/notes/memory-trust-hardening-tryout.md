@@ -1,7 +1,7 @@
 # Memory Trust Hardening — Try It Out & Verify
 
 A hands-on guide to exercise the memory trust-hardening features and confirm they
-behave as designed. For the architecture, see `docs/memory-architecture.md`.
+behave as designed. For the architecture, see `notes/memory-architecture.md`.
 
 What you can verify here:
 

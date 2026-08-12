@@ -5,7 +5,7 @@ execute a command, organized in a folder tree. This module only renders the
 page shell; **persistence is real** — the browser-side state (`cronFolders` /
 `cronRowsState`) hydrates from `GET /cron/api/tree` and saves placement, order
 and job settings back through `PUT`; creation, duplication and deletion are
-their own endpoints, per docs/ui-tree-persistence.md (`webapp/cron_api.py` →
+their own endpoints, per notes/ui-tree-persistence.md (`webapp/cron_api.py` →
 `db/cron.py`). Edits survive a refresh. Scheduled firing is the supervisor
 loop's cron tick (db.cron).
 
@@ -44,7 +44,7 @@ CRON_TEMPLATE = """
   body{font-family:system-ui,sans-serif;margin:0;padding:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
   .muted{color:#6b7280;font-size:0.85rem}
   .builder{margin:1em 0;max-width:900px}
-  /* App-wide modal pattern (docs/ui-modals.md): one shared backdrop + centered
+  /* App-wide modal pattern (notes/ui-modals.md): one shared backdrop + centered
      "card" overlays that are siblings of it. The New-job builder and the
      job-details edit overlays (Edit schedule / Edit action / description /
      delete / folder) are all .ui-modal cards over the single backdrop.
@@ -122,7 +122,7 @@ CRON_TEMPLATE = """
   .cron-main .builder{margin-top:0}
   .cron-table-wrap{overflow-x:auto}
   /* Click-to-rename name display at the top of the right pane: doubles as the
-     pane heading; clicking opens the rename modal (docs/ui-modal-rename.md). */
+     pane heading; clicking opens the rename modal (notes/ui-modal-rename.md). */
   .node-rename{margin:0 0 0.8em}
   .node-rename[hidden]{display:none}
   .node-rename button{font:inherit;font-size:1.4rem;font-weight:700;color:#1a1a2e;background:none;
@@ -319,7 +319,7 @@ CRON_TEMPLATE = """
 </div>
 <!-- One shared backdrop for every modal on the page (the New-job builder above
      and all the edit overlays below); each card is a SIBLING of it so in-card
-     clicks don't bubble to the backdrop's dismiss handler (docs/ui-modals.md). -->
+     clicks don't bubble to the backdrop's dismiss handler (notes/ui-modals.md). -->
 <div id="ui-modal-backdrop" class="ui-modal-backdrop" hidden></div>
 <!-- Job-details edit overlays. -->
 <div id="cron-sched-modal" class="ui-modal" hidden>

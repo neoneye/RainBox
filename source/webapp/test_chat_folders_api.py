@@ -66,7 +66,7 @@ def test_put_tree_missing_version_is_400(app_ctx):
 
 def _tree_payload(client):
     """The whole current tree in the PUT's field names. The save can neither
-    create nor delete (docs/ui-tree-persistence.md), so every existing row has
+    create nor delete (notes/ui-tree-persistence.md), so every existing row has
     to ride along."""
     tree = client.get("/chat/api/tree").get_json()
     folders = [{"id": f["id"], "name": f["name"], "parentId": f["parentId"]}

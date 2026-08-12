@@ -20,7 +20,7 @@ class AgentConfigEntry(TypedDict):
     # offers groups whose structured-output constraint is "must not have" to
     # these. Mutually exclusive with requires_structured_output.
     excludes_structured_output: NotRequired[bool]
-    # Kanban board authority (docs/kanban-design.md "Agent permission model").
+    # Kanban board authority (notes/kanban-design.md "Agent permission model").
     # Enforced by tools/kanban_dispatcher.py, NOT the model prompt. Missing →
     # "observe": an unlisted agent can only read and append comment/suggestion
     # events. "work" adds claim/renew/release/progress events/complete.

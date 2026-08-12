@@ -6,8 +6,8 @@ and a production monitor — all persisting to the `eval_case` / `eval_run` /
 
 **Scope:** the framework internals only. The feedback→eval **loop
 architecture** (why the pieces exist, gate/optimizer rules at the policy
-level) is `docs/eval-loop.md`; the **operator workflow** (capture → promote →
-run → compare routine) is `docs/eval-playbook.md`. Read those first — this
+level) is `notes/eval-loop.md`; the **operator workflow** (capture → promote →
+run → compare routine) is `notes/eval-playbook.md`. Read those first — this
 doc covers what they don't: module ownership, scoring math, persistence
 semantics, and extension points.
 
@@ -26,7 +26,7 @@ semantics, and extension points.
 
 ## Data model and persistence
 
-Field-level inventory is in `docs/eval-loop.md`; the semantics that live in code:
+Field-level inventory is in `notes/eval-loop.md`; the semantics that live in code:
 
 - **`EvalCase`** — `input` / `expected` / `rubric` are JSONB blobs (default `{}`), editable in Flask-Admin. CHECK constraints pin `case_type` to `chat_reply | memory_retrieval | query_answer | tool_output`, `split` to `train | holdout | regression`, `status` to `candidate | active | archived`. `source_feedback_uuid` is a plain indexed UUID column (no FK): set for promoted cases, null for hand-authored ones.
 - **`EvalRun`** — `started_at` auto-stamps on insert; `finished_at` stays NULL until `db.finish_eval_run(run_uuid, summary=...)` stamps it and stores the summary blob. `is_baseline` (default false) is flipped via `db.set_baseline_eval_run` or Flask-Admin.
@@ -73,7 +73,7 @@ For `chat_reply`, the memory criteria are scored against the reply's own text (t
 
 `evals/compare.py` is a **pure read-only consumer**: it loads two runs' results, joins to `EvalCase` for name/split, and computes an `EvalComparison` dataclass — mean/pass-count deltas (means read from the runs' summary blobs, not recomputed), `new_failures` (pass→fail, with a human-readable reason), `improved`, `regressed` (score dropped beyond `EPSILON = 1e-9`), `common` (every shared case with both scores), and `only_in_baseline` / `only_in_candidate`.
 
-`gate_candidate_run(baseline, candidate, max_mean_drop=0.02)` returns a `GateDecision` (passed, reasons, warnings, comparison; serializable via `to_json()` / `to_text()`). The rule set and its rationale are documented in `docs/eval-loop.md`; the implementation details worth knowing: per-split means for the overfitting warning are computed over **all** common entries (not just flipped/regressed ones), and the two unequal-case-set rejection reasons are formatted by helpers shared with the optimizer (`_format_missing_baseline_cases_reason`, `_format_extra_candidate_cases_reason`) so the wording cannot drift between the two call sites.
+`gate_candidate_run(baseline, candidate, max_mean_drop=0.02)` returns a `GateDecision` (passed, reasons, warnings, comparison; serializable via `to_json()` / `to_text()`). The rule set and its rationale are documented in `notes/eval-loop.md`; the implementation details worth knowing: per-split means for the overfitting warning are computed over **all** common entries (not just flipped/regressed ones), and the two unequal-case-set rejection reasons are formatted by helpers shared with the optimizer (`_format_missing_baseline_cases_reason`, `_format_extra_candidate_cases_reason`) so the wording cannot drift between the two call sites.
 
 ## Optimizer
 
@@ -81,7 +81,7 @@ For `chat_reply`, the memory criteria are scored against the reply's own text (t
 
 - **`generate_candidate_configs(base_config)`** — one variant per value in `CANDIDATE_MATRIX` (today: `memory_retrieval_limit` ∈ {3, 6, 10}), each a full copy of `BASE_CONFIG` with one knob substituted. Deliberately no cartesian product across knobs.
 - **`run_candidate_matrix(configs, case_filter, runner=None)`** — one `EvalRun` per config via an injectable runner (default: a thin wrapper over `run_eval_suite`, naming runs `optimizer-candidate: limit=N`). Output order preserves input order; the tie-break below depends on it.
-- **`select_best_candidate(baseline_run_uuid, candidate_run_uuids, holdout_tolerance=0.05)`** — applies the stricter-than-gate safety rules (see `docs/eval-loop.md`) per candidate and returns an `OptimizerDecision`: the safe candidate with the highest mean, or `selected_uuid=None` with per-candidate rejection reasons. The forbidden-memory rule is **absolute**: any result whose `details.forbidden_memories` shows `absent < total` rejects the candidate even if the baseline leaked the same memory.
+- **`select_best_candidate(baseline_run_uuid, candidate_run_uuids, holdout_tolerance=0.05)`** — applies the stricter-than-gate safety rules (see `notes/eval-loop.md`) per candidate and returns an `OptimizerDecision`: the safe candidate with the highest mean, or `selected_uuid=None` with per-candidate rejection reasons. The forbidden-memory rule is **absolute**: any result whose `details.forbidden_memories` shows `absent < total` rejects the candidate even if the baseline leaked the same memory.
 
 There is no optimizer CLI; it is driven from Python (see the playbook). Selected configs are not auto-applied anywhere — promotion is a human decision.
 
@@ -109,7 +109,7 @@ There is no optimizer CLI; it is driven from Python (see the playbook). Selected
 
 ## Deliberate limits
 
-- Scoring is substring matching over snapshots — no live chat generation, no LLM-as-judge (see `docs/eval-loop.md` § Current Limits).
+- Scoring is substring matching over snapshots — no live chat generation, no LLM-as-judge (see `notes/eval-loop.md` § Current Limits).
 - `rubric.criteria` weights are stored but unused; the mean is unweighted.
 - Case selection for a run is by status/split/uuid only; there is no tagging or per-case-type suite composition.
 - No dedicated eval UI page — Flask-Admin plus the three CLIs are the whole surface.

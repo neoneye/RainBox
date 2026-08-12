@@ -568,7 +568,7 @@ def chat_save_tree(
     room placement and order (list order becomes `position`). A room's name,
     membership and messages are never touched here.
 
-    Per docs/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
+    Per notes/ui-tree-persistence.md this save NEVER creates and NEVER deletes:
     a payload that omits an existing folder or room, or names one the DB
     doesn't have, is a ChatTreeError — absence means a bug, not an
     instruction. That matters most for rooms, whose messages cascade with

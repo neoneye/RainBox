@@ -1,7 +1,7 @@
 # Kanban — design
 
 The kanban board at `GET /kanban` is the coordination primitive from
-docs/plan.md ("Kanban board"): agents keep track of progress in Postgres
+notes/plan.md ("Kanban board"): agents keep track of progress in Postgres
 because editing markdown todo lists is too fragile for small models — instead
 of "rewrite the document correctly", an agent calls **narrow, uuid-addressed
 operations** that succeed atomically or fail loudly.
@@ -20,7 +20,7 @@ operations** that succeed atomically or fail loudly.
   operations. **API** (`webapp/kanban_api.py`).
 - **Page** (`webapp/kanban_views.py` shell + `static/kanban.js` logic): a
   left-panel folder tree (folders → boards; the shared pattern in
-  `docs/ui-left-panel-tree.md`, mirroring /cron) with per-node kebab menus
+  `notes/ui-left-panel-tree.md`, mirroring /cron) with per-node kebab menus
   (rename, new subfolder, duplicate board, copy id, delete), tree
   drag-and-drop (folder 3-zone, board 2-zone, root strip), columns/cards with
   drag-and-drop, modal CRUD (shared `ui-modal.css`), the task's audit trail +
@@ -53,7 +53,7 @@ capabilities.**
 - `PUT /kanban/api/tree` with the whole folder/board placement — folder names
   and descriptions plus folder/board placement and order; board names and
   content are not editable through it. The save follows
-  `docs/ui-tree-persistence.md`: it **only updates rows that already exist**,
+  `notes/ui-tree-persistence.md`: it **only updates rows that already exist**,
   so a payload that omits an existing folder or board — or names one the DB
   doesn't hold — is a **400** that mutates nothing, and it has no `deletes`
   counter because the shape can't express a deletion. Its version token
@@ -173,7 +173,7 @@ in the agent_config registry and are enforced in
 model prompt — a model can propose an operation, but code decides whether it
 is permitted before calling `db.kanban_*`.
 
-The finer permission names from `docs/plan.md` remain vocabulary, not
+The finer permission names from `notes/plan.md` remain vocabulary, not
 implementation targets:
 
 | Planned split | Fits under | When to split it out |
@@ -194,7 +194,7 @@ no authority check, `complete` defaults `review=False`. Until they are routed
 through `kanban_dispatch` (or formally declared operator-only), treat them as
 a trusted/operator surface, not an agent surface. The whole kanban API is
 also unauthenticated HTTP like the rest of the control plane — Finding 8d of
-`docs/proposals/2026-06-25-security-review-mitigations.md` folds it into the
+`notes/proposals/2026-06-25-security-review-mitigations.md` folds it into the
 planned Phase 1 auth boundary.
 
 ## Execution (enqueue-on-command)
@@ -419,7 +419,7 @@ operation endpoints through the dispatcher (the known gap above).
 
 ## Benchmark plan
 
-The central hypothesis from `docs/plan.md`: a dedicated database-backed
+The central hypothesis from `notes/plan.md`: a dedicated database-backed
 kanban board is more robust than asking models to edit markdown todo lists
 with `EditDocumentAgentV6` or similar document patchers. The first slice
 (**/benchmark_kanban**, `benchmarks/kanban.py`, also a CLI) tests the 2×2

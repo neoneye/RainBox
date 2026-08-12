@@ -108,7 +108,7 @@ def test_cron_page_has_folder_tree_split():
     assert 'id="ui-modal-backdrop"' in body
     assert "builder ui-modal" in body
     # Modals use the shared modal stylesheet + the unified title/action pattern
-    # (docs/ui-modals.md): an <h3> title and a right-aligned .modal-actions row
+    # (notes/ui-modals.md): an <h3> title and a right-aligned .modal-actions row
     # with cancel-then-primary buttons carrying .btn-* classes. The old
     # .builder-title div + inline-styled action buttons are gone.
     assert '<link rel="stylesheet" href="/static/ui-modal.css">' in body
@@ -119,7 +119,7 @@ def test_cron_page_has_folder_tree_split():
     assert 'class="btn-danger"' in body  # destructive delete-confirm button
     assert 'class="builder-title"' not in body
     # No right-pane title label — the click-to-rename name display doubles as
-    # the pane heading (docs/ui-modal-rename.md).
+    # the pane heading (notes/ui-modal-rename.md).
     assert 'id="cron-pane-title"' not in body
     # Job creation is via the tree's "+ Job" action / folder kebab — there is no
     # separate "New job" button cluttering the All jobs / Folder details pages.
@@ -131,7 +131,7 @@ def test_cron_page_has_folder_tree_split():
     assert 'id="cron-folder-detail"' in body
     assert "function cronToggleFolderEnabled" in body
     assert "function cronFolderEnabled" in body
-    # Renaming is modal-confirmed (docs/ui-modal-rename.md): the right pane
+    # Renaming is modal-confirmed (notes/ui-modal-rename.md): the right pane
     # shows a click-to-rename name display; editing happens in the modal.
     assert 'id="cron-node-rename"' in body
     assert "function cronRenderRename" in body
@@ -199,7 +199,7 @@ def test_cron_page_has_kebab_menu():
     assert "confirm(" not in body  # cronConfirmDelete* are PascalCase, not confirm(
     assert "alert(" not in body
     # uuids are minted server-side by the create endpoints — the tree PUT can
-    # never bring a row into existence (docs/ui-tree-persistence.md).
+    # never bring a row into existence (notes/ui-tree-persistence.md).
     assert "crypto.randomUUID" not in body
     assert "cronFlushPendingSave" in body
     assert "/cron/api/jobs" in body and "/cron/api/folders" in body
@@ -323,7 +323,7 @@ def test_folder_rows_are_real_links():
 
 
 def test_tree_save_declares_no_deletes():
-    """Per docs/ui-tree-persistence.md the tree PUT cannot delete, so the
+    """Per notes/ui-tree-persistence.md the tree PUT cannot delete, so the
     client must not carry a deletes counter — deletion goes to DELETE."""
     b = _body()
     assert "deletes" not in b

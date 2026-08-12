@@ -979,7 +979,7 @@ def request_run_stop(run_uuid: UUID) -> bool:
 # The pre-execution gate's judgment as first-class rows, so "why did this run go
 # wrong?" and "why was this right for the wrong reasons?" are queries rather
 # than a scan of observation blobs. See
-# docs/proposals/2026-07-28-second-opinion-review-records.md.
+# notes/proposals/2026-07-28-second-opinion-review-records.md.
 
 
 def record_second_opinion_review(

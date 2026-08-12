@@ -1,6 +1,6 @@
 """JSON API backing the /profile page's persistence.
 
-Save shape per docs/ui-tree-persistence.md: the tree PUT only updates rows that
+Save shape per notes/ui-tree-persistence.md: the tree PUT only updates rows that
 already exist (a payload that omits or invents one is a 400), and creation and
 deletion are their own endpoints. Every tree-structure endpoint (the tree PUT,
 folder/profile create, duplicate, folder/profile delete) carries the new tree

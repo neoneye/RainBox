@@ -123,7 +123,7 @@ def test_overrides_dict_includes_context_window():
 
 
 def test_rename_goes_through_confirm_modal(seeded_two_providers):
-    """Renaming is modal-confirmed (docs/ui-modal-rename.md): the detail pane
+    """Renaming is modal-confirmed (notes/ui-modal-rename.md): the detail pane
     shows the display name as a click-to-rename control whose modal submits
     the rename form, so a typed-but-unconfirmed name can't be silently lost."""
     from db import ModelConfig, db as _db

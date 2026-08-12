@@ -3,7 +3,7 @@
 ## Purpose
 
 This is the practical workflow for using the eval loop. For architecture, see
-`docs/eval-loop.md`.
+`notes/eval-loop.md`.
 
 ## 1. Capture Feedback
 

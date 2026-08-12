@@ -3,7 +3,7 @@
 Deterministic pipeline (plan -> split -> research subtasks -> synthesize)
 over pluggable web search providers and local LLMs. Public seam:
 `run_deep_research(query, config, progress_cb)`. See
-source/docs/deep-research.md.
+source/notes/deep-research.md.
 
 Lazy re-exports keep `import research` cheap (pipeline pulls db + llm).
 """

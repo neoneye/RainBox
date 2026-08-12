@@ -35,7 +35,7 @@ uuid and is addressable at `/prompt?id=<uuid>`.
   not check it); their UI degrades to "(deleted)" and diff-vs-parent becomes
   unavailable.
 
-## Architecture — a port of `/git` (docs/ui-left-panel-tree.md §9)
+## Architecture — a port of `/git` (notes/ui-left-panel-tree.md §9)
 
 | piece | file | mirrors |
 |---|---|---|

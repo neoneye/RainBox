@@ -7,7 +7,7 @@ through `POST /memory/api/claims/<uuid>/<action>` (webapp/memory_api.py).
 Chrome is copied from /cron (the mature left-panel reference) — split layout,
 sidebar list, static "All memories" root node, select-first/toggle-expand,
 kebab-on-selected, detail pane, shared ui-modal pattern, toast. The deliberate
-divergence (see docs/ui-left-panel-tree.md and the design spec): the left panel
+divergence (see notes/ui-left-panel-tree.md and the design spec): the left panel
 groups by **status facets**, not draggable user folders, so there is no
 drag-drop and no whole-tree version-guarded save. The render layer is
 grouping-agnostic so a user-created folder tree can be added later as an
@@ -169,7 +169,7 @@ MEMORY_TEMPLATE = """
   </div>
 </section>
 </div>
-<!-- One shared backdrop; each card is a SIBLING of it (docs/ui-modals.md). -->
+<!-- One shared backdrop; each card is a SIBLING of it (notes/ui-modals.md). -->
 <div id="ui-modal-backdrop" class="ui-modal-backdrop" hidden></div>
 <!-- Correct (= supersede): replace text, old kept as history. -->
 <div id="mem-correct-modal" class="ui-modal" hidden>

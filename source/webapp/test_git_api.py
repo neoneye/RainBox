@@ -82,7 +82,7 @@ def test_repo_detail_unknown_uuid_404():
 
 def test_tree_put_refuses_to_omit_an_existing_row(tmp_path):
     """The whole point of the split shape: a payload that drops a row is a
-    malformed request, not a deletion (docs/ui-tree-persistence.md)."""
+    malformed request, not a deletion (notes/ui-tree-persistence.md)."""
     _init_repo(tmp_path)
     c = app.test_client()
     made = c.post("/git/api/repos",

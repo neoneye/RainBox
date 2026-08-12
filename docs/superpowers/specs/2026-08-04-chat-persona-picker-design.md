@@ -15,7 +15,7 @@ from the `/chat` right-side panel.
 The persona applies to **the assistant, in agents rooms** — any room whose
 `room_type` is not `'direct'`. Direct rooms are not touched: they already have
 a complete system-prompt mechanism (free text or a linked `/prompt` version,
-`docs/direct-chat.md`), and a third source there would only raise "which one
+`notes/direct-chat.md`), and a third source there would only raise "which one
 wins". The other chat responders (router, query,
 tool_demo, …) carry their own prompts and are not what "who is the assistant"
 means.

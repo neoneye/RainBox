@@ -51,7 +51,7 @@ def _full_payload(*, folders=(), boards=()):
     """The whole current tree in the PUT's field names, with the listed rows'
     fields overridden and those rows moved to the front in the order given.
 
-    The save can neither create nor delete (docs/ui-tree-persistence.md), so a
+    The save can neither create nor delete (notes/ui-tree-persistence.md), so a
     payload that omits a row is refused — a test that only wants to move two
     rows must still send every row the shared DB holds."""
     tree = db.kanban_load_tree()
@@ -220,7 +220,7 @@ def test_save_tree_round_trips_placement(app_ctx):
 
 def test_save_tree_refuses_to_omit_an_existing_row(app_ctx):
     """A payload that drops a row is a malformed request, not a deletion, and
-    nothing is mutated (docs/ui-tree-persistence.md)."""
+    nothing is mutated (notes/ui-tree-persistence.md)."""
     f = db.kanban_create_folder("f")
     keep = db.kanban_create_board("keep")
     absent = db.kanban_create_board("absent from payload")

@@ -166,7 +166,7 @@ status, expiry, sensitivity, and scope; keeps model-inferred writes as
 candidates; records retrieval telemetry separately; and stores operational
 history in assistant/task/journal rows. Flattening those systems into four new
 tables would lose information. The classification above is an eval-time
-authority overlay over the contracts in `docs/memory-architecture.md`.
+authority overlay over the contracts in `notes/memory-architecture.md`.
 
 ### `memory_evidence` grades itself; use its grades
 
@@ -1568,7 +1568,7 @@ too — this phase is about tool calls.
 
 **Persistence.** `case_type="tool_output"`, which the
 `eval_case_case_type_check` constraint already permits and which
-`docs/evals-design.md` names as an extension point. `run_eval_case` currently
+`notes/evals-design.md` names as an extension point. `run_eval_case` currently
 drops it into the else-branch and scores 0.0 with
 `unsupported case_type` — the seam is a new branch beside the `chat_reply`
 and `memory_retrieval` ones at [evals/runner.py:285](evals/runner.py:285).

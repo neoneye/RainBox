@@ -101,7 +101,7 @@ user.
   `available` flags; available first.
 
 ## UI (chat_template.py — inline, non-raw string; obey
-docs/chat-frontend-rules.md)
+notes/chat-frontend-rules.md)
 
 - **New-room modal**: a room-type radio — "Agents room" (default) / "Direct
   LLM chat". Choosing direct hides the agent checkbox list. POST carries

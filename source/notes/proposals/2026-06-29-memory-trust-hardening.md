@@ -3,7 +3,7 @@
 Status: implemented — this is the original design proposal, kept as a historical
 record. For current behavior (which diverged in places during implementation,
 e.g. `correct_belief` delegating to `record_belief`), see the living doc
-`docs/memory-architecture.md`.
+`notes/memory-architecture.md`.
 Date: 2026-06-29
 Scope: `source/db`, `source/memory`, `source/agents`, `source/webapp`
 

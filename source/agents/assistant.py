@@ -143,7 +143,7 @@ class SecondOpinionProblem(BaseModel):
     rejection bar SECOND_OPINION_SYSTEM_PROMPT already sets, so the reviewer is
     naming the ground it already reasoned from rather than learning a new
     taxonomy — and `identity_mismatch` becomes countable, which is the whole
-    point of the gate (see docs/second-opinion-design.md)."""
+    point of the gate (see notes/second-opinion-design.md)."""
 
     category: Literal[
         "not_asked",

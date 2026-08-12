@@ -134,7 +134,7 @@ def chat_rooms() -> Response | tuple[Response, int]:
                            "agents room; create the room with room_type='direct'")
         room = db.create_chatroom(name, human.uuid, member_uuids, room_type=room_type)
         # A create is a tree mutation, so it hands back the fresh tree version —
-        # without it the client's next drag 409s (docs/ui-tree-persistence.md).
+        # without it the client's next drag 409s (notes/ui-tree-persistence.md).
         return jsonify({"uuid": str(room.uuid), "name": room.name,
                         "version": db.chat_tree_version()}), 201
     return jsonify(db.list_chatrooms())
@@ -152,7 +152,7 @@ def chat_room_details() -> Response:
 def chat_tree() -> Response | tuple[Response, int]:
     """The left-panel folder/room tree. GET hydrates {folders, rooms, version};
     PUT saves folder names plus folder and room placement + ordering
-    (version-guarded). Per docs/ui-tree-persistence.md the PUT only updates
+    (version-guarded). Per notes/ui-tree-persistence.md the PUT only updates
     rows that already exist — a payload that omits or invents a folder or room
     is a 400 — and creation/deletion are their own endpoints below."""
     if request.method == "PUT":

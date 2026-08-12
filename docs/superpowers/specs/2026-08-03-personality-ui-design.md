@@ -54,7 +54,7 @@ Personalities invert both:
   keeping everything is the entire point of the feature. A retention cap is a
   separate decision if it ever bites.
 
-## Architecture — a port of `/prompt` (docs/ui-left-panel-tree.md §9)
+## Architecture — a port of `/prompt` (notes/ui-left-panel-tree.md §9)
 
 | piece | file | mirrors |
 |---|---|---|
@@ -72,7 +72,7 @@ migration step.
 
 ### Data model
 
-Repo conventions (`docs/data-model.md`): plain UUID reference columns, **no FK
+Repo conventions (`notes/data-model.md`): plain UUID reference columns, **no FK
 constraints**, integrity enforced in the application layer.
 
 ```python
@@ -127,7 +127,7 @@ personality_revision_diff(uuid, rev_uuid)     unified diff, revision → current
 personality_restore_revision(uuid, rev_uuid)  appends a new revision
 ```
 
-`personality_save_tree` follows `docs/ui-tree-persistence.md`: it **only**
+`personality_save_tree` follows `notes/ui-tree-persistence.md`: it **only**
 updates rows that already exist, and raises `PersonalityTreeError` when the
 payload omits an existing folder or personality, or names one that does not
 exist. It has no `expected_deletes` parameter — the shape cannot express a
@@ -170,9 +170,9 @@ against a stranger's text.
 
 ## Frontend
 
-Layout and behavior follow `docs/ui-left-panel-tree.md` (tree),
-`docs/ui-tree-persistence.md` (saving), `docs/ui-modals.md`,
-`docs/ui-kebab-menu.md` and `docs/ui-modal-rename.md`. The CSS is diffed
+Layout and behavior follow `notes/ui-left-panel-tree.md` (tree),
+`notes/ui-tree-persistence.md` (saving), `notes/ui-modals.md`,
+`notes/ui-kebab-menu.md` and `notes/ui-modal-rename.md`. The CSS is diffed
 rule-by-rule against `/prompt`'s rather than eyeballed — §8 of the tree doc
 lists what that catches (block-flow tree panel so the root-drop strip stays
 under the tree, `/cron`'s exact node padding and icon sizes, the kebab
@@ -198,7 +198,7 @@ rendered on every row at `visibility:hidden`, 16px main-pane padding).
   raises it above the shared modal backdrop and greys out the rest of the page
   until **Save** or **Cancel**. No autosave: an accidental keystroke in a
   personality must never persist on its own. Esc and backdrop-click cancel
-  only while the text is unchanged (`docs/ui-modals.md` dirty guard).
+  only while the text is unchanged (`notes/ui-modals.md` dirty guard).
 - **History view** replaces the editor: one row per revision — Saved at /
   Size / first line of the text — newest labeled *current*, each with **Diff**
   and **Restore**. Diff renders the unified diff inline with `/prompt`'s

@@ -51,7 +51,7 @@ fallback.
   `assistant.knowledge_calibration` settings — enable each only after its
   live release gate passes. The full verification and enablement runbook
   (tests → browser → prompt inspection → live evals → gate) is
-  `docs/profile-guidance.md`. Switching `profile.current` changes those
+  `notes/profile-guidance.md`. Switching `profile.current` changes those
   three blocks and posts a one-time notice into each room — room history is
   preserved, and the switch is **not** an audience boundary: to hand the
   screen to someone else, use a fresh room and the demo database.
@@ -61,7 +61,7 @@ fallback.
   work-steering preferences, formatting, and disclosed assumptions before any
   work — inspect its `assumptions` there to spot a wrong guess at a glance.
   Response language is handled by the separate classifier step; see
-  `docs/assistant-design.md` §Acceptance criteria.
+  `notes/assistant-design.md` §Acceptance criteria.
 
   Reading a run: the **Model calls** card is where the time went — one bar per
   model call, placed on the run's wall-clock span, so the gaps between bars are
@@ -132,7 +132,7 @@ which memories did you use?
 `correct` and `forget` tombstone the old/rejected value so the model cannot
 silently re-learn it; a `correct` whose new value conflicts with a different
 same-scope active claim is refused. Curate claims, resolve conflicts, and review
-suppressed re-assertions on the `/memory` page (see `docs/memory-commands.md`).
+suppressed re-assertions on the `/memory` page (see `notes/memory-commands.md`).
 
 When a memory doesn't surface where you expect it, check its **scope badge**
 first (a room-scoped claim is recallable only inside its own chatroom — widen
@@ -217,7 +217,7 @@ pushed).
 A disabled daily "Database backup" cron job is seeded under the **System**
 folder on `/cron`; set the recipient + destination and enable it to run nightly.
 Restore with `age -d -i identity | zstd -dc | psql`. Full usage, key setup, and
-restore instructions: `docs/backup.md`.
+restore instructions: `notes/backup.md`.
 
 **Where the scheduled backup reads its config:** the cron job resolves the
 backup settings (`backup.repo`, `backup.age_recipient`, `backup.git_push`) from
@@ -226,7 +226,7 @@ you can edit them on the **`/settings`** page and they take effect without a
 restart (also visible read-only in Flask-Admin under **Config**). The standalone
 `python -m backup.dump` CLI is **flags/env
 only by design** — it builds no app context and does not read DB settings, so a
-manual run ignores values edited in the UI. See `docs/backup.md`.
+manual run ignores values edited in the UI. See `notes/backup.md`.
 
 ## Inspecting Telemetry
 

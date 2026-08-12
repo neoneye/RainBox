@@ -2,7 +2,7 @@
 // webapp/prompt_views.py; this file is served at /static/prompt.js with an
 // mtime cache-buster. Tree state hydrates from GET /prompt/api/tree and
 // structural edits save via debounced PUTs; creation and deletion are their
-// own immediate requests (docs/ui-tree-persistence.md). Prompt content is
+// own immediate requests (notes/ui-tree-persistence.md). Prompt content is
 // read-only until an explicit Edit → Save (PUT /prompt/api/prompts/<uuid>) or
 // Cancel. Mirrors static/git.js.
 
@@ -112,7 +112,7 @@ function promptRender(){
 }
 // Depth-first list of everything under parentId (null = whole tree), in the
 // same order as the left tree, each row tagged with its nesting `depth` — like
-// /cron's cronFlattenTree (docs/ui-left-panel-tree.md §7).
+// /cron's cronFlattenTree (notes/ui-left-panel-tree.md §7).
 function promptFlattenTree(parentId){
   parentId = parentId || null;
   const out = [];
@@ -453,7 +453,7 @@ window.addEventListener('beforeunload', (e) => {
 async function promptCloneUuid(uuid){
   // Flush any pending structural edits first: the clone bumps the server-side
   // tree version, and a PUT response landing after it would put the stale
-  // token back (docs/ui-tree-persistence.md).
+  // token back (notes/ui-tree-persistence.md).
   await promptFlushPendingSave();
   let d = null;
   try {
@@ -740,7 +740,7 @@ function promptCloseNewModal(){
 }
 // A new prompt is a lineage root: empty content, no parentUuid. It lands in the
 // currently-selected folder. Created by its own endpoint — the tree save can
-// never make a row (docs/ui-tree-persistence.md).
+// never make a row (notes/ui-tree-persistence.md).
 async function promptAddPromptConfirm(){
   const name = document.getElementById('prompt-new-input').value.trim();
   if (!name) return;
@@ -1146,7 +1146,7 @@ function promptSave(){
   clearTimeout(promptSaveTimer);
   promptSaveTimer = setTimeout(promptSavePush, 250);  // coalesce bursts into one PUT
 }
-// Per docs/ui-tree-persistence.md: "Flush or await a pending tree PUT before
+// Per notes/ui-tree-persistence.md: "Flush or await a pending tree PUT before
 // issuing a create or delete." Nothing else orders a tree PUT against a
 // create/delete, and the two responses race — if the older PUT's response
 // lands after the create/delete's fresher token, it overwrites that token with

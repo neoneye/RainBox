@@ -1,5 +1,5 @@
 /* Shared UI-modal pattern — canonical base for /chat, /cron, /kanban.
-   See docs/ui-modals.md. Linked by each page; page-specific form-field
+   See notes/ui-modals.md. Linked by each page; page-specific form-field
    styling (.agents / .brow / .kb-row, compact inputs, the cron builder
    width, etc.) stays in that page's own <style>. */
 .ui-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:1500}

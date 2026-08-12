@@ -51,7 +51,7 @@ The client already knows folder nesting (`folders` / `rooms` arrays,
 
 `list_chatrooms()` exposes only `member_count` + `last_message_id` — not agent
 names, message count, or last-message time. To avoid making the frequently
-re-fetched tree load heavier (see `docs/chat-frontend-rules.md`: idle/tree load
+re-fetched tree load heavier (see `notes/chat-frontend-rules.md`: idle/tree load
 must stay light), add a **separate** endpoint fetched only when a folder is
 selected:
 

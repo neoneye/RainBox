@@ -17,7 +17,7 @@
 - `KEY_VERSION = 1` (the deterministic-keyer version stamped on every claim).
 - `normalize_claim_text` is the single normalizer; `belief_keys` joins subject/predicate with `\x1f`.
 - Tests use the `app_ctx` fixture (`db.make_app()` + `db.init_db()`), seed with a per-test marker UUID in `room_uuid`, and delete their own rows in teardown.
-- Spec of record: `source/docs/proposals/2026-06-29-memory-trust-hardening.md`.
+- Spec of record: `source/notes/proposals/2026-06-29-memory-trust-hardening.md`.
 
 ---
 

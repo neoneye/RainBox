@@ -41,7 +41,7 @@ dict. Consequences, in the order they bite:
 
 ### Two tables: `benchmark_run` + `benchmark_result`
 
-Repo conventions throughout (`docs/data-model.md`): uuid identity,
+Repo conventions throughout (`notes/data-model.md`): uuid identity,
 timezone-aware stamps, plain-UUID references validated in code.
 
 ```
@@ -206,10 +206,10 @@ re-embeds the store automatically on the next sync.
 
 ## See also
 
-- `docs/benchmarks.md` — the three harnesses, worker protocol, Stop flow.
-- `docs/llm-providers.md` — provider sync, `/models` test probes,
+- `notes/benchmarks.md` — the three harnesses, worker protocol, Stop flow.
+- `notes/llm-providers.md` — provider sync, `/models` test probes,
   `is_function_calling_model`.
 - `db/models.py::ModelGroup` — tri-state capability constraints that today
   resolve against claimed flags.
-- `docs/qa-system.md` — `KB_EPOCH`; why swapping the embedding model after a
+- `notes/qa-system.md` — `KB_EPOCH`; why swapping the embedding model after a
   grid read is already safe.

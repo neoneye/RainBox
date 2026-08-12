@@ -1,7 +1,7 @@
 """Back up the rainbox Postgres database to a zstd-compressed, public-key-encrypted dump.
 
 Dumps postgres to zstd, encrypted to a recipient's *public* key with `age`
-(see docs/backup.md for the full operator guide). The pipeline is:
+(see notes/backup.md for the full operator guide). The pipeline is:
 
     pg_dump <dsn> | zstd | age -r <recipient>   ->   FILE.zstd.age
 

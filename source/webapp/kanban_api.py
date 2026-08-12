@@ -9,7 +9,7 @@ generated from DB state (spoof-resistant escaping in db.kanban).
 
 Tasks: the narrow, uuid-addressed agent operations (claim / move / events /
 complete) — these are the robust write path the board exists for
-(docs/plan.md): no document editing, each call succeeds atomically or fails
+(notes/plan.md): no document editing, each call succeeds atomically or fails
 loudly, and everything lands in the kanban_task_event audit trail.
 """
 
@@ -47,7 +47,7 @@ def kanban_boards() -> tuple[Response, int] | Response:
         except db.KanbanError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         # A create is a tree mutation, so it hands back the fresh tree version —
-        # without it the client's next drag 409s (docs/ui-tree-persistence.md).
+        # without it the client's next drag 409s (notes/ui-tree-persistence.md).
         return jsonify({"ok": True, "board": board,
                         "version": db.kanban_tree_version()})
     return jsonify({"boards": db.kanban_list_boards()})
@@ -301,7 +301,7 @@ def kanban_task_events(task_uuid: str) -> tuple[Response, int] | Response:
 @app.route("/kanban/api/tree", methods=["GET", "PUT"])
 def kanban_tree() -> tuple[Response, int] | Response:
     """Hydrate / save the folder tree (folder names and descriptions, folder
-    and board placement). Per docs/ui-tree-persistence.md the PUT only updates
+    and board placement). Per notes/ui-tree-persistence.md the PUT only updates
     rows that already exist — a payload that omits or invents one is a 400 —
     and creation/deletion are their own endpoints below. The PUT echoes the
     version token GET returned; a stale token is a 409 and the page
