@@ -202,6 +202,16 @@ CHAT_TEMPLATE: str = """
   .thinking-toggle{margin:2px 0 0;padding:0;background:none;border:none;cursor:pointer;font:inherit;
                    font-size:0.8rem;color:#6d28d9;text-decoration:underline;text-underline-offset:2px}
   .thinking-toggle:hover{color:#4c1d95}
+  /* An over-long message is clamped to its opening. A pasted document or log
+     otherwise owns the whole pane, and scrolling back through the conversation
+     means scrolling through all of it. The fade says there is more below
+     without a hard cut mid-line. */
+  .msg-text.msg-clamped{max-height:24em;overflow:hidden;
+                        -webkit-mask-image:linear-gradient(#000 80%,transparent);
+                        mask-image:linear-gradient(#000 80%,transparent)}
+  .msg-more-toggle{display:inline-block;margin:2px 0 0;padding:0;background:none;border:none;cursor:pointer;
+                   font:inherit;font-size:0.8rem;color:#2563eb;text-decoration:underline;text-underline-offset:2px}
+  .msg-more-toggle:hover{color:#1d4ed8}
   /* Live-streaming row: a blinking cursor after the text while tokens arrive. */
   .msg-streaming .msg-text::after{content:'▍';margin-left:1px;color:#7c6fb0;animation:pp-blink 1s steps(1) infinite}
   @keyframes pp-blink{50%{opacity:0}}
@@ -1015,6 +1025,37 @@ function messageRenderKey(m){
           m.streaming ? 'live' : 'settled'].join('|');
 }
 
+// How much of a message is shown before the reader has to ask for the rest.
+// Two limits because one is not enough: a pasted log is many short lines, a
+// pasted document can be one line thousands of characters long — clamping only
+// by line count leaves the second one filling the pane.
+const MSG_PEEK_LINES = 24;
+const MSG_PEEK_CHARS = 2000;
+// This template is a Python string, so a backslash escape written here would be
+// consumed before the browser ever sees the script. The newline comes from its
+// code point instead.
+const MSG_NL = String.fromCharCode(10);
+
+// Whether a message is long enough that showing it whole buries the
+// conversation around it.
+function isOverlongMessage(text){
+  const s = text || '';
+  return s.length > MSG_PEEK_CHARS || s.split(MSG_NL).length > MSG_PEEK_LINES;
+}
+
+// What the reader gives up by leaving a message collapsed, in units they can
+// see: a bare "show more" cannot tell 3 held-back lines from 3000. A pasted
+// document that is one very long line has no line count worth reading, so it
+// is measured in characters alone.
+function peekLabel(text){
+  const s = text || '';
+  const lines = s.split(MSG_NL).length;
+  const chars = s.length.toLocaleString() + ' characters';
+  return lines > 1
+    ? 'show all ' + lines.toLocaleString() + ' lines (' + chars + ')'
+    : 'show the whole message (' + chars + ')';
+}
+
 // Render a message's text into its body element: a JSON code block for
 // content_type 'json' (textContent, never innerHTML, keeps it safe), markdown
 // otherwise. Split out of makeMessage so a streaming update can refresh the
@@ -1095,6 +1136,26 @@ function makeMessage(m){
     msg.appendChild(toggleTop);
   }
   msg.appendChild(body);
+  // An over-long message is clamped to its opening, with a toggle under the
+  // fade naming what is held back and a second one above the body so it can be
+  // collapsed again without scrolling back to the end. Collapsible rows
+  // (thinking / debug-*) already hide their whole body, so they keep that
+  // toggle rather than gaining a second one inside it. A streaming row is left
+  // alone: its text grows every 150ms through the in-place patch above, which
+  // would leave the label counting a message that has since moved on — it gets
+  // clamped when it settles and the row is rebuilt.
+  let moreTop = null, moreBottom = null;
+  if (!collapseNoun && !m.streaming && isOverlongMessage(m.text)){
+    moreTop = document.createElement('button');
+    moreTop.type = 'button';
+    moreTop.className = 'msg-more-toggle';
+    moreTop.textContent = 'show less';
+    msg.insertBefore(moreTop, body);
+    moreBottom = document.createElement('button');
+    moreBottom.type = 'button';
+    moreBottom.className = 'msg-more-toggle';
+    msg.appendChild(moreBottom);
+  }
   // Working bubbles say how long they have been at it, counting up.
   if (m.kind === 'progress') msg.appendChild(workedForLine(m));
   // Write-proposal card (confirm / reject) — only on messages that carry meta.write_intent.
@@ -1209,6 +1270,26 @@ function makeMessage(m){
     toggleTop.addEventListener('click', toggle);
     toggleBottom.addEventListener('click', toggle);
   }
+  if (moreBottom){
+    // Same expanded-id set as the collapsible rows above: a row is either
+    // collapsible or clamped, never both, so they cannot collide. Keying by
+    // message id is what carries the choice across the rebuilds that an edit,
+    // a retry, or a settling stream trigger.
+    const label = peekLabel(m.text);
+    const apply = (expanded) => {
+      body.classList.toggle('msg-clamped', !expanded);
+      moreTop.style.display = expanded ? '' : 'none';
+      moreBottom.textContent = expanded ? 'show less' : label;
+    };
+    const toggle = () => {
+      const expanded = !expandedSections.has(m.id);
+      if (expanded) expandedSections.add(m.id); else expandedSections.delete(m.id);
+      apply(expanded);
+    };
+    apply(expandedSections.has(m.id));
+    moreTop.addEventListener('click', toggle);
+    moreBottom.addEventListener('click', toggle);
+  }
   return msg;
 }
 
@@ -1221,6 +1302,10 @@ function startEditMessage(m, msgEl, bodyEl, actionsEl){
   const room = currentRoom;
   bodyEl.style.display = 'none';
   actionsEl.style.display = 'none';
+  // A long message is being edited whole in the textarea, so its show-all /
+  // show-less toggles have nothing left to act on. Both paths out of the edit
+  // rebuild the row via upsertMessage, which brings them back.
+  msgEl.querySelectorAll('.msg-more-toggle').forEach(b => { b.style.display = 'none'; });
   const ta = document.createElement('textarea');
   ta.className = 'msg-edit-area';
   ta.value = m.text;

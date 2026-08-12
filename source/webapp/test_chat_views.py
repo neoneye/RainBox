@@ -368,3 +368,52 @@ def test_typing_redirect_yields_to_modals_and_the_folder_view():
     body = _body()
     assert "if (!document.getElementById('ui-modal-backdrop').hidden) return;" in body
     assert "if (form.hidden) return;" in body
+
+
+def test_overlong_messages_are_clamped_to_their_opening():
+    """A pasted document or log used to own the whole pane, so scrolling back
+    through the conversation meant scrolling through all of it. Over 24 lines
+    or 2000 characters a message now shows its opening behind a fade, with a
+    toggle naming what is held back — two limits because a pasted log is many
+    short lines and a pasted document can be one very long line."""
+    body = _body()
+    assert "const MSG_PEEK_LINES = 24;" in body
+    assert "const MSG_PEEK_CHARS = 2000;" in body
+    assert "return s.length > MSG_PEEK_CHARS || s.split(MSG_NL).length > MSG_PEEK_LINES;" in body
+    assert "const chars = s.length.toLocaleString() + ' characters';" in body
+    assert "? 'show all ' + lines.toLocaleString() + ' lines (' + chars + ')'" in body
+    # A pasted document that is one very long line has no line count to read.
+    assert ": 'show the whole message (' + chars + ')';" in body
+    assert ".msg-text.msg-clamped{max-height:24em;overflow:hidden;" in body
+    assert "body.classList.toggle('msg-clamped', !expanded);" in body
+
+
+def test_clamped_messages_collapse_from_either_end():
+    """The toggle under the fade opens it; a second one above the body closes
+    it, so a long message need not be scrolled back through to be put away.
+    The collapse choice is keyed by message id like the thinking rows, so it
+    survives the rebuilds an edit or a settling stream trigger."""
+    body = _body()
+    assert "moreTop.textContent = 'show less';" in body
+    assert "msg.insertBefore(moreTop, body);" in body
+    assert "moreBottom.textContent = expanded ? 'show less' : label;" in body
+    assert "moreTop.style.display = expanded ? '' : 'none';" in body
+    assert "if (expanded) expandedSections.add(m.id); else expandedSections.delete(m.id);" in body
+
+
+def test_clamping_leaves_streaming_and_collapsible_rows_alone():
+    """Thinking / debug-* rows already hide their whole body, so they must not
+    gain a second toggle inside the first. A streaming row is re-sent every
+    ~150ms through the in-place patch, which never re-runs this wiring — its
+    label would count a message that has since grown, so it waits until the
+    row settles and is rebuilt."""
+    body = _body()
+    assert "if (!collapseNoun && !m.streaming && isOverlongMessage(m.text)){" in body
+
+
+def test_editing_hides_the_clamp_toggles():
+    """The edit textarea holds the whole message, so show-all / show-less have
+    nothing to act on while it is open."""
+    body = _body()
+    assert ("msgEl.querySelectorAll('.msg-more-toggle')"
+            ".forEach(b => { b.style.display = 'none'; });") in body
