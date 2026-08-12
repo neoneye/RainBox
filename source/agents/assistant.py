@@ -4950,11 +4950,21 @@ class AssistantAgent(ModelGroupAgent):
         self, messages: list[dict[str, Any]]
     ) -> str:
         """The summary call's user prompt: the request, at this call's own much
-        larger budget, and what to write about it.
+        larger budget. Nothing else.
 
         No conversation history and no profile: this call describes material,
         it does not interpret it for a particular user, and history would cost
         tokens on the one call whose input is already the largest of the turn.
+
+        No trailing instruction section either, unlike the other builders. The
+        instruction those carry is either dynamic (decision_request quotes the
+        request, because a step once answered a near-identical question out of
+        the history instead) or says something its system prompt does not. Here
+        it would restate REQUEST_SUMMARY_SYSTEM_PROMPT word for word, at the
+        end of the largest prompt of the turn — and there is nothing to
+        disambiguate: one input, one forced output schema, no competing
+        candidate to answer by mistake.
+
         Same ElementTree escaping guarantee as the other prompt builders."""
         root = ET.Element("request_summary_call")
         current = messages[-1] if messages else None
@@ -4970,13 +4980,6 @@ class AssistantAgent(ModelGroupAgent):
                 text, self.REQUEST_SUMMARY_INPUT_MAX_CHARS)
         request = ET.SubElement(root, "current_user_request", attrs)
         request.text = text
-        ask = ET.SubElement(root, "summary_request")
-        ask.text = (
-            "The assistant will receive the opening and the closing of this "
-            "request with the middle dropped, and your description in place "
-            "of the middle. Say what the material is, what the user wants "
-            "done with it, and what the dropped middle holds."
-        )
         parts: list[str] = []
         for section in root:
             ET.indent(section, space="  ")

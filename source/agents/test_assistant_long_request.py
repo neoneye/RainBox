@@ -293,6 +293,18 @@ def test_the_summarizer_reads_far_more_than_the_prompts_do():
     assert "truncated=" not in prompt
 
 
+def test_the_summarizer_prompt_is_the_request_and_nothing_else():
+    """No trailing instruction section: it would restate the system prompt
+    word for word at the end of the largest prompt of the turn, and this call
+    has one input and one forced output schema — nothing to disambiguate."""
+    agent = _agent()
+    prompt = agent._build_request_summary_prompt(
+        [{"sender_type": "human", "text": _paste(3000)}])
+
+    assert prompt.startswith("<current_user_request")
+    assert prompt.rstrip().endswith("</current_user_request>")
+
+
 def test_the_summarizers_own_input_is_capped_and_marked():
     """The paste that triggers this call has no size limit. Its own middle
     goes the same way, and the tag says so rather than letting it describe a
