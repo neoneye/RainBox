@@ -8,8 +8,12 @@ so the ordering, gating, prompt shape, and trace properties are exercised
 without a model.
 """
 
+import re
 from uuid import uuid4
 
+import pytest
+
+import db
 from agents.assistant import (
     ASSISTANT_SYSTEM_PROMPT,
     AssistantAgent,
@@ -19,6 +23,38 @@ from agents.assistant import (
     SECOND_OPINION_SYSTEM_PROMPT,
     TRUNCATED_REQUEST_SECTION,
 )
+from agents.config import ASSISTANT_UUID
+
+
+@pytest.fixture
+def app_ctx():
+    app = db.make_app()
+    db.init_db(app)
+    ctx = app.app_context()
+    ctx.push()
+    try:
+        yield app
+    finally:
+        db.db.session.rollback()
+        ctx.pop()
+
+
+@pytest.fixture
+def room(app_ctx):
+    """An empty room owned by the operator, cleaned up after the test."""
+    human = db.get_human_user()
+    assert human is not None
+    chatroom = db.create_chatroom(
+        f"lr-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    try:
+        yield chatroom.uuid, human.uuid
+    finally:
+        db.db.session.rollback()
+        db.db.session.query(db.ChatMessage).filter(
+            db.ChatMessage.room_uuid == chatroom.uuid).delete()
+        db.db.session.query(db.Chatroom).filter(
+            db.Chatroom.uuid == chatroom.uuid).delete()
+        db.db.session.commit()
 
 
 def _agent() -> AssistantAgent:
@@ -159,7 +195,7 @@ def test_every_prompt_that_carries_the_request_gets_the_same_treatment():
 
 def test_history_messages_are_cut_too():
     """A paste one turn ago keeps arriving in every prompt of every later
-    turn, where no summary call will ever describe it."""
+    turn."""
     agent = _agent()
     old = _paste(4000)
     prompt = agent._build_user_prompt(
@@ -173,6 +209,76 @@ def test_history_messages_are_cut_too():
     assert 'truncated="middle"' in history
     assert f'included_chars="{agent.HISTORY_MESSAGE_MAX_CHARS}"' in history
     assert len(prompt) < len(old)
+
+
+def test_a_stored_summary_replays_next_to_the_message_it_describes():
+    """Three long pastes then "retry": without the replay the model reads
+    three cut messages and nothing about what was cut, while the summaries sit
+    unread on the runs that wrote them."""
+    agent = _agent()
+    messages = [
+        {"sender_type": "human", "text": _paste(4000),
+         "meta": {"request_summary_markdown": f"## Summary\npaste {i}"}}
+        for i in range(3)
+    ] + [{"sender_type": "human", "text": "retry"}]
+
+    prompt = agent._build_user_prompt(
+        messages=messages, scratchpad=[], step_index=0)
+
+    history = prompt.split("<conversation_history_xml>")[1]
+    assert history.count("<message_summary_markdown>") == 3
+    for i in range(3):
+        assert f"paste {i}" in history
+    # Each summary follows its own message, not the block of them.
+    order = [re.split(r"[ >]", chunk)[0] for chunk in history.split("<")
+             if chunk.startswith(("message ", "message_summary_markdown"))]
+    assert order == ["message", "message_summary_markdown"] * 3
+
+
+def test_a_message_without_a_stored_summary_renders_as_before():
+    """Messages from before the summary call existed, and turns where it
+    failed, still have to render."""
+    agent = _agent()
+    prompt = agent._build_user_prompt(
+        messages=[
+            {"sender_type": "human", "text": _paste(4000)},
+            {"sender_type": "human", "text": "retry"},
+        ],
+        scratchpad=[], step_index=0)
+
+    assert "message_summary_markdown" not in prompt
+
+
+def test_the_summary_is_stored_on_the_message_it_describes(room):
+    """The description has to outlive the turn that paid for it, and the
+    message is where every later turn already looks."""
+    room_uuid, human_uuid = room
+    db.post_chat_message(room_uuid, human_uuid, _paste(4000))
+    agent = _agent()
+    agent._summarize_request = lambda **_: _summary()
+    messages = db.list_room_messages(room_uuid)
+
+    agent._run_request_summary_call(step_index=0, messages=messages)
+
+    stored = db.list_room_messages(room_uuid)[-1]["meta"]
+    assert stored["request_summary_markdown"] == (
+        agent._long_request_summary_markdown)
+    assert "a build log" in stored["request_summary_markdown"]
+
+
+def test_a_failed_store_does_not_break_the_turn(app_ctx):
+    """Best-effort: losing the store costs later turns the description, never
+    this turn."""
+    agent = _agent()
+    agent._summarize_request = lambda **_: _summary()
+
+    agent._run_request_summary_call(
+        step_index=0,
+        messages=[{"sender_type": "human", "text": _paste(4000),
+                   "uuid": "not-a-uuid"}])
+
+    assert "a build log" in agent._long_request_summary_markdown
+    assert agent._steps[0]["phase"] == "observed"
 
 
 def test_the_summarizer_reads_far_more_than_the_prompts_do():

@@ -128,7 +128,9 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   transcript (`<conversation_history_xml>`, `kind == "message"` rows
   only, newest `MAX_RECENT_MESSAGES = 30`; bare except for
   `assistant_messages="omitted_after_fresh_read"`, which the system prompt
-  reads to explain the gap it describes), the **scratchpad** of steps
+  reads to explain the gap it describes; a message shortened by
+  [Long requests](#long-requests) carries that section's attributes and may be
+  followed by a `<message_summary_markdown>` sibling), the **scratchpad** of steps
   taken this turn (each step renders its action, the decision's stated
   reason, the args, and the observation — a rejected step reads as the full
   decision it was, not an anonymous failure; tail-capped at
@@ -233,7 +235,24 @@ something it failed to cover.
 History messages get the same cut at a tighter
 `HISTORY_MESSAGE_MAX_CHARS = 2000` — an old message is context rather than the
 task, and a paste from an earlier turn would otherwise arrive in every prompt
-of every later turn, where no summary call will ever describe it.
+of every later turn.
+
+**The description outlives its turn.** A successful summary call writes its
+Markdown to the triggering message's `meta.request_summary_markdown`, and
+`_append_prompt_message` replays it as a `<message_summary_markdown>` sibling
+directly after that message in `conversation_history_xml` — the same adjacency
+the top-level pair uses, and `<message>` stays a leaf so every message renders
+the same shape. Without it the description died with the turn: three long
+pastes followed by "retry" left the model reading three shortened messages and
+nothing about what was cut from any of them, while the summaries that had
+already been computed and paid for sat unread on the runs that wrote them.
+The message is the right home rather than the run — every turn already reads
+the room's messages, so the replay costs no extra query and does not depend on
+finding the run that produced it. The write is additive (no other `meta` key is
+touched, no NOTIFY, nothing a chat client renders changes) and best-effort:
+losing it costs later turns the description, never this turn. A message with no
+stored summary — posted before this existed, or summarized by a call that
+failed — renders shortened and undescribed, as it did before.
 
 The path is lossy by design for now: the dropped middle is gone for the run.
 Giving the assistant tools to grep and page through the full text — turning

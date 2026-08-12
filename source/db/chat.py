@@ -920,6 +920,35 @@ def _chat_event_payload(
     return payload
 
 
+def set_message_request_summary(message_uuid: UUID, summary_markdown: str) -> bool:
+    """Attach the description of an over-long message to the message itself.
+
+    The assistant shortens a huge paste before it reaches any prompt and pays
+    for one model call to describe what it dropped. That description has to
+    outlive the turn: three long pastes followed by "retry" leaves the model
+    reading three shortened messages in `conversation_history_xml` and nothing
+    at all about what was cut from them. Storing it on the message means every
+    later turn gets it back from the history read it already does, with no
+    extra query and no dependence on the run that produced it.
+
+    Additive: `meta` is reassigned rather than mutated in place so SQLAlchemy
+    sees the change, and no other key is touched. No NOTIFY — this changes
+    nothing a chat client renders. Returns False when the message is gone.
+    """
+    row = (
+        db.session.query(ChatMessage)
+        .filter(ChatMessage.uuid == message_uuid)
+        .one_or_none()
+    )
+    if row is None:
+        return False
+    row.meta = {**(row.meta or {}),
+                "request_summary_markdown": summary_markdown}
+    db.session.add(row)
+    db.session.commit()
+    return True
+
+
 def _chat_notify(**kwargs: Any) -> None:
     """Emit one chat_events NOTIFY (must run inside the writing transaction)."""
     db.session.execute(
