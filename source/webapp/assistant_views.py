@@ -968,29 +968,43 @@ def _time_field(dt, title: str) -> list[dict]:
                    cls="io-time")]
 
 
+def _usage_fields(
+    input_tokens: int | None, output_tokens: int | None, duration_ms: int | None
+) -> list[dict]:
+    """What one model call cost, as the meta fields every such line shares.
+
+    One renderer because a model call costs the same thing wherever it ran: a
+    line that showed only a duration read as a call that was free, which is
+    exactly how the reply audit's cost went unnoticed."""
+    fields: list[dict] = []
+    if input_tokens is not None or output_tokens is not None:
+        tokens = (input_tokens or 0) + (output_tokens or 0)
+        fields.append(_field(
+            f"in {input_tokens or 0}",
+            "Input tokens: the size of the prompt sent to the model for this step"))
+        fields.append(_field(
+            f"out {output_tokens or 0}",
+            "Output tokens: the amount of text the model generated for this step"))
+        if duration_ms:
+            fields.append(_field(
+                f"{tokens * 1000 / duration_ms:.0f} tok/s",
+                "Throughput: total tokens (input + output) processed per second"))
+    if duration_ms is not None:
+        fields.append(_field(
+            f"took {duration_ms / 1000:.1f}s",
+            "Duration: how long the model took to produce this response",
+            cls="io-dur"))
+    return fields
+
+
 def _response_meta(step, model_names: dict[str, str]) -> list[dict]:
     """The model-response line: which model, what the call cost, how fast."""
     fields: list[dict] = []
     if step.model_uuid:
         fields.append(_model_field(
             step.model_uuid, model_names, "The model that produced this response"))
-    if step.input_tokens is not None or step.output_tokens is not None:
-        tokens = (step.input_tokens or 0) + (step.output_tokens or 0)
-        fields.append(_field(
-            f"in {step.input_tokens or 0}",
-            "Input tokens: the size of the prompt sent to the model for this step"))
-        fields.append(_field(
-            f"out {step.output_tokens or 0}",
-            "Output tokens: the amount of text the model generated for this step"))
-        if step.duration_ms:
-            fields.append(_field(
-                f"{tokens * 1000 / step.duration_ms:.0f} tok/s",
-                "Throughput: total tokens (input + output) processed per second"))
-    if step.duration_ms is not None:
-        fields.append(_field(
-            f"took {step.duration_ms / 1000:.1f}s",
-            "Duration: how long the model took to produce this response",
-            cls="io-dur"))
+    fields += _usage_fields(
+        step.input_tokens, step.output_tokens, step.duration_ms)
     return fields + _time_field(
         step.created_at, "When this model response was recorded")
 
@@ -1019,8 +1033,10 @@ def _result_meta(step) -> list[dict]:
 
 
 def _review_meta(so: dict, model_names: dict[str, str]) -> list[dict]:
-    """The second-opinion line: the reviewer model and where its group came
-    from. No token counts — the review payload records no usage."""
+    """The second-opinion line: the reviewer model, where its group came from,
+    and what the review cost — the review is a model call like any other, and
+    it is the one the operator is most likely to be weighing against the step
+    it gates."""
     fields: list[dict] = []
     if so.get("model_uuid"):
         fields.append(_model_field(
@@ -1030,7 +1046,9 @@ def _review_meta(so: dict, model_names: dict[str, str]) -> list[dict]:
             f"group: {so['group_from']}",
             "Which agent binding supplied the reviewer's model group "
             "(second_opinion on /agentmodel, else the assistant's own)"))
-    return fields
+    usage = so.get("usage") or {}
+    return fields + _usage_fields(
+        usage.get("input"), usage.get("output"), usage.get("ms"))
 
 
 def _meta_md(fields: list[dict]) -> str:
@@ -1074,6 +1092,11 @@ def _review_payload(row) -> dict:
         "response": row.response,
         "skipped": row.skip_reason,
         "error": row.error,
+        # Same shape the inline payload carries, so `_review_meta` reads one
+        # thing whether the review came from its own row or from the step's
+        # observation fallback.
+        "usage": {"input": row.input_tokens, "output": row.output_tokens,
+                  "ms": row.duration_ms},
     }
     if row.verdict in ("approved", "rejected"):
         payload["approved"] = row.verdict == "approved"

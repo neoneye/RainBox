@@ -5753,6 +5753,12 @@ class AssistantAgent(ModelGroupAgent):
             model_group_uuid=self.model_group_uuid,
             model_uuid=(UUID(payload["model_uuid"])
                         if payload.get("model_uuid") else None),
+            # The whole usage dict, not just the clock: the audit reads the
+            # reply, the request, the observations and the settings, so it is
+            # one of the turn's larger prompts, and a row showing only its
+            # duration made it look free next to every other model call.
+            input_tokens=usage.get("input"),
+            output_tokens=usage.get("output"),
             duration_ms=usage.get("ms"),
             # Every step row carries the operator-facing debug log, this one
             # included: a bounced reply is exactly when the active profile

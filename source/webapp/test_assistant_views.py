@@ -15,7 +15,11 @@ import pytest
 import db
 import webapp  # noqa: F401 — registers all views (incl. /assistant) on the app
 from db import AssistantRun
-from webapp.assistant_views import _format_duration
+from webapp.assistant_views import (
+    _format_duration,
+    _review_meta,
+    _review_payload,
+)
 from webapp.core import app as flask_app
 
 
@@ -1310,3 +1314,42 @@ def test_a_skipped_call_reads_as_skipped_not_as_a_silent_row(app_ctx, client):
         assert "- **LLM calls:** 1" in md
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_review_meta_shows_what_the_review_cost():
+    """The reviewer's row stored its tokens all along; the line rendered only
+    the model and the group, so the gate looked free next to the step it
+    gates."""
+    fields = _review_meta(
+        {"model_uuid": str(uuid4()), "group_from": "second_opinion",
+         "usage": {"input": 3100, "output": 120, "ms": 4000}},
+        {})
+    texts = [f["text"] for f in fields]
+
+    assert "in 3100" in texts
+    assert "out 120" in texts
+    assert "805 tok/s" in texts
+    assert "took 4.0s" in texts
+
+
+def test_review_meta_survives_a_review_that_recorded_no_usage():
+    """A skipped or failed-open review has no model call to cost."""
+    fields = _review_meta({"group_from": "own"}, {})
+
+    assert [f["text"] for f in fields] == ["group: own"]
+
+
+def test_review_payload_carries_the_rows_usage_forward():
+    """The row is the source of truth, so the shape it hands the renderer has
+    to match the inline payload's."""
+    class _Row:
+        problems = []
+        group_from = "own"
+        model_uuid = None
+        system_prompt = user_prompt = reasoning = response = None
+        skip_reason = error = None
+        verdict = "approved"
+        input_tokens, output_tokens, duration_ms = 11, 22, 33
+
+    assert _review_payload(_Row())["usage"] == {
+        "input": 11, "output": 22, "ms": 33}

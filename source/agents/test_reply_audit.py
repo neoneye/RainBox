@@ -376,6 +376,23 @@ def test_the_audit_gets_its_own_trace_row(room, monkeypatch):
     assert "send" in (audits[0].observation_preview or "")
 
 
+def test_the_audit_row_carries_its_token_cost(room, monkeypatch):
+    """The row recorded the clock but not the tokens, so the audit — which
+    reads the reply, the request, the observations and the settings — looked
+    free next to every other model call in the same trace."""
+    agent, _messages = _audited_run(
+        room, monkeypatch,
+        (True, {"verdict": "send", "reason": "sound", "problems": "",
+                "model_uuid": str(uuid4()), "system_prompt": "sys",
+                "user_prompt": "usr",
+                "usage": {"input": 4321, "output": 87, "ms": 23401}}))
+    audits = [s for s in db.list_assistant_steps(agent._run.uuid)
+              if s.action == AssistantAgent.REPLY_AUDIT_ACTION]
+
+    assert (audits[0].input_tokens, audits[0].output_tokens) == (4321, 87)
+    assert audits[0].duration_ms == 23401
+
+
 def test_a_bounced_audit_is_traced_too(room, monkeypatch):
     """The bounce is the interesting case: a persistently revising auditor is
     only diagnosable if every verdict left a row."""
