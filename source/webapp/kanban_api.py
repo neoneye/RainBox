@@ -9,8 +9,8 @@ generated from DB state (spoof-resistant escaping in db.kanban).
 
 Tasks: the narrow, uuid-addressed agent operations (claim / move / events /
 complete) — these are the robust write path the board exists for
-(notes/plan.md): no document editing, each call succeeds atomically or fails
-loudly, and everything lands in the kanban_task_event audit trail.
+(notes/kanban-design.md): no document editing, each call succeeds atomically
+or fails loudly, and everything lands in the kanban_task_event audit trail.
 """
 
 from uuid import UUID

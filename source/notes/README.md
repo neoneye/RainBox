@@ -1,4 +1,4 @@
-# Docs index
+# Notes index
 
 One line per document. Design docs describe **current state** (git holds the
 history); `proposals/` holds design-time intent and reviews.

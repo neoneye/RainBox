@@ -2,7 +2,7 @@
 
 **Status:** **Built and running.** The `/cron` page persists a folder tree of jobs to Postgres, the supervisor loop fires due jobs on their schedule, five action types exist (`message`, `command`, `backup`, `memory_sync`, `script`), run outcomes/health/retries/global-pause are all live, and the assistant creates **one-shot reminder jobs** through the same tables. Requires running via `python main.py` (the scheduler and web app share one process). Page at `GET /cron`.
 **Date:** 2026-07-07
-**Source brief:** `plan.md` → "## Cronjob"
+**Source brief:** the original project plan → "## Cronjob"
 **UI scope:** **Desktop-first** (tablet acceptable). Small-phone layouts are a **non-goal** — the fixed-width tree + split view is tuned for wide viewports.
 
 ## The idea
@@ -205,7 +205,7 @@ The three tables are registered under an **Admin → Cron** category (`CronFolde
 
 - **Agent-inbox message targeting.** Message jobs post to chatrooms; delegating directly into an agent's inbox (`enqueue(agent_uuid, …)` — the brief's "placing a task in their inbox") is unbuilt. In practice, posting to a room an agent watches covers the need.
 - **Named IANA timezones.** `Europe/Copenhagen`-style zones beyond the local/UTC pair, and DST edge cases (a `croniter`/tz concern).
-- **Multi-user ownership.** plan.md wants multi-user; `user_id` on `cron_folder`/`cron_job` (and scoping every query + the tick by it) is still deferred.
+- **Multi-user ownership.** The original project plan wants multi-user; `user_id` on `cron_folder`/`cron_job` (and scoping every query + the tick by it) is still deferred.
 - **Folder = project binding.** Should a folder pin a workspace/repo path for command confinement (PlanExe folder → PlanExe repo), making it both an on/off group *and* an execution context?
 - **Cron-room noise.** Every fire posts an event line. Fine at current volume; a high-frequency job would want a failures-only or per-folder-room policy.
 - **Global pause vs in-flight.** Pause stops *new* fires; runs already in flight are left to finish.

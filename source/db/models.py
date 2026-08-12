@@ -343,7 +343,7 @@ class CronRun(db.Model):
 
 class KanbanBoard(db.Model):
     """A kanban board: the database-backed coordination surface agents and
-    humans share (notes/plan.md "Kanban board" — chosen over markdown todo
+    humans share (notes/kanban-design.md — chosen over markdown todo
     lists precisely because reliable mutation needs uuid-addressed rows, not
     document editing). Columns/tasks reference boards by plain uuid columns
     (no FKs, app-side validation — the cron-tables pattern)."""

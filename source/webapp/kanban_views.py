@@ -2,8 +2,8 @@
 
 Multiple kanban boards backed by Postgres (kanban_board/column/task/
 task_event via db.kanban + webapp/kanban_api.py) — the database-backed
-coordination primitive from notes/plan.md: agents track progress here because
-markdown todo-list editing is too fragile for small models. Each task carries
+coordination primitive: agents track progress here because markdown
+todo-list editing is too fragile for small models. Each task carries
 a uuid and is assigned to an agent (agents/config.py uuid — stable across role
 renames). A board serializes to markdown server-side (the page's "Markdown"
 button; GET /kanban/api/board/<uuid>/markdown) so LLMs get context about what

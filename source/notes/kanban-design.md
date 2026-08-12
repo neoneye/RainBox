@@ -1,7 +1,7 @@
 # Kanban — design
 
-The kanban board at `GET /kanban` is the coordination primitive from
-notes/plan.md ("Kanban board"): agents keep track of progress in Postgres
+The kanban board at `GET /kanban` is the coordination primitive from the
+original project plan ("Kanban board"): agents keep track of progress in Postgres
 because editing markdown todo lists is too fragile for small models — instead
 of "rewrite the document correctly", an agent calls **narrow, uuid-addressed
 operations** that succeed atomically or fail loudly.
@@ -173,8 +173,8 @@ in the agent_config registry and are enforced in
 model prompt — a model can propose an operation, but code decides whether it
 is permitted before calling `db.kanban_*`.
 
-The finer permission names from `notes/plan.md` remain vocabulary, not
-implementation targets:
+The finer permission names from the original project plan remain vocabulary,
+not implementation targets:
 
 | Planned split | Fits under | When to split it out |
 |---|---|---|
@@ -419,7 +419,7 @@ operation endpoints through the dispatcher (the known gap above).
 
 ## Benchmark plan
 
-The central hypothesis from `notes/plan.md`: a dedicated database-backed
+The central hypothesis from the original project plan: a dedicated database-backed
 kanban board is more robust than asking models to edit markdown todo lists
 with `EditDocumentAgentV6` or similar document patchers. The first slice
 (**/benchmark_kanban**, `benchmarks/kanban.py`, also a CLI) tests the 2×2

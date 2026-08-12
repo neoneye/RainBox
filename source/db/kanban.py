@@ -1,7 +1,7 @@
 """Kanban persistence + agent operations.
 
-The kanban board is a database-backed coordination primitive (notes/plan.md):
-agents keep track of progress here because editing markdown todo lists is too
+The kanban board is a database-backed coordination primitive: agents keep
+track of progress here because editing markdown todo lists is too
 fragile for small models — instead of "rewrite the document correctly", an
 agent calls narrow, uuid-addressed operations (claim / move / append event /
 complete) that either succeed atomically or fail loudly. Those primitives are
