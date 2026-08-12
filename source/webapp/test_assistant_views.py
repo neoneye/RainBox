@@ -16,7 +16,10 @@ import db
 import webapp  # noqa: F401 — registers all views (incl. /assistant) on the app
 from db import AssistantRun
 from webapp.assistant_views import (
+    TRIGGER_PEEK_CHARS,
+    TRIGGER_PEEK_LINES,
     _format_duration,
+    _trigger_peek,
     _review_meta,
     _review_payload,
 )
@@ -1353,3 +1356,83 @@ def test_review_payload_carries_the_rows_usage_forward():
 
     assert _review_payload(_Row())["usage"] == {
         "input": 11, "output": 22, "ms": 33}
+
+
+def test_trigger_peek_leaves_a_short_message_alone():
+    """The common card keeps exactly the shape it had, with no toggle to
+    ignore."""
+    assert _trigger_peek("convert 12 feet") is None
+    assert _trigger_peek("line\n" * TRIGGER_PEEK_LINES) is None
+
+
+def test_trigger_peek_clamps_by_lines():
+    peek = _trigger_peek("\n".join(f"line {i}" for i in range(400)))
+
+    assert peek["head"].count("\n") == TRIGGER_PEEK_LINES - 1
+    assert peek["head"].startswith("line 0")
+    assert peek["more"] == "show all 400 lines (3,489 characters)"
+
+
+def test_trigger_peek_clamps_a_single_enormous_line_too():
+    """A pasted document can be one line thousands of characters long, which a
+    line-count clamp would let through whole."""
+    peek = _trigger_peek("x" * 20_000)
+
+    assert len(peek["head"]) <= TRIGGER_PEEK_CHARS + 2  # + the ellipsis
+    assert peek["more"] == "show all 1 lines (20,000 characters)"
+
+
+def test_a_long_trigger_message_renders_collapsed_but_whole(app_ctx, client):
+    """Collapsed, not truncated: the reader can still get the whole message,
+    and the open state rides the live-refresh swap like every other block."""
+    room = _room()
+    human = db.get_human_user()
+    text = "OPENING LINE\n" + "\n".join(f"pasted line {i}" for i in range(400))
+    db.post_chat_message(room.uuid, human.uuid, text)
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished")
+    try:
+        body = html.unescape(
+            client.get(f"/assistant?id={run.uuid}").get_data(as_text=True))
+        assert 'data-k="trigger"' in body          # carried across a refresh
+        assert "show all 401 lines" in body
+        assert "OPENING LINE" in body
+        assert "pasted line 399" in body           # the whole message is there
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_short_trigger_message_gets_no_toggle(app_ctx, client):
+    room = _room()
+    human = db.get_human_user()
+    db.post_chat_message(room.uuid, human.uuid, "convert 12 feet")
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "convert 12 feet" in body
+        assert 'data-k="trigger"' not in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_the_markdown_export_keeps_the_whole_trigger_message(app_ctx, client):
+    """The export is for reading away from the page; there is nothing to
+    click, so clamping it would only lose the message."""
+    room = _room()
+    human = db.get_human_user()
+    text = "\n".join(f"pasted line {i}" for i in range(400))
+    db.post_chat_message(room.uuid, human.uuid, text)
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished")
+    try:
+        md = client.get(
+            f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
+        assert "pasted line 0" in md
+        assert "pasted line 399" in md
+        assert "show all" not in md
+    finally:
+        _cleanup(run.uuid, room.uuid)

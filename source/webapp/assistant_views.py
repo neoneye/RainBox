@@ -171,6 +171,25 @@ ASSISTANT_TEMPLATE = """
   .as-main .obstacles { margin:0.2rem 0 0; padding-left:1.2rem; }
   .as-main .obstacles li { margin:0.1rem 0; }
   .as-main .trigmsg { white-space:pre-wrap; word-break:break-word; margin:0; }
+  /* An over-long triggering message is collapsed to its opening lines: a
+     pasted document or log otherwise pushes the step timeline — the reason
+     this page exists — below the fold. The peek sits in the <summary>, so the
+     whole closed card is one click target; open, the summary is just the
+     toggle. */
+  .as-main .trigwrap > summary { cursor:pointer; list-style:none;
+                             -webkit-user-select:none; user-select:none; }
+  .as-main .trigwrap > summary::-webkit-details-marker { display:none; }
+  .as-main .trigwrap[open] > summary .peek { display:none; }
+  .as-main .trigwrap .peek { -webkit-mask-image:linear-gradient(#000 70%, transparent);
+                             mask-image:linear-gradient(#000 70%, transparent); }
+  .as-main .trigtoggle { display:inline-block; margin-top:0.35rem; padding:0;
+                             border:0; background:none; font:inherit;
+                             font-size:0.72rem; color:#3b6fd4; cursor:pointer; }
+  .as-main .trigtoggle:hover { text-decoration:underline; }
+  .as-main .trigwrap > summary .trigtoggle::before { content:attr(data-more); }
+  .as-main .trigwrap[open] > summary .trigtoggle::before { content:attr(data-less); }
+  .as-main .trigwrap .trigless { display:none; }
+  .as-main .trigwrap[open] .trigless { display:inline-block; }
   .as-main .card-body pre { margin:0; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
@@ -416,7 +435,25 @@ ASSISTANT_TEMPLATE = """
         </div>
         <div class="card-body">
           <div class="trigger">
-            {% if trigger %}
+            {% if trigger and trigger.peek %}
+              {# Collapsed to its opening lines. A <details> rather than a
+                 hand-rolled toggle so the live-refresh swap carries the open
+                 state like every other collapsed block on this page (see
+                 detailsKey below) — the peek lives in the <summary> because a
+                 closed <details> hides everything else. #}
+              <details class="trigwrap" data-k="trigger">
+                <summary>
+                  <pre class="trigmsg peek">{{ trigger.peek.head }}</pre>
+                  <span class="trigtoggle" data-more="{{ trigger.peek.more }}"
+                        data-less="show less"></span>
+                </summary>
+                <pre class="trigmsg">{{ trigger.text }}</pre>
+                {# A second way out at the far end: scrolling back up past a
+                   long message to collapse it is the whole complaint again. #}
+                <button class="trigtoggle trigless" type="button"
+                        onclick="this.closest('details').open=false">show less</button>
+              </details>
+            {% elif trigger %}
               <pre class="trigmsg">{{ trigger.text }}</pre>
             {% else %}
               <div class="muted">No triggering chat message found.</div>
@@ -968,6 +1005,46 @@ def _time_field(dt, title: str) -> list[dict]:
                    cls="io-time")]
 
 
+# How much of the triggering message the card shows before the reader asks for
+# the rest. Two limits because one is not enough: a pasted log is many short
+# lines, and a pasted document can be one line thousands of characters long —
+# clamping only by line count leaves the second one filling the screen.
+TRIGGER_PEEK_LINES: int = 12
+TRIGGER_PEEK_CHARS: int = 900
+
+
+def _trigger_peek(text: str) -> dict | None:
+    """The opening of an over-long triggering message, or None when the whole
+    message is short enough to show.
+
+    The card led with the operator's message in full, which was fine until the
+    assistant started accepting pasted documents and logs: a 20 000-character
+    trigger pushed the entire step timeline — the reason the page exists —
+    below the fold. Returning None for a short message keeps the common card
+    exactly as it was, with no toggle to ignore."""
+    lines = text.splitlines()
+    if len(lines) <= TRIGGER_PEEK_LINES and len(text) <= TRIGGER_PEEK_CHARS:
+        return None
+    head = "\n".join(lines[:TRIGGER_PEEK_LINES])
+    if len(head) > TRIGGER_PEEK_CHARS:
+        head = head[:TRIGGER_PEEK_CHARS]
+    return {
+        "head": head + " …",
+        # What the reader gives up by leaving it collapsed, in the units they
+        # can see: a bare "show more" cannot tell 3 held-back lines from 3000.
+        "more": f"show all {len(lines):,} lines ({len(text):,} characters)",
+    }
+
+
+def _with_trigger_peek(trigger: dict | None) -> dict | None:
+    """Attach the card's peek to the trigger dict, leaving db's shape alone —
+    how much of a message fits on a page is a rendering question."""
+    if trigger is None:
+        return None
+    peek = _trigger_peek(str(trigger.get("text") or ""))
+    return trigger if peek is None else {**trigger, "peek": peek}
+
+
 def _usage_fields(
     input_tokens: int | None, output_tokens: int | None, duration_ms: int | None
 ) -> list[dict]:
@@ -1510,7 +1587,7 @@ def _load_run_detail(selected) -> dict:
         "unlinked": unlinked,
         "reviews": reviews,
         "pending_controls": db.list_pending_controls(selected.uuid),
-        "trigger": db.get_run_trigger_message(selected),
+        "trigger": _with_trigger_peek(db.get_run_trigger_message(selected)),
         "dash": _run_dashboard(selected, steps, review_rows),
         "waterfall": _waterfall(db.assistant_llm_calls(steps, review_rows), selected),
         "reply": reply,
