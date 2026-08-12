@@ -115,8 +115,8 @@ bubble through `db.post_chat_message`'s terminal-kind transaction.
   the section order carries the emphasis and the time anchor is
   current_local_time at the end; see
   [Long requests](#long-requests) for the shortening attributes and the
-  `<request_summary_markdown>` section that follows the request when they are
-  present), the **response-language classification**
+  `<current_user_request_summary_markdown>` section that follows the request
+  when they are present), the **response-language classification**
   (a bare `<reply_language_markdown>`: the suffix states the format and the
   system prompt names the section as reference data, so neither a `format` nor
   an `authority` attribute repeats what is already said —
@@ -204,7 +204,9 @@ counts characters, and slicing UTF-8 by byte splits codepoints.
 A shortened request carries `truncated="middle"`, `original_chars` and
 `included_chars`. Those are code-owned facts, so they live in attributes; the
 description of what was dropped is model-written, so it renders as its own
-`<request_summary_markdown>` section directly after the request, with its
+`<current_user_request_summary_markdown>` section directly after the request
+— named off the request so the tie between the two is visible in the tag
+rather than only in the prose — with its
 authority declared in a code-owned system-prompt paragraph
 (`TRUNCATED_REQUEST_SECTION`, carried by every prompt that renders the
 request). `_append_current_user_request` is the single renderer all five

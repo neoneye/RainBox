@@ -1,7 +1,7 @@
 """Tests for the long-request path: a request too big for the prompt travels
 with its middle dropped, tagged so every reader knows the seam is a cut, and a
 code-driven summary call before step 0 describes what was dropped as
-<request_summary_markdown> alongside the shortened request.
+<current_user_request_summary_markdown> alongside the shortened request.
 
 Deterministic: the summary live-model seam (`_summarize_request`) is stubbed,
 so the ordering, gating, prompt shape, and trace properties are exercised
@@ -98,7 +98,7 @@ def test_request_inside_the_cap_travels_whole_and_unmarked():
 
     assert "how tall is the tower?" in prompt
     assert "truncated=" not in prompt
-    assert "request_summary_markdown" not in prompt
+    assert "current_user_request_summary_markdown" not in prompt
 
 
 def test_long_request_is_cut_and_the_tag_says_so():
@@ -127,12 +127,12 @@ def test_summary_renders_beside_the_request_not_inside_its_attributes():
         messages=[{"sender_type": "human", "text": _paste(4000)}],
         scratchpad=[], step_index=0)
 
-    assert "<request_summary_markdown>" in prompt
+    assert "<current_user_request_summary_markdown>" in prompt
     assert "a build log" in prompt
     assert "exit status 2" in prompt
     assert 'summary="' not in prompt
     assert prompt.index("<current_user_request") < prompt.index(
-        "<request_summary_markdown>")
+        "<current_user_request_summary_markdown>")
 
 
 def test_every_prompt_that_carries_the_request_gets_the_same_treatment():
@@ -154,7 +154,7 @@ def test_every_prompt_that_carries_the_request_gets_the_same_treatment():
     ]
     for prompt in prompts:
         assert 'truncated="middle"' in prompt
-        assert "<request_summary_markdown>" in prompt
+        assert "<current_user_request_summary_markdown>" in prompt
 
 
 def test_history_messages_are_cut_too():
