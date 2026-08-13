@@ -145,7 +145,7 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     # turn's own state rather than a restatement of the prompt's policy.
     # The history now leads the prompt with the request, above
     # turn_instructions, so it is checked against the whole prompt.
-    assert '<conversation_history_xml assistant_messages="omitted_after_fresh_read">' in prompt
+    assert "<conversation_history_xml>" in prompt
     assert "authority=" not in prompt.split("<conversation_history_xml")[1][:80]
     assert "facts_are_authoritative" not in rest
     assert '<current_turn_steps authority="fresh_evidence">' in rest
@@ -244,25 +244,50 @@ def test_turn_event_budget_preserves_events_within_budget():
     assert omitted == 0
 
 
-def test_successful_read_removes_old_assistant_answers_but_keeps_operator_context():
+def test_history_keeps_assistant_answers_after_a_successful_read():
+    """conversation_history_xml carries both sides for the whole turn — a
+    successful read no longer filters the assistant's own earlier answers out
+    of it. That keeps the section byte-identical on every step of the turn,
+    which is what lets it sit at the head of the prompt as part of the prefix
+    the backend reuses. The staleness the filtering guarded against is handled
+    in DECIDE_TURN_INSTRUCTIONS instead: old answers are explicitly not
+    authoritative evidence, and this turn's read wins over them."""
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
     messages = [
         {"sender_type": "human", "text": "earlier operator context"},
         {"sender_type": "agent", "text": "stale factual answer"},
         {"sender_type": "human", "text": "current question"},
     ]
-    prompt = agent._build_user_prompt(
-        messages=messages,
-        scratchpad=[AssistantTurnStep(
-            step_index=0, action="memory_query", args={"query": "current question"},
-            status="ok", observation="fresh facts", is_read=True,
-        )],
-        step_index=1,
+    read_step = AssistantTurnStep(
+        step_index=0, action="memory_query", args={"query": "current question"},
+        status="ok", observation="fresh facts", is_read=True,
     )
+    before = agent._build_user_prompt(
+        messages=messages, scratchpad=[], step_index=0)
+    after = agent._build_user_prompt(
+        messages=messages, scratchpad=[read_step], step_index=1)
 
-    assert "earlier operator context" in prompt
-    assert "stale factual answer" not in prompt
-    assert 'assistant_messages="omitted_after_fresh_read"' in prompt
+    for prompt in (before, after):
+        assert "earlier operator context" in prompt
+        assert "stale factual answer" in prompt
+        assert "omitted_after_fresh_read" not in prompt
+
+    # The section renders identically either side of the read, so the prefix
+    # through it survives the step that used to invalidate it.
+    def history(text):
+        i = text.index("<conversation_history_xml")
+        return text[i:text.index("</conversation_history_xml>", i)]
+
+    assert history(before) == history(after)
+
+
+def test_turn_instructions_rank_this_turns_read_over_an_earlier_answer():
+    """With the omission gone, this prose is the only thing standing between
+    the model and its own stale answer sitting in the transcript."""
+    p = DECIDE_TURN_INSTRUCTIONS.lower()
+    assert "never authoritative" in p
+    assert "stored facts change between turns" in p
+    assert "the read wins" in p
 
 
 def test_system_prompt_forbids_claiming_unperformed_writes():

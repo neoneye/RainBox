@@ -881,9 +881,12 @@ with user_profile, calibration wins for response style and technology
 preference. Switching the active profile changes identity, formatting, and
 calibration; it is not an audience boundary.
 Old assistant answers in conversation_history_xml are never authoritative
-evidence. If conversation_history_xml says assistant messages were omitted
-after a fresh read,
-that omission is intentional; do not reconstruct or infer those old answers.
+evidence. They are there so you can see what the conversation has covered and
+in what voice, never as a source of facts: an answer you gave in an earlier
+turn was true of what was stored then, and stored facts change between turns.
+When this turn's read contradicts one of your earlier answers, the read wins
+and the earlier answer is simply out of date. Reusing it because it is already
+written, and reads well, is the mistake this section invites.
 Every message in conversation_history_xml belongs to a turn that already ended,
 including the last one. The request you are answering is the one quoted in
 current_user_request and repeated in decision_request, and only that one. When
@@ -4168,24 +4171,18 @@ class AssistantAgent(ModelGroupAgent):
         # the model still reads the question last (see _request_anchor).
         self._append_current_user_request(root, current)
 
-        has_fresh_read = any(
-            isinstance(event, AssistantTurnStep)
-            and event.is_read
-            and event.status == "ok"
-            for event in scratchpad
-        )
-        # A bare suffixed tag: the `_xml` suffix states the format, the
-        # source-priority block ranks the section, and turn_instructions says
-        # old assistant answers are never authoritative evidence — so
-        # `authority` and `facts_are_authoritative` attributes only repeated
-        # what the prompt already says. `assistant_messages` stays: it is not a
-        # restatement but this turn's own state, true only after a fresh read,
-        # and turn_instructions reads it to explain the gap it describes.
-        history_attrs = {}
-        if has_fresh_read:
-            history_attrs["assistant_messages"] = "omitted_after_fresh_read"
-            context = [m for m in context if self._message_role(m) == "user"]
-        history = ET.SubElement(root, "conversation_history_xml", history_attrs)
+        # Every message of the recent window, the assistant's replies included,
+        # for the whole turn. A bare tag: the `_xml` suffix states the format,
+        # the source-priority block ranks the section, and turn_instructions
+        # says old assistant answers are never authoritative evidence — so an
+        # `authority` attribute would only repeat what the prompt already says.
+        #
+        # The section is constant for the turn, which is why it can sit this
+        # high: it renders identically on every step, so everything from the
+        # request through the end of this block is a prefix the backend reuses
+        # across the whole decide loop. Filtering the assistant's messages out
+        # partway through the turn would move that boundary to here.
+        history = ET.SubElement(root, "conversation_history_xml")
         if context:
             for message in context:
                 self._append_prompt_message(history, message)
