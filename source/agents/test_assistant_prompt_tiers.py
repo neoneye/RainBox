@@ -236,3 +236,74 @@ def test_second_opinion_prompt_follows_tier_order(
     order = section_order(prompt)
     assert order == [s for s in SECOND_OPINION_EXPECTED if s in order]
     assert set(SECOND_OPINION_ALWAYS) <= set(order)
+
+
+AUDIT_EXPECTED = [
+    "user_settings_json", "formatting_guide",
+    "turn_instructions",
+    "conversation_history_xml", "acceptance_criteria_markdown",
+    "reply_language_markdown", "turn_observations", "proposed_reply",
+    "current_user_request", "current_local_time",
+]
+
+# user_settings_languages_json is this call's own tier-1 block (built from
+# the profile, not from _append_static_head), so it leads the prompt in that
+# role. The brief's version of this list omitted current_user_request, even
+# though _append_current_user_request always renders it; it is included here
+# so the equality check below stays accurate against what the builder emits.
+CLASSIFIER_EXPECTED = [
+    "user_settings_languages_json",
+    "turn_instructions",
+    "conversation_history_xml", "current_user_request",
+    "classification_request",
+]
+
+SUMMARY_EXPECTED = ["turn_instructions", "current_user_request"]
+
+
+# As in Task 4: the order check filters by what was found, so these lists are
+# what stops a builder silently dropping a section it must always emit.
+AUDIT_ALWAYS = [
+    "user_settings_json", "formatting_guide", "turn_instructions",
+    "conversation_history_xml", "proposed_reply", "current_user_request",
+    "current_local_time",
+]
+CLASSIFIER_ALWAYS = [
+    "user_settings_languages_json", "turn_instructions",
+    "conversation_history_xml", "current_user_request",
+    "classification_request",
+]
+
+
+def test_reply_audit_prompt_follows_tier_order(fully_populated_agent):
+    prompt = fully_populated_agent._build_reply_audit_prompt(
+        "here is the answer",
+        messages=[{"sender_type": "human", "text": "what is 2+2"}],
+        scratchpad=[])
+
+    order = section_order(prompt)
+    assert order == [s for s in AUDIT_EXPECTED if s in order]
+    assert set(AUDIT_ALWAYS) <= set(order)
+
+
+def test_response_language_classifier_prompt_follows_tier_order(
+    fully_populated_agent,
+):
+    prompt = fully_populated_agent._build_response_language_classifier_prompt(
+        [{"sender_type": "human", "text": "what is 2+2"}], None)
+
+    order = section_order(prompt)
+    assert order == [s for s in CLASSIFIER_EXPECTED if s in order]
+    assert set(CLASSIFIER_ALWAYS) <= set(order)
+
+
+def test_request_summary_prompt_leads_with_instructions(fully_populated_agent):
+    # _build_request_summary_prompt takes a message list, not a single dict
+    # (the brief's snippet omitted the list brackets) — see the existing
+    # calls in test_assistant_long_request.py for the real signature.
+    prompt = fully_populated_agent._build_request_summary_prompt(
+        [{"sender_type": "human", "text": "x" * 200}])
+
+    # This prompt carries exactly two sections whatever the turn state, so it
+    # gets the exact-equality form rather than the subsequence one.
+    assert section_order(prompt) == SUMMARY_EXPECTED

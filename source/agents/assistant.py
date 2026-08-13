@@ -4505,18 +4505,18 @@ class AssistantAgent(ModelGroupAgent):
         own, and an auditor without the prior turns cannot tell a reply about
         the right person from one about the wrong person — it said as much,
         "the context is unclear without prior turns", and passed a reply that
-        had lost a generation. It stays below the request so the message under
-        audit is unambiguous, and the system prompt scopes it to reference
-        rather than evidence.
+        had lost a generation. It leads the dynamic tail, ahead of the
+        proposed reply and the request it disambiguates, and the system
+        prompt scopes it to reference rather than evidence.
 
-        Same ElementTree escaping guarantee as the other prompt builders.
+        Same tier convention as the other builders: static head, then
+        turn_instructions, then the dynamic tail ending with the request and
+        the clock. Same ElementTree escaping guarantee too.
         """
         root = ET.Element("reply_audit")
+        self._append_static_head(root, blocks=("identity", "formatting"))
         self._append_turn_instructions(root, REPLY_AUDIT_TURN_INSTRUCTIONS)
         current = messages[-1] if messages else None
-        self._append_current_user_request(root, current)
-        proposed = ET.SubElement(root, "proposed_reply")
-        proposed.text = message
         context = (messages[:-1] if messages else [])[
             -self.REPLY_AUDIT_MAX_MESSAGES:]
         history = ET.SubElement(root, "conversation_history_xml")
@@ -4543,13 +4543,11 @@ class AssistantAgent(ModelGroupAgent):
                     {"action": step.action, "status": step.status})
                 entry.text = step.observation[
                     : self.REPLY_AUDIT_MAX_OBSERVATION_CHARS]
-        if self._identity_block:
-            identity = ET.SubElement(root, "user_settings_json")
-            identity.text = self._identity_block
-        if self._formatting_block:
-            formatting = ET.SubElement(
-                root, "formatting_guide", {"authority": "instructions"})
-            formatting.text = self._formatting_block
+        # Stays adjacent to the request: it is what the request is being
+        # audited against.
+        proposed = ET.SubElement(root, "proposed_reply")
+        proposed.text = message
+        self._append_current_user_request(root, current)
         now_local = datetime.now().astimezone()
         ET.SubElement(root, "current_local_time").text = now_local.strftime(
             "%Y-%m-%d %H:%M %Z")
@@ -4731,11 +4729,18 @@ class AssistantAgent(ModelGroupAgent):
         messages: list[dict[str, Any]],
         profile: dict[str, Any] | None,
     ) -> str:
-        """Build the narrow classifier request with assistant history omitted."""
+        """Build the narrow classifier request with assistant history omitted.
+
+        No static head from _append_static_head: user_settings_languages_json
+        is this call's own tier-1 block, built here from the profile rather
+        than from the shared identity/persona/formatting blocks, so it leads
+        the prompt in that role instead."""
         root = ET.Element("response_language_classifier_call")
+        rows = ET.SubElement(root, "user_settings_languages_json")
+        candidates = user_profile.declared_language_candidates(profile)
+        rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
+
         self._append_turn_instructions(root, RESPONSE_LANGUAGE_TURN_INSTRUCTIONS)
-        current = messages[-1] if messages else None
-        self._append_current_user_request(root, current)
 
         # Both roles: an earlier assistant reply is the only record of what
         # language the conversation has actually been running in, and dropping
@@ -4752,9 +4757,8 @@ class AssistantAgent(ModelGroupAgent):
         else:
             ET.SubElement(history, "none")
 
-        rows = ET.SubElement(root, "user_settings_languages_json")
-        candidates = user_profile.declared_language_candidates(profile)
-        rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
+        current = messages[-1] if messages else None
+        self._append_current_user_request(root, current)
 
         ask = ET.SubElement(root, "classification_request")
         ask.text = (

@@ -553,9 +553,10 @@ def test_reply_audit_sees_the_conversation_it_needs_to_resolve_a_referent(room):
         scratchpad=[])
     assert "<conversation_history_xml" in prompt
     assert "tell me about my mom" in prompt
-    # The request under audit is still the current one, not the history.
-    assert prompt.index("<current_user_request>") < prompt.index(
-        "<conversation_history_xml")
+    # The history leads the dynamic tail so the subject check can resolve a
+    # referent before the request and the reply under audit appear.
+    assert prompt.index("<conversation_history_xml") < prompt.index(
+        "<current_user_request>")
 
 
 def test_reply_audit_prompt_names_the_history_as_referent_only(room):
