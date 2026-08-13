@@ -4,6 +4,7 @@ The tiers exist so the local backends have a stable prompt prefix to reuse
 across steps and across the six assistant calls. Order is the whole property,
 so it gets asserted directly rather than implied by content tests.
 """
+import os
 import re
 import xml.etree.ElementTree as ET
 
@@ -286,6 +287,31 @@ def test_reply_audit_prompt_follows_tier_order(fully_populated_agent):
     assert set(AUDIT_ALWAYS) <= set(order)
 
 
+def test_reply_audit_prompt_with_observations_follows_tier_order(
+    fully_populated_agent,
+):
+    """The tier-order test above passes scratchpad=[], so turn_observations
+    never renders and its position — between reply_language_markdown and
+    proposed_reply, the one section the audit reorder moved past — was
+    asserted only by its absence. A populated scratchpad makes it render, and
+    the subsequence check against AUDIT_EXPECTED pins where."""
+    from agents.assistant import AssistantTurnStep
+
+    step = AssistantTurnStep(
+        step_index=0, action="memory_query", reason="look it up",
+        status="ok", args={"query": "2+2"}, observation="4")
+
+    prompt = fully_populated_agent._build_reply_audit_prompt(
+        "here is the answer",
+        messages=[{"sender_type": "human", "text": "what is 2+2"}],
+        scratchpad=[step])
+
+    order = section_order(prompt)
+    assert "turn_observations" in order
+    assert order == [s for s in AUDIT_EXPECTED if s in order]
+    assert set(AUDIT_ALWAYS) <= set(order)
+
+
 def test_response_language_classifier_prompt_follows_tier_order(
     fully_populated_agent,
 ):
@@ -307,3 +333,91 @@ def test_request_summary_prompt_leads_with_instructions(fully_populated_agent):
     # This prompt carries exactly two sections whatever the turn state, so it
     # gets the exact-equality form rather than the subsequence one.
     assert section_order(prompt) == SUMMARY_EXPECTED
+
+
+# The tier-order tests above assert the means (section order); the tests
+# below assert the end directly: two prompts that are supposed to share a
+# prefix actually do, byte for byte, so a future edit that quietly reorders
+# one builder fails on the shared string rather than only on section order.
+
+
+def common_prefix_len(a: str, b: str) -> int:
+    return len(os.path.commonprefix([a, b]))
+
+
+def test_decide_and_audit_prompts_share_the_static_head(fully_populated_agent):
+    """decide and audit both lead with _append_static_head, so whatever they
+    render in common must land byte-for-byte at the start of both strings.
+
+    They do NOT carry the same tier-1 block *set* — decide takes all five
+    static blocks (identity, persona, formatting, calibration, profile) via
+    the default `blocks=_ALL_STATIC_BLOCKS`, audit takes only
+    `("identity", "formatting")`. Because persona sits between identity and
+    formatting in decide's rendering but is absent from audit's, the two
+    prompts diverge as soon as decide emits assistant_persona and audit
+    emits formatting_guide in its place — confirmed empirically, not
+    assumed. So the guaranteed literal-prefix overlap between these two
+    specific calls is the identity block alone; that is inherent to the
+    current per-call block selection (worth a look if the real prefix-cache
+    win is meant to include formatting_guide too), not something a
+    tests-only task should paper over."""
+    agent = fully_populated_agent
+    messages = [{"sender_type": "human", "text": "what is 2+2"}]
+
+    decide = agent._build_user_prompt(
+        messages=messages, scratchpad=[], step_index=0)
+    audit = agent._build_reply_audit_prompt(
+        "four", messages=messages, scratchpad=[])
+
+    shared = common_prefix_len(decide, audit)
+    # A slice shorter than the target string can never satisfy startswith,
+    # so this also pins a lower bound on `shared` — not merely that some
+    # prefix is shared, but that the whole identity section is in it.
+    assert decide[:shared].startswith(
+        "<user_settings_json>identity</user_settings_json>")
+    # And the divergence point is real: decide's next section (persona)
+    # is not swallowed into the "shared" slice by accident.
+    assert "<assistant_persona" not in decide[:shared]
+
+
+def test_consecutive_decide_steps_share_everything_before_the_new_step(
+    fully_populated_agent
+):
+    """Within a turn the scratchpad grows append-only, so step N+1 must share
+    its whole prefix with step N up to step N's own entry."""
+    from agents.assistant import AssistantTurnStep
+
+    agent = fully_populated_agent
+    messages = [{"sender_type": "human", "text": "what is 2+2"}]
+    # AssistantTurnStep is a frozen dataclass whose first field is
+    # step_index (required, no default) — the brief's snippet omitted it.
+    step_one = AssistantTurnStep(
+        step_index=0, action="memory_query", reason="look it up",
+        status="ok", args={"query": "2+2"}, observation="4", is_read=True)
+
+    early = agent._build_user_prompt(
+        messages=messages, scratchpad=[step_one], step_index=1)
+    later = agent._build_user_prompt(
+        messages=messages, scratchpad=[step_one, step_one], step_index=2)
+
+    # Confirm the step actually renders into current_turn_steps rather than
+    # assuming it — a silently-dropped scratchpad entry would make both
+    # prompts' current_turn_steps sections empty and this whole test
+    # vacuous.
+    assert '<step index="1" action="memory_query" status="ok">' in early
+
+    shared = common_prefix_len(early, later)
+    assert "<turn_instructions" in early[:shared]
+    assert "<conversation_history_xml" in early[:shared]
+    assert "<current_turn_steps" in early[:shared]
+    # Pin the lower bound precisely: the whole first step entry, observation
+    # included, is inside the shared region — not just the opening tag of
+    # current_turn_steps.
+    assert (
+        '<observation authority="fresh_evidence" content_is_data="true">'
+        '4</observation>\n  </step>'
+    ) in early[:shared]
+    # And the second (duplicate) step entry that only "later" carries is
+    # genuinely past the boundary, not swallowed in by a miscomputed shared
+    # length.
+    assert later[:shared].count('action="memory_query"') == 1
