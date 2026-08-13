@@ -4421,27 +4421,30 @@ class AssistantAgent(ModelGroupAgent):
         reasoning: str | None,
         messages: list[dict[str, Any]],
     ) -> str:
-        """The reviewer's user prompt: what was asked, the three artifacts
-        under review — the stated reason, the model's reasoning channel, and
-        the program — then who is asking (identity + profile) and the local
-        time. Same section convention as the main prompt: the task leads (a
-        bare current_user_request tag), supporting context follows, the time
-        anchor closes. Built with ElementTree for the same escaping guarantee;
-        leaf sections only, no conversation history (the current request is
-        the contract the program is judged against)."""
+        """The reviewer's user prompt: who is asking (identity + profile),
+        then the three artifacts under review — the stated reason, the
+        model's reasoning channel, and the program — then what was asked and
+        the local time. Same tier convention as the main prompt: static head,
+        then turn_instructions, then the dynamic tail ending with the request
+        and the clock. Built with ElementTree for the same escaping
+        guarantee; leaf sections only, no conversation history (the current
+        request is the contract the program is judged against)."""
         root = ET.Element("second_opinion_review")
-        self._append_turn_instructions(root, SECOND_OPINION_TURN_INSTRUCTIONS)
         current = messages[-1] if messages else None
-        self._append_current_user_request(root, current)
+
+        self._append_static_head(root, blocks=("identity", "profile"))
+        self._append_turn_instructions(root, SECOND_OPINION_TURN_INSTRUCTIONS)
+
         if self._reply_language_markdown:
-            language = ET.SubElement(
-                root, "reply_language_markdown")
-            language.text = self._reply_language_markdown
+            ET.SubElement(
+                root, "reply_language_markdown"
+            ).text = self._reply_language_markdown
         # The criteria are part of what "serves the request" means: a program
         # converting to yards should fail review when the criteria say meters.
         if self._criteria_markdown:
-            criteria = ET.SubElement(root, "acceptance_criteria_markdown")
-            criteria.text = self._criteria_markdown
+            ET.SubElement(
+                root, "acceptance_criteria_markdown"
+            ).text = self._criteria_markdown
         proposed = ET.SubElement(
             root, "proposed_step", {"action": decision.action.value}
         )
@@ -4454,20 +4457,12 @@ class AssistantAgent(ModelGroupAgent):
         ET.SubElement(proposed, "python_program").text = code[
             : self.SECOND_OPINION_MAX_CODE_CHARS
         ]
-        verdict_request = ET.SubElement(root, "verdict_request")
-        verdict_request.text = (
+        self._append_current_user_request(root, current)
+        ET.SubElement(root, "verdict_request").text = (
             "Review the proposed_step against the current_user_request and "
-            "the user context below. List real problems (or none), then "
+            "the user context above. List real problems (or none), then "
             "set approved."
         )
-        if self._identity_block:
-            identity = ET.SubElement(root, "user_settings_json")
-            identity.text = self._identity_block
-        if self._profile_block:
-            profile = ET.SubElement(
-                root, "user_profile", {"authority": "context"}
-            )
-            profile.text = self._profile_block
         now_local = datetime.now().astimezone()
         ET.SubElement(root, "current_local_time").text = now_local.strftime(
             "%Y-%m-%d %H:%M %Z"
@@ -5190,18 +5185,31 @@ class AssistantAgent(ModelGroupAgent):
         prior_criteria: "AcceptanceCriteria | None" = None,
         scratchpad: list[AssistantTurnEvent] | None = None,
     ) -> str:
-        """The criteria call's user prompt: the request, a short operator
-        history tail, and — for a revision — the prior criteria and the run's
-        steps so far, without which the call would reproduce the same criteria
-        deterministically and the revision would be a no-op. Then who is
-        asking (identity) and the formatting guide. NOT the action catalog:
-        this call plans constraints, not actions. Same ElementTree escaping
-        guarantee as the other prompt builders."""
+        """The criteria call's user prompt: who is asking (identity) and the
+        formatting guide, then the request, a short operator history tail,
+        and — for a revision — the prior criteria and the run's steps so
+        far, without which the call would reproduce the same criteria
+        deterministically and the revision would be a no-op. NOT the action
+        catalog: this call plans constraints, not actions. Same ElementTree
+        escaping guarantee as the other prompt builders."""
         root = ET.Element("acceptance_criteria_call")
+        current = messages[-1] if messages else None
+
+        # Tier 1 (identity only) and tier 2. The formatting guide is tier 1
+        # too, but NOT the shared _formatting_block — it is this call's own
+        # _criteria_formatting_guide(), read from the criteria snapshot
+        # profile regardless of the separate assistant.formatting_guide
+        # switch (see that method's docstring), so it stays a bespoke append
+        # rather than going through _append_static_head's generic
+        # "formatting" block.
+        self._append_static_head(root, blocks=("identity",))
+        guide = self._criteria_formatting_guide()
+        if guide:
+            formatting = ET.SubElement(root, "formatting_guide")
+            formatting.text = guide
         self._append_turn_instructions(
             root, ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
-        current = messages[-1] if messages else None
-        self._append_current_user_request(root, current)
+
         # Both roles. The operator's requests and preferences are the
         # authoritative context, but how the assistant has been formatting and
         # phrasing its replies is exactly the continuity these criteria are
@@ -5230,6 +5238,7 @@ class AssistantAgent(ModelGroupAgent):
                     self._append_turn_event(steps, event)
             else:
                 ET.SubElement(steps, "none")
+        self._append_current_user_request(root, current)
         ask = ET.SubElement(root, "criteria_request")
         ask.text = (
             "Revise the acceptance criteria: compare the prior criteria "
@@ -5240,13 +5249,6 @@ class AssistantAgent(ModelGroupAgent):
             f"{self._request_anchor(current)} Establish the acceptance "
             "criteria the reply to that request must satisfy."
         )
-        if self._identity_block:
-            identity = ET.SubElement(root, "user_settings_json")
-            identity.text = self._identity_block
-        guide = self._criteria_formatting_guide()
-        if guide:
-            formatting = ET.SubElement(root, "formatting_guide")
-            formatting.text = guide
         return _render_sections(root)
 
     def _criteria_formatting_guide(self) -> str:
@@ -5554,26 +5556,36 @@ class AssistantAgent(ModelGroupAgent):
     # formatting guide (how replies are shaped) before calibration and the
     # remembered digest. Nothing here changes within a turn, so it sits ahead
     # of everything that does and the backend can reuse its prefill.
-    def _append_static_head(self, root: ET.Element) -> None:
+    _ALL_STATIC_BLOCKS: tuple[str, ...] = (
+        "identity", "persona", "formatting", "calibration", "profile")
+
+    def _append_static_head(
+        self, root: ET.Element, blocks: tuple[str, ...] = _ALL_STATIC_BLOCKS,
+    ) -> None:
         """Append the tier-1 blocks this call carries, in fixed order.
+
+        `blocks` lets a call take only the tier-1 blocks it actually uses
+        (e.g. the second-opinion call wants identity + profile, not persona
+        or calibration) while keeping their relative order and text
+        identical to the full head.
 
         formatting_guide is the one profile-derived block with instruction
         authority — justified because every imperative sentence in it is
         code-owned and every interpolated value passed the strict
         prompt-boundary validation in user_profile.formatting."""
-        if self._identity_block:
+        if "identity" in blocks and self._identity_block:
             ET.SubElement(root, "user_settings_json").text = self._identity_block
-        if self._persona_block:
+        if "persona" in blocks and self._persona_block:
             ET.SubElement(root, "assistant_persona").text = self._persona_block
-        if self._formatting_block:
+        if "formatting" in blocks and self._formatting_block:
             ET.SubElement(
                 root, "formatting_guide", {"authority": "instructions"}
             ).text = self._formatting_block
-        if self._calibration_block:
+        if "calibration" in blocks and self._calibration_block:
             ET.SubElement(
                 root, "knowledge_calibration", {"authority": "context"}
             ).text = self._calibration_block
-        if self._profile_block:
+        if "profile" in blocks and self._profile_block:
             ET.SubElement(
                 root, "user_profile", {"authority": "context"}
             ).text = self._profile_block

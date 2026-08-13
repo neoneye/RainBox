@@ -791,9 +791,9 @@ def test_second_opinion_prompt_carries_criteria_next_to_current_user_request(roo
         messages=[{"text": "convert 1053737172 feet", "sender_type": "human"}])
     assert "<acceptance_criteria_markdown" in prompt
     assert "target unit: meters (step0)" in prompt
-    assert (prompt.index("</current_user_request>")
-            < prompt.index("<acceptance_criteria_markdown")
-            < prompt.index("<proposed_step"))
+    assert (prompt.index("<acceptance_criteria_markdown")
+            < prompt.index("<proposed_step")
+            < prompt.index("</current_user_request>"))
 
 
 def test_a_call_the_loop_could_not_make_is_recorded_as_skipped(app_ctx):

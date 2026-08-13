@@ -41,6 +41,11 @@ def fully_populated_agent():
     agent._reply_language_markdown = "language"
     agent._long_request_summary_markdown = ""
     agent.step_limit = 8
+    # The criteria call's formatting_guide comes from _criteria_formatting_guide(),
+    # not _formatting_block (it stays populated even when the decide-prompt
+    # injection is switched off — see test_criteria_call_sees_formatting_guide_
+    # despite_gated_switch). A minimal real profile so that section renders.
+    agent._criteria_profile = {"data": {"units": "metric"}}
     return agent
 
 
@@ -166,3 +171,68 @@ def test_decide_prompt_ends_with_request_then_clock(fully_populated_agent):
     assert order[-1] == "current_local_time"
     assert "current_user_request" in order
     assert order.index("current_user_request") > order.index("turn_instructions")
+
+
+@pytest.fixture
+def sample_decision():
+    from agents.assistant import AssistantActionName, AssistantStepDecision
+
+    return AssistantStepDecision(
+        reason="run the sum",
+        action=AssistantActionName.PYTHON_RUN,
+        args={"code": "print(2 + 2)"},
+    )
+
+
+CRITERIA_EXPECTED = [
+    "user_settings_json", "formatting_guide",
+    "turn_instructions",
+    "conversation_history_xml", "prior_acceptance_criteria",
+    "current_turn_steps", "current_user_request",
+    "current_user_request_summary_markdown", "criteria_request",
+]
+
+SECOND_OPINION_EXPECTED = [
+    "user_settings_json", "user_profile",
+    "turn_instructions",
+    "reply_language_markdown", "acceptance_criteria_markdown",
+    "proposed_step", "current_user_request", "verdict_request",
+    "current_local_time",
+]
+
+
+# Sections a call ALWAYS emits, whatever the turn state. The order check
+# below filters the expectation by what was found, so on its own it would
+# stay green if a builder stopped emitting a section entirely; this list is
+# what closes that hole. Sections genuinely conditional on turn state
+# (prior_acceptance_criteria on a revision, the request summary on a
+# truncated request) are deliberately absent from it.
+CRITERIA_ALWAYS = [
+    "user_settings_json", "formatting_guide", "turn_instructions",
+    "conversation_history_xml", "current_user_request", "criteria_request",
+]
+SECOND_OPINION_ALWAYS = [
+    "user_settings_json", "turn_instructions", "proposed_step",
+    "current_user_request", "verdict_request", "current_local_time",
+]
+
+
+def test_criteria_prompt_follows_tier_order(fully_populated_agent):
+    prompt = fully_populated_agent._build_acceptance_criteria_prompt(
+        [{"sender_type": "human", "text": "convert 30C to F"}])
+
+    order = section_order(prompt)
+    assert order == [s for s in CRITERIA_EXPECTED if s in order]
+    assert set(CRITERIA_ALWAYS) <= set(order)
+
+
+def test_second_opinion_prompt_follows_tier_order(
+    fully_populated_agent, sample_decision
+):
+    prompt = fully_populated_agent._build_second_opinion_prompt(
+        sample_decision, reasoning="because",
+        messages=[{"sender_type": "human", "text": "compute 2+2"}])
+
+    order = section_order(prompt)
+    assert order == [s for s in SECOND_OPINION_EXPECTED if s in order]
+    assert set(SECOND_OPINION_ALWAYS) <= set(order)
