@@ -4168,19 +4168,6 @@ class AssistantAgent(ModelGroupAgent):
         # the model still reads the question last (see _request_anchor).
         self._append_current_user_request(root, current)
 
-        # Tier 1: static head.
-        self._append_static_head(root)
-
-        # Tier 2: what this call is for.
-        self._append_turn_instructions(root, self._decide_turn_instructions())
-
-        # Tier 3: dynamic tail, least volatile first. active_skills is
-        # retrieved per request, so it is dynamic despite reading as static.
-        if self._skill_block:
-            ET.SubElement(
-                root, "active_skills", {"authority": "instructions"}
-            ).text = self._skill_block
-
         has_fresh_read = any(
             isinstance(event, AssistantTurnStep)
             and event.is_read
@@ -4204,6 +4191,19 @@ class AssistantAgent(ModelGroupAgent):
                 self._append_prompt_message(history, message)
         else:
             ET.SubElement(history, "none")
+
+        # Tier 1: static head.
+        self._append_static_head(root)
+
+        # Tier 2: what this call is for.
+        self._append_turn_instructions(root, self._decide_turn_instructions())
+
+        # Tier 3: dynamic tail, least volatile first. active_skills is
+        # retrieved per request, so it is dynamic despite reading as static.
+        if self._skill_block:
+            ET.SubElement(
+                root, "active_skills", {"authority": "instructions"}
+            ).text = self._skill_block
 
         # The classifier's score-free Markdown follows the history into every
         # reasoning step. It is model-derived context, while turn_instructions
@@ -4535,8 +4535,6 @@ class AssistantAgent(ModelGroupAgent):
         # what the auditor reads last, and check 1 of its instructions sends it
         # back to the request.
         self._append_current_user_request(root, current)
-        self._append_static_head(root, blocks=("identity", "formatting"))
-        self._append_turn_instructions(root, REPLY_AUDIT_TURN_INSTRUCTIONS)
         context = (messages[:-1] if messages else [])[
             -self.REPLY_AUDIT_MAX_MESSAGES:]
         history = ET.SubElement(root, "conversation_history_xml")
@@ -4545,6 +4543,8 @@ class AssistantAgent(ModelGroupAgent):
                 self._append_prompt_message(history, entry)
         else:
             ET.SubElement(history, "none")
+        self._append_static_head(root, blocks=("identity", "formatting"))
+        self._append_turn_instructions(root, REPLY_AUDIT_TURN_INSTRUCTIONS)
         if self._criteria_markdown:
             criteria = ET.SubElement(root, "acceptance_criteria_markdown")
             criteria.text = self._criteria_markdown
@@ -4760,12 +4760,6 @@ class AssistantAgent(ModelGroupAgent):
         current = messages[-1] if messages else None
         self._append_current_user_request(root, current)
 
-        rows = ET.SubElement(root, "user_settings_languages_json")
-        candidates = user_profile.declared_language_candidates(profile)
-        rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
-
-        self._append_turn_instructions(root, RESPONSE_LANGUAGE_TURN_INSTRUCTIONS)
-
         # Both roles: an earlier assistant reply is the only record of what
         # language the conversation has actually been running in, and dropping
         # it hid that from the one call whose job is to decide the language.
@@ -4780,6 +4774,13 @@ class AssistantAgent(ModelGroupAgent):
                 self._append_prompt_message(history, message)
         else:
             ET.SubElement(history, "none")
+
+        rows = ET.SubElement(root, "user_settings_languages_json")
+        candidates = user_profile.declared_language_candidates(profile)
+        rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
+
+        self._append_turn_instructions(root, RESPONSE_LANGUAGE_TURN_INSTRUCTIONS)
+
 
         ask = ET.SubElement(root, "classification_request")
         ask.text = (
@@ -5230,14 +5231,6 @@ class AssistantAgent(ModelGroupAgent):
         # Leads for the same reason as the decide prompt; criteria_request
         # below re-anchors it.
         self._append_current_user_request(root, current)
-        self._append_static_head(root, blocks=("identity",))
-        guide = self._criteria_formatting_guide()
-        if guide:
-            formatting = ET.SubElement(root, "formatting_guide")
-            formatting.text = guide
-        self._append_turn_instructions(
-            root, ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
-
         # Both roles. The operator's requests and preferences are the
         # authoritative context, but how the assistant has been formatting and
         # phrasing its replies is exactly the continuity these criteria are
@@ -5251,6 +5244,13 @@ class AssistantAgent(ModelGroupAgent):
                 self._append_prompt_message(history, message)
         else:
             ET.SubElement(history, "none")
+        self._append_static_head(root, blocks=("identity",))
+        guide = self._criteria_formatting_guide()
+        if guide:
+            formatting = ET.SubElement(root, "formatting_guide")
+            formatting.text = guide
+        self._append_turn_instructions(
+            root, ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
         revising = prior_criteria is not None
         if revising:
             prior = ET.SubElement(root, "prior_acceptance_criteria",

@@ -184,14 +184,14 @@ DECIDE_EXPECTED = [
     # (current_user_request_summary_markdown follows it whenever the request
     # was truncated; this fixture's request is short, and the exact-equality
     # check below would reject a section the builder legitimately skipped.)
-    "current_user_request",
+    "current_user_request", "conversation_history_xml",
     # tier 1 — ordered so the per-call block sets nest (see _ALL_STATIC_BLOCKS)
     "user_settings_json", "formatting_guide", "user_profile",
     "assistant_persona", "knowledge_calibration",
     # tier 2
     "turn_instructions",
     # tier 3
-    "active_skills", "conversation_history_xml", "reply_language_markdown",
+    "active_skills", "reply_language_markdown",
     "acceptance_criteria_markdown", "current_turn_steps",
     "decision_request", "current_local_time",
 ]
@@ -222,7 +222,7 @@ def test_decide_prompt_leads_with_the_request_and_re_anchors_it(
 
     order = section_order(prompt)
     assert order[-1] == "current_local_time"
-    assert order[0] == "current_user_request"
+    assert order[:2] == ["current_user_request", "conversation_history_xml"]
     assert order.index("current_user_request") < order.index("turn_instructions")
     # The re-anchor: the request's own words, after the history.
     tail = prompt[prompt.index("<decision_request"):]
@@ -242,9 +242,10 @@ def sample_decision():
 
 CRITERIA_EXPECTED = [
     "current_user_request", "current_user_request_summary_markdown",
+    "conversation_history_xml",
     "user_settings_json", "formatting_guide",
     "turn_instructions",
-    "conversation_history_xml", "prior_acceptance_criteria",
+    "prior_acceptance_criteria",
     "current_turn_steps", "criteria_request",
 ]
 
@@ -295,10 +296,10 @@ def test_second_opinion_prompt_follows_tier_order(
 
 
 AUDIT_EXPECTED = [
-    "current_user_request",
+    "current_user_request", "conversation_history_xml",
     "user_settings_json", "formatting_guide",
     "turn_instructions",
-    "conversation_history_xml", "acceptance_criteria_markdown",
+    "acceptance_criteria_markdown",
     "reply_language_markdown", "turn_observations", "proposed_reply",
     "current_local_time",
 ]
@@ -309,10 +310,9 @@ AUDIT_EXPECTED = [
 # though _append_current_user_request always renders it; it is included here
 # so the equality check below stays accurate against what the builder emits.
 CLASSIFIER_EXPECTED = [
-    "current_user_request",
+    "current_user_request", "conversation_history_xml",
     "user_settings_languages_json",
-    "turn_instructions",
-    "conversation_history_xml", "classification_request",
+    "turn_instructions", "classification_request",
 ]
 
 SUMMARY_EXPECTED = ["turn_instructions", "current_user_request"]

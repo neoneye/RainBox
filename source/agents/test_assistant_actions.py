@@ -143,8 +143,10 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     rest = prompt.split("</turn_instructions>\n", 1)[1]
     # A bare suffixed tag apart from `assistant_messages`, which is this
     # turn's own state rather than a restatement of the prompt's policy.
-    assert '<conversation_history_xml assistant_messages="omitted_after_fresh_read">' in rest
-    assert "authority=" not in rest.split("<conversation_history_xml")[1][:80]
+    # The history now leads the prompt with the request, above
+    # turn_instructions, so it is checked against the whole prompt.
+    assert '<conversation_history_xml assistant_messages="omitted_after_fresh_read">' in prompt
+    assert "authority=" not in prompt.split("<conversation_history_xml")[1][:80]
     assert "facts_are_authoritative" not in rest
     assert '<current_turn_steps authority="fresh_evidence">' in rest
     assert '<decision_request step="2" max_steps="6">' in rest
@@ -174,11 +176,12 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     # turn_instructions (tier 1b) so every call of the turn shares it, and
     # decision_request re-quotes it so the model still reads it last.
     tags = [s.tag for s in parsed]
-    assert tags[0] == "conversation_history_xml"
+    assert tags[0] == "current_turn_steps"
     assert tags[-1] == "current_local_time"
-    assert tags.index("conversation_history_xml") < tags.index("current_turn_steps") \
-        < tags.index("decision_request")
+    assert tags.index("current_turn_steps") < tags.index("decision_request")
+    # Both moved above turn_instructions, so neither is in the tail any more.
     assert "current_user_request" not in tags
+    assert "conversation_history_xml" not in tags
     assert "how is Simon" in rest.split("<decision_request", 1)[1]
     assert "<runtime_context>" not in rest      # wrapper dropped
 
