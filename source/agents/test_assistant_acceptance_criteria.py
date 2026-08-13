@@ -176,7 +176,8 @@ def test_criteria_run_on_every_turn_with_no_switch_to_turn_them_off(app_ctx):
         assert "<acceptance_criteria_markdown" in prompts[0]["user"]
         # The turn_instructions section ranks the section, so the model
         # treats it as binding rather than as one more piece of context.
-        assert prompts[0]["user"].count("acceptance_criteria_markdown") >= 2
+        assert ('<source rank="4">acceptance_criteria_markdown'
+                in prompts[0]["user"])
         # …and the revision action is always available to the model.
         assert "- acceptance_criteria:" in agent._action_catalog()
         assert AssistantActionName.ACCEPTANCE_CRITERIA in agent._caps
@@ -626,11 +627,12 @@ def test_revision_prompt_carries_prior_criteria_and_observations(room):
     assert "<prior_acceptance_criteria" in revision
     assert "target unit: meters (prior)" in revision
     assert "the operator wants altitude in feet" in revision
-    assert "invalidate" in revision  # "what changed, which criteria does it invalidate?"
+    assert "Emit the full revised criteria" in revision
     # The step-0 prompt has neither: identical inputs would make a revision
-    # the no-op it is — detectable by the absent sections. (The word
-    # "invalidate" alone no longer discriminates: turn_instructions carries
-    # it unconditionally now, describing what a revision does.)
+    # the no-op it is — detectable by the absent sections. ("invalidate"
+    # alone no longer discriminates: turn_instructions carries that word
+    # unconditionally now, describing what a revision does; "Emit the full
+    # revised criteria" only appears in criteria_request's revising branch.)
     step0 = agent._build_acceptance_criteria_prompt(messages)
     assert "<prior_acceptance_criteria" not in step0
     assert "Emit the full revised criteria" not in step0

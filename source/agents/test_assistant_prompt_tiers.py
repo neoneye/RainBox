@@ -14,6 +14,7 @@ from agents.assistant import (
     REQUEST_SUMMARY_TURN_INSTRUCTIONS,
     RESPONSE_LANGUAGE_TURN_INSTRUCTIONS,
     SECOND_OPINION_TURN_INSTRUCTIONS,
+    AssistantAgent,
     _render_sections,
 )
 
@@ -58,3 +59,35 @@ def test_render_sections_escapes_untrusted_text():
 
     assert "<forged>" not in out
     assert "&lt;/only&gt;" in out
+
+
+def test_turn_instructions_render_raw_but_other_sections_stay_escaped():
+    """The raw-rendering exception is opted into at the append site
+    (_append_turn_instructions marks its own element), not inherited by
+    matching on the tag name "turn_instructions" — so it cannot be
+    triggered by coincidence. Pin both directions: a turn_instructions
+    section built through the real append helper renders its pseudo-tags
+    and bare "&" unchanged, while any other section carrying identical text
+    — even one also named "turn_instructions" but built by hand, bypassing
+    the helper — stays escaped."""
+    forged_text = '<x a="1"> & more'
+
+    root = ET.Element("ignored_root")
+    AssistantAgent._append_turn_instructions(root, forged_text)
+    out = _render_sections(root)
+
+    assert '<turn_instructions authority="instructions">' in out
+    assert '<x a="1"> & more' in out
+    assert "&lt;x" not in out
+    assert "&amp;" not in out
+
+    # A section with the same tag name, built without going through
+    # _append_turn_instructions, gets no special treatment: matching used
+    # to be by tag name alone, which this proves is no longer the case.
+    hand_built_root = ET.Element("ignored_root")
+    ET.SubElement(hand_built_root, "turn_instructions").text = forged_text
+    hand_built_out = _render_sections(hand_built_root)
+
+    assert '&lt;x a="1"&gt;' in hand_built_out
+    assert "&amp; more" in hand_built_out
+    assert '<x a="1">' not in hand_built_out

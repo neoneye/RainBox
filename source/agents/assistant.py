@@ -359,6 +359,16 @@ class AcceptanceCriteria(BaseModel):
         "empty — when the request is unambiguous, say that."))
 
 
+# Internal marker attribute that opts a single section into raw (unescaped)
+# rendering. It is set only by _append_turn_instructions, on the element it
+# builds — never by tag name — and _render_sections pops it off before
+# serializing, so it never reaches the model. Matching on the tag name would
+# let any future `ET.SubElement(root, "turn_instructions", ...)`, or anyone
+# interpolating untrusted text into the existing section, silently lose
+# escaping; requiring the append site to opt in makes that impossible.
+_RAW_RENDER_ATTR = "_raw_render"
+
+
 def _render_sections(root: ET.Element) -> str:
     """Serialize a built prompt tree as top-level siblings.
 
@@ -369,18 +379,21 @@ def _render_sections(root: ET.Element) -> str:
     because its escaping is the security property — dynamic content cannot
     close or forge a section tag.
 
-    turn_instructions is the one documented exception: it carries only
-    code-owned module constants (see _append_turn_instructions), never user
-    data, profile fields, or model output, so nothing untrusted can ever
-    reach it. Left escaped, the source-priority block's literal
-    "<source rank=...>" pseudo-tags — plain prompt formatting, not real
-    markup — would render to the model as "&lt;source rank=...&gt;"."""
+    A section renders raw only when the code that created it marked the
+    element with _RAW_RENDER_ATTR (see _append_turn_instructions) — never by
+    tag name. turn_instructions is the one section that does this today: it
+    carries only code-owned module constants, never user data, profile
+    fields, or model output, so nothing untrusted can ever reach it. Left
+    escaped, the source-priority block's literal "<source rank=...>"
+    pseudo-tags — plain prompt formatting, not real markup — would render to
+    the model as "&lt;source rank=...&gt;"."""
     parts = []
     for section in root:
+        raw = section.attrib.pop(_RAW_RENDER_ATTR, None) is not None
         ET.indent(section, space="  ")
         rendered = ET.tostring(section, encoding="unicode",
                                short_empty_elements=True)
-        if section.tag == "turn_instructions":
+        if raw:
             rendered = _xml_unescape(rendered)
         parts.append(rendered)
     return "\n".join(parts)
@@ -4986,12 +4999,14 @@ class AssistantAgent(ModelGroupAgent):
         it does not interpret it for a particular user, and history would cost
         tokens on the one call whose input is already the largest of the turn.
 
-        No trailing instruction section either, unlike the other builders. The
-        instruction those carry is either dynamic (decision_request quotes the
-        request, because a step once answered a near-identical question out of
-        the history instead) or says something its system prompt does not. Here
-        it would restate REQUEST_SUMMARY_TURN_INSTRUCTIONS word for word, at the
-        end of the largest prompt of the turn — and there is nothing to
+        No trailing instruction section either, unlike the other builders,
+        which follow the leading turn_instructions with a second, dynamic ask
+        at the end (decision_request, criteria_request) — because that ask is
+        either dynamic (decision_request quotes the request, because a step
+        once answered a near-identical question out of the history instead)
+        or says something turn_instructions does not. Here a trailing section
+        would only restate REQUEST_SUMMARY_TURN_INSTRUCTIONS word for word, at
+        the end of the largest prompt of the turn — and there is nothing to
         disambiguate: one input, one forced output schema, no competing
         candidate to answer by mistake.
 
@@ -5557,10 +5572,17 @@ class AssistantAgent(ModelGroupAgent):
         the profile, or a model response is ever interpolated here: the shared
         system prompt tells the model this section is authoritative, so the
         escaping guarantee that protects every other section would be a
-        guarantee about the wrong thing if this one carried untrusted text."""
+        guarantee about the wrong thing if this one carried untrusted text.
+
+        Sets _RAW_RENDER_ATTR so _render_sections renders this element raw —
+        the attribute is popped before serializing and never reaches the
+        model. This is the only call site allowed to do so; it is what makes
+        the source-priority block's literal "<source rank=...>" pseudo-tags
+        reach the model as tags instead of "&lt;source rank=...&gt;"."""
         node = ET.SubElement(
             root, "turn_instructions", {"authority": "instructions"})
         node.text = instructions
+        node.set(_RAW_RENDER_ATTR, "1")
 
     def _append_current_user_request(
         self, root: ET.Element, current: dict[str, Any] | None

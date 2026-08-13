@@ -297,8 +297,10 @@ def test_the_summarizer_reads_far_more_than_the_prompts_do():
     assert "<current_user_request truncated=" not in prompt
 
 
-def test_the_summarizer_prompt_is_the_request_and_nothing_else():
-    """No trailing instruction section: it would restate the system prompt
+def test_the_summarizer_prompt_has_no_trailing_instruction_section():
+    """turn_instructions leads the prompt with the fixed job description;
+    the request is everything that follows, and nothing trails it. A
+    trailing instruction section would restate REQUEST_SUMMARY_TURN_INSTRUCTIONS
     word for word at the end of the largest prompt of the turn, and this call
     has one input and one forced output schema — nothing to disambiguate."""
     agent = _agent()
