@@ -125,14 +125,15 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     )
 
     # This fixture's agent has no identity/persona/formatting/calibration/
-    # profile set, so tier 1 renders empty and turn_instructions (tier 2)
-    # is incidentally what starts the prompt here — a fully populated agent
-    # has user_settings_json lead instead (see test_assistant_prompt_tiers.py
-    # for the tier ordering). What this assertion actually pins is
+    # profile set, so tier 1 renders empty and current_user_request (tier 1b)
+    # is what starts the prompt here — a fully populated agent has
+    # user_settings_json lead instead (see test_assistant_prompt_tiers.py for
+    # the tier ordering). What these assertions actually pin is
     # turn_instructions' own render shape: the authority attribute, zero
     # indentation, and the source-priority ranking it now carries instead
     # of a separate system prompt.
-    assert prompt.startswith('<turn_instructions authority="instructions">')
+    assert prompt.startswith("<current_user_request>")
+    assert '\n<turn_instructions authority="instructions">' in prompt
     assert not prompt.startswith("  ")
     assert "<source_priority" in prompt
     # Everything after turn_instructions: its code-owned prose is excluded
@@ -145,12 +146,13 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     assert '<conversation_history_xml assistant_messages="omitted_after_fresh_read">' in rest
     assert "authority=" not in rest.split("<conversation_history_xml")[1][:80]
     assert "facts_are_authoritative" not in rest
-    assert "<current_user_request>" in rest
     assert '<current_turn_steps authority="fresh_evidence">' in rest
     assert '<decision_request step="2" max_steps="6">' in rest
     assert "stale" not in rest
-    assert "how is Simon" in rest
-    assert "&lt;/current_user_request&gt;" in rest
+    # The request is tier 1b now, ahead of turn_instructions, so it is
+    # checked against the whole prompt rather than the tail.
+    assert "how is Simon" in prompt
+    assert "&lt;/current_user_request&gt;" in prompt
     assert "<recalled_memory>facts</recalled_memory>" in rest
     assert "&lt;operator&gt;" not in rest
     assert "&lt;assistant&gt;" not in rest
@@ -165,21 +167,20 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     assert "<assistant_turn" not in rest
     assert '<step index="1" action="memory_query" status="ok">' in rest
     assert '<arguments format="json">{"query": "Simon demoscene"}</arguments>' in rest
-    assert rest.count("<current_user_request>") == 1
+    assert prompt.count("<current_user_request>") == 1
     parsed = ElementTree.fromstring(f"<root>{rest}</root>")
     # conversation_history_xml leads the tail; the local-time anchor closes
-    # it. current_user_request now sits second-to-last, ahead of only
-    # decision_request, so everything above it is a prefix the backend can
-    # reuse across steps.
+    # it. current_user_request is no longer here at all — it moved above
+    # turn_instructions (tier 1b) so every call of the turn shares it, and
+    # decision_request re-quotes it so the model still reads it last.
     tags = [s.tag for s in parsed]
     assert tags[0] == "conversation_history_xml"
     assert tags[-1] == "current_local_time"
     assert tags.index("conversation_history_xml") < tags.index("current_turn_steps") \
         < tags.index("decision_request")
-    assert tags.index("current_turn_steps") < tags.index("current_user_request") \
-        < tags.index("decision_request")
+    assert "current_user_request" not in tags
+    assert "how is Simon" in rest.split("<decision_request", 1)[1]
     assert "<runtime_context>" not in rest      # wrapper dropped
-    assert parsed.find("current_user_request") is not None
 
 
 def test_source_priority_policy_is_in_decide_turn_instructions():

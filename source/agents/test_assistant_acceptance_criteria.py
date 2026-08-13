@@ -229,7 +229,7 @@ def test_criteria_call_made_once_per_run_before_the_first_decide(room):
     assert "memory_query" not in calls[0]
 
 
-def test_criteria_section_renders_between_history_and_current_user_request(room):
+def test_criteria_section_renders_between_history_and_the_turn_steps(room):
     agent = _agent()
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
@@ -237,9 +237,11 @@ def test_criteria_section_renders_between_history_and_current_user_request(room)
     prompt = prompts[0]["user"]
     assert "<acceptance_criteria_markdown" in prompt
     assert "target unit: meters (step0)" in prompt
-    assert (prompt.index("<conversation_history")
-            < prompt.index("<acceptance_criteria_markdown")
-            < prompt.index("<current_user_request>"))
+    # The request now leads (tier 1b), then turn_instructions, then the
+    # dynamic tail in which the criteria follow the history.
+    assert (prompt.index("<current_user_request>")
+            < prompt.index("<conversation_history")
+            < prompt.index("<acceptance_criteria_markdown"))
 
 
 def test_system_prompt_ranks_the_criteria_just_below_the_request(room):
@@ -553,10 +555,12 @@ def test_reply_audit_sees_the_conversation_it_needs_to_resolve_a_referent(room):
         scratchpad=[])
     assert "<conversation_history_xml" in prompt
     assert "tell me about my mom" in prompt
-    # The history leads the dynamic tail so the subject check can resolve a
-    # referent before the request and the reply under audit appear.
-    assert prompt.index("<conversation_history_xml") < prompt.index(
-        "<current_user_request>")
+    # The request leads (tier 1b, shared by every call of the turn); the
+    # history heads the dynamic tail, still ahead of the reply under audit so
+    # the subject check can resolve a referent before reading it.
+    assert (prompt.index("<current_user_request>")
+            < prompt.index("<conversation_history_xml")
+            < prompt.index("<proposed_reply>"))
 
 
 def test_reply_audit_prompt_names_the_history_as_referent_only(room):
@@ -792,9 +796,9 @@ def test_second_opinion_prompt_carries_criteria_next_to_current_user_request(roo
         messages=[{"text": "convert 1053737172 feet", "sender_type": "human"}])
     assert "<acceptance_criteria_markdown" in prompt
     assert "target unit: meters (step0)" in prompt
-    assert (prompt.index("<acceptance_criteria_markdown")
-            < prompt.index("<proposed_step")
-            < prompt.index("</current_user_request>"))
+    assert (prompt.index("</current_user_request>")
+            < prompt.index("<acceptance_criteria_markdown")
+            < prompt.index("<proposed_step"))
 
 
 def test_a_call_the_loop_could_not_make_is_recorded_as_skipped(app_ctx):

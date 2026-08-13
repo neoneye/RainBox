@@ -4161,6 +4161,14 @@ class AssistantAgent(ModelGroupAgent):
         # Tier 1: static head.
         self._append_static_head(root)
 
+        # Tier 1b: the request. It changes every turn, but it is byte-identical
+        # across every call and every step WITHIN a turn, and it is unbounded
+        # up to CURRENT_REQUEST_MAX_CHARS — a pasted document makes it the
+        # largest invariant the turn has. Ahead of turn_instructions so the six
+        # calls share it too; the closing decision_request re-quotes it, so the
+        # model still reads the question last (see _request_anchor).
+        self._append_current_user_request(root, current)
+
         # Tier 2: what this call is for.
         self._append_turn_instructions(root, self._decide_turn_instructions())
 
@@ -4227,18 +4235,6 @@ class AssistantAgent(ModelGroupAgent):
                 self._append_turn_event(turn_steps, event)
         else:
             ET.SubElement(turn_steps, "none")
-
-        # The tag is bare — no authority/role/timestamp attributes — because
-        # the section order carries the emphasis and the time anchor is
-        # current_local_time below. ElementTree escapes leaf text exactly
-        # once, so dynamic content cannot close or forge a prompt zone.
-        #
-        # The task closes the prompt. It used to lead it, because a request
-        # buried in the middle under a long profile and history got answered
-        # past — weaker models replied to the surrounding context instead.
-        # Last position buys the same salience by recency rather than primacy,
-        # and it is what lets everything above it be a reusable prefix.
-        self._append_current_user_request(root, current)
 
         decision_request = ET.SubElement(
             root,
@@ -4444,7 +4440,11 @@ class AssistantAgent(ModelGroupAgent):
         root = ET.Element("second_opinion_review")
         current = messages[-1] if messages else None
 
-        self._append_static_head(root, blocks=("identity", "profile"))
+        self._append_static_head(
+            root, blocks=("identity", "formatting", "profile"))
+        # Tier 1b — invariant across every call of the turn, so it precedes
+        # turn_instructions; verdict_request below re-anchors it.
+        self._append_current_user_request(root, current)
         self._append_turn_instructions(root, SECOND_OPINION_TURN_INSTRUCTIONS)
 
         if self._reply_language_markdown:
@@ -4469,7 +4469,6 @@ class AssistantAgent(ModelGroupAgent):
         ET.SubElement(proposed, "python_program").text = code[
             : self.SECOND_OPINION_MAX_CODE_CHARS
         ]
-        self._append_current_user_request(root, current)
         ET.SubElement(root, "verdict_request").text = (
             "Review the proposed_step against the current_user_request and "
             "the user context above. List real problems (or none), then "
@@ -4526,9 +4525,14 @@ class AssistantAgent(ModelGroupAgent):
         the clock. Same ElementTree escaping guarantee too.
         """
         root = ET.Element("reply_audit")
-        self._append_static_head(root, blocks=("identity", "formatting"))
-        self._append_turn_instructions(root, REPLY_AUDIT_TURN_INSTRUCTIONS)
         current = messages[-1] if messages else None
+        self._append_static_head(root, blocks=("identity", "formatting"))
+        # Tier 1b — invariant across every call of the turn, so it precedes
+        # turn_instructions. Unlike the other prompts this one has no closing
+        # re-anchor; proposed_reply at the tail is what the auditor reads last,
+        # and check 1 of its instructions sends it back to the request.
+        self._append_current_user_request(root, current)
+        self._append_turn_instructions(root, REPLY_AUDIT_TURN_INSTRUCTIONS)
         context = (messages[:-1] if messages else [])[
             -self.REPLY_AUDIT_MAX_MESSAGES:]
         history = ET.SubElement(root, "conversation_history_xml")
@@ -4555,11 +4559,10 @@ class AssistantAgent(ModelGroupAgent):
                     {"action": step.action, "status": step.status})
                 entry.text = step.observation[
                     : self.REPLY_AUDIT_MAX_OBSERVATION_CHARS]
-        # Stays adjacent to the request: it is what the request is being
-        # audited against.
+        # The message under audit closes the prompt — the last thing the
+        # auditor reads is the thing it is judging.
         proposed = ET.SubElement(root, "proposed_reply")
         proposed.text = message
-        self._append_current_user_request(root, current)
         now_local = datetime.now().astimezone()
         ET.SubElement(root, "current_local_time").text = now_local.strftime(
             "%Y-%m-%d %H:%M %Z")
@@ -4752,6 +4755,11 @@ class AssistantAgent(ModelGroupAgent):
         candidates = user_profile.declared_language_candidates(profile)
         rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
 
+        # Tier 1b — invariant across every call of the turn, so it precedes
+        # turn_instructions; classification_request below re-anchors it.
+        current = messages[-1] if messages else None
+        self._append_current_user_request(root, current)
+
         self._append_turn_instructions(root, RESPONSE_LANGUAGE_TURN_INSTRUCTIONS)
 
         # Both roles: an earlier assistant reply is the only record of what
@@ -4768,9 +4776,6 @@ class AssistantAgent(ModelGroupAgent):
                 self._append_prompt_message(history, message)
         else:
             ET.SubElement(history, "none")
-
-        current = messages[-1] if messages else None
-        self._append_current_user_request(root, current)
 
         ask = ET.SubElement(root, "classification_request")
         ask.text = (
@@ -5223,6 +5228,9 @@ class AssistantAgent(ModelGroupAgent):
         if guide:
             formatting = ET.SubElement(root, "formatting_guide")
             formatting.text = guide
+        # Tier 1b — invariant across every call of the turn, so it precedes
+        # turn_instructions; criteria_request below re-anchors it.
+        self._append_current_user_request(root, current)
         self._append_turn_instructions(
             root, ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
 
@@ -5254,7 +5262,6 @@ class AssistantAgent(ModelGroupAgent):
                     self._append_turn_event(steps, event)
             else:
                 ET.SubElement(steps, "none")
-        self._append_current_user_request(root, current)
         ask = ET.SubElement(root, "criteria_request")
         ask.text = (
             "Revise the acceptance criteria: compare the prior criteria "
@@ -5567,18 +5574,24 @@ class AssistantAgent(ModelGroupAgent):
         marker = f"\n\n[… {omitted} characters dropped from the middle …]\n\n"
         return text[:head] + marker + (text[len(text) - tail:] if tail else "")
 
-    # Tier 1. Fixed order, identical on every call and every step: identity
-    # (who the operator is) before persona (who the assistant is) before the
-    # formatting guide (how replies are shaped) before calibration and the
-    # remembered digest. Nothing here changes within a turn, so it sits ahead
-    # of everything that does. The SET of blocks a call takes still varies
-    # (each call passes its own `blocks` subset to _append_static_head), so
-    # this only guarantees a shared prefix between two calls up to the first
-    # block one of them omits — measured at 51-67 bytes across calls, not the
-    # whole tier. The within-turn win is real: consecutive decide steps share
-    # thousands of characters through this tier and beyond.
+    # Tier 1. Fixed order, and ordered so the per-call block SETS nest:
+    #
+    #   criteria {identity}
+    #     ⊂ audit {identity, formatting}
+    #       ⊂ second_opinion {identity, formatting, profile}
+    #         ⊂ decide {identity, formatting, profile, persona, calibration}
+    #
+    # Nesting is what makes the head a shared *prefix* between two different
+    # calls rather than just a shared set. A block one call omits truncates
+    # the other's prefix at that point, so the omitted ones have to sort last:
+    # ordering by "identity, persona, formatting, …" put persona between two
+    # blocks audit carries and cut decide x audit to 702 bytes on a live run.
+    # This order gives that pair audit's whole head instead.
+    #
+    # Within a turn nothing here changes, so it also sits ahead of everything
+    # that does — consecutive decide steps share this tier and far beyond it.
     _ALL_STATIC_BLOCKS: tuple[str, ...] = (
-        "identity", "persona", "formatting", "calibration", "profile")
+        "identity", "formatting", "profile", "persona", "calibration")
 
     def _append_static_head(
         self, root: ET.Element, blocks: tuple[str, ...] = _ALL_STATIC_BLOCKS,
@@ -5586,30 +5599,33 @@ class AssistantAgent(ModelGroupAgent):
         """Append the tier-1 blocks this call carries, in fixed order.
 
         `blocks` lets a call take only the tier-1 blocks it actually uses
-        (e.g. the second-opinion call wants identity + profile, not persona
-        or calibration) while keeping their relative order and text
-        identical to the full head.
+        while keeping their relative order and text identical to the full
+        head. Keep the per-call sets nested (see the order above): a call
+        that takes a block another call skips ends the shared prefix there.
 
         formatting_guide is the one profile-derived block with instruction
         authority — justified because every imperative sentence in it is
         code-owned and every interpolated value passed the strict
         prompt-boundary validation in user_profile.formatting."""
+        unknown = set(blocks) - set(self._ALL_STATIC_BLOCKS)
+        if unknown:
+            raise ValueError(f"unknown static block(s): {sorted(unknown)}")
         if "identity" in blocks and self._identity_block:
             ET.SubElement(root, "user_settings_json").text = self._identity_block
-        if "persona" in blocks and self._persona_block:
-            ET.SubElement(root, "assistant_persona").text = self._persona_block
         if "formatting" in blocks and self._formatting_block:
             ET.SubElement(
                 root, "formatting_guide", {"authority": "instructions"}
             ).text = self._formatting_block
-        if "calibration" in blocks and self._calibration_block:
-            ET.SubElement(
-                root, "knowledge_calibration", {"authority": "context"}
-            ).text = self._calibration_block
         if "profile" in blocks and self._profile_block:
             ET.SubElement(
                 root, "user_profile", {"authority": "context"}
             ).text = self._profile_block
+        if "persona" in blocks and self._persona_block:
+            ET.SubElement(root, "assistant_persona").text = self._persona_block
+        if "calibration" in blocks and self._calibration_block:
+            ET.SubElement(
+                root, "knowledge_calibration", {"authority": "context"}
+            ).text = self._calibration_block
 
     @staticmethod
     def _append_turn_instructions(root: ET.Element, instructions: str) -> None:

@@ -170,15 +170,18 @@ def section_order(prompt: str) -> list[str]:
 
 
 DECIDE_EXPECTED = [
-    # tier 1
-    "user_settings_json", "assistant_persona", "formatting_guide",
-    "knowledge_calibration", "user_profile",
+    # tier 1 — ordered so the per-call block sets nest (see _ALL_STATIC_BLOCKS)
+    "user_settings_json", "formatting_guide", "user_profile",
+    "assistant_persona", "knowledge_calibration",
+    # tier 1b — invariant across every call of the turn, ahead of tier 2 so
+    # the six calls share it; decision_request re-anchors it at the tail
+    "current_user_request",
     # tier 2
     "turn_instructions",
     # tier 3
     "active_skills", "conversation_history_xml", "reply_language_markdown",
     "acceptance_criteria_markdown", "current_turn_steps",
-    "current_user_request", "decision_request", "current_local_time",
+    "decision_request", "current_local_time",
 ]
 
 
@@ -192,15 +195,26 @@ def test_decide_prompt_follows_tier_order(fully_populated_agent):
     assert order.count("turn_instructions") == 1
 
 
-def test_decide_prompt_ends_with_request_then_clock(fully_populated_agent):
+def test_decide_prompt_leads_with_the_request_and_re_anchors_it(
+    fully_populated_agent,
+):
+    """The request sits in tier 1b — above turn_instructions, so all six calls
+    of a turn share it — and decision_request quotes it back at the tail, so
+    the model still reads the question last. Both halves matter: the position
+    is the cache win, the re-anchor is what stops a step answering the newest
+    message in conversation_history_xml instead (see _request_anchor)."""
     prompt = fully_populated_agent._build_user_prompt(
         messages=[{"sender_type": "human", "text": "hello"}],
         scratchpad=[], step_index=0)
 
     order = section_order(prompt)
     assert order[-1] == "current_local_time"
-    assert "current_user_request" in order
-    assert order.index("current_user_request") > order.index("turn_instructions")
+    assert order.index("current_user_request") < order.index("turn_instructions")
+    assert order.index("current_user_request") < order.index(
+        "conversation_history_xml")
+    # The re-anchor: the request's own words, after the history.
+    tail = prompt[prompt.index("<decision_request"):]
+    assert "hello" in tail
 
 
 @pytest.fixture
@@ -216,18 +230,18 @@ def sample_decision():
 
 CRITERIA_EXPECTED = [
     "user_settings_json", "formatting_guide",
+    "current_user_request", "current_user_request_summary_markdown",
     "turn_instructions",
     "conversation_history_xml", "prior_acceptance_criteria",
-    "current_turn_steps", "current_user_request",
-    "current_user_request_summary_markdown", "criteria_request",
+    "current_turn_steps", "criteria_request",
 ]
 
 SECOND_OPINION_EXPECTED = [
-    "user_settings_json", "user_profile",
+    "user_settings_json", "formatting_guide", "user_profile",
+    "current_user_request",
     "turn_instructions",
     "reply_language_markdown", "acceptance_criteria_markdown",
-    "proposed_step", "current_user_request", "verdict_request",
-    "current_local_time",
+    "proposed_step", "verdict_request", "current_local_time",
 ]
 
 
@@ -270,10 +284,11 @@ def test_second_opinion_prompt_follows_tier_order(
 
 AUDIT_EXPECTED = [
     "user_settings_json", "formatting_guide",
+    "current_user_request",
     "turn_instructions",
     "conversation_history_xml", "acceptance_criteria_markdown",
     "reply_language_markdown", "turn_observations", "proposed_reply",
-    "current_user_request", "current_local_time",
+    "current_local_time",
 ]
 
 # user_settings_languages_json is this call's own tier-1 block (built from
@@ -283,9 +298,9 @@ AUDIT_EXPECTED = [
 # so the equality check below stays accurate against what the builder emits.
 CLASSIFIER_EXPECTED = [
     "user_settings_languages_json",
+    "current_user_request",
     "turn_instructions",
-    "conversation_history_xml", "current_user_request",
-    "classification_request",
+    "conversation_history_xml", "classification_request",
 ]
 
 SUMMARY_EXPECTED = ["turn_instructions", "current_user_request"]
