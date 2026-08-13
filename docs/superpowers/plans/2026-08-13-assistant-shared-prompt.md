@@ -687,12 +687,29 @@ SECOND_OPINION_EXPECTED = [
 ]
 
 
+# Sections a call ALWAYS emits, whatever the turn state. The order check
+# below filters the expectation by what was found, so on its own it would
+# stay green if a builder stopped emitting a section entirely; this list is
+# what closes that hole. Sections genuinely conditional on turn state
+# (prior_acceptance_criteria on a revision, the request summary on a
+# truncated request) are deliberately absent from it.
+CRITERIA_ALWAYS = [
+    "user_settings_json", "formatting_guide", "turn_instructions",
+    "conversation_history_xml", "current_user_request", "criteria_request",
+]
+SECOND_OPINION_ALWAYS = [
+    "user_settings_json", "turn_instructions", "proposed_step",
+    "current_user_request", "verdict_request", "current_local_time",
+]
+
+
 def test_criteria_prompt_follows_tier_order(fully_populated_agent):
     prompt = fully_populated_agent._build_acceptance_criteria_prompt(
         [{"sender_type": "human", "text": "convert 30C to F"}])
 
     order = section_order(prompt)
     assert order == [s for s in CRITERIA_EXPECTED if s in order]
+    assert set(CRITERIA_ALWAYS) <= set(order)
 
 
 def test_second_opinion_prompt_follows_tier_order(
@@ -704,6 +721,7 @@ def test_second_opinion_prompt_follows_tier_order(
 
     order = section_order(prompt)
     assert order == [s for s in SECOND_OPINION_EXPECTED if s in order]
+    assert set(SECOND_OPINION_ALWAYS) <= set(order)
 ```
 
 Add the `sample_decision` fixture:
@@ -884,6 +902,19 @@ CLASSIFIER_EXPECTED = [
 SUMMARY_EXPECTED = ["turn_instructions", "current_user_request"]
 
 
+# As in Task 4: the order check filters by what was found, so these lists are
+# what stops a builder silently dropping a section it must always emit.
+AUDIT_ALWAYS = [
+    "user_settings_json", "formatting_guide", "turn_instructions",
+    "conversation_history_xml", "proposed_reply", "current_user_request",
+    "current_local_time",
+]
+CLASSIFIER_ALWAYS = [
+    "user_settings_languages_json", "turn_instructions",
+    "conversation_history_xml", "classification_request",
+]
+
+
 def test_reply_audit_prompt_follows_tier_order(fully_populated_agent):
     prompt = fully_populated_agent._build_reply_audit_prompt(
         "here is the answer",
@@ -892,14 +923,16 @@ def test_reply_audit_prompt_follows_tier_order(fully_populated_agent):
 
     order = section_order(prompt)
     assert order == [s for s in AUDIT_EXPECTED if s in order]
+    assert set(AUDIT_ALWAYS) <= set(order)
 
 
 def test_request_summary_prompt_leads_with_instructions(fully_populated_agent):
     prompt = fully_populated_agent._build_request_summary_prompt(
         {"sender_type": "human", "text": "x" * 200})
 
-    order = section_order(prompt)
-    assert order == [s for s in SUMMARY_EXPECTED if s in order]
+    # This prompt carries exactly two sections whatever the turn state, so it
+    # gets the exact-equality form rather than the subsequence one.
+    assert section_order(prompt) == SUMMARY_EXPECTED
 ```
 
 The classifier builder takes the turn's messages and profile; call it the way `test_response_language_classifier.py` already does and assert `section_order(prompt) == [s for s in CLASSIFIER_EXPECTED if s in order]`. Read that existing test file for the call signature rather than guessing it.
