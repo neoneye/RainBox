@@ -5,8 +5,8 @@ Injected by the main assistant as `<knowledge_calibration authority="context">`
 — reference data, never instructions. The block carries only its two short
 header lines (a point-of-use reminder of the reading rules; cheap redundancy
 that helps small models) and the data rows: the axis interpretations are
-code-owned policy and live in ASSISTANT_SYSTEM_PROMPT, so the block can never
-restate policy differently from the system prompt.
+code-owned policy and live in DECIDE_TURN_INSTRUCTIONS, so the block can never
+restate policy differently from the decide call's job description.
 
 Rows are json.dumps output, not hand-built prose: a topic or note containing a
 pipe, newline, quote, or bullet stays one escaped string and cannot forge a

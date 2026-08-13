@@ -1,8 +1,15 @@
 """Prompt tier order: static head, turn_instructions, dynamic tail.
 
-The tiers exist so the local backends have a stable prompt prefix to reuse
-across steps and across the six assistant calls. Order is the whole property,
-so it gets asserted directly rather than implied by content tests.
+The tiers exist so a backend that reuses a matched prefix gets one to reuse.
+The large win is within one call: consecutive steps of a decide loop share
+their whole prefix through the previous step's own entry (measured at 18555
+shared characters between two real steps). Across the six different calls the
+shared prefix is small — each call passes its own subset of tier-1 blocks to
+_append_static_head, so two calls share only up to the first block one of
+them omits (measured at 51-67 bytes; the classifier and summary calls carry
+no static head at all, so their cross-call share is near zero). Order is
+still the whole property this file asserts, so it gets checked directly
+rather than implied by content tests.
 """
 import os
 import re
@@ -60,10 +67,32 @@ ALL_TURN_INSTRUCTIONS = [
 ]
 
 
-def test_shared_system_prompt_names_turn_instructions_as_sole_authority():
+def test_shared_system_prompt_names_turn_instructions_as_authority():
     assert "turn_instructions" in ASSISTANT_SHARED_SYSTEM_PROMPT
     # The truncated-request rule was duplicated into four per-call prompts.
     assert 'truncated="middle"' in ASSISTANT_SHARED_SYSTEM_PROMPT
+
+
+def test_shared_system_prompt_carves_out_other_authority_instructions_sections(
+    fully_populated_agent,
+):
+    """active_skills and formatting_guide are built with
+    authority="instructions" (see _build_user_prompt and
+    _append_static_head) — a grant the code makes, not the section's own
+    text. The shared prompt must acknowledge that class of section exists,
+    or its "turn_instructions is the only section that carries
+    instructions" framing overrules them: a model following the prompt
+    literally would treat active skills as inert data to reason about
+    instead of following them. Pins both halves so a future edit that
+    re-tightens the shared prompt back to "only turn_instructions" while
+    active_skills still claims authority="instructions" fails here."""
+    assert 'authority="instructions"' in ASSISTANT_SHARED_SYSTEM_PROMPT
+
+    prompt = fully_populated_agent._build_user_prompt(
+        messages=[{"sender_type": "human", "text": "hello"}],
+        scratchpad=[], step_index=0)
+
+    assert '<active_skills authority="instructions">' in prompt
 
 
 def test_turn_instruction_constants_are_distinct_and_non_empty():
