@@ -504,13 +504,13 @@ ASSISTANT_TEMPLATE = """
           <div class="io-label">model request{{ io_meta(request_meta(step)) }}</div>
           {% if step.system_prompt %}
           <details class="prompt" data-k="system">
-            <summary>system prompt</summary>
+            <summary>system prompt ({{ step.system_prompt | length }} chars)</summary>
             <pre>{{ step.system_prompt }}</pre>
           </details>
           {% endif %}
           {% if step.user_prompt %}
           <details class="prompt" data-k="user">
-            <summary>user prompt</summary>
+            <summary>user prompt ({{ step.user_prompt | length }} chars)</summary>
             <pre>{{ step.user_prompt }}</pre>
           </details>
           {% endif %}
@@ -545,13 +545,13 @@ ASSISTANT_TEMPLATE = """
           <div class="io-label">second opinion{% if 'approved' in so %}<span class="fn-ok {{ 'ok-true' if so.approved else 'ok-false' }}" title="The reviewer's verdict: false means the action was blocked and never executed">approved: {{ 'true' if so.approved else 'false' }}</span>{% endif %}{{ io_meta(review_meta(so, model_names)) }}</div>
           {% if so.system_prompt %}
           <details class="prompt" data-k="so-system">
-            <summary>system prompt</summary>
+            <summary>system prompt ({{ so.system_prompt | length }} chars)</summary>
             <pre>{{ so.system_prompt }}</pre>
           </details>
           {% endif %}
           {% if so.user_prompt %}
           <details class="prompt" data-k="so-user">
-            <summary>user prompt</summary>
+            <summary>user prompt ({{ so.user_prompt | length }} chars)</summary>
             <pre>{{ so.user_prompt }}</pre>
           </details>
           {% endif %}
