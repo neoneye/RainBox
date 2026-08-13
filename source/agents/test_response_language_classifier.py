@@ -352,9 +352,9 @@ def test_ranked_markdown_is_injected_into_every_later_decide_without_scores(room
             "<reply_language_markdown>", 1)[1].split(
             "</reply_language_markdown>", 1)[0]
         assert "score" not in markdown_block.casefold()
-        assert (decide_prompt.index("</current_user_request>")
+        assert (decide_prompt.index("<conversation_history")
                 < decide_prompt.index("<reply_language_markdown")
-                < decide_prompt.index("<conversation_history"))
+                < decide_prompt.index("</current_user_request>"))
         assert (
             '<source rank="3">reply_language_markdown' in decide_prompt)
         assert "scores are intentionally omitted" in decide_prompt

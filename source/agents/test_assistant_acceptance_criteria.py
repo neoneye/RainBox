@@ -229,7 +229,7 @@ def test_criteria_call_made_once_per_run_before_the_first_decide(room):
     assert "memory_query" not in calls[0]
 
 
-def test_criteria_section_renders_directly_after_current_user_request(room):
+def test_criteria_section_renders_between_history_and_current_user_request(room):
     agent = _agent()
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
@@ -237,9 +237,9 @@ def test_criteria_section_renders_directly_after_current_user_request(room):
     prompt = prompts[0]["user"]
     assert "<acceptance_criteria_markdown" in prompt
     assert "target unit: meters (step0)" in prompt
-    assert (prompt.index("</current_user_request>")
+    assert (prompt.index("<conversation_history")
             < prompt.index("<acceptance_criteria_markdown")
-            < prompt.index("<conversation_history"))
+            < prompt.index("<current_user_request>"))
 
 
 def test_system_prompt_ranks_the_criteria_just_below_the_request(room):

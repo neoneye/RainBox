@@ -4143,37 +4143,21 @@ class AssistantAgent(ModelGroupAgent):
         step_index: int,
     ) -> str:
         root = ET.Element("assistant_turn")
-        self._append_turn_instructions(root, self._decide_turn_instructions())
-
-        # The task leads the prompt: with the request buried at the bottom
-        # under a long profile/history, weaker models answered the surrounding
-        # context instead of the request. The tag is bare — no authority/role/
-        # timestamp attributes — because the section order now carries the
-        # emphasis and the time anchor is current_local_time below.
-        # ElementTree escapes leaf text exactly once, so dynamic content
-        # cannot close or forge a prompt zone.
         current = messages[-1] if messages else None
         context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
-        self._append_current_user_request(root, current)
 
-        # The classifier's score-free Markdown follows the request into every
-        # reasoning step. It is model-derived context, while the system prompt
-        # owns the instruction explaining how its ranked list is interpreted.
-        if self._reply_language_markdown:
-            language = ET.SubElement(
-                root, "reply_language_markdown")
-            language.text = self._reply_language_markdown
+        # Tier 1: static head.
+        self._append_static_head(root)
 
-        # The request, language context and broader constraints travel together
-        # at the top of the prompt. Only the LATEST criteria render — a revision
-        # replaces this section, never appends (the trace keeps the history).
-        # A bare suffixed tag, like <user_settings_json>: the suffix states the
-        # format, so a `format` attribute would only repeat it, and the content
-        # is model-generated, so its authority lives in the code-owned sentence
-        # in the system prompt rather than in an attribute here.
-        if self._criteria_markdown:
-            criteria = ET.SubElement(root, "acceptance_criteria_markdown")
-            criteria.text = self._criteria_markdown
+        # Tier 2: what this call is for.
+        self._append_turn_instructions(root, self._decide_turn_instructions())
+
+        # Tier 3: dynamic tail, least volatile first. active_skills is
+        # retrieved per request, so it is dynamic despite reading as static.
+        if self._skill_block:
+            ET.SubElement(
+                root, "active_skills", {"authority": "instructions"}
+            ).text = self._skill_block
 
         has_fresh_read = any(
             isinstance(event, AssistantTurnStep)
@@ -4199,6 +4183,23 @@ class AssistantAgent(ModelGroupAgent):
         else:
             ET.SubElement(history, "none")
 
+        # The classifier's score-free Markdown follows the history into every
+        # reasoning step. It is model-derived context, while the system prompt
+        # owns the instruction explaining how its ranked list is interpreted.
+        if self._reply_language_markdown:
+            ET.SubElement(
+                root, "reply_language_markdown"
+            ).text = self._reply_language_markdown
+
+        # Only the LATEST criteria render — a revision replaces this section,
+        # never appends (the trace keeps the history).
+        if self._criteria_markdown:
+            ET.SubElement(
+                root, "acceptance_criteria_markdown"
+            ).text = self._criteria_markdown
+
+        # Ahead of the request because it grows append-only within a turn:
+        # step N+1 shares its whole prefix through step N's entry.
         turn_steps = ET.SubElement(
             root, "current_turn_steps", {"authority": "fresh_evidence"}
         )
@@ -4210,6 +4211,13 @@ class AssistantAgent(ModelGroupAgent):
                 self._append_turn_event(turn_steps, event)
         else:
             ET.SubElement(turn_steps, "none")
+
+        # The task closes the prompt. It used to lead it, because a request
+        # buried in the middle under a long profile and history got answered
+        # past — weaker models replied to the surrounding context instead.
+        # Last position buys the same salience by recency rather than primacy,
+        # and it is what lets everything above it be a reusable prefix.
+        self._append_current_user_request(root, current)
 
         decision_request = ET.SubElement(
             root,
@@ -4223,43 +4231,8 @@ class AssistantAgent(ModelGroupAgent):
             "an identical successful or failed action."
         )
 
-        # Supporting context after the decision request. Identity (who the
-        # operator is) before the formatting guide (how to format replies)
-        # before profile (what is remembered about them) before skills (how to
-        # do the task). formatting_guide is the one profile-derived block with
-        # instruction authority — justified because every imperative sentence
-        # in it is code-owned and every interpolated value passed the strict
-        # prompt-boundary validation in user_profile.formatting.
-        if self._identity_block:
-            identity = ET.SubElement(root, "user_settings_json")
-            identity.text = self._identity_block
-        if self._persona_block:
-            persona = ET.SubElement(root, "assistant_persona")
-            persona.text = self._persona_block
-        if self._formatting_block:
-            formatting = ET.SubElement(
-                root, "formatting_guide", {"authority": "instructions"}
-            )
-            formatting.text = self._formatting_block
-        if self._calibration_block:
-            calibration = ET.SubElement(
-                root, "knowledge_calibration", {"authority": "context"}
-            )
-            calibration.text = self._calibration_block
-        if self._profile_block:
-            profile = ET.SubElement(root, "user_profile", {"authority": "context"})
-            profile.text = self._profile_block
-        if self._skill_block:
-            active_skills = ET.SubElement(
-                root, "active_skills", {"authority": "instructions"}
-            )
-            active_skills.text = self._skill_block
-
-        # The current local time is the operator's clock — the model's only
-        # other time anchor is the conversation's (UTC) message timestamps,
-        # which made relative reminders ("in 10 minutes") resolve in UTC.
-        # Stating local time explicitly lets set_reminder land in the
-        # operator's zone. Last section of the prompt.
+        # The operator's clock, last: it changes every minute, and anywhere
+        # else it would invalidate the cached prefix of every section after it.
         now_local = datetime.now().astimezone()
         ET.SubElement(root, "current_local_time").text = now_local.strftime(
             "%Y-%m-%d %H:%M %Z"
@@ -5562,6 +5535,35 @@ class AssistantAgent(ModelGroupAgent):
         omitted = len(text) - limit
         marker = f"\n\n[… {omitted} characters dropped from the middle …]\n\n"
         return text[:head] + marker + (text[len(text) - tail:] if tail else "")
+
+    # Tier 1. Fixed order, identical on every call and every step: identity
+    # (who the operator is) before persona (who the assistant is) before the
+    # formatting guide (how replies are shaped) before calibration and the
+    # remembered digest. Nothing here changes within a turn, so it sits ahead
+    # of everything that does and the backend can reuse its prefill.
+    def _append_static_head(self, root: ET.Element) -> None:
+        """Append the tier-1 blocks this call carries, in fixed order.
+
+        formatting_guide is the one profile-derived block with instruction
+        authority — justified because every imperative sentence in it is
+        code-owned and every interpolated value passed the strict
+        prompt-boundary validation in user_profile.formatting."""
+        if self._identity_block:
+            ET.SubElement(root, "user_settings_json").text = self._identity_block
+        if self._persona_block:
+            ET.SubElement(root, "assistant_persona").text = self._persona_block
+        if self._formatting_block:
+            ET.SubElement(
+                root, "formatting_guide", {"authority": "instructions"}
+            ).text = self._formatting_block
+        if self._calibration_block:
+            ET.SubElement(
+                root, "knowledge_calibration", {"authority": "context"}
+            ).text = self._calibration_block
+        if self._profile_block:
+            ET.SubElement(
+                root, "user_profile", {"authority": "context"}
+            ).text = self._profile_block
 
     @staticmethod
     def _append_turn_instructions(root: ET.Element, instructions: str) -> None:

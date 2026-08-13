@@ -162,11 +162,16 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     assert '<arguments format="json">{"query": "Simon demoscene"}</arguments>' in rest
     assert rest.count("<current_user_request>") == 1
     parsed = ElementTree.fromstring(f"<root>{rest}</root>")
-    # current_user_request leads the rest; the local-time anchor closes it.
+    # conversation_history_xml leads the tail; the local-time anchor closes
+    # it. current_user_request now sits second-to-last, ahead of only
+    # decision_request, so everything above it is a prefix the backend can
+    # reuse across steps.
     tags = [s.tag for s in parsed]
-    assert tags[0] == "current_user_request"
+    assert tags[0] == "conversation_history_xml"
     assert tags[-1] == "current_local_time"
     assert tags.index("conversation_history_xml") < tags.index("current_turn_steps") \
+        < tags.index("decision_request")
+    assert tags.index("current_turn_steps") < tags.index("current_user_request") \
         < tags.index("decision_request")
     assert "<runtime_context>" not in rest      # wrapper dropped
     assert parsed.find("current_user_request") is not None
