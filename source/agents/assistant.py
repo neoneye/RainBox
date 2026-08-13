@@ -358,6 +358,23 @@ class AcceptanceCriteria(BaseModel):
         "empty — when the request is unambiguous, say that."))
 
 
+def _render_sections(root: ET.Element) -> str:
+    """Serialize a built prompt tree as top-level siblings.
+
+    The sections are emitted as siblings, NOT wrapped in a single root
+    element: models recognize the start/end tags fine without a valid
+    single-rooted document, and a wrapper would cost one level of indentation
+    on every line of every step. The tree is still BUILT with ElementTree
+    because its escaping is the security property — dynamic content cannot
+    close or forge a section tag."""
+    parts = []
+    for section in root:
+        ET.indent(section, space="  ")
+        parts.append(ET.tostring(section, encoding="unicode",
+                                 short_empty_elements=True))
+    return "\n".join(parts)
+
+
 # The paragraph every prompt that renders current_user_request carries, because
 # every one of them can be handed the shortened form. A reader that does not
 # know the middle is missing reads the seam as continuous text and judges the
@@ -4198,18 +4215,7 @@ class AssistantAgent(ModelGroupAgent):
         ET.SubElement(root, "current_local_time").text = now_local.strftime(
             "%Y-%m-%d %H:%M %Z"
         )
-        # The sections are emitted as top-level siblings, NOT wrapped in a
-        # single root element: models recognize the start/end tags fine
-        # without a valid single-rooted document, and a wrapper would cost
-        # one level of indentation on every line of every step. The tree is
-        # still BUILT with ElementTree because its escaping is the security
-        # property — dynamic content cannot close or forge a section tag.
-        parts = []
-        for section in root:
-            ET.indent(section, space="  ")
-            parts.append(ET.tostring(section, encoding="unicode",
-                                     short_empty_elements=True))
-        return "\n".join(parts)
+        return _render_sections(root)
 
     # The reviewer reads bounded excerpts: a runaway reasoning trace or program
     # must not blow the critic's context. Tail-truncation would drop the code's
@@ -4430,12 +4436,7 @@ class AssistantAgent(ModelGroupAgent):
         ET.SubElement(root, "current_local_time").text = now_local.strftime(
             "%Y-%m-%d %H:%M %Z"
         )
-        parts = []
-        for section in root:
-            ET.indent(section, space="  ")
-            parts.append(ET.tostring(section, encoding="unicode",
-                                     short_empty_elements=True))
-        return "\n".join(parts)
+        return _render_sections(root)
 
     # --- reply audit ----------------------------------------------------------
 
@@ -4520,12 +4521,7 @@ class AssistantAgent(ModelGroupAgent):
         now_local = datetime.now().astimezone()
         ET.SubElement(root, "current_local_time").text = now_local.strftime(
             "%Y-%m-%d %H:%M %Z")
-        parts = []
-        for section in root:
-            ET.indent(section, space="  ")
-            parts.append(ET.tostring(section, encoding="unicode",
-                                     short_empty_elements=True))
-        return "\n".join(parts)
+        return _render_sections(root)
 
     def _reply_audit(
         self,
@@ -4740,12 +4736,7 @@ class AssistantAgent(ModelGroupAgent):
             "candidates supported by the request."
         )
 
-        parts: list[str] = []
-        for section in root:
-            ET.indent(section, space="  ")
-            parts.append(ET.tostring(
-                section, encoding="unicode", short_empty_elements=True))
-        return "\n".join(parts)
+        return _render_sections(root)
 
     def _request_response_language_classification(
         self, *, system_prompt: str, user_prompt: str
@@ -4980,12 +4971,7 @@ class AssistantAgent(ModelGroupAgent):
                 text, self.REQUEST_SUMMARY_INPUT_MAX_CHARS)
         request = ET.SubElement(root, "current_user_request", attrs)
         request.text = text
-        parts: list[str] = []
-        for section in root:
-            ET.indent(section, space="  ")
-            parts.append(ET.tostring(section, encoding="unicode",
-                                     short_empty_elements=True))
-        return "\n".join(parts)
+        return _render_sections(root)
 
     def _summarize_request(
         self, *, system_prompt: str, user_prompt: str
@@ -5217,12 +5203,7 @@ class AssistantAgent(ModelGroupAgent):
         if guide:
             formatting = ET.SubElement(root, "formatting_guide")
             formatting.text = guide
-        parts = []
-        for section in root:
-            ET.indent(section, space="  ")
-            parts.append(ET.tostring(section, encoding="unicode",
-                                     short_empty_elements=True))
-        return "\n".join(parts)
+        return _render_sections(root)
 
     def _criteria_formatting_guide(self) -> str:
         """The formatting guide as a criteria-call INPUT, rendered from the
