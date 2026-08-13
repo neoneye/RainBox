@@ -153,7 +153,7 @@ def test_decide_prompt_follows_tier_order(fully_populated_agent):
         scratchpad=[], step_index=0)
 
     order = section_order(prompt)
-    assert order == [s for s in DECIDE_EXPECTED if s in order]
+    assert order == DECIDE_EXPECTED
     assert order.count("turn_instructions") == 1
 
 

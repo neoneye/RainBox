@@ -124,8 +124,13 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
         step_index=1,
     )
 
-    # turn_instructions leads every builder's root, and it is what now
-    # carries the policy — including the source-priority ranking — instead
+    # This fixture's agent has no identity/persona/formatting/calibration/
+    # profile set, so tier 1 renders empty and turn_instructions (tier 2)
+    # is incidentally what starts the prompt here — a fully populated agent
+    # has user_settings_json lead instead (see test_assistant_prompt_tiers.py
+    # for the tier ordering). What this assertion actually pins is
+    # turn_instructions' own render shape: the authority attribute, zero
+    # indentation, and the source-priority ranking it now carries instead
     # of a separate system prompt.
     assert prompt.startswith('<turn_instructions authority="instructions">')
     assert not prompt.startswith("  ")

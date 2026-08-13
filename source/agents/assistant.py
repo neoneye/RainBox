@@ -4192,7 +4192,11 @@ class AssistantAgent(ModelGroupAgent):
             ).text = self._reply_language_markdown
 
         # Only the LATEST criteria render — a revision replaces this section,
-        # never appends (the trace keeps the history).
+        # never appends (the trace keeps the history). A bare suffixed tag:
+        # the `_markdown` suffix states the format, so a `format` attribute
+        # would only repeat it, and the content is model-generated, so its
+        # authority lives in the code-owned sentence in the system prompt
+        # rather than in an attribute here.
         if self._criteria_markdown:
             ET.SubElement(
                 root, "acceptance_criteria_markdown"
@@ -4212,6 +4216,11 @@ class AssistantAgent(ModelGroupAgent):
         else:
             ET.SubElement(turn_steps, "none")
 
+        # The tag is bare — no authority/role/timestamp attributes — because
+        # the section order carries the emphasis and the time anchor is
+        # current_local_time below. ElementTree escapes leaf text exactly
+        # once, so dynamic content cannot close or forge a prompt zone.
+        #
         # The task closes the prompt. It used to lead it, because a request
         # buried in the middle under a long profile and history got answered
         # past — weaker models replied to the surrounding context instead.
@@ -4231,8 +4240,12 @@ class AssistantAgent(ModelGroupAgent):
             "an identical successful or failed action."
         )
 
-        # The operator's clock, last: it changes every minute, and anywhere
-        # else it would invalidate the cached prefix of every section after it.
+        # The operator's clock — the model's only other time anchor is the
+        # conversation's (UTC) message timestamps, which made relative
+        # reminders ("in 10 minutes") resolve in UTC. Stating local time
+        # explicitly is what lets set_reminder land in the operator's zone.
+        # Last, because it changes every minute, and anywhere else it would
+        # invalidate the cached prefix of every section after it.
         now_local = datetime.now().astimezone()
         ET.SubElement(root, "current_local_time").text = now_local.strftime(
             "%Y-%m-%d %H:%M %Z"
