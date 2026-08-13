@@ -25,7 +25,7 @@ from agents.assistant import (
     _action_query_memory,
     _action_workspace_read_command,
 )
-from agents.assistant import ASSISTANT_SYSTEM_PROMPT, CAPABILITIES
+from agents.assistant import DECIDE_TURN_INSTRUCTIONS, CAPABILITIES
 from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
 
@@ -52,7 +52,7 @@ def test_read_action_descriptions_disambiguate_query_memory_from_kanban():
     kb = CAPABILITIES[AssistantActionName.KANBAN_READ].description.lower()
     assert "kanban" in qm and "not for" in qm          # memory_query says: not for kanban
     assert "column" in kb                              # kanban_read: look up a board's columns
-    assert "kanban_read" in ASSISTANT_SYSTEM_PROMPT.lower()
+    assert "kanban_read" in DECIDE_TURN_INSTRUCTIONS.lower()
 
 
 def test_system_prompt_forbids_narrating_where_the_answer_came_from():
@@ -62,7 +62,7 @@ def test_system_prompt_forbids_narrating_where_the_answer_came_from():
     and no imitating the shape of one's own previous messages. It states the
     rule without quoting the offending opening — an example phrase in a prompt
     is a phrase the model emits (see test_reply_audit's no-dialect test)."""
-    p = ASSISTANT_SYSTEM_PROMPT
+    p = DECIDE_TURN_INSTRUCTIONS
     assert "Write the answer, not an account of how you obtained it." in p
     assert "Never preface a reply by crediting where it came from" in p
     assert "never imitate the shape of your own\nprevious messages" in p
@@ -95,7 +95,7 @@ def test_user_prompt_includes_current_local_time():
     assert "current_local_time" in prompt.lower()
 
 
-def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
+def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content():
     from xml.etree import ElementTree
 
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
@@ -124,56 +124,67 @@ def test_user_prompt_has_xml_zones_and_escaped_content_but_no_policy():
         step_index=1,
     )
 
+    # turn_instructions leads every builder's root, and it is what now
+    # carries the policy — including the source-priority ranking — instead
+    # of a separate system prompt.
+    assert prompt.startswith('<turn_instructions authority="instructions">')
+    assert not prompt.startswith("  ")
+    assert "<source_priority" in prompt
+    # Everything after turn_instructions: its code-owned prose is excluded
+    # from the content checks below, since it is fixed job-description text
+    # that can incidentally contain words like "stale" or "->" the checks
+    # test for elsewhere.
+    rest = prompt.split("</turn_instructions>\n", 1)[1]
     # A bare suffixed tag apart from `assistant_messages`, which is this
     # turn's own state rather than a restatement of the prompt's policy.
-    assert '<conversation_history_xml assistant_messages="omitted_after_fresh_read">' in prompt
-    assert "authority=" not in prompt.split("<conversation_history_xml")[1][:80]
-    assert "facts_are_authoritative" not in prompt
-    assert "<current_user_request>" in prompt
-    assert '<current_turn_steps authority="fresh_evidence">' in prompt
-    assert "<source_priority" not in prompt
-    assert '<decision_request step="2" max_steps="6">' in prompt
-    assert "stale" not in prompt
-    assert "how is Simon" in prompt
-    assert "&lt;/current_user_request&gt;" in prompt
-    assert "<recalled_memory>facts</recalled_memory>" in prompt
-    assert "&lt;operator&gt;" not in prompt
-    assert "&lt;assistant&gt;" not in prompt
-    assert "-&gt;" not in prompt
+    assert '<conversation_history_xml assistant_messages="omitted_after_fresh_read">' in rest
+    assert "authority=" not in rest.split("<conversation_history_xml")[1][:80]
+    assert "facts_are_authoritative" not in rest
+    assert "<current_user_request>" in rest
+    assert '<current_turn_steps authority="fresh_evidence">' in rest
+    assert '<decision_request step="2" max_steps="6">' in rest
+    assert "stale" not in rest
+    assert "how is Simon" in rest
+    assert "&lt;/current_user_request&gt;" in rest
+    assert "<recalled_memory>facts</recalled_memory>" in rest
+    assert "&lt;operator&gt;" not in rest
+    assert "&lt;assistant&gt;" not in rest
+    assert "-&gt;" not in rest
     # No <assistant_turn> root wrapper: the sections are top-level siblings
     # (models don't need a single-rooted document, and the wrapper cost one
-    # level of indentation on every line). Each section is still valid,
-    # ElementTree-escaped XML — proven by parsing the whole prompt under a
-    # synthetic root.
-    assert "<assistant_turn" not in prompt
-    assert not prompt.startswith("  ")
-    assert '<step index="1" action="memory_query" status="ok">' in prompt
-    assert '<arguments format="json">{"query": "Simon demoscene"}</arguments>' in prompt
-    assert prompt.count("<current_user_request>") == 1
-    parsed = ElementTree.fromstring(f"<root>{prompt}</root>")
-    # The task leads the prompt; the local-time anchor closes it.
+    # level of indentation on every line). Every section but turn_instructions
+    # is still valid, ElementTree-escaped XML — proven by parsing them under a
+    # synthetic root. turn_instructions is the one documented exception (see
+    # _render_sections): it renders unescaped code-owned text, so its prose
+    # placeholders (like `<COLUMN_UUID>`) are not required to be well-formed.
+    assert "<assistant_turn" not in rest
+    assert '<step index="1" action="memory_query" status="ok">' in rest
+    assert '<arguments format="json">{"query": "Simon demoscene"}</arguments>' in rest
+    assert rest.count("<current_user_request>") == 1
+    parsed = ElementTree.fromstring(f"<root>{rest}</root>")
+    # current_user_request leads the rest; the local-time anchor closes it.
     tags = [s.tag for s in parsed]
     assert tags[0] == "current_user_request"
     assert tags[-1] == "current_local_time"
     assert tags.index("conversation_history_xml") < tags.index("current_turn_steps") \
         < tags.index("decision_request")
-    assert "<runtime_context>" not in prompt      # wrapper dropped
+    assert "<runtime_context>" not in rest      # wrapper dropped
     assert parsed.find("current_user_request") is not None
 
 
-def test_source_priority_policy_is_in_system_prompt_only():
-    assert '<source_priority highest_first="true">' in ASSISTANT_SYSTEM_PROMPT
+def test_source_priority_policy_is_in_decide_turn_instructions():
+    assert '<source_priority highest_first="true">' in DECIDE_TURN_INSTRUCTIONS
     assert '<source rank="1">successful current_turn_steps observations</source>' in (
-        ASSISTANT_SYSTEM_PROMPT
+        DECIDE_TURN_INSTRUCTIONS
     )
     assert '<source rank="7">conversation_history_xml (context only)</source>' in (
-        ASSISTANT_SYSTEM_PROMPT
+        DECIDE_TURN_INSTRUCTIONS
     )
-    # The baseline constant is the un-swapped literal; _system_prompt() always
-    # swaps in the variant that ranks the criteria section (see
+    # The baseline constant is the un-swapped literal; _decide_turn_instructions()
+    # always swaps in the variant that ranks the criteria section (see
     # ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION), so this asserts the two are
     # genuinely separate literals rather than one drifting into the other.
-    assert "acceptance_criteria_markdown" not in ASSISTANT_SYSTEM_PROMPT
+    assert "acceptance_criteria_markdown" not in DECIDE_TURN_INSTRUCTIONS
 
 
 def test_turn_event_budget_drops_whole_old_events():
@@ -243,7 +254,7 @@ def test_successful_read_removes_old_assistant_answers_but_keeps_operator_contex
 def test_system_prompt_forbids_claiming_unperformed_writes():
     """Run 19: the model read a task then replied 'successfully moved' with no
     kanban_task_column step. The prompt must forbid claiming a write it didn't perform."""
-    p = ASSISTANT_SYSTEM_PROMPT.lower()
+    p = DECIDE_TURN_INSTRUCTIONS.lower()
     assert "never tell the user you did something" in p
     assert "reading a task is not moving it" in p
 
@@ -253,7 +264,7 @@ def test_system_prompt_requires_fresh_read_not_chat_history():
     re-querying: it reused a stored fact that had since become restricted, and
     it repeated a stale live value. The prompt must forbid answering factual or
     live-value questions from earlier messages and require a fresh read action."""
-    p = ASSISTANT_SYSTEM_PROMPT.lower()
+    p = DECIDE_TURN_INSTRUCTIONS.lower()
     assert "do not reuse an answer from an earlier message" in p
     assert "call the matching read action" in p
     assert "after a read action succeeds" in p
@@ -1321,7 +1332,7 @@ def test_query_memory_uuid_respects_shield(app_ctx, monkeypatch):
 
 
 def test_system_prompt_explains_truncate_and_uuid_fetch():
-    p = ASSISTANT_SYSTEM_PROMPT.lower()
+    p = DECIDE_TURN_INSTRUCTIONS.lower()
     assert "truncate" in p
     assert '"uuid"' in p or "uuid" in p
 
@@ -1397,6 +1408,6 @@ def test_request_anchor_collapses_newlines_so_the_quote_stays_one_line():
 def test_system_prompt_says_the_newest_history_message_is_an_ended_turn():
     """Naming the trap: the closer the newest history message is to the current
     request, the more likely the substitution."""
-    p = " ".join(ASSISTANT_SYSTEM_PROMPT.split())
+    p = " ".join(DECIDE_TURN_INSTRUCTIONS.split())
     assert "belongs to a turn that already ended, including the last one" in p
     assert "answer the quoted request, not the one you have already answered" in p

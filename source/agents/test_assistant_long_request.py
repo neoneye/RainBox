@@ -15,12 +15,13 @@ import pytest
 
 import db
 from agents.assistant import (
-    ASSISTANT_SYSTEM_PROMPT,
+    ASSISTANT_SHARED_SYSTEM_PROMPT,
+    DECIDE_TURN_INSTRUCTIONS,
     AssistantAgent,
-    REPLY_AUDIT_SYSTEM_PROMPT,
-    REQUEST_SUMMARY_SYSTEM_PROMPT,
+    REPLY_AUDIT_TURN_INSTRUCTIONS,
+    REQUEST_SUMMARY_TURN_INSTRUCTIONS,
     RequestSummary,
-    SECOND_OPINION_SYSTEM_PROMPT,
+    SECOND_OPINION_TURN_INSTRUCTIONS,
     TRUNCATED_REQUEST_SECTION,
 )
 from agents.config import ASSISTANT_UUID
@@ -290,7 +291,10 @@ def test_the_summarizer_reads_far_more_than_the_prompts_do():
         [{"sender_type": "human", "text": text}])
 
     assert text in prompt
-    assert "truncated=" not in prompt
+    # Scoped to the tag itself: turn_instructions carries the fixed job
+    # description explaining the truncated="middle" convention, so the bare
+    # substring now legitimately appears in every request-summary prompt.
+    assert "<current_user_request truncated=" not in prompt
 
 
 def test_the_summarizer_prompt_is_the_request_and_nothing_else():
@@ -301,7 +305,7 @@ def test_the_summarizer_prompt_is_the_request_and_nothing_else():
     prompt = agent._build_request_summary_prompt(
         [{"sender_type": "human", "text": _paste(3000)}])
 
-    assert prompt.startswith("<current_user_request")
+    assert "<current_user_request" in prompt
     assert prompt.rstrip().endswith("</current_user_request>")
 
 
@@ -408,21 +412,24 @@ def test_summary_markdown_omits_the_details_heading_when_there_are_none():
 
 def test_every_prompt_that_can_receive_a_cut_request_explains_the_cut():
     """A reader that does not know the middle is missing reads the seam as
-    continuous text and judges the request on material it never saw."""
-    for prompt in (ASSISTANT_SYSTEM_PROMPT, SECOND_OPINION_SYSTEM_PROMPT,
-                   REPLY_AUDIT_SYSTEM_PROMPT):
-        assert TRUNCATED_REQUEST_SECTION in prompt
+    continuous text and judges the request on material it never saw. Every
+    call now shares this one system prompt, so the explanation travels with
+    all of them once instead of being duplicated per job description."""
+    assert TRUNCATED_REQUEST_SECTION in ASSISTANT_SHARED_SYSTEM_PROMPT
+    for turn_instructions in (DECIDE_TURN_INSTRUCTIONS, SECOND_OPINION_TURN_INSTRUCTIONS,
+                              REPLY_AUDIT_TURN_INSTRUCTIONS):
+        assert TRUNCATED_REQUEST_SECTION not in turn_instructions
 
 
 def test_the_reviewer_and_the_auditor_are_told_a_cut_is_not_a_defect():
     """Both judge the reply against the request. Neither can fault it for the
     part of the request neither of them was shown."""
-    assert "never itself a ground to reject" in SECOND_OPINION_SYSTEM_PROMPT
-    assert "only a defect when you can see" in REPLY_AUDIT_SYSTEM_PROMPT
+    assert "never itself a ground to reject" in SECOND_OPINION_TURN_INSTRUCTIONS
+    assert "only a defect when you can see" in REPLY_AUDIT_TURN_INSTRUCTIONS
 
 
 def test_the_summarizer_is_told_never_to_describe_what_it_did_not_see():
     """It is the assistant's only account of the dropped middle, so an
     invention here is the one error nothing downstream can catch."""
-    assert "Never describe a middle you" in REQUEST_SUMMARY_SYSTEM_PROMPT
-    assert "only account of it" in REQUEST_SUMMARY_SYSTEM_PROMPT
+    assert "Never describe a middle you" in REQUEST_SUMMARY_TURN_INSTRUCTIONS
+    assert "only account of it" in REQUEST_SUMMARY_TURN_INSTRUCTIONS

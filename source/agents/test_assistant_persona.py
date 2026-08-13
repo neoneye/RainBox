@@ -8,7 +8,7 @@ import pytest
 import db
 from agents.assistant import (
     ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION,
-    ASSISTANT_SYSTEM_PROMPT,
+    DECIDE_TURN_INSTRUCTIONS,
     SOURCE_PRIORITY_SECTION,
 )
 
@@ -38,9 +38,9 @@ def test_both_source_priority_variants_rank_the_persona():
 
 
 def test_system_prompt_states_the_persona_boundary():
-    assert "assistant_persona is the character you are playing" in ASSISTANT_SYSTEM_PROMPT
-    assert "Adhering to it is not optional" in ASSISTANT_SYSTEM_PROMPT
-    assert "does not\nchange which actions are available" in ASSISTANT_SYSTEM_PROMPT
+    assert "assistant_persona is the character you are playing" in DECIDE_TURN_INSTRUCTIONS
+    assert "Adhering to it is not optional" in DECIDE_TURN_INSTRUCTIONS
+    assert "does not\nchange which actions are available" in DECIDE_TURN_INSTRUCTIONS
 
 
 def test_persona_section_renders_when_the_room_links_one(ctx):

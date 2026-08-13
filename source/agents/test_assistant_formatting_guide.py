@@ -156,11 +156,11 @@ def test_formatting_failure_empties_only_its_block(room, monkeypatch):
 
 def test_system_prompt_names_the_new_blocks(room):
     db.set_current_profile(None)
-    system = _run_capture(room)["system_prompt"]
-    assert "formatting_guide" in system
-    assert "knowledge_calibration" in system
-    assert 'authority="context"' in system            # non-executable policy
-    assert "not an audience boundary" in system
+    user_prompt = _run_capture(room)["user_prompt"]
+    assert "formatting_guide" in user_prompt
+    assert "knowledge_calibration" in user_prompt
+    assert 'authority="context"' in user_prompt       # non-executable policy
+    assert "not an audience boundary" in user_prompt
 
 
 @pytest.fixture
@@ -206,7 +206,10 @@ def test_hostile_note_stays_escaped_context(room, calibrated_profile):
     prompt = _run_capture(room)["user_prompt"]
     # The sections are top-level siblings (no root wrapper); parse under a
     # synthetic root to prove each section is still well-formed escaped XML.
-    root = ET.fromstring(f"<root>{prompt}</root>")
+    # turn_instructions is excluded: it renders unescaped code-owned prose
+    # (see _render_sections) and is not required to be well-formed itself.
+    rest = prompt.split("</turn_instructions>\n", 1)[1]
+    root = ET.fromstring(f"<root>{rest}</root>")
     node = root.find("knowledge_calibration")
     assert node is not None
     assert node.get("authority") == "context"
@@ -375,20 +378,20 @@ def test_the_reply_contract_is_the_message_alone():
 
 
 def test_system_prompt_documents_the_reply_args(room):
-    system = _run_capture(room)["system_prompt"]
-    assert '"message"' in system
-    assert "2_audit" not in system
-    assert "1_specification" not in system
+    user_prompt = _run_capture(room)["user_prompt"]
+    assert '"message"' in user_prompt
+    assert "2_audit" not in user_prompt
+    assert "1_specification" not in user_prompt
     # The reply capability names the constraints neutrally rather than by tag —
     # the prompt already names the section where it ranks it and where the
     # revision action describes it, and a fourth naming inside `reply` would
     # just be noise on the one action the model reaches for most.
-    assert "constraints already established for this turn" in system
-    reply_line = next(ln for ln in system.splitlines()
+    assert "constraints already established for this turn" in user_prompt
+    reply_line = next(ln for ln in user_prompt.splitlines()
                       if ln.strip().startswith("- reply:"))
     assert "acceptance_criteria_markdown" not in reply_line
-    assert "never switch language on your own" in system
-    assert "audited before it is sent" in system
+    assert "never switch language on your own" in user_prompt
+    assert "audited before it is sent" in user_prompt
 
 
 def test_profile_switch_field_changes_only_its_directive(room):

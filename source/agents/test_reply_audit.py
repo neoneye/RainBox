@@ -19,7 +19,7 @@ import db
 from db import AssistantRun
 from agents.assistant import (
     CAPABILITIES,
-    REPLY_AUDIT_SYSTEM_PROMPT,
+    REPLY_AUDIT_TURN_INSTRUCTIONS,
     AssistantActionName,
     AssistantAgent,
     AssistantStepDecision,
@@ -130,7 +130,7 @@ def test_an_unknown_verdict_is_rejected_by_the_schema():
 def test_the_system_prompt_states_the_job_and_names_no_dialect():
     """The auditor's job belongs in its system prompt, and the prompt names
     no dialect or example word — those get parroted into replies."""
-    low = REPLY_AUDIT_SYSTEM_PROMPT.lower()
+    low = REPLY_AUDIT_TURN_INSTRUCTIONS.lower()
     assert "audit" in low or "review" in low
     for word in ("british", "american", "colour", "anticlockwise", "car park"):
         assert word not in low
@@ -141,7 +141,7 @@ def test_the_auditor_treats_a_source_preamble_as_a_defect():
     it read as diligence, so the habit passed the one check that could have
     stopped it. It is now a named defect, fenced off from tone nitpicking so
     the carve-out does not reopen the style complaints check 6 sits beside."""
-    p = REPLY_AUDIT_SYSTEM_PROMPT
+    p = REPLY_AUDIT_TURN_INSTRUCTIONS
     assert "6. Against how it addresses the user." in p
     assert "the reply withholds the answer to narrate its own plumbing" in " ".join(
         p.split())
@@ -154,7 +154,7 @@ def test_the_auditor_checks_the_reply_answers_the_requests_subject():
     about the USER: the auditor read a fluent answer to an adjacent question as
     a complete one. Subject alignment is now its own named check, not something
     left implicit inside "does it answer all of it"."""
-    p = " ".join(REPLY_AUDIT_SYSTEM_PROMPT.split())
+    p = " ".join(REPLY_AUDIT_TURN_INSTRUCTIONS.split())
     assert "2. Against WHO OR WHAT the request is about." in p
     assert "Name the subject the request asks about" in p
     assert "the user's question about themselves answered about the assistant" in p

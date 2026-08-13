@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 import db
 from agents.assistant import (
-    RESPONSE_LANGUAGE_CLASSIFIER_SYSTEM_PROMPT,
+    RESPONSE_LANGUAGE_TURN_INSTRUCTIONS,
     AssistantActionName,
     AssistantAgent,
     AssistantStepDecision,
@@ -159,7 +159,7 @@ def test_prompt_scores_all_profile_rows_and_carries_both_roles():
     # out of sight.
     assert "Je vais répondre en français." in prompt
     assert "assistant_messages" not in prompt
-    assert "must not perpetuate itself" in RESPONSE_LANGUAGE_CLASSIFIER_SYSTEM_PROMPT
+    assert "must not perpetuate itself" in RESPONSE_LANGUAGE_TURN_INSTRUCTIONS
     assert '"code": "en-GB"' in prompt
     assert '"code": "da"' in prompt
     assert "copy every declared profile-language code exactly" in prompt
@@ -167,7 +167,7 @@ def test_prompt_scores_all_profile_rows_and_carries_both_roles():
 
 
 def test_system_prompt_uses_planexe_likert_and_distinguishes_content_language():
-    prompt = RESPONSE_LANGUAGE_CLASSIFIER_SYSTEM_PROMPT
+    prompt = RESPONSE_LANGUAGE_TURN_INSTRUCTIONS
     assert "1 = strong negative" in prompt
     assert "2 = weak negative" in prompt
     assert "3 = neutral" in prompt
@@ -342,17 +342,22 @@ def test_ranked_markdown_is_injected_into_every_later_decide_without_scores(room
     assert len(decide_prompts) == 2
     for call in decide_prompts:
         decide_prompt = call["user_prompt"]
-        system_prompt = call["system_prompt"]
         assert decide_prompt.count("<reply_language_markdown") == 1
         assert _classification().reason in decide_prompt
         assert decide_prompt.index("- `en-GB`") < decide_prompt.index("- `da`")
-        assert "score" not in decide_prompt.casefold()
+        # Scoped to the injected block itself: turn_instructions (now part of
+        # the user prompt) explains the score-free convention in prose, which
+        # legitimately uses the word "score" without the block doing so.
+        markdown_block = decide_prompt.split(
+            "<reply_language_markdown>", 1)[1].split(
+            "</reply_language_markdown>", 1)[0]
+        assert "score" not in markdown_block.casefold()
         assert (decide_prompt.index("</current_user_request>")
                 < decide_prompt.index("<reply_language_markdown")
                 < decide_prompt.index("<conversation_history"))
         assert (
-            '<source rank="3">reply_language_markdown' in system_prompt)
-        assert "scores are intentionally omitted" in system_prompt
+            '<source rank="3">reply_language_markdown' in decide_prompt)
+        assert "scores are intentionally omitted" in decide_prompt
 
 
 def test_classifier_output_skips_criteria_but_reaches_second_opinion():

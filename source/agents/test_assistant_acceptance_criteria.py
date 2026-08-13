@@ -19,12 +19,13 @@ import pytest
 import db
 from agents.assistant import (
     AcceptanceCriteria,
+    ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS,
     AssistantActionName,
     AssistantAgent,
     AssistantObservation,
     AssistantStepDecision,
     AssistantTurnStep,
-    REPLY_AUDIT_SYSTEM_PROMPT,
+    REPLY_AUDIT_TURN_INSTRUCTIONS,
 )
 from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
@@ -173,9 +174,9 @@ def test_criteria_run_on_every_turn_with_no_switch_to_turn_them_off(app_ctx):
         assert result["status"] == "finished"
         assert len(calls) == 1                                   # the step-0 call
         assert "<acceptance_criteria_markdown" in prompts[0]["user"]
-        # The system prompt ranks the section, so the model treats it as
-        # binding rather than as one more piece of context.
-        assert "acceptance_criteria_markdown" in prompts[0]["system"]
+        # The turn_instructions section ranks the section, so the model
+        # treats it as binding rather than as one more piece of context.
+        assert prompts[0]["user"].count("acceptance_criteria_markdown") >= 2
         # …and the revision action is always available to the model.
         assert "- acceptance_criteria:" in agent._action_catalog()
         assert AssistantActionName.ACCEPTANCE_CRITERIA in agent._caps
@@ -241,26 +242,26 @@ def test_criteria_section_renders_directly_after_current_user_request(room):
 
 
 def test_system_prompt_ranks_the_criteria_just_below_the_request(room):
-    """The decide system prompt lists acceptance_criteria_markdown directly
-    below current_user_request and carries the code-owned authority sentence,
-    so the model treats the criteria as binding rather than as one more piece
-    of context.
+    """The decide turn_instructions section lists acceptance_criteria_markdown
+    directly below current_user_request and carries the code-owned authority
+    sentence, so the model treats the criteria as binding rather than as one
+    more piece of context.
     The module constant is the un-swapped literal and mentions neither — the
     two variants stay readable exactly as the model receives them."""
-    from agents.assistant import ASSISTANT_SYSTEM_PROMPT
+    from agents.assistant import DECIDE_TURN_INSTRUCTIONS
 
-    assert "acceptance_criteria_markdown" not in ASSISTANT_SYSTEM_PROMPT
+    assert "acceptance_criteria_markdown" not in DECIDE_TURN_INSTRUCTIONS
     agent = _agent()
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    system = prompts[0]["system"]
-    assert ('<source rank="3">reply_language_markdown' in system)
-    assert ('<source rank="4">acceptance_criteria_markdown' in system)
-    assert '<source rank="2">current_user_request</source>' in system
-    assert "acceptance_criteria_markdown is the established plan" in system
+    user = prompts[0]["user"]
+    assert ('<source rank="3">reply_language_markdown' in user)
+    assert ('<source rank="4">acceptance_criteria_markdown' in user)
+    assert '<source rank="2">current_user_request</source>' in user
+    assert "acceptance_criteria_markdown is the established plan" in user
     # The other sources are still all ranked (shifted, not dropped).
-    assert '<source rank="8">conversation_history_xml (context only)</source>' in system
+    assert '<source rank="8">conversation_history_xml (context only)</source>' in user
 
 
 def test_step0_consumes_none_of_the_step_limit(room):
@@ -356,7 +357,7 @@ def test_failed_criteria_call_is_fail_open(room):
 
 
 def test_system_prompt_excludes_response_language():
-    prompt = AssistantAgent._acceptance_criteria_system_prompt()
+    prompt = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
     assert "response_language" not in prompt
     assert "Language rules" not in prompt
     assert "processing" in prompt
@@ -388,7 +389,7 @@ def test_system_prompt_offers_no_empty_exit_and_no_copyable_example():
     """The observed failure was not a schema difficulty: the call filled two
     fields and reasoned itself out of the third, then copied the prompt's
     worked example verbatim into the first. Neither invitation survives."""
-    prompt = AssistantAgent._acceptance_criteria_system_prompt()
+    prompt = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
     assert "Empty when none apply" not in prompt
     assert "target unit: meters" not in prompt      # nothing to parrot
     assert "formatting guide line by line" in prompt
@@ -405,7 +406,7 @@ def test_system_prompt_forbids_naming_where_the_facts_come_from():
     Choosing a source is the assistant's decision, taken with a read. The
     criteria constrain the shape of the reply, never where its content is
     found."""
-    prompt = AssistantAgent._acceptance_criteria_system_prompt()
+    prompt = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
     assert "never name a source" in prompt
     assert "conversation history" in prompt          # named as the trap it is
     assert "never settle what the answer" in prompt
@@ -421,10 +422,10 @@ def test_criteria_never_license_skipping_a_read(room):
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    system = prompts[0]["system"]
-    assert "acceptance_criteria_markdown is the established plan" in system
-    assert "never where its facts come from" in system
-    assert "does not satisfy the read requirement" in system
+    user = prompts[0]["user"]
+    assert "acceptance_criteria_markdown is the established plan" in user
+    assert "never where its facts come from" in user
+    assert "does not satisfy the read requirement" in user
 
 
 def test_the_read_rule_covers_questions_about_the_user_s_own_life(room):
@@ -437,9 +438,9 @@ def test_the_read_rule_covers_questions_about_the_user_s_own_life(room):
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    system = prompts[0]["system"]
-    assert "Earlier messages are context, not a source of facts." in system
-    assert "their own life, the people in it" in system
+    user = prompts[0]["user"]
+    assert "Earlier messages are context, not a source of facts." in user
+    assert "their own life, the people in it" in user
 
 
 def test_the_read_rule_separates_facts_from_what_the_request_refers_to(room):
@@ -456,10 +457,10 @@ def test_the_read_rule_separates_facts_from_what_the_request_refers_to(room):
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    system = prompts[0]["system"]
-    assert "Earlier messages are context, not a source of facts." in system
-    assert "what the request refers to is a different question" in system
-    assert "take their subject from the exchange before them" in system
+    user = prompts[0]["user"]
+    assert "Earlier messages are context, not a source of facts." in user
+    assert "what the request refers to is a different question" in user
+    assert "take their subject from the exchange before them" in user
 
 
 def test_clarifying_question_is_not_for_a_referent_the_history_supplies(room):
@@ -471,9 +472,9 @@ def test_clarifying_question_is_not_for_a_referent_the_history_supplies(room):
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    system = prompts[0]["system"]
-    assert "already answers it" in system
-    assert "resolve the subject and read" in system
+    user = prompts[0]["user"]
+    assert "already answers it" in user
+    assert "resolve the subject and read" in user
 
 
 def test_criteria_may_resolve_a_referent_without_nominating_a_source(room):
@@ -482,7 +483,7 @@ def test_criteria_may_resolve_a_referent_without_nominating_a_source(room):
     stopped it carrying a subject the transcript unambiguously supplies, so it
     recorded "the content retrieval area remains ambiguous" and the decide step
     took that as licence to ask. Reference is not a source."""
-    prompt = AssistantAgent._acceptance_criteria_system_prompt()
+    prompt = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
     assert "never name a source" in prompt
     assert "Carrying that subject over is not naming a source" in prompt
 
@@ -514,9 +515,9 @@ def test_a_relation_on_the_carried_subject_moves_the_subject(room):
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    system = prompts[0]["system"]
-    assert "names a relation on that subject" in system
-    assert "not the one you reached them through" in system
+    user = prompts[0]["user"]
+    assert "names a relation on that subject" in user
+    assert "not the one you reached them through" in user
 
 
 def test_a_read_that_misses_the_new_subject_is_not_answered_with_the_old(room):
@@ -529,8 +530,8 @@ def test_a_read_that_misses_the_new_subject_is_not_answered_with_the_old(room):
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    system = prompts[0]["system"]
-    assert "say that nothing is stored about them" in system
+    user = prompts[0]["user"]
+    assert "say that nothing is stored about them" in user
 
 
 def test_reply_audit_sees_the_conversation_it_needs_to_resolve_a_referent(room):
@@ -560,8 +561,8 @@ def test_reply_audit_prompt_names_the_history_as_referent_only(room):
     """The auditor must not start checking the reply against remembered facts
     it reads off the transcript — that is the failure the observations exist to
     prevent. The history is there to resolve who is being asked about."""
-    assert "resolve what the request refers to" in REPLY_AUDIT_SYSTEM_PROMPT
-    assert "not evidence for what is true" in REPLY_AUDIT_SYSTEM_PROMPT
+    assert "resolve what the request refers to" in REPLY_AUDIT_TURN_INSTRUCTIONS
+    assert "not evidence for what is true" in REPLY_AUDIT_TURN_INSTRUCTIONS
 
 
 def test_an_empty_read_is_retried_broadly_before_reporting_nothing(room):
@@ -580,11 +581,11 @@ def test_an_empty_read_is_retried_broadly_before_reporting_nothing(room):
     _stub_criteria_seam(agent, [_criteria("step0")])
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    system = prompts[0]["system"]
-    assert "query the name on its own" in system
-    assert "before you report that nothing is stored" in system
+    user = prompts[0]["user"]
+    assert "query the name on its own" in user
+    assert "before you report that nothing is stored" in user
     # Bounded: one broader retry, not an open-ended search.
-    assert "one broader query" in system
+    assert "one broader query" in user
 
 
 def test_criteria_history_carries_both_roles(room):
@@ -627,10 +628,12 @@ def test_revision_prompt_carries_prior_criteria_and_observations(room):
     assert "the operator wants altitude in feet" in revision
     assert "invalidate" in revision  # "what changed, which criteria does it invalidate?"
     # The step-0 prompt has neither: identical inputs would make a revision
-    # the no-op it is — detectable by the absent sections.
+    # the no-op it is — detectable by the absent sections. (The word
+    # "invalidate" alone no longer discriminates: turn_instructions carries
+    # it unconditionally now, describing what a revision does.)
     step0 = agent._build_acceptance_criteria_prompt(messages)
     assert "<prior_acceptance_criteria" not in step0
-    assert "invalidate" not in step0
+    assert "Emit the full revised criteria" not in step0
 
 
 # --- code-driven refresh after a flagged write --------------------------------
@@ -714,7 +717,7 @@ def test_model_requested_revision_costs_a_step_and_replaces_criteria(room):
         "target unit: meters (revised)")
     assert "<prior_acceptance_criteria" in data.get("user_prompt", "")
     assert "You establish the acceptance criteria" in data.get(
-        "system_prompt", "")
+        "user_prompt", "")
 
 
 def test_identical_revision_is_reported_as_a_no_op(room):

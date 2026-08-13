@@ -19,7 +19,7 @@ from agents.assistant import (
     CAPABILITIES,
     AssistantActionName,
     AssistantAgent,
-    SECOND_OPINION_SYSTEM_PROMPT,
+    SECOND_OPINION_TURN_INSTRUCTIONS,
     AssistantStepDecision,
     SecondOpinionVerdict,
     problem_texts,
@@ -169,7 +169,7 @@ def test_each_rejection_ground_names_its_category_tag():
     classifying afresh."""
     for category in ("not_asked", "identity_mismatch", "logic_error",
                      "sandbox_infeasible", "reason_mismatch"):
-        assert category in SECOND_OPINION_SYSTEM_PROMPT
+        assert category in SECOND_OPINION_TURN_INSTRUCTIONS
 
 
 def test_problem_texts_reads_both_shapes():
@@ -455,7 +455,7 @@ def test_review_prompt_carries_all_artifacts_under_review(monkeypatch):
     assert approved is True
     assert review["approved"] is True and review["group_from"] == "second_opinion"
     [(system_prompt, user_prompt)] = prompts
-    assert "second-opinion reviewer" in system_prompt
+    assert "second-opinion reviewer" in user_prompt
     assert "how much is 12 feet?" in user_prompt
     assert "compute the conversion" in user_prompt          # stated_reason
     assert "the operator is metric" in user_prompt          # model_reasoning
