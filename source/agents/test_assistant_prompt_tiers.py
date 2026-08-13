@@ -21,6 +21,7 @@ from agents.assistant import (
     _render_sections,
 )
 
+
 @pytest.fixture
 def fully_populated_agent():
     """An agent with every tier-1 block set, so the order test sees them all.
