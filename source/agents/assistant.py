@@ -4158,16 +4158,18 @@ class AssistantAgent(ModelGroupAgent):
         current = messages[-1] if messages else None
         context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
 
+        # Tier 0 of the user prompt: the request. It changes every turn, but
+        # within a turn it is byte-identical across every call and every step,
+        # and it is unbounded up to CURRENT_REQUEST_MAX_CHARS — a pasted
+        # document makes it the largest invariant a turn has. It leads because
+        # the calls carry different-length static heads: anything placed after
+        # those heads sits at a different offset in each prompt and can never
+        # be shared between them. The closing decision_request re-quotes it, so
+        # the model still reads the question last (see _request_anchor).
+        self._append_current_user_request(root, current)
+
         # Tier 1: static head.
         self._append_static_head(root)
-
-        # Tier 1b: the request. It changes every turn, but it is byte-identical
-        # across every call and every step WITHIN a turn, and it is unbounded
-        # up to CURRENT_REQUEST_MAX_CHARS — a pasted document makes it the
-        # largest invariant the turn has. Ahead of turn_instructions so the six
-        # calls share it too; the closing decision_request re-quotes it, so the
-        # model still reads the question last (see _request_anchor).
-        self._append_current_user_request(root, current)
 
         # Tier 2: what this call is for.
         self._append_turn_instructions(root, self._decide_turn_instructions())
@@ -4440,11 +4442,13 @@ class AssistantAgent(ModelGroupAgent):
         root = ET.Element("second_opinion_review")
         current = messages[-1] if messages else None
 
+        # Leads for the same reason as the decide prompt: it is the turn's
+        # largest cross-call invariant, and only position 0 shares it between
+        # calls whose static heads differ in length. verdict_request
+        # re-anchors it below.
+        self._append_current_user_request(root, current)
         self._append_static_head(
             root, blocks=("identity", "formatting", "profile"))
-        # Tier 1b — invariant across every call of the turn, so it precedes
-        # turn_instructions; verdict_request below re-anchors it.
-        self._append_current_user_request(root, current)
         self._append_turn_instructions(root, SECOND_OPINION_TURN_INSTRUCTIONS)
 
         if self._reply_language_markdown:
@@ -4526,12 +4530,12 @@ class AssistantAgent(ModelGroupAgent):
         """
         root = ET.Element("reply_audit")
         current = messages[-1] if messages else None
-        self._append_static_head(root, blocks=("identity", "formatting"))
-        # Tier 1b — invariant across every call of the turn, so it precedes
-        # turn_instructions. Unlike the other prompts this one has no closing
-        # re-anchor; proposed_reply at the tail is what the auditor reads last,
-        # and check 1 of its instructions sends it back to the request.
+        # Leads for the same reason as the decide prompt. Unlike the others
+        # this prompt has no closing re-anchor: proposed_reply at the tail is
+        # what the auditor reads last, and check 1 of its instructions sends it
+        # back to the request.
         self._append_current_user_request(root, current)
+        self._append_static_head(root, blocks=("identity", "formatting"))
         self._append_turn_instructions(root, REPLY_AUDIT_TURN_INSTRUCTIONS)
         context = (messages[:-1] if messages else [])[
             -self.REPLY_AUDIT_MAX_MESSAGES:]
@@ -4751,14 +4755,14 @@ class AssistantAgent(ModelGroupAgent):
         than from the shared identity/persona/formatting blocks, so it leads
         the prompt in that role instead."""
         root = ET.Element("response_language_classifier_call")
+        # Leads for the same reason as the decide prompt; the
+        # classification_request below re-anchors it.
+        current = messages[-1] if messages else None
+        self._append_current_user_request(root, current)
+
         rows = ET.SubElement(root, "user_settings_languages_json")
         candidates = user_profile.declared_language_candidates(profile)
         rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
-
-        # Tier 1b — invariant across every call of the turn, so it precedes
-        # turn_instructions; classification_request below re-anchors it.
-        current = messages[-1] if messages else None
-        self._append_current_user_request(root, current)
 
         self._append_turn_instructions(root, RESPONSE_LANGUAGE_TURN_INSTRUCTIONS)
 
@@ -5223,14 +5227,14 @@ class AssistantAgent(ModelGroupAgent):
         # switch (see that method's docstring), so it stays a bespoke append
         # rather than going through _append_static_head's generic
         # "formatting" block.
+        # Leads for the same reason as the decide prompt; criteria_request
+        # below re-anchors it.
+        self._append_current_user_request(root, current)
         self._append_static_head(root, blocks=("identity",))
         guide = self._criteria_formatting_guide()
         if guide:
             formatting = ET.SubElement(root, "formatting_guide")
             formatting.text = guide
-        # Tier 1b — invariant across every call of the turn, so it precedes
-        # turn_instructions; criteria_request below re-anchors it.
-        self._append_current_user_request(root, current)
         self._append_turn_instructions(
             root, ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
 

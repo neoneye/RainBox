@@ -1,14 +1,22 @@
-"""Prompt tier order: static head, turn_instructions, dynamic tail.
+"""Prompt tier order: request, static head, turn_instructions, dynamic tail.
 
 The tiers exist so a backend that reuses a matched prefix gets one to reuse.
-The large win is within one call: consecutive steps of a decide loop share
-their whole prefix through the previous step's own entry (measured at 18555
-shared characters between two real steps). Across the six different calls the
-shared prefix is small — each call passes its own subset of tier-1 blocks to
-_append_static_head, so two calls share only up to the first block one of
-them omits (measured at 51-67 bytes; the classifier and summary calls carry
-no static head at all, so their cross-call share is near zero). Order is
-still the whole property this file asserts, so it gets checked directly
+
+Two wins, measured. Within one call, consecutive steps of a decide loop share
+their whole prefix through the previous step's own entry (18555 shared
+characters between two real steps). Across the six different calls of one
+turn, current_user_request leads every prompt: it changes each turn but is
+byte-identical across every call and step within one, and it is unbounded up
+to CURRENT_REQUEST_MAX_CHARS, so a pasted document makes it the turn's largest
+invariant. Position 0 is the only place it can be shared, because the calls
+carry different-length static heads and anything after them sits at a
+different offset in each prompt. Behind it, _ALL_STATIC_BLOCKS is ordered so
+the per-call block sets nest (criteria then audit then second_opinion then
+decide), which extends the overlap past the request into the blocks two calls
+have in common. On a 5158-char request that took cross-call sharing from 619
+chars to 5823-7381.
+
+Order is the whole property this file asserts, so it gets checked directly
 rather than implied by content tests.
 """
 import os
@@ -170,12 +178,16 @@ def section_order(prompt: str) -> list[str]:
 
 
 DECIDE_EXPECTED = [
+    # tier 0 — the turn's largest cross-call invariant. Leads because the
+    # calls carry different-length static heads, so anything after them sits
+    # at a different offset per prompt and can never be shared between them.
+    # (current_user_request_summary_markdown follows it whenever the request
+    # was truncated; this fixture's request is short, and the exact-equality
+    # check below would reject a section the builder legitimately skipped.)
+    "current_user_request",
     # tier 1 — ordered so the per-call block sets nest (see _ALL_STATIC_BLOCKS)
     "user_settings_json", "formatting_guide", "user_profile",
     "assistant_persona", "knowledge_calibration",
-    # tier 1b — invariant across every call of the turn, ahead of tier 2 so
-    # the six calls share it; decision_request re-anchors it at the tail
-    "current_user_request",
     # tier 2
     "turn_instructions",
     # tier 3
@@ -198,8 +210,9 @@ def test_decide_prompt_follows_tier_order(fully_populated_agent):
 def test_decide_prompt_leads_with_the_request_and_re_anchors_it(
     fully_populated_agent,
 ):
-    """The request sits in tier 1b — above turn_instructions, so all six calls
-    of a turn share it — and decision_request quotes it back at the tail, so
+    """The request leads the prompt — position 0, so all six calls of a turn
+    share it whatever their static heads cost — and decision_request quotes it
+    back at the tail, so
     the model still reads the question last. Both halves matter: the position
     is the cache win, the re-anchor is what stops a step answering the newest
     message in conversation_history_xml instead (see _request_anchor)."""
@@ -209,9 +222,8 @@ def test_decide_prompt_leads_with_the_request_and_re_anchors_it(
 
     order = section_order(prompt)
     assert order[-1] == "current_local_time"
+    assert order[0] == "current_user_request"
     assert order.index("current_user_request") < order.index("turn_instructions")
-    assert order.index("current_user_request") < order.index(
-        "conversation_history_xml")
     # The re-anchor: the request's own words, after the history.
     tail = prompt[prompt.index("<decision_request"):]
     assert "hello" in tail
@@ -229,16 +241,16 @@ def sample_decision():
 
 
 CRITERIA_EXPECTED = [
-    "user_settings_json", "formatting_guide",
     "current_user_request", "current_user_request_summary_markdown",
+    "user_settings_json", "formatting_guide",
     "turn_instructions",
     "conversation_history_xml", "prior_acceptance_criteria",
     "current_turn_steps", "criteria_request",
 ]
 
 SECOND_OPINION_EXPECTED = [
-    "user_settings_json", "formatting_guide", "user_profile",
     "current_user_request",
+    "user_settings_json", "formatting_guide", "user_profile",
     "turn_instructions",
     "reply_language_markdown", "acceptance_criteria_markdown",
     "proposed_step", "verdict_request", "current_local_time",
@@ -283,8 +295,8 @@ def test_second_opinion_prompt_follows_tier_order(
 
 
 AUDIT_EXPECTED = [
-    "user_settings_json", "formatting_guide",
     "current_user_request",
+    "user_settings_json", "formatting_guide",
     "turn_instructions",
     "conversation_history_xml", "acceptance_criteria_markdown",
     "reply_language_markdown", "turn_observations", "proposed_reply",
@@ -297,8 +309,8 @@ AUDIT_EXPECTED = [
 # though _append_current_user_request always renders it; it is included here
 # so the equality check below stays accurate against what the builder emits.
 CLASSIFIER_EXPECTED = [
-    "user_settings_languages_json",
     "current_user_request",
+    "user_settings_languages_json",
     "turn_instructions",
     "conversation_history_xml", "classification_request",
 ]
@@ -389,22 +401,20 @@ def common_prefix_len(a: str, b: str) -> int:
     return len(os.path.commonprefix([a, b]))
 
 
-def test_decide_and_audit_prompts_share_the_static_head(fully_populated_agent):
-    """decide and audit both lead with _append_static_head, so whatever they
-    render in common must land byte-for-byte at the start of both strings.
+def test_decide_and_audit_prompts_share_the_request_and_static_head(
+    fully_populated_agent,
+):
+    """Both prompts lead with current_user_request, then the tier-1 blocks
+    they have in common, so all of that must land byte-for-byte at the start
+    of both strings.
 
-    They do NOT carry the same tier-1 block *set* — decide takes all five
-    static blocks (identity, persona, formatting, calibration, profile) via
-    the default `blocks=_ALL_STATIC_BLOCKS`, audit takes only
-    `("identity", "formatting")`. Because persona sits between identity and
-    formatting in decide's rendering but is absent from audit's, the two
-    prompts diverge as soon as decide emits assistant_persona and audit
-    emits formatting_guide in its place — confirmed empirically, not
-    assumed. So the guaranteed literal-prefix overlap between these two
-    specific calls is the identity block alone; that is inherent to the
-    current per-call block selection (worth a look if the real prefix-cache
-    win is meant to include formatting_guide too), not something a
-    tests-only task should paper over."""
+    The request leads because the two calls carry different-length static
+    heads — decide takes all five blocks via the default
+    `blocks=_ALL_STATIC_BLOCKS`, audit takes only ("identity", "formatting")
+    — so anything placed after those heads sits at a different offset in each
+    prompt and can never be shared. With the request at position 0 and
+    _ALL_STATIC_BLOCKS ordered so audit's set is a prefix of decide's, the
+    overlap runs through the request and on into formatting_guide."""
     agent = fully_populated_agent
     messages = [{"sender_type": "human", "text": "what is 2+2"}]
 
@@ -414,14 +424,16 @@ def test_decide_and_audit_prompts_share_the_static_head(fully_populated_agent):
         "four", messages=messages, scratchpad=[])
 
     shared = common_prefix_len(decide, audit)
-    # A slice shorter than the target string can never satisfy startswith,
-    # so this also pins a lower bound on `shared` — not merely that some
-    # prefix is shared, but that the whole identity section is in it.
+    # A slice shorter than the target can never satisfy startswith, so this
+    # pins a lower bound on `shared`, not merely that something is shared.
     assert decide[:shared].startswith(
-        "<user_settings_json>identity</user_settings_json>")
-    # And the divergence point is real: decide's next section (persona)
-    # is not swallowed into the "shared" slice by accident.
-    assert "<assistant_persona" not in decide[:shared]
+        "<current_user_request>what is 2+2</current_user_request>")
+    # Nesting: audit's whole static head is inside the shared region, so the
+    # overlap does not stop at the first block decide carries and audit does
+    # not. Reordering _ALL_STATIC_BLOCKS to put persona or calibration before
+    # formatting would break this.
+    assert "<user_settings_json>identity</user_settings_json>" in decide[:shared]
+    assert "<formatting_guide" in decide[:shared]
 
 
 def test_consecutive_decide_steps_share_everything_before_the_new_step(
