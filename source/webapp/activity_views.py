@@ -421,7 +421,10 @@ ACTIVITY_TEMPLATE = """
      The nav pins its own background for the same reason. */
   body { margin: 0; font-family: system-ui, sans-serif; color: #1a1a2e;
          background: #fff; }
-  .pp-act { max-width: 1180px; margin: 1rem auto; padding: 0 1rem 3rem; }
+  /* Full-bleed. The tables are the point of this page and they are wide — ten
+     columns, three of which (model, caller, origin) are long identifiers that
+     get unreadable when squeezed. Prose keeps its own measure; see .reading. */
+  .pp-act { margin: 1rem 0; padding: 0 1rem 3rem; }
   .pp-act h1 { margin: 0.2rem 0 0.2rem; }
   .pp-act .sub { color: #6c757d; margin: 0 0 1.2rem; }
   .pp-act .bar { display: flex; gap: 0.6rem; align-items: center;
