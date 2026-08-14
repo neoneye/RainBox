@@ -695,12 +695,12 @@ ACTIVITY_TEMPLATE = """
         <th>Model</th>
         <th>Caller</th>
         <th>Origin</th>
-        <th class="num" title="Prompt tokens sent on this call. Hover a cell for the exact count.">Prompt</th>
-        <th class="num" title="Prompt tokens the runtime evidently reused. Reported by the provider where it says so, otherwise inferred from prefill timing — each cell's hover says which.">Cached</th>
+        <th class="num" title="Prompt tokens sent on this call.">Prompt</th>
+        <th class="num" title="Prompt tokens the runtime evidently reused. Reported by the provider where it says so, otherwise inferred from prefill timing.">Cached</th>
         <th class="num" title="Prompt tokens rainbox had already sent before this call: what a perfect cache could have reused. Exact, and needs no provider cooperation.">Reusable</th>
-        <th class="num" title="Tokens the model generated in reply — the &quot;Completion tokens&quot; metric, per call. Hover a cell for the exact count.">Output</th>
-        <th class="num" title="Time spent processing the prompt before the first output token. Hover a cell for the exact milliseconds.">Prefill</th>
-        <th class="num" title="Wall-clock time for the whole call. Hover a cell for the exact milliseconds.">Total</th>
+        <th class="num" title="Tokens the model generated in reply — the &quot;Completion tokens&quot; metric, per call.">Output</th>
+        <th class="num" title="Time spent processing the prompt before the first output token.">Prefill</th>
+        <th class="num" title="Wall-clock time for the whole call.">Total</th>
         <th></th>
       </tr>
       {% for call in recent %}
