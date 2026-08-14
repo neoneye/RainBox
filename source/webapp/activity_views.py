@@ -122,16 +122,58 @@ def pick_bucket_seconds(span_seconds: float) -> int:
 # --- Formatting -------------------------------------------------------------
 
 
+# Digit-group separator for four-digit counts. One knob, one place: switch it
+# to "," or " " and every grouped number on the page follows.
+_GROUP_SEP: str = "."
+
+_SI_UNITS: tuple[tuple[float, str], ...] = ((1e9, "B"), (1e6, "M"), (1e3, "k"))
+
+
 def si(value: float | int | None) -> str:
-    """Compact magnitude: 8.2M rather than 8231904."""
+    """Compact magnitude, five characters wide from a thousand upwards:
+    999, 1.000, 9.999, 10.0k, 999.9k, 8.2M.
+
+    Four-digit counts keep all four digits. Abbreviating 2234 to "2.2k" throws
+    away exactly the precision that makes a number comparable against what a
+    provider's own dashboard reports, and saves nothing — "1.000" and "10.0k"
+    occupy the same width. Above 9999 the abbreviation earns its place."""
     if value is None:
         return "—"
     value = float(value)
-    for limit, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "k")):
-        if abs(value) >= limit:
-            trimmed = value / limit
-            return f"{trimmed:.1f}".rstrip("0").rstrip(".") + suffix
-    return f"{value:.0f}"
+    magnitude = abs(value)
+    if magnitude < 10_000:
+        return f"{value:,.0f}".replace(",", _GROUP_SEP)
+    for limit, suffix in _SI_UNITS:
+        # 0.9995 promotes the values that would otherwise round up into a
+        # nonsense unit, so 999_999 reads as 1.0M and never as 1000.0k.
+        if magnitude >= limit * 0.9995:
+            return f"{value / limit:.1f}{suffix}"
+    return f"{value:,.0f}".replace(",", _GROUP_SEP)
+
+
+def exact(value: float | int | None, unit: str = "") -> str:
+    """Full-precision hover text for a cell that si()/ms() abbreviates.
+
+    Plain digits, ungrouped, so the number can be read or pasted straight
+    against a provider's own reporting without anyone having to agree on what
+    a separator means."""
+    if value is None:
+        return "not recorded"
+    return f"{value:,.0f}".replace(",", "") + (f" {unit}" if unit else "")
+
+
+def cached_title(call: Any) -> str:
+    """Hover text for a Cached cell, which carries the one distinction the
+    number alone hides: whether the provider reported the figure or rainbox
+    inferred it from prefill timing."""
+    if call.cached_tokens_reported is not None:
+        return f"{exact(call.cached_tokens_reported, 'tokens')} — reported by the provider"
+    if call.cached_tokens_estimated is not None:
+        return (
+            f"{exact(call.cached_tokens_estimated, 'tokens')} — estimated from "
+            "prefill timing, not reported"
+        )
+    return "not recorded"
 
 
 def pct(value: float | None) -> str:
@@ -359,6 +401,8 @@ def build_context(args: Any, now: datetime) -> dict:
         ],
         "min_calibration_calls": MIN_CALIBRATION_CALLS,
         "si": si,
+        "exact": exact,
+        "cached_title": cached_title,
         "pct": pct,
         "ms": ms,
         "duration": duration,
@@ -593,10 +637,10 @@ ACTIVITY_TEMPLATE = """
                            if metric in row else '—' }}</td>
         <td class="num {{ 'warn' if row.judged_calls == 0 }}">{{ hit_rate_cell(row) }}</td>
         <td class="num">{{ pct(row.reusable_rate) }}</td>
-        <td class="num">{{ si(row.prompt_tokens) }}</td>
+        <td class="num" title="{{ exact(row.prompt_tokens, 'tokens') }}">{{ si(row.prompt_tokens) }}</td>
         <td class="num">{{ (row.avg_prefill_tps|round|int ~ ' tok/s')
                            if row.avg_prefill_tps else '—' }}</td>
-        <td class="num">{{ ms(row.p50_latency_ms) }}</td>
+        <td class="num" title="{{ exact(row.p50_latency_ms, 'ms') }}">{{ ms(row.p50_latency_ms) }}</td>
         <td class="num">{{ duration(row.seconds_saved) }}</td>
       </tr>
       {% endfor %}
@@ -633,8 +677,8 @@ ACTIVITY_TEMPLATE = """
         <td class="num">{{ row.calls }}</td>
         <td class="num {{ 'warn' if row.judged_calls == 0 }}">{{ hit_rate_cell(row) }}</td>
         <td class="num">{{ pct(row.reusable_rate) }}</td>
-        <td class="num">{{ si(row.prompt_tokens) }}</td>
-        <td class="num">{{ ms(row.p50_latency_ms) }}</td>
+        <td class="num" title="{{ exact(row.prompt_tokens, 'tokens') }}">{{ si(row.prompt_tokens) }}</td>
+        <td class="num" title="{{ exact(row.p50_latency_ms, 'ms') }}">{{ ms(row.p50_latency_ms) }}</td>
         <td class="num">{{ duration(row.seconds_saved) }}</td>
       </tr>
       {% endfor %}
@@ -651,11 +695,11 @@ ACTIVITY_TEMPLATE = """
         <th>Model</th>
         <th>Caller</th>
         <th>Origin</th>
-        <th class="num">Prompt</th>
-        <th class="num">Cached</th>
-        <th class="num">Reusable</th>
-        <th class="num">Prefill</th>
-        <th class="num">Total</th>
+        <th class="num" title="Prompt tokens sent on this call. Hover a cell for the exact count.">Prompt</th>
+        <th class="num" title="Prompt tokens the runtime evidently reused. Reported by the provider where it says so, otherwise inferred from prefill timing — each cell's hover says which.">Cached</th>
+        <th class="num" title="Prompt tokens rainbox had already sent before this call: what a perfect cache could have reused. Exact, and needs no provider cooperation.">Reusable</th>
+        <th class="num" title="Time spent processing the prompt before the first output token. Hover a cell for the exact milliseconds.">Prefill</th>
+        <th class="num" title="Wall-clock time for the whole call. Hover a cell for the exact milliseconds.">Total</th>
         <th></th>
       </tr>
       {% for call in recent %}
@@ -665,13 +709,13 @@ ACTIVITY_TEMPLATE = """
         <td class="name">{{ call.model or '—' }}</td>
         <td class="muted">{{ call.caller }}</td>
         <td class="muted origin">{{ call.origin or '—' }}</td>
-        <td class="num">{{ si(call.prompt_tokens) }}</td>
-        <td class="num">{{ si(call.cached_tokens_reported
+        <td class="num" title="{{ exact(call.prompt_tokens, 'tokens') }}">{{ si(call.prompt_tokens) }}</td>
+        <td class="num" title="{{ cached_title(call) }}">{{ si(call.cached_tokens_reported
                               if call.cached_tokens_reported is not none
                               else call.cached_tokens_estimated) }}</td>
-        <td class="num">{{ si(call.reusable_prefix_tokens) }}</td>
-        <td class="num">{{ ms(call.prefill_ms) }}</td>
-        <td class="num">{{ ms(call.total_ms) }}</td>
+        <td class="num" title="{{ exact(call.reusable_prefix_tokens, 'tokens') }}">{{ si(call.reusable_prefix_tokens) }}</td>
+        <td class="num" title="{{ exact(call.prefill_ms, 'ms') }}">{{ ms(call.prefill_ms) }}</td>
+        <td class="num" title="{{ exact(call.total_ms, 'ms') }}">{{ ms(call.total_ms) }}</td>
         <td>{% if not call.ok %}<span class="bad">{{ call.error_category
             or 'failed' }}</span>{% endif %}</td>
       </tr>

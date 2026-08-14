@@ -2,6 +2,7 @@
 get wrong — no data at all, and a model that hasn't calibrated yet."""
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -13,6 +14,8 @@ from webapp.activity_views import (
     DEFAULT_METRIC,
     _hit_rate_cell,
     build_chart,
+    cached_title,
+    exact,
     pick_bucket_seconds,
     resolve_range,
     si,
@@ -310,12 +313,62 @@ class TestChartGeometry:
 class TestFormatting:
     def test_large_counts_are_compact(self):
         assert si(8_231_904) == "8.2M"
-        assert si(1500) == "1.5k"
+        assert si(16_400) == "16.4k"
         assert si(42) == "42"
+
+    def test_four_digit_counts_keep_all_four_digits(self):
+        """Abbreviating these loses the precision that makes a count
+        comparable against a provider's own reporting, and saves no width."""
+        assert si(1000) == "1.000"
+        assert si(2234) == "2.234"
+        assert si(9999) == "9.999"
+
+    def test_abbreviation_starts_at_five_digits(self):
+        assert si(9999) == "9.999"
+        assert si(10_000) == "10.0k"
+
+    def test_a_value_never_rounds_up_into_a_nonsense_unit(self):
+        assert si(999_999) == "1.0M"
+        assert si(999_400) == "999.4k"
+
+    def test_negative_counts_group_the_same_way(self):
+        assert si(-2234) == "-2.234"
 
     def test_nothing_is_an_em_dash_not_a_zero(self):
         """A missing measurement and a measured zero are different facts."""
         assert si(None) == "—"
+        assert si(0) == "0"
+
+
+class TestExactHoverText:
+    def test_digits_are_ungrouped_so_they_can_be_pasted_anywhere(self):
+        assert exact(2234, "tokens") == "2234 tokens"
+        assert exact(16_412, "ms") == "16412 ms"
+
+    def test_a_unit_is_optional(self):
+        assert exact(2234) == "2234"
+
+    def test_a_missing_measurement_says_so(self):
+        assert exact(None, "tokens") == "not recorded"
+
+    def test_cached_hover_names_the_source_of_the_number(self):
+        """The number alone can't say whether the provider reported it or
+        rainbox inferred it from prefill timing — the distinction the page
+        exists to keep visible."""
+        reported = SimpleNamespace(
+            cached_tokens_reported=1523, cached_tokens_estimated=900
+        )
+        estimated = SimpleNamespace(
+            cached_tokens_reported=None, cached_tokens_estimated=1400
+        )
+        missing = SimpleNamespace(
+            cached_tokens_reported=None, cached_tokens_estimated=None
+        )
+        assert cached_title(reported) == "1523 tokens — reported by the provider"
+        assert cached_title(estimated) == (
+            "1400 tokens — estimated from prefill timing, not reported"
+        )
+        assert cached_title(missing) == "not recorded"
 
 
 class TestAdminCoverage:
