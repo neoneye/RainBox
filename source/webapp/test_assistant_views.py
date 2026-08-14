@@ -1436,3 +1436,77 @@ def test_the_markdown_export_keeps_the_whole_trigger_message(app_ctx, client):
         assert "show all" not in md
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def _recall_filter_step(run, *, mode="llm"):
+    """One settled memory_query step whose observation data carries the recall
+    filter's payload — the nested model call the action makes to score what it
+    recalled."""
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="memory_query",
+        reason="look up what languages the operator knows",
+        args={"query": "programming languages"})
+    rf = {
+        "mode": mode,
+        "group_from": "query_filter_router",
+        "scorer_model": "granite4:tiny-h",
+        "scorer_model_uuid": str(uuid4()),
+        "usage": {"input": 3100, "output": 216, "ms": 2500},
+        "system_prompt": "You score recalled candidates for relevance.",
+        "user_prompt": "<candidates>rows go here</candidates>",
+        "reasoning": "Two rows answer the question; the rest are unrelated.",
+        "candidates": [],
+    }
+    if mode != "llm":
+        rf = {"mode": mode, "reason": "no_model_group"}
+    db.settle_assistant_step(
+        step, phase="observed", observation_preview="found 2 facts",
+        observation={"ok": True, "text": "found 2 facts",
+                     "data": {"recall_filter": rf}})
+    return step
+
+
+def test_recall_filter_renders_as_its_own_block_with_its_prompts(app_ctx, client):
+    """The filter is a second model call, on a different model group, nested
+    inside one memory_query action and with no step row of its own. It gets the
+    same treatment as the second opinion: its own labelled block carrying the
+    scorer model, the cost, and both prompts — rather than an anonymous JSON
+    dump inside the action result."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _recall_filter_step(run)
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        # "recall filter" also appears in the LLM-calls tooltip, so anchor on
+        # the io-label the step block renders.
+        label = '<div class="io-label">recall filter'
+        assert label in body
+        # The model is the point: it is usually NOT the assistant's own.
+        assert "granite4:tiny-h" in body
+        assert "group: query_filter_router" in body
+        assert "You score recalled candidates for relevance." in body
+        assert "&lt;candidates&gt;rows go here&lt;/candidates&gt;" in body
+        # Chronologically it runs inside the action, so after the action call.
+        assert body.index("action call") < body.index(label)
+        assert body.index(label) < body.index("action result")
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_gated_recall_filter_has_no_block_because_no_model_ran(app_ctx, client):
+    """A filter that never reached a model has nothing to show — it keeps its
+    one-line note in the action-result data instead of claiming a model-call
+    block that would report no model and no cost."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _recall_filter_step(run, mode="gated")
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert '<div class="io-label">recall filter' not in body
+        assert "no_model_group" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)

@@ -1187,9 +1187,10 @@ def _filter_recalled_candidates(
     # reports how many model calls the run made.
     usage: dict[str, int] = {}
     requested_at = datetime.now(UTC)
+    filter_user_prompt = build_filter_prompt_rows(query, rows)
     decision, scorer_model_uuid = structured_llm_call(
         "assistant.memory_query", model_uuids,
-        FILTER_SYSTEM_PROMPT, build_filter_prompt_rows(query, rows),
+        FILTER_SYSTEM_PROMPT, filter_user_prompt,
         FilterDecision, usage_out=usage,
     )
     try:
@@ -1225,6 +1226,12 @@ def _filter_recalled_candidates(
             "relevancy": s.relevancy, "kept": s.kept,
         }
 
+    # The prompts ride along so the trace can show this call's model request
+    # the way it shows the decide call's and the second opinion's. It is a real
+    # model call the run paid for — nested inside one memory_query action, on
+    # its own model group — and without them it was the one call whose cost
+    # appeared in the run totals with nothing to open. Stored whole, as step
+    # rows already store the (much larger) decide prompts.
     debug = {
         "mode": "llm",
         "group_from": group_from,
@@ -1232,6 +1239,8 @@ def _filter_recalled_candidates(
         "scorer_model_uuid": str(scorer_model_uuid),
         "requested_at": requested_at.isoformat(),
         "usage": usage,
+        "system_prompt": FILTER_SYSTEM_PROMPT,
+        "user_prompt": filter_user_prompt,
         "reasoning": decision.reasoning,
         "candidates": [_debug_row(s) for s in scored],
     }

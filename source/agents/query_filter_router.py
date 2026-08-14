@@ -349,10 +349,17 @@ def structured_llm_call(
 ) -> tuple[BaseModel, UUID]:
     """One structured-output call, falling back through a model group's members
     on failure. Returns (result, answering_model_uuid); raises RuntimeError when
-    no group is bound or every member fails. `agent_name` only labels log/error
-    messages. Free function (not an agent method) so non-agent callers — the
-    assistant's memory_query recall filter, the /memory/developer page — can make
-    the same call against any group's members.
+    no group is bound or every member fails. Free function (not an agent method)
+    so non-agent callers — the assistant's memory_query recall filter, the
+    /memory/developer page — can make the same call against any group's members.
+
+    `agent_name` labels log/error messages AND becomes the call's caller label
+    on /activity. Without the tag, attribution walks the stack for the
+    innermost application frame (llm.activity.call_origin) — which is this
+    function — so every call through here reported as one indistinguishable
+    query_filter_router row, whoever actually made it. Four different assistant
+    jobs (recall filter, second opinion, reply audit, language classifier) come
+    through this helper.
 
     Pass `usage_out` to have this call's cost written into it as
     {input, output, ms} — the same shape as StructuredLLMAgent's `_last_usage`.
@@ -372,6 +379,8 @@ def structured_llm_call(
     # though `.raw` is the parsed model, not a usage dict.
     from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 
+    from llama_index.core.instrumentation.dispatcher import instrument_tags
+
     token_counter = TokenCountingHandler()
     for model_uuid in candidate_model_uuids:
         t0 = time.monotonic()
@@ -388,7 +397,8 @@ def structured_llm_call(
             sllm = the_llm.as_structured_llm(
                 response_model, callback_manager=CallbackManager([token_counter])
             )
-            result = cast(BaseModel, sllm.chat(messages).raw)
+            with instrument_tags({"caller": agent_name}):
+                result = cast(BaseModel, sllm.chat(messages).raw)
             if usage_out is not None:
                 usage_out.update({
                     "input": token_counter.prompt_llm_token_count,

@@ -263,3 +263,33 @@ def test_query_filter_used_events_carry_approximation_metadata(
         assert meta.get("used_signal") == "accepted_candidate_approximation", meta
     finally:
         _cleanup(fresh_tag)
+
+
+def test_structured_llm_call_labels_its_caller_not_this_module():
+    """Attribution otherwise walks the stack for the innermost application
+    frame, which is structured_llm_call itself — so every call through this
+    helper reported as one query_filter_router row whoever made it, and the
+    assistant's four distinct jobs through it were indistinguishable on
+    /activity. agent_name is now the caller tag; llm.activity._caller_from
+    prefers a tag over the derived value."""
+    import inspect
+
+    from agents.query_filter_router import structured_llm_call
+
+    src = inspect.getsource(structured_llm_call)
+    assert 'instrument_tags({"caller": agent_name})' in src
+    # The tag must wrap the call that emits the instrumentation events.
+    tag_at = src.index('instrument_tags({"caller": agent_name})')
+    chat_at = src.index("sllm.chat(messages)")
+    assert tag_at < chat_at
+
+
+def test_activity_prefers_the_caller_tag_over_the_derived_frame():
+    from llm.activity import _caller_from
+
+    assert _caller_from({"caller": "assistant.reply_audit"},
+                        "agents.query_filter_router.structured_llm_call") == (
+        "assistant.reply_audit")
+    # No tag: falls back to whatever the stack derived.
+    assert _caller_from({}, "agents.query_filter_router.structured_llm_call") == (
+        "agents.query_filter_router.structured_llm_call")

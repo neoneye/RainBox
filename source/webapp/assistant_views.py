@@ -576,6 +576,30 @@ ASSISTANT_TEMPLATE = """
         </div>
         {% endif %}
         {% endif %}
+        {% set rf = recall_filter.get(step.uuid|string) %}
+        {% if rf %}
+        <div class="io io-so">
+          {# The memory_query recall filter's own model call. It runs INSIDE
+             the action, after the action call and before the result, on the
+             query_filter_router's model group rather than the assistant's —
+             so it is a second model, mid-decide-loop, that the run pays for
+             and that has no step row of its own. #}
+          <div class="io-label">recall filter{{ io_meta(recall_filter_meta(rf)) }}</div>
+          {% if rf.system_prompt %}
+          <details class="prompt" data-k="rf-system">
+            <summary>system prompt ({{ rf.system_prompt | length }} chars)</summary>
+            <pre>{{ rf.system_prompt }}</pre>
+          </details>
+          {% endif %}
+          {% if rf.user_prompt %}
+          <details class="prompt" data-k="rf-user">
+            <summary>user prompt ({{ rf.user_prompt | length }} chars)</summary>
+            <pre>{{ rf.user_prompt }}</pre>
+          </details>
+          {% endif %}
+          {% if rf.reasoning %}<pre>{{ rf.reasoning }}</pre>{% endif %}
+        </div>
+        {% endif %}
         {% set obs = step.observation %}
         {# The model request / second opinion / action call / action result
            io-blocks are mirrored in Python by _step_md(); keep them aligned.
@@ -1128,6 +1152,26 @@ def _review_meta(so: dict, model_names: dict[str, str]) -> list[dict]:
         usage.get("input"), usage.get("output"), usage.get("ms"))
 
 
+def _recall_filter_meta(rf: dict) -> list[dict]:
+    """The recall-filter line: the scorer model, where its group came from, and
+    what the call cost. The model matters more here than on the other blocks —
+    this one runs on the query_filter_router's binding, so it is usually a
+    different model from the one deciding the step it sits inside."""
+    fields: list[dict] = []
+    if rf.get("scorer_model"):
+        fields.append(_field(
+            str(rf["scorer_model"]),
+            "The model that scored the recalled candidates", cls="io-model"))
+    if rf.get("group_from"):
+        fields.append(_field(
+            f"group: {rf['group_from']}",
+            "Which agent binding supplied the scorer's model group "
+            "(query_filter_router on /agentmodel, else the assistant's own)"))
+    usage = rf.get("usage") or {}
+    return fields + _usage_fields(
+        usage.get("input"), usage.get("output"), usage.get("ms"))
+
+
 def _meta_md(fields: list[dict]) -> str:
     """The export's rendering of an io-meta line: the field values, in order."""
     return " · ".join(f["text"] for f in fields)
@@ -1198,6 +1242,25 @@ def _split_second_opinion(step, reviews: dict | None = None) -> tuple[dict | Non
         row = (reviews or {}).get(str(so["review_uuid"]))
         return (_review_payload(row) if row is not None else None), data
     return so, data
+
+
+def _split_recall_filter(step) -> dict | None:
+    """The memory_query recall filter's own model call, lifted out of the
+    step's observation data so it renders as its own block.
+
+    It is a second LLM call nested inside one memory_query action, on the
+    query_filter_router's model group rather than the assistant's — a real
+    cost the run pays with no step row of its own. Left inside the
+    action-result data it rendered as an anonymous JSON dump, which is how a
+    call on a different model, in the middle of the decide loop, stayed
+    invisible. Returns None for a gated/failed filter that never called a
+    model; those keep their one-line note in the result data.
+    """
+    data = (step.observation or {}).get("data") or {}
+    rf = data.get("recall_filter")
+    if isinstance(rf, dict) and rf.get("mode") == "llm":
+        return rf
+    return None
 
 
 def _second_opinion_md(so: dict, model_names: dict[str, str]) -> list[str]:
@@ -1554,8 +1617,12 @@ def _load_run_detail(selected) -> dict:
     review_rows = db.list_second_opinion_reviews(selected.uuid)
     reviews = {str(r.uuid): r for r in review_rows}
     second_opinion: dict[str, dict] = {}
+    recall_filter: dict[str, dict] = {}
     obs_data: dict[str, dict] = {}
     for s in steps:
+        rf = _split_recall_filter(s)
+        if rf is not None:
+            recall_filter[str(s.uuid)] = rf
         so, data = _split_second_opinion(s, reviews)
         if so is not None:
             # problems_text is precomputed because ASSISTANT_TEMPLATE is a
@@ -1584,6 +1651,7 @@ def _load_run_detail(selected) -> dict:
         "duplicate_result": duplicate_result,
         "second_opinion": second_opinion,
         "obs_data": obs_data,
+        "recall_filter": recall_filter,
         "unlinked": unlinked,
         "reviews": reviews,
         "pending_controls": db.list_pending_controls(selected.uuid),
@@ -1626,13 +1694,14 @@ def assistant_page() -> str:
         duplicate_result=ctx.get("duplicate_result", set()),
         second_opinion=ctx.get("second_opinion", {}),
         obs_data=ctx.get("obs_data", {}),
+        recall_filter=ctx.get("recall_filter", {}),
         action_descriptions=_ACTION_DESCRIPTIONS,
         code_driven_descriptions=_CODE_DRIVEN_DESCRIPTIONS,
         # The io-meta field builders, called from the template so the page and
         # the markdown export read the same definitions.
         response_meta=_response_meta, request_meta=_request_meta,
         call_meta=_call_meta, result_meta=_result_meta,
-        review_meta=_review_meta,
+        review_meta=_review_meta, recall_filter_meta=_recall_filter_meta,
         unlinked=ctx.get("unlinked", []),
         pending_controls=ctx.get("pending_controls", []),
         duration=duration, model_names=ctx.get("model_names", {}),
