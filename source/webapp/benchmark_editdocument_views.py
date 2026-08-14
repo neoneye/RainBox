@@ -102,6 +102,7 @@ function providerLabel(id) {
   if (id === 'ollama') return 'Ollama';
   if (id === 'jan') return 'Jan';
   if (id === 'lm_studio') return 'LM Studio';
+  if (id === 'openrouter') return 'OpenRouter';
   return id || '';
 }
 function escapeHtml(s) {

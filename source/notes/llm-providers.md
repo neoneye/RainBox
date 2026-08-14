@@ -2,10 +2,11 @@
 
 ## Purpose
 
-`rainbox` talks to local LLM servers through a small **provider
-registry**. **Ollama is the preferred default**; Jan and LM Studio are
-supported alternatives. All three can be active at the same time. Adding
-OpenRouter or any future backend is a matter of dropping in one module.
+`rainbox` talks to LLM servers through a small **provider registry**.
+**Ollama is the preferred default**; Jan and LM Studio are supported local
+alternatives, and OpenRouter reaches several hundred cloud models. All four can
+be active at the same time. Adding a future backend is a matter of dropping in
+one module.
 
 This doc covers:
 
@@ -33,8 +34,9 @@ A provider is a Python class that satisfies the `Provider` Protocol in
 
 ```python
 class Provider(Protocol):
-    id: ProviderId            # "ollama" | "jan" | "lm_studio"
-    display_name: str         # "Ollama", "Jan", "LM Studio" — badges/logs
+    id: ProviderId            # "ollama" | "jan" | "lm_studio" | "openrouter"
+    display_name: str         # "Ollama", "Jan", … — badges/logs
+    curated: bool             # True => sync never creates rows (see below)
 
     def base_url(self) -> str: ...
     def list_models(self) -> list[str]: ...
@@ -59,6 +61,7 @@ providers/
   ollama.py           Ollama (REST only, ensure_loaded is a no-op)
   jan.py              Jan (REST only, ensure_loaded is a no-op)
   lm_studio.py        LM Studio (REST + `lms` CLI)
+  openrouter.py       OpenRouter (cloud, curated — rows are added by hand)
 ```
 
 Per-provider quirks live inside the provider module. Examples:
@@ -83,6 +86,24 @@ Per-provider quirks live inside the provider module. Examples:
   because its OpenAI-compat endpoint won't let you change context size
   per request.
 - LM Studio's `fetch_model_sizes` calls `lms ls --json`.
+- OpenRouter is the only **curated** provider (`curated = True`): its catalog
+  runs to several hundred cloud models, so rows are created one at a time
+  through the Add-model overlay on `/model` and sync never creates. See
+  [Curated providers](#curated-providers) below.
+- OpenRouter's `ensure_loaded` is a no-op — each request is routed to an
+  upstream that already has the model hot — and `fetch_model_sizes` returns
+  `{}`, since a cloud model has no size on disk.
+- OpenRouter's catalog (`/api/v1/models`) is public, but a key-less OpenRouter
+  can't answer an inference call, so a missing `OPENROUTER_API_KEY` is reported
+  the way an unreachable local server is: `list_models()` raises,
+  `fetch_native_models()` returns `None`, sync logs a skip and touches nothing.
+  It also means no network traffic at startup on a machine without a key.
+- OpenRouter's `fetch_native_models` folds each entry's `supported_parameters`
+  into the `capabilities: ["tool_use"]` shape the sync layer already reads, so
+  `is_function_calling_model` lands correctly with no OpenRouter-specific
+  branch in `_sync_one_provider` — the same trick Ollama uses to rename `name`
+  → `id`. The catalog is memoized for 60 seconds per process; the `/model`
+  Reload button drops that cache first so a reload really re-asks.
 
 ### Environment variables
 
@@ -91,6 +112,23 @@ Per-provider quirks live inside the provider module. Examples:
 - `LM_STUDIO_BASE_URL` — defaults to `http://127.0.0.1:1234`.
 - `LMS` — explicit path to LM Studio's `lms` CLI. Otherwise PATH, then
   `~/.cache/lm-studio/bin/lms`.
+- `OPENROUTER_API_KEY` — required to use any OpenRouter model. No default.
+
+### The repo-root `.env`
+
+`OPENROUTER_API_KEY` is a secret, so it lives in a gitignored `.env` at the
+repo root (next to `source/`), documented by the committed `.env.example`.
+`env_file.load_env_file()` loads it at import of `providers/__init__.py` — the
+one choke point every process that builds an LLM passes through, including the
+killable `/model` test-worker subprocess. Variables already set in the
+environment win, so `OPENROUTER_API_KEY=… python main.py` still overrides the
+file.
+
+The key is deliberately **absent** from `openrouter.default_arguments()`.
+`ModelConfig.arguments` is JSONB that `/model` renders verbatim in its
+`arguments` block, so a key stored there would be both persisted to the
+database and printed on screen. `llm.prepare_llm` injects it from the
+environment at construction time instead.
 
 ## DB schema
 
@@ -119,9 +157,9 @@ Two things keep `model_config` in step with what each backend exposes:
    the same function.
 
 `sync_models_from_providers()` iterates every registered provider in preferred
-order (Ollama, Jan, LM Studio) and runs `_sync_one_provider` against each.
-**Providers are independent**: one being unreachable does not flip another's
-rows.
+order (Ollama, Jan, LM Studio, OpenRouter) and runs `_sync_one_provider`
+against each. **Providers are independent**: one being unreachable does not
+flip another's rows.
 
 For each provider the helper:
 
@@ -149,6 +187,19 @@ mutates rows where `ModelConfig.provider == provider`:
 
 Return shape (per provider): `{"created", "re_enabled", "disabled",
 "function_calling_updated"}` — or `None` if the provider was unreachable.
+
+### Curated providers
+
+`_sync_one_provider` passes `create_missing=not prov.curated`. For a **curated**
+provider — OpenRouter, today the only one — the creation half is dropped: a
+catalog entry with no row is skipped rather than turned into one. Everything
+else runs unchanged, so a hand-added OpenRouter row whose model is retired
+upstream still flips to `available=False`, and one that reappears is
+re-enabled.
+
+Why: mirroring OpenRouter's several hundred models into rows would bury the
+`/model` tree and churn on every reload. The operator picks instead, through
+the Add-model overlay described below.
 
 ### What sync NEVER touches
 
@@ -191,11 +242,21 @@ the resolution path is:
      `ThinkingBlock`). `thinking` is **off by default** and opt-in via a
      `thinking` arg, because thinking and structured output don't mix on
      Ollama (with thinking on, the answer goes to the thinking channel and
-     `content` comes back empty). For **every other provider**, builds a
-     `ThinkingAwareOpenAILike(model=model_name, **args)` over the
-     OpenAI-compat endpoint (which also recovers JSON from LM Studio's
-     Qwen-style `reasoning_content`).
+     `content` comes back empty). For **OpenRouter**, builds
+     `ThinkingAwareOpenRouter` — the `llama-index-llms-openrouter` wrapper —
+     injecting the API key from the environment and an `X-Title: rainbox`
+     app-info header (merged, so an override's
+     `additional_kwargs.extra_body` survives). For **every other provider**,
+     builds a `ThinkingAwareOpenAILike(model=model_name, **args)` over the
+     OpenAI-compat endpoint.
    - Returns it.
+
+Both `ThinkingAwareOpenAILike` and `ThinkingAwareOpenRouter` share
+`_recover_content_from_reasoning`: when an endpoint returns empty `content`
+with the answer in `reasoning_content`, it pulls the final JSON out of there so
+structured-output parsing doesn't crash on an empty string. OpenRouter needs it
+for the same reason LM Studio's Qwen-style models do, and more so — the
+upstream a request lands on can change between calls.
 
 The `api_base` and `api_key` in `args` (written by the provider's
 `default_arguments()` when the row was first synced) tell llama-index
@@ -241,6 +302,30 @@ The page renders one combined tree with a per-row provider badge:
 - The model-info side panel uses the row's provider when rendering its
   heading ("Model info ({{ display_name }})") and the unreachable /
   not-found hints.
+
+### Add model (OpenRouter)
+
+Next to Reload sits **Add model**, the way a curated provider's rows get
+created. It opens an overlay following `notes/ui-modals.md` (shared backdrop,
+sibling card, `.btn-cancel` / `.btn-primary`, dirty-guarded Esc and
+backdrop-click), widened to `min(760px,94vw)` for its scrolling list:
+
+- `GET /model/api/openrouter/models` returns the catalog flattened for display
+  — id, context length, USD per million prompt/completion tokens, and
+  tools / structured / reasoning flags — with `added` marking ids that already
+  have a row. It's fetched lazily on first open and filtered client-side.
+  When no key is configured, the response is `{"ok": false, "error": …}` naming
+  `OPENROUTER_API_KEY`, which the overlay shows in place of the list.
+- Already-added models are dimmed and unselectable. Picking one and confirming
+  calls `POST /model/api/openrouter/add`, which creates the row and redirects
+  to `/model?id=<uuid>`. Adding the same model twice returns the existing row's
+  uuid rather than tripping the `(provider, model_name)` unique constraint.
+- The new row's `arguments` are the provider defaults **seeded from the catalog
+  entry**: `context_window` from `context_length`, `max_tokens` from
+  `top_provider.max_completion_tokens`, and both capability flags from
+  `supported_parameters`. This matters — llama-index's OpenRouter wrapper
+  otherwise defaults to `context_window=3900` and `max_tokens=256`, which would
+  quietly cripple a 128k model.
 
 ## /model test probes
 
@@ -302,7 +387,10 @@ the call killable.
 2. Extend the `ProviderId` literal and place the provider in
    `PROVIDER_ORDER` in `providers/base.py`.
 3. Add its instance to `_PROVIDER_INSTANCES` in `providers/registry.py`.
-4. Add a friendly label to the model-page badge/provider-label helpers
+4. Set `curated` — `False` for a backend whose whole model list should become
+   rows, `True` for a catalog too large to mirror (which then needs a way to
+   add rows by hand, as OpenRouter has).
+5. Add a friendly label to the model-page badge/provider-label helpers
    (otherwise the raw provider id remains as a legible fallback).
 
 That's it — startup sync, the Reload button, the /model page, and all
@@ -322,3 +410,9 @@ probe paths pick the new provider up automatically.
   `/v1/models` doesn't expose a `capabilities` array, so new Jan rows
   start with `is_function_calling_model=False`. Flip it via an override
   if a Jan model supports tools.
+- **No spend guards on OpenRouter.** Its models cost real money per call, and
+  the `/model` probe buttons, benchmark runners, and agents call them like any
+  local model. The Add-model overlay shows per-token pricing at the moment of
+  choosing, but nothing warns or confirms before a paid call.
+- **`size_bytes` is `NULL` for OpenRouter rows.** A cloud model has no size on
+  disk. The column is observational, so this is harmless.

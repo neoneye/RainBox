@@ -20,9 +20,10 @@ def app_ctx():
 
 class _FakeProvider:
     def __init__(self, pid, available_names, sizes=None, native=None,
-                 reachable=True):
+                 reachable=True, curated=False):
         self.id = pid
         self.display_name = pid
+        self.curated = curated
         self._available = available_names
         self._sizes = sizes or {}
         self._native = native
@@ -107,6 +108,40 @@ def test_unreachable_provider_does_not_disable_other_providers_rows(app_ctx):
         assert result["jan"] is None
         db.session.refresh(seed)
         assert seed.available is True
+    finally:
+        db.session.delete(seed)
+        db.session.commit()
+
+
+def test_curated_provider_creates_no_rows_but_still_tracks_availability(app_ctx):
+    """OpenRouter's catalog is several hundred models. Sync must not turn any
+    of them into rows — only keep `available` honest for the ones the operator
+    added through /model's Add-model overlay."""
+    seed = ModelConfig(
+        provider="openrouter",
+        model_name="pp3-syncprov-curated",
+        arguments={},
+        available=False,
+    )
+    db.session.add(seed)
+    db.session.commit()
+    try:
+        fake_or = _FakeProvider(
+            "openrouter",
+            ["pp3-syncprov-curated", "vendor/never-added"],
+            curated=True,
+        )
+        with patch("webapp.core.providers.all_providers", return_value=[fake_or]):
+            result = sync_models_from_providers()
+        assert result["openrouter"]["created"] == 0
+        db.session.refresh(seed)
+        assert seed.available is True
+        assert (
+            db.session.query(ModelConfig)
+            .filter_by(provider="openrouter", model_name="vendor/never-added")
+            .one_or_none()
+            is None
+        )
     finally:
         db.session.delete(seed)
         db.session.commit()

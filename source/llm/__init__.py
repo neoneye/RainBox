@@ -16,9 +16,11 @@ from llama_index.core.instrumentation.events.llm import (
 )
 from llama_index.core.llms import LLM, ChatMessage, MessageRole
 from llama_index.llms.openai_like import OpenAILike
+from llama_index.llms.openrouter import OpenRouter
 from pydantic import BaseModel, Field
 
 import providers
+from providers import openrouter as openrouter_provider
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,9 @@ def prepare_llm(
 
     Ollama uses the native `llama-index-llms-ollama` wrapper (see
     `_prepare_ollama_llm`) so chain-of-thought surfaces as a ThinkingBlock;
-    every other provider uses ThinkingAwareOpenAILike over its OpenAI-compat
+    OpenRouter uses the `llama-index-llms-openrouter` wrapper (see
+    `_prepare_openrouter_llm`), which is where the API key is injected; every
+    other provider uses ThinkingAwareOpenAILike over its OpenAI-compat
     endpoint. This is a pure constructor — it makes no capability decisions at
     runtime; thinking and structured-output settling happen on /model when the
     config is saved."""
@@ -59,6 +63,8 @@ def prepare_llm(
     provider.ensure_loaded(model, desired_ctx)
     if provider_id == "ollama":
         return _prepare_ollama_llm(model, arguments)
+    if provider_id == "openrouter":
+        return _prepare_openrouter_llm(model, arguments)
     merged: dict[str, Any] = dict(arguments)
     # `thinking` is a native-Ollama-only knob; OpenAILike has no such field
     # and would reject it. Drop it so callers can pass it uniformly.
@@ -87,6 +93,36 @@ def _prepare_ollama_llm(model: str, arguments: dict[str, Any]) -> LLM:
         if k in Ollama.model_fields and k != "model"
     }
     return Ollama(model=model, **native)
+
+
+def _prepare_openrouter_llm(model: str, arguments: dict[str, Any]) -> LLM:
+    """Build the llama-index OpenRouter wrapper for a cloud model.
+
+    The API key is injected here, from the environment (the repo-root `.env`,
+    loaded by `providers/__init__.py`), rather than living in the row's saved
+    `arguments`: that blob is persisted as JSONB and rendered verbatim in the
+    `arguments` block on /model, so a key stored there would be both saved to
+    the database and printed on screen."""
+    api_key = openrouter_provider.api_key()
+    if not api_key:
+        raise RuntimeError(
+            f"{openrouter_provider.API_KEY_ENV} is not set — put it in the "
+            "repo-root .env file (see .env.example)"
+        )
+    merged: dict[str, Any] = dict(arguments)
+    # `thinking` is a native-Ollama-only knob; the OpenAI-shaped wrappers have
+    # no such field and would reject it.
+    merged.pop("thinking", None)
+    merged["api_key"] = api_key
+    # App-info header so calls are attributable on openrouter.ai's dashboard.
+    # Merged rather than assigned, so an override's
+    # additional_kwargs.extra_body (the reasoning_effort control) survives.
+    additional = dict(merged.get("additional_kwargs") or {})
+    headers = dict(additional.get("extra_headers") or {})
+    headers.setdefault("X-Title", "rainbox")
+    additional["extra_headers"] = headers
+    merged["additional_kwargs"] = additional
+    return ThinkingAwareOpenRouter(model=model, **merged)
 
 
 def _extract_json_from_thinking(text: str) -> str:
@@ -126,43 +162,68 @@ def _extract_json_from_thinking(text: str) -> str:
     return text
 
 
-class ThinkingAwareOpenAILike(OpenAILike):
-    """OpenAILike subclass that handles Qwen3-style thinking tokens.
+def _recover_content_from_reasoning(
+    response: ChatResponse, who: str
+) -> ChatResponse:
+    """When a chat response came back with empty `content`, substitute the final
+    JSON answer pulled out of `reasoning_content`; otherwise return it as-is.
 
-    Some OpenAI-compatible providers put all model output into
+    Some OpenAI-compatible endpoints put all model output into
     `reasoning_content` and leave `content` empty when thinking is enabled. The
-    parent class only reads `content`, so structured-output parsing crashes.
-    This subclass intercepts `chat()`, and when `content` is empty, extracts the
-    final JSON answer from `reasoning_content` and substitutes it as the message
-    text.
+    llama-index base classes only read `content`, so structured-output parsing
+    crashes on an empty string.
 
-    Ported from PlanExe's ThinkingAwareOpenAILike."""
+    Ported from PlanExe's ThinkingAwareOpenAILike, and shared by the two
+    wrappers below because both sit on OpenAILike and hit this identically."""
+    content = response.message.content
+    if content and content.strip() != "":
+        return response
+    raw = getattr(response, "raw", None)
+    if not (raw and hasattr(raw, "choices") and raw.choices):
+        return response
+    raw_message = raw.choices[0].message
+    reasoning_content = getattr(raw_message, "reasoning_content", None)
+    if not reasoning_content:
+        return response
+    extracted = _extract_json_from_thinking(reasoning_content)
+    logger.info(
+        "%s: content empty; pulled %d chars from reasoning_content "
+        "(%d chars total)",
+        who,
+        len(extracted),
+        len(reasoning_content),
+    )
+    response.message = ChatMessage(
+        role=response.message.role,
+        blocks=[TextBlock(text=extracted)],
+        additional_kwargs=response.message.additional_kwargs,
+    )
+    return response
+
+
+class ThinkingAwareOpenAILike(OpenAILike):
+    """OpenAILike subclass that handles Qwen3-style thinking tokens: when the
+    model leaves `content` empty and puts everything in `reasoning_content`,
+    `chat()` recovers the final JSON answer from there."""
 
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResponse:
-        response = super().chat(messages, **kwargs)
-        content = response.message.content
-        if content and content.strip() != "":
-            return response
-        raw = getattr(response, "raw", None)
-        if not (raw and hasattr(raw, "choices") and raw.choices):
-            return response
-        raw_message = raw.choices[0].message
-        reasoning_content = getattr(raw_message, "reasoning_content", None)
-        if not reasoning_content:
-            return response
-        extracted = _extract_json_from_thinking(reasoning_content)
-        logger.info(
-            "ThinkingAwareOpenAILike: content empty; pulled %d chars from "
-            "reasoning_content (%d chars total)",
-            len(extracted),
-            len(reasoning_content),
+        return _recover_content_from_reasoning(
+            super().chat(messages, **kwargs), "ThinkingAwareOpenAILike"
         )
-        response.message = ChatMessage(
-            role=response.message.role,
-            blocks=[TextBlock(text=extracted)],
-            additional_kwargs=response.message.additional_kwargs,
+
+
+class ThinkingAwareOpenRouter(OpenRouter):
+    """The llama-index OpenRouter wrapper with the same reasoning_content
+    recovery. OpenRouter subclasses OpenAILike and fronts plenty of reasoning
+    models, so it hits the empty-`content` failure the same way — and the
+    upstream a request lands on can change between calls, which makes the
+    fallback worth having on every OpenRouter model rather than only the ones
+    labelled as reasoning."""
+
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResponse:
+        return _recover_content_from_reasoning(
+            super().chat(messages, **kwargs), "ThinkingAwareOpenRouter"
         )
-        return response
 
 
 class PingResponse(BaseModel):

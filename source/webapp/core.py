@@ -255,6 +255,10 @@ def _sync_one_provider(
         sizes_by_name=sizes,
         function_calling_by_name=func_calling,
         force_update_arguments=force_update_arguments,
+        # A curated provider's catalog is far too large to mirror into rows;
+        # the operator adds them one at a time on /model, and sync only keeps
+        # `available` honest for the ones already there.
+        create_missing=not prov.curated,
     )
     _log.info(
         "model_config sync (%s — %d models, %d sizes, "

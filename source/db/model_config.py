@@ -239,6 +239,7 @@ def sync_model_configs(
     sizes_by_name: dict[str, int] | None = None,
     function_calling_by_name: dict[str, bool] | None = None,
     force_update_arguments: bool = False,
+    create_missing: bool = True,
 ) -> dict[str, int]:
     """Reconcile model_config rows belonging to `provider` against the set of
     currently-available models for that provider.
@@ -259,6 +260,12 @@ def sync_model_configs(
       known) and mark `available=True`.
     - For each existing row of this provider whose `model_name` is NOT in
       `available_model_names`: flip `available=False`. Never deletes.
+
+    `create_missing=False` (a curated provider — see Provider.curated) drops the
+    creation half: a catalog entry with no row is skipped rather than turned
+    into one, so OpenRouter's several hundred models don't flood the tree. The
+    availability half still runs, so a hand-added row whose model OpenRouter
+    retires flips to `available=False` like any other.
 
     `function_calling_by_name` maps model name -> whether the provider reports
     the `tool_use` capability. It's always applied to *new* rows. For *existing*
@@ -289,6 +296,8 @@ def sync_model_configs(
         cfg = existing.get(name)
         size = sizes.get(name)
         if cfg is None:
+            if not create_missing:
+                continue
             arguments = dict(default_arguments)
             if name in func_calling:
                 arguments["is_function_calling_model"] = func_calling[name]

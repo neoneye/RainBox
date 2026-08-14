@@ -53,6 +53,7 @@ def _fetch_tags() -> list[dict[str, Any]] | None:
 class _OllamaProvider:
     id: ProviderId = "ollama"
     display_name: str = "Ollama"
+    curated: bool = False
 
     def base_url(self) -> str:
         return _base_url()

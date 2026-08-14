@@ -151,6 +151,7 @@ def _max_loaded_context(instances: list[dict[str, Any]]) -> int:
 class _LMStudioProvider:
     id: ProviderId = "lm_studio"
     display_name: str = "LM Studio"
+    curated: bool = False
 
     def base_url(self) -> str:
         return _base_url()

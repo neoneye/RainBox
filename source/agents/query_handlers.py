@@ -95,7 +95,12 @@ def get_version(ctx: QueryContext) -> str:
     return f"git {sha}  ({when})"
 
 
-_PROVIDER_LABELS = {"ollama": "Ollama", "jan": "Jan", "lm_studio": "LM Studio"}
+_PROVIDER_LABELS = {
+    "ollama": "Ollama",
+    "jan": "Jan",
+    "lm_studio": "LM Studio",
+    "openrouter": "OpenRouter",
+}
 
 
 def _describe_member(member_uuid: UUID) -> str:

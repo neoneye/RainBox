@@ -30,6 +30,7 @@ def _base_url() -> str:
 class _JanProvider:
     id: ProviderId = "jan"
     display_name: str = "Jan"
+    curated: bool = False
 
     def base_url(self) -> str:
         return _base_url()

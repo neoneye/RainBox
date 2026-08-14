@@ -19,14 +19,17 @@ from flask import (
 import llm
 import providers
 from db import (
+    create_model_config,
     create_model_config_override,
     db,
     delete_model_config_override,
     get_model_config,
     get_model_config_override,
+    list_model_configs,
     list_model_configs_with_overrides,
     resolved_arguments,
 )
+from providers import openrouter as openrouter_provider
 
 from .core import app, sync_models_from_providers
 
@@ -117,6 +120,25 @@ MODELS_TEMPLATE: str = """
   .pp-rename-display:hover{border-color:#cbd5e1;background:#f8fafc}
   .pp-rename-display .empty{font-weight:400}
   #pp-rename-modal input{font:inherit;width:100%;box-sizing:border-box;padding:5px 7px}
+  /* Add-model overlay (notes/ui-modals.md). Wider than the shared default
+     because it carries a scrolling catalog of several hundred rows. */
+  #pp-addmodel-modal{width:min(760px,94vw)}
+  #pp-addmodel-filter{font:inherit;width:100%;box-sizing:border-box;padding:5px 7px}
+  #pp-addmodel-list{margin-top:0.6em;max-height:min(52vh,420px);overflow:auto;
+    border:1px solid #e3e3e3;border-radius:6px}
+  .pp-orm{display:block;width:100%;text-align:left;font:inherit;background:none;
+    border:none;border-bottom:1px solid #f0f0f0;padding:0.45em 0.7em;cursor:pointer}
+  .pp-orm:last-child{border-bottom:none}
+  .pp-orm:hover{background:#eef}
+  .pp-orm.selected{background:#dde7ff}
+  .pp-orm[disabled]{cursor:default;opacity:0.55}
+  .pp-orm[disabled]:hover{background:none}
+  .pp-orm .mid{font-family:ui-monospace,monospace;font-size:92%}
+  .pp-orm .meta{color:#666;font-size:82%;margin-top:0.15em}
+  .pp-orm .chip{display:inline-block;font-size:88%;padding:0 0.4em;border-radius:0.4em;
+    background:#e5edff;color:#1e40af;margin-right:0.3em}
+  .pp-orm .chip.added{background:#dcfce7;color:#166534}
+  #pp-addmodel-status{font-size:88%}
 </style>
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
@@ -125,6 +147,8 @@ MODELS_TEMPLATE: str = """
   <div class="pane left">
     <div class="reload-bar">
       <button type="button" id="pp-reload-btn" onclick="ppReloadModels(this)">Reload model list</button>
+      <button type="button" id="pp-add-model-btn"
+              title="pick a model from OpenRouter's catalog — cloud models aren't synced automatically">Add model</button>
       <span id="pp-reload-status" class="empty"></span>
       <label class="pp-sort-picker" title="Tree sort order">
         sort:
@@ -138,7 +162,7 @@ MODELS_TEMPLATE: str = """
       {% for cfg, overrides in tree %}
       <li>
         <a href="{{ url_for('models_page', id=cfg.uuid) }}" class="{% if selected_kind == 'config' and selected_uuid == cfg.uuid %}selected{% endif %}">
-          <span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% else %}{{ cfg.provider }}{% endif %}</span>
+          <span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'openrouter' %}OpenRouter{% else %}{{ cfg.provider }}{% endif %}</span>
           <b>{{ cfg.effective_display_name }}</b>
           {% if not cfg.available %}<span class="badge unavailable">unavailable</span>{% endif %}
         </a>
@@ -722,6 +746,20 @@ MODELS_TEMPLATE: str = """
   </div>
 </div>
 
+<div class="ui-modal" id="pp-addmodel-modal" hidden>
+  <h3>Add an OpenRouter model</h3>
+  <p>OpenRouter serves several hundred cloud models, so they are not synced into
+     the list automatically &mdash; pick the ones you want. Prices are USD per
+     million tokens.</p>
+  <input type="text" id="pp-addmodel-filter" placeholder="Filter by model id or name" autocomplete="off">
+  <div id="pp-addmodel-list"><span class="empty">Loading catalog&hellip;</span></div>
+  <div class="modal-actions">
+    <span id="pp-addmodel-status" class="empty" style="margin-right:auto"></span>
+    <button type="button" class="btn-cancel" id="pp-addmodel-cancel">Cancel</button>
+    <button type="button" class="btn-primary" id="pp-addmodel-confirm" disabled>Add model</button>
+  </div>
+</div>
+
 <script>
   // ---- rename modal (notes/ui-modal-rename.md) ----
   // The display name is shown as a click-to-rename control; editing happens in
@@ -764,9 +802,8 @@ MODELS_TEMPLATE: str = """
   }
   // Backdrop / Esc dismiss only while the typed name still equals the stored
   // one (notes/ui-modals.md dirty guard); Cancel always closes.
-  function ppDismissRenameIfClean(){
-    if (document.getElementById('pp-rename-modal').hidden) return;
-    if (document.getElementById('pp-rename-input').value === (ppRenameOriginal || '')) ppCloseRenameModal();
+  function ppRenameDirty(){
+    return document.getElementById('pp-rename-input').value !== (ppRenameOriginal || '');
   }
   document.getElementById('pp-rename-cancel').addEventListener('click', ppCloseRenameModal);
   document.getElementById('pp-rename-confirm').addEventListener('click', ppConfirmRenameModal);
@@ -776,8 +813,149 @@ MODELS_TEMPLATE: str = """
       e.preventDefault(); ppConfirmRenameModal();
     }
   });
-  document.getElementById('ui-modal-backdrop').addEventListener('click', ppDismissRenameIfClean);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') ppDismissRenameIfClean(); });
+
+  // ---- Add-model overlay (notes/ui-modals.md) ----
+  // OpenRouter is a curated provider: the startup sync never creates its rows,
+  // so this overlay is the only way a cloud model becomes a model_config row.
+  // The catalog is fetched once per page load and filtered client-side --
+  // it's a few hundred entries, small enough to keep in memory and far
+  // cheaper than re-querying OpenRouter on every keystroke.
+  let ppOrCatalog = null;     // full catalog for this page, or null until loaded
+  let ppOrSelected = null;    // model id the user clicked
+
+  function ppOrPrice(v){
+    if (v === null || v === undefined) return '?';
+    if (v === 0) return 'free';
+    return '$' + (v < 1 ? v.toFixed(3) : v.toFixed(2));
+  }
+  function ppOrRowHtml(m){
+    const chips = [];
+    if (m.tools) chips.push('<span class="chip">tools</span>');
+    if (m.structured_outputs) chips.push('<span class="chip">structured</span>');
+    if (m.reasoning) chips.push('<span class="chip">reasoning</span>');
+    if (m.added) chips.push('<span class="chip added">added</span>');
+    const ctx = m.context_length ? Number(m.context_length).toLocaleString() + ' ctx' : 'context unknown';
+    const meta = ctx + ' &middot; in ' + ppOrPrice(m.prompt_price) +
+                 ' / out ' + ppOrPrice(m.completion_price) + ' per 1M tokens';
+    return '<button type="button" class="pp-orm' + (m.id === ppOrSelected ? ' selected' : '') + '"' +
+           (m.added ? ' disabled' : '') +
+           ' data-model-id="' + ppEsc(m.id) + '">' +
+           '<div class="mid">' + ppEsc(m.id) + '</div>' +
+           '<div class="meta">' + meta + ' ' + chips.join('') + '</div>' +
+           '</button>';
+  }
+  function ppRenderOpenRouterList(){
+    const list = document.getElementById('pp-addmodel-list');
+    if (ppOrCatalog === null) return;
+    const q = document.getElementById('pp-addmodel-filter').value.trim().toLowerCase();
+    const shown = q
+      ? ppOrCatalog.filter(m => m.id.toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q))
+      : ppOrCatalog;
+    if (!shown.length){
+      list.innerHTML = '<div style="padding:0.6em"><span class="empty">No model matches that filter.</span></div>';
+      return;
+    }
+    list.innerHTML = shown.map(ppOrRowHtml).join('');
+    list.querySelectorAll('.pp-orm').forEach(btn => {
+      btn.addEventListener('click', () => {
+        ppOrSelected = btn.dataset.modelId;
+        list.querySelectorAll('.pp-orm.selected').forEach(el => el.classList.remove('selected'));
+        btn.classList.add('selected');
+        ppSyncAddModelConfirm();
+      });
+    });
+  }
+  function ppLoadOpenRouterCatalog(){
+    const list = document.getElementById('pp-addmodel-list');
+    list.innerHTML = '<div style="padding:0.6em"><span class="empty">Loading catalog\\u2026</span></div>';
+    fetch('/model/api/openrouter/models')
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok){
+          list.innerHTML = '<div style="padding:0.6em"><span class="err">\\u2717 ' + ppEsc(d.error) + '</span></div>';
+          return;
+        }
+        ppOrCatalog = d.models;
+        ppRenderOpenRouterList();
+      })
+      .catch(e => {
+        list.innerHTML = '<div style="padding:0.6em"><span class="err">\\u2717 ' + ppEsc(String(e)) + '</span></div>';
+      });
+  }
+  function ppSyncAddModelConfirm(){
+    document.getElementById('pp-addmodel-confirm').disabled = ppOrSelected === null;
+  }
+  function ppOpenAddModelModal(){
+    ppOrSelected = null;
+    document.getElementById('pp-addmodel-filter').value = '';
+    const status = document.getElementById('pp-addmodel-status');
+    status.className = 'empty';
+    status.textContent = '';
+    ppSyncAddModelConfirm();
+    document.getElementById('ui-modal-backdrop').hidden = false;
+    document.getElementById('pp-addmodel-modal').hidden = false;
+    document.getElementById('pp-addmodel-filter').focus();
+    // Lazy on first open, so a page load costs nothing for someone who never
+    // adds a cloud model.
+    if (ppOrCatalog === null) ppLoadOpenRouterCatalog();
+    else ppRenderOpenRouterList();
+  }
+  function ppCloseAddModelModal(){
+    document.getElementById('pp-addmodel-modal').hidden = true;
+    document.getElementById('ui-modal-backdrop').hidden = true;
+    ppOrSelected = null;
+  }
+  function ppConfirmAddModelModal(){
+    if (ppOrSelected === null) return;
+    const confirmBtn = document.getElementById('pp-addmodel-confirm');
+    const status = document.getElementById('pp-addmodel-status');
+    confirmBtn.disabled = true;
+    status.className = 'empty';
+    status.textContent = 'Adding\\u2026';
+    fetch('/model/api/openrouter/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model_name: ppOrSelected}),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok){ window.location.href = '/model?id=' + encodeURIComponent(d.uuid); }
+        else {
+          status.className = 'err';
+          status.textContent = '\\u2717 ' + (d.error || 'could not add the model');
+          confirmBtn.disabled = false;
+        }
+      })
+      .catch(e => {
+        status.className = 'err';
+        status.textContent = '\\u2717 ' + String(e);
+        confirmBtn.disabled = false;
+      });
+  }
+  // Dirty once the user has typed a filter or picked a model, so an errant
+  // Esc/backdrop click can't discard a choice made after scrolling the list.
+  function ppAddModelDirty(){
+    return ppOrSelected !== null
+        || document.getElementById('pp-addmodel-filter').value !== '';
+  }
+  document.getElementById('pp-add-model-btn').addEventListener('click', ppOpenAddModelModal);
+  document.getElementById('pp-addmodel-cancel').addEventListener('click', ppCloseAddModelModal);
+  document.getElementById('pp-addmodel-confirm').addEventListener('click', ppConfirmAddModelModal);
+  document.getElementById('pp-addmodel-filter').addEventListener('input', ppRenderOpenRouterList);
+
+  // One pair of dismiss handlers covers every card on the page: close whichever
+  // modal is open, but only while it's untouched (notes/ui-modals.md).
+  function ppDismissOpenModalIfClean(){
+    if (!document.getElementById('pp-rename-modal').hidden){
+      if (!ppRenameDirty()) ppCloseRenameModal();
+      return;
+    }
+    if (!document.getElementById('pp-addmodel-modal').hidden){
+      if (!ppAddModelDirty()) ppCloseAddModelModal();
+    }
+  }
+  document.getElementById('ui-modal-backdrop').addEventListener('click', ppDismissOpenModalIfClean);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') ppDismissOpenModalIfClean(); });
 </script>
 """
 
@@ -867,8 +1045,143 @@ def models_reload_api() -> Response:
     """Re-sync model_config rows with every registered provider's current
     model list. Used by the Reload button on /model so newly added models
     show up without a server restart."""
+    # Drop the memoized OpenRouter catalog so an explicit Reload really re-asks
+    # OpenRouter rather than replaying a copy up to a minute old.
+    openrouter_provider.reset_catalog_cache()
     summary = sync_models_from_providers()
     return jsonify({"ok": True, "summary": summary})
+
+
+def _price_per_million(pricing: dict[str, Any], key: str) -> float | None:
+    """OpenRouter quotes prices as a USD-per-token string. Return USD per
+    million tokens, or None when the field is missing or not a number.
+    Free models quote "0"; a few quote "-1" meaning "varies", which reads as
+    unknown here."""
+    raw = (pricing or {}).get(key)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return None
+    return value * 1_000_000
+
+
+def _openrouter_catalog_rows() -> list[dict[str, Any]] | None:
+    """The OpenRouter catalog flattened for the Add-model overlay, sorted by
+    model id, with `added` marking the ones that already have a row. None when
+    OpenRouter has no key configured or can't be reached."""
+    catalog = openrouter_provider.fetch_catalog()
+    if catalog is None:
+        return None
+    already = {
+        c.model_name
+        for c in list_model_configs()
+        if c.provider == openrouter_provider.PROVIDER.id
+    }
+    rows: list[dict[str, Any]] = []
+    for entry in catalog:
+        supported = entry.get("supported_parameters") or []
+        pricing = entry.get("pricing") or {}
+        rows.append(
+            {
+                "id": entry["id"],
+                "name": entry.get("name") or entry["id"],
+                "context_length": entry.get("context_length"),
+                "prompt_price": _price_per_million(pricing, "prompt"),
+                "completion_price": _price_per_million(pricing, "completion"),
+                "tools": "tools" in supported,
+                "structured_outputs": "structured_outputs" in supported,
+                "reasoning": "reasoning" in supported,
+                "added": entry["id"] in already,
+            }
+        )
+    rows.sort(key=lambda r: r["id"])
+    return rows
+
+
+@app.route("/model/api/openrouter/models", methods=["GET"])
+def models_openrouter_catalog_api() -> Response:
+    """The OpenRouter catalog for the Add-model overlay. OpenRouter is a
+    curated provider — startup sync never creates its rows — so this endpoint
+    is how the operator sees what's on offer."""
+    rows = _openrouter_catalog_rows()
+    if rows is None:
+        if not openrouter_provider.is_configured():
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": (
+                        f"{openrouter_provider.API_KEY_ENV} is not set — put it "
+                        "in the repo-root .env file (see .env.example) and "
+                        "restart the server."
+                    ),
+                }
+            )
+        return jsonify(
+            {"ok": False, "error": "could not reach OpenRouter's model catalog"}
+        )
+    return jsonify({"ok": True, "models": rows})
+
+
+@app.route("/model/api/openrouter/add", methods=["POST"])
+def models_openrouter_add_api() -> Response:
+    """Create one model_config row for an OpenRouter model chosen in the
+    Add-model overlay, seeded from that model's catalog entry.
+
+    The catalog's numbers matter: llama-index's OpenRouter wrapper defaults
+    context_window to 3900 and max_tokens to 256, either of which would
+    silently cripple a large model."""
+    data = request.get_json(silent=True) or {}
+    model_name = str(data.get("model_name") or "").strip()
+    if not model_name:
+        return jsonify({"ok": False, "error": "model_name is required"}), 400
+
+    provider_id = openrouter_provider.PROVIDER.id
+    existing = next(
+        (
+            c
+            for c in list_model_configs()
+            if c.provider == provider_id and c.model_name == model_name
+        ),
+        None,
+    )
+    if existing is not None:
+        # Idempotent: the overlay already dims added models, but a stale page
+        # or a double-click shouldn't trip the (provider, model_name) unique
+        # constraint — just point at the row that's already there.
+        return jsonify({"ok": True, "uuid": str(existing.uuid), "existing": True})
+
+    catalog = openrouter_provider.fetch_catalog()
+    if catalog is None:
+        return jsonify(
+            {"ok": False, "error": "could not reach OpenRouter's model catalog"}
+        ), 502
+    entry = next((e for e in catalog if e["id"] == model_name), None)
+    if entry is None:
+        return jsonify(
+            {"ok": False, "error": f"{model_name!r} is not in OpenRouter's catalog"}
+        ), 400
+
+    supported = entry.get("supported_parameters") or []
+    arguments = dict(openrouter_provider.PROVIDER.default_arguments())
+    context_length = entry.get("context_length")
+    if isinstance(context_length, int) and context_length > 0:
+        arguments["context_window"] = context_length
+    max_completion = (entry.get("top_provider") or {}).get("max_completion_tokens")
+    if isinstance(max_completion, int) and max_completion > 0:
+        arguments["max_tokens"] = max_completion
+    arguments["is_function_calling_model"] = "tools" in supported
+    arguments["should_use_structured_outputs"] = "structured_outputs" in supported
+
+    row = create_model_config(
+        model_name=model_name,
+        arguments=arguments,
+        provider=provider_id,
+    )
+    return jsonify({"ok": True, "uuid": str(row.uuid), "existing": False})
 
 
 def _resolve_test_target(

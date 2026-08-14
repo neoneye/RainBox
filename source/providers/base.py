@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol
 
-ProviderId = Literal["ollama", "jan", "lm_studio"]
+ProviderId = Literal["ollama", "jan", "lm_studio", "openrouter"]
 PREFERRED_PROVIDER_ID: ProviderId = "ollama"
 PROVIDER_ORDER: tuple[ProviderId, ...] = (
     PREFERRED_PROVIDER_ID,
     "jan",
     "lm_studio",
+    "openrouter",
 )
 
 
@@ -30,6 +31,13 @@ def provider_sort_key(provider_id: str) -> tuple[int, str]:
 class Provider(Protocol):
     id: ProviderId
     display_name: str
+    curated: bool
+    """True when the provider's catalog is too large to mirror into
+    model_config wholesale (OpenRouter serves several hundred models). Rows for
+    a curated provider are created by hand — the Add-model overlay on /model —
+    and sync only tracks whether an existing row's model is still on offer,
+    never creating. False for a provider whose entire model list should become
+    rows, which is every locally-installed one."""
 
     def base_url(self) -> str:
         """The provider's HTTP base, without trailing slash. Used for log

@@ -7,7 +7,7 @@ import providers
 
 def test_registry_lists_all_known_providers():
     ids = [p.id for p in providers.all_providers()]
-    assert ids == ["ollama", "jan", "lm_studio"]
+    assert ids == ["ollama", "jan", "lm_studio", "openrouter"]
 
 
 def test_ollama_is_the_preferred_provider():
