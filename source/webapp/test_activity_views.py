@@ -10,11 +10,12 @@ import pytest
 import db
 import webapp
 from db import LlmCall
+from llm.activity_metrics import MIN_CALIBRATION_CALLS
 from webapp.activity_views import (
     DEFAULT_METRIC,
     _hit_rate_cell,
     build_chart,
-    cached_title,
+    cache_reading,
     exact,
     pick_bucket_seconds,
     resolve_range,
@@ -370,20 +371,60 @@ class TestExactHoverText:
         """The number alone can't say whether the provider reported it or
         rainbox inferred it from prefill timing — the distinction the page
         exists to keep visible."""
-        reported = SimpleNamespace(
-            cached_tokens_reported=1523, cached_tokens_estimated=900
-        )
-        estimated = SimpleNamespace(
-            cached_tokens_reported=None, cached_tokens_estimated=1400
-        )
-        missing = SimpleNamespace(
-            cached_tokens_reported=None, cached_tokens_estimated=None
-        )
-        assert cached_title(reported) == "1523 tokens — reported by the provider"
-        assert cached_title(estimated) == (
-            "1400 tokens — estimated from prefill timing, not reported"
-        )
-        assert cached_title(missing) == "not recorded"
+        reported = _call(cached_tokens_reported=1523, cached_tokens_estimated=900)
+        estimated = _call(cached_tokens_estimated=1400)
+        text, hover, _cls = cache_reading(reported)
+        assert text == "1.523"
+        assert hover == "1523 tokens — reported by the provider"
+        text, hover, _cls = cache_reading(estimated)
+        assert text == "1.400"
+        assert hover == "1400 tokens — estimated from prefill timing, not reported"
+
+
+def _call(**overrides):
+    """A minimal stand-in for an LlmCall row, defaulting to a timed call with
+    no cache figures — the shape cache_reading() has to disambiguate."""
+    fields = {
+        "cached_tokens_reported": None,
+        "cached_tokens_estimated": None,
+        "prefill_ms": 850,
+        "prompt_tokens": 1000,
+    }
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+class TestUnjudgedIsNotZero:
+    """A model needs MIN_CALIBRATION_CALLS recorded calls before its
+    cold-prefill baseline means anything, and the estimate is written once at
+    record time. Calls made inside that window keep an empty Cached column
+    forever — which reads as "this model never caches" unless the cell says
+    otherwise. That misreading is what this distinction exists to stop.
+    """
+
+    def test_a_timed_call_with_no_baseline_is_marked_unjudged(self):
+        text, hover, cls = cache_reading(_call())
+        assert text == "unjudged"
+        assert cls == "unjudged"
+        assert str(MIN_CALIBRATION_CALLS) in hover
+        assert "Reusable is" in hover
+
+    def test_an_unmeasured_call_stays_an_em_dash(self):
+        """No prefill timing means nothing was withheld — nothing was measured.
+        A provider that reports cache figures directly (OpenRouter) records no
+        prefill_ms, so this must not claim a baseline was missing."""
+        text, hover, cls = cache_reading(_call(prefill_ms=None))
+        assert text == "—"
+        assert hover == "not recorded"
+        assert cls == ""
+
+    def test_a_real_figure_always_wins_over_the_unjudged_marker(self):
+        assert cache_reading(_call(cached_tokens_estimated=0))[0] == "0"
+        assert cache_reading(_call(cached_tokens_reported=0))[0] == "0"
+
+    def test_a_call_with_no_prompt_tokens_is_not_called_unjudged(self):
+        """Nothing to judge, so nothing was withheld."""
+        assert cache_reading(_call(prompt_tokens=None))[0] == "—"
 
 
 class TestAdminCoverage:

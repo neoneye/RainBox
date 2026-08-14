@@ -162,18 +162,51 @@ def exact(value: float | int | None, unit: str = "") -> str:
     return f"{value:,.0f}".replace(",", "") + (f" {unit}" if unit else "")
 
 
-def cached_title(call: Any) -> str:
-    """Hover text for a Cached cell, which carries the one distinction the
-    number alone hides: whether the provider reported the figure or rainbox
-    inferred it from prefill timing."""
+def cache_reading(call: Any) -> tuple[str, str, str]:
+    """One Cached cell as (text, hover text, css class).
+
+    Four outcomes, and conflating the last two is what makes a working cache
+    look like a broken one:
+
+    - the provider reported a figure — authoritative;
+    - rainbox inferred one from prefill timing — an estimate, labelled so;
+    - the call was timed but the model had no cold-prefill baseline yet, so its
+      cache use was left unjudged rather than guessed;
+    - nothing was measured at all.
+
+    The third case is not "no caching". A model needs MIN_CALIBRATION_CALLS
+    recorded calls before a baseline means anything, and the estimate is
+    written once at record time — so calls made during that window keep an
+    empty Cached column permanently, however well the cache was working. It
+    reads as a flat zero unless the cell says otherwise, which is why it gets
+    its own word instead of the same em dash as an unmeasured call."""
     if call.cached_tokens_reported is not None:
-        return f"{exact(call.cached_tokens_reported, 'tokens')} — reported by the provider"
-    if call.cached_tokens_estimated is not None:
+        value = call.cached_tokens_reported
         return (
-            f"{exact(call.cached_tokens_estimated, 'tokens')} — estimated from "
-            "prefill timing, not reported"
+            si(value),
+            f"{exact(value, 'tokens')} — reported by the provider",
+            "",
         )
-    return "not recorded"
+    if call.cached_tokens_estimated is not None:
+        value = call.cached_tokens_estimated
+        return (
+            si(value),
+            f"{exact(value, 'tokens')} — estimated from prefill timing, not reported",
+            "",
+        )
+    if call.prefill_ms is not None and call.prompt_tokens:
+        return (
+            "unjudged",
+            (
+                "This call was timed, but the model had no cold-prefill baseline "
+                "yet, so its cache use was left unjudged rather than guessed — a "
+                f"model needs {MIN_CALIBRATION_CALLS} recorded calls before that "
+                "baseline means anything. Not the same as no caching: Reusable is "
+                "exact and needs no baseline."
+            ),
+            "unjudged",
+        )
+    return ("—", "not recorded", "")
 
 
 def pct(value: float | None) -> str:
@@ -402,7 +435,7 @@ def build_context(args: Any, now: datetime) -> dict:
         "min_calibration_calls": MIN_CALIBRATION_CALLS,
         "si": si,
         "exact": exact,
-        "cached_title": cached_title,
+        "cache_reading": cache_reading,
         "pct": pct,
         "ms": ms,
         "duration": duration,
@@ -461,6 +494,9 @@ ACTIVITY_TEMPLATE = """
      implicit tbody, doesn't light up too. */
   .pp-act tr:hover td { background: #f1f5f9; }
   .pp-act td.num, .pp-act th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  /* A withheld judgement is not a measurement — it must not read as one, and
+     must not read as a zero either. */
+  .pp-act td.unjudged { color: #6c757d; font-style: italic; font-size: 0.85em; }
   .pp-act td.name { font-weight: 600; }
   .pp-act .muted { color: #6c757d; }
   .pp-act td.origin { font-family: ui-monospace, monospace; font-size: 0.8rem; }
@@ -704,7 +740,7 @@ ACTIVITY_TEMPLATE = """
         <th>Caller</th>
         <th>Origin</th>
         <th class="num" title="Prompt tokens sent on this call.">Prompt</th>
-        <th class="num" title="Prompt tokens the runtime evidently reused. Reported by the provider where it says so, otherwise inferred from prefill timing.">Cached</th>
+        <th class="num" title="Prompt tokens the runtime evidently reused. Reported by the provider where it says so, otherwise inferred from prefill timing — and left unjudged until that model has a cold-prefill baseline.">Cached</th>
         <th class="num" title="Prompt tokens rainbox had already sent before this call: what a perfect cache could have reused. Exact, and needs no provider cooperation.">Reusable</th>
         <th class="num" title="Tokens the model generated in reply — the &quot;Completion tokens&quot; metric, per call.">Output</th>
         <th class="num" title="Time spent processing the prompt before the first output token.">Prefill</th>
@@ -719,9 +755,8 @@ ACTIVITY_TEMPLATE = """
         <td class="muted">{{ call.caller }}</td>
         <td class="muted origin">{{ call.origin or '—' }}</td>
         <td class="num" title="{{ exact(call.prompt_tokens, 'tokens') }}">{{ si(call.prompt_tokens) }}</td>
-        <td class="num" title="{{ cached_title(call) }}">{{ si(call.cached_tokens_reported
-                              if call.cached_tokens_reported is not none
-                              else call.cached_tokens_estimated) }}</td>
+        {% set cache_text, cache_hover, cache_cls = cache_reading(call) %}
+        <td class="num {{ cache_cls }}" title="{{ cache_hover }}">{{ cache_text }}</td>
         <td class="num" title="{{ exact(call.reusable_prefix_tokens, 'tokens') }}">{{ si(call.reusable_prefix_tokens) }}</td>
         <td class="num" title="{{ exact(call.completion_tokens, 'tokens') }}">{{ si(call.completion_tokens) }}</td>
         <td class="num" title="{{ exact(call.prefill_ms, 'ms') }}">{{ ms(call.prefill_ms) }}</td>
