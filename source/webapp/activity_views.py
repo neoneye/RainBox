@@ -455,6 +455,11 @@ ACTIVITY_TEMPLATE = """
                white-space: nowrap; }
   .pp-act td { padding: 0.45rem 0.6rem; border-bottom: 1px solid #f1f5f9;
                white-space: nowrap; }
+  /* Row hover. Ten columns across the full window is a long way for the eye
+     to travel, so the band is what keeps a reading on one call. Scoped to
+     `td` rather than `tr` so the all-`th` header row, which shares the
+     implicit tbody, doesn't light up too. */
+  .pp-act tr:hover td { background: #f1f5f9; }
   .pp-act td.num, .pp-act th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .pp-act td.name { font-weight: 600; }
   .pp-act .muted { color: #6c757d; }
