@@ -18,8 +18,10 @@ would be lost; keep the remainder then.
 import argparse
 import json
 import logging
+import signal
 import socket
 import sys
+from types import FrameType
 from typing import Any
 from uuid import UUID
 
@@ -29,8 +31,32 @@ from agents.config import resolve_agent_class
 logger = logging.getLogger(__name__)
 
 
+class SupervisorTerminate(SystemExit):
+    """Raised in the worker when the supervisor asks it to stop."""
+
+
+def _on_sigterm(_signum: int, _frame: FrameType | None) -> None:
+    """Turn the supervisor's SIGTERM into an exception in the main thread.
+
+    Default SIGTERM ends the process where it stands, running no `finally`
+    blocks — which leaves the HTTP connection to the inference server open.
+    The server never sees a disconnect, so it keeps generating and holding the
+    GPU long after the run has been marked failed. Raising instead unwinds the
+    stack: the LLM stream generator is closed, its connection torn down, and
+    the backend stops.
+
+    Signal handlers run in the main thread, so this fires wherever the worker
+    is — including inside a blocking socket read, because PEP 475 propagates a
+    handler's exception rather than retrying the syscall. The supervisor still
+    SIGKILLs after TERM_GRACE if the unwind does not finish.
+    """
+    logger.warning("agent: SIGTERM from supervisor; unwinding")
+    raise SupervisorTerminate("terminated by supervisor")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    signal.signal(signal.SIGTERM, _on_sigterm)
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket-fd", type=int, required=True)

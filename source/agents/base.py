@@ -95,11 +95,20 @@ class Agent:
         self._active_journal_id = journal_id
 
         def _beat() -> None:
+            # Keep beating through a failed send. Returning on the first
+            # exception meant one transient hiccup on the status socket
+            # silenced the rest of the turn, and the supervisor SIGKILLed a
+            # healthy run HEARTBEAT_TIMEOUT later — the failure and the kill
+            # far enough apart to look unrelated. A genuinely dead socket
+            # raises every time and the watchdog still fires; the difference
+            # is that a recoverable one no longer costs the turn.
             while not stop.wait(self.HEARTBEAT_INTERVAL):
                 try:
                     self._emit_heartbeat()
                 except Exception:
-                    return  # socket gone; nothing useful to do from this thread
+                    logger.warning(
+                        "agent %s: heartbeat send failed; still beating",
+                        self.name, exc_info=True)
         hb = threading.Thread(target=_beat, name=f"hb-{self.name}", daemon=True)
         hb.start()
         try:

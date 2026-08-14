@@ -30,6 +30,15 @@ from webapp.core import sync_models_from_providers  # noqa: E402
 # supervisor considers it hung and kills it. Agents emit background heartbeats
 # during handle(), so this measures a dead worker or broken status channel.
 HEARTBEAT_TIMEOUT: float = 60.0
+# After the watchdog fires, how long a SIGTERMed agent gets to unwind before
+# the supervisor escalates to SIGKILL. SIGKILL runs no `finally`, so a worker
+# killed outright leaves its HTTP connection to the inference server open —
+# the server never sees a disconnect and keeps generating, holding the GPU
+# long after the run is marked failed. SIGTERM raises inside the worker
+# instead, so the LLM stream closes on the way out. The grace has to cover a
+# main thread parked in a socket read: PEP 475 lets the raising handler break
+# that read, but the handler only runs once the interpreter regains control.
+TERM_GRACE: float = 10.0
 TICK_TIMEOUT: float = 1.0
 # When fully idle (no live agents, no pending work) the loop has nothing to
 # multiplex, so its select() timeout is the *only* thing setting how often it
@@ -63,6 +72,9 @@ class Agent(TypedDict):
     alive: bool
     current_journal_id: UUID | None
     death_reason: str | None
+    # monotonic deadline after which a SIGTERMed agent is SIGKILLed; None
+    # until the watchdog has asked it to stop.
+    term_deadline: float | None
 
 
 def spawn(name: str, params: AgentConfigEntry) -> Agent:
@@ -94,6 +106,7 @@ def spawn(name: str, params: AgentConfigEntry) -> Agent:
         "alive": True,
         "current_journal_id": None,
         "death_reason": None,
+        "term_deadline": None,
     }
 
 
@@ -207,7 +220,12 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                 chunk = ag["sock"].recv(4096)
                 if not chunk:
                     ag["alive"] = False
-                    ag["death_reason"] = "Agent worker connection closed unexpectedly."
+                    # A worker that exits after SIGTERM closes this socket on
+                    # its way out. That is the watchdog's kill completing, not
+                    # a surprise death — keep the reason already recorded.
+                    if ag["death_reason"] is None:
+                        ag["death_reason"] = (
+                            "Agent worker connection closed unexpectedly.")
                     continue
                 ag["buffer"] += chunk
                 while b"\n" in ag["buffer"]:
@@ -229,8 +247,31 @@ def supervisor_loop(stop_event: threading.Event) -> None:
             now = time.monotonic()
             for name in list(agents):
                 ag = agents[name]
-                if ag["alive"] and now - ag["last_heartbeat"] > HEARTBEAT_TIMEOUT:
-                    logger.warning("agent %s hung (no message in %.1fs); killing", name, HEARTBEAT_TIMEOUT)
+                if (ag["alive"] and ag["term_deadline"] is None
+                        and now - ag["last_heartbeat"] > HEARTBEAT_TIMEOUT):
+                    # Ask first. The worker's SIGTERM handler raises, so its
+                    # `finally` blocks run and the LLM stream closes — without
+                    # that the inference server keeps generating against a
+                    # connection nobody is reading.
+                    logger.warning(
+                        "agent %s hung (no message in %.1fs); terminating",
+                        name, HEARTBEAT_TIMEOUT)
+                    try:
+                        os.kill(ag["pid"], signal.SIGTERM)
+                    except ProcessLookupError:
+                        ag["alive"] = False
+                    ag["term_deadline"] = now + TERM_GRACE
+                    ag["death_reason"] = (
+                        "Supervisor killed the agent after a heartbeat timeout "
+                        f"of {HEARTBEAT_TIMEOUT:g}s."
+                    )
+                elif (ag["alive"] and ag["term_deadline"] is not None
+                        and now > ag["term_deadline"]):
+                    # It did not unwind in time. Nothing left but SIGKILL, and
+                    # whatever it held open stays open until the OS reaps it.
+                    logger.warning(
+                        "agent %s did not exit %.0fs after SIGTERM; killing",
+                        name, TERM_GRACE)
                     try:
                         os.kill(ag["pid"], signal.SIGKILL)
                     except ProcessLookupError:
@@ -238,7 +279,9 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                     ag["alive"] = False
                     ag["death_reason"] = (
                         "Supervisor killed the agent after a heartbeat timeout "
-                        f"of {HEARTBEAT_TIMEOUT:g}s."
+                        f"of {HEARTBEAT_TIMEOUT:g}s; it ignored SIGTERM for "
+                        f"{TERM_GRACE:g}s and was force-killed, so its "
+                        "connection to the inference server was not closed."
                     )
 
             for name in list(agents):

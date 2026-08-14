@@ -84,3 +84,54 @@ def test_heartbeat_stops_when_handle_raises():
     else:
         raise AssertionError("expected the handle exception to propagate")
     assert not any(t.name.startswith("hb-") for t in threading.enumerate())
+
+
+def test_beat_loop_survives_a_failed_send(monkeypatch):
+    """One failed send used to `return`, silencing heartbeats for the rest of
+    the turn — the supervisor then SIGKILLed a healthy run HEARTBEAT_TIMEOUT
+    later, far enough from the hiccup to look unrelated. A transient failure
+    must not cost the turn."""
+    import threading
+
+    from agents.base import Agent
+
+    sent: list[dict] = []
+    calls = {"n": 0}
+
+    def flaky(msg):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("transient socket hiccup")
+        sent.append(msg)
+
+    agent = Agent.__new__(Agent)
+    agent.name = "probe"
+    agent._send = flaky
+    agent._send_lock = threading.Lock()
+    agent._active_journal_id = uuid4()
+
+    # Beat by hand rather than waiting on the real 20s timer.
+    for _ in range(3):
+        try:
+            agent._emit_heartbeat()
+        except Exception:  # what the loop now swallows
+            pass
+
+    assert calls["n"] == 3
+    # The two sends after the failure still landed.
+    assert len(sent) == 2
+
+
+def test_beat_loop_body_does_not_return_on_exception():
+    """Pins the shape, since the behavioural test above drives _emit_heartbeat
+    directly rather than the thread: the except branch must not exit the loop."""
+    import inspect
+
+    from agents.base import Agent
+
+    src = inspect.getsource(Agent._handle_with_heartbeat)
+    beat = src[src.index("def _beat()"):src.index("hb = threading.Thread")]
+    assert "except Exception:" in beat
+    # No exit from the loop other than the stop event.
+    assert "return" not in beat
+    assert "break" not in beat
