@@ -198,6 +198,21 @@ class TestOriginColumn:
         assert client.get("/activity?range=24h").status_code == 200
 
 
+class TestOutputColumn:
+    """What a call cost on the way out, next to what it cost on the way in."""
+
+    def test_the_recent_calls_table_shows_generated_tokens(self, client, model):
+        add_call(model, completion_tokens=1234)
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert ">Output</th>" in body
+        assert 'title="1234 tokens">1.234<' in body
+
+    def test_an_unreported_output_count_shows_a_dash(self, client, model):
+        add_call(model, completion_tokens=None)
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert 'title="not recorded">—<' in body
+
+
 class TestEstimateHonesty:
     def test_the_page_says_the_cached_band_is_an_estimate(self, client, model):
         """Local backends report no cache field, so the orange band is

@@ -698,6 +698,7 @@ ACTIVITY_TEMPLATE = """
         <th class="num" title="Prompt tokens sent on this call. Hover a cell for the exact count.">Prompt</th>
         <th class="num" title="Prompt tokens the runtime evidently reused. Reported by the provider where it says so, otherwise inferred from prefill timing — each cell's hover says which.">Cached</th>
         <th class="num" title="Prompt tokens rainbox had already sent before this call: what a perfect cache could have reused. Exact, and needs no provider cooperation.">Reusable</th>
+        <th class="num" title="Tokens the model generated in reply — the &quot;Completion tokens&quot; metric, per call. Hover a cell for the exact count.">Output</th>
         <th class="num" title="Time spent processing the prompt before the first output token. Hover a cell for the exact milliseconds.">Prefill</th>
         <th class="num" title="Wall-clock time for the whole call. Hover a cell for the exact milliseconds.">Total</th>
         <th></th>
@@ -714,6 +715,7 @@ ACTIVITY_TEMPLATE = """
                               if call.cached_tokens_reported is not none
                               else call.cached_tokens_estimated) }}</td>
         <td class="num" title="{{ exact(call.reusable_prefix_tokens, 'tokens') }}">{{ si(call.reusable_prefix_tokens) }}</td>
+        <td class="num" title="{{ exact(call.completion_tokens, 'tokens') }}">{{ si(call.completion_tokens) }}</td>
         <td class="num" title="{{ exact(call.prefill_ms, 'ms') }}">{{ ms(call.prefill_ms) }}</td>
         <td class="num" title="{{ exact(call.total_ms, 'ms') }}">{{ ms(call.total_ms) }}</td>
         <td>{% if not call.ok %}<span class="bad">{{ call.error_category
