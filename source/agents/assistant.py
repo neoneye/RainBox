@@ -533,6 +533,50 @@ class RequestSummary(BaseModel):
 # The request-summary call's persona prompt. Like the criteria and second-
 # opinion calls it is a separate narrow job, not the assistant's working
 # prompt: this one never answers the request, it only describes it.
+# The recall filter's job. It was the query_filter_router's FILTER_SYSTEM_PROMPT
+# — a proof of concept the assistant borrowed. The assistant now owns its own
+# copy so this call can carry the shared system prompt like every other
+# assistant call and keep its job description in <turn_instructions>, which is
+# what lets it share a cached prefix with them. The query_filter_router keeps
+# its own constant for its own routing calls.
+RECALL_FILTER_TURN_INSTRUCTIONS: str = """\
+You are a relevance scorer. Given the user's latest chat message and a list of
+candidates — knowledge-base Q&A entries and/or remembered facts — score EVERY
+candidate on three Likert scales from "1" (not at all) to "5" (fully):
+
+- `direct`: how directly the candidate's question/answer addresses what the
+  user is asking, telling, or doing ("1" = not at all, "5" = answers it
+  outright).
+- `indirect`: how much closely related context the candidate adds without
+  answering the message itself — e.g. for a question about a person, an entry
+  about that person's family or household ("1" = none, "5" = strongly
+  related).
+- `relevancy`: overall topical relevance to the message ("1" = a different
+  topic entirely, "5" = the same topic).
+
+A candidate about a different topic, or one the user's message does not speak
+to (for example: the user says where THEY are from, but the candidate is about
+the BOT's location) scores low on all three scales.
+
+Each candidate carries a `similarity score`: an integer from 0 to 1000 (higher
+means a closer semantic match; 1000 is an exact match). Treat it as a hint, not
+a hard threshold — a high score still has to be on-topic to score high.
+
+You do not decide what is kept or dropped — that decision is made downstream
+from your scores. Score every listed candidate; omit none; do not invent ids.
+
+Score the candidates in recall_candidates against the message quoted in
+scoring_request. current_user_request and conversation_history_xml are there so
+you can read that message in context; they are never candidates themselves.
+
+Return exactly one JSON object with two fields, in this order:
+- `reasoning`: first, 1-3 short sentences calibrating yourself — does any
+  candidate genuinely match the user's message, and why or why not.
+- `items`: then a list with one entry per listed candidate:
+  {"id": "<candidate id>", "direct": "1".."5", "indirect": "1".."5",
+   "relevancy": "1".."5"}"""
+
+
 REQUEST_SUMMARY_TURN_INSTRUCTIONS: str = """\
 You describe a request that is too long to fit in a personal assistant's
 prompt. The assistant will receive the opening and the closing of it with the
@@ -998,6 +1042,14 @@ class AssistantActionContext:
     # records so the intent points at its step by identity (not (run_id,
     # step_index)). None for the dry-run preview call, which records nothing.
     step_uuid: UUID | None = None
+    # Tier 0 + tier 1 of the turn's prompt, rendered once by the loop (see
+    # AssistantAgent._recall_filter_prefix). memory_query's recall filter
+    # prepends it so its prompt opens with the same bytes as the decide
+    # prompt — this call is nested inside the decide loop, so a matching
+    # prefix is the difference between reusing the loop's cached prompt and
+    # prefilling a second one from scratch. Empty for callers with no turn
+    # (the dry-run preview, /memory/developer), which simply get no prefix.
+    prompt_prefix: str = ""
     # True only inside _propose_write's preview call: a dry_run-capable action
     # must compute + return a preview without mutating anything.
     dry_run: bool = False
@@ -1117,10 +1169,38 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
 _FILTER_CLAIM_PREVIEW_CHARS: int = 300
 
 
+def _build_recall_filter_prompt(
+    query: str, rows: list[dict[str, Any]], *, prompt_prefix: str = ""
+) -> str:
+    """The recall filter's user prompt, in the same tiers as every other
+    assistant call: the turn's prefix (request, history, identity), then this
+    call's job, then the candidates, then the ask.
+
+    `prompt_prefix` is rendered by the loop (AssistantAgent._recall_filter_prefix)
+    and passed through the action context; empty for callers with no turn, which
+    simply get the job description first. The candidate rows go through
+    ElementTree like every other dynamic section, so a remembered fact cannot
+    forge or close a prompt zone."""
+    from agents.query_filter_router import build_filter_prompt_rows
+
+    root = ET.Element("recall_filter_call")
+    AssistantAgent._append_turn_instructions(
+        root, RECALL_FILTER_TURN_INSTRUCTIONS)
+    ET.SubElement(root, "recall_candidates").text = build_filter_prompt_rows(
+        query, rows)
+    ET.SubElement(root, "scoring_request").text = (
+        f"Score every candidate in recall_candidates against this message: "
+        f"{query!r}. Omit none; do not invent ids."
+    )
+    body = _render_sections(root)
+    return f"{prompt_prefix}\n{body}" if prompt_prefix else body
+
+
 def _filter_recalled_candidates(
     query: str, *, qctx, agent_uuid: UUID, claim_candidates: list,
     top_k_vector: int | None = None, top_k_fulltext: int | None = None,
     journal_id: UUID | None = None, record_telemetry: bool = False,
+    prompt_prefix: str = "",
 ) -> tuple[list | None, list | None, dict[str, Any]]:
     """One LLM relevance filter over EVERYTHING memory_query recalls: the
     hybrid seed candidates (ungated top-K per signal) AND the memory claims
@@ -1145,7 +1225,7 @@ def _filter_recalled_candidates(
     live runs pass None."""
     from agents.config import QUERY_FILTER_ROUTER_UUID
     from agents.query_filter_router import (
-        FILTER_SYSTEM_PROMPT, FilterDecision,
+        FilterDecision,
         apply_filter_scores, build_filter_prompt_rows,
         resolve_filter_model_uuids, seed_candidate_rows, structured_llm_call,
     )
@@ -1187,10 +1267,11 @@ def _filter_recalled_candidates(
     # reports how many model calls the run made.
     usage: dict[str, int] = {}
     requested_at = datetime.now(UTC)
-    filter_user_prompt = build_filter_prompt_rows(query, rows)
+    filter_user_prompt = _build_recall_filter_prompt(
+        query, rows, prompt_prefix=prompt_prefix)
     decision, scorer_model_uuid = structured_llm_call(
         "assistant.memory_query", model_uuids,
-        FILTER_SYSTEM_PROMPT, filter_user_prompt,
+        ASSISTANT_SHARED_SYSTEM_PROMPT, filter_user_prompt,
         FilterDecision, usage_out=usage,
     )
     try:
@@ -1239,7 +1320,7 @@ def _filter_recalled_candidates(
         "scorer_model_uuid": str(scorer_model_uuid),
         "requested_at": requested_at.isoformat(),
         "usage": usage,
-        "system_prompt": FILTER_SYSTEM_PROMPT,
+        "system_prompt": ASSISTANT_SHARED_SYSTEM_PROMPT,
         "user_prompt": filter_user_prompt,
         "reasoning": decision.reasoning,
         "candidates": [_debug_row(s) for s in scored],
@@ -1428,7 +1509,8 @@ def _action_query_memory(
                     query, qctx=qctx, agent_uuid=ctx.agent_uuid,
                     claim_candidates=memories,
                     top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext,
-                    journal_id=ctx.journal_id, record_telemetry=record_telemetry)
+                    journal_id=ctx.journal_id, record_telemetry=record_telemetry,
+                    prompt_prefix=ctx.prompt_prefix)
             except Exception:
                 logger.warning(
                     "assistant: recall LLM filter failed; falling back to "
@@ -3482,6 +3564,7 @@ class AssistantAgent(ModelGroupAgent):
                     step_index=step_index,
                     step_uuid=step_row.uuid if step_row is not None else None,
                     message_uuid=message_uuid,
+                    prompt_prefix=self._recall_filter_prefix(messages),
                 )
                 cap = self._caps[decision.action]
                 action_sig = (
@@ -4158,6 +4241,34 @@ class AssistantAgent(ModelGroupAgent):
             "follow-up too short to name its own subject takes it from the "
             "exchange before it."
         )
+
+    def _recall_filter_prefix(self, messages: list[dict[str, Any]]) -> str:
+        """Tier 0 + tier 1 for the memory_query recall filter, rendered exactly
+        as _build_user_prompt renders them.
+
+        The filter is a second model call nested inside one decide step. Opening
+        it with the same bytes the decide prompt opens with — request, history,
+        identity — makes it a prefix of the loop's own prompt instead of an
+        unrelated one. `identity` alone, not the full static head: the block
+        sets have to nest, and a scorer needs to know who "I" is in a candidate
+        without the persona, calibration or remembered digest.
+
+        Only pays off when the filter answers on the assistant's own model
+        group. The memory_filter / query_filter_router bindings resolve first
+        (see _filter_recalled_candidates), and a different model is a different
+        cache no matter how the prompt is shaped."""
+        root = ET.Element("recall_filter_call")
+        self._append_current_user_request(
+            root, messages[-1] if messages else None)
+        context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
+        history = ET.SubElement(root, "conversation_history_xml")
+        if context:
+            for message in context:
+                self._append_prompt_message(history, message)
+        else:
+            ET.SubElement(history, "none")
+        self._append_static_head(root, blocks=("identity",))
+        return _render_sections(root)
 
     def _build_user_prompt(
         self,
