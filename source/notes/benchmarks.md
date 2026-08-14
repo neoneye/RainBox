@@ -41,6 +41,27 @@ A "target" / "row" is a `ModelConfigOverride` — the unconfigured base
 actually dialed in. `/benchmark_editdocument` further restricts to
 function-calling overrides.
 
+## Warm up
+
+Before a target's first trial the child sends one throwaway `complete("hi")`,
+so a cold model's load time doesn't land inside the first benchmark's average.
+It is skipped automatically when the previous target used the same model, which
+is already in memory.
+
+`/benchmark_story` carries a **Warm up LLM** checkbox, **off by default**, kept
+in `localStorage` under `pp-benchmark-warmup` and sent to `…/start` as
+`?warmup=0|1`. The story suite is the one read for *cache* behaviour, and there
+a model warmed before the first trial is the thing under observation, not noise
+to remove. The other pages are read for timings and always warm up; giving one
+of them the toggle is `show_warmup_toggle=True` plus passing `warmup` through
+that page's start endpoint.
+
+The setting lives in the browser rather than in the runner because it describes
+how the operator wants to read a run, not a property of the run — it has to
+survive a page load and must not be reset by whatever the previous run used. A
+start request with no `warmup` parameter warms up, so anything predating the
+toggle behaves as before.
+
 ## One suite at a time
 
 There are four runner instances — general, kanban, story, edit-document — and

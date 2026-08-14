@@ -59,6 +59,7 @@ def benchmark_story_page() -> str:
         "benchmark_story_state", "benchmark_story_start", "benchmark_story_stop",
         show_artifacts=True,
         artifact_endpoint="benchmark_story_artifact",
+        show_warmup_toggle=True,
     )
 
 
@@ -117,9 +118,17 @@ def benchmark_story_start() -> Response:
             bench_indices = [int(raw_bench)]
         except ValueError:
             abort(400, "bench must be an integer")
+    # The page's "Warm up LLM" checkbox, off by default and remembered in
+    # localStorage. Absent (a hand-made request) keeps the historical
+    # behaviour of warming up.
+    raw_warmup = request.args.get("warmup")
+    warmup = raw_warmup not in ("0", "false", "False", "off")
     try:
         started = story_benchmark_runner.start(
-            app, target_uuids=target_uuids, bench_indices=bench_indices
+            app,
+            target_uuids=target_uuids,
+            bench_indices=bench_indices,
+            warmup=warmup,
         )
     except ValueError as e:
         abort(400, str(e))

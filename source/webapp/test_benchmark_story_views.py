@@ -2,6 +2,8 @@
 shared benchmark template without disturbing the two pages that don't want it.
 """
 
+from unittest.mock import patch
+
 import pytest
 
 import webapp
@@ -289,7 +291,7 @@ class TestPerCellStart:
     def test_the_endpoint_accepts_a_bench_index(self, client, monkeypatch):
         seen = {}
 
-        def fake_start(app, target_uuids=None, bench_indices=None):
+        def fake_start(app, target_uuids=None, bench_indices=None, warmup=True):
             seen["targets"] = target_uuids
             seen["benches"] = bench_indices
             return True
@@ -304,7 +306,7 @@ class TestPerCellStart:
         monkeypatch.setattr(
             story_benchmark_runner,
             "start",
-            lambda app, target_uuids=None, bench_indices=None: seen.update(
+            lambda app, target_uuids=None, bench_indices=None, warmup=True: seen.update(
                 benches=bench_indices
             )
             or True,
@@ -320,3 +322,61 @@ class TestPerCellStart:
         """It selects a spec by position, so it cannot be trusted raw."""
         r = client.post("/benchmark_story/start?target_uuid=abc&bench=99")
         assert r.status_code == 400
+
+
+class TestWarmupToggle:
+    """The pre-trial "hi" call is what makes a model warm before the first
+    trial — exactly the thing being observed when the run is read for cache
+    behaviour, so the story page can turn it off."""
+
+    def test_the_story_page_offers_the_toggle(self):
+        body = webapp.app.test_client().get("/benchmark_story").get_data(as_text=True)
+        assert 'id="warmup-toggle"' in body
+        assert "Warm up LLM" in body
+
+    def test_it_is_unchecked_in_the_markup(self):
+        """Default off; localStorage is what turns it back on for a session
+        that wants it."""
+        body = webapp.app.test_client().get("/benchmark_story").get_data(as_text=True)
+        assert '<input type="checkbox" id="warmup-toggle">' in body
+
+    def test_the_other_suites_do_not_show_it(self):
+        """They are read for timings, where a cold model's load time landing
+        inside the first average is the problem the warmup solves."""
+        for path in ("/benchmark_basic", "/benchmark_kanban"):
+            body = webapp.app.test_client().get(path).get_data(as_text=True)
+            assert 'id="warmup-toggle"' not in body, path
+
+    def test_warmup_0_reaches_the_runner_as_false(self):
+        seen = {}
+
+        def fake_start(_app, target_uuids=None, bench_indices=None, warmup=True):
+            seen["warmup"] = warmup
+            return True
+
+        with patch.object(story_benchmark_runner, "start", fake_start):
+            webapp.app.test_client().post("/benchmark_story/start?warmup=0")
+        assert seen["warmup"] is False
+
+    def test_warmup_1_reaches_the_runner_as_true(self):
+        seen = {}
+
+        def fake_start(_app, target_uuids=None, bench_indices=None, warmup=True):
+            seen["warmup"] = warmup
+            return True
+
+        with patch.object(story_benchmark_runner, "start", fake_start):
+            webapp.app.test_client().post("/benchmark_story/start?warmup=1")
+        assert seen["warmup"] is True
+
+    def test_an_absent_param_keeps_warming_up(self):
+        """A hand-made request, or any caller that predates the toggle."""
+        seen = {}
+
+        def fake_start(_app, target_uuids=None, bench_indices=None, warmup=True):
+            seen["warmup"] = warmup
+            return True
+
+        with patch.object(story_benchmark_runner, "start", fake_start):
+            webapp.app.test_client().post("/benchmark_story/start")
+        assert seen["warmup"] is True

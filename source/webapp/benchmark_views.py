@@ -27,6 +27,8 @@ BENCHMARK_TEMPLATE: str = """
   header{margin-bottom:1em}
   header a{margin-right:1em}
   .controls{margin:1em 0;padding:0.6em;border:1px solid #ddd;border-radius:4px;background:#fafafa}
+  .warmup-toggle{margin-left:0.5em;font-size:0.9em;color:#444;cursor:pointer;user-select:none}
+  .warmup-toggle input{vertical-align:-0.1em;margin-right:0.25em}
   .status{margin-left:1em;color:#555}
   table{border-collapse:collapse;width:100%;margin-top:0.6em}
   th,td{border:1px solid #ddd;padding:6px 8px;vertical-align:middle;text-align:left}
@@ -88,6 +90,11 @@ BENCHMARK_TEMPLATE: str = """
 <div class="controls">
   <button id="start-btn">Start all</button>
   <button id="stop-btn">Stop</button>
+  {% if show_warmup_toggle %}
+  <label class="warmup-toggle" title="Send one throwaway 'hi' to each target before its first trial, so a cold model's load time doesn't land inside the first benchmark's average. Off while reading a run for cache behaviour, where a model warmed before the first trial is the thing being measured.">
+    <input type="checkbox" id="warmup-toggle"> Warm up LLM
+  </label>
+  {% endif %}
   <span class="status" id="status">loading…</span>
 </div>
 
@@ -347,6 +354,27 @@ function render(state) {
   body.innerHTML = rows;
 }
 
+// "Warm up LLM" lives in localStorage, not in the runner: it is a property of
+// how this operator wants to read a run, not of the run itself, so it must
+// survive a page load and must not be reset by whatever the last run used.
+// Off by default — the warmup call is only worth its time when the numbers
+// being read are timings.
+const WARMUP_KEY = 'pp-benchmark-warmup';
+// Returns "" on the pages that have no toggle, so their start URLs are
+// untouched and the endpoint keeps its warm-up default.
+function warmupQuery(separator) {
+  const el = document.getElementById('warmup-toggle');
+  return el ? separator + 'warmup=' + (el.checked ? '1' : '0') : '';
+}
+(function initWarmupToggle() {
+  const el = document.getElementById('warmup-toggle');
+  if (!el) return;
+  el.checked = localStorage.getItem(WARMUP_KEY) === '1';
+  el.addEventListener('change', () => {
+    localStorage.setItem(WARMUP_KEY, el.checked ? '1' : '0');
+  });
+})();
+
 let pollTimer = null;
 function startPolling() {
   if (pollTimer) return;
@@ -371,7 +399,7 @@ async function poll() {
 
 document.getElementById('start-btn').addEventListener('click', async () => {
   try {
-    const res = await call('{{ start_url }}', 'POST');
+    const res = await call('{{ start_url }}' + warmupQuery('?'), 'POST');
     // started=false means another suite holds the machine; re-poll so the
     // status line names it instead of the click doing nothing visible.
     if (res && res.started === false) { poll(); return; }
@@ -388,6 +416,7 @@ document.getElementById('grid-body').addEventListener('click', async (ev) => {
     if (btn.dataset.bench !== undefined) {
       url += '&bench=' + encodeURIComponent(btn.dataset.bench);
     }
+    url += warmupQuery('&');
     const res = await call(url, 'POST');
     if (res && res.started === false) { poll(); return; }
     startPolling(); poll();
@@ -416,6 +445,7 @@ def render_benchmark_page(
     state_endpoint: str, start_endpoint: str, stop_endpoint: str,
     show_artifacts: bool = False,
     artifact_endpoint: str | None = None,
+    show_warmup_toggle: bool = False,
 ) -> str:
     """Render the shared benchmark-suite page (table of targets × specs with
     live polling) for one spec set + runner. Used by /benchmark_basic and
@@ -423,7 +453,13 @@ def render_benchmark_page(
 
     `show_artifacts` turns on the per-trial copy buttons for spec sets whose
     trials produce something worth reading — the story suite. Off elsewhere,
-    where there is nothing to copy."""
+    where there is nothing to copy.
+
+    `show_warmup_toggle` adds the "Warm up LLM" checkbox. Only the story suite
+    has it: that is the set being read for cache behaviour, where warming a
+    model before the first trial hides the thing under observation. The other
+    pages are read for timings and always warm up. Turning it on elsewhere is
+    this one flag plus passing `warmup` through that page's start endpoint."""
     from flask import url_for
 
     return render_template_string(
@@ -438,6 +474,7 @@ def render_benchmark_page(
         stop_url=url_for(stop_endpoint),
         show_artifacts=show_artifacts,
         artifact_url=url_for(artifact_endpoint) if artifact_endpoint else '',
+        show_warmup_toggle=show_warmup_toggle,
     )
 
 

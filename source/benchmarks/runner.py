@@ -239,6 +239,7 @@ class BenchmarkRunner:
         app: Flask,
         target_uuids: list[str] | None = None,
         bench_indices: list[int] | None = None,
+        warmup: bool = True,
     ) -> bool:
         """Kick off a run in the background.
 
@@ -252,6 +253,12 @@ class BenchmarkRunner:
         suite runs four benchmarks in order and the interesting one is often
         last, so waiting through the others to reach it is minutes of nothing.
 
+        warmup=False skips the pre-trial "hi" call on every target. That call
+        exists so a cold model's load time doesn't land inside the first
+        benchmark's average; skipping it is for when the run is being read for
+        cache behaviour rather than for timings, where a warm model before the
+        first trial is the thing being measured.
+
         Returns False if a run is already in progress, or if another benchmark
         suite holds the shared slot (see benchmarks/exclusion.py — the models
         run on one local machine and cannot share it)."""
@@ -264,7 +271,7 @@ class BenchmarkRunner:
         if not SLOT.acquire(self.label):
             return False
         try:
-            self._begin_run(app, target_uuids, bench_indices)
+            self._begin_run(app, target_uuids, bench_indices, warmup)
         except BaseException:
             # _validate_bench_indices raises on a bad index and _collect_targets
             # touches the DB; either way no worker thread exists yet to hand the
@@ -279,6 +286,7 @@ class BenchmarkRunner:
         app: Flask,
         target_uuids: list[str] | None,
         bench_indices: list[int] | None,
+        warmup: bool = True,
     ) -> None:
         """Build the run state and hand it to the worker thread. Called only by
         start(), with the shared slot already held; _finish() releases it."""
@@ -350,7 +358,7 @@ class BenchmarkRunner:
             }
             self._stop_event.clear()
         self._thread = threading.Thread(
-            target=self._run, args=(app, run_targets, chosen),
+            target=self._run, args=(app, run_targets, chosen, warmup),
             name="benchmark-runner", daemon=True,
         )
         self._thread.start()
@@ -537,6 +545,7 @@ class BenchmarkRunner:
     def _run(
         self, app: Flask, targets: list[dict[str, Any]],
         bench_indices: list[int] | None = None,
+        warmup: bool = True,
     ) -> None:
         # Each target runs in its own child process (benchmarks.worker). The
         # child streams progress events back; stop() sets _stop_event, which
@@ -558,9 +567,12 @@ class BenchmarkRunner:
                         target["model_name"],
                         f" / {target['display_name']}" if target["display_name"] else "",
                     )
-                    # The model already lives in memory after the previous
-                    # target on the same model, so skip the child's warmup.
-                    skip_warmup = target["model_name"] == prev_model_name
+                    # Skipped either because the operator turned warmup off
+                    # for this run, or because the model already lives in
+                    # memory after the previous target on the same model.
+                    skip_warmup = (
+                        not warmup or target["model_name"] == prev_model_name
+                    )
                     prev_model_name = target["model_name"]
                     request = self._worker_request(
                         target["uuid"], skip_warmup, bench_indices
