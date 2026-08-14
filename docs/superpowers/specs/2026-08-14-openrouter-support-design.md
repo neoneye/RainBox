@@ -120,8 +120,8 @@ process that makes the call.
 
 ## 5. `.env` loading
 
-`.env` sits at the repo root (`/Users/neoneye/git/rainbox/.env`), added to the
-root `.gitignore`. A committed `.env.example` documents the keys.
+`.env` sits at the repo root, next to `source/`, and is added to the root
+`.gitignore`. A committed `.env.example` documents the keys.
 
 New `source/env_file.py`:
 
