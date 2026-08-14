@@ -260,7 +260,9 @@ function escapeHtml(s) {
 
 function render(state) {
   const statusEl = document.getElementById('status');
-  if (state.total_targets === 0) {
+  if (state.blocked_by) {
+    statusEl.textContent = `${state.blocked_by} is running — benchmarks run one at a time`;
+  } else if (state.total_targets === 0) {
     statusEl.textContent = 'no targets (no available model configs)';
   } else if (state.running) {
     statusEl.textContent = `running — target ${state.current_target_index + 1} of ${state.total_targets}`;
@@ -301,7 +303,9 @@ function render(state) {
   }
   const rankLabel = ['1st', '2nd', '3rd'];
 
-  const running = !!state.running;
+  const busy = !!state.running || !!state.blocked_by;
+  const topStart = document.getElementById('start-btn');
+  if (topStart) topStart.disabled = busy;
   const rows = scored.map(({ t, score }) => {
     const rowCls = (t.status === 'running' || t.status === 'warming_up') ? 'target-running' : '';
     const providerLine = t.provider
@@ -324,10 +328,10 @@ function render(state) {
     } else if (t.warmup_elapsed !== null && t.warmup_elapsed !== undefined) {
       warmup = `<small class="muted">warmup ${t.warmup_elapsed.toFixed(1)}s</small>`;
     }
-    const startBtn = `<button class="row-start" data-uuid="${escapeHtml(t.uuid)}" ${running ? 'disabled' : ''}>Start</button>`;
+    const startBtn = `<button class="row-start" data-uuid="${escapeHtml(t.uuid)}" ${busy ? 'disabled' : ''}>Start</button>`;
     const benchCells = benchmarkNames.map((bname, i) => {
       const b = t.benchmarks[i];
-      return `<td class="bench">${cellStart(b, t.uuid, i, running)}${renderBench(b, t.index, i)}</td>`;
+      return `<td class="bench">${cellStart(b, t.uuid, i, busy)}${renderBench(b, t.index, i)}</td>`;
     }).join('');
     const rank = rankByIndex.get(t.index);
     const rankBadge = rank ? `<span class="rank rank-${rank}">${rankLabel[rank - 1]}</span>` : '';
@@ -360,14 +364,17 @@ async function poll() {
     // results / right-click without the DOM being clobbered every 500 ms.
     // Conversely, if a run is active (e.g. the user reloaded the page
     // mid-run), make sure the timer is going.
-    if (state.running) startPolling();
+    if (state.running || state.blocked_by) startPolling();
     else stopPolling();
   } catch (e) { console.error(e); }
 }
 
 document.getElementById('start-btn').addEventListener('click', async () => {
   try {
-    await call('{{ start_url }}', 'POST');
+    const res = await call('{{ start_url }}', 'POST');
+    // started=false means another suite holds the machine; re-poll so the
+    // status line names it instead of the click doing nothing visible.
+    if (res && res.started === false) { poll(); return; }
     startPolling(); poll();
   } catch (e) { alert(e); }
 });
@@ -381,7 +388,8 @@ document.getElementById('grid-body').addEventListener('click', async (ev) => {
     if (btn.dataset.bench !== undefined) {
       url += '&bench=' + encodeURIComponent(btn.dataset.bench);
     }
-    await call(url, 'POST');
+    const res = await call(url, 'POST');
+    if (res && res.started === false) { poll(); return; }
     startPolling(); poll();
   } catch (e) { alert(e); }
 });

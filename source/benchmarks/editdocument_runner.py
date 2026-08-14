@@ -17,6 +17,7 @@ from uuid import UUID
 from flask import Flask
 
 import db
+from benchmarks.exclusion import SLOT
 from benchmarks.subproc import stream_target_subprocess
 from agents.config import (
     EDIT_DOCUMENT_V1_UUID,
@@ -122,6 +123,9 @@ class BenchmarkEditDocumentRunner:
     at import time and routes /benchmark_editdocument/{start,stop,state} to
     it."""
 
+    # Identifies this runner in the shared one-at-a-time slot.
+    label: str = "Edit-document benchmark"
+
     def __init__(self, app: Flask) -> None:
         self._app = app
         self._lock = threading.Lock()
@@ -142,7 +146,15 @@ class BenchmarkEditDocumentRunner:
 
     def get_state(self) -> dict[str, Any]:
         with self._lock:
-            return dict(self._state)
+            state = dict(self._state)
+        # `blocked_by` names the suite currently holding the machine, so a page
+        # that can't start says why instead of just disabling its buttons.
+        # Keyed on the holder rather than on `running`, because start() takes
+        # the slot a moment before it sets running — in that window this runner
+        # would otherwise report itself as the thing blocking it.
+        holder = SLOT.holder()
+        state["blocked_by"] = None if holder in (None, self.label) else holder
+        return state
 
     def ensure_targets_populated(self) -> None:
         """Refresh the targets list when idle so the page can render an
@@ -168,6 +180,11 @@ class BenchmarkEditDocumentRunner:
         with self._lock:
             if self._state["running"]:
                 return False
+        # Take the machine before touching any state, so a suite that loses the
+        # race leaves the winner's run untouched (benchmarks/exclusion.py).
+        if not SLOT.acquire(self.label):
+            return False
+        with self._lock:
             self._stop_event.clear()
             self._state["running"] = True
             self._state["started_at"] = time.time()
@@ -175,11 +192,20 @@ class BenchmarkEditDocumentRunner:
             self._state["aborted"] = False
             self._state["agent_choice"] = agent_choice
             self._state["current_target_index"] = -1
-        self._thread = threading.Thread(
-            target=self._run, args=(agent_choice, target_uuids),
-            name="benchmark-editdoc", daemon=True,
-        )
-        self._thread.start()
+        try:
+            self._thread = threading.Thread(
+                target=self._run, args=(agent_choice, target_uuids),
+                name="benchmark-editdoc", daemon=True,
+            )
+            self._thread.start()
+        except BaseException:
+            # Until the thread is running, nothing else will hand the slot
+            # back, and a stranded slot locks every benchmark page out until
+            # the server restarts.
+            SLOT.release(self.label)
+            with self._lock:
+                self._state["running"] = False
+            raise
         return True
 
     def stop(self) -> None:
@@ -222,6 +248,20 @@ class BenchmarkEditDocumentRunner:
             )
 
     def _run(self, agent_choice: str, target_uuids: list[str] | None) -> None:
+        try:
+            self._run_targets(agent_choice, target_uuids)
+        finally:
+            # The one place reached whether the run finished, was stopped, or
+            # raised. Releasing the shared slot here is what keeps an
+            # unexpected exception from locking every benchmark page out until
+            # restart; clearing `running` covers the same case for this page.
+            SLOT.release(self.label)
+            with self._lock:
+                self._state["running"] = False
+
+    def _run_targets(
+        self, agent_choice: str, target_uuids: list[str] | None
+    ) -> None:
         with self._app.app_context():
             try:
                 available = _list_available_targets()

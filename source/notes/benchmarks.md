@@ -41,6 +41,32 @@ A "target" / "row" is a `ModelConfigOverride` — the unconfigured base
 actually dialed in. `/benchmark_editdocument` further restricts to
 function-calling overrides.
 
+## One suite at a time
+
+There are four runner instances — general, kanban, story, edit-document — and
+each used to guard only its own re-entry, so two pages could be started minutes
+apart and drive two models at once. The models run locally on one consumer
+machine: two suites in flight means two models resident and competing for the
+same GPU, which is slower than running them in turn and makes every timing the
+benchmarks record meaningless.
+
+So the runners share one slot (`benchmarks/exclusion.py`). `start()` takes it or
+returns `False`; `_finish()` (the worker thread's `finally`, reached whether the
+run ended, was stopped, or raised) hands it back. An in-process lock suffices
+even though trials execute in child processes, because the runner thread that
+spawned a child blocks until that child is done — the slot covers the whole row.
+
+`…/state` carries `blocked_by`: the label of the suite currently holding the
+slot, or `null`. It is keyed on the holder rather than on `running`, since
+`start()` takes the slot a moment before it sets `running` and the holder must
+never report itself as blocked. A blocked page disables every Start control,
+says which suite is running, and keeps polling so it re-enables itself when that
+run ends.
+
+This covers the benchmark pages only. The supervisor in `main.py` spawns
+assistant agent processes on its own schedule and does not consult the slot, so
+an assistant turn can still overlap a benchmark run.
+
 ## Per-row child process
 
 A benchmark trial is a blocking LLM call. Run in the runner thread, a runaway

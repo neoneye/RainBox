@@ -152,7 +152,12 @@ function cellClass(trial) {
 
 function render(state) {
   const statusEl = document.getElementById('status');
-  if (state.total_targets === 0) {
+  // A suite running on another page owns the machine just as much as one
+  // running here, and saying which one is the most actionable thing here.
+  const busy = !!state.running || !!state.blocked_by;
+  if (state.blocked_by) {
+    statusEl.textContent = `${state.blocked_by} is running — benchmarks run one at a time`;
+  } else if (state.total_targets === 0) {
     statusEl.textContent = 'no available targets — add a model in /model first';
   } else if (state.running) {
     statusEl.textContent = `running (${state.agent_choice}) — target ${state.current_target_index + 1} of ${state.total_targets}`;
@@ -165,8 +170,10 @@ function render(state) {
   // Reflect the runner's current agent choice into the picker.
   document.querySelectorAll('input[name=agent]').forEach(inp => {
     inp.checked = inp.value === state.agent_choice;
-    inp.disabled = !!state.running;
+    inp.disabled = busy;
   });
+
+  document.getElementById('start-btn').disabled = busy;
 
   const body = document.getElementById('grid-body');
   if (!state.targets || state.targets.length === 0) {
@@ -178,7 +185,7 @@ function render(state) {
       const trial = t.trials[n] || {status: 'pending'};
       return `<td class="${cellClass(trial)}">${fmtCell(trial)}</td>`;
     }).join('');
-    const startBtn = `<button class="row-start" data-uuid="${escapeHtml(t.uuid)}" ${state.running ? 'disabled' : ''}>Start</button>`;
+    const startBtn = `<button class="row-start" data-uuid="${escapeHtml(t.uuid)}" ${busy ? 'disabled' : ''}>Start</button>`;
     const providerLine = t.provider
       ? `<small class="provider">${escapeHtml(providerLabel(t.provider))}</small>`
       : '';
@@ -221,7 +228,9 @@ async function poll() {
   try {
     const s = await call('/benchmark_editdocument/state');
     render(s);
-    if (s.running) startPolling();
+    // Keep polling while another suite holds the machine, so this page
+    // re-enables itself the moment that run ends.
+    if (s.running || s.blocked_by) startPolling();
     else stopPolling();
   } catch (e) {
     document.getElementById('status').textContent = `error: ${e.message}`;

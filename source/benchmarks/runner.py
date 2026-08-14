@@ -25,6 +25,7 @@ from benchmarks.story import (
     BenchmarkStoryText,
     BenchmarkStoryTextTool,
 )
+from benchmarks.exclusion import SLOT
 from benchmarks.subproc import stream_target_subprocess
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,15 @@ SPEC_SETS: dict[str, list[tuple[str, type, dict[str, Any]]]] = {
     "story": STORY_BENCHMARK_SPECS,
 }
 
+# What a page says when another suite holds the machine. Named per spec set
+# rather than per page so the message points at the suite, which is what the
+# operator recognizes.
+SPEC_SET_LABELS: dict[str, str] = {
+    "general": "General benchmark",
+    "kanban": "Kanban benchmark",
+    "story": "Story benchmark",
+}
+
 
 def _empty_benchmark_entry(name: str, total: int) -> dict[str, Any]:
     return {
@@ -106,6 +116,8 @@ class BenchmarkRunner:
     def __init__(self, spec_set: str = "general") -> None:
         self.spec_set = spec_set
         self.specs = SPEC_SETS[spec_set]
+        # Identifies this runner in the shared one-at-a-time slot.
+        self.label = SPEC_SET_LABELS[spec_set]
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -129,7 +141,15 @@ class BenchmarkRunner:
         with self._lock:
             # Shallow copy is enough — callers will JSON-serialize and not
             # mutate. The targets list/dicts are not externally edited.
-            return dict(self._state)
+            state = dict(self._state)
+        # `blocked_by` names the suite currently holding the machine, so a page
+        # that can't start says why instead of just disabling its buttons.
+        # Keyed on the holder rather than on `running`, because start() takes
+        # the slot a moment before it sets running — in that window this runner
+        # would otherwise report itself as the thing blocking it.
+        holder = SLOT.holder()
+        state["blocked_by"] = None if holder in (None, self.label) else holder
+        return state
 
     def ensure_targets_populated(self) -> None:
         """Refresh `targets` from the /models tree if no run is in progress.
@@ -232,10 +252,37 @@ class BenchmarkRunner:
         suite runs four benchmarks in order and the interesting one is often
         last, so waiting through the others to reach it is minutes of nothing.
 
-        Returns False if a run is already in progress."""
+        Returns False if a run is already in progress, or if another benchmark
+        suite holds the shared slot (see benchmarks/exclusion.py — the models
+        run on one local machine and cannot share it)."""
         with self._lock:
             if self._state["running"]:
                 return False
+        # Take the machine before touching any state, so a suite that loses the
+        # race leaves the winner's run completely untouched. The slot also
+        # covers this runner's own re-entry, since it already holds it.
+        if not SLOT.acquire(self.label):
+            return False
+        try:
+            self._begin_run(app, target_uuids, bench_indices)
+        except BaseException:
+            # _validate_bench_indices raises on a bad index and _collect_targets
+            # touches the DB; either way no worker thread exists yet to hand the
+            # slot back, so it must be released here or every page stays locked
+            # out until restart.
+            SLOT.release(self.label)
+            raise
+        return True
+
+    def _begin_run(
+        self,
+        app: Flask,
+        target_uuids: list[str] | None,
+        bench_indices: list[int] | None,
+    ) -> None:
+        """Build the run state and hand it to the worker thread. Called only by
+        start(), with the shared slot already held; _finish() releases it."""
+        with self._lock:
             chosen = self._validate_bench_indices(bench_indices)
             all_targets = self._collect_targets()
             run_set: set[str] | None = (
@@ -307,7 +354,6 @@ class BenchmarkRunner:
             name="benchmark-runner", daemon=True,
         )
         self._thread.start()
-        return True
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -438,6 +484,11 @@ class BenchmarkRunner:
             return self._artifacts.get((target_index, bench_index, trial))
 
     def _finish(self, aborted: bool) -> None:
+        # Hand the machine back first: this runs in the worker thread's finally,
+        # so it is the one place reached whether the run ended, was stopped, or
+        # raised. Releasing before taking self._lock keeps the slot from
+        # outliving a failure in the state bookkeeping below.
+        SLOT.release(self.label)
         with self._lock:
             self._state["running"] = False
             self._state["ended_at"] = time.time()
