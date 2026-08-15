@@ -39,6 +39,34 @@ logger = logging.getLogger(__name__)
 StatusSender = Callable[[dict[str, Any]], None]
 
 
+def truncate_middle(text: str, limit: int) -> str:
+    """Shorten over-long text to `limit` characters by dropping its middle,
+    saying in band how much went.
+
+    The one shortening shape every agent uses on text a model will read, so a
+    model that has learned to read the marker once reads it everywhere.
+
+    Head AND tail because both ends carry the content: a pasted log opens with
+    the command and closes with the failure, a request that opens with the
+    question closes with the material it is about, and an answer closes with
+    the part that says whether it answered. A head-only cut throws away
+    whichever end matters most, and does it silently.
+
+    The marker is written into the text rather than carried by an attribute
+    beside it because the model reads the text as prose: without it the seam
+    reads as continuous, and a backtrace appears to step from one frame
+    straight to an unrelated one — or a list of six languages appears to stop
+    after three.
+    """
+    if len(text) <= limit:
+        return text
+    head = (limit + 1) // 2
+    tail = limit - head
+    omitted = len(text) - limit
+    marker = f"\n\n[… {omitted} characters dropped from the middle …]\n\n"
+    return text[:head] + marker + (text[len(text) - tail:] if tail else "")
+
+
 class RejectedResponse(ValueError):
     """A response that arrived whole and was then rejected — the schema said
     no, or the caller's validator did.

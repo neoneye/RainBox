@@ -716,6 +716,15 @@ means a failed run is useful even if the summarizer model is unavailable; a
 later successful summarizer call may replace it. The summarizer posts no chat
 and enqueues nothing, so it can never summarize itself.
 
+`outcome` is what the /assistant and /assistant-overview chips read: anything
+but `resolved` shows as **Unresolved**, so a mis-graded `partial` is
+indistinguishable from a run that failed. The delivered reply is the evidence
+that field is judged on, so it reaches the summarizer shortened from the middle
+(`agents.base.truncate_middle`, 2000 chars) rather than cut from the end — an
+answer's closing lines are where it says whether it answered — and the system
+prompt tells the model what the marker means, so a shortened reply is never
+itself a reason to lower the outcome.
+
 ## Failure recovery
 
 There are two terminal failure paths:

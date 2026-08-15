@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import db
 import skills
 import user_profile
-from agents.base import ModelGroupAgent, StatusSender
+from agents.base import ModelGroupAgent, StatusSender, truncate_middle
 from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID, ASSISTANT_WORKING_NOTICE
 
 logger = logging.getLogger(__name__)
@@ -3249,7 +3249,7 @@ class AssistantAgent(ModelGroupAgent):
     # is a request too — and it renders into every prompt of every step plus the
     # criteria, classifier, second-opinion and audit calls, so an uncapped paste
     # is multiplied by the whole turn. Past this the middle is dropped
-    # (`_truncate_middle`) and a summary call describes what was cut.
+    # (`agents.base.truncate_middle`) and a summary call describes what was cut.
     # 8000 is the order of SECOND_OPINION_MAX_CODE_CHARS, the existing cap for a
     # whole program's worth of text: well above any typed request, well below a
     # paste. Characters, not bytes — every other cap here counts characters, and
@@ -5226,7 +5226,7 @@ class AssistantAgent(ModelGroupAgent):
                 "original_chars": str(len(text)),
                 "included_chars": str(self.REQUEST_SUMMARY_INPUT_MAX_CHARS),
             }
-            text = self._truncate_middle(
+            text = truncate_middle(
                 text, self.REQUEST_SUMMARY_INPUT_MAX_CHARS)
         request = ET.SubElement(root, "current_user_request", attrs)
         request.text = text
@@ -5751,30 +5751,6 @@ class AssistantAgent(ModelGroupAgent):
     def _message_role(message: dict[str, Any]) -> str:
         return "user" if message.get("sender_type") == "human" else "assistant"
 
-    @staticmethod
-    def _truncate_middle(text: str, limit: int) -> str:
-        """Shorten an over-long section to `limit` characters by dropping its
-        middle, saying in band how much went.
-
-        Head AND tail because both ends carry the content: a pasted log opens
-        with the command and closes with the failure, and a request that opens
-        with the question closes with the material it is about. A head-only cut
-        (the shape every other cap here uses) throws away whichever end the
-        operator put last.
-
-        The marker is written into the text rather than left to the tag's
-        attributes because the model reads the section as prose: without it the
-        seam reads as continuous, and a backtrace appears to step from one
-        frame straight to an unrelated one.
-        """
-        if len(text) <= limit:
-            return text
-        head = (limit + 1) // 2
-        tail = limit - head
-        omitted = len(text) - limit
-        marker = f"\n\n[… {omitted} characters dropped from the middle …]\n\n"
-        return text[:head] + marker + (text[len(text) - tail:] if tail else "")
-
     # Tier 1. Fixed order, and ordered so the per-call block SETS nest:
     #
     #   criteria {identity}
@@ -5875,7 +5851,7 @@ class AssistantAgent(ModelGroupAgent):
                 "original_chars": str(len(text)),
                 "included_chars": str(self.CURRENT_REQUEST_MAX_CHARS),
             }
-            text = self._truncate_middle(text, self.CURRENT_REQUEST_MAX_CHARS)
+            text = truncate_middle(text, self.CURRENT_REQUEST_MAX_CHARS)
         node = ET.SubElement(root, "current_user_request", attrs)
         node.text = text
         if self._long_request_summary_markdown:
@@ -5901,7 +5877,7 @@ class AssistantAgent(ModelGroupAgent):
             node.set("truncated", "middle")
             node.set("original_chars", str(len(text)))
             node.set("included_chars", str(cls.HISTORY_MESSAGE_MAX_CHARS))
-            text = cls._truncate_middle(text, cls.HISTORY_MESSAGE_MAX_CHARS)
+            text = truncate_middle(text, cls.HISTORY_MESSAGE_MAX_CHARS)
         node.text = text
         # The description written when this message WAS the request, replayed
         # as a sibling of the message it describes — the same adjacency the

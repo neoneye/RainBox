@@ -24,6 +24,7 @@ from agents.assistant import (
     SECOND_OPINION_TURN_INSTRUCTIONS,
     TRUNCATED_REQUEST_SECTION,
 )
+from agents.base import truncate_middle
 from agents.config import ASSISTANT_UUID
 
 
@@ -81,7 +82,7 @@ def _summary() -> RequestSummary:
 
 
 def test_short_text_is_returned_unchanged():
-    assert AssistantAgent._truncate_middle("hello", 8000) == "hello"
+    assert truncate_middle("hello", 8000) == "hello"
 
 
 def test_truncate_middle_keeps_both_ends():
@@ -89,7 +90,7 @@ def test_truncate_middle_keeps_both_ends():
     pasted log closes with the failure, and a request closes with the material
     it is about."""
     text = "A" * 100 + "B" * 100
-    cut = AssistantAgent._truncate_middle(text, 20)
+    cut = truncate_middle(text, 20)
 
     assert cut.startswith("A" * 10)
     assert cut.endswith("B" * 10)
@@ -98,7 +99,7 @@ def test_truncate_middle_keeps_both_ends():
 def test_truncate_middle_marks_the_seam_in_band():
     """Without an in-band marker the seam reads as continuous prose and a
     backtrace appears to step from one frame straight to an unrelated one."""
-    cut = AssistantAgent._truncate_middle("A" * 100, 20)
+    cut = truncate_middle("A" * 100, 20)
 
     assert "80 characters dropped from the middle" in cut
 
@@ -106,7 +107,7 @@ def test_truncate_middle_marks_the_seam_in_band():
 def test_truncate_middle_keeps_exactly_the_budget_of_original_text():
     """`included_chars` in the tag is a promise about the original text, so
     the marker's own length must not be counted against it."""
-    cut = AssistantAgent._truncate_middle("A" * 5000, 1000)
+    cut = truncate_middle("A" * 5000, 1000)
     marker_start = cut.index("[")
     marker_end = cut.index("]") + 1
 
@@ -118,7 +119,7 @@ def test_truncate_middle_counts_characters_not_bytes():
     """Byte-slicing UTF-8 splits codepoints; every other cap in the assistant
     counts characters, and this pipeline is explicitly multilingual."""
     text = "æ" * 100
-    cut = AssistantAgent._truncate_middle(text, 20)
+    cut = truncate_middle(text, 20)
 
     assert cut.startswith("æ" * 10)
     assert "80 characters dropped" in cut

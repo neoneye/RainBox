@@ -18,7 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 import db
-from agents.base import StatusSender, StructuredLLMAgent
+from agents.base import StatusSender, StructuredLLMAgent, truncate_middle
 
 # Repeated-call detection: two action steps count as the "same call" when they
 # invoke the same action with args at least this similar, and a cluster of this
@@ -26,10 +26,18 @@ from agents.base import StatusSender, StructuredLLMAgent
 _DUP_SIMILARITY_THRESHOLD = 0.85
 _DUP_MIN_GROUP = 2
 
-# How much of the delivered reply to show the summarizer. The reply is the
-# primary evidence for `outcome`, so it gets a longer budget than a step's
-# observation preview.
-_REPLY_PREVIEW_CHARS = 500
+# How much of the delivered reply to show the summarizer, and from which end.
+# The reply IS the evidence for `outcome`, so it gets far more room than a
+# step's observation preview — and what room it gets is spent on both ends
+# (`truncate_middle`), because the closing paragraph is where an answer says
+# whether it answered.
+#
+# A live run mis-graded itself on the old 500-char head-only cut: the six
+# languages it listed reached this call as three and a half, ending mid-word
+# with nothing to say a cut had happened, and the summarizer — correctly, for
+# what it was shown — called a complete answer "partial". 2000 carries both
+# ends of any ordinary reply; the marker covers the rest.
+_REPLY_PREVIEW_CHARS = 2000
 
 
 def _canonical_args(args: dict | None) -> str:
@@ -146,6 +154,13 @@ delivered. That reply is the evidence for `outcome` — the terminal step itself
 carries no observation, so a bare `reply` step is not a sign that the run \
 produced nothing.
 
+An over-long reply reaches you shortened: its opening and closing are present \
+and a "[… N characters dropped from the middle …]" marker stands where its \
+middle was. The user received the whole thing. Judge it on what you can see, \
+and never lower the outcome for the shortening itself — a list that continues \
+past the marker is a list you were shown part of, not one the reply cut short. \
+The same marker can appear in a step's line, and means the same thing there.
+
 Be terse and factual. Do not add prose, markdown, or fields outside the schema.
 """
 
@@ -193,7 +208,7 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
         text = ((reply or {}).get("text") or "").strip()
         if text:
             lines.append("Final reply delivered to the user:")
-            lines.append(text[:_REPLY_PREVIEW_CHARS])
+            lines.append(truncate_middle(text, _REPLY_PREVIEW_CHARS))
         else:
             lines.append("No reply was delivered to the user.")
         return "\n".join(lines)

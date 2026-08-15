@@ -206,12 +206,44 @@ def test_prompt_treats_a_blank_reply_as_no_reply():
     assert "No reply was delivered to the user." in prompt
 
 
-def test_prompt_truncates_a_long_reply():
+def test_prompt_shortens_a_long_reply_from_the_middle_and_says_so():
+    """The reply is the evidence for `outcome`, so both ends have to survive:
+    a live run was graded "partial" on a head-only cut that ended mid-word,
+    hiding half the answer it was judging. The marker is what stops the seam
+    reading as the place the reply stopped."""
     agent = _agent()
+    reply = "A" * 3000 + "B" * 3000
     prompt = agent._build_prompt(
-        SimpleNamespace(status="finished"), [], None, {"text": "z" * 5000})
-    assert "z" * _REPLY_PREVIEW_CHARS in prompt
-    assert "z" * (_REPLY_PREVIEW_CHARS + 1) not in prompt
+        SimpleNamespace(status="finished"), [], None, {"text": reply})
+
+    body = prompt.split("Final reply delivered to the user:\n", 1)[1]
+    assert body.startswith("A" * 1000)
+    assert body.endswith("B" * 1000)                  # the closing paragraph
+    assert "4000 characters dropped from the middle" in body
+    assert len(body.replace("A", "").replace("B", "")) < 100    # marker only
+
+
+def test_a_reply_within_the_budget_travels_whole_and_unmarked():
+    agent = _agent()
+    reply = "z" * _REPLY_PREVIEW_CHARS
+    prompt = agent._build_prompt(
+        SimpleNamespace(status="finished"), [], None, {"text": reply})
+
+    assert reply in prompt
+    assert "dropped from the middle" not in prompt
+
+
+def test_the_prompt_tells_the_model_what_the_marker_means():
+    """A marker the model has not been told about is worse than the cut it
+    describes: it reads as the reply trailing off, which is exactly the
+    reading that mis-graded a complete answer as partial."""
+    from agents.assistant_run_summarizer import (
+        ASSISTANT_RUN_SUMMARIZER_SYSTEM_PROMPT as SYSTEM_PROMPT,
+    )
+
+    assert "characters dropped from the middle" in SYSTEM_PROMPT
+    assert "The user received the whole thing." in SYSTEM_PROMPT
+    assert "never lower the outcome for the shortening itself" in SYSTEM_PROMPT
 
 
 def test_handle_feeds_the_delivered_reply_into_the_prompt(app_ctx):
