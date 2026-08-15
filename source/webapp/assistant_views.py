@@ -285,12 +285,12 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .hd .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   /* Model-call waterfall: name | track | duration. Bars are positioned on the
      run's wall-clock span, so a wide gap between two bars is time no model was
-     working. The bars carry the kind (purple for the calls the loop drove,
-     blue for the model's own decide calls, teal for the embedder, amber for a
-     review); the NAMES stay default text, so colour in this column means one
-     thing only — red, a call the run paid for and threw away. A column where
-     every row is a different colour spends the reader's attention on the
-     legend rather than on the one row that is a problem. */
+     working — which is what the chart is FOR, and what a bar per kind in a
+     different colour was competing with. One neutral bar, one neutral name,
+     and a single exception: a rejected call, in red, both bar and name. The
+     kind of every other call is already written next to it in the name
+     column, so colouring it too said nothing twice and left the row that is
+     actually a problem as one colour among five. */
   .as-main .wf { display:flex; flex-direction:column; gap:2px; }
   .as-main .wf-row { display:grid; grid-template-columns:14rem 1fr 4rem; gap:0.8rem;
                      align-items:center; text-decoration:none; color:inherit;
@@ -302,17 +302,11 @@ ASSISTANT_TEMPLATE = """
   .as-main .wf-track { position:relative; height:0.85rem; background:#f1f3f5;
                        border-radius:3px; overflow:hidden; }
   .as-main .wf-bar { position:absolute; top:0; bottom:0; border-radius:3px;
-                     background:#93b4f5; }
-  .as-main .wf-bar.kind-code-driven, .as-main .wf-bar.kind-inner { background:#d8b4fe; }
-  .as-main .wf-bar.kind-review { background:#fcd34d; }
-  /* The embedder — a different model on the same runtime, so a different
-     colour from any of the assistant's own calls. Its bars are what most of
-     the gaps between the others turn out to be. */
-  .as-main .wf-bar.kind-embedding { background:#5eead4; }
-  /* A call whose response was thrown away and asked for again. Same red as
-     the error text: the run paid for it and got nothing back — the one row
-     worth pulling the eye, and so the only coloured name. */
-  .as-main .wf-bar.kind-rejected { background:#fca5a5; }
+                     background:#98a2b3; }
+  /* The one exception: a call whose response was thrown away and asked for
+     again. Same red as the error text — the run paid for it and got nothing
+     back, and against neutral bars it is the row the eye finds first. */
+  .as-main .wf-bar.kind-rejected { background:#e8746f; }
   .as-main .wf-name.kind-rejected { color:#c0392b; }
   .as-main .wf-undated { position:absolute; left:4px; font-size:0.68rem; color:#98a2b3; }
   .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;

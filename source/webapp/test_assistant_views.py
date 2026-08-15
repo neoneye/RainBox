@@ -885,20 +885,17 @@ def test_waterfall_places_each_call_on_the_run_span(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
-def test_only_a_rejected_call_gets_a_coloured_name_in_the_waterfall():
-    """Colour in the name column means one thing: a call the run paid for and
-    threw away. The bars still carry the kind — that is what the track is for —
-    but a name column where every row is a different colour spends attention on
-    decoding the legend instead of on the one row that is a problem."""
+def test_only_a_rejected_call_is_coloured_in_the_waterfall():
+    """One call kind is worth colour: the one whose answer was thrown away.
+    Every other bar and name is neutral, so the chart shows where the time went
+    instead of asking the reader to decode a five-colour legend — and the row
+    that is a problem is the row that stands out."""
     import re
 
     from webapp.assistant_views import ASSISTANT_TEMPLATE
 
-    coloured = set(re.findall(r"\.wf-name\.kind-([a-z-]+)", ASSISTANT_TEMPLATE))
-    assert coloured == {"rejected"}
-    # The bars keep theirs.
-    assert ".wf-bar.kind-embedding" in ASSISTANT_TEMPLATE
-    assert ".wf-bar.kind-review" in ASSISTANT_TEMPLATE
+    kinds = set(re.findall(r"\.wf-(?:name|bar)\.kind-([a-z-]+)", ASSISTANT_TEMPLATE))
+    assert kinds == {"rejected"}
 
 
 def test_review_written_before_start_times_still_gets_a_bar(app_ctx, client):

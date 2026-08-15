@@ -810,15 +810,17 @@ UI), `POST …/stop`, `POST …/redirect`, `POST …/resummarize`, and
   inner call (in a step's observation payload, with `requested_at` + `usage`).
   A call with no recorded start is placed at its row's end minus its duration.
 
-  The bar carries the call's kind by colour (blue = the model's own decide
-  call, purple = one the loop drove, teal = the embedder, amber = a review,
-  red = an attempt whose answer was thrown away). The name beside it stays
-  default text except for that last one, so colour in the name column means
-  exactly one thing — a call the run paid for and got nothing back from —
-  rather than a legend to decode row by row. Embedder rows are labelled just
-  `embed`: a run embeds on one model, and naming it per row repeats one string
-  down the column; the model is named once per step, on the timing block's
-  embedder line.
+  Bars and names are neutral, with one exception: a **rejected** call — an
+  attempt whose answer was thrown away — is red in both. The chart's job is to
+  show where the wall-clock went, and a colour per call kind competed with
+  that: the kind is already written next to the bar in the name column, so
+  colouring it too said nothing twice and left the one row that is a problem
+  as one colour among five. Every row still carries a `kind-<kind>` class, so
+  a future kind that genuinely needs the eye can claim colour without
+  reintroducing a legend. Embedder rows are labelled just `embed`: a run
+  embeds on one model, and naming it per row repeats one string down the
+  column; the model is named once per step, on the timing block's embedder
+  line.
 
   Timeline rows are numbered by their position ("Step 3 of 4"), not by
   `step_index` — the code-driven rows share the decide index they sit beside,
