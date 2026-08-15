@@ -145,7 +145,7 @@ def test_turn_instructions_render_raw_but_other_sections_stay_escaped():
     AssistantAgent._append_turn_instructions(root, forged_text)
     out = _render_sections(root)
 
-    assert '<turn_instructions authority="instructions">' in out
+    assert "<turn_instructions>" in out
     assert '<x a="1"> & more' in out
     assert "&lt;x" not in out
     assert "&amp;" not in out

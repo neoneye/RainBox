@@ -210,8 +210,7 @@ def test_hostile_note_stays_escaped_context(room, calibrated_profile):
     # (see _render_sections) and is not required to be well-formed itself.
     # It sits between the tier-1 static head and the tier-3 tail, so cut it
     # out of the middle rather than keeping only what follows it.
-    before, _, after = prompt.partition(
-        '<turn_instructions authority="instructions">')
+    before, _, after = prompt.partition("<turn_instructions>")
     rest = before + after.split("</turn_instructions>\n", 1)[1]
     root = ET.fromstring(f"<root>{rest}</root>")
     node = root.find("knowledge_calibration")
