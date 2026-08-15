@@ -85,7 +85,9 @@ budgets for the filter pipelines), `MIN_SCORE = 0.60`, `MIN_MARGIN = 0.05`
   `_alias_table`. No embedding call; deterministic.
 - **Semantic, ungated** (`_semantic_ranked`) — pgvector top-`TOP_K_NODES`
   nodes, aggregated to the max score per `qa_id`, returned ranked descending.
-  No score gate — the caller decides.
+  No score gate — the caller decides. The query vector comes from
+  `embed_query` (below) and is handed to the retriever in the `QueryBundle`,
+  so LlamaIndex does not embed the string a second time.
 - **Lexical full-text** (`_fulltext_ranked`) — IDF-weighted token overlap over
   every entry's questions (double weight) AND answer text, scored in Python
   against the in-memory registry (no embedding server needed). The signal
@@ -105,6 +107,16 @@ budgets for the filter pipelines), `MIN_SCORE = 0.60`, `MIN_MARGIN = 0.05`
 - **Semantic, gated top-1** (`_semantic_match`) — requires the best score
   `>= MIN_SCORE` and a margin `>= MIN_MARGIN` over the runner-up. Returns `None`
   when too weak or ambiguous — a clean "no" over a confident wrong answer.
+
+**`embed_query`** is the one place a search query is embedded, for both vector
+stores: this KB and the memory-claim store (`memory/retrieval.py::_vector_sims`
+defaults to it). One `memory_query` searches both, and each store embedding the
+query for itself put two identical requests on embeddinggemma — on the same
+local runtime the assistant's own model is waiting for. The memo is bounded and
+process-lifetime: an embedding is a pure function of (model, text) and the
+embedder is a process singleton, so a hit is never stale, and the same question
+asked twice costs one embedding. Tests get an empty cache per test (the
+autouse fixture in `conftest.py`), since they swap in fake embedders.
 
 Resolving a match to text is `_resolve_match`: static → `answer`; dynamic → run
 the handler.

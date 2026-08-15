@@ -17,3 +17,20 @@ os.environ["DATABASE_URL"] = os.environ.get(
     "RAINBOX_TEST_DATABASE_URL",
     "postgresql+psycopg://localhost/rainbox_claude",
 )
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_query_embedding_cache():
+    """Start every test with an empty query-embedding cache.
+
+    `seed_memory.embed_query` memoizes by query text for the life of the
+    process, which is right in production (the embedder is a singleton) and
+    wrong across tests: they swap in fake embedders freely, so one test's
+    vector for "who is X" would otherwise be served to the next."""
+    from memory.seed_memory import _embed_query_cached
+
+    _embed_query_cached.cache_clear()
+    yield
+    _embed_query_cached.cache_clear()

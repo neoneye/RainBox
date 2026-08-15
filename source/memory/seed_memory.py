@@ -15,6 +15,7 @@ import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -22,7 +23,7 @@ from uuid import UUID
 import psycopg
 import sqlalchemy as sa
 from llama_index.core import Document, VectorStoreIndex
-from llama_index.core.schema import BaseNode, TextNode
+from llama_index.core.schema import BaseNode, QueryBundle, TextNode
 from llama_index.core.storage.storage_context import StorageContext
 from llama_index.core.vector_stores import (
     FilterCondition,
@@ -135,6 +136,43 @@ def _embed_model() -> OpenAIEmbedding:
             max_retries=EMBED_MAX_RETRIES,
         )
     return _embed
+
+
+# One query, one embedding. A memory_query searches TWO vector stores — the
+# memory claims (rainbox's own table, via `memory.retrieval`) and the seed KB
+# (LlamaIndex's PGVectorStore) — and each used to embed the query itself, so
+# every recall sent the same string to embeddinggemma twice, on the local
+# runtime the assistant's own model is waiting for. Both paths come through
+# here instead.
+#
+# Bounded and process-lifetime: an embedding is a pure function of (model,
+# text) and the model is a process singleton (`_embed_model`), so a hit can
+# never be stale — swapping the embedder already requires a restart. The
+# repeat inside one action is what this exists for; the repeat across actions
+# (the operator asking the same thing twice) is a bonus.
+QUERY_EMBED_CACHE_SIZE: int = 64
+
+
+@lru_cache(maxsize=QUERY_EMBED_CACHE_SIZE)
+def _embed_query_cached(model_name: str, text: str) -> tuple[float, ...]:
+    """The cache itself. `model_name` is part of the key, not the request: the
+    embedder is resolved from the module singleton, and naming it here means a
+    future embedder swap cannot serve vectors from the old one. Tuple so a
+    caller cannot mutate what the next caller gets."""
+    return tuple(_embed_model().get_query_embedding(text))
+
+
+def embed_query(text: str) -> list[float]:
+    """The query vector for `text` — the ONE place a search query is embedded.
+
+    Embedded as a query, though the claim store's own vectors were written as
+    text (`memory.embeddings._default_embed`): for this embedder the two are
+    the same request — the OpenAI client's query and text engines are both
+    `EMBED_MODEL_NAME` — so one vector is correct against both stores.
+
+    Raises what the embedder raised; both callers already catch it and degrade
+    to lexical-only retrieval."""
+    return list(_embed_query_cached(EMBED_MODEL_NAME, text))
 
 
 def _vector_store() -> PGVectorStore:
@@ -778,9 +816,13 @@ def _semantic_ranked(query: str, vs: PGVectorStore, *,
     caller to apply."""
     unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
     index = VectorStoreIndex.from_vector_store(vs, embed_model=_embed_model())
+    # The query vector is supplied rather than left to the retriever, which
+    # would embed the string a second time — `embed_query` has it already (the
+    # claim search asked for the same one). A QueryBundle carrying an
+    # `embedding` skips the retriever's own embed entirely.
     nodes = index.as_retriever(
         similarity_top_k=TOP_K_NODES, filters=_shield_filters(unlocked),
-    ).retrieve(query)
+    ).retrieve(QueryBundle(query_str=query, embedding=embed_query(query)))
     if not nodes:
         return []
     by_qa: dict[str, tuple[float, str]] = {}   # qa_id -> (best_score, matched_question)

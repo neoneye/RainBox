@@ -1,12 +1,15 @@
-"""Memory retrieval: deterministic, token-overlap based, no embeddings.
+"""Memory retrieval over the memory-claim store.
 
-`retrieve_memories` returns a small, explainable bundle. `format_memory_context`
-turns the bundle into a compact block injected before the chat transcript.
-`record_memory_use` posts a `debug-memory` chat row so the operator (and
-the explanation command) can audit which memories an agent used.
+`retrieve_memories_hybrid` is what callers use: hard filters first, then a
+weighted merge of vector similarity (against the claims' stored embeddings,
+the query embedded once via `seed_memory.embed_query`), Postgres full-text
+rank, and a structured subject/object entity boost. `retrieve_memories` is the
+model-free token-overlap fallback — deterministic, and what retrieval degrades
+towards when no embedder is reachable.
 
-This is the first cut — favouring correctness and auditability over
-aggressive recall, as the spec requires.
+`format_memory_context` turns a bundle into a compact block injected before the
+chat transcript. `record_memory_use` posts a `debug-memory` chat row so the
+operator (and the explanation command) can audit which memories an agent used.
 """
 
 import json
@@ -276,12 +279,17 @@ def _vector_sims(
     query: str, ids: list[UUID], embed_fn: Callable[[str], list[float]] | None
 ) -> dict[UUID, float]:
     """Cosine similarity (0..1) for candidates that have an embedding. Empty when
-    no query embedding is available — retrieval degrades to lexical-only."""
+    no query embedding is available — retrieval degrades to lexical-only.
+
+    The default embedder is `seed_memory.embed_query`, the one place a search
+    query is embedded: the assistant's memory_query searches this store and the
+    seed KB in the same action, and embedding the same string once per store
+    put two calls on the local runtime for one query."""
     if not ids or not query.strip():
         return {}
     if embed_fn is None:
-        from memory.embeddings import _default_embed
-        embed_fn = _default_embed
+        from memory.seed_memory import embed_query
+        embed_fn = embed_query
     try:
         qvec = embed_fn(query)
     except Exception:

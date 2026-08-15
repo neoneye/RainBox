@@ -288,3 +288,66 @@ def test_expired_active_claim_is_not_embedded_and_is_pruned(app_ctx, fresh_subje
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
     finally:
         _cleanup(fresh_subject)
+
+
+# --- one query, one embedding -------------------------------------------------
+
+
+def test_a_query_is_embedded_once_for_both_vector_stores(app_ctx, monkeypatch):
+    """A memory_query searches two vector stores — the claim store and the seed
+    KB — and each used to embed the query itself, so one recall put two
+    identical requests on the local embedder, competing with the assistant's
+    own model for the runtime. `embed_query` is the one place a search query is
+    embedded, and both stores read the same vector."""
+    from memory import seed_memory as qkb
+    from memory.retrieval import _vector_sims
+
+    calls: list[str] = []
+
+    class _CountingEmbedder:
+        def get_query_embedding(self, text: str) -> list[float]:
+            calls.append(text)
+            return _fake_embed(text)
+
+    monkeypatch.setattr(qkb, "_embed_model", lambda: _CountingEmbedder())
+    first = qkb.embed_query("which host runs the deploy")
+    second = qkb.embed_query("which host runs the deploy")
+    assert calls == ["which host runs the deploy"]
+    assert first == second == _fake_embed("which host runs the deploy")
+    # The claim store's default embedder is that same one place — so its
+    # search is served by the call the seed KB's search already made.
+    assert _vector_sims("which host runs the deploy", [uuid4()], None) == {}  # no such claim
+    assert calls == ["which host runs the deploy"]
+    # A different query is a different vector, and does reach the embedder.
+    qkb.embed_query("which port does it listen on")
+    assert calls == ["which host runs the deploy", "which port does it listen on"]
+
+
+def test_the_seed_retriever_is_handed_the_query_vector(monkeypatch):
+    """The seed KB search goes through LlamaIndex, which embeds the query
+    itself unless the QueryBundle already carries an embedding. It must carry
+    one — that second embed is exactly the duplicate this removes."""
+    from llama_index.core.schema import QueryBundle
+    from memory import seed_memory as qkb
+
+    seen: dict = {}
+
+    class _Retriever:
+        def retrieve(self, bundle):
+            seen["bundle"] = bundle
+            return []
+
+    class _Index:
+        def as_retriever(self, **_):
+            return _Retriever()
+
+    monkeypatch.setattr(qkb, "_embed_model", lambda: object())
+    monkeypatch.setattr(qkb, "embed_query", lambda text: [0.25] * 3)
+    monkeypatch.setattr(qkb.VectorStoreIndex, "from_vector_store",
+                        staticmethod(lambda vs, **_: _Index()))
+    monkeypatch.setattr(qkb, "_unlocked_shields", lambda: set())
+    assert qkb._semantic_ranked("which host runs the deploy", object()) == []
+    bundle = seen["bundle"]
+    assert isinstance(bundle, QueryBundle)
+    assert bundle.query_str == "which host runs the deploy"
+    assert bundle.embedding == [0.25] * 3
