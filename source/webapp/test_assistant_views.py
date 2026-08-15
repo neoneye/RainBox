@@ -1613,3 +1613,92 @@ def test_timing_payload_is_not_dumped_as_json_in_the_result(app_ctx, client):
         assert '"started_at"' not in md
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+# --- rejected attempts -------------------------------------------------------
+#
+# A decide call whose first response is refused is retried (see
+# ModelGroupAgent.REJECTED_RESPONSE_RETRIES). The step records the attempt it
+# kept, so the refused ones — real seconds, real tokens — showed up on the
+# trace as a gap between two calls with nothing in it.
+
+def _retried_step_run(room):
+    """A finished run whose reply step took two attempts: the first refused
+    after 18s, the second accepted after 14s."""
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=1, phase="final", action="reply",
+        reason="answer it", model_response='{"action":"reply"}',
+        input_tokens=9500, output_tokens=200, duration_ms=14104,
+        requested_at=datetime(2026, 8, 15, 15, 53, 5, tzinfo=UTC),
+        rejected_attempts=[{
+            "model_uuid": str(uuid4()),
+            "model_name": "gemma4:e4b",
+            "requested_at": "2026-08-15T15:53:05+00:00",
+            "ms": 18271,
+            "input_tokens": 9400,
+            "output_tokens": 682,
+            "response": '{"reason":null,"action":null,"args":null}',
+            "error": "RejectedResponse: model did not return a valid "
+                     "AssistantStepDecision",
+        }])
+    db.finish_run(run, "finished")
+    return run
+
+
+def test_a_rejected_attempt_shows_beside_the_response_that_replaced_it(
+        app_ctx, client):
+    room = _room()
+    run = _retried_step_run(room)
+    try:
+        page, md = _rendered(client, run)
+        for body in (page, md):
+            assert "rejected response 1 of 1" in body
+            assert '{"reason":null,"action":null,"args":null}' in body
+            assert "model did not return a valid AssistantStepDecision" in body
+            # …and above the decision that replaced it, which both renderers
+            # show as the reconstructed decide JSON.
+            assert '"action": "reply"' in body
+            assert body.index("rejected response 1 of 1") < body.index(
+                '"action": "reply"')
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_rejected_attempt_is_a_call_on_the_waterfall_and_in_the_totals(
+        app_ctx, client):
+    """The 18 seconds have to land somewhere. As its own row they are model
+    time; left out they were "action" time — a gap where nothing ran."""
+    room = _room()
+    run = _retried_step_run(room)
+    try:
+        page, md = _rendered(client, run)
+        assert "kind-rejected" in page
+        assert "reply (rejected)" in page
+        assert "| reply (rejected) | rejected |" in md
+
+        steps = db.list_assistant_steps(run.uuid)
+        stats = db.assistant_run_stats(steps)
+        assert stats["calls"] == 2                          # both attempts
+        assert stats["duration_ms"] == 14104 + 18271        # and both durations
+        assert stats["input_tokens"] == 9500 + 9400         # and both prompts
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_step_without_retries_renders_no_rejected_block(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="answer it", model_response='{"action":"reply"}',
+        duration_ms=1000)
+    db.finish_run(run, "finished")
+    try:
+        page, md = _rendered(client, run)
+        assert "rejected response" not in page
+        assert "rejected response" not in md
+    finally:
+        _cleanup(run.uuid, room.uuid)

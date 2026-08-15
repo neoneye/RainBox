@@ -3537,6 +3537,11 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt = self._last_system_prompt
                 user_prompt = self._last_user_prompt
                 model_response = self._last_response_text
+                # Responses this decide call had refused before the one it
+                # kept. Snapshotted here with the rest: the reply audit runs
+                # its own call before this step's row is written, and the row
+                # must not inherit the audit's retries — or lose its own.
+                rejected_attempts = self._last_rejected_attempts
                 # The model's native reasoning ("thinking") channel for this
                 # decide call; None for a non-reasoning model. Persisted on the
                 # step row and read on /assistant. It is deliberately NOT a
@@ -3551,6 +3556,7 @@ class AssistantAgent(ModelGroupAgent):
                         error=error, usage=usage, model_uuid=model_uuid,
                         system_prompt=system_prompt, user_prompt=user_prompt,
                         reasoning=reasoning, model_response=model_response,
+                        rejected_attempts=rejected_attempts,
                         requested_at=requested_at,
                     )
                     scratchpad.append(AssistantTurnStep(
@@ -3593,6 +3599,7 @@ class AssistantAgent(ModelGroupAgent):
                                 system_prompt=system_prompt,
                                 user_prompt=user_prompt, reasoning=reasoning,
                                 model_response=model_response,
+                                rejected_attempts=rejected_attempts,
                                 requested_at=requested_at,
                             )
                             scratchpad.append(AssistantTurnStep(
@@ -3609,6 +3616,7 @@ class AssistantAgent(ModelGroupAgent):
                         usage=usage, model_uuid=model_uuid,
                         system_prompt=system_prompt, user_prompt=user_prompt,
                         reasoning=reasoning, model_response=model_response,
+                        rejected_attempts=rejected_attempts,
                         requested_at=requested_at,
                     )
                     text = self._terminal_text(decision)
@@ -3636,6 +3644,7 @@ class AssistantAgent(ModelGroupAgent):
                     model_uuid=model_uuid,
                     system_prompt=system_prompt, user_prompt=user_prompt,
                     reasoning=reasoning, model_response=model_response,
+                    rejected_attempts=rejected_attempts,
                     requested_at=requested_at)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
@@ -5378,6 +5387,7 @@ class AssistantAgent(ModelGroupAgent):
             log=self._turn_log or None,
             reasoning=self._last_reasoning,
             model_response=self._last_response_text,
+            rejected_attempts=self._last_rejected_attempts,
             code_driven=True,
             requested_at=requested_at,
             observation_preview=observation_preview, error=error,
@@ -5631,6 +5641,7 @@ class AssistantAgent(ModelGroupAgent):
             user_prompt=user_prompt, log=self._turn_log or None,
             reasoning=self._last_reasoning,
             model_response=self._last_response_text,
+            rejected_attempts=self._last_rejected_attempts,
             code_driven=True,
             requested_at=requested_at,
             observation_preview=observation_preview, error=error,
@@ -6340,6 +6351,7 @@ class AssistantAgent(ModelGroupAgent):
         system_prompt: str | None = None, user_prompt: str | None = None,
         reasoning: str | None = None,
         model_response: str | None = None,
+        rejected_attempts: list | None = None,
         requested_at: "datetime | None" = None,
     ) -> "db.AssistantStep | None":
         """Open a non-terminal action step: insert its single `running` row
@@ -6370,6 +6382,7 @@ class AssistantAgent(ModelGroupAgent):
             log=self._turn_log or None,
             reasoning=reasoning,
             model_response=model_response,
+            rejected_attempts=rejected_attempts,
             requested_at=requested_at,
             model_group_uuid=self.model_group_uuid,
             model_uuid=model_uuid,
@@ -6416,6 +6429,7 @@ class AssistantAgent(ModelGroupAgent):
         user_prompt: str | None = None,
         reasoning: str | None = None,
         model_response: str | None = None,
+        rejected_attempts: list | None = None,
         requested_at: "datetime | None" = None,
     ) -> None:
         """Record a single-insert (no open/settle lifecycle) trace step — the
@@ -6451,6 +6465,7 @@ class AssistantAgent(ModelGroupAgent):
                 log=self._turn_log or None,
                 reasoning=reasoning,
                 model_response=model_response,
+                rejected_attempts=rejected_attempts,
                 requested_at=requested_at,
                 observation_preview=observation_preview,
                 error=error,

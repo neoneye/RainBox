@@ -637,11 +637,19 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   `ModelGroupAgent.REJECTED_RESPONSE_RETRIES` (3) times before the group falls
   back to the next candidate. Each retry appends, after the unchanged prompt,
   every response rejected so far (as assistant turns) and why each was
-  rejected (as a `<rejected_response>` user turn), so
-  the model can see what was wrong with what it wrote. Every retry is its own
-  attempt entry, so the trace shows each rejected response beside its reason.
-  A call that never produced a response (timeout, transport error, empty
-  stream) is not retried — it falls straight through to the next candidate.
+  rejected (as a `<rejected_response>` user turn), so the model can see what
+  was wrong with what it wrote. A call that never produced a response
+  (timeout, transport error, empty stream) is not retried — it falls straight
+  through to the next candidate.
+- Each rejected attempt is kept on the step's **`rejected_attempts`** (what the
+  model wrote, why it was refused, its start time, duration and token counts)
+  and renders above the accepted response, one block per attempt, plus a row of
+  its own (kind `rejected`) on the model-call waterfall. It is a real call: its
+  tokens and seconds count in the run's LLM totals. Without the row, a retried
+  step showed as a short call followed by a gap where nothing appeared to be
+  running. Token counting is per attempt, so the step's own in/out — and the
+  throughput divided by the winner's duration — describe the attempt that
+  succeeded and not the sum of all of them.
 - An action may record a **`timing`** block in its observation `data`, and
   `memory_query` does: `{phases: [{name, ms, started_at}], embeddings: {count,
   ms, chars, models, calls, dropped}}`. The phases are `claim retrieval`,

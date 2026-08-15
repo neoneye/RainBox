@@ -255,6 +255,10 @@ ASSISTANT_TEMPLATE = """
      the gaps between the others turn out to be. */
   .as-main .wf-bar.kind-embedding { background:#5eead4; }
   .as-main .wf-name.kind-embedding { color:#0f766e; }
+  /* A call whose response was thrown away and asked for again. Same red as
+     the error text: the run paid for it and got nothing back. */
+  .as-main .wf-bar.kind-rejected { background:#fca5a5; }
+  .as-main .wf-name.kind-rejected { color:#c0392b; }
   .as-main .wf-undated { position:absolute; left:4px; font-size:0.68rem; color:#98a2b3; }
   .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;
                       font-variant-numeric:tabular-nums; }
@@ -539,6 +543,17 @@ ASSISTANT_TEMPLATE = """
           </details>
         </div>
         {% endif %}
+        {# Responses this call made and threw away, before the one it kept.
+           They render ABOVE the accepted response because that is the order
+           they happened in, and each one's seconds are part of the wall-clock
+           between this step's request and the next call. #}
+        {% for r in step.rejected_attempts or [] %}
+        <div class="io io-out io-rejected">
+          <div class="io-label">rejected response {{ loop.index }} of {{ loop.length }}{{ io_meta(rejected_meta(r, model_names)) }}</div>
+          <div class="err">{{ r.error }}</div>
+          {% if r.response %}<pre>{{ r.response }}</pre>{% endif %}
+        </div>
+        {% endfor %}
         {% set decision_text = decision_json.get(step.uuid|string, '') %}
         {% if decision_text or step.model_response %}
         <div class="io io-out">
@@ -1147,6 +1162,27 @@ def _response_meta(step, model_names: dict[str, str]) -> list[dict]:
         step.created_at, "When this model response was recorded")
 
 
+def _rejected_meta(attempt: dict, model_names: dict[str, str]) -> list[dict]:
+    """The rejected-response line: which model wrote it, what it cost, when.
+
+    The same fields as the accepted response beside it, because the question
+    the operator is asking is the same one — where did the time go — and this
+    attempt spent as much of it as the one that worked."""
+    fields: list[dict] = []
+    if attempt.get("model_uuid"):
+        fields.append(_model_field(
+            attempt["model_uuid"], model_names,
+            "The model that produced this rejected response"))
+    fields += _usage_fields(
+        attempt.get("input_tokens"), attempt.get("output_tokens"),
+        attempt.get("ms"))
+    if attempt.get("requested_at"):
+        fields.append(_field(
+            _iso_hms(attempt["requested_at"]),
+            "When this attempt was sent", cls="io-time"))
+    return fields
+
+
 def _request_meta(step) -> list[dict]:
     return _time_field(step.requested_at, "When this model request was made")
 
@@ -1438,6 +1474,20 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
         if step.model_response and not decision and step.error
         else "model response"
     )
+    # The responses this call threw away, above the one it kept — the order
+    # they happened in, and where the run's missing seconds went. Mirrored in
+    # ASSISTANT_TEMPLATE; change both together.
+    attempts = step.rejected_attempts or []
+    for i, attempt in enumerate(attempts, start=1):
+        lines.append(_labelled(
+            f"**rejected response {i} of {len(attempts)}**",
+            _rejected_meta(attempt, model_names)))
+        lines.append("")
+        lines.append(f"**error:** {attempt.get('error')}")
+        lines.append("")
+        if attempt.get("response"):
+            lines.append(_fence(str(attempt["response"])))
+            lines.append("")
     response_text = decision or step.model_response or ""
     if response_text:
         lines.append(_labelled(f"**{response_label}**",
@@ -1821,6 +1871,7 @@ def assistant_page() -> str:
         response_meta=_response_meta, request_meta=_request_meta,
         call_meta=_call_meta, result_meta=_result_meta,
         review_meta=_review_meta, recall_filter_meta=_recall_filter_meta,
+        rejected_meta=_rejected_meta,
         unlinked=ctx.get("unlinked", []),
         pending_controls=ctx.get("pending_controls", []),
         duration=duration, model_names=ctx.get("model_names", {}),

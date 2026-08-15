@@ -20,6 +20,7 @@ import json
 import logging
 import threading
 import time
+from datetime import UTC, datetime
 from typing import Any, Callable, cast
 from uuid import UUID
 
@@ -298,6 +299,14 @@ class ModelGroupAgent(Agent):
         # Raw provider content from the latest structured call. On an
         # interrupted stream this is the latest partial JSON/text received.
         self._last_response_text: str | None = None
+        # The responses the latest structured call had rejected before it
+        # returned, oldest first — one entry per retry (see
+        # REJECTED_RESPONSE_RETRIES), each with what the model wrote, why it
+        # was refused, and what that attempt cost. Empty for a call that got
+        # it right the first time. Callers persist it: a rejected attempt is
+        # real wall-clock and real tokens, and left unrecorded it becomes an
+        # unexplained gap between two calls in the trace.
+        self._last_rejected_attempts: list[dict[str, Any]] = []
 
     def setup(self) -> None:
         self.model_group_uuid: UUID | None = None
@@ -418,15 +427,11 @@ class ModelGroupAgent(Agent):
             ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
             ChatMessage(role=MessageRole.USER, content=user_prompt),
         ]
-        # Per-call token accounting (PlanExe's structured-LLM pattern): a
-        # TokenCountingHandler on the structured LLM captures input/output tokens
-        # even though `.raw` is the parsed model, not the usage dict. Reset here so
-        # a caller reading self._last_usage after a failed call sees None.
         self._last_usage = None
         self._last_model_uuid = None
         self._last_reasoning = None
         self._last_response_text = None
-        token_counter = TokenCountingHandler()
+        self._last_rejected_attempts = []
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
             model_name = str(model_uuid)
@@ -446,6 +451,17 @@ class ModelGroupAgent(Agent):
                 # produced it.
                 self._last_reasoning = None
                 self._last_response_text = None
+                # Per-attempt token accounting (PlanExe's structured-LLM
+                # pattern): a TokenCountingHandler on the structured LLM
+                # captures input/output tokens even though `.raw` is the
+                # parsed model, not the usage dict. Per ATTEMPT, not per call:
+                # one counter across a retry charges the succeeding attempt
+                # for the rejected one's prompt too, and the step's throughput
+                # figure — tokens over the winner's duration — then reads
+                # roughly double what the model did.
+                token_counter = TokenCountingHandler()
+                attempt_at = datetime.now(UTC)
+                t0 = time.monotonic()
                 try:
                     provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
                     timeout_s = float(
@@ -461,7 +477,6 @@ class ModelGroupAgent(Agent):
                         model_name,
                         provider_id,
                     )
-                    t0 = time.monotonic()
                     the_llm = prepare_llm(provider_id, model_name, args)
                     sllm = the_llm.as_structured_llm(
                         response_model, callback_manager=CallbackManager([token_counter])
@@ -570,6 +585,23 @@ class ModelGroupAgent(Agent):
                         )
                         break
                     rejections += 1
+                    # What this attempt cost and what it wrote, for the caller
+                    # to persist. Without it the retry is time and tokens the
+                    # trace cannot account for: the step records only the
+                    # attempt that succeeded, and the wall-clock of the ones
+                    # before it reads as a gap where nothing was running.
+                    self._last_rejected_attempts.append({
+                        "model_uuid": str(model_uuid),
+                        "model_name": model_name,
+                        "requested_at": attempt_at.isoformat(),
+                        "ms": int((time.monotonic() - t0) * 1000),
+                        "input_tokens": token_counter.prompt_llm_token_count,
+                        "output_tokens": token_counter.completion_llm_token_count,
+                        "response": truncate_middle(
+                            self._last_response_text or "",
+                            self.REJECTED_RESPONSE_ECHO_CHARS),
+                        "error": f"{type(e).__name__}: {e}",
+                    })
                     logger.warning(
                         "agent %s: model %s returned an unusable response (%s); "
                         "asking it again with the reason (%d retr%s left)",

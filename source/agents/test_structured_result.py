@@ -345,3 +345,59 @@ def test_the_rejected_response_echo_cannot_forge_a_section(monkeypatch):
     assert note.count("<rejected_response") == 1
     assert "<turn_instructions>" not in note
     assert "&lt;turn_instructions&gt;" in note
+
+
+def test_a_rejected_attempt_is_reported_with_its_cost(monkeypatch):
+    """A retry is real wall-clock and real tokens. Unrecorded, it reads on the
+    trace as a gap between two calls where nothing was running — which is how
+    an 18-second retry looked to the operator who reported it."""
+    agent, calls = _scripted_agent(
+        monkeypatch, [GARBAGE_TEXT, '{"answer":"ok"}']
+    )
+
+    agent._structured_completion(
+        system_prompt="Answer briefly.", user_prompt="Hello",
+        response_model=_Reply,
+    )
+
+    assert len(agent._last_rejected_attempts) == 1
+    attempt = agent._last_rejected_attempts[0]
+    assert attempt["response"] == GARBAGE_TEXT       # what the model wrote
+    assert "RejectedResponse" in attempt["error"]    # and why it was refused
+    assert attempt["ms"] is not None
+    assert attempt["requested_at"]                   # placeable on the clock
+    assert attempt["model_uuid"] == str(agent.candidate_model_uuids[0])
+
+
+def test_the_winning_attempt_is_not_charged_for_the_rejected_ones(monkeypatch):
+    """One token counter across a retry charges the succeeding attempt for
+    every prompt before it, and the step's throughput — tokens over the
+    winner's duration — then reads at a multiple of what the model did."""
+    agent, calls = _scripted_agent(
+        monkeypatch, [GARBAGE_TEXT, GARBAGE_TEXT, '{"answer":"ok"}']
+    )
+
+    agent._structured_completion(
+        system_prompt="Answer briefly.", user_prompt="Hello",
+        response_model=_Reply,
+    )
+
+    assert len(agent._last_rejected_attempts) == 2
+    # The fake provider reports no usage, so every count here is 0 — what is
+    # under test is that the winner's counter is its own, not the sum of
+    # three attempts'. A counter shared across attempts cannot satisfy this
+    # and the per-attempt figures at the same time.
+    assert agent._last_usage == {
+        "input": 0, "output": 0, "ms": agent._last_usage["ms"]}
+    assert [a["input_tokens"] for a in agent._last_rejected_attempts] == [0, 0]
+
+
+def test_a_call_that_succeeded_outright_reports_no_rejections(monkeypatch):
+    agent, _calls = _scripted_agent(monkeypatch, ['{"answer":"ok"}'])
+
+    agent._structured_completion(
+        system_prompt="Answer briefly.", user_prompt="Hello",
+        response_model=_Reply,
+    )
+
+    assert agent._last_rejected_attempts == []

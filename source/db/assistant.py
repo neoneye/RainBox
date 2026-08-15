@@ -110,6 +110,7 @@ def open_assistant_step(
     user_prompt: str | None = None,
     reasoning: str | None = None,
     model_response: str | None = None,
+    rejected_attempts: list | None = None,
     requested_at: datetime | None = None,
     model_group_uuid: UUID | None = None,
     model_uuid: UUID | None = None,
@@ -134,6 +135,7 @@ def open_assistant_step(
         log=log,
         reasoning=reasoning,
         model_response=model_response,
+        rejected_attempts=rejected_attempts or None,
         requested_at=requested_at,
         model_group_uuid=model_group_uuid,
         model_uuid=model_uuid,
@@ -183,6 +185,7 @@ def append_assistant_step(
     user_prompt: str | None = None,
     reasoning: str | None = None,
     model_response: str | None = None,
+    rejected_attempts: list | None = None,
     code_driven: bool = False,
     requested_at: datetime | None = None,
     observation_preview: str | None = None,
@@ -212,6 +215,7 @@ def append_assistant_step(
         log=log,
         reasoning=reasoning,
         model_response=model_response,
+        rejected_attempts=rejected_attempts or None,
         code_driven=code_driven,
         requested_at=requested_at,
         observation_preview=observation_preview,
@@ -736,6 +740,27 @@ def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
             "input_tokens": input_tokens, "output_tokens": output_tokens}
 
 
+def _rejected_calls(step) -> list[dict]:
+    """The calls this step made and threw away: responses that arrived and
+    were refused by the schema or a validator, each retried with the reason
+    attached (see `ModelGroupAgent.REJECTED_RESPONSE_RETRIES`).
+
+    Real calls to a real model, so they belong in the enumeration on the same
+    footing as the one that succeeded — the step's own `duration_ms` covers
+    only the attempt it kept, and without these rows their seconds read as a
+    gap where nothing was running."""
+    calls: list[dict] = []
+    for attempt in step.rejected_attempts or []:
+        calls.append(_call(
+            f"{step.action or '—'} (rejected)", "rejected",
+            start=_parse_ts(attempt.get("requested_at")),
+            duration_ms=attempt.get("ms"), anchor=str(step.uuid),
+            model_uuid=attempt.get("model_uuid"),
+            input_tokens=attempt.get("input_tokens"),
+            output_tokens=attempt.get("output_tokens")))
+    return calls
+
+
 def _embedding_calls(step, data: dict) -> list[dict]:
     """The embedder calls a step made, from its `timing` payload.
 
@@ -810,6 +835,7 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
                 start=start, duration_ms=s.duration_ms, anchor=str(s.uuid),
                 model_uuid=s.model_uuid, input_tokens=s.input_tokens,
                 output_tokens=s.output_tokens))
+        calls.extend(_rejected_calls(s))
         calls.extend(_inner_calls(s, data))
         calls.extend(_embedding_calls(s, data))
     by_uuid = {str(s.uuid): s for s in steps}
@@ -840,7 +866,11 @@ def assistant_run_stats(steps: list, reviews: list | None = None) -> dict:
     The embedder is counted apart from the LLM totals rather than folded in:
     it produces no tokens, so its seconds in `duration_ms` would drag the
     throughput figure down against work it never did. It gets its own two
-    numbers instead — visible, and not mixed into anything."""
+    numbers instead — visible, and not mixed into anything.
+
+    Rejected attempts DO count. The run paid their tokens and their seconds,
+    and leaving them out is what made a retried step look like a fast call
+    followed by a gap where nothing ran."""
     calls = assistant_llm_calls(steps, reviews)
     embeddings = [c for c in calls if c["kind"] == "embedding"]
     llm = [c for c in calls if c["kind"] != "embedding"]

@@ -507,6 +507,10 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("assistant_step", "user_prompt", "user_prompt TEXT")
         # Raw/partial provider response for successful and interrupted decides.
         _add_column_if_missing("assistant_step", "model_response", "model_response TEXT")
+        # The responses this step's call rejected before the one it kept — the
+        # retries that would otherwise be an unexplained gap in the trace.
+        _add_column_if_missing(
+            "assistant_step", "rejected_attempts", "rejected_attempts JSONB")
         # Whether the loop issued this call itself instead of the model choosing
         # it (criteria, language classifier, reply audit); existing rows are
         # classified by _backfill_code_driven_steps below.

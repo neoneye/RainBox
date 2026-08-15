@@ -209,6 +209,11 @@ Key fields:
   operator-facing audit note
 - `model_response`: raw provider content from the decide call; on interruption,
   the most recently checkpointed partial structured response
+- `rejected_attempts`: the responses this call refused before the one it kept
+  (schema violations, validator refusals), oldest first, as
+  `{model_uuid, model_name, requested_at, ms, input_tokens, output_tokens,
+  response, error}`. NULL for a call that got it right first time. Their
+  tokens and seconds are the run's, and count in its totals
 - `code_driven`: true when the loop issued this call itself rather than the
   model choosing it — the acceptance-criteria establish/refresh, the
   response-language classifier, the reply audit. Such a row has no decision

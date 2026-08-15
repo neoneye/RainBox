@@ -1093,6 +1093,17 @@ class AssistantStep(db.Model):
     # for a worker interrupted mid-stream, the latest durable partial response.
     # NULL on legacy/control rows and providers that expose no content stream.
     model_response: Mapped[str | None] = mapped_column(Text)
+    # The responses this step's call had rejected — schema violations and
+    # validator refusals — before the one in `model_response` was accepted, as
+    # a list of {model_uuid, model_name, requested_at, ms, input_tokens,
+    # output_tokens, response, error}, oldest first. NULL/empty for a call
+    # that got it right first time, which is nearly all of them.
+    #
+    # Persisted rather than left in the run's `active_call` checkpoint, which
+    # is cleared the moment this row lands: a retry is real wall-clock and
+    # real tokens, and unrecorded it shows up on the trace as a gap between
+    # two calls with nothing in it.
+    rejected_attempts: Mapped[list | None] = mapped_column(JSONB)
     # True when the loop issued this call itself rather than the model choosing
     # it: the acceptance-criteria establish/refresh, the response-language
     # classifier, the reply audit. Such a row has no decide decision behind it —
