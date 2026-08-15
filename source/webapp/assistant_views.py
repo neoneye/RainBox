@@ -250,6 +250,11 @@ ASSISTANT_TEMPLATE = """
   .as-main .wf-bar.kind-review { background:#fcd34d; }
   .as-main .wf-name.kind-code-driven, .as-main .wf-name.kind-inner { color:#7e22ce; }
   .as-main .wf-name.kind-review { color:#b06f00; }
+  /* The embedder — a different model on the same runtime, so a different
+     colour from any of the assistant's own calls. Its bars are what most of
+     the gaps between the others turn out to be. */
+  .as-main .wf-bar.kind-embedding { background:#5eead4; }
+  .as-main .wf-name.kind-embedding { color:#0f766e; }
   .as-main .wf-undated { position:absolute; left:4px; font-size:0.68rem; color:#98a2b3; }
   .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;
                       font-variant-numeric:tabular-nums; }
@@ -285,6 +290,11 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .io-data th, .as-main .step .io-data td {
      border:1px solid #d1d5db; padding:2px 8px; text-align:right; }
   .as-main .step .io-data th { background:#f3f4f6; font-weight:600; cursor:help; }
+  /* Phase timing: where one action's own duration went. Names read left, the
+     numbers stay right-aligned with the counts table above them. */
+  .as-main .step .io-timing td.io-timing-name { text-align:left;
+     font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+     font-size:0.76rem; }
   /* The chosen action's human description, shown after the action in the header band. */
   .as-main .step .hd .action-desc { color:inherit; font-size:inherit; font-weight:400; }
   /* The observation's ok flag, derived from the step phase (observed=ok). */
@@ -355,7 +365,8 @@ ASSISTANT_TEMPLATE = """
           <div class="dlabel">Time</div>
           <div class="dval">total {{ dash.total_time }}</div>
           <div class="dval">model {{ dash.model_time }}</div>
-          <div class="dval">action {{ dash.action_time }}</div>
+          {% if dash.embed_calls %}<div class="dval" title="Wall-clock inside the embedder ({{ dash.embed_calls }} call(s)) — a second model on the same runtime, called by memory retrieval">embed {{ dash.embed_time }}</div>{% endif %}
+          <div class="dval" title="Wall-clock outside both models: action execution and loop overhead">action {{ dash.action_time }}</div>
         </div>
         <div class="dcell">
           <div class="dlabel">Tokens</div>
@@ -402,7 +413,7 @@ ASSISTANT_TEMPLATE = """
       <div class="card">
         <div class="hd">
           <div class="card-title">Model calls</div>
-          <span class="outcome muted">{{ dash.llm_calls }} calls · model {{ dash.model_time }} · total {{ dash.total_time }}</span>
+          <span class="outcome muted">{{ dash.llm_calls }} calls · model {{ dash.model_time }}{% if dash.embed_calls %} · {{ dash.embed_calls }} embed {{ dash.embed_time }}{% endif %} · total {{ dash.total_time }}</span>
         </div>
         <div class="card-body">
           <div class="wf">
@@ -611,6 +622,25 @@ ASSISTANT_TEMPLATE = """
           <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{{ io_meta(result_meta(step)) }}</div>
           {% if obs is not none %}
             {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
+            {% set tm = timing.get(step.uuid|string) %}
+            {% if tm %}
+            {# Where the action's own duration went. The phases are the
+               action's parts in the order they finished; the embedder line
+               below counts the calls those phases made (already inside their
+               durations — the per-call bars are in the waterfall above). #}
+            <table class="io-data io-timing"><thead><tr>
+              <th title="A named part of this action">phase</th>
+              <th title="Wall-clock spent in this phase">took</th>
+              <th title="When this phase started">at</th>
+            </tr></thead><tbody>
+              {% for r in tm.rows %}
+              <tr><td class="io-timing-name">{{ r.name }}</td><td>{{ r.took }}</td><td>{{ r.at }}</td></tr>
+              {% endfor %}
+              {% if tm.embeddings %}
+              <tr><td class="io-timing-name" title="Embedding calls made inside the phases above — a second model on the same runtime, which is what a warm cache for the assistant's own model competes with">embedder</td><td colspan="2">{{ tm.embeddings }}</td></tr>
+              {% endif %}
+            </tbody></table>
+            {% endif %}
             {% set odata = obs_data.get(step.uuid|string) %}
             {% if odata %}
               {% if 'qa_static' in odata %}
@@ -951,8 +981,13 @@ def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
     in_tokens, out_tokens = stats["input_tokens"], stats["output_tokens"]
     llm_ms = stats["duration_ms"]
     llm_seconds = llm_ms / 1000
-    # "action" time = wall-clock spent outside the model (action execution +
-    # overhead) = total - model. Only computable once the run has finished.
+    # The embedder gets its own line rather than hiding inside "action": it is
+    # a model call on the same local runtime, and a run whose retrieval spends
+    # seconds embedding looks, without this, like a run with slow actions.
+    embed_seconds = stats["embedding_ms"] / 1000
+    # "action" time = wall-clock spent outside either model (action execution +
+    # overhead) = total - model - embed. Only computable once the run has
+    # finished.
     total_seconds = None
     if run.started_at and run.finished_at:
         total_seconds = (run.finished_at - run.started_at).total_seconds()
@@ -963,7 +998,9 @@ def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
         "llm_calls": stats["calls"],
         "total_time": _format_seconds(total_seconds) if total_seconds is not None else "—",
         "model_time": _format_seconds(llm_seconds),
-        "action_time": (_format_seconds(total_seconds - llm_seconds)
+        "embed_calls": stats["embedding_calls"],
+        "embed_time": _format_seconds(embed_seconds),
+        "action_time": (_format_seconds(total_seconds - llm_seconds - embed_seconds)
                         if total_seconds is not None else "—"),
         "llm_tps": stats["tps"],
         "in_tokens": in_tokens,
@@ -1263,6 +1300,62 @@ def _split_recall_filter(step) -> dict | None:
     return None
 
 
+def _split_timing(step) -> dict | None:
+    """The action's phase timing, lifted out of the observation data so it
+    renders as a table instead of a JSON dump inside the result.
+
+    Only memory_query records it today. Its step duration says the action took
+    half a minute; the phases say whether that was the vector search, the seed
+    KB, or the relevance filter's own LLM call — three different problems with
+    three different fixes."""
+    data = (step.observation or {}).get("data") or {}
+    timing = data.get("timing")
+    return timing if isinstance(timing, dict) and timing.get("phases") else None
+
+
+def _timing_view(timing: dict) -> dict:
+    """The timing block as the page and the export both render it: one row per
+    phase, plus the embedder's totals underneath.
+
+    The embedding calls are NOT rows here — their time is already inside the
+    phase that made them, and a second set of bars adding up to more than the
+    action took would read as a contradiction. They are listed individually in
+    the run's model-call waterfall, where they sit on the same wall-clock as
+    everything else."""
+    rows = []
+    for p in timing.get("phases") or []:
+        ms = p.get("ms")
+        rows.append({
+            "name": str(p.get("name") or "—"),
+            "took": _format_seconds(ms / 1000) if ms is not None else "—",
+            "at": _iso_hms(p.get("started_at")),
+        })
+    embeds = timing.get("embeddings") or {}
+    summary = None
+    if embeds.get("count"):
+        parts = [f"{embeds['count']} call{'s' if embeds['count'] != 1 else ''}",
+                 _format_seconds((embeds.get("ms") or 0) / 1000)]
+        if embeds.get("chars"):
+            parts.append(f"{embeds['chars']} chars")
+        parts += [str(m) for m in (embeds.get("models") or [])]
+        summary = " · ".join(parts)
+    return {"rows": rows, "embeddings": summary}
+
+
+def _iso_hms(value: str | None) -> str:
+    """An ISO timestamp from a JSONB payload as wall-clock HH:MM:SS, in the
+    same zone as the other trace times (the payloads store UTC). Unparseable
+    or missing renders as an em dash rather than raising — the timing block is
+    diagnostics, and diagnostics must not be what breaks the page."""
+    if not value:
+        return "—"
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return "—"
+    return (parsed.astimezone() if parsed.tzinfo else parsed).strftime("%H:%M:%S")
+
+
 def _second_opinion_md(so: dict, model_names: dict[str, str]) -> list[str]:
     """The second-opinion block as Markdown: verdict and reviewer on the label,
     the exact prompts the reviewer model was given, then the problems (or why
@@ -1373,6 +1466,19 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
             if obs.get("text"):
                 lines.append(_fence(obs["text"]))
                 lines.append("")
+            # Phase timing, same table as the page (see _timing_view), before
+            # the counts: it explains the duration on the label just above.
+            tm = _split_timing(step)
+            if tm is not None:
+                view = _timing_view(tm)
+                lines.append("| phase | took | at |")
+                lines.append("|---|---|---|")
+                for r in view["rows"]:
+                    lines.append(f"| {r['name']} | {r['took']} | {r['at']} |")
+                if view["embeddings"]:
+                    lines.append(f"| embedder | {view['embeddings']} | |")
+                lines.append("")
+            obs_data.pop("timing", None)
             if obs_data:
                 data = obs_data
                 if "qa_static" in data:
@@ -1411,7 +1517,10 @@ def _run_markdown(run, ctx: dict) -> str:
         f"- **Status:** {dash['status']} ({run.status.capitalize()})",
         f"- **Steps:** {dash['steps']}",
         f"- **LLM calls:** {dash['llm_calls']}",
-        f"- **Time:** total {dash['total_time']} · model {dash['model_time']} · action {dash['action_time']}",
+        (f"- **Time:** total {dash['total_time']} · model {dash['model_time']}"
+         + (f" · embed {dash['embed_time']} ({dash['embed_calls']} calls)"
+            if dash.get("embed_calls") else "")
+         + f" · action {dash['action_time']}"),
         f"- **Tokens:** {toks}",
         f"- **Start:** {fmt_dt(run.started_at)}",
         f"- **Finish:** {fmt_dt(run.finished_at)}",
@@ -1618,11 +1727,15 @@ def _load_run_detail(selected) -> dict:
     reviews = {str(r.uuid): r for r in review_rows}
     second_opinion: dict[str, dict] = {}
     recall_filter: dict[str, dict] = {}
+    timing: dict[str, dict] = {}
     obs_data: dict[str, dict] = {}
     for s in steps:
         rf = _split_recall_filter(s)
         if rf is not None:
             recall_filter[str(s.uuid)] = rf
+        tm = _split_timing(s)
+        if tm is not None:
+            timing[str(s.uuid)] = _timing_view(tm)
         so, data = _split_second_opinion(s, reviews)
         if so is not None:
             # problems_text is precomputed because ASSISTANT_TEMPLATE is a
@@ -1632,6 +1745,10 @@ def _load_run_detail(selected) -> dict:
             so["problems_text"] = "\n".join(
                 f"- {t}" for t in problem_texts(so.get("problems")))
             second_opinion[str(s.uuid)] = so
+        # Timing renders as its own table under the result, so it is stripped
+        # here for the same reason the review and the recall filter are: left
+        # in, it reaches the page as a JSON dump nobody reads.
+        data.pop("timing", None)
         obs_data[str(s.uuid)] = data
     # The full final reply (the run stores only a truncated final_summary).
     reply = db.get_run_final_reply(selected)
@@ -1652,6 +1769,7 @@ def _load_run_detail(selected) -> dict:
         "second_opinion": second_opinion,
         "obs_data": obs_data,
         "recall_filter": recall_filter,
+        "timing": timing,
         "unlinked": unlinked,
         "reviews": reviews,
         "pending_controls": db.list_pending_controls(selected.uuid),
@@ -1695,6 +1813,7 @@ def assistant_page() -> str:
         second_opinion=ctx.get("second_opinion", {}),
         obs_data=ctx.get("obs_data", {}),
         recall_filter=ctx.get("recall_filter", {}),
+        timing=ctx.get("timing", {}),
         action_descriptions=_ACTION_DESCRIPTIONS,
         code_driven_descriptions=_CODE_DRIVEN_DESCRIPTIONS,
         # The io-meta field builders, called from the template so the page and

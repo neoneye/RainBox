@@ -736,6 +736,27 @@ def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
             "input_tokens": input_tokens, "output_tokens": output_tokens}
 
 
+def _embedding_calls(step, data: dict) -> list[dict]:
+    """The embedder calls a step made, from its `timing` payload.
+
+    A different model from the ones above — no tokens, no prompt, and not the
+    assistant's own — but it runs on the same local runtime, so its calls are
+    part of what the wall-clock between two LLM bars is made of, and enough of
+    them can evict the model the next decide call needs warm. Kept out of the
+    run's token/throughput totals (see `assistant_run_stats`) and counted on
+    their own."""
+    timing = data.get("timing") or {}
+    embeddings = timing.get("embeddings") or {}
+    calls: list[dict] = []
+    for call in embeddings.get("calls") or []:
+        model = call.get("model") or "embedder"
+        calls.append(_call(
+            f"embed {model}", "embedding",
+            start=_parse_ts(call.get("requested_at")),
+            duration_ms=call.get("ms"), anchor=str(step.uuid)))
+    return calls
+
+
 def _inner_calls(step, data: dict) -> list[dict]:
     """The model calls a step made from inside its action, which have no row of
     their own: the criteria revision's inner call and the memory recall
@@ -790,6 +811,7 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
                 model_uuid=s.model_uuid, input_tokens=s.input_tokens,
                 output_tokens=s.output_tokens))
         calls.extend(_inner_calls(s, data))
+        calls.extend(_embedding_calls(s, data))
     by_uuid = {str(s.uuid): s for s in steps}
     for r in reviews or []:
         # A review runs between its step's decide call returning and the action
@@ -811,18 +833,28 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
 
 def assistant_run_stats(steps: list, reviews: list | None = None) -> dict:
     """What a run has cost so far: `{calls, input_tokens, output_tokens,
-    duration_ms, tps}` over every model call. Summed from the call enumeration
-    rather than the step rows, so the inner calls are in the totals."""
+    duration_ms, tps, embedding_calls, embedding_ms}`. Summed from the call
+    enumeration rather than the step rows, so the inner calls are in the
+    totals.
+
+    The embedder is counted apart from the LLM totals rather than folded in:
+    it produces no tokens, so its seconds in `duration_ms` would drag the
+    throughput figure down against work it never did. It gets its own two
+    numbers instead — visible, and not mixed into anything."""
     calls = assistant_llm_calls(steps, reviews)
-    in_tokens = sum((c["input_tokens"] or 0) for c in calls)
-    out_tokens = sum((c["output_tokens"] or 0) for c in calls)
-    llm_ms = sum((c["duration_ms"] or 0) for c in calls)
+    embeddings = [c for c in calls if c["kind"] == "embedding"]
+    llm = [c for c in calls if c["kind"] != "embedding"]
+    in_tokens = sum((c["input_tokens"] or 0) for c in llm)
+    out_tokens = sum((c["output_tokens"] or 0) for c in llm)
+    llm_ms = sum((c["duration_ms"] or 0) for c in llm)
     return {
-        "calls": len(calls),
+        "calls": len(llm),
         "input_tokens": in_tokens,
         "output_tokens": out_tokens,
         "duration_ms": llm_ms,
         "tps": round((in_tokens + out_tokens) / (llm_ms / 1000)) if llm_ms else None,
+        "embedding_calls": len(embeddings),
+        "embedding_ms": sum((c["duration_ms"] or 0) for c in embeddings),
     }
 
 

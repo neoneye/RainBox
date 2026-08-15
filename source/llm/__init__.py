@@ -4,12 +4,17 @@ import logging
 import random
 import time
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any, Iterator, Sequence
 
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.core.base.llms.types import ChatResponse, TextBlock, ThinkingBlock
 from llama_index.core.instrumentation import get_dispatcher
 from llama_index.core.instrumentation.event_handlers import BaseEventHandler
+from llama_index.core.instrumentation.events.embedding import (
+    EmbeddingEndEvent,
+    EmbeddingStartEvent,
+)
 from llama_index.core.instrumentation.events.llm import (
     LLMChatEndEvent,
     LLMChatInProgressEvent,
@@ -352,6 +357,82 @@ class _ReasoningTally(BaseEventHandler):
     @property
     def content_chars(self) -> int:
         return self.totals["content"] + self.inflight["content"]
+
+
+class _EmbeddingTally(BaseEventHandler):
+    """Dispatcher handler that times every embedding call made inside the
+    block, however deep in the retrieval stack it happens.
+
+    Instrumentation rather than a wrapper around the embed call: the embedder
+    is reached from several places (claim vector search, the seed KB's
+    populate and retrieve), and an embed nobody remembered to wrap is exactly
+    the one worth seeing. The embedder is a second model sharing the runtime
+    with the one the assistant is talking to, so its calls are what a
+    gap between two LLM bars in the trace is usually made of.
+
+    Start/end pairs are matched as a stack: the calls are synchronous, so the
+    end that arrives belongs to the most recent start still open."""
+
+    calls: list[dict] = Field(default_factory=list)
+    pending: list[dict] = Field(default_factory=list)
+
+    @classmethod
+    def class_name(cls) -> str:
+        return "EmbeddingTally"
+
+    def handle(self, event: Any, **kwargs: Any) -> Any:
+        if isinstance(event, EmbeddingStartEvent):
+            model = (event.model_dict or {}).get("model_name")
+            self.pending.append({
+                "model": str(model) if model else None,
+                "t0": time.monotonic(),
+                "requested_at": datetime.now(UTC).isoformat(),
+            })
+        elif isinstance(event, EmbeddingEndEvent):
+            # An end with no open start (the block was entered mid-call)
+            # still counts as a call that happened; it just has no duration.
+            started = self.pending.pop() if self.pending else {}
+            chunks = list(getattr(event, "chunks", None) or [])
+            self.calls.append({
+                "model": started.get("model"),
+                "requested_at": started.get("requested_at"),
+                "ms": (int((time.monotonic() - started["t0"]) * 1000)
+                       if started.get("t0") else None),
+                "texts": len(chunks),
+                "chars": sum(len(c) for c in chunks),
+            })
+
+    @property
+    def count(self) -> int:
+        return len(self.calls)
+
+    @property
+    def total_ms(self) -> int:
+        return sum(c["ms"] or 0 for c in self.calls)
+
+    @property
+    def total_chars(self) -> int:
+        return sum(c["chars"] or 0 for c in self.calls)
+
+
+@contextmanager
+def capture_embeddings() -> Iterator["_EmbeddingTally"]:
+    """Time every embedding call made inside the block — how many, against
+    which model, how long each took, how much text went in.
+
+    The counterpart to `capture_reasoning` for the other model in the system:
+    the embedder (embeddinggemma via Ollama) that memory retrieval calls
+    before any of it reaches the assistant's own model."""
+    tally = _EmbeddingTally()
+    dispatcher = get_dispatcher()
+    dispatcher.add_event_handler(tally)
+    try:
+        yield tally
+    finally:
+        try:
+            dispatcher.event_handlers.remove(tally)
+        except ValueError:
+            pass
 
 
 @contextmanager

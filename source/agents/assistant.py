@@ -16,7 +16,8 @@ deterministic fake via `agents/assistant_fakes.py`).
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -1444,6 +1445,68 @@ def _recall_filter_assessment_line(recall_filter_debug: dict[str, Any]) -> str:
     return f"\n\n{_ASSESSMENT_FENCE_OPEN}\n{safe}\n{_ASSESSMENT_FENCE_CLOSE}"
 
 
+class _PhaseTimer:
+    """Wall-clock for the named phases of one action, for the trace.
+
+    A step's own duration says an action took 33 seconds; it cannot say which
+    part of it did. memory_query is three very different costs in a trench
+    coat — a vector search that calls the embedder, a seed KB that may embed
+    its whole registry, and a relevance filter that is a full LLM call on
+    another model — and which one dominates changes with the query.
+
+    Phases are recorded in completion order with their start times, so the
+    trace can lay them out on the same wall-clock as the model calls."""
+
+    def __init__(self) -> None:
+        self.phases: list[dict[str, Any]] = []
+
+    @contextmanager
+    def phase(self, name: str) -> Iterator[None]:
+        started = datetime.now(UTC)
+        t0 = time.perf_counter()
+        try:
+            yield
+        finally:
+            # Recorded in `finally`: a phase that raised is a phase that spent
+            # time, and a failed retrieval is exactly when the operator asks
+            # where the time went.
+            self.phases.append({
+                "name": name,
+                "ms": int((time.perf_counter() - t0) * 1000),
+                "started_at": started.isoformat(),
+            })
+
+
+#: How many individual embedding calls a step's timing payload keeps. One
+#: query embeds once or twice; a first-run seed populate embeds the whole
+#: registry, and a hundred rows of that in the trace would bury the two calls
+#: that belong to the query. The totals always cover every call.
+MEMORY_QUERY_EMBEDDING_CALLS_KEPT: int = 20
+
+
+def _memory_query_timing(timer: _PhaseTimer, embeds: Any) -> dict[str, Any]:
+    """The `timing` block of memory_query's observation data: what each phase
+    cost, and every embedding call underneath them.
+
+    Embeddings are broken out because they are the run's *other* model. They
+    share the Ollama runtime with the assistant's own model, so a query that
+    embeds is a query that can evict what the decide call just warmed —
+    invisible in a per-step duration, obvious as a row of its own."""
+    kept = embeds.calls[:MEMORY_QUERY_EMBEDDING_CALLS_KEPT]
+    models = sorted({c["model"] for c in embeds.calls if c.get("model")})
+    return {
+        "phases": timer.phases,
+        "embeddings": {
+            "count": embeds.count,
+            "ms": embeds.total_ms,
+            "chars": embeds.total_chars,
+            "models": models,
+            "calls": kept,
+            "dropped": embeds.count - len(kept),
+        },
+    }
+
+
 def _action_query_memory(
     ctx: AssistantActionContext, args: dict[str, Any], *, _seed_retriever=None,
     record_telemetry: bool = True,
@@ -1473,6 +1536,7 @@ def _action_query_memory(
     from memory.retrieval import fence_recalled_memory, format_memory_context, retrieve_memories_hybrid
     from memory import seed_memory as qkb
     from agents.query_handlers import QueryContext
+    from llm import capture_embeddings
 
     uuid_arg = str(args.get("uuid", "")).strip()
     if uuid_arg:
@@ -1483,46 +1547,59 @@ def _action_query_memory(
     qctx = QueryContext(
         room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
     )
-    # Claim candidates first: they join the seed candidates in the one shared
-    # filter call below (or pass through unfiltered on the fallback paths).
-    memories = retrieve_memories_hybrid(
-        query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
-        include_secret=False, journal_id=ctx.journal_id,
-        record_telemetry=record_telemetry, any_room=any_room,
-    )
-    seeds = []
-    recall_filter_debug: dict[str, Any] = {}
-    try:
-        # The assistant loop, unlike the chat route's query_filter_router.handle(),
-        # never loads the seed KB — so load the registry (_entries_by_id) and ensure
-        # the pgvector table is populated before retrieving, or every seed match is
-        # dropped. Skip when a retriever is injected (tests stay hermetic).
-        if _seed_retriever is not None:
-            seeds = _seed_retriever(query, qctx=qctx)
-        else:
-            qkb._load_kb()
-            qkb._ensure_populated(qkb._vector_store())
-            filtered = None
-            kept_claims = None
-            try:
-                filtered, kept_claims, recall_filter_debug = _filter_recalled_candidates(
-                    query, qctx=qctx, agent_uuid=ctx.agent_uuid,
-                    claim_candidates=memories,
-                    top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext,
-                    journal_id=ctx.journal_id, record_telemetry=record_telemetry,
-                    prompt_prefix=ctx.prompt_prefix)
-            except Exception:
-                logger.warning(
-                    "assistant: recall LLM filter failed; falling back to "
-                    "gated seeds + unfiltered claims", exc_info=True)
-                recall_filter_debug = {"mode": "gated", "reason": "filter_llm_failed"}
-            if filtered is not None:
-                seeds = filtered
-                memories = kept_claims if kept_claims is not None else memories
+    # Every phase below is timed, and every embedding call any of them makes
+    # is captured, for the step's `timing` block (see _memory_query_timing).
+    # This action is the run's most expensive read and the only one that
+    # touches a second model, so "it took 33 seconds" is not an answer the
+    # operator can act on.
+    timer = _PhaseTimer()
+    with capture_embeddings() as embeds:
+        # Claim candidates first: they join the seed candidates in the one shared
+        # filter call below (or pass through unfiltered on the fallback paths).
+        with timer.phase("claim retrieval"):
+            memories = retrieve_memories_hybrid(
+                query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
+                include_secret=False, journal_id=ctx.journal_id,
+                record_telemetry=record_telemetry, any_room=any_room,
+            )
+        seeds = []
+        recall_filter_debug: dict[str, Any] = {}
+        try:
+            # The assistant loop, unlike the chat route's query_filter_router.handle(),
+            # never loads the seed KB — so load the registry (_entries_by_id) and ensure
+            # the pgvector table is populated before retrieving, or every seed match is
+            # dropped. Skip when a retriever is injected (tests stay hermetic).
+            if _seed_retriever is not None:
+                with timer.phase("seed retrieval"):
+                    seeds = _seed_retriever(query, qctx=qctx)
             else:
-                seeds = qkb.retrieve_seed_answers(query, qctx=qctx)
-    except Exception:
-        logger.warning("assistant: seed memory retrieval failed", exc_info=True)
+                with timer.phase("seed KB load"):
+                    qkb._load_kb()
+                    qkb._ensure_populated(qkb._vector_store())
+                filtered = None
+                kept_claims = None
+                try:
+                    with timer.phase("recall filter"):
+                        filtered, kept_claims, recall_filter_debug = _filter_recalled_candidates(
+                            query, qctx=qctx, agent_uuid=ctx.agent_uuid,
+                            claim_candidates=memories,
+                            top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext,
+                            journal_id=ctx.journal_id, record_telemetry=record_telemetry,
+                            prompt_prefix=ctx.prompt_prefix)
+                except Exception:
+                    logger.warning(
+                        "assistant: recall LLM filter failed; falling back to "
+                        "gated seeds + unfiltered claims", exc_info=True)
+                    recall_filter_debug = {"mode": "gated", "reason": "filter_llm_failed"}
+                if filtered is not None:
+                    seeds = filtered
+                    memories = kept_claims if kept_claims is not None else memories
+                else:
+                    with timer.phase("seed fallback"):
+                        seeds = qkb.retrieve_seed_answers(query, qctx=qctx)
+        except Exception:
+            logger.warning("assistant: seed memory retrieval failed", exc_info=True)
+    timing = _memory_query_timing(timer, embeds)
     # Tier seeds: user-overlay first, then upstream; preserve score order within tier.
     overlay = [s for s in seeds if s.source == "user-overlay"]
     upstream = [s for s in seeds if s.source != "user-overlay"]
@@ -1531,11 +1608,14 @@ def _action_query_memory(
     if not (overlay or upstream or memories):
         # The empty result is exactly when the operator wants to see what the
         # recall filter considered and dropped — keep the debug in the trace,
-        # and give the model the filter's own why-nothing-matched note.
+        # and give the model the filter's own why-nothing-matched note. The
+        # timing rides along for the same reason: a query that found nothing
+        # still spent the time, and that is the one worth explaining.
         text = "No relevant remembered facts."
         text += _recall_filter_assessment_line(recall_filter_debug)
-        return AssistantObservation(ok=True, text=text,
-                                    data={"recall_filter": recall_filter_debug})
+        return AssistantObservation(
+            ok=True, text=text,
+            data={"recall_filter": recall_filter_debug, "timing": timing})
 
     # (B) Per-fact cap: build one line per fact, shortening long ones. Dynamic
     # seed entries (live handlers) carry a `dynamic` tag; static ones do not.
@@ -1598,7 +1678,7 @@ def _action_query_memory(
         data={"qa_static": sum(1 for s in seeds if s.kind == "static"),
               "qa_dynamic": sum(1 for s in seeds if s.kind == "dynamic"),
               "memory": len(memories), "truncated": truncated_count, "omitted": omitted,
-              "recall_filter": recall_filter_debug},
+              "recall_filter": recall_filter_debug, "timing": timing},
     )
 
 

@@ -1510,3 +1510,106 @@ def test_gated_recall_filter_has_no_block_because_no_model_ran(app_ctx, client):
         assert "no_model_group" in body
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+# --- action phase timing -----------------------------------------------------
+#
+# "The action took 33s" is not something an operator can act on. memory_query
+# is three unrelated costs — a vector search that calls the embedder, a seed KB
+# that may embed its whole registry, and a relevance filter that is a full LLM
+# call on another model — and which one dominates changes per query.
+
+def _timed_memory_query_run(room):
+    """A finished run whose memory_query step carries a timing payload: two
+    phases and two embedder calls, one of which is the bulk of the action."""
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="recall",
+        input_tokens=100, output_tokens=20, duration_ms=1000)
+    db.settle_assistant_step(step, phase="observed", observation_preview="ok",
+                             observation={"ok": True, "text": "facts", "data": {
+                                 "qa_static": 3, "qa_dynamic": 0, "memory": 6,
+                                 "truncated": 0, "omitted": 0,
+                                 "timing": {
+                                     "phases": [
+                                         {"name": "claim retrieval", "ms": 1200,
+                                          "started_at": "2026-08-15T10:00:00+00:00"},
+                                         {"name": "recall filter", "ms": 31600,
+                                          "started_at": "2026-08-15T10:00:01+00:00"},
+                                     ],
+                                     "embeddings": {
+                                         "count": 2, "ms": 900, "chars": 137,
+                                         "models": ["embeddinggemma:300m"],
+                                         "calls": [
+                                             {"model": "embeddinggemma:300m", "ms": 500,
+                                              "chars": 100, "texts": 1,
+                                              "requested_at": "2026-08-15T10:00:00+00:00"},
+                                             {"model": "embeddinggemma:300m", "ms": 400,
+                                              "chars": 37, "texts": 1,
+                                              "requested_at": "2026-08-15T10:00:02+00:00"},
+                                         ],
+                                         "dropped": 0,
+                                     },
+                                 }}})
+    db.finish_run(run, "finished")
+    return run
+
+
+def test_memory_query_phase_timing_renders_in_both_views(app_ctx, client):
+    """The phases render as a table on the page and in the export, so the
+    action's own duration is broken into the parts that spent it."""
+    room = _room()
+    run = _timed_memory_query_run(room)
+    try:
+        page, md = _rendered(client, run)
+        for body in (page, md):
+            assert "claim retrieval" in body
+            assert "recall filter" in body
+            assert "1.2s" in body                  # the vector search
+            assert "31.6s" in body                 # the filter's LLM call
+        assert "io-timing" in page
+        assert "| phase | took | at |" in md
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, client):
+    """The embedder is a second model on the same runtime, so its calls show —
+    as their own waterfall rows, a dashboard line, and a summary under the
+    phases. It stays out of the LLM token/throughput totals, which it would
+    only dilute: it produces no tokens."""
+    room = _room()
+    run = _timed_memory_query_run(room)
+    try:
+        page, md = _rendered(client, run)
+        assert "embed embeddinggemma:300m" in page        # waterfall rows
+        assert "kind-embedding" in page
+        assert "embed 0.9s" in page                        # dashboard Time cell
+        assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in page
+        assert "embed 0.9s (2 calls)" in md
+        assert "| embed embeddinggemma:300m | embedding |" in md
+        # The LLM totals are the step's own, untouched by the two embed calls.
+        assert "in 100" in page and "out 20" in page
+        steps = db.list_assistant_steps(run.uuid)
+        stats = db.assistant_run_stats(steps)
+        assert stats["calls"] == 1                         # the decide call only
+        assert stats["duration_ms"] == 1000                # no embedder ms
+        assert stats["embedding_calls"] == 2
+        assert stats["embedding_ms"] == 900
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_timing_payload_is_not_dumped_as_json_in_the_result(app_ctx, client):
+    """The timing block renders as a table, so it must be stripped from the
+    action-result data — left in, it reaches the page as an unreadable JSON
+    dump beside the table that already says it."""
+    room = _room()
+    run = _timed_memory_query_run(room)
+    try:
+        page, md = _rendered(client, run)
+        assert '"started_at"' not in page
+        assert '"started_at"' not in md
+    finally:
+        _cleanup(run.uuid, room.uuid)

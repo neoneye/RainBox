@@ -1452,3 +1452,68 @@ def test_system_prompt_says_the_newest_history_message_is_an_ended_turn():
     p = " ".join(DECIDE_TURN_INSTRUCTIONS.split())
     assert "belongs to a turn that already ended, including the last one" in p
     assert "answer the quoted request, not the one you have already answered" in p
+
+
+# --- memory_query phase timing ------------------------------------------------
+
+
+def test_query_memory_records_its_phases_and_embedder_calls(app_ctx):
+    """The step's own duration cannot say whether a slow memory_query was the
+    vector search, the seed KB or the relevance filter's LLM call. The timing
+    payload names each phase, and counts every embedding call underneath them
+    — the embedder is a second model on the same runtime, so a query that
+    embeds is a query that can evict what the decide call just warmed."""
+    from llama_index.core.instrumentation import get_dispatcher
+    from llama_index.core.instrumentation.events.embedding import (
+        EmbeddingEndEvent, EmbeddingStartEvent,
+    )
+    from memory.seed_memory import SeedMemory
+
+    def fake_seed(query, **_):
+        # Stands in for the real retriever, which embeds the query before
+        # searching: the tally must see it wherever in the stack it happens.
+        dispatcher = get_dispatcher()
+        dispatcher.event(EmbeddingStartEvent(
+            model_dict={"model_name": "embeddinggemma:300m"}))
+        dispatcher.event(EmbeddingEndEvent(chunks=[query], embeddings=[[0.1]]))
+        return [SeedMemory(uuid="s-1", path="p.s", source="upstream",
+                           answer="a fact", score=0.7)]
+
+    obs = _action_query_memory(
+        _ctx(), {"query": "anything unrelated zzz"}, _seed_retriever=fake_seed)
+
+    timing = obs.data["timing"]
+    assert [p["name"] for p in timing["phases"]] == [
+        "claim retrieval", "seed retrieval"]
+    for phase in timing["phases"]:
+        assert phase["ms"] >= 0
+        assert phase["started_at"]                 # placeable on the run's clock
+    embeds = timing["embeddings"]
+    assert embeds["count"] == 1
+    assert embeds["models"] == ["embeddinggemma:300m"]
+    assert embeds["chars"] == len("anything unrelated zzz")
+    assert embeds["calls"][0]["requested_at"]
+    assert embeds["dropped"] == 0
+
+
+def test_query_memory_with_no_matches_still_reports_where_the_time_went(app_ctx):
+    """A query that recalls nothing still spent the time — and is exactly the
+    one whose cost wants explaining."""
+    obs = _action_query_memory(_ctx(), {"query": "no such topic zzzqqq"})
+
+    assert obs.ok
+    assert [p["name"] for p in obs.data["timing"]["phases"]][0] == "claim retrieval"
+
+
+def test_query_memory_times_a_phase_that_failed(app_ctx):
+    """A phase that raised is a phase that spent time, and a failing retrieval
+    is when the operator most wants the breakdown. The action degrades as
+    before; the timing still names the phase that burned the seconds."""
+    def exploding_seed(query, **_):
+        raise RuntimeError("seed store unreachable")
+
+    obs = _action_query_memory(
+        _ctx(), {"query": "no such topic zzzqqq"}, _seed_retriever=exploding_seed)
+
+    assert obs.ok                                  # degrades, does not crash
+    assert "seed retrieval" in [p["name"] for p in obs.data["timing"]["phases"]]

@@ -642,6 +642,27 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   attempt entry, so the trace shows each rejected response beside its reason.
   A call that never produced a response (timeout, transport error, empty
   stream) is not retried — it falls straight through to the next candidate.
+- An action may record a **`timing`** block in its observation `data`, and
+  `memory_query` does: `{phases: [{name, ms, started_at}], embeddings: {count,
+  ms, chars, models, calls, dropped}}`. The phases are `claim retrieval`,
+  `seed KB load`, `recall filter`, `seed retrieval`/`seed fallback` — timed in
+  `finally`, so a phase that raised still reports what it spent. The
+  embeddings come from `llm.capture_embeddings()`, a dispatcher handler that
+  times every embedding call made anywhere inside the action (the embedder is
+  reached from claim vector search, the seed KB's populate and its retrieve).
+  The /assistant page renders the phases as a table under the action result
+  and the embedder's totals beneath them; each embedding call is also a row in
+  the run's model-call waterfall (kind `embedding`), where it lands on the same
+  wall-clock as the LLM calls and usually explains the gaps between them. Any
+  action that records the same block gets both renderings for free.
+- Embedder time is counted apart from LLM time everywhere: `assistant_run_stats`
+  reports `embedding_calls`/`embedding_ms` beside the token totals rather than
+  inside them (the embedder produces no tokens, so folding its seconds in would
+  drag throughput down against work it never did), and the dashboard splits the
+  run's wall-clock into model / embed / action. embeddinggemma shares the local
+  runtime with the assistant's own model, so retrieval that embeds can evict
+  what the last decide call warmed — that cost is visible rather than buried in
+  "action" time.
 - Each step also stores an operator-facing debug **`log`** (JSONB list of
   `{label, text, uuid?, href?}` entries): the active profile that drove the
   declared blocks (name, uuid, `/profile` deep link) and both block switch
