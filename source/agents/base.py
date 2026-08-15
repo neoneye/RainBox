@@ -70,6 +70,13 @@ class Agent:
     # hides it from that page.
     uses_model_group: bool = True
 
+    # What this agent's LLM calls are attributed to on /activity, when the
+    # agent's own name isn't the right label. Default None = use `self.name`.
+    # An agent that exists to serve another one names itself after that one
+    # ("assistant.run_summarizer"), so every call an operator thinks of as the
+    # assistant's sorts together under one prefix.
+    caller_name: str | None = None
+
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         self.agent_uuid = agent_uuid
         self.name = name
@@ -275,6 +282,20 @@ class ModelGroupAgent(Agent):
     ) -> None:
         """Hook for throttled persistence of an in-flight model stream."""
 
+    def _caller_tag(self, purpose: str | None = None) -> str:
+        """How this call labels itself on /activity: `name` or `name.purpose`.
+
+        Deliberately unprefixed. A blanket `agent.` in front of every row said
+        nothing — every row had it — while costing the reader the leading
+        characters that actually distinguish one call from the next. What the
+        first segment carries instead is the owner: the assistant's calls all
+        read `assistant.<something>`, whether the assistant itself made them
+        (`assistant.decide`) or an agent working on its behalf did
+        (`assistant.run_summarizer`, via `caller_name`).
+        """
+        base = self.caller_name or self.name
+        return f"{base}.{purpose}" if purpose else base
+
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         # INTENTIONAL STUB — keep functional, do NOT make abstract. This is the
         # *default* dispatch for any role without a specialized class, including
@@ -369,10 +390,7 @@ class ModelGroupAgent(Agent):
                 # Attribute this call on /activity. The tag rides the
                 # instrumentation events the activity recorder reads, so no
                 # row has to be threaded through by hand.
-                caller_tag = (
-                    f"agent.{self.name}.{purpose}" if purpose
-                    else f"agent.{self.name}"
-                )
+                caller_tag = self._caller_tag(purpose)
                 # Consume the structured output as a *stream* (same parsed
                 # result as .chat()) so the underlying tokens are received
                 # incrementally — this is what lets a caller see how much a

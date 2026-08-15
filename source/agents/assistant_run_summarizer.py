@@ -153,6 +153,11 @@ Be terse and factual. Do not add prose, markdown, or fields outside the schema.
 class AssistantRunSummarizerAgent(StructuredLLMAgent):
     """Summarize one assistant run by uuid into `assistant_run.summary`."""
 
+    # This is the assistant's own summarizing call, made in a separate agent
+    # only to keep it off the reply's critical path — so on /activity it sorts
+    # with the assistant's other calls rather than under a name of its own.
+    caller_name = "assistant.run_summarizer"
+
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(
             agent_uuid, name, send,

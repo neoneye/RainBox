@@ -1660,6 +1660,10 @@ class LlmCall(db.Model):
     model_uuid: Mapped[UUID | None] = mapped_column()
     # Which part of rainbox issued the call, from instrument_tags({"caller":
     # ...}) at the call site. "unknown" for a site that isn't tagged yet.
+    # Written as "<owner>" or "<owner>.<call>" with no blanket prefix — the
+    # first segment is what the call belongs to ("assistant.decide",
+    # "assistant.run_summarizer", "benchmark.<story>"), so one owner's calls
+    # sort together. See ModelGroupAgent._caller_tag.
     caller: Mapped[str] = mapped_column(Text, default="unknown")
     # Where the call was made from: "benchmarks/story.py:412 in _take_turn".
     # Derived from the stack, not from a tag — a tag has to be remembered at
