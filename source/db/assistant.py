@@ -774,14 +774,18 @@ def _embedding_calls(step, data: dict) -> list[dict]:
     part of what the wall-clock between two LLM bars is made of, and enough of
     them can evict the model the next decide call needs warm. Kept out of the
     run's token/throughput totals (see `assistant_run_stats`) and counted on
-    their own."""
+    their own.
+
+    Labelled `embed`, without the model: a run embeds on one model, so naming
+    it on every row is the same string repeated down the column, competing for
+    attention with the labels that differ. The model is named once per step, in
+    the timing block's embedder line."""
     timing = data.get("timing") or {}
     embeddings = timing.get("embeddings") or {}
     calls: list[dict] = []
     for call in embeddings.get("calls") or []:
-        model = call.get("model") or "embedder"
         calls.append(_call(
-            f"embed {model}", "embedding",
+            "embed", "embedding",
             start=_parse_ts(call.get("requested_at")),
             duration_ms=call.get("ms"), anchor=str(step.uuid)))
     return calls

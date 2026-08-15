@@ -885,6 +885,22 @@ def test_waterfall_places_each_call_on_the_run_span(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_only_a_rejected_call_gets_a_coloured_name_in_the_waterfall():
+    """Colour in the name column means one thing: a call the run paid for and
+    threw away. The bars still carry the kind — that is what the track is for —
+    but a name column where every row is a different colour spends attention on
+    decoding the legend instead of on the one row that is a problem."""
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    coloured = set(re.findall(r"\.wf-name\.kind-([a-z-]+)", ASSISTANT_TEMPLATE))
+    assert coloured == {"rejected"}
+    # The bars keep theirs.
+    assert ".wf-bar.kind-embedding" in ASSISTANT_TEMPLATE
+    assert ".wf-bar.kind-review" in ASSISTANT_TEMPLATE
+
+
 def test_review_written_before_start_times_still_gets_a_bar(app_ctx, client):
     """Reviews recorded before the gate stamped its start have a duration and
     no start, so the timeline drew every other call and left this one outside
@@ -1595,12 +1611,14 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
     run = _timed_memory_query_run(room)
     try:
         page, md = _rendered(client, run)
-        assert "embed embeddinggemma:300m" in page        # waterfall rows
-        assert "kind-embedding" in page
+        assert "kind-embedding" in page                    # waterfall rows
         assert "embed 0.9s" in page                        # dashboard Time cell
+        # The model is named once, under the phases — not on every waterfall
+        # row, where it would be the same string repeated down the column.
         assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in page
+        assert "embed embeddinggemma:300m" not in page
         assert "embed 0.9s (2 calls)" in md
-        assert "| embed embeddinggemma:300m | embedding |" in md
+        assert "| embed | embedding |" in md
         # The LLM totals are the step's own, untouched by the two embed calls.
         assert "in 100" in page and "out 20" in page
         steps = db.list_assistant_steps(run.uuid)
