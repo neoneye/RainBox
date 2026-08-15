@@ -212,7 +212,7 @@ def test_garbage_response_is_retried_with_what_was_wrong(monkeypatch):
     assert rejected.role.value == "assistant"
     assert GARBAGE_TEXT in str(rejected.content)
     assert note.role.value == "user"
-    assert '<rejected_response authority="instructions">' in str(note.content)
+    assert "<rejected_response>" in str(note.content)
     assert "answer" in str(note.content)          # the field pydantic named
     assert "Attempts remaining after this one: 2." in str(note.content)
 

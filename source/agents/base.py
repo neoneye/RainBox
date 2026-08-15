@@ -596,13 +596,13 @@ class ModelGroupAgent(Agent):
         """The user turn that follows a replayed rejected response: what was
         wrong with it, and that the next answer is not a fresh start.
 
-        Rendered as a section with `authority="instructions"`, the marking the
-        assistant's system prompt reads as binding — the one message in the
-        conversation that is neither the sectioned prompt nor model output,
-        and unmarked it would be read as data to reason about rather than a
-        correction to act on. Built through ElementTree so the error text,
-        which quotes the model's own rejected output back, cannot close the
-        section or forge another.
+        A bare tag, with no authority marking. The marking belongs to the
+        sections of the one built prompt, where a reader has to be told which
+        of several sections binds; this is a message of its own, the newest
+        turn in the conversation, arriving after the model's own turn — the
+        position a chat model already reads as the live instruction. Built
+        through ElementTree so the error text, which quotes the model's own
+        rejected output back, cannot close the section or forge another.
 
         A validator's message is app-owned prose and a schema violation is
         pydantic's; both name the field and what was wrong with it, which is
@@ -613,7 +613,7 @@ class ModelGroupAgent(Agent):
         from xml.etree import ElementTree as ET
 
         last = retries_left < 1
-        node = ET.Element("rejected_response", {"authority": "instructions"})
+        node = ET.Element("rejected_response")
         node.text = (
             "\nYour last response was rejected and is not part of this "
             "conversation's answer. Why it was rejected:\n\n"

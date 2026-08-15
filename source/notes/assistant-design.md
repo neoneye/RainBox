@@ -637,7 +637,7 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   `ModelGroupAgent.REJECTED_RESPONSE_RETRIES` (3) times before the group falls
   back to the next candidate. Each retry appends, after the unchanged prompt,
   every response rejected so far (as assistant turns) and why each was
-  rejected (as a `<rejected_response authority="instructions">` user turn), so
+  rejected (as a `<rejected_response>` user turn), so
   the model can see what was wrong with what it wrote. Every retry is its own
   attempt entry, so the trace shows each rejected response beside its reason.
   A call that never produced a response (timeout, transport error, empty
