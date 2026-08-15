@@ -750,9 +750,14 @@ def _rejected_calls(step) -> list[dict]:
     only the attempt it kept, and without these rows their seconds read as a
     gap where nothing was running."""
     calls: list[dict] = []
-    for attempt in step.rejected_attempts or []:
+    attempts = step.rejected_attempts or []
+    for index, attempt in enumerate(attempts, start=1):
+        # Numbered only when there were several, so the common single retry
+        # reads as plain "(rejected)" and a model that failed twice in a row
+        # is still tellable apart row by row.
+        ordinal = f" {index}/{len(attempts)}" if len(attempts) > 1 else ""
         calls.append(_call(
-            f"{step.action or '—'} (rejected)", "rejected",
+            f"{step.action or '—'} (rejected{ordinal})", "rejected",
             start=_parse_ts(attempt.get("requested_at")),
             duration_ms=attempt.get("ms"), anchor=str(step.uuid),
             model_uuid=attempt.get("model_uuid"),
@@ -810,6 +815,28 @@ def _inner_calls(step, data: dict) -> list[dict]:
     return calls
 
 
+def _retry_resumed_at(step):
+    """When the attempt a step RECORDS began, on a call that retried.
+
+    `requested_at` is when the call was sent, which on a retried call is when
+    its first — rejected — attempt was sent. The row's `duration_ms` is the
+    kept attempt's. Placed at `requested_at` the two bars start together and
+    the kept one looks like it ran alongside the attempt it replaced, when in
+    fact it began where that one stopped: the attempts are sequential, each
+    sent only after the previous was refused.
+
+    None when the call kept its first answer, which is nearly every call."""
+    resumed = None
+    for attempt in step.rejected_attempts or []:
+        started = _parse_ts(attempt.get("requested_at"))
+        if started is None:
+            continue
+        ended = started + timedelta(milliseconds=attempt.get("ms") or 0)
+        if resumed is None or ended > resumed:
+            resumed = ended
+    return resumed
+
+
 def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
     """Every model call the run made, oldest first.
 
@@ -826,16 +853,22 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
             # a skip would price a call that never went out.
             continue
         data = (s.observation or {}).get("data") or {}
+        # Before the step's own row: the attempts it threw away came first,
+        # and enumerating them first keeps that order even where an attempt
+        # recorded no duration to sort by.
+        calls.extend(_rejected_calls(s))
         if s.requested_at or s.duration_ms is not None or s.system_prompt:
             start = s.requested_at
             if start is None and s.created_at and s.duration_ms:
                 start = s.created_at - timedelta(milliseconds=s.duration_ms)
+            resumed = _retry_resumed_at(s)
+            if resumed is not None and (start is None or resumed > start):
+                start = resumed
             calls.append(_call(
                 s.action or "—", "code-driven" if s.code_driven else "decide",
                 start=start, duration_ms=s.duration_ms, anchor=str(s.uuid),
                 model_uuid=s.model_uuid, input_tokens=s.input_tokens,
                 output_tokens=s.output_tokens))
-        calls.extend(_rejected_calls(s))
         calls.extend(_inner_calls(s, data))
         calls.extend(_embedding_calls(s, data))
     by_uuid = {str(s.uuid): s for s in steps}

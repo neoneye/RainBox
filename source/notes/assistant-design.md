@@ -647,7 +647,10 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   its own (kind `rejected`) on the model-call waterfall. It is a real call: its
   tokens and seconds count in the run's LLM totals. Without the row, a retried
   step showed as a short call followed by a gap where nothing appeared to be
-  running. Token counting is per attempt, so the step's own in/out — and the
+  running. On the waterfall the attempts lie end to end — `requested_at` is
+  when the call was sent, so on a retried call it belongs to the first
+  attempt, and the step's own bar is placed where the last rejection ended
+  rather than at `requested_at`. Token counting is per attempt, so the step's own in/out — and the
   throughput divided by the winner's duration — describe the attempt that
   succeeded and not the sum of all of them.
 - An action may record a **`timing`** block in its observation `data`, and

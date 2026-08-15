@@ -1702,3 +1702,51 @@ def test_a_step_without_retries_renders_no_rejected_block(app_ctx, client):
         assert "rejected response" not in md
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_the_kept_attempt_starts_where_the_rejected_one_ended(app_ctx, client):
+    """Attempts are sequential — the retry goes out only after the previous
+    answer was refused. Both bars drawn from `requested_at` (the call's start,
+    which is the FIRST attempt's) made the kept one look like it ran alongside
+    the attempt it replaced, and put it first in a list ordered by start."""
+    room = _room()
+    run = _retried_step_run(room)
+    try:
+        steps = db.list_assistant_steps(run.uuid)
+        calls = db.assistant_llm_calls(steps)
+
+        assert [c["label"] for c in calls] == ["reply (rejected)", "reply"]
+        rejected, kept = calls
+        assert rejected["start"] == datetime(
+            2026, 8, 15, 15, 53, 5, tzinfo=UTC).astimezone()
+        # 18271ms later, to the millisecond — not the same instant.
+        assert kept["start"] - rejected["start"] == timedelta(
+            milliseconds=rejected["duration_ms"])
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_several_rejections_are_numbered_and_laid_end_to_end(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="answer it", duration_ms=5000,
+        requested_at=datetime(2026, 8, 15, 12, 0, 0, tzinfo=UTC),
+        rejected_attempts=[
+            {"requested_at": "2026-08-15T12:00:00+00:00", "ms": 7000,
+             "error": "RejectedResponse: nope", "response": "{}"},
+            {"requested_at": "2026-08-15T12:00:07+00:00", "ms": 3000,
+             "error": "RejectedResponse: nope again", "response": "{}"},
+        ])
+    db.finish_run(run, "finished")
+    try:
+        calls = db.assistant_llm_calls(db.list_assistant_steps(run.uuid))
+        assert [c["label"] for c in calls] == [
+            "reply (rejected 1/2)", "reply (rejected 2/2)", "reply"]
+        # …and the kept attempt sits after the LAST rejection, not the first.
+        assert calls[-1]["start"] == datetime(
+            2026, 8, 15, 12, 0, 10, tzinfo=UTC).astimezone()
+    finally:
+        _cleanup(run.uuid, room.uuid)
