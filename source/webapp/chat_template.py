@@ -772,10 +772,10 @@ function prettyPrintJsonBlocks(rootEl){
   });
 }
 
-// Swap the copy icon for a checkmark for 3s, so the click is acknowledged on
+// Swap the copy icon for a checkmark for 1.5s, so the click is acknowledged on
 // the button itself. Both icons are 1em in the same 24x24 viewBox, so the swap
 // leaves the button's size alone and nothing reflows (unlike the "Copied" text
-// this replaced — see copyText). Re-clicking restarts the 3s rather than
+// this replaced — see copyText). Re-clicking restarts the 1.5s rather than
 // letting an older timer restore the icon early.
 function flashCopied(btn){
   clearTimeout(btn._copiedTimer);
@@ -784,7 +784,7 @@ function flashCopied(btn){
   btn._copiedTimer = setTimeout(() => {
     btn.innerHTML = LUCIDE_COPY_SVG;
     btn.classList.remove('copied');
-  }, 3000);
+  }, 1500);
 }
 
 // Copies the original markdown source, not the rendered HTML. Appends
