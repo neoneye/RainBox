@@ -39,6 +39,17 @@ logger = logging.getLogger(__name__)
 StatusSender = Callable[[dict[str, Any]], None]
 
 
+class RejectedResponse(ValueError):
+    """A response that arrived whole and was then rejected — the schema said
+    no, or the caller's validator did.
+
+    Distinct from a call that never produced a response (timeout, transport
+    error, empty stream) because the two want opposite handling: a rejected
+    response is something the model can fix once it is told what was wrong,
+    while nothing said to a model that timed out makes the next call faster.
+    Only this one earns retries against the same model."""
+
+
 class Agent:
     """Base class for an inbox-draining agent.
 
@@ -219,6 +230,19 @@ class ModelGroupAgent(Agent):
     try, in priority order, on the journal result.
     """
 
+    # Extra calls a model gets after a RejectedResponse, before the group
+    # falls back to the next candidate. Three because the corrections are
+    # cumulative: the second try sees one rejected response, the third sees
+    # two, the fourth sees three — past that, a model that has read three of
+    # its own failures and repeated them is not one more nudge from getting it
+    # right, and the operator is paying a full call per nudge.
+    REJECTED_RESPONSE_RETRIES = 3
+
+    # How much of a rejected response is quoted back to the model. Enough to
+    # carry any plausible structured answer whole, and a bound on the runaway
+    # generation that gets rejected precisely because it never stopped.
+    REJECTED_RESPONSE_ECHO_CHARS = 4000
+
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid=agent_uuid, name=name, send=send)
         # Safe defaults so the instance is well-formed before setup() resolves
@@ -333,8 +357,20 @@ class ModelGroupAgent(Agent):
         one-shot `_structured_call` is a thin wrapper over this.
 
         An optional `validator` callable is invoked on each successful response
-        before returning it; if it raises, the model is treated as failed and
-        the loop falls back to the next candidate.
+        before returning it; if it raises, the response is treated as rejected,
+        exactly as a schema violation is.
+
+        A rejected response — one that arrived whole and failed the schema or
+        the validator — buys the SAME model up to REJECTED_RESPONSE_RETRIES
+        more calls before the group falls back to the next candidate, each one
+        carrying every response rejected so far and the reason it was rejected
+        (see `_rejection_note`). A model that answers `{"reason": null,
+        "action": null}` after a page of correct reasoning is one sentence of
+        feedback away from a usable answer; the next model in the group, told
+        nothing, is more likely to make the same mistake than to fix it. Calls
+        that never produced a response (timeout, transport error, empty
+        stream) fall through immediately as before — feedback cannot make a
+        timed-out model faster.
 
         `purpose` names what this particular call is for, when an agent makes
         several different ones (the assistant decides a step, asks for a second
@@ -366,118 +402,239 @@ class ModelGroupAgent(Agent):
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
             model_name = str(model_uuid)
-            attempt_started = False
-            try:
-                provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
-                timeout_s = float(
-                    args.get("request_timeout") or args.get("timeout") or 60.0
-                )
-                self._last_model_uuid = model_uuid
-                self._model_attempt_started(model_uuid, model_name, timeout_s)
-                attempt_started = True
-                logger.info(
-                    "agent %s: calling model %s (provider %s; a cold model may "
-                    "take a while)",
-                    self.name,
-                    model_name,
-                    provider_id,
-                )
-                t0 = time.monotonic()
-                the_llm = prepare_llm(provider_id, model_name, args)
-                sllm = the_llm.as_structured_llm(
-                    response_model, callback_manager=CallbackManager([token_counter])
-                )
-                # Attribute this call on /activity. The tag rides the
-                # instrumentation events the activity recorder reads, so no
-                # row has to be threaded through by hand.
-                caller_tag = self._caller_tag(purpose)
-                # Consume the structured output as a *stream* (same parsed
-                # result as .chat()) so the underlying tokens are received
-                # incrementally — this is what lets a caller see how much a
-                # reasoning model produced before a timeout, and fires the
-                # per-chunk instrumentation events the reasoning tally reads.
-                #
-                # request_timeout is a per-read timeout, but a streamed response
-                # delivers tokens continuously, so it never trips on a runaway
-                # generation. Bound the whole stream with a wall-clock deadline
-                # instead; abandoning the generator closes the provider stream.
-                deadline = time.monotonic() + timeout_s
-                last = None
-                # Capture the reasoning ("thinking") channel while the stream is
-                # consumed — the structured wrapper drops it from the parsed
-                # result, so instrumentation is the only place it's visible.
-                # Recorded per attempt, even on failure (the partial reasoning
-                # of a timed-out call is exactly what one wants to inspect).
-                with instrument_tags({"caller": caller_tag}), capture_reasoning() as tally:
-                    try:
-                        for last in sllm.stream_chat(messages):
-                            # Prefer the instrumentation capture: it holds the
-                            # provider's true streamed text. A structured
-                            # stream's message.content is a dump of the
-                            # PARTIALLY PARSED object, which has been seen
-                            # dropping free-form dict contents (args: {}).
-                            response_text = (
-                                tally.content_text
-                                or getattr(getattr(last, "message", None), "content", None)
-                                or ""
-                            )
-                            self._last_reasoning = tally.reasoning_text.strip() or None
-                            self._last_response_text = response_text.strip() or None
-                            self._model_attempt_progress(
-                                model_uuid,
-                                model_name,
-                                self._last_reasoning,
-                                self._last_response_text,
-                            )
-                            if time.monotonic() > deadline:
-                                raise TimeoutError(
-                                    f"structured stream exceeded {timeout_s:.0f}s "
-                                    "(model still generating)"
+            # The corrective turns this model has earned, appended after the
+            # user prompt: each rejected response, then why it was rejected.
+            # They accumulate, so the third try sees every earlier mistake and
+            # not just the last. Empty on the first call of each model, which
+            # is what keeps the prompt — and the provider's cache of its
+            # prefix — byte-identical to what a group without retries sends.
+            corrections: list[ChatMessage] = []
+            rejections = 0
+            while True:
+                attempt_started = False
+                # Per attempt, not per model: a retry that streams nothing
+                # must not inherit the rejected text of the one before it, or
+                # the trace attributes a response to the call that never
+                # produced it.
+                self._last_reasoning = None
+                self._last_response_text = None
+                try:
+                    provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+                    timeout_s = float(
+                        args.get("request_timeout") or args.get("timeout") or 60.0
+                    )
+                    self._last_model_uuid = model_uuid
+                    self._model_attempt_started(model_uuid, model_name, timeout_s)
+                    attempt_started = True
+                    logger.info(
+                        "agent %s: calling model %s (provider %s; a cold model may "
+                        "take a while)",
+                        self.name,
+                        model_name,
+                        provider_id,
+                    )
+                    t0 = time.monotonic()
+                    the_llm = prepare_llm(provider_id, model_name, args)
+                    sllm = the_llm.as_structured_llm(
+                        response_model, callback_manager=CallbackManager([token_counter])
+                    )
+                    # Attribute this call on /activity. The tag rides the
+                    # instrumentation events the activity recorder reads, so no
+                    # row has to be threaded through by hand.
+                    caller_tag = self._caller_tag(purpose)
+                    # Consume the structured output as a *stream* (same parsed
+                    # result as .chat()) so the underlying tokens are received
+                    # incrementally — this is what lets a caller see how much a
+                    # reasoning model produced before a timeout, and fires the
+                    # per-chunk instrumentation events the reasoning tally reads.
+                    #
+                    # request_timeout is a per-read timeout, but a streamed response
+                    # delivers tokens continuously, so it never trips on a runaway
+                    # generation. Bound the whole stream with a wall-clock deadline
+                    # instead; abandoning the generator closes the provider stream.
+                    deadline = time.monotonic() + timeout_s
+                    last = None
+                    # Capture the reasoning ("thinking") channel while the stream is
+                    # consumed — the structured wrapper drops it from the parsed
+                    # result, so instrumentation is the only place it's visible.
+                    # Recorded per attempt, even on failure (the partial reasoning
+                    # of a timed-out call is exactly what one wants to inspect).
+                    with instrument_tags({"caller": caller_tag}), capture_reasoning() as tally:
+                        try:
+                            for last in sllm.stream_chat(messages + corrections):
+                                # Prefer the instrumentation capture: it holds the
+                                # provider's true streamed text. A structured
+                                # stream's message.content is a dump of the
+                                # PARTIALLY PARSED object, which has been seen
+                                # dropping free-form dict contents (args: {}).
+                                response_text = (
+                                    tally.content_text
+                                    or getattr(getattr(last, "message", None), "content", None)
+                                    or ""
                                 )
-                    finally:
-                        self._last_reasoning = tally.reasoning_text.strip() or None
-                        if not self._last_response_text:
-                            self._last_response_text = tally.content_text.strip() or None
-                if last is None:
-                    raise RuntimeError("structured stream produced no response")
-                # .raw is typed Any | None by LlamaIndex; on a successful
-                # structured call it's an instance of response_model — but the
-                # streaming partial-parser corrupts it (see
-                # _settle_structured_result), so the provider's true text is
-                # re-validated and wins when it parses.
-                result = self._settle_structured_result(
-                    response_model,
-                    cast(BaseModel, last.raw),
-                    self._last_response_text,
-                )
-                logger.info(
-                    "agent %s: model %s responded in %.1fs",
-                    self.name,
-                    model_name,
-                    time.monotonic() - t0,
-                )
-                if validator is not None:
-                    validator(result)
-                self._last_usage = {
-                    "input": token_counter.prompt_llm_token_count,
-                    "output": token_counter.completion_llm_token_count,
-                    "ms": int((time.monotonic() - t0) * 1000),
-                }
-                return result
-            except Exception as e:
-                last_error = e
-                if attempt_started:
-                    self._model_attempt_failed(model_uuid, model_name, e)
-                logger.warning(
-                    "agent %s: model %s failed (%s); trying next in group",
-                    self.name,
-                    model_uuid,
-                    e,
-                )
+                                self._last_reasoning = tally.reasoning_text.strip() or None
+                                self._last_response_text = response_text.strip() or None
+                                self._model_attempt_progress(
+                                    model_uuid,
+                                    model_name,
+                                    self._last_reasoning,
+                                    self._last_response_text,
+                                )
+                                if time.monotonic() > deadline:
+                                    raise TimeoutError(
+                                        f"structured stream exceeded {timeout_s:.0f}s "
+                                        "(model still generating)"
+                                    )
+                        finally:
+                            self._last_reasoning = tally.reasoning_text.strip() or None
+                            if not self._last_response_text:
+                                self._last_response_text = tally.content_text.strip() or None
+                    if last is None:
+                        raise RuntimeError("structured stream produced no response")
+                    # .raw is typed Any | None by LlamaIndex; on a successful
+                    # structured call it's an instance of response_model — but the
+                    # streaming partial-parser corrupts it (see
+                    # _settle_structured_result), so the provider's true text is
+                    # re-validated and wins when it parses.
+                    try:
+                        result = self._settle_structured_result(
+                            response_model,
+                            cast(BaseModel, last.raw),
+                            self._last_response_text,
+                        )
+                    except Exception as e:
+                        raise RejectedResponse(str(e)) from e
+                    logger.info(
+                        "agent %s: model %s responded in %.1fs",
+                        self.name,
+                        model_name,
+                        time.monotonic() - t0,
+                    )
+                    if validator is not None:
+                        # A validator raising means the response parsed and is
+                        # still unusable — the same kind of failure as a schema
+                        # violation, and fixable by the same feedback, so it
+                        # earns the same retries.
+                        try:
+                            validator(result)
+                        except Exception as e:
+                            raise RejectedResponse(
+                                f"the response is valid {response_model.__name__} "
+                                f"but was rejected: {type(e).__name__}: {e}"
+                            ) from e
+                    self._last_usage = {
+                        "input": token_counter.prompt_llm_token_count,
+                        "output": token_counter.completion_llm_token_count,
+                        "ms": int((time.monotonic() - t0) * 1000),
+                    }
+                    return result
+                except Exception as e:
+                    last_error = e
+                    if attempt_started:
+                        self._model_attempt_failed(model_uuid, model_name, e)
+                    retries_left = self.REJECTED_RESPONSE_RETRIES - rejections
+                    if not isinstance(e, RejectedResponse) or retries_left < 1:
+                        logger.warning(
+                            "agent %s: model %s failed (%s); trying next in group",
+                            self.name,
+                            model_uuid,
+                            e,
+                        )
+                        break
+                    rejections += 1
+                    logger.warning(
+                        "agent %s: model %s returned an unusable response (%s); "
+                        "asking it again with the reason (%d retr%s left)",
+                        self.name,
+                        model_uuid,
+                        e,
+                        retries_left,
+                        "y" if retries_left == 1 else "ies",
+                    )
+                    # The rejected text goes back as the model's own turn and
+                    # the reason as the next user turn, which is the shape a
+                    # chat model already knows how to act on. Read before the
+                    # next attempt overwrites it.
+                    echo = self._rejected_response_echo(self._last_response_text)
+                    if echo is not None:
+                        corrections.append(
+                            ChatMessage(role=MessageRole.ASSISTANT, content=echo)
+                        )
+                    corrections.append(ChatMessage(
+                        role=MessageRole.USER,
+                        content=self._rejection_note(
+                            e, retries_left=retries_left - 1
+                        ),
+                    ))
         raise RuntimeError(
             f"agent {self.name}: all {len(self.candidate_model_uuids)} models "
             f"in the group failed; last error: {last_error}"
         )
+
+    @classmethod
+    def _rejected_response_echo(cls, response_text: str | None) -> str | None:
+        """The rejected response, as the assistant turn it is replayed in.
+
+        None when nothing was captured — an attempt that streamed no text has
+        no mistake to show, and an empty assistant turn would only invite the
+        model to explain what it "said". The middle is what gets dropped from
+        an over-long one: a runaway generation goes wrong at the end, and the
+        opening is what says which shape it was aiming for."""
+        text = (response_text or "").strip()
+        if not text:
+            return None
+        limit = cls.REJECTED_RESPONSE_ECHO_CHARS
+        if len(text) <= limit:
+            return text
+        head = text[: limit // 2].rstrip()
+        tail = text[-(limit // 2):].lstrip()
+        dropped = len(text) - len(head) - len(tail)
+        return f"{head}\n[... {dropped} characters dropped ...]\n{tail}"
+
+    @staticmethod
+    def _rejection_note(error: Exception, *, retries_left: int) -> str:
+        """The user turn that follows a replayed rejected response: what was
+        wrong with it, and that the next answer is not a fresh start.
+
+        Rendered as a section with `authority="instructions"`, the marking the
+        assistant's system prompt reads as binding — the one message in the
+        conversation that is neither the sectioned prompt nor model output,
+        and unmarked it would be read as data to reason about rather than a
+        correction to act on. Built through ElementTree so the error text,
+        which quotes the model's own rejected output back, cannot close the
+        section or forge another.
+
+        A validator's message is app-owned prose and a schema violation is
+        pydantic's; both name the field and what was wrong with it, which is
+        the whole content of the feedback. Nothing here restates the schema —
+        it is already in the structured-output request the model gets on every
+        call, and repeating it invites the model to answer about the schema
+        instead of with it."""
+        from xml.etree import ElementTree as ET
+
+        last = retries_left < 1
+        node = ET.Element("rejected_response", {"authority": "instructions"})
+        node.text = (
+            "\nYour last response was rejected and is not part of this "
+            "conversation's answer. Why it was rejected:\n\n"
+            f"{error}\n\n"
+            "Answer the same request again, as one structured response that "
+            "does not repeat the fault above. Every required field carries a "
+            "real value; none is null, empty, or a placeholder. Fix only what "
+            "the rejection names — the rest of what you decided still holds. "
+            "Return the structured output alone: no apology, no explanation "
+            "of the mistake, no commentary.\n"
+        )
+        if last:
+            node.text += (
+                "This is the last attempt. If this response is rejected too, "
+                "the request fails with no answer at all.\n"
+            )
+        else:
+            node.text += (
+                f"Attempts remaining after this one: {retries_left}.\n"
+            )
+        return ET.tostring(node, encoding="unicode")
 
     @staticmethod
     def _settle_structured_result(

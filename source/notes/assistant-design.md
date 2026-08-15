@@ -632,6 +632,16 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   most once per second), and failure when applicable. The checkpoint
   is removed only after the resulting step is durable. This covers the window
   where no `assistant_step` exists yet because the model has not returned.
+- A model that returns an unusable response — one that arrived whole and then
+  failed the schema or a caller's validator — is asked again up to
+  `ModelGroupAgent.REJECTED_RESPONSE_RETRIES` (3) times before the group falls
+  back to the next candidate. Each retry appends, after the unchanged prompt,
+  every response rejected so far (as assistant turns) and why each was
+  rejected (as a `<rejected_response authority="instructions">` user turn), so
+  the model can see what was wrong with what it wrote. Every retry is its own
+  attempt entry, so the trace shows each rejected response beside its reason.
+  A call that never produced a response (timeout, transport error, empty
+  stream) is not retried — it falls straight through to the next candidate.
 - Each step also stores an operator-facing debug **`log`** (JSONB list of
   `{label, text, uuid?, href?}` entries): the active profile that drove the
   declared blocks (name, uuid, `/profile` deep link) and both block switch
