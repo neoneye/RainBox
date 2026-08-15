@@ -7,7 +7,7 @@ running->observed/failed trace boundary. No writes, no MCP, no generated code.
 """
 
 import json
-from datetime import UTC, datetime
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 import pytest
@@ -520,13 +520,15 @@ def test_query_memory_recall_filter_drops_low_scores_on_a_full_list(app_ctx, mon
     assert obs.text.rstrip().endswith("</memory_filter_assessment>")
 
 
-def test_recall_filter_records_when_it_ran_and_what_it_cost(app_ctx, monkeypatch):
-    """The scorer is a real model call, made inside the action rather than as a
-    step of its own. Without its start time and usage in the payload it is
-    invisible: the /assistant trace can neither count it nor place it, and its
-    seconds book as action time — which is exactly the time an operator
-    profiling a slow run is trying to find."""
+def test_recall_filter_scores_through_the_loops_call_seam(app_ctx, monkeypatch):
+    """The scorer is a model call the run makes, so the loop makes it: the
+    action hands the resolved group and the prompts to the context's
+    `recall_filter_call` (AssistantAgent._recall_filter_call), which runs it
+    through the same `_structured_completion` as the decide call and gives it a
+    step row. The standalone `structured_llm_call` is only for a caller with no
+    run — /memory/developer — and must not be reached from a turn."""
     import agents.query_filter_router as qfr
+    from agents.assistant import ASSISTANT_SHARED_SYSTEM_PROMPT
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -540,22 +542,37 @@ def test_recall_filter_records_when_it_ran_and_what_it_cost(app_ctx, monkeypatch
         Match(qa_id="qa-mac", method="semantic", score=0.62,
               matched_question="first mac")])
 
-    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
-                  response_model, usage_out=None):
-        if usage_out is not None:
-            usage_out.update({"input": 3400, "output": 210, "ms": 12000})
-        return (response_model(reasoning="r", items=[
-            _score("qa-mac", direct="5", relevancy="5")]), model_uuids[0])
+    def unreachable(*a, **kw):
+        raise AssertionError("a turn must score through the loop's seam")
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
-    obs = _action_query_memory(_ctx(), {"query": "first mac"})
+    monkeypatch.setattr(qfr, "structured_llm_call", unreachable)
+    answering_model = uuid4()
+    seen: dict = {}
+
+    def seam(*, model_uuids, model_group_uuid, group_from, system_prompt,
+             user_prompt, step_index):
+        seen.update(model_uuids=model_uuids, model_group_uuid=model_group_uuid,
+                    group_from=group_from, system_prompt=system_prompt,
+                    user_prompt=user_prompt, step_index=step_index)
+        return qfr.FilterDecision(reasoning="r", items=[
+            _score("qa-mac", direct="5", relevancy="5")]), answering_model
+
+    ctx = replace(_ctx(), recall_filter_call=seam, step_index=3)
+    obs = _action_query_memory(ctx, {"query": "first mac"})
     assert obs.ok
+    assert "PowerBook" in obs.text
+    # The seam gets everything the row needs to attribute the call.
+    assert seen["model_uuids"] and seen["model_group_uuid"]
+    assert seen["group_from"] == "memory_filter"
+    assert seen["system_prompt"] == ASSISTANT_SHARED_SYSTEM_PROMPT
+    assert "qa-mac" in seen["user_prompt"]
+    assert seen["step_index"] == 3
+    # The observation keeps the verdicts, not a second copy of the call: what
+    # it cost and what it was sent live on the step row.
     recall = obs.data["recall_filter"]
-    assert recall["usage"] == {"input": 3400, "output": 210, "ms": 12000}
-    assert recall["scorer_model_uuid"]
-    # Parseable, and stamped when the call went out.
-    requested_at = datetime.fromisoformat(recall["requested_at"])
-    assert (datetime.now(UTC) - requested_at).total_seconds() < 60
+    assert recall["mode"] == "llm"
+    assert [c["qa_id"] for c in recall["candidates"]] == ["qa-mac"]
+    assert not {"usage", "system_prompt", "user_prompt", "requested_at"} & set(recall)
 
 
 def test_query_memory_recall_filter_keeps_all_when_fewer_than_top_k(app_ctx, monkeypatch):
@@ -1202,6 +1219,71 @@ def test_loop_dispatches_read_action_then_replies(room):
     observed = _decide_steps(steps)[0]
     assert observed.action == "memory_query"
     assert observed.observation_preview is not None
+
+
+def test_recall_filter_lands_as_its_own_step_row(room, monkeypatch):
+    """End to end: memory_query's scoring call gets a step row of its own, with
+    everything a call's row carries — the prompts it was sent, the scores it
+    answered, the model that answered, and the cost. It is `code_driven` (the
+    loop made it, the model did not choose it) and spends no step budget.
+
+    Before this the call was made privately inside the action and its prompts
+    were stashed in the observation payload, so the trace could show neither
+    the response nor a model to click."""
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+    from agents.query_filter_router import FilterDecision
+
+    room_uuid, message_uuid = room
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    _seed_entries(monkeypatch, qkb, {
+        "qa-mac": {"kind": "static", "path": "identity.first_mac",
+                   "_source": "user-overlay", "answer": "It was a PowerBook."},
+    })
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
+        Match(qa_id="qa-mac", method="semantic", score=0.62,
+              matched_question="first mac")])
+    scorer = uuid4()
+    agent = _agent()
+
+    def fake_completion(*, system_prompt, user_prompt, response_model,
+                        candidate_model_uuids=None, **_):
+        # The seam every call of the turn goes through, standing in for the
+        # provider: it leaves the same `_last_*` snapshot a real call does.
+        assert response_model is FilterDecision
+        assert candidate_model_uuids            # the filter's group, not the agent's
+        agent._last_model_uuid = scorer
+        agent._last_usage = {"input": 3100, "output": 216, "ms": 2500}
+        agent._last_reasoning = "One row answers the question."
+        agent._last_response_text = '{"items": [{"id": "qa-mac"}]}'
+        agent._last_rejected_attempts = []
+        return FilterDecision(reasoning="One row answers the question.", items=[
+            _score("qa-mac", direct="5", relevancy="5")])
+
+    agent._structured_completion = fake_completion
+    agent._decide_next_step = scripted_decisions(
+        _decision(AssistantActionName.MEMORY_QUERY, query="first mac"),
+        _decision(AssistantActionName.REPLY, message="A PowerBook."),
+    )
+    result = agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+
+    assert result["status"] == "finished"
+    steps = _steps_for(result["assistant_run_uuid"])
+    # It costs no step budget: the decide loop's own rows are unchanged.
+    assert _decide_phases(steps) == ["observed", "final"]
+    row = next(s for s in steps if s.action == "recall_filter")
+    assert row.code_driven
+    assert row.phase == "observed"
+    assert row.model_uuid == scorer
+    assert (row.input_tokens, row.output_tokens, row.duration_ms) == (3100, 216, 2500)
+    assert row.system_prompt and "qa-mac" in (row.user_prompt or "")
+    assert row.model_response == '{"items": [{"id": "qa-mac"}]}'
+    assert row.reasoning == "One row answers the question."
+    assert row.requested_at is not None
+    # It ran inside the memory_query step, so it shares that step's index.
+    assert row.step_index == 0
 
 
 def test_loop_does_not_dispatch_identical_successful_read_twice(room):

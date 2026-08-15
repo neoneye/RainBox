@@ -1030,6 +1030,15 @@ def _demote_trailing_context_marker(messages: list[dict[str, Any]]) -> list[dict
     return messages
 
 
+# The recall filter's model call, as the action context carries it (see
+# `AssistantActionContext.recall_filter_call` and the loop's implementation,
+# `AssistantAgent._recall_filter_call`). Keyword arguments: `model_uuids`,
+# `model_group_uuid`, `group_from`, `system_prompt`, `user_prompt`,
+# `step_index`. Returns the parsed FilterDecision and the uuid of the model
+# that answered.
+RecallFilterCall = Callable[..., tuple[Any, "UUID | None"]]
+
+
 @dataclass(frozen=True)
 class AssistantActionContext:
     """What a read action is told about the request it serves. No payload: the
@@ -1058,6 +1067,14 @@ class AssistantActionContext:
     # message). Used as evidence source_id so every belief write can be traced
     # back to the specific message that motivated it. None when not available.
     message_uuid: UUID | None = None
+    # How memory_query's recall filter makes its model call. The loop installs
+    # `AssistantAgent._recall_filter_call`, which runs the scorer through the
+    # same `_structured_completion` the decide call uses and records it as its
+    # own step row — the filter is an assistant call like any other, not a
+    # private LLM path inside an action. None for a caller with no run (the
+    # /memory/developer probe), which falls through to the standalone
+    # `query_filter_router.structured_llm_call` and records nothing.
+    recall_filter_call: "RecallFilterCall | None" = None
 
 
 @dataclass(frozen=True)
@@ -1201,7 +1218,8 @@ def _filter_recalled_candidates(
     query: str, *, qctx, agent_uuid: UUID, claim_candidates: list,
     top_k_vector: int | None = None, top_k_fulltext: int | None = None,
     journal_id: UUID | None = None, record_telemetry: bool = False,
-    prompt_prefix: str = "",
+    prompt_prefix: str = "", recall_filter_call: "RecallFilterCall | None" = None,
+    step_index: int = 0,
 ) -> tuple[list | None, list | None, dict[str, Any]]:
     """One LLM relevance filter over EVERYTHING memory_query recalls: the
     hybrid seed candidates (ungated top-K per signal) AND the memory claims
@@ -1210,7 +1228,7 @@ def _filter_recalled_candidates(
     one scorer round-trip and lets seed entries and claims compete under the
     same keep/drop policy.
 
-    The scorer's model group resolves via `resolve_filter_model_uuids` — the
+    The scorer's model group resolves via `resolve_filter_model_group` — the
     dedicated memory_filter binding when set, else the query_filter_router's
     group, else `agent_uuid`'s own: the filter is a shared subsystem, and
     scoring with one model identity keeps the assistant's keep/drop decisions
@@ -1221,22 +1239,32 @@ def _filter_recalled_candidates(
     Likert scales, kept/dropped — for the step trace and /memory/developer.
     Hallucinated ids are ignored.
 
+    `recall_filter_call` is how the scoring call is made and recorded: the loop
+    passes its own, which runs the call through the agent's
+    `_structured_completion` on the resolved group and writes a step row for it
+    like every other assistant call. Without one (the /memory/developer probe,
+    which has no run to record into) the call falls through to the standalone
+    `structured_llm_call`. Either way this function only scores and applies the
+    keep/drop policy — what the call cost and what the model answered belong to
+    the caller that owns the trace.
+
     `top_k_vector`/`top_k_fulltext` override the per-signal seed budgets
     (defaults TOP_K_VECTOR/TOP_K_FULLTEXT) — /memory/developer tuning knobs;
     live runs pass None."""
     from agents.config import QUERY_FILTER_ROUTER_UUID
     from agents.query_filter_router import (
         FilterDecision,
-        apply_filter_scores, build_filter_prompt_rows,
-        resolve_filter_model_uuids, seed_candidate_rows, structured_llm_call,
+        apply_filter_scores, resolve_filter_model_group,
+        seed_candidate_rows, structured_llm_call,
     )
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
-    model_uuids, group_from = resolve_filter_model_uuids(
+    group_uuid, group_from = resolve_filter_model_group(
         [(QUERY_FILTER_ROUTER_UUID, "query_filter_router"), (agent_uuid, "own")])
-    if model_uuids is None:
+    if group_uuid is None:
         return None, None, {"mode": "gated", "reason": "no_model_group"}
+    model_uuids = db.get_model_group_member_uuids(group_uuid)
     seed_cands = qkb._hybrid_seed_ranked(
         query, qkb._vector_store(),
         top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext)
@@ -1262,23 +1290,28 @@ def _filter_recalled_candidates(
         }
         for cid, m in claims_by_id.items()
     ]
-    # This scorer call is a real model call on the run's behalf, made inside an
-    # action rather than as a step of its own. Record when it went out and what
-    # it cost, or its time silently books as action time and the trace under-
-    # reports how many model calls the run made.
-    usage: dict[str, int] = {}
-    requested_at = datetime.now(UTC)
     filter_user_prompt = _build_recall_filter_prompt(
         query, rows, prompt_prefix=prompt_prefix)
-    decision, scorer_model_uuid = structured_llm_call(
-        "assistant.memory_query", model_uuids,
-        ASSISTANT_SHARED_SYSTEM_PROMPT, filter_user_prompt,
-        FilterDecision, usage_out=usage,
-    )
-    try:
-        _provider, scorer_model, _args = db.resolved_model_kwargs(scorer_model_uuid)
-    except Exception:
-        scorer_model = str(scorer_model_uuid)
+    if recall_filter_call is not None:
+        decision, scorer_model_uuid = recall_filter_call(
+            model_uuids=model_uuids, model_group_uuid=group_uuid,
+            group_from=group_from,
+            system_prompt=ASSISTANT_SHARED_SYSTEM_PROMPT,
+            user_prompt=filter_user_prompt, step_index=step_index)
+    else:
+        decision, scorer_model_uuid = structured_llm_call(
+            "assistant.memory_filter", model_uuids,
+            ASSISTANT_SHARED_SYSTEM_PROMPT, filter_user_prompt,
+            FilterDecision,
+        )
+    # The scorer's display name for the observation (the /memory/developer
+    # page reads it); the run trace reads the model off the step row instead.
+    scorer_model = str(scorer_model_uuid)
+    if scorer_model_uuid is not None:
+        try:
+            _provider, scorer_model, _args = db.resolved_model_kwargs(scorer_model_uuid)
+        except Exception:
+            pass
     # The LLM only scored; the keep/drop policy (keep all when few candidates,
     # threshold on a full list) is code — apply_filter_scores.
     scored = apply_filter_scores(decision, candidates)
@@ -1308,21 +1341,15 @@ def _filter_recalled_candidates(
             "relevancy": s.relevancy, "kept": s.kept,
         }
 
-    # The prompts ride along so the trace can show this call's model request
-    # the way it shows the decide call's and the second opinion's. It is a real
-    # model call the run paid for — nested inside one memory_query action, on
-    # its own model group — and without them it was the one call whose cost
-    # appeared in the run totals with nothing to open. Stored whole, as step
-    # rows already store the (much larger) decide prompts.
+    # What the filter DECIDED, for the observation: which model scored, on
+    # whose binding, its note, and every candidate's scores and verdict. What
+    # the call cost and what it was sent live on its own step row (see
+    # AssistantAgent._recall_filter_call) — the same place the decide call
+    # keeps them — so no prompt or token count is stored twice.
     debug = {
         "mode": "llm",
         "group_from": group_from,
         "scorer_model": scorer_model,
-        "scorer_model_uuid": str(scorer_model_uuid),
-        "requested_at": requested_at.isoformat(),
-        "usage": usage,
-        "system_prompt": ASSISTANT_SHARED_SYSTEM_PROMPT,
-        "user_prompt": filter_user_prompt,
         "reasoning": decision.reasoning,
         "candidates": [_debug_row(s) for s in scored],
     }
@@ -1585,7 +1612,9 @@ def _action_query_memory(
                             claim_candidates=memories,
                             top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext,
                             journal_id=ctx.journal_id, record_telemetry=record_telemetry,
-                            prompt_prefix=ctx.prompt_prefix)
+                            prompt_prefix=ctx.prompt_prefix,
+                            recall_filter_call=ctx.recall_filter_call,
+                            step_index=ctx.step_index)
                 except Exception:
                     logger.warning(
                         "assistant: recall LLM filter failed; falling back to "
@@ -3280,6 +3309,7 @@ class AssistantAgent(ModelGroupAgent):
     # room to work; an audit that never says "OK" must not fail the turn.
     MAX_AUDIT_REJECTIONS: int = 2
     REPLY_AUDIT_ACTION: str = "reply_audit"
+    RECALL_FILTER_ACTION: str = "recall_filter"
     RESPONSE_LANGUAGE_CLASSIFIER_ACTION: str = "response_language_classifier"
     RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES: int = 6
 
@@ -3654,6 +3684,7 @@ class AssistantAgent(ModelGroupAgent):
                     step_uuid=step_row.uuid if step_row is not None else None,
                     message_uuid=message_uuid,
                     prompt_prefix=self._recall_filter_prefix(messages),
+                    recall_filter_call=self._recall_filter_call,
                 )
                 cap = self._caps[decision.action]
                 action_sig = (
@@ -5189,6 +5220,128 @@ class AssistantAgent(ModelGroupAgent):
             input_tokens=meta.get("input_tokens"),
             output_tokens=meta.get("output_tokens"),
             duration_ms=meta.get("duration_ms"),
+        )
+        db.clear_assistant_call_checkpoint(self._run)
+
+    # --- memory recall filter -------------------------------------------------
+
+    def _recall_filter_call(
+        self,
+        *,
+        model_uuids: list[UUID],
+        model_group_uuid: UUID | None,
+        group_from: str,
+        system_prompt: str,
+        user_prompt: str,
+        step_index: int,
+    ) -> tuple[Any, UUID | None]:
+        """memory_query's relevance scorer, made the way every other call of
+        the turn is made: `_structured_completion` over the FILTER's model
+        group (the memory_filter binding when the operator set one, see
+        `_filter_recalled_candidates`), checkpointed before dispatch so a kill
+        leaves evidence, retried on a rejected response, and recorded as its
+        own step row.
+
+        It is made from inside an action, which is why it needs this and not a
+        path of its own: on a private call the operator got a model that was
+        not a link, a response that was nowhere, retries that went unrecorded,
+        and no live view while half a minute passed. None of that is specific
+        to scoring — it is what a call gets by going through the loop.
+
+        Returns the parsed FilterDecision and the model that answered. A
+        failure is recorded as a failed row and re-raised: the action catches
+        it and falls back to gated retrieval."""
+        from agents.query_filter_router import FilterDecision
+
+        requested_at = datetime.now(UTC)
+        if self._run is not None:
+            db.checkpoint_assistant_call(
+                self._run,
+                step_index=step_index,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                requested_at=requested_at,
+                model_group_uuid=model_group_uuid,
+            )
+        try:
+            decision = self._structured_completion(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_model=FilterDecision,
+                purpose="memory_filter",
+                candidate_model_uuids=model_uuids,
+            )
+        except Exception as exc:
+            self._record_recall_filter_step(
+                step_index=step_index, phase="failed", group_from=group_from,
+                model_group_uuid=model_group_uuid,
+                system_prompt=system_prompt, user_prompt=user_prompt,
+                requested_at=requested_at,
+                error=f"{type(exc).__name__}: {exc}")
+            raise
+        self._record_recall_filter_step(
+            step_index=step_index, phase="observed", group_from=group_from,
+            model_group_uuid=model_group_uuid,
+            system_prompt=system_prompt, user_prompt=user_prompt,
+            requested_at=requested_at)
+        return cast(FilterDecision, decision), self._last_model_uuid
+
+    def _record_recall_filter_step(
+        self,
+        *,
+        step_index: int,
+        phase: str,
+        group_from: str,
+        model_group_uuid: UUID | None,
+        system_prompt: str,
+        user_prompt: str,
+        requested_at: datetime,
+        error: str | None = None,
+    ) -> None:
+        """Persist the recall-filter call as its own code-driven step row.
+
+        Code-driven: the loop issued it, the model never chose it, and it
+        consumes none of the step budget. The row records the FILTER's model
+        group rather than the assistant's — that difference is the thing an
+        operator reading the trace most needs attributed, and a row is what
+        attributes it.
+
+        The call's answer IS its result, so the row carries no observation: the
+        scores it returned are on `model_response`, and what the loop kept or
+        dropped is in the memory_query step's own observation."""
+        reason = (f"score the recalled candidates for relevance "
+                  f"({group_from} model group)")
+        self._steps.append({
+            "step_index": step_index,
+            "phase": phase,
+            "action": self.RECALL_FILTER_ACTION,
+            "reason": reason,
+            "error": error,
+            "code_driven": True,
+        })
+        if self._run is None:
+            return
+        usage = self._last_usage or {}
+        db.append_assistant_step(
+            run_uuid=self._run.uuid,
+            step_index=step_index,
+            phase=phase,  # type: ignore[arg-type]
+            action=self.RECALL_FILTER_ACTION,
+            reason=reason,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            log=self._turn_log or None,
+            reasoning=self._last_reasoning,
+            model_response=self._last_response_text,
+            rejected_attempts=self._last_rejected_attempts,
+            code_driven=True,
+            requested_at=requested_at,
+            error=error,
+            model_group_uuid=model_group_uuid,
+            model_uuid=self._last_model_uuid,
+            input_tokens=usage.get("input"),
+            output_tokens=usage.get("output"),
+            duration_ms=usage.get("ms"),
         )
         db.clear_assistant_call_checkpoint(self._run)
 

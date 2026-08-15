@@ -66,8 +66,8 @@ fallback.
   Reading a run: the **Model calls** card is where the time went — one bar per
   model call, placed on the run's wall-clock span, so the gaps between bars are
   the time no model was working. It counts calls that have no step row of their
-  own (the second opinion, the memory recall filter), which is why the LLM-calls
-  figure can exceed the step count. Rows badged `warm-up` or `follow-up` are
+  own (the second opinion), which is why the LLM-calls figure can exceed the
+  step count. Rows badged `warm-up` or `follow-up` are
   calls the loop made itself and cost none of the step budget; one badged
   `skipped` is a call that could not run at all (usually no model group bound —
   check `/agentmodel`). The page live-refreshes while a run works and keeps

@@ -804,12 +804,11 @@ UI), `POST …/stop`, `POST …/redirect`, `POST …/resummarize`, and
   model call, placed on the run's wall-clock span and scaled by its duration,
   so the gaps between bars are the time no model was working. The dashboard
   counts the same calls. Both read `_llm_calls`, which is deliberately not a
-  count of step rows — three calls ride inside something else and would
+  count of step rows — two calls ride inside something else and would
   otherwise be invisible, their seconds booking as "action" time: the
-  second-opinion review (its own table), the acceptance-criteria revision's
-  inner call, and the memory recall filter's scorer (both in a step's
-  observation payload, with `requested_at` + `usage`). A call with no recorded
-  start is placed at its row's end minus its duration.
+  second-opinion review (its own table) and the acceptance-criteria revision's
+  inner call (in a step's observation payload, with `requested_at` + `usage`).
+  A call with no recorded start is placed at its row's end minus its duration.
 
   Timeline rows are numbered by their position ("Step 3 of 4"), not by
   `step_index` — the code-driven rows share the decide index they sit beside,
@@ -817,7 +816,8 @@ UI), `POST …/stop`, `POST …/redirect`, `POST …/resummarize`, and
   index stays in the anchor's tooltip. A code-driven row is marked `warm-up`
   (its call went out before the first decide call: the response-language
   classifier, the acceptance-criteria step 0) or `follow-up` (after: the reply
-  audit, a mid-run criteria refresh), so the real ReAct steps are scannable
+  audit, a mid-run criteria refresh, memory_query's recall filter), so the real
+  ReAct steps are scannable
   between them. Those rows show no decision dump and no action call — neither
   happened — and their result is dropped when it only repeats the response
   above, which for such a call is the same content twice.

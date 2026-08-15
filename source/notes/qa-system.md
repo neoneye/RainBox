@@ -167,8 +167,13 @@ action for facts. It:
    (`_filter_recalled_candidates`): the scorer LLM (the `memory_filter`
    binding) rates every candidate on the Likert scales, code keeps/drops via
    `apply_filter_scores`, kept seed entries are resolved (dynamic handlers run
-   only for kept candidates), kept claims are injected. Live runs record one
-   RetrievalEvent verdict per candidate (see `relevance-telemetry.md`).
+   only for kept candidates), kept claims are injected. In a live run the
+   scoring call is made by the loop (`AssistantAgent._recall_filter_call`)
+   through the same `_structured_completion` as every other call of the turn,
+   on the filter's model group, and lands as its own code-driven `recall_filter`
+   step row — prompts, scores, model link, cost and retries included. Live runs
+   also record one RetrievalEvent verdict per candidate (see
+   `relevance-telemetry.md`).
    Fallback when no scorer group is bound or the LLM fails: `MIN_SCORE`-gated
    `retrieve_seed_answers` plus unfiltered claims — recall degrades, never
    dies with the scorer.

@@ -706,14 +706,14 @@ def list_assistant_steps(run_uuid: UUID) -> list[AssistantStep]:
 # --- model calls --------------------------------------------------------------
 #
 # A run's model calls do not map one-to-one onto step rows. Most are a step's
-# own decide/code-driven call, but three ride inside something else: the
-# second-opinion review (its own table), the acceptance-criteria revision's
-# inner call, and the memory recall filter (both in a step's observation
-# payload). Counting rows therefore under-reports the calls, and their time
-# books as "action" time — exactly the time an operator is hunting for. This is
-# the single enumeration: the inspector's dashboard and waterfall, the markdown
-# export, and the in-chat progress row all read it, so no surface can quote a
-# different number of calls than another.
+# own decide/code-driven call, but two ride inside something else: the
+# second-opinion review (its own table) and the acceptance-criteria revision's
+# inner call (in a step's observation payload). Counting rows therefore
+# under-reports the calls, and their time books as "action" time — exactly the
+# time an operator is hunting for. This is the single enumeration: the
+# inspector's dashboard and waterfall, the markdown export, and the in-chat
+# progress row all read it, so no surface can quote a different number of calls
+# than another.
 
 
 def _parse_ts(value):
@@ -789,9 +789,9 @@ def _embedding_calls(step, data: dict) -> list[dict]:
 
 def _inner_calls(step, data: dict) -> list[dict]:
     """The model calls a step made from inside its action, which have no row of
-    their own: the criteria revision's inner call and the memory recall
-    filter's scorer. Both record `requested_at` + `usage` in the observation
-    payload; older payloads have the usage but no start time."""
+    their own: the criteria revision's inner call. It records `requested_at` +
+    `usage` in the observation payload; older payloads have the usage but no
+    start time."""
     calls: list[dict] = []
     if "acceptance_criteria" in data or "usage" in data:
         usage = data.get("usage") or {}
@@ -803,15 +803,6 @@ def _inner_calls(step, data: dict) -> list[dict]:
                 model_uuid=data.get("model_uuid"),
                 input_tokens=usage.get("input"),
                 output_tokens=usage.get("output")))
-    recall = data.get("recall_filter") or {}
-    usage = recall.get("usage") or {}
-    if usage.get("ms") is not None:
-        calls.append(_call(
-            "memory recall filter", "inner",
-            start=_parse_ts(recall.get("requested_at")),
-            duration_ms=usage.get("ms"), anchor=str(step.uuid),
-            model_uuid=recall.get("scorer_model_uuid"),
-            input_tokens=usage.get("input"), output_tokens=usage.get("output")))
     return calls
 
 

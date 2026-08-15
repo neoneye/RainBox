@@ -388,6 +388,7 @@ class ModelGroupAgent(Agent):
         response_model: type[BaseModel],
         validator: Callable[[BaseModel], None] | None = None,
         purpose: str | None = None,
+        candidate_model_uuids: list[UUID] | None = None,
     ) -> BaseModel:
         """Run one structured-output call (system + user message -> a parsed
         `response_model`), falling back through the model group's members in
@@ -420,13 +421,23 @@ class ModelGroupAgent(Agent):
         several different ones (the assistant decides a step, asks for a second
         opinion, audits its own reply). It only affects attribution on the
         /activity page — "assistant.decide" is actionable where a bare
-        "assistant" is not."""
+        "assistant" is not.
+
+        `candidate_model_uuids` overrides the group this call falls through,
+        for the calls an agent makes on ANOTHER binding's models: the
+        assistant's memory recall filter scores on the `memory_filter` group so
+        every caller of the filter scores with one model identity. Such a call
+        is still the agent's own — it earns the same rejection retries, fires
+        the same attempt hooks, and leaves the same `_last_*` snapshot for the
+        caller to persist — so it overrides the candidates rather than forking
+        a second call path that has none of that."""
         from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
         from llama_index.core.instrumentation.dispatcher import instrument_tags
         from llama_index.core.llms import ChatMessage, MessageRole
         from llm import capture_reasoning, prepare_llm
 
-        if not self.candidate_model_uuids:
+        candidates = candidate_model_uuids or self.candidate_model_uuids
+        if not candidates:
             raise RuntimeError(
                 f"agent {self.name} has no model group / candidate models bound"
             )
@@ -440,7 +451,7 @@ class ModelGroupAgent(Agent):
         self._last_response_text = None
         self._last_rejected_attempts = []
         last_error: Exception | None = None
-        for model_uuid in self.candidate_model_uuids:
+        for model_uuid in candidates:
             model_name = str(model_uuid)
             # The corrective turns this model has earned, appended after the
             # user prompt: each rejected response, then why it was rejected.
@@ -649,7 +660,7 @@ class ModelGroupAgent(Agent):
                         for turn in feedback
                     )
         raise RuntimeError(
-            f"agent {self.name}: all {len(self.candidate_model_uuids)} models "
+            f"agent {self.name}: all {len(candidates)} models "
             f"in the group failed; last error: {last_error}"
         )
 
