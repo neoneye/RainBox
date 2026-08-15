@@ -237,9 +237,6 @@ CHAT_TEMPLATE: str = """
   .msg-actions{display:flex;gap:0.15em;align-items:center;margin-top:calc(0.3em + 2px)}
   .copy-btn{font-size:1rem;color:#6c757d;background:none;border:1px solid transparent;border-radius:4px;padding:5px;cursor:pointer;line-height:1.4;display:inline-flex;align-items:center}
   .copy-btn:hover{color:#1a1a2e;border-color:#cbd5e1}
-  /* After :hover so the checkmark keeps its green under the cursor that just
-     clicked it (same specificity — source order decides). */
-  .copy-btn.copied{color:#15803d}
 
   .fb-row{display:inline-flex;gap:0.15em}
   .fb-btn{font-size:1rem;color:#6c757d;background:none;border:1px solid transparent;border-radius:4px;padding:5px;cursor:pointer;line-height:1.4;display:inline-flex;align-items:center}
@@ -773,17 +770,16 @@ function prettyPrintJsonBlocks(rootEl){
 }
 
 // Swap the copy icon for a checkmark briefly, so the click is
-// acknowledged on the button itself. Both icons are 1em in the same 24x24
-// viewBox, so the swap leaves the button's size alone and nothing reflows
-// (unlike the "Copied" text this replaced — see copyText). Re-clicking restarts
-// the flash rather than letting an older timer restore the icon early.
+// acknowledged on the button itself. The check inherits the button's own color
+// like every other icon here. Both icons are 1em in the same 24x24 viewBox, so
+// the swap leaves the button's size alone and nothing reflows (unlike the
+// "Copied" text this replaced — see copyText). Re-clicking restarts the flash
+// rather than letting an older timer restore the icon early.
 function flashCopied(btn){
   clearTimeout(btn._copiedTimer);
   btn.innerHTML = LUCIDE_CHECK_SVG;
-  btn.classList.add('copied');
   btn._copiedTimer = setTimeout(() => {
     btn.innerHTML = LUCIDE_COPY_SVG;
-    btn.classList.remove('copied');
   }, 250);
 }
 
