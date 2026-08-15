@@ -642,9 +642,15 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   (timeout, transport error, empty stream) is not retried — it falls straight
   through to the next candidate.
 - Each rejected attempt is kept on the step's **`rejected_attempts`** (what the
-  model wrote, why it was refused, its start time, duration and token counts)
-  and renders above the accepted response, one block per attempt, plus a row of
-  its own (kind `rejected`) on the model-call waterfall. It is a real call: its
+  model wrote and thought, why it was refused, its start time, duration, token
+  counts, and the corrective turns that rejection produced) and renders as a
+  full exchange — request, reasoning, response — through the same
+  `llm_exchange` macro as the attempt that replaced it, so no attempt is a
+  special case that shows less than the others. A step is therefore rendered as
+  one exchange per attempt, oldest first; the prompts are stored once on the
+  step and shared by every attempt, which differ only by the retry turns
+  appended after them. Each attempt also gets a row of its own (kind
+  `rejected`) on the model-call waterfall. It is a real call: its
   tokens and seconds count in the run's LLM totals. Without the row, a retried
   step showed as a short call followed by a gap where nothing appeared to be
   running. On the waterfall the attempts lie end to end — `requested_at` is

@@ -272,6 +272,13 @@ class ModelGroupAgent(Agent):
     # generation that gets rejected precisely because it never stopped.
     REJECTED_RESPONSE_ECHO_CHARS = 4000
 
+    # How much of a rejected attempt's thinking is kept for the trace. Wider
+    # than the response cap because the reasoning is what answers the question
+    # the operator actually has — what was the model doing before it wrote
+    # something unusable — and a reasoning model spends far more tokens there
+    # than on the answer. Not sent to any model; this is trace only.
+    REJECTED_ATTEMPT_REASONING_CHARS = 20_000
+
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid=agent_uuid, name=name, send=send)
         # Safe defaults so the instance is well-formed before setup() resolves
@@ -585,23 +592,6 @@ class ModelGroupAgent(Agent):
                         )
                         break
                     rejections += 1
-                    # What this attempt cost and what it wrote, for the caller
-                    # to persist. Without it the retry is time and tokens the
-                    # trace cannot account for: the step records only the
-                    # attempt that succeeded, and the wall-clock of the ones
-                    # before it reads as a gap where nothing was running.
-                    self._last_rejected_attempts.append({
-                        "model_uuid": str(model_uuid),
-                        "model_name": model_name,
-                        "requested_at": attempt_at.isoformat(),
-                        "ms": int((time.monotonic() - t0) * 1000),
-                        "input_tokens": token_counter.prompt_llm_token_count,
-                        "output_tokens": token_counter.completion_llm_token_count,
-                        "response": truncate_middle(
-                            self._last_response_text or "",
-                            self.REJECTED_RESPONSE_ECHO_CHARS),
-                        "error": f"{type(e).__name__}: {e}",
-                    })
                     logger.warning(
                         "agent %s: model %s returned an unusable response (%s); "
                         "asking it again with the reason (%d retr%s left)",
@@ -613,19 +603,51 @@ class ModelGroupAgent(Agent):
                     )
                     # The rejected text goes back as the model's own turn and
                     # the reason as the next user turn, which is the shape a
-                    # chat model already knows how to act on. Read before the
-                    # next attempt overwrites it.
+                    # chat model already knows how to act on. Built before the
+                    # next attempt overwrites _last_response_text.
+                    feedback: list[dict[str, str]] = []
                     echo = self._rejected_response_echo(self._last_response_text)
                     if echo is not None:
-                        corrections.append(
-                            ChatMessage(role=MessageRole.ASSISTANT, content=echo)
-                        )
-                    corrections.append(ChatMessage(
-                        role=MessageRole.USER,
-                        content=self._rejection_note(
-                            e, retries_left=retries_left - 1
-                        ),
-                    ))
+                        feedback.append({"role": "assistant", "content": echo})
+                    feedback.append({
+                        "role": "user",
+                        "content": self._rejection_note(
+                            e, retries_left=retries_left - 1),
+                    })
+                    # What this attempt was sent, wrote, and cost, for the
+                    # caller to persist. Without it the retry is time and
+                    # tokens the trace cannot account for: the step records
+                    # only the attempt that succeeded, and the wall-clock of
+                    # the ones before it reads as a gap where nothing ran.
+                    #
+                    # `feedback` is the turns THIS rejection produced, not the
+                    # whole conversation: every attempt shares one system and
+                    # user prompt (the caller already stores those once), and
+                    # what the retry after this one additionally received is
+                    # exactly these turns. Storing the shared prompt per
+                    # attempt would trace one call by saving its largest text
+                    # four times.
+                    self._last_rejected_attempts.append({
+                        "model_uuid": str(model_uuid),
+                        "model_name": model_name,
+                        "requested_at": attempt_at.isoformat(),
+                        "ms": int((time.monotonic() - t0) * 1000),
+                        "input_tokens": token_counter.prompt_llm_token_count,
+                        "output_tokens": token_counter.completion_llm_token_count,
+                        "reasoning": truncate_middle(
+                            self._last_reasoning or "",
+                            self.REJECTED_ATTEMPT_REASONING_CHARS) or None,
+                        "response": truncate_middle(
+                            self._last_response_text or "",
+                            self.REJECTED_RESPONSE_ECHO_CHARS),
+                        "error": f"{type(e).__name__}: {e}",
+                        "feedback": feedback,
+                    })
+                    corrections.extend(
+                        ChatMessage(role=MessageRole(turn["role"]),
+                                    content=turn["content"])
+                        for turn in feedback
+                    )
         raise RuntimeError(
             f"agent {self.name}: all {len(self.candidate_model_uuids)} models "
             f"in the group failed; last error: {last_error}"

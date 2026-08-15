@@ -61,6 +61,58 @@ ASSISTANT_TEMPLATE = """
   {%- endfor %}
 </span>{% endif %}
 {%- endmacro %}
+{# One LLM exchange of a step: what was sent, what the model thought, what it
+   answered. Built by _exchanges(), which returns one of these per ATTEMPT —
+   so a call that was refused and asked again renders as two, identical in
+   shape, and no attempt is a special case that shows less than the others.
+   Mirrored in Python by _exchange_md(); keep the two aligned. #}
+{% macro llm_exchange(x) %}
+  {% if x.system_prompt or x.user_prompt or x.turns %}
+  <div class="io io-req">
+    <div class="io-label">{{ x.request_label }}{{ io_meta(x.request_meta) }}</div>
+    {% if x.system_prompt %}
+    <details class="prompt" data-k="{{ x.key_prefix }}system">
+      <summary>system prompt ({{ x.system_prompt | length }} chars)</summary>
+      <pre>{{ x.system_prompt }}</pre>
+    </details>
+    {% endif %}
+    {% if x.user_prompt %}
+    <details class="prompt" data-k="{{ x.key_prefix }}user">
+      <summary>user prompt ({{ x.user_prompt | length }} chars)</summary>
+      <pre>{{ x.user_prompt }}</pre>
+    </details>
+    {% endif %}
+    {# What a retry received on top of the shared prompt above: the refused
+       answer replayed as the model's own turn, and the reason it was refused
+       as the turn after it. #}
+    {% for t in x.turns %}
+    <details class="prompt" data-k="{{ x.key_prefix }}turn{{ loop.index }}">
+      <summary>{{ t.role }} turn ({{ t.content | length }} chars)</summary>
+      <pre>{{ t.content }}</pre>
+    </details>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if x.reasoning %}
+  <div class="io io-think">
+    {# The model's native reasoning channel (a reasoning model's thinking
+       before it emitted the structured decision); absent for non-reasoning
+       models. Collapsed like the request prompts. #}
+    <div class="io-label">model reasoning</div>
+    <details class="prompt" data-k="{{ x.key_prefix }}reasoning">
+      <summary>reasoning ({{ x.reasoning | length }} chars)</summary>
+      <pre>{{ x.reasoning }}</pre>
+    </details>
+  </div>
+  {% endif %}
+  {% if x.response_text or x.error %}
+  <div class="io io-out{% if x.rejected %} io-rejected{% endif %}">
+    <div class="io-label">{{ x.response_label }}{{ io_meta(x.response_meta) }}</div>
+    {% if x.error %}<div class="err">{{ x.error }}</div>{% endif %}
+    {% if x.response_text %}<pre>{{ x.response_text }}</pre>{% endif %}
+  </div>
+  {% endif %}
+{% endmacro %}
 {% macro render_intent(it) %}
   <div class="intent {{ it.state }}">
     <span class="cap">{{ it.capability_name }}</span>
@@ -514,53 +566,11 @@ ASSISTANT_TEMPLATE = """
           </div>
         </details>
         {% endif %}
-        {% if step.system_prompt or step.user_prompt %}
-        <div class="io io-req">
-          <div class="io-label">model request{{ io_meta(request_meta(step)) }}</div>
-          {% if step.system_prompt %}
-          <details class="prompt" data-k="system">
-            <summary>system prompt ({{ step.system_prompt | length }} chars)</summary>
-            <pre>{{ step.system_prompt }}</pre>
-          </details>
-          {% endif %}
-          {% if step.user_prompt %}
-          <details class="prompt" data-k="user">
-            <summary>user prompt ({{ step.user_prompt | length }} chars)</summary>
-            <pre>{{ step.user_prompt }}</pre>
-          </details>
-          {% endif %}
-        </div>
-        {% endif %}
-        {% if step.reasoning %}
-        <div class="io io-think">
-          {# The model's native reasoning channel (a reasoning model's thinking
-             before it emitted the structured decision); absent for
-             non-reasoning models. Collapsed like the request prompts. #}
-          <div class="io-label">model reasoning</div>
-          <details class="prompt" data-k="reasoning">
-            <summary>reasoning ({{ step.reasoning | length }} chars)</summary>
-            <pre>{{ step.reasoning }}</pre>
-          </details>
-        </div>
-        {% endif %}
-        {# Responses this call made and threw away, before the one it kept.
-           They render ABOVE the accepted response because that is the order
-           they happened in, and each one's seconds are part of the wall-clock
-           between this step's request and the next call. #}
-        {% for r in step.rejected_attempts or [] %}
-        <div class="io io-out io-rejected">
-          <div class="io-label">rejected response {{ loop.index }} of {{ loop.length }}{{ io_meta(rejected_meta(r, model_names)) }}</div>
-          <div class="err">{{ r.error }}</div>
-          {% if r.response %}<pre>{{ r.response }}</pre>{% endif %}
-        </div>
-        {% endfor %}
-        {% set decision_text = decision_json.get(step.uuid|string, '') %}
-        {% if decision_text or step.model_response %}
-        <div class="io io-out">
-          <div class="io-label">{% if step.model_response and not decision_text and step.error %}partial model response{% else %}model response{% endif %}{{ io_meta(response_meta(step, model_names)) }}</div>
-          <pre>{{ decision_text or step.model_response }}</pre>
-        </div>
-        {% endif %}
+        {# Every attempt this step's call made, oldest first: the ones whose
+           answer was thrown away, then the one that was kept. All render
+           through one macro, so a rejected attempt shows its request,
+           thinking and answer exactly like the attempt that replaced it. #}
+        {% for x in exchanges.get(step.uuid|string, []) %}{{ llm_exchange(x) }}{% endfor %}
         {% set so = second_opinion.get(step.uuid|string) %}
         {% if so %}
         <div class="io io-so">
@@ -1162,6 +1172,81 @@ def _response_meta(step, model_names: dict[str, str]) -> list[dict]:
         step.created_at, "When this model response was recorded")
 
 
+def _exchanges(step, model_names: dict[str, str], decision_text: str) -> list[dict]:
+    """One step's LLM exchanges, oldest first: every attempt its call made.
+
+    A retried call is several exchanges, not one exchange plus a footnote. A
+    rejected attempt is an LLM invocation like any other — it was sent a
+    request, it thought, it answered — so it renders through the same shape as
+    the kept one, and prompts, reasoning and response appear for all of them or
+    for none.
+
+    Every attempt shares the step's system and user prompt; a retry differs
+    only by the turns appended after them, which is what `turns` carries (the
+    feedback from each earlier rejection, accumulated). The rejected attempts
+    store no prompt of their own for exactly this reason.
+    """
+    exchanges: list[dict] = []
+    attempts = list(step.rejected_attempts or [])
+    turns: list[dict] = []
+    for index, attempt in enumerate(attempts, start=1):
+        exchanges.append({
+            "key_prefix": f"attempt{index}-",
+            "rejected": True,
+            "request_label": f"model request (attempt {index})",
+            "request_meta": [_field(
+                _iso_hms(attempt.get("requested_at")),
+                "When this attempt was sent", cls="io-time")]
+            if attempt.get("requested_at") else [],
+            "system_prompt": step.system_prompt,
+            "user_prompt": step.user_prompt,
+            "turns": list(turns),
+            "reasoning": attempt.get("reasoning"),
+            "response_label": f"rejected response {index} of {len(attempts)}",
+            "response_meta": _rejected_meta(attempt, model_names),
+            "response_text": attempt.get("response"),
+            "error": attempt.get("error"),
+        })
+        turns = turns + list(attempt.get("feedback") or [])
+    # The attempt the step itself records — the one whose answer was kept,
+    # which on a call that never retried is the only one there was.
+    if step.system_prompt or step.user_prompt or decision_text or step.model_response:
+        exchanges.append({
+            "key_prefix": "",
+            "rejected": False,
+            # Only worth numbering when there is something to number it
+            # against; a call that got it right first time reads as before.
+            "request_label": ("model request"
+                              if not attempts
+                              else f"model request (attempt {len(attempts) + 1})"),
+            # A retry went out when the attempt before it was refused, not
+            # when the call started — `requested_at` is the first attempt's
+            # (the same reading the waterfall places these bars by).
+            "request_meta": (
+                _request_meta(step) if not attempts else
+                [_field(_hms(db.retry_resumed_at(step)) or "—",
+                        "When this attempt was sent", cls="io-time")]),
+            "system_prompt": step.system_prompt,
+            "user_prompt": step.user_prompt,
+            "turns": turns,
+            "reasoning": step.reasoning,
+            # "partial" means the call died mid-stream and this is as far as
+            # it got — a row that never produced a decision AND recorded an
+            # error. A code-driven row that succeeded holds its complete
+            # response, so it stays "model response".
+            "response_label": (
+                "partial model response"
+                if step.model_response and not decision_text and step.error
+                else "model response"),
+            "response_meta": _response_meta(step, model_names),
+            "response_text": decision_text or step.model_response,
+            "error": None,
+        })
+    return [x for x in exchanges
+            if x["system_prompt"] or x["user_prompt"] or x["turns"]
+            or x["reasoning"] or x["response_text"] or x["error"]]
+
+
 def _rejected_meta(attempt: dict, model_names: dict[str, str]) -> list[dict]:
     """The rejected-response line: which model wrote it, what it cost, when.
 
@@ -1427,6 +1512,49 @@ def _second_opinion_md(so: dict, model_names: dict[str, str]) -> list[str]:
     return lines
 
 
+def _exchange_md(exchange: dict, *, fence_json: bool) -> list[str]:
+    """One LLM exchange as Markdown — the mirror of the template's
+    `llm_exchange` macro (search ASSISTANT_TEMPLATE for it); keep the two
+    aligned. Both are fed the same dicts from `_exchanges`, so a rejected
+    attempt and the attempt that replaced it cannot drift into different
+    shapes in one renderer and not the other."""
+    lines: list[str] = []
+    if exchange["system_prompt"] or exchange["user_prompt"] or exchange["turns"]:
+        lines.append(_labelled(f"**{exchange['request_label']}**",
+                               exchange["request_meta"]))
+        lines.append("")
+        if exchange["system_prompt"]:
+            lines.append("_system prompt_")
+            lines.append(_fence(exchange["system_prompt"]))
+            lines.append("")
+        if exchange["user_prompt"]:
+            lines.append("_user prompt_")
+            lines.append(_fence(exchange["user_prompt"]))
+            lines.append("")
+        for turn in exchange["turns"]:
+            lines.append(f"_{turn.get('role')} turn_")
+            lines.append(_fence(str(turn.get("content") or "")))
+            lines.append("")
+    if exchange["reasoning"]:
+        lines.append("**model reasoning**")
+        lines.append("")
+        lines.append(_fence(exchange["reasoning"]))
+        lines.append("")
+    if exchange["response_text"] or exchange["error"]:
+        lines.append(_labelled(f"**{exchange['response_label']}**",
+                               exchange["response_meta"]))
+        lines.append("")
+        if exchange["error"]:
+            lines.append(f"**error:** {exchange['error']}")
+            lines.append("")
+        if exchange["response_text"]:
+            lines.append(_fence(
+                exchange["response_text"],
+                "json" if fence_json and not exchange["rejected"] else ""))
+            lines.append("")
+    return lines
+
+
 def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
              reviews: dict | None = None,
              duplicate_result: set[str] | None = None) -> list[str]:
@@ -1448,53 +1576,9 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
             suffix = f" `{entry['uuid']}`" if entry.get("uuid") else ""
             lines.append(f"- {entry.get('label')}: {text}{suffix}")
         lines.append("")
-    if step.system_prompt or step.user_prompt:
-        lines.append(_labelled("**model request**", _request_meta(step)))
-        lines.append("")
-        if step.system_prompt:
-            lines.append("_system prompt_")
-            lines.append(_fence(step.system_prompt))
-            lines.append("")
-        if step.user_prompt:
-            lines.append("_user prompt_")
-            lines.append(_fence(step.user_prompt))
-            lines.append("")
-    if step.reasoning:
-        lines.append("**model reasoning**")
-        lines.append("")
-        lines.append(_fence(step.reasoning))
-        lines.append("")
     decision = decision_json.get(str(step.uuid), "")
-    # "partial" means the call died mid-stream and this is as far as it got —
-    # a row that never produced a decision AND recorded an error. A code-driven
-    # row that succeeded holds its complete response, so it stays "model
-    # response". Duplicated in the template; change both together.
-    response_label = (
-        "partial model response"
-        if step.model_response and not decision and step.error
-        else "model response"
-    )
-    # The responses this call threw away, above the one it kept — the order
-    # they happened in, and where the run's missing seconds went. Mirrored in
-    # ASSISTANT_TEMPLATE; change both together.
-    attempts = step.rejected_attempts or []
-    for i, attempt in enumerate(attempts, start=1):
-        lines.append(_labelled(
-            f"**rejected response {i} of {len(attempts)}**",
-            _rejected_meta(attempt, model_names)))
-        lines.append("")
-        lines.append(f"**error:** {attempt.get('error')}")
-        lines.append("")
-        if attempt.get("response"):
-            lines.append(_fence(str(attempt["response"])))
-            lines.append("")
-    response_text = decision or step.model_response or ""
-    if response_text:
-        lines.append(_labelled(f"**{response_label}**",
-                               _response_meta(step, model_names)))
-        lines.append("")
-        lines.append(_fence(response_text, "json" if decision else ""))
-        lines.append("")
+    for exchange in _exchanges(step, model_names, decision):
+        lines.extend(_exchange_md(exchange, fence_json=bool(decision)))
     second_opinion, obs_data = _split_second_opinion(step, reviews)
     if second_opinion is not None:
         lines.extend(_second_opinion_md(second_opinion, model_names))
@@ -1811,9 +1895,16 @@ def _load_run_detail(selected) -> dict:
         mc = db.get_model_config(muid)
         if mc is not None:
             model_names[str(muid)] = mc.display_name or mc.model_name
+    # Built here, not in the template: the export renders the same dicts, so
+    # what an exchange consists of is decided once (see _exchanges).
+    exchanges = {
+        str(s.uuid): _exchanges(s, model_names, decision_json.get(str(s.uuid), ""))
+        for s in steps if s.phase != "control"
+    }
     return {
         "timeline": timeline,
         "decision_json": decision_json,
+        "exchanges": exchanges,
         "step_kinds": step_kinds,
         "duplicate_result": duplicate_result,
         "second_opinion": second_opinion,
@@ -1858,6 +1949,7 @@ def assistant_page() -> str:
         trigger=ctx.get("trigger"),
         timeline=ctx.get("timeline", []),
         decision_json=ctx.get("decision_json", {}),
+        exchanges=ctx.get("exchanges", {}),
         step_kinds=ctx.get("step_kinds", {}),
         duplicate_result=ctx.get("duplicate_result", set()),
         second_opinion=ctx.get("second_opinion", {}),

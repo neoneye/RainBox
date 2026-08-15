@@ -212,8 +212,12 @@ Key fields:
 - `rejected_attempts`: the responses this call refused before the one it kept
   (schema violations, validator refusals), oldest first, as
   `{model_uuid, model_name, requested_at, ms, input_tokens, output_tokens,
-  response, error}`. NULL for a call that got it right first time. Their
-  tokens and seconds are the run's, and count in its totals
+  reasoning, response, error, feedback}`. NULL for a call that got it right
+  first time. Their tokens and seconds are the run's, and count in its totals.
+  `feedback` is the corrective turns that rejection produced (`{role,
+  content}`), i.e. what the NEXT attempt received on top of the shared
+  `system_prompt`/`user_prompt` — the prompt is stored once per step, never
+  per attempt
 - `code_driven`: true when the loop issued this call itself rather than the
   model choosing it — the acceptance-criteria establish/refresh, the
   response-language classifier, the reply audit. Such a row has no decision

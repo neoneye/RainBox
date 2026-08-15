@@ -1632,6 +1632,9 @@ def _retried_step_run(room):
         reason="answer it", model_response='{"action":"reply"}',
         input_tokens=9500, output_tokens=200, duration_ms=14104,
         requested_at=datetime(2026, 8, 15, 15, 53, 5, tzinfo=UTC),
+        system_prompt="You perform one narrow call.",
+        user_prompt="<current_user_request>hi</current_user_request>",
+        reasoning="thinking again",
         rejected_attempts=[{
             "model_uuid": str(uuid4()),
             "model_name": "gemma4:e4b",
@@ -1639,9 +1642,16 @@ def _retried_step_run(room):
             "ms": 18271,
             "input_tokens": 9400,
             "output_tokens": 682,
+            "reasoning": "thinking about it",
             "response": '{"reason":null,"action":null,"args":null}',
             "error": "RejectedResponse: model did not return a valid "
                      "AssistantStepDecision",
+            "feedback": [
+                {"role": "assistant",
+                 "content": '{"reason":null,"action":null,"args":null}'},
+                {"role": "user",
+                 "content": "<rejected_response>\nfix it\n</rejected_response>"},
+            ],
         }])
     db.finish_run(run, "finished")
     return run
@@ -1662,6 +1672,49 @@ def test_a_rejected_attempt_shows_beside_the_response_that_replaced_it(
             assert '"action": "reply"' in body
             assert body.index("rejected response 1 of 1") < body.index(
                 '"action": "reply"')
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_rejected_attempt_renders_as_a_full_exchange(app_ctx, client):
+    """A rejected attempt is an LLM invocation like any other: it was sent a
+    request, it thought, it answered. It renders through the same macro as the
+    attempt that replaced it — so prompts, reasoning and response show for
+    both, or the trace is teaching that one of them is less of a call."""
+    room = _room()
+    run = _retried_step_run(room)
+    try:
+        page, md = _rendered(client, run)
+
+        # Both attempts number their request, and each carries the prompts.
+        for body in (page, md):
+            assert "model request (attempt 1)" in body
+            assert "model request (attempt 2)" in body
+            assert body.count("system prompt") == 2      # one per attempt
+            assert body.count("thinking about it") == 1     # attempt 1's
+            assert body.count("thinking again") == 1        # attempt 2's
+        # The rejected attempt's collapsible blocks are addressable, like
+        # every other block on the page (the live refresh reopens by key).
+        assert 'data-k="attempt1-system"' in page
+        assert 'data-k="attempt1-reasoning"' in page
+        assert 'data-k="reasoning"' in page                 # the kept one
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_the_retry_shows_the_turns_the_first_attempt_never_saw(app_ctx, client):
+    """What makes the second attempt a different call is what was appended to
+    its prompt: its own refused answer, and why it was refused. Attempt 1
+    carries none of it; attempt 2 carries both."""
+    room = _room()
+    run = _retried_step_run(room)
+    try:
+        page, md = _rendered(client, run)
+        for body in (page, md):
+            assert "<rejected_response>" in body
+            assert body.count("<rejected_response>") == 1   # only the retry's
+        assert 'data-k="attempt1-turn1"' not in page        # nothing preceded it
+        assert 'data-k="turn1"' in page and 'data-k="turn2"' in page
     finally:
         _cleanup(run.uuid, room.uuid)
 

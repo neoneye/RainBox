@@ -815,7 +815,7 @@ def _inner_calls(step, data: dict) -> list[dict]:
     return calls
 
 
-def _retry_resumed_at(step):
+def retry_resumed_at(step):
     """When the attempt a step RECORDS began, on a call that retried.
 
     `requested_at` is when the call was sent, which on a retried call is when
@@ -861,7 +861,7 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
             start = s.requested_at
             if start is None and s.created_at and s.duration_ms:
                 start = s.created_at - timedelta(milliseconds=s.duration_ms)
-            resumed = _retry_resumed_at(s)
+            resumed = retry_resumed_at(s)
             if resumed is not None and (start is None or resumed > start):
                 start = resumed
             calls.append(_call(
