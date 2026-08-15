@@ -704,15 +704,13 @@ function fallbackCopy(text, done){
   done();
 }
 
-function copyText(text, btn){
-  const done = () => {
-    // The button may hold an SVG child instead of text; snapshot innerHTML
-    // and restore that, otherwise the SVG gets wiped by textContent and the
-    // button comes back blank.
-    const prev = btn.innerHTML;
-    btn.textContent = 'Copied';
-    setTimeout(() => { btn.innerHTML = prev; }, 1200);
-  };
+// Copy to the clipboard and confirm via the bottom-right toast. The
+// confirmation stays out of the document flow on purpose: a button that swaps
+// its own label to "Copied" changes width/height, which reflows the message log
+// and scrolls it under the reader.
+// `message` overrides the default toast text.
+function copyText(text, message){
+  const done = () => chatToast(message || 'Copied to clipboard');
   const doCopy = (t) => {
     t = (t == null) ? '' : String(t);
     if (navigator.clipboard && navigator.clipboard.writeText){
@@ -737,13 +735,10 @@ function chatToast(text){
   clearTimeout(chatToastTimer);
   chatToastTimer = setTimeout(() => el.classList.remove('show'), 5000);
 }
-// Copy a room/folder uuid to the clipboard and confirm via the toast (not an
-// in-menu "Copied" flash) — consistent with the other tree panels.
+// Copy a room/folder uuid to the clipboard, naming the kind in the toast —
+// consistent with the other tree panels.
 function copyIdToast(uuid, kind){
-  const done = () => chatToast(kind + ' id copied: ' + uuid);
-  if (navigator.clipboard && navigator.clipboard.writeText)
-    navigator.clipboard.writeText(uuid).then(done).catch(() => fallbackCopy(uuid, done));
-  else fallbackCopy(uuid, done);
+  copyText(uuid, kind + ' id copied: ' + uuid);
 }
 
 // Pretty-print JSON for display; fall back to the raw text if it doesn't parse.
@@ -782,7 +777,7 @@ function addCopyButton(container, source){
   btn.title = 'Copy';
   btn.innerHTML = LUCIDE_COPY_SVG;
   btn.addEventListener('click',
-    () => copyText(typeof source === 'function' ? source() : source, btn));
+    () => copyText(typeof source === 'function' ? source() : source, 'Message copied'));
   container.appendChild(btn);
 }
 
@@ -859,8 +854,8 @@ function buildMessageMenu(m){
   item.textContent = 'Copy message id';
   item.addEventListener('click', (e) => {
     e.stopPropagation();
-    copyText(uuid, item);  // shows "Copied" in the item briefly
-    setTimeout(() => { menu.hidden = true; }, 900);
+    copyIdToast(uuid, 'Message');
+    menu.hidden = true;
   });
   menu.appendChild(item);
   kebab.addEventListener('click', (e) => {
@@ -2912,8 +2907,10 @@ function renderExport(){
   cp.addEventListener('click', () => {
     const url = exportUrl();
     if (!url) return;
-    // copyText accepts a promise-returning source; the button flashes "Copied".
-    copyText(() => getJSON(url).then(d => JSON.stringify(d, null, 2)), cp);
+    // copyText accepts a promise-returning source, so the fetch resolves first
+    // and the toast fires once the JSON is actually on the clipboard.
+    copyText(() => getJSON(url).then(d => JSON.stringify(d, null, 2)),
+             'Room history copied to clipboard');
   });
   actions.appendChild(cp);
   sidebarEl.appendChild(actions);
