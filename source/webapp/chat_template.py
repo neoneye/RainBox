@@ -237,6 +237,9 @@ CHAT_TEMPLATE: str = """
   .msg-actions{display:flex;gap:0.15em;align-items:center;margin-top:calc(0.3em + 2px)}
   .copy-btn{font-size:1rem;color:#6c757d;background:none;border:1px solid transparent;border-radius:4px;padding:5px;cursor:pointer;line-height:1.4;display:inline-flex;align-items:center}
   .copy-btn:hover{color:#1a1a2e;border-color:#cbd5e1}
+  /* After :hover so the checkmark keeps its green under the cursor that just
+     clicked it (same specificity — source order decides). */
+  .copy-btn.copied{color:#15803d}
 
   .fb-row{display:inline-flex;gap:0.15em}
   .fb-btn{font-size:1rem;color:#6c757d;background:none;border:1px solid transparent;border-radius:4px;padding:5px;cursor:pointer;line-height:1.4;display:inline-flex;align-items:center}
@@ -442,6 +445,7 @@ const agentListEl = document.getElementById('agent-list');
 // inherits the button's text color, and width/height in em scales with
 // the button's font-size. These are the upstream icons verbatim.
 const LUCIDE_COPY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+const LUCIDE_CHECK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const LUCIDE_THUMBS_UP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/><path d="M7 10v12"/></svg>';
 const LUCIDE_THUMBS_DOWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/></svg>';
 const LUCIDE_MORE_HORIZONTAL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>';
@@ -708,9 +712,13 @@ function fallbackCopy(text, done){
 // confirmation stays out of the document flow on purpose: a button that swaps
 // its own label to "Copied" changes width/height, which reflows the message log
 // and scrolls it under the reader.
-// `message` overrides the default toast text.
-function copyText(text, message){
-  const done = () => chatToast(message || 'Copied to clipboard');
+// `message` overrides the default toast text; `onCopied` runs once the text is
+// on the clipboard (used to flash the checkmark).
+function copyText(text, message, onCopied){
+  const done = () => {
+    chatToast(message || 'Copied to clipboard');
+    if (onCopied) onCopied();
+  };
   const doCopy = (t) => {
     t = (t == null) ? '' : String(t);
     if (navigator.clipboard && navigator.clipboard.writeText){
@@ -764,6 +772,21 @@ function prettyPrintJsonBlocks(rootEl){
   });
 }
 
+// Swap the copy icon for a checkmark for 3s, so the click is acknowledged on
+// the button itself. Both icons are 1em in the same 24x24 viewBox, so the swap
+// leaves the button's size alone and nothing reflows (unlike the "Copied" text
+// this replaced — see copyText). Re-clicking restarts the 3s rather than
+// letting an older timer restore the icon early.
+function flashCopied(btn){
+  clearTimeout(btn._copiedTimer);
+  btn.innerHTML = LUCIDE_CHECK_SVG;
+  btn.classList.add('copied');
+  btn._copiedTimer = setTimeout(() => {
+    btn.innerHTML = LUCIDE_COPY_SVG;
+    btn.classList.remove('copied');
+  }, 3000);
+}
+
 // Copies the original markdown source, not the rendered HTML. Appends
 // into a container (typically the .msg-actions row) rather than the
 // .msg directly so the copy + feedback buttons share one parent and one
@@ -776,8 +799,10 @@ function addCopyButton(container, source){
   btn.className = 'copy-btn';
   btn.title = 'Copy';
   btn.innerHTML = LUCIDE_COPY_SVG;
-  btn.addEventListener('click',
-    () => copyText(typeof source === 'function' ? source() : source, 'Message copied'));
+  btn.addEventListener('click', () => copyText(
+    typeof source === 'function' ? source() : source,
+    'Message copied',
+    () => flashCopied(btn)));
   container.appendChild(btn);
 }
 
