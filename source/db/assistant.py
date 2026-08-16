@@ -733,11 +733,13 @@ def _parse_ts(value):
 
 
 def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
-          model_uuid=None, input_tokens=None, output_tokens=None) -> dict:
+          model_uuid=None, input_tokens=None, output_tokens=None,
+          detail: str = "") -> dict:
     return {"label": label, "kind": kind, "start": start,
             "duration_ms": duration_ms, "anchor": anchor,
             "model_uuid": str(model_uuid) if model_uuid else None,
-            "input_tokens": input_tokens, "output_tokens": output_tokens}
+            "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "detail": detail}
 
 
 def _rejected_calls(step) -> list[dict]:
@@ -766,6 +768,38 @@ def _rejected_calls(step) -> list[dict]:
     return calls
 
 
+#: How much of an embedded text the waterfall's name column carries. The
+#: column is 14rem wide; past this the row ellipsises either way, and the
+#: tooltip has the rest.
+EMBED_LABEL_CHARS: int = 40
+
+
+def embed_call_label(call: dict) -> tuple[str, str]:
+    """An embed row's label and its tooltip detail: WHAT went to the embedder.
+
+    The model is deliberately not in either — a run embeds on one model, so
+    naming it per row is the same string repeated down the column; it is named
+    once per step, in the timing block's embedder line. The text IS worth
+    repeating, because it is the thing that differs: without it a column of
+    identical `embed` rows could equally be one query embedded repeatedly,
+    several different queries, or one call drawn more than once.
+
+    A batched call — a first-run seed populate embeds the whole registry — is
+    named by its size instead: its first chunk says nothing about the call."""
+    preview = [str(t) for t in (call.get("preview") or [])]
+    texts = call.get("texts") or 0
+    if texts > 1:
+        label = f"embed {texts} texts"
+    elif preview:
+        head = preview[0][:EMBED_LABEL_CHARS]
+        label = f'embed "{head}{"…" if len(preview[0]) > EMBED_LABEL_CHARS else ""}"'
+    else:
+        # A payload written before the text was captured, or a call that
+        # embedded nothing. Still a call, still worth its row.
+        label = "embed"
+    return label, " / ".join(preview)
+
+
 def _embedding_calls(step, data: dict) -> list[dict]:
     """The embedder calls a step made, from its `timing` payload.
 
@@ -774,20 +808,16 @@ def _embedding_calls(step, data: dict) -> list[dict]:
     part of what the wall-clock between two LLM bars is made of, and enough of
     them can evict the model the next decide call needs warm. Kept out of the
     run's token/throughput totals (see `assistant_run_stats`) and counted on
-    their own.
-
-    Labelled `embed`, without the model: a run embeds on one model, so naming
-    it on every row is the same string repeated down the column, competing for
-    attention with the labels that differ. The model is named once per step, in
-    the timing block's embedder line."""
+    their own."""
     timing = data.get("timing") or {}
     embeddings = timing.get("embeddings") or {}
     calls: list[dict] = []
     for call in embeddings.get("calls") or []:
+        label, detail = embed_call_label(call)
         calls.append(_call(
-            "embed", "embedding",
+            label, "embedding",
             start=_parse_ts(call.get("requested_at")),
-            duration_ms=call.get("ms"), anchor=str(step.uuid)))
+            duration_ms=call.get("ms"), anchor=str(step.uuid), detail=detail))
     return calls
 
 

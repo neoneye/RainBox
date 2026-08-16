@@ -1569,9 +1569,11 @@ def _timed_memory_query_run(room):
                                          "calls": [
                                              {"model": "embeddinggemma:300m", "ms": 500,
                                               "chars": 100, "texts": 1,
+                                              "preview": ["what languages do I know"],
                                               "requested_at": "2026-08-15T10:00:00+00:00"},
                                              {"model": "embeddinggemma:300m", "ms": 400,
                                               "chars": 37, "texts": 1,
+                                              "preview": ["where do I live"],
                                               "requested_at": "2026-08-15T10:00:02+00:00"},
                                          ],
                                          "dropped": 0,
@@ -1615,7 +1617,7 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
         assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in page
         assert "embed embeddinggemma:300m" not in page
         assert "embed 0.9s (2 calls)" in md
-        assert "| embed | embedding |" in md
+        assert '| embed "what languages do I know" | embedding |' in md
         # The LLM totals are the step's own, untouched by the two embed calls.
         assert "in 100" in page and "out 20" in page
         steps = db.list_assistant_steps(run.uuid)
@@ -1626,6 +1628,44 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
         assert stats["embedding_ms"] == 900
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_each_embed_call_shows_the_text_it_was_given(app_ctx, client):
+    """Two embed bars of the same length raise one question — same query or
+    different ones? — that neither the bars nor the char total can answer. The
+    text goes on the waterfall row itself and under the phases, so the answer
+    is on the page rather than in a psql session."""
+    room = _room()
+    run = _timed_memory_query_run(room)
+    try:
+        page, md = _rendered(client, run)
+        for body in (page, md):
+            assert "what languages do I know" in body
+            assert "where do I live" in body
+        # On the waterfall row's own label, not only in the timing table: the
+        # Model calls card is where a repeated-looking row is noticed.
+        assert 'embed "what languages do I know"' in page
+        assert "io-embed-text" in page
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_bulk_embed_is_named_by_its_size_and_a_legacy_one_still_renders():
+    """A first-run seed populate embeds the whole registry in one call — its
+    first chunk says nothing about it, so the row is named by its size. A
+    payload written before the text was captured keeps its bare `embed` row:
+    losing the call would lose time the trace cannot otherwise explain."""
+    bulk, detail = db.embed_call_label(
+        {"texts": 312, "chars": 90000, "preview": ["a fact", "another fact"]})
+    assert bulk == "embed 312 texts"
+    assert detail == "a fact / another fact"        # still readable in full
+
+    assert db.embed_call_label({"texts": 1, "chars": 26}) == ("embed", "")
+
+    long_query = "x" * 200
+    label, detail = db.embed_call_label({"texts": 1, "preview": [long_query]})
+    assert label == f"embed \"{'x' * db.EMBED_LABEL_CHARS}…\""
+    assert detail == long_query                     # the tooltip keeps it whole
 
 
 def test_timing_payload_is_not_dumped_as_json_in_the_result(app_ctx, client):

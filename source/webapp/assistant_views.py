@@ -348,6 +348,14 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .io-timing td.io-timing-name { text-align:left;
      font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
      font-size:0.76rem; }
+  /* The text each embedder call was given, indented under the embedder line
+     it belongs to. Wraps rather than ellipsises: a query cut off mid-word is
+     exactly the one that has to be read in full to be recognised. */
+  .as-main .step .io-timing tr.io-embed td { color:#667085; }
+  .as-main .step .io-timing td.io-embed-text { text-align:left;
+     font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+     font-size:0.72rem; padding-left:1.6rem; max-width:34rem;
+     overflow-wrap:anywhere; }
   /* The chosen action's human description, shown after the action in the header band. */
   .as-main .step .hd .action-desc { color:inherit; font-size:inherit; font-weight:400; }
   /* The observation's ok flag, derived from the step phase (observed=ok). */
@@ -471,7 +479,7 @@ ASSISTANT_TEMPLATE = """
         <div class="card-body">
           <div class="wf">
             {% for c in waterfall %}
-            <a class="wf-row" href="#step-{{ c.anchor }}" title="{{ c.label }} — {{ c.seconds }}{% if c.start %} at {{ c.start.strftime('%H:%M:%S') }}{% endif %}">
+            <a class="wf-row" href="#step-{{ c.anchor }}" title="{{ c.label }} — {{ c.seconds }}{% if c.start %} at {{ c.start.strftime('%H:%M:%S') }}{% endif %}{% if c.detail %}&#10;&#10;{{ c.detail }}{% endif %}">
               <span class="wf-name kind-{{ c.kind }}">{{ c.label }}</span>
               <span class="wf-track">
                 {% if c.width_pct is not none %}
@@ -636,6 +644,12 @@ ASSISTANT_TEMPLATE = """
               {% endfor %}
               {% if tm.embeddings %}
               <tr><td class="io-timing-name" title="Embedding calls made inside the phases above — a second model on the same runtime, which is what a warm cache for the assistant's own model competes with">embedder</td><td colspan="2">{{ tm.embeddings }}</td></tr>
+              {# One row per embedder call, showing the text it was given —
+                 the question a column of identical bars raises and cannot
+                 answer: did these embed the same thing or different things? #}
+              {% for e in tm.embed_calls %}
+              <tr class="io-embed"><td class="io-embed-text" title="The text sent to the embedder">{{ e.text }}</td><td>{{ e.took }}</td><td>{{ e.at }}</td></tr>
+              {% endfor %}
               {% endif %}
             </tbody></table>
             {% endif %}
@@ -1370,13 +1384,15 @@ def _split_timing(step) -> dict | None:
 
 def _timing_view(timing: dict) -> dict:
     """The timing block as the page and the export both render it: one row per
-    phase, plus the embedder's totals underneath.
+    phase, the embedder's totals underneath, and under those the text each
+    embedder call was given.
 
-    The embedding calls are NOT rows here — their time is already inside the
-    phase that made them, and a second set of bars adding up to more than the
-    action took would read as a contradiction. They are listed individually in
-    the run's model-call waterfall, where they sit on the same wall-clock as
-    everything else."""
+    The embedder calls are not phase rows — their time is already inside the
+    phase that made them, and a second set of durations adding up to more than
+    the action took would read as a contradiction. They are listed for their
+    text, which is the one thing about them the waterfall's bars and the
+    totals' char count cannot show: whether two calls embedded the same thing.
+    Their placement on the run's wall-clock stays in the waterfall above."""
     rows = []
     for p in timing.get("phases") or []:
         ms = p.get("ms")
@@ -1387,14 +1403,28 @@ def _timing_view(timing: dict) -> dict:
         })
     embeds = timing.get("embeddings") or {}
     summary = None
+    calls = []
     if embeds.get("count"):
         parts = [f"{embeds['count']} call{'s' if embeds['count'] != 1 else ''}",
                  _format_seconds((embeds.get("ms") or 0) / 1000)]
         if embeds.get("chars"):
             parts.append(f"{embeds['chars']} chars")
         parts += [str(m) for m in (embeds.get("models") or [])]
+        # A bulk populate embeds more calls than the payload keeps. Said out
+        # loud, because a list that silently stops short reads as the whole of
+        # it — and then the totals above look wrong instead of the list.
+        if embeds.get("dropped"):
+            parts.append(f"{embeds['dropped']} not kept below")
         summary = " · ".join(parts)
-    return {"rows": rows, "embeddings": summary}
+        for call in embeds.get("calls") or []:
+            label, detail = db.embed_call_label(call)
+            ms = call.get("ms")
+            calls.append({
+                "text": detail or label,
+                "took": _format_seconds(ms / 1000) if ms is not None else "—",
+                "at": _iso_hms(call.get("requested_at")),
+            })
+    return {"rows": rows, "embeddings": summary, "embed_calls": calls}
 
 
 def _iso_hms(value: str | None) -> str:
@@ -1545,6 +1575,12 @@ def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
                     lines.append(f"| {r['name']} | {r['took']} | {r['at']} |")
                 if view["embeddings"]:
                     lines.append(f"| embedder | {view['embeddings']} | |")
+                for e in view["embed_calls"]:
+                    # An embedded text is arbitrary content: a newline would
+                    # end the table row and a pipe would split it into columns
+                    # that aren't there.
+                    text = " ".join(e["text"].split()).replace("|", "\\|")
+                    lines.append(f"| ↳ {text} | {e['took']} | {e['at']} |")
                 lines.append("")
             obs_data.pop("timing", None)
             if obs_data:
@@ -1621,7 +1657,11 @@ def _run_markdown(run, ctx: dict) -> str:
                 "| call | kind | at | took |", "|---|---|---|---|"]
         for c in ctx["waterfall"]:
             at = c["start"].strftime("%H:%M:%S") if c["start"] else "—"
-            out.append(f"| {c['label']} | {c['kind']} | {at} | {c['seconds']} |")
+            # An embed row's label quotes the text it was given, so the label
+            # is no longer a fixed vocabulary: a pipe in it would split the
+            # row into columns that aren't there.
+            label = " ".join(c["label"].split()).replace("|", "\\|")
+            out.append(f"| {label} | {c['kind']} | {at} | {c['seconds']} |")
         out.append("")
 
     # Trigger message.

@@ -359,6 +359,13 @@ class _ReasoningTally(BaseEventHandler):
         return self.totals["content"] + self.inflight["content"]
 
 
+#: How much of each embedded text a call keeps, and how many of a batched
+#: call's texts. Enough to recognise the query and to tell two calls apart;
+#: not so much that a seed populate's whole registry lands in a step's payload.
+EMBEDDED_TEXT_CHARS: int = 200
+EMBEDDED_TEXTS_KEPT: int = 3
+
+
 class _EmbeddingTally(BaseEventHandler):
     """Dispatcher handler that times every embedding call made inside the
     block, however deep in the retrieval stack it happens.
@@ -369,6 +376,12 @@ class _EmbeddingTally(BaseEventHandler):
     the one worth seeing. The embedder is a second model sharing the runtime
     with the one the assistant is talking to, so its calls are what a
     gap between two LLM bars in the trace is usually made of.
+
+    Each call keeps a `preview` of the text that went in. Timing alone cannot
+    answer the question an operator actually has about a row of embed calls —
+    whether they embedded the same thing or different things — and a char
+    count is not an answer either: two different queries of equal length look
+    identical in it.
 
     Start/end pairs are matched as a stack: the calls are synchronous, so the
     end that arrives belongs to the most recent start still open."""
@@ -392,7 +405,7 @@ class _EmbeddingTally(BaseEventHandler):
             # An end with no open start (the block was entered mid-call)
             # still counts as a call that happened; it just has no duration.
             started = self.pending.pop() if self.pending else {}
-            chunks = list(getattr(event, "chunks", None) or [])
+            chunks = [str(c) for c in (getattr(event, "chunks", None) or [])]
             self.calls.append({
                 "model": started.get("model"),
                 "requested_at": started.get("requested_at"),
@@ -400,6 +413,8 @@ class _EmbeddingTally(BaseEventHandler):
                        if started.get("t0") else None),
                 "texts": len(chunks),
                 "chars": sum(len(c) for c in chunks),
+                "preview": [c[:EMBEDDED_TEXT_CHARS]
+                            for c in chunks[:EMBEDDED_TEXTS_KEPT]],
             })
 
     @property

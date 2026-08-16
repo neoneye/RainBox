@@ -1575,6 +1575,9 @@ def test_query_memory_records_its_phases_and_embedder_calls(app_ctx):
     assert embeds["models"] == ["embeddinggemma:300m"]
     assert embeds["chars"] == len("anything unrelated zzz")
     assert embeds["calls"][0]["requested_at"]
+    # And WHAT was embedded, which is what the trace is asked in practice:
+    # three embed rows on one run are only readable if the query is on them.
+    assert embeds["calls"][0]["preview"] == ["anything unrelated zzz"]
     assert embeds["dropped"] == 0
 
 

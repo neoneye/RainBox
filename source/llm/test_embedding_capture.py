@@ -15,7 +15,7 @@ from llama_index.core.instrumentation.events.embedding import (
     EmbeddingStartEvent,
 )
 
-from llm import capture_embeddings
+from llm import EMBEDDED_TEXT_CHARS, EMBEDDED_TEXTS_KEPT, capture_embeddings
 
 MODEL = "embeddinggemma:300m"
 
@@ -39,6 +39,33 @@ def test_each_call_is_timed_and_named():
     assert call["chars"] == len("what languages do I know")
     assert call["ms"] is not None
     assert call["requested_at"]                  # placeable on the run's clock
+    assert call["preview"] == ["what languages do I know"]
+
+
+def test_the_text_that_went_in_is_kept():
+    """What was embedded, not just how much of it: two queries of the same
+    length are indistinguishable by `chars`, and telling them apart is the
+    whole reason to look at a row of embed calls."""
+    with capture_embeddings() as tally:
+        _embed(["aardvark"])
+        _embed(["windmill"])                     # same length, different query
+
+    assert [c["preview"] for c in tally.calls] == [["aardvark"], ["windmill"]]
+
+
+def test_a_bulk_call_is_previewed_not_transcribed():
+    """A first-run seed populate embeds the whole registry in one call. The
+    preview is bounded in both directions — a few texts, each cut short — so
+    the payload stays a diagnostic and not a copy of the corpus."""
+    long_text = "x" * (EMBEDDED_TEXT_CHARS + 50)
+    with capture_embeddings() as tally:
+        _embed([long_text] * (EMBEDDED_TEXTS_KEPT + 4))
+
+    call = tally.calls[0]
+    assert call["texts"] == EMBEDDED_TEXTS_KEPT + 4   # counted in full
+    assert call["chars"] == len(long_text) * (EMBEDDED_TEXTS_KEPT + 4)
+    assert len(call["preview"]) == EMBEDDED_TEXTS_KEPT
+    assert all(len(t) == EMBEDDED_TEXT_CHARS for t in call["preview"])
 
 
 def test_totals_cover_every_call_including_a_bulk_one():
