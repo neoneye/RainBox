@@ -694,13 +694,59 @@ def get_run_final_reply(run: AssistantRun) -> dict[str, Any] | None:
 
 
 def list_assistant_steps(run_uuid: UUID) -> list[AssistantStep]:
-    """All step rows for a run, in commit order (id ascending)."""
+    """All step rows for a run, in commit order (id ascending).
+
+    What the loop's own readers want — the row written last IS the newest, and
+    a running step is found by walking back from the end. A reader that wants
+    the order the calls actually RAN wants `assistant_trace_steps`."""
     return (
         db.session.query(AssistantStep)
         .filter(AssistantStep.run_uuid == run_uuid)
         .order_by(AssistantStep.id)
         .all()
     )
+
+
+def step_started_at(step):
+    """When a step's model call BEGAN — which is not when its row was written.
+
+    `requested_at` where it was recorded. Rows predating that capture are
+    placed at their write time minus how long they took: the response landed
+    when the row was written, so that is where the call ran. None when the row
+    has neither, which is a legacy row the caller has to place itself."""
+    if step.requested_at:
+        return step.requested_at
+    if step.created_at and step.duration_ms:
+        return step.created_at - timedelta(milliseconds=step.duration_ms)
+    return None
+
+
+def assistant_trace_steps(run_uuid: UUID) -> list[AssistantStep]:
+    """A run's steps in the order they ran, for the surfaces that read as a
+    trace: the /assistant timeline and the markdown export.
+
+    Commit order is not causal order, and the reply audit is where they come
+    apart. The audit runs on a reply the decide call has already produced, but
+    the decide row cannot be written until the audit's verdict is known (it
+    settles `final` or `failed` on that verdict), so the audit commits first.
+    Read by row id the audit appears BEFORE the call it audited — and since an
+    audit prompt carries no action list, the run reads as one where the model
+    was never offered its actions.
+
+    The model-call waterfall on the same page has always been laid out on the
+    clock, so commit order left one page disagreeing with itself about which of
+    two calls came first. `_step_kinds` already had to reach for `requested_at`
+    for the same reason; this puts the rows themselves in that order.
+
+    A row with no start at all falls back to when it was written, and one
+    without even that keeps its row position at the end: a legacy row belongs
+    where it landed rather than at a guessed moment."""
+    placed, unplaced = [], []
+    for s in list_assistant_steps(run_uuid):
+        at = step_started_at(s) or s.created_at
+        (placed if at else unplaced).append((at, s))
+    placed.sort(key=lambda p: (p[0], p[1].id))
+    return [s for _, s in placed] + [s for _, s in unplaced]
 
 
 # --- model calls --------------------------------------------------------------
@@ -883,9 +929,7 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
         # recorded no duration to sort by.
         calls.extend(_rejected_calls(s))
         if s.requested_at or s.duration_ms is not None or s.system_prompt:
-            start = s.requested_at
-            if start is None and s.created_at and s.duration_ms:
-                start = s.created_at - timedelta(milliseconds=s.duration_ms)
+            start = step_started_at(s)
             resumed = retry_resumed_at(s)
             if resumed is not None and (start is None or resumed > start):
                 start = resumed

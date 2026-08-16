@@ -653,9 +653,11 @@ def _real_run_shape(run) -> None:
     """The row sequence a plain reply run produces: two calls the loop makes
     before the loop opens, the audit of the finished reply, then the reply the
     model decided. All four carry decide-step index 0 — the code-driven ones
-    ride alongside the decide step rather than consuming budget. The audit's
-    row precedes the reply's (the reply lands only once the audit says send)
-    while its call went out later, so the `requested_at` stamps matter."""
+    ride alongside the decide step rather than consuming budget.
+
+    The audit's ROW precedes the reply's — the reply lands only once the audit
+    says send — while its CALL went out 20s later. That inversion is the whole
+    point of the fixture, so the `requested_at` stamps matter."""
     t0 = datetime(2026, 7, 29, 14, 7, 21, tzinfo=UTC)
     db.append_assistant_step(
         run_uuid=run.uuid, step_index=0, phase="observed",
@@ -702,21 +704,51 @@ def test_steps_are_numbered_by_position_and_marked_warm_up_or_follow_up(
             # The two pre-loop calls, then the audit of what the model decided.
             assert text.count("warm-up") >= 2
             assert text.count("follow-up") >= 1
-        # The markdown headings carry it in reading order. The audit ran after
-        # the reply's decide call even though its row precedes the reply's.
+        # The markdown headings carry it in reading order — the order the
+        # calls RAN. The audit's row was written first, but it audits a reply
+        # the decide call had already produced, so it reads last.
         heads = [ln.split(" — ")[:3] for ln in md.splitlines()
                  if ln.startswith("### Step ")]
         assert heads == [
             ["### Step 1 of 4", "warm-up", "response_language_classifier"],
             ["### Step 2 of 4", "warm-up", "acceptance_criteria"],
-            ["### Step 3 of 4", "follow-up", "reply_audit"],
             # No kind on the one real decide step, so its action sits here.
-            ["### Step 4 of 4", "reply", "send the final answer to the user"],
+            ["### Step 3 of 4", "reply", "send the final answer to the user"],
+            ["### Step 4 of 4", "follow-up", "reply_audit"],
         ]
         # The catalog summary for `acceptance_criteria` describes the revision
         # the model can request; the loop's own call establishes them.
         assert "establish what a good reply must satisfy" in md
         assert "revise this turn's acceptance criteria" not in md
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_the_timeline_reads_in_the_same_order_as_the_waterfall(app_ctx, client):
+    """One page cannot hold two answers to "which call came first".
+
+    Ordered by row id, the reply audit sat above the decide call whose reply it
+    audited — and an audit prompt carries no action list, so the run read as
+    one where the model was never offered its actions. The waterfall was laid
+    out on the clock all along; the rows now are too."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    _real_run_shape(run)
+    db.finish_run(run, "finished")
+    try:
+        steps = db.assistant_trace_steps(run.uuid)
+        assert [s.action for s in steps] == [
+            "response_language_classifier", "acceptance_criteria",
+            "reply", "reply_audit"]
+        # Commit order still says otherwise, and still should: the loop's own
+        # readers find a running step by walking back from the newest row.
+        assert [s.action for s in db.list_assistant_steps(run.uuid)] == [
+            "response_language_classifier", "acceptance_criteria",
+            "reply_audit", "reply"]
+        # And the two surfaces on the page now agree call for call.
+        calls = db.assistant_llm_calls(steps)
+        assert [c["label"] for c in calls] == [s.action for s in steps]
     finally:
         _cleanup(run.uuid, room.uuid)
 

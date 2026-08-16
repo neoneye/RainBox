@@ -1795,7 +1795,11 @@ def _load_run_detail(selected) -> dict:
     export: the step timeline (each step with its write-intents), the verbatim
     decision dumps, unlinked write-intents, pending controls, trigger/reply
     messages, dashboard metrics, model display names, and the verdict text."""
-    steps = db.list_assistant_steps(selected.uuid)
+    # Causal order, not commit order: the reply audit's row is written before
+    # the reply row it audits, so ordering by id put it above the decide call
+    # that produced the reply — and disagreed with the waterfall on the same
+    # page. See `assistant_trace_steps`.
+    steps = db.assistant_trace_steps(selected.uuid)
     intents = db.list_write_intents_for_run(selected.uuid)
     unlinked: list = []
     by_step: dict[str, list] = {}
