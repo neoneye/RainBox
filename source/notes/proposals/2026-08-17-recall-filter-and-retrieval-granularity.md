@@ -1,14 +1,13 @@
 # Recall: what is ready, what is decided, what is not designed
 
-**Status:** Partially ready. Two behavioural changes plus deterministic
-regression fixtures are implementable; the retrieval architecture is not
+**Status:** Partially ready. Two behavioural commits (R1, R2), each carrying its
+own permanent tests, are implementable. The retrieval architecture is not
 designed and must not be built from this document.
 **Date:** 2026-08-17 (revised 2026-08-18)
-**Revision:** 5 — revision 4 was approved in shape by a fourth review, subject
-to corrections now applied: the fixture sequencing would have merged a red CI
-commit, the fixtures had to be stated as synthetic, `truncate_middle` does not
-preserve a 1200-character rendered cap, and R1's second call site changed its
-decision. Revision 3's factual errors are kept in the table below rather than
+**Revision:** 6 — a fifth review rejected revision 5's R1 branch decision as
+unsafe and its R2 acceptance criteria as mathematically inconsistent. Both are
+corrected here, along with the renderer contract, the test sequencing and the
+test inventory. Earlier factual errors are kept in the table below rather than
 quietly folded in; git holds the earlier text.
 **Relates to:** `qa-system.md`, `memory-architecture.md`,
 `assistant-design.md` §Model slots and §Acceptance criteria.
@@ -72,92 +71,106 @@ sequenced casually.
 
 ## Ready to implement now
 
-Scoped so each is a small, independently revertible commit with an obvious
-correctness argument.
+Two behavioural commits. Each carries its own permanent tests, verified failing
+against the current code before the fix is applied — no commit is merged red and
+no test asserts behaviour that a later commit rewrites.
 
-### R1 — Stop injecting `<memory_filter_assessment>` beside recalled facts
+Neither fix needs a model. Both are rendering changes on the
+`_action_query_memory` path, which is the real path and makes for less brittle
+tests than replaying fixed criteria/decide outputs.
 
-`_recall_filter_assessment_line` is appended on **two** branches: the empty
-result (`assistant.py:1653`) and the populated result (`assistant.py:1713`).
-Revision 4 proposed removing both. Verifying the second branch changed the
-decision.
+**Fixture data is synthetic.** A structurally equivalent neutral record — same
+length, same position of the answer-bearing span, same sibling shape — lives in
+the repository. The operator's actual case lives only under `customize.dir`. No
+private text may appear in a repository fixture, an assertion message, a
+snapshot or CI output. The first implementation step must not violate N1.
 
-**Decision: remove it from the populated branch only.**
+### R1 — Remove `<memory_filter_assessment>` from both output branches
 
-On the populated branch the note sits beside the facts and can contradict them —
-which is the incident. On the empty branch there are no facts for it to
-contradict, and the code carries a documented rationale worth keeping: *"The
-empty result is exactly when the operator wants to see what the recall filter
-considered and dropped — and give the model the filter's own why-nothing-matched
-note."*
+`_recall_filter_assessment_line` is appended on two branches: the empty result
+(`assistant.py:1653`) and the populated result (`assistant.py:1713`). **Both go.**
 
-Revision 4 rejected "inject only when the scorer kept nothing" as adding a
-conditional section. That was wrong twice over: the conditional already exists in
-the code, and the branch it was rejecting is the one with the better argument.
+Revision 5 kept it on the empty branch, reasoning that with no facts beside it
+there was nothing for it to contradict. That has it backwards, and the reversal
+is the correction that matters most in this revision: **with no facts beside it,
+an unsupported explanation becomes the only substantive thing the answering model
+reads.** The scorer has already demonstrated on this very run that it will
+manufacture a confident false negative. The branch I called safer is the one
+where that note faces no contradiction at all.
 
-Both branches keep the note in the trace and in the observation data, where the
-operator reads it. Tests must cover both, or the note stays model-visible on the
-less common path.
+Operator visibility is not a reason to inject into a prompt. It is already served
+by `observation.data["recall_filter"]`, the trace row and the inspector, none of
+which change.
 
-**Open:** if evidence later shows the note misleads even with no facts beside it,
-the empty branch goes too. Nothing yet shows that.
+Acceptance criteria, permanent:
 
-### R2 — One truncation renderer, using `truncate_middle`
+- populated `obs.text` contains no `<memory_filter_assessment>`;
+- empty `obs.text` is the neutral empty-result message only;
+- both branches still carry recall-filter diagnostics in `obs.data`;
+- trace and inspector visibility unchanged.
 
-Two head-only cuts exist: `_fact_line` (`assistant.py:1146`) for seed entries and
-a second at `assistant.py:1679` for remembered facts. Revision 3 proposed
-patching both.
+### R2 — One structured fact renderer, with a rendered cap
 
-**Patching both preserves the drift that produced the bug.** Route both through
-one shared renderer, and have that renderer call `truncate_middle` —
-`agents/base.py` already calls it "the one shortening shape every agent uses on
-text a model will read". The same bug was fixed once for the run summarizer
-(`867cd4a`); it recurred here because there were two paths.
+**Renderer contract.** `_fact_line(uuid, tags, text)` (`assistant.py:1146`)
+becomes the sole fact renderer:
 
-**Source-character allowance unchanged at 1200.** Note this is not a rendered
-cap: `truncate_middle(text, 1200)` retains 1200 source characters and then adds
-its in-band marker — measured at 1249 characters returned, the overhead varying
-with the digit count of the dropped-character total. Today's `text[:1200]`
-renders at most 1200. So the change is a small rendered-length increase per
-truncated fact against the 11000-character block budget.
+- both seed entries (`SeedMemory`) and remembered facts (`RetrievedMemory`) are
+  passed to it as **structured fields**;
+- the `format_memory_context(...)` → `split("\n")` → strip `"- "` →
+  `partition(": ")` round trip at `assistant.py:1672` is removed. Rendering a
+  string and parsing it back apart is where the two truncation paths drifted, and
+  the parse is fragile besides — it splits on the first `": "` in a line it did
+  not construct;
+- existing tags are preserved exactly: seeds keep `seed/{source}`, `dynamic`
+  and `{path}`; claims keep `{kind}`, `{sensitivity}` and the evidence summary;
+- uuid full-fetch behaviour (`_query_memory_full`) is unchanged.
 
-R2's tests must therefore pin: maximum rendered line length; total-block
-behaviour at the boundary; that no candidate is newly omitted through marker
-overhead; and how the `truncate1200` tag and the in-band marker read together
-(the tag names a source allowance, the marker states an actual drop — they are
-not the same number and should not look like they are).
+**Budget semantics.** Revision 5's "source-character allowance unchanged at
+1200" is **withdrawn**. It was mathematically inconsistent: 1200 retained source
+characters, plus a marker, plus an unchanged 11000-character block, plus no newly
+omitted candidate cannot all hold at once.
 
-Sizing of the allowance itself is benchmarked once measurement exists, not
-guessed. Revision 3's "share of remaining budget" scheme is withdrawn: it is
-order-dependent and would let early facts starve later ones.
+`MEMORY_QUERY_PER_FACT_CHARS = 1200` is redefined as the **maximum rendered
+fact-text length, marker included**. The block budget is then untouched and no
+candidate is displaced by marker overhead.
 
-### R3 — Deterministic regression fixtures reproducing the failure
+Implementation: `truncate_middle(text, limit)` returns `limit` source characters
+*plus* a marker of `45 + digits(dropped)` characters, so the limit must be solved
+for rather than passed straight through. Measured values for a 1200 cap:
 
-Not a live end-to-end test. Fixed scorer, criteria and decide outputs replayed
-against the real rendering path.
+| source chars | limit passed | rendered |
+| --- | --- | --- |
+| 1201 | 1153 | 1200 |
+| 1947 | 1152 | 1200 |
+| 5178 | 1151 | 1200 |
+| 100000 | 1150 | 1200 |
 
-**Fixture data is synthetic.** A structurally equivalent neutral record —
-same length, same position of the answer-bearing span, same sibling shape —
-lives in the repository. The operator's actual case lives only under
-`customize.dir`. No private answer text may appear in a repository fixture, a
-snapshot, a failure message or CI output. The first implementation step must not
-violate N1.
+One fixed-point step converges (compute the limit from the marker length implied
+by the cap, then decrement while the rendered result exceeds the cap). This
+belongs beside `truncate_middle` in `agents/base.py` as a sibling helper with a
+rendered-length guarantee — **not** as a change to `truncate_middle` itself,
+whose existing contract the run summarizer depends on.
 
-**Sequencing.** Each regression test lands **in the same commit as the fix it
-guards**, never before it:
+The `truncate1200` tag now names a rendered ceiling and the in-band marker states
+the actual number dropped. Those are consistent, which they were not under
+revision 5's reading.
 
-| commit | test it carries |
-| --- | --- |
-| R3a (first) | characterization: the answer-bearing span is **absent** from the decide prompt, and the assessment block **is** present — recording the behaviour as it is today |
-| R1 | the assessment block is absent on the populated branch, present on the empty branch |
-| R2 | one renderer; both fact kinds cut from the middle; the span survives |
+### Test inventory
 
-R3a is the recorded pre-fix fixture and stays green throughout by asserting the
-*old* behaviour until its guarded commit inverts it. No commit is merged red, and
-no test is marked expected-failure.
+In `agents/test_assistant_actions.py`, alongside the existing
+memory_query truncation tests:
 
-These are CI tests. They cannot say why a model behaved as it did — that needs
-the separated evaluation tiers below, which are not designed.
+- a seed fact preserves an answer span near its tail;
+- a retrieved claim preserves the same span;
+- both render the identical middle-truncation syntax;
+- rendered **fact text** stays within the cap (tested separately from the line,
+  whose length also varies with uuid and tags);
+- the total recalled-memory block stays within `MEMORY_QUERY_TOTAL_CHARS`;
+- the boundary omission count is deterministic;
+- populated and empty outputs both omit assessment prose;
+- both retain assessment diagnostics in `obs.data`;
+- uuid lookup still returns the complete untruncated fact;
+- fixtures and assertion messages contain no private data.
 
 ## Decided in principle, blocked on design and measurement
 
@@ -286,16 +299,18 @@ component that also serves `query_filter_router` on the evidence of one trace.
 
 ## Sequence
 
-1. R3a — synthetic characterization fixtures recording today's behaviour.
-2. R1, then R2 — each its own commit, carrying the test that inverts its
-   characterization assertion. CI green at every commit.
-3. N5 — design the three evaluation tiers and define every metric.
-4. N1 — privacy governance, written and agreed.
-5. B1 — with the cost measured under N5/N6.
-6. N2–N4, N6 — design, then evaluate, then build.
+1. R1 — remove assessment prose from both output branches; permanent tests.
+2. R2 — `_fact_line` as the structured renderer for seeds and claims; rendered-cap
+   middle truncation; permanent tests.
+3. Focused assistant-action tests, then the full suite.
+4. N5 and N6 together — the three evaluation tiers, every metric defined, and
+   gates with numbers.
+5. B1 — mechanism chosen first, then measured.
+6. N1–N4 — retrieval-unit decomposition as a separate project, after privacy,
+   lifecycle, identity and evaluation contracts exist.
 7. N7 — decide on the evidence.
 
-Nothing past step 2 is implementable from this document, which is the point of
+Nothing past step 3 is implementable from this document, which is the point of
 saying so here.
 
 ## Open questions
