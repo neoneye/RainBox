@@ -1151,6 +1151,9 @@ MEMORY_QUERY_PER_FACT_CHARS: int = 1200
 # retained fact lines. NOT the <recalled_memory> fence and not the explanatory
 # suffixes after it — the name says payload because that is what it counts. A
 # whole-observation budget would be a different number and a different change.
+#
+# It is the threshold for admitting ANOTHER fact, not a ceiling on the payload:
+# see the loop in _action_query_memory, which always admits the first.
 MEMORY_QUERY_FACT_PAYLOAD_CHARS: int = 11000
 
 
@@ -1654,10 +1657,15 @@ def _action_query_memory(
 
     if not (overlay or upstream or memories):
         # The empty result is exactly when the operator wants to see what the
-        # recall filter considered and dropped — keep the debug in the trace,
-        # and give the model the filter's own why-nothing-matched note. The
-        # timing rides along for the same reason: a query that found nothing
-        # still spent the time, and that is the one worth explaining.
+        # recall filter considered and dropped, so the debug and the timing stay
+        # on the observation data — a query that found nothing still spent the
+        # time, and that is the one worth explaining.
+        #
+        # The model gets the bare sentence and nothing else. The scorer's
+        # why-nothing-matched note used to be appended here, and this is the
+        # branch where that does the most damage: with no facts beside it, one
+        # model's unsupported explanation is the only substantive thing the
+        # answering model reads.
         text = "No relevant remembered facts."
         return AssistantObservation(
             ok=True, text=text,
@@ -1688,8 +1696,16 @@ def _action_query_memory(
         fact_lines.append(line)
         truncated_count += tr
 
-    # (C) Overall budget: keep top-ranked facts up to TOTAL chars; drop the tail
-    # at a fact boundary (never mid-word) and count what was omitted.
+    # (C) Overall budget: admit facts in rank order while they fit; drop the
+    # tail at a fact boundary (never mid-word) and count what was omitted.
+    #
+    # An ADMISSION THRESHOLD, not a hard cap. The first fact is admitted
+    # whatever its size (`if kept and ...`), so a payload can exceed the budget
+    # by one over-long line rather than return nothing. In practice the
+    # per-fact rendered cap keeps a line far below the threshold, but the
+    # guarantee this loop makes is "no fact is admitted that does not fit
+    # alongside what came before it" — not "the payload is never larger than
+    # the number".
     used = len(RECALLED_MEMORY_LEGEND) + 1
     kept: list[str] = []
     omitted = 0

@@ -1440,7 +1440,7 @@ def test_query_memory_truncates_large_facts_and_tags_them(app_ctx):
 
 
 # The incident's geometry, synthetic: a 1947-character answer whose
-# answer-bearing span sits at offset 1795 with 133 characters after it. A
+# answer-bearing span sits at offset 1795 with 134 characters after it. A
 # head-only cut at 1200 removes it; a middle cut keeps it. The numbers are
 # asserted rather than described so a later edit cannot quietly slide the span
 # into the head region, where this test would pass without proving anything.
@@ -1458,7 +1458,9 @@ def _assert_incident_geometry(text: str) -> None:
     assert len(text) == 1947, len(text)
     assert text.index(INCIDENT_SENTINEL) == 1795, text.index(INCIDENT_SENTINEL)
     trailing = len(text) - (text.index(INCIDENT_SENTINEL) + len(INCIDENT_SENTINEL))
-    assert trailing >= 91, trailing
+    # Exact, not a floor: a floor lets an edit shorten the tail without anyone
+    # noticing, and the tail is half of what the middle cut has to preserve.
+    assert trailing == 134, trailing
 
 
 def test_query_memory_keeps_the_tail_of_a_long_seed_fact(app_ctx):

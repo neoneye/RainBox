@@ -212,12 +212,19 @@ e6d8…, seed/upstream, dynamic, system.uptime_process: 1m 35s (since …)
 
 The uuid full-fetch mode (below) renders the same tag shape.
 
-Each fact is capped to `QUERY_MEMORY_PER_FACT_CHARS` (1200) — longer facts are
-shortened and tagged `truncate1200` — and the whole block to
-`QUERY_MEMORY_TOTAL_CHARS` (11000); lower-ranked facts past the budget are
-dropped at a fact boundary (never mid-word) and counted in a note appended
-outside the fence. This keeps one large overlay entry (some are >5000 chars)
-from crowding out every other fact.
+Each fact's text is capped to `MEMORY_QUERY_PER_FACT_CHARS` (1200) — longer
+facts have their MIDDLE dropped, keeping both ends, and are tagged
+`truncate1200`. The cap is on the RENDERED text, marker included, so a
+shortened fact cannot displace another through marker overhead.
+
+`MEMORY_QUERY_FACT_PAYLOAD_CHARS` (11000) then bounds the payload — the format
+legend, the per-line newlines and the retained fact lines, not the fence and
+not the notes after it. It is the threshold for admitting another fact rather
+than a ceiling on the payload: the first fact is admitted whatever its size, so
+a single over-long line is preferred to returning nothing. Lower-ranked facts
+past the threshold are dropped at a fact boundary (never mid-word) and counted
+in a note appended outside the fence. This keeps one large overlay entry (some
+are >5000 chars) from crowding out every other fact.
 
 To read a shortened or omitted fact in full, the model calls `memory_query`
 again with `{"uuid": "<the fact's uuid>"}` instead of `{"query": ...}`
