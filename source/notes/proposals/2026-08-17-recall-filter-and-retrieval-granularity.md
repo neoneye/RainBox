@@ -1,13 +1,15 @@
 # Recall: what is ready, what is decided, what is not designed
 
-**Status:** Partially ready. Two changes are implementable; the retrieval
-architecture is not designed and must not be built from this document.
+**Status:** Partially ready. Two behavioural changes plus deterministic
+regression fixtures are implementable; the retrieval architecture is not
+designed and must not be built from this document.
 **Date:** 2026-08-17 (revised 2026-08-18)
-**Revision:** 4 — rewritten after a third review that blocked most of revision 3.
-Revision 3 asserted two facts about the current system that are false and
-proposed an architecture with no privacy, identity or failure semantics.
-Corrections are listed below rather than quietly folded in; git holds the
-earlier text.
+**Revision:** 5 — revision 4 was approved in shape by a fourth review, subject
+to corrections now applied: the fixture sequencing would have merged a red CI
+commit, the fixtures had to be stated as synthetic, `truncate_middle` does not
+preserve a 1200-character rendered cap, and R1's second call site changed its
+decision. Revision 3's factual errors are kept in the table below rather than
+quietly folded in; git holds the earlier text.
 **Relates to:** `qa-system.md`, `memory-architecture.md`,
 `assistant-design.md` §Model slots and §Acceptance criteria.
 
@@ -21,11 +23,12 @@ answering text and called it irrelevant; and the injection cut the answering
 sentence off head-only at 1200 characters. The reply audit approved the result in
 17 tokens. Evidence in the appendix.
 
-They were not independent — three of the four calls were one model over
-overlapping context. Revisions 1–3 called them independent while arguing the
-opposite; the word is wrong and is corrected throughout.
+They were not independent — every relevant model call in the run (classifier,
+criteria, decide, scorer, audit) resolved to the same model over overlapping
+context. Revisions 1–3 called them independent while arguing the opposite; the
+word is wrong and is corrected throughout.
 
-## Corrections to revision 3
+## Corrections carried from earlier revisions
 
 Stated plainly because two of them are load-bearing and one is unsafe.
 
@@ -72,18 +75,34 @@ sequenced casually.
 Scoped so each is a small, independently revertible commit with an obvious
 correctness argument.
 
-### R1 — Stop injecting `<memory_filter_assessment>` into the answering prompt
+### R1 — Stop injecting `<memory_filter_assessment>` beside recalled facts
 
-The scorer's `reasoning` is lossy commentary about a candidate set, injected
-beside the candidates. On the traced run it was a second voice asserting the
-answer was absent. Keep it in the trace and in the `memory_query` observation
-data, where the operator reads it; remove it from model-visible prompt text.
+`_recall_filter_assessment_line` is appended on **two** branches: the empty
+result (`assistant.py:1653`) and the populated result (`assistant.py:1713`).
+Revision 4 proposed removing both. Verifying the second branch changed the
+decision.
 
-**Rejected — inject it only when the scorer kept nothing.** Plausible, and it
-preserves a genuinely useful "why nothing matched" note. It adds a conditional
-prompt section for a case nothing has yet shown to matter. Revisit with evidence.
+**Decision: remove it from the populated branch only.**
 
-### R2 — One truncation renderer, using `truncate_middle`, cap unchanged
+On the populated branch the note sits beside the facts and can contradict them —
+which is the incident. On the empty branch there are no facts for it to
+contradict, and the code carries a documented rationale worth keeping: *"The
+empty result is exactly when the operator wants to see what the recall filter
+considered and dropped — and give the model the filter's own why-nothing-matched
+note."*
+
+Revision 4 rejected "inject only when the scorer kept nothing" as adding a
+conditional section. That was wrong twice over: the conditional already exists in
+the code, and the branch it was rejecting is the one with the better argument.
+
+Both branches keep the note in the trace and in the observation data, where the
+operator reads it. Tests must cover both, or the note stays model-visible on the
+less common path.
+
+**Open:** if evidence later shows the note misleads even with no facts beside it,
+the empty branch goes too. Nothing yet shows that.
+
+### R2 — One truncation renderer, using `truncate_middle`
 
 Two head-only cuts exist: `_fact_line` (`assistant.py:1146`) for seed entries and
 a second at `assistant.py:1679` for remembered facts. Revision 3 proposed
@@ -95,21 +114,52 @@ one shared renderer, and have that renderer call `truncate_middle` —
 text a model will read". The same bug was fixed once for the run summarizer
 (`867cd4a`); it recurred here because there were two paths.
 
-**Cap unchanged.** Sizing is benchmarked once measurement exists, not guessed.
-Revision 3's "share of remaining budget" scheme is withdrawn: it is
+**Source-character allowance unchanged at 1200.** Note this is not a rendered
+cap: `truncate_middle(text, 1200)` retains 1200 source characters and then adds
+its in-band marker — measured at 1249 characters returned, the overhead varying
+with the digit count of the dropped-character total. Today's `text[:1200]`
+renders at most 1200. So the change is a small rendered-length increase per
+truncated fact against the 11000-character block budget.
+
+R2's tests must therefore pin: maximum rendered line length; total-block
+behaviour at the boundary; that no candidate is newly omitted through marker
+overhead; and how the `truncate1200` tag and the in-band marker read together
+(the tag names a source allowance, the marker states an actual drop — they are
+not the same number and should not look like they are).
+
+Sizing of the allowance itself is benchmarked once measurement exists, not
+guessed. Revision 3's "share of remaining budget" scheme is withdrawn: it is
 order-dependent and would let early facts starve later ones.
 
 ### R3 — Deterministic regression fixtures reproducing the failure
 
 Not a live end-to-end test. Fixed scorer, criteria and decide outputs replayed
-against the real rendering path, asserting: the entry is a candidate; it is
-kept; the answer-bearing span survives into the decide prompt; the assessment
-block is absent (R1); both truncation paths cut from the middle (R2).
+against the real rendering path.
 
-These are CI tests. They cannot tell us why a model behaved as it did — that
-needs the separated evaluation tiers below, which are not designed.
+**Fixture data is synthetic.** A structurally equivalent neutral record —
+same length, same position of the answer-bearing span, same sibling shape —
+lives in the repository. The operator's actual case lives only under
+`customize.dir`. No private answer text may appear in a repository fixture, a
+snapshot, a failure message or CI output. The first implementation step must not
+violate N1.
 
-## Decided in principle, blocked on measurement
+**Sequencing.** Each regression test lands **in the same commit as the fix it
+guards**, never before it:
+
+| commit | test it carries |
+| --- | --- |
+| R3a (first) | characterization: the answer-bearing span is **absent** from the decide prompt, and the assessment block **is** present — recording the behaviour as it is today |
+| R1 | the assessment block is absent on the populated branch, present on the empty branch |
+| R2 | one renderer; both fact kinds cut from the middle; the span survives |
+
+R3a is the recorded pre-fix fixture and stays green throughout by asserting the
+*old* behaviour until its guarded commit inverts it. No commit is merged red, and
+no test is marked expected-failure.
+
+These are CI tests. They cannot say why a model behaved as it did — that needs
+the separated evaluation tiers below, which are not designed.
+
+## Decided in principle, blocked on design and measurement
 
 ### B1 — No model-written prose in the authoritative criteria block
 
@@ -123,11 +173,17 @@ actually read the evidence.
 Revision 3's D1 (drop `assumptions`, keep the other two) is **withdrawn**: it
 removes the field that failed and leaves two equally unconstrained ones.
 
-**Why it is blocked rather than ready:** this changes what every answering prompt
-carries and removes the only path by which an unresolved ambiguity becomes a
-clarifying question. It needs the evaluation tiers to show what it costs. Also
-open: whether a required field no consumer reads should be generated at all —
-today `assumptions` costs tokens on every turn.
+**Why it is blocked rather than ready:** the direction is settled; the mechanism
+is not. Three variants remain live — a typed `needs_clarification` signal, a
+non-authoritative diagnostic string, or ambiguity detection moved into the decide
+call — and measurement cannot evaluate a mechanism nobody has chosen. The
+variants and their expected behaviour must be written down first, then measured.
+
+It also changes what every answering prompt carries and removes the only path by
+which an unresolved ambiguity becomes a clarifying question, so it needs the
+evaluation tiers to show what that costs. Also open: whether a required field no
+consumer reads should be generated at all — today `assumptions` costs tokens on
+every turn.
 
 ## Not designed — do not build from this document
 
@@ -141,12 +197,22 @@ overlay holds identity, health, relationship, sexual, financial and family
 records. Revision 3 wrote "the derivation pass is an LLM pass over the registry"
 as a single clause under an architecture decision.
 
-Before any such pass is designed, the following must be settled and written down:
-local-only execution or an explicit allowlist of providers; provider retention
-and logging posture; how `shield` values propagate to derived units (an unshielded
-child of a shielded parent is a leak); redaction; explicit operator consent per
+Before any such pass is designed, the following must be settled and written down.
+
+**The derivation call:** local-only execution or an explicit allowlist of
+providers; provider retention and logging posture; explicit operator consent per
 scope; caching so unchanged private records are not re-sent on every repopulate;
 and behaviour when no approved derivation model is reachable.
+
+**The derived artifacts, which are themselves sensitive personal data:**
+contextualised child text, embeddings, caches, debug traces and the output of
+*failed* derivations all inherit the sensitivity of their source. Governance must
+cover storage and backups; retention and deletion; what may appear in logs and
+exception messages; how `shield` values propagate to derived units and what
+happens when a parent's shield changes *after* derivation (an unshielded child of
+a shielded parent is a leak, and so is a stale child of a newly shielded parent);
+removal of every derived artifact when a parent is deleted; and whether an
+embedding is treated as sensitive even though it carries no plaintext.
 
 No part of the retrieval architecture proceeds before this exists.
 
@@ -220,8 +286,9 @@ component that also serves `query_filter_router` on the evidence of one trace.
 
 ## Sequence
 
-1. R3 — deterministic fixtures reproducing the failure.
-2. R1, R2 — each its own commit, fixtures green between them.
+1. R3a — synthetic characterization fixtures recording today's behaviour.
+2. R1, then R2 — each its own commit, carrying the test that inverts its
+   characterization assertion. CI green at every commit.
 3. N5 — design the three evaluation tiers and define every metric.
 4. N1 — privacy governance, written and agreed.
 5. B1 — with the cost measured under N5/N6.
