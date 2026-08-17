@@ -16,7 +16,7 @@ from agents.assistant import (
 )
 from agents.config import (
     ASSISTANT_UUID,
-    RESPONSE_LANGUAGE_CLASSIFIER_UUID,
+    ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
     agent_config,
 )
 
@@ -114,8 +114,8 @@ def test_schema_enforces_likert_bounds_and_canonical_language_codes():
 
 
 def test_classifier_has_a_structured_output_model_binding():
-    entry = agent_config["response_language_classifier"]
-    assert entry["uuid"] == RESPONSE_LANGUAGE_CLASSIFIER_UUID
+    entry = agent_config["assistant.response_language_classifier"]
+    assert entry["uuid"] == ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID
     assert entry["requires_structured_output"] is True
     assert entry["next"] is None
 

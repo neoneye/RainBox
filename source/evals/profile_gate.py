@@ -21,7 +21,8 @@ after seeing results:
 
 The gate trusts nothing it can verify instead. Every run must be a finished
 live profile-guidance run of the exact expected variant, produced against
-the assistant's CURRENTLY bound model group with an identical member
+the group the assistant CURRENTLY decides on (`assistant.decide`, else
+`assistant.default`) with an identical member
 snapshot, carrying exactly the configured repetition count (three) of finite
 in-range scores per case, no duplicate results, and a per-case manifest
 (definition fingerprint, family, threshold, seed id) identical between
@@ -48,7 +49,6 @@ from typing import Any
 from uuid import UUID
 
 import db
-from agents.config import ASSISTANT_UUID
 
 HARD_ZERO_FAMILY = "exact_source"
 OVERRIDE_FAMILY = "override"
@@ -329,10 +329,14 @@ def evaluate_gate(
                                   "formatting_alone": False,
                                   "calibration_alone": False,
                                   "both": False}}
-    binding = db.get_agent_model_binding(ASSISTANT_UUID)
-    bound_group = (str(binding.model_group_uuid)
-                   if binding is not None and binding.model_group_uuid
-                   else None)
+    # The group the assistant's own loop currently decides on — assistant.decide,
+    # else assistant.default. That is the call this eval's prompt changes, so it
+    # is the one a gate verdict has to describe.
+    from agents.config import ASSISTANT_DECIDE_UUID
+    from agents.query_filter_router import resolve_assistant_model_group
+
+    decide_group, _slot = resolve_assistant_model_group(ASSISTANT_DECIDE_UUID)
+    bound_group = str(decide_group) if decide_group else None
     slots: dict[str, tuple[UUID | None, dict[str, float]]] = {
         "formatting": (formatting_uuid, {"locale": LOCALE_MARGIN}),
         "calibration": (calibration_uuid, {"calibration": CALIBRATION_MARGIN}),

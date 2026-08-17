@@ -179,7 +179,7 @@ Key fields:
   checkpoint is cleared after step persistence or interruption recovery.
 - `summary`: a post-completion JSONB digest (`{trigger, obstacles[], outcome,
   summarized_at}`); failures receive a deterministic digest immediately, while
-  the off-path `assistant_run_summarizer` may later replace it with a
+  the off-path `assistant.run_summarizer` may later replace it with a
   model-produced digest
 
 ### `assistant_step`

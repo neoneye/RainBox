@@ -180,6 +180,22 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
             response_model=RunSummary,
         )
 
+    def setup(self) -> None:
+        """Resolve `assistant.run_summarizer`, else `assistant.default`.
+
+        The one assistant.* slot that is also a spawned agent, so the fallback
+        that every other slot gets from `resolve_assistant_model_group` has to
+        be applied here instead of at a call site — otherwise this would be the
+        single call an operator had to bind by hand after setting the default.
+        """
+        from agents.query_filter_router import resolve_assistant_model_group
+
+        group_uuid, _label = resolve_assistant_model_group(self.agent_uuid)
+        self.model_group_uuid = group_uuid
+        self.candidate_model_uuids = (
+            db.get_model_group_member_uuids(group_uuid) if group_uuid else []
+        )
+
     def _build_prompt(self, run: Any, steps: list, trigger: dict | None,
                       reply: dict | None) -> str:
         lines = [f"Run status: {run.status}"]

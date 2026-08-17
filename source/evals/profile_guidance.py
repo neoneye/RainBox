@@ -83,15 +83,23 @@ def _resolve_profile(case_input: dict[str, Any]) -> dict[str, Any] | None:
 
 def _eval_agent(model_group_uuid: UUID | None) -> AssistantAgent:
     """An AssistantAgent bound for prompt construction + structured calls
-    only. Defaults to the assistant's current binding; an explicit group
-    overrides it (an informative compatibility matrix, never the gate)."""
+    only. Defaults to the assistant.decide slot — this eval varies the prompt
+    the loop's own call receives, so that is the model whose behaviour it
+    measures. An explicit group overrides it (an informative compatibility
+    matrix, never the gate).
+
+    Either way the group is PINNED across every call the agent makes: an eval
+    that let one call resolve to a different slot than another would be
+    measuring the slots, not the prompt."""
+    from agents.config import ASSISTANT_DECIDE_UUID
+    from agents.query_filter_router import resolve_assistant_model_group
+
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant-eval",
                            send=lambda _: None)
-    agent.setup()
-    if model_group_uuid is not None:
-        agent.model_group_uuid = model_group_uuid
-        agent.candidate_model_uuids = db.get_model_group_member_uuids(
-            model_group_uuid)
+    if model_group_uuid is None:
+        model_group_uuid, _slot = resolve_assistant_model_group(
+            ASSISTANT_DECIDE_UUID)
+    agent.pin_model_group(model_group_uuid)
     return agent
 
 

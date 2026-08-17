@@ -89,6 +89,9 @@ fallback.
 2. Create or select a room.
 3. Add agents to the room.
 4. Make sure LLM-backed agents are bound to model groups on `/agentmodel`.
+   The assistant binds per call, not as a whole: bind `assistant.default` and
+   every one of its calls is configured, then bind an individual
+   `assistant.<call>` row to move just that call to another group.
 5. Post a human message.
 6. Watch replies stream over SSE.
 
@@ -108,7 +111,7 @@ Useful responder agents:
 - `tool_demo`: FunctionAgent demo with a multiply tool.
 - `mcp`: FunctionAgent backed by MCP tools.
 
-(`followup` and `assistant_run_summarizer` also exist but run as internal
+(`followup` and `assistant.run_summarizer` also exist but run as internal
 helpers, and `direct_chat` backs one-to-one direct rooms — none of them are
 room responders you add.)
 
@@ -139,8 +142,8 @@ first (a room-scoped claim is recallable only inside its own chatroom — widen
 it via the Scope… action), then its **Recall KPIs** (which queries pulled it
 in, and whether the recall filter judged it relevant), then probe the exact
 query on `/memory/developer`. The recall filter's scorer model is the
-`memory_filter` binding on `/agentmodel`; the KPI retention window is the
-`memory.recall_fifo_capacity` setting.
+`assistant.memory_filter` slot on `/agentmodel` (else `assistant.default`);
+the KPI retention window is the `memory.recall_fifo_capacity` setting.
 
 Memory tables are inspectable in Flask-Admin under the Memory category:
 

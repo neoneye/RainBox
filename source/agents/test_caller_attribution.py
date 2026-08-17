@@ -33,7 +33,7 @@ def test_purpose_becomes_the_second_segment():
 def test_run_summarizer_attributes_itself_to_the_assistant():
     """It is a separate agent only to stay off the reply's critical path — as
     a caller it is one of the assistant's calls, not a peer of it."""
-    agent = _agent(AssistantRunSummarizerAgent, "assistant_run_summarizer")
+    agent = _agent(AssistantRunSummarizerAgent, "assistant.run_summarizer")
     assert agent._caller_tag() == "assistant.run_summarizer"
 
 

@@ -89,23 +89,24 @@ def _group_info(group_uuid, label: str | None) -> dict[str, Any]:
 def _models_overview() -> dict[str, Any]:
     """What models each pipeline stage runs on, so a comparison on this page is
     apples-to-apples: the embedding models (seed questions vs claims), the
-    shared relevance scorer as each panel resolves it, and the router's reply
-    group. Members list provider/model plus override name and overridden
-    argument keys."""
+    relevance scorer as each panel resolves it (the two panels resolve it
+    separately — the router on its own binding, the assistant on
+    assistant.memory_filter), and the router's reply group. Members list
+    provider/model plus override name and overridden argument keys."""
     import db
-    from agents.config import ASSISTANT_UUID, QUERY_FILTER_ROUTER_UUID
-    from agents.query_filter_router import resolve_filter_model_group
+    from agents.config import ASSISTANT_MEMORY_FILTER_UUID, QUERY_FILTER_ROUTER_UUID
+    from agents.query_filter_router import (
+        resolve_assistant_model_group, resolve_model_group,
+    )
     from memory.embeddings import EMBED_MODEL_NAME as CLAIMS_EMBED
     from memory.seed_memory import EMBED_MODEL_NAME as SEED_EMBED, OLLAMA_BASE
 
     router_binding = db.get_agent_model_binding(QUERY_FILTER_ROUTER_UUID)
     route_group_uuid = (router_binding.model_group_uuid
                         if router_binding is not None else None)
-    filter_router = resolve_filter_model_group(
-        [(QUERY_FILTER_ROUTER_UUID, "own")])
-    filter_assistant = resolve_filter_model_group(
-        [(QUERY_FILTER_ROUTER_UUID, "query_filter_router"),
-         (ASSISTANT_UUID, "own")])
+    filter_router = resolve_model_group([(QUERY_FILTER_ROUTER_UUID, "own")])
+    filter_assistant = resolve_assistant_model_group(
+        ASSISTANT_MEMORY_FILTER_UUID)
     return {
         "embedding_seed": {"model": SEED_EMBED, "base": OLLAMA_BASE},
         "embedding_claims": {"model": CLAIMS_EMBED},
@@ -167,7 +168,7 @@ def _run_query_filter_router(query: str, top_k_vector: int,
         QueryFilterRouterAgent,
         apply_filter_scores,
         build_filter_prompt,
-        resolve_filter_model_uuids,
+        resolve_model_uuids,
         structured_llm_call,
     )
     from agents.query_handlers import QueryContext
@@ -251,9 +252,10 @@ def _run_query_filter_router(query: str, top_k_vector: int,
         if candidates:
             try:
                 filter_prompt = build_filter_prompt(query, candidates)
-                # Same scorer resolution as the live pipelines: the dedicated
-                # memory_filter binding when set, else the router's own group.
-                scorer_uuids, scorer_src = resolve_filter_model_uuids(
+                # Same scorer resolution as the live router pipeline: its own
+                # group. (The assistant panel resolves its scorer separately,
+                # through assistant.memory_filter.)
+                scorer_uuids, scorer_src = resolve_model_uuids(
                     [(QUERY_FILTER_ROUTER_UUID, "own")])
                 out["filter_group"] = scorer_src
                 decision, scorer_model_uuid = structured_llm_call(

@@ -60,8 +60,8 @@ consumes the step limit. Each loop iteration:
    rejected step (the problems flow back through the scratchpad so the model
    fixes the message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
    never-approving auditor cannot burn the step limit. The audit resolves
-   its model through the dedicated `reply_audit` binding, else the
-   assistant's own group; it fails open, so an unbound or unreachable
+   its model through the `assistant.reply_audit` slot, else
+   `assistant.default`; it fails open, so an unbound or unreachable
    auditor sends the message. Every verdict lands in its own `reply_audit`
    trace row with its model, duration and prompts. A clarifying question is
    not audited. Reads and log-and-undo writes execute immediately.
@@ -86,6 +86,43 @@ during spawn+import. The payload carries `room_uuid` and the triggering
 `message_uuid` (used as evidence provenance for memory writes). Every terminal
 reply, stop message, step-limit message, or failure notice clears that progress
 bubble through `db.post_chat_message`'s terminal-kind transaction.
+
+## Model slots
+
+A turn is not one model call, so it is not one model choice. Each call the
+assistant makes binds separately on `/agentmodel`, under the name that call
+already labels itself with on `/activity` (`Agent._caller_tag`) — one
+vocabulary, so the row an operator binds is the row they read the cost of:
+
+| Slot | The call | Calls per run |
+| --- | --- | --- |
+| `assistant.default` | — | fallback for all |
+| `assistant.decide` | the loop's step decision | one per step |
+| `assistant.acceptance_criteria` | step 0 and its revisions | one, plus revisions |
+| `assistant.request_summary` | describing an over-long request | zero or one |
+| `assistant.memory_filter` | scoring what `memory_query` recalled | one per `memory_query` |
+| `assistant.second_opinion` | reviewing a gated action | one per gated action |
+| `assistant.reply_audit` | checking the finished reply | one |
+| `assistant.response_language_classifier` | predicting the reply's language(s) | one |
+| `assistant.run_summarizer` | digesting the finished run | one, off the critical path |
+
+Every slot resolves through the same two links —
+`resolve_assistant_model_group`: the slot, then `assistant.default`. So
+binding only the default configures the whole assistant, and binding one slot
+moves exactly one call. There is no third level; when neither is bound each
+call site applies its own rule (the loop raises, the optional calls record a
+skipped step). Which slot answered is recorded as `group_from` on the call's
+step row, so a run says what it ran on rather than what happens to be bound
+now.
+
+`assistant` itself has no row on `/agentmodel` (`uses_model_group = False`) —
+it is the worker, not a model choice. Evals that must hold the model fixed
+across a run call `pin_model_group`, which overrides every slot.
+
+The slots exist to make "is this step still good on a faster non-reasoning
+model?" a question that can be asked one step at a time. `assistant.decide`
+is the one to move first: it runs once per step where the others run once per
+turn.
 
 ## Prompt assembly
 
@@ -314,9 +351,9 @@ not every scored candidate must appear in the reply:
 </reply_language_markdown>
 ```
 
-The dedicated binding-only `response_language_classifier` role allows
-scorer-model comparisons on `/agentmodel`; when unbound it falls back to the
-assistant's group. If neither binding has a usable group, no Markdown block is
+The binding-only `assistant.response_language_classifier` slot allows
+scorer-model comparisons on `/agentmodel`; when unbound it falls back to
+`assistant.default`. If neither has a usable group, no Markdown block is
 added. Call failures are traced and fail open.
 
 **Status (2026-07-26):** live exploratory use is very close to the operator's
@@ -531,7 +568,7 @@ through the scratchpad, and the exact resubmission is blocked via
 `failed_actions`), while an approval dispatches with the full review — verdict,
 prompts, the reviewer's reasoning and response — riding in
 `observation.data["second_opinion"]` for the trace. Reviewer model: the
-`second_opinion` binding on `/agentmodel`, else the assistant's own group.
+`assistant.second_opinion` slot on `/agentmodel`, else `assistant.default`.
 Fails open (`skipped`/`error` recorded): the gated actions are
 side-effect-free compute, so the gate is a quality check, not a security
 boundary — write safety stays with the tier system below. Full design:
@@ -726,7 +763,7 @@ Copy yields, and it is what the model reads back as conversation next turn.
 
 After every terminal state the assistant stores an immediate deterministic
 failure digest when applicable, then enqueues the
-**`assistant_run_summarizer`** agent (off the critical path), which makes one
+**`assistant.run_summarizer`** agent (off the critical path), which makes one
 structured call over the trace and stores a `{trigger, obstacles[], outcome}`
 digest on `assistant_run.summary` for the inspector. The deterministic digest
 means a failed run is useful even if the summarizer model is unavailable; a

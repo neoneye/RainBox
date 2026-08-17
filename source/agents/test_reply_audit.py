@@ -204,8 +204,8 @@ def audit_call(monkeypatch):
         return box["verdict"], uuid4()
 
     monkeypatch.setattr(router, "structured_llm_call", fake_structured_llm_call)
-    monkeypatch.setattr(router, "resolve_model_uuids",
-                        lambda _c: ([uuid4()], "own"))
+    monkeypatch.setattr(router, "resolve_assistant_model_uuids",
+                        lambda _slot: ([uuid4()], "assistant.reply_audit"))
     return box
 
 
@@ -245,7 +245,8 @@ def test_the_audit_fails_open_when_no_model_group_is_bound(
         app_ctx, monkeypatch):
     import agents.query_filter_router as router
 
-    monkeypatch.setattr(router, "resolve_model_uuids", lambda _c: (None, None))
+    monkeypatch.setattr(
+        router, "resolve_assistant_model_uuids", lambda _slot: (None, None))
     ok, payload = _agent()._reply_audit(
         _reply("12 feet is 3.6576 meters."), messages=[], scratchpad=[])
     assert ok is True

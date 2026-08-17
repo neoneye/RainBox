@@ -37,7 +37,7 @@ class AgentConfigEntry(TypedDict):
 # nothing at module load; resolve_agent_class imports only the one it needs.
 AGENT_CLASS_PATHS: dict[str, str] = {
     "assistant": "agents.assistant:AssistantAgent",
-    "assistant_run_summarizer": "agents.assistant_run_summarizer:AssistantRunSummarizerAgent",
+    "assistant.run_summarizer": "agents.assistant_run_summarizer:AssistantRunSummarizerAgent",
     "chat_structured": "agents.chat_structured:StructuredChatAgent",
     "chat_unstructured": "agents.chat_unstructured:UnstructuredChatAgent",
     "direct_chat": "agents.direct_chat:DirectChatAgent",
@@ -89,11 +89,6 @@ ROUTER_UUID: UUID = UUID("04707c68-cda4-46e4-929a-48b3f53f7270")
 QUERY_UUID: UUID = UUID("cb4a4715-2b57-49fd-802c-0a05818f8b1c")
 QUERY_ROUTER_UUID: UUID = UUID("c973bca3-aa92-4a12-af20-d3f1087cac5e")
 QUERY_FILTER_ROUTER_UUID: UUID = UUID("218bb954-da6b-4712-9206-4f0f72eafcc0")
-MEMORY_FILTER_UUID: UUID = UUID("b4809a3f-12d6-4725-ab23-4808cec2d5d7")
-SECOND_OPINION_UUID: UUID = UUID("7a1d4c3e-5b2f-4e8a-9c6d-0f3b8a51e274")
-RESPONSE_LANGUAGE_CLASSIFIER_UUID: UUID = UUID(
-    "6d4ef68c-8b63-4f55-b704-b3a2b416d9a7")
-REPLY_AUDIT_UUID: UUID = UUID("5c8e3a17-4d92-4b6f-8a30-1e7c9f2b45d8")
 EDIT_DOCUMENT_V1_UUID: UUID = UUID("9f3b1a8e-2c5d-4d7a-9e3b-5f8a1c2d4e7b")
 EDIT_DOCUMENT_V2_UUID: UUID = UUID("d2a7c5e1-6b3f-4e9a-9c1d-7e4b8f2a3c5d")
 EDIT_DOCUMENT_V3_UUID: UUID = UUID("8f4d9b2a-7e3c-4a5b-9c8d-1f6e7d2c4b3a")
@@ -103,6 +98,28 @@ EDIT_DOCUMENT_V6_UUID: UUID = UUID("4bf3271f-a58f-4dd0-a07f-b85dac906cd0")
 MCP_UUID: UUID = UUID("828ae65d-a902-4b4e-bcd3-f761afe23d29")
 DIRECT_CHAT_UUID: UUID = UUID("7c2f0d5e-8b4a-4c3d-9e6f-1a2b3c4d5e6f")
 ASSISTANT_UUID: UUID = UUID("cad11db6-a8e6-4cdd-a37e-a98bbc53e74d")
+
+# One model slot per model call the assistant makes, named exactly as that call
+# labels itself on /activity (agents.base.Agent._caller_tag). /agentmodel and
+# /activity therefore share one vocabulary: the row an operator binds is the
+# row they later read the cost and latency of.
+#
+# Every slot resolves through the same two-link chain — the slot itself, then
+# ASSISTANT_DEFAULT_UUID — so binding nothing but the default configures the
+# whole assistant, and binding one slot moves exactly one call. There is no
+# third level: an unbound default means no candidates, which each call site
+# already handles (the loop raises; the optional calls record a skipped step).
+ASSISTANT_DEFAULT_UUID: UUID = UUID("c4321506-e536-4217-95f3-8801d8b860f9")
+ASSISTANT_DECIDE_UUID: UUID = UUID("88c125c3-527a-4875-a361-76d5754dde0f")
+ASSISTANT_ACCEPTANCE_CRITERIA_UUID: UUID = UUID(
+    "02cd99a0-c073-4f34-aef3-577138f09800")
+ASSISTANT_REQUEST_SUMMARY_UUID: UUID = UUID(
+    "5c213272-b53f-44db-a68d-d7be2f990e81")
+ASSISTANT_MEMORY_FILTER_UUID: UUID = UUID("b4809a3f-12d6-4725-ab23-4808cec2d5d7")
+ASSISTANT_SECOND_OPINION_UUID: UUID = UUID("7a1d4c3e-5b2f-4e8a-9c6d-0f3b8a51e274")
+ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID: UUID = UUID(
+    "6d4ef68c-8b63-4f55-b704-b3a2b416d9a7")
+ASSISTANT_REPLY_AUDIT_UUID: UUID = UUID("5c8e3a17-4d92-4b6f-8a30-1e7c9f2b45d8")
 ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25")
 
 # The in-flight progress bubble, posted at enqueue time (the moment a human
@@ -181,30 +198,6 @@ agent_config: dict[str, AgentConfigEntry] = {
         "description": "two-stage LLM: filter top-K candidates for relevance, then a simpler router LLM produces the reply using only the kept candidates",
         "next": None,
     },
-    "memory_filter": {
-        "uuid": MEMORY_FILTER_UUID,
-        "requires_structured_output": True,
-        "description": "binding-only: the model that SCORES retrieval candidates (Likert relevance filter) for query_filter_router and the assistant's memory_query; unbound, those fall back to their own groups. Never receives journal work.",
-        "next": None,
-    },
-    "second_opinion": {
-        "uuid": SECOND_OPINION_UUID,
-        "requires_structured_output": True,
-        "description": "binding-only: the model that REVIEWS a gated assistant action (currently python_run) before it executes — checks the stated reason, the model's reasoning, and the program against the request and operator profile; unbound, the assistant's own group reviews. Never receives journal work.",
-        "next": None,
-    },
-    "response_language_classifier": {
-        "uuid": RESPONSE_LANGUAGE_CLASSIFIER_UUID,
-        "requires_structured_output": True,
-        "description": "binding-only: narrow scorer that predicts which language(s) the assistant's next reply should use before step 0; records reason and per-language Likert confidence, then supplies later assistant calls with score-free ranked Markdown. Unbound, the assistant's own group classifies. Never receives journal work.",
-        "next": None,
-    },
-    "reply_audit": {
-        "uuid": REPLY_AUDIT_UUID,
-        "requires_structured_output": True,
-        "description": "binding-only: the model that AUDITS a finished reply message before it is sent — checks it against the request (every sub-question answered), the turn's constraints, the operator settings and the turn's observations, and returns it with problems when it is not sound. Unbound, the assistant's own group audits; a failed or unbound audit sends the message. Never receives journal work.",
-        "next": None,
-    },
     "edit_document_v1": {
         "uuid": EDIT_DOCUMENT_V1_UUID,
         "requires_structured_output": True,
@@ -255,13 +248,81 @@ agent_config: dict[str, AgentConfigEntry] = {
     "assistant": {
         "uuid": ASSISTANT_UUID,
         "requires_structured_output": True,
-        "description": "rainbox-owned ReAct loop: decides one bounded action per step via structured output, observes, and repeats until a terminal reply or the step cap",
+        "description": "rainbox-owned ReAct loop: decides one bounded action per step via structured output, observes, and repeats until a terminal reply or the step cap. Its models come from the assistant.* slots below, not from a binding of its own (AssistantAgent.uses_model_group is False), so it has no row on /agentmodel.",
         "next": None,
     },
-    "assistant_run_summarizer": {
+    # The assistant's model slots, one per model call it makes. Each resolves
+    # through `<slot> -> assistant.default`, so the default alone configures
+    # the whole assistant and a single slot moves exactly one call — which is
+    # what makes "does this step still work on a non-reasoning model" a
+    # question that can be asked one step at a time.
+    #
+    # All binding-only: they name a model, never a worker. Nothing is ever
+    # enqueued to these uuids and no class is registered for them, so the
+    # supervisor never spawns them.
+    "assistant.default": {
+        "uuid": ASSISTANT_DEFAULT_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model every other assistant.* slot falls back to when it is unbound. With nothing but this bound, one group runs the whole assistant. Never receives journal work.",
+        "next": None,
+    },
+    "assistant.decide": {
+        "uuid": ASSISTANT_DECIDE_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that DECIDES each step of the ReAct loop — the assistant's hot path, called once per step (up to the step cap) where every other slot is called once. The slot to move first when a turn is too slow, and the one whose quality the turn's shape depends on.",
+        "next": None,
+    },
+    "assistant.acceptance_criteria": {
+        "uuid": ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that ESTABLISHES what a good reply must satisfy, before step 0, and revises it when the loop asks. Unbound or failing, the turn runs with no criteria section rather than failing.",
+        "next": None,
+    },
+    "assistant.request_summary": {
+        "uuid": ASSISTANT_REQUEST_SUMMARY_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that DESCRIBES a request too long to ride into the prompts whole. Runs only for an over-long request, and reads far more of it than any other call.",
+        "next": None,
+    },
+    "assistant.memory_filter": {
+        "uuid": ASSISTANT_MEMORY_FILTER_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that SCORES what memory_query recalled (Likert relevance filter), one call per memory_query. Narrow, repetitive work over candidate text.",
+        "next": None,
+    },
+    "assistant.second_opinion": {
+        "uuid": ASSISTANT_SECOND_OPINION_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that REVIEWS a gated assistant action (currently python_run) before it executes — checks the stated reason, the model's reasoning, and the program against the request and operator profile. Fails open: unbound or failing, the action runs.",
+        "next": None,
+    },
+    "assistant.reply_audit": {
+        "uuid": ASSISTANT_REPLY_AUDIT_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that AUDITS a finished reply message before it is sent — checks it against the request (every sub-question answered), the turn's constraints, the operator settings and the turn's observations, and returns it with problems when it is not sound. Fails open: unbound or failing, the message is sent.",
+        "next": None,
+    },
+    "assistant.response_language_classifier": {
+        "uuid": ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: narrow scorer that predicts which language(s) the assistant's next reply should use before step 0; records reason and per-language Likert confidence, then supplies later assistant calls with score-free ranked Markdown. Unbound, the run records a skipped step.",
+        "next": None,
+    },
+    "assistant.run_summarizer": {
         "uuid": ASSISTANT_RUN_SUMMARIZER_UUID,
         "requires_structured_output": True,
-        "description": "summarizes a completed assistant run (trigger + obstacles + outcome) off the critical path, via one structured call; enqueued by the assistant at every terminal state",
+        "description": "summarizes a completed assistant run (trigger + obstacles + outcome) via one structured call; enqueued by the assistant at every terminal state. The one assistant.* slot that is also a real agent — it runs off the critical path, so a slow model here costs the operator nothing.",
         "next": None,
     },
 }
+
+
+def role_name(agent_uuid: UUID) -> str | None:
+    """The `agent_config` key for `agent_uuid`, or None for a uuid this table
+    does not know. The key is the one name a call is known by — its /agentmodel
+    row, its /activity caller tag, its label in the assistant's trace — so a
+    caller that has the uuid never has to carry the name alongside it."""
+    for name, entry in agent_config.items():
+        if entry["uuid"] == agent_uuid:
+            return name
+    return None

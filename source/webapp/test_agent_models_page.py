@@ -44,12 +44,15 @@ def test_page_hides_agents_that_dont_use_model_groups(client):
     resp = test_client.get("/agentmodel")
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
-    for hidden in ("direct_chat", "workspace_shell"):
+    # `assistant` is hidden for a different reason than the others: it runs
+    # LLM calls, but each one binds through its own assistant.* slot, so a row
+    # for the agent itself would be a control nothing reads.
+    for hidden in ("direct_chat", "workspace_shell", "assistant"):
         assert str(agent_config[hidden]["uuid"]) not in body, hidden
     assert str(agent_config["query"]["uuid"]) not in body
     # Model-group consumers are still there (query_router also guards against
     # an over-eager 'query' substring filter).
-    for shown in ("dreamer", "router", "assistant", "query_router"):
+    for shown in ("dreamer", "router", "assistant.decide", "query_router"):
         assert str(agent_config[shown]["uuid"]) in body, shown
 
 
@@ -60,3 +63,36 @@ def test_post_binding_rejected_for_opted_out_agent(client):
         data={"agent_uuid": str(DIRECT_CHAT_UUID), "model_group": ""},
     )
     assert resp.status_code == 400
+
+
+def test_dotted_rows_are_grouped_under_one_heading(client):
+    """Nine assistant rows read as one family with one heading, not as nine
+    rows an operator has to recognize as related."""
+    test_client, _app = client
+    body = test_client.get("/agentmodel").get_data(as_text=True)
+    assert body.count('<tr class="section">') == 1
+    assert '<span class="section-title">assistant.*</span>' in body
+
+
+def test_an_unassigned_slot_shows_what_it_inherits(client):
+    """"none assigned" would read as "this call does not happen"; the row runs
+    on assistant.default, and says so."""
+    test_client, app = client
+    with app.app_context():
+        db.set_agent_model_binding(
+            agent_config["assistant.decide"]["uuid"], None)
+    body = test_client.get("/agentmodel").get_data(as_text=True)
+    assert "&rarr; assistant.default" in body
+
+
+def test_the_default_row_inherits_from_nothing(client):
+    """The end of the chain. A `.default` that pointed at itself would be a
+    fallback that never resolves."""
+    from webapp.agent_views import _fallback_name
+
+    assert _fallback_name("assistant.default") == ""
+    assert _fallback_name("assistant.decide") == "assistant.default"
+    assert _fallback_name("dreamer") == ""
+    # A dotted name whose family has no default inherits nothing rather than
+    # naming a row that does not exist.
+    assert _fallback_name("nosuchfamily.step") == ""

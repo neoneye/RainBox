@@ -32,7 +32,18 @@ import db
 import skills
 import user_profile
 from agents.base import ModelGroupAgent, StatusSender, truncate_middle
-from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID, ASSISTANT_WORKING_NOTICE
+from agents.config import (
+    ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
+    ASSISTANT_DECIDE_UUID,
+    ASSISTANT_DEFAULT_UUID,
+    ASSISTANT_MEMORY_FILTER_UUID,
+    ASSISTANT_REPLY_AUDIT_UUID,
+    ASSISTANT_REQUEST_SUMMARY_UUID,
+    ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
+    ASSISTANT_RUN_SUMMARIZER_UUID,
+    ASSISTANT_SECOND_OPINION_UUID,
+    ASSISTANT_WORKING_NOTICE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1228,11 +1239,10 @@ def _filter_recalled_candidates(
     one scorer round-trip and lets seed entries and claims compete under the
     same keep/drop policy.
 
-    The scorer's model group resolves via `resolve_filter_model_group` — the
-    dedicated memory_filter binding when set, else the query_filter_router's
-    group, else `agent_uuid`'s own: the filter is a shared subsystem, and
-    scoring with one model identity keeps the assistant's keep/drop decisions
-    consistent with the chat route's. Returns `(seeds, kept_claims, debug)`;
+    The scorer's model group resolves via `assistant.memory_filter`, else
+    `assistant.default` — the assistant's own slot, so a scorer chosen for
+    this filter is not also chosen for the query_filter_router chat route.
+    Returns `(seeds, kept_claims, debug)`;
     the first two are None when no group is bound anywhere (the caller falls
     back to gated seed retrieval + unfiltered claims); an LLM failure raises
     (same fallback). `debug` describes every candidate — source, score,
@@ -1251,17 +1261,16 @@ def _filter_recalled_candidates(
     `top_k_vector`/`top_k_fulltext` override the per-signal seed budgets
     (defaults TOP_K_VECTOR/TOP_K_FULLTEXT) — /memory/developer tuning knobs;
     live runs pass None."""
-    from agents.config import QUERY_FILTER_ROUTER_UUID
     from agents.query_filter_router import (
         FilterDecision,
-        apply_filter_scores, resolve_filter_model_group,
+        apply_filter_scores, resolve_assistant_model_group,
         seed_candidate_rows, structured_llm_call,
     )
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
-    group_uuid, group_from = resolve_filter_model_group(
-        [(QUERY_FILTER_ROUTER_UUID, "query_filter_router"), (agent_uuid, "own")])
+    group_uuid, group_from = resolve_assistant_model_group(
+        ASSISTANT_MEMORY_FILTER_UUID)
     if group_uuid is None:
         return None, None, {"mode": "gated", "reason": "no_model_group"}
     model_uuids = db.get_model_group_member_uuids(group_uuid)
@@ -3313,9 +3322,24 @@ class AssistantAgent(ModelGroupAgent):
     RESPONSE_LANGUAGE_CLASSIFIER_ACTION: str = "response_language_classifier"
     RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES: int = 6
 
+    # No /agentmodel row of its own: this agent's models come from the
+    # `assistant.*` slots (agents/config.py), one per call it makes, each
+    # falling back to `assistant.default`. A row named `assistant` here would
+    # be a fifth name for the same models and would not say which call it
+    # governed.
+    uses_model_group = False
+
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
         self.step_limit = self.STEP_LIMIT
+        # Set only by pin_model_group (evals); None on every live turn, where
+        # each call resolves its own assistant.* slot.
+        self._pinned_model_group: UUID | None = None
+        # The group the latest decide call resolved to, so the step rows around
+        # it record the group that call ACTUALLY ran on — not what a re-resolve
+        # would answer a moment later. None until a decide call runs (the
+        # scripted-seam test path never runs one).
+        self._decide_group_uuid: UUID | None = None
         # The capabilities this turn may use. Defaults to the code-enabled set;
         # handle() refreshes it with the operator's disable setting (which needs
         # an app context). Catalog, validation, and dispatch all read from it, so
@@ -3381,6 +3405,71 @@ class AssistantAgent(ModelGroupAgent):
         self._activity: str = "idle"
         self._model_progress_checkpoint_at: float = 0.0
         self._model_progress_snapshot: tuple[str | None, str | None] = (None, None)
+
+    # --- model slots ----------------------------------------------------------
+
+    def setup(self) -> None:
+        """Resolve `assistant.default` as this agent's base group.
+
+        Every call site asks for its own slot (`_slot_models`) and passes the
+        result down, so these two attributes are what remains for the paths
+        that never named a slot — and the default is the right answer for
+        those, being the answer every slot falls back to anyway."""
+        from agents.query_filter_router import resolve_assistant_model_group
+
+        if self._pinned_model_group is not None:
+            return
+        group_uuid, _label = resolve_assistant_model_group(ASSISTANT_DEFAULT_UUID)
+        self.model_group_uuid = group_uuid
+        self.candidate_model_uuids = (
+            db.get_model_group_member_uuids(group_uuid) if group_uuid else []
+        )
+        logger.info(
+            "agent %s bound to model group %s (%d candidate models) via "
+            "assistant.default",
+            self.name,
+            self.model_group_uuid,
+            len(self.candidate_model_uuids),
+        )
+
+    def pin_model_group(self, group_uuid: UUID | None) -> None:
+        """Run EVERY call of this agent on `group_uuid`, ignoring the slots.
+
+        For harnesses that must hold the model fixed to attribute a result to
+        something else — the profile-guidance eval varies the prompt and needs
+        the model not to vary with it. Live turns never pin: the whole point of
+        the slots is that different calls can run on different models."""
+        self._pinned_model_group = group_uuid
+        self.model_group_uuid = group_uuid
+        self.candidate_model_uuids = (
+            db.get_model_group_member_uuids(group_uuid) if group_uuid else []
+        )
+
+    def _slot_models(
+        self, slot_uuid: UUID
+    ) -> tuple[list[UUID], UUID, str] | tuple[None, None, None]:
+        """The models, group and slot name for one of this agent's calls.
+
+        Resolved per call rather than once per run: a binding changed on
+        /agentmodel mid-turn takes effect on the next call, which is what an
+        operator comparing models expects from a page they just saved."""
+        from agents.query_filter_router import resolve_assistant_model_group
+
+        if self._pinned_model_group is not None:
+            return (self.candidate_model_uuids, self._pinned_model_group,
+                    "pinned")
+        group_uuid, label = resolve_assistant_model_group(slot_uuid)
+        if group_uuid is None or label is None:
+            return None, None, None
+        return db.get_model_group_member_uuids(group_uuid), group_uuid, label
+
+    def _slot_group(self, slot_uuid: UUID) -> UUID | None:
+        """Just the group behind `slot_uuid` — for the trace rows that record
+        which group a call ran on and do not need its members. A step row that
+        recorded the agent's ambient group instead would name the wrong one for
+        every call whose slot is bound away from the default."""
+        _models, group_uuid, _label = self._slot_models(slot_uuid)
+        return group_uuid
 
     @staticmethod
     def _room_uuid(payload: dict[str, Any]) -> UUID:
@@ -3946,6 +4035,11 @@ class AssistantAgent(ModelGroupAgent):
         # this method, so these stay None there — read defensively downstream).
         self._last_system_prompt = system_prompt
         self._last_user_prompt = user_prompt
+        # The loop's own slot. Resolved per step, so the group the row records
+        # is the one this call actually ran on rather than whatever was bound
+        # when the process started.
+        models, group_uuid, _slot = self._slot_models(ASSISTANT_DECIDE_UUID)
+        self._decide_group_uuid = group_uuid
         if self._run is not None:
             db.checkpoint_assistant_call(
                 self._run,
@@ -3953,13 +4047,14 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 requested_at=datetime.now(UTC),
-                model_group_uuid=self.model_group_uuid,
+                model_group_uuid=group_uuid,
             )
         result = self._structured_completion(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_model=AssistantStepDecision,
             purpose="decide",
+            candidate_model_uuids=models,
         )
         return cast(AssistantStepDecision, result)
 
@@ -4513,10 +4608,10 @@ class AssistantAgent(ModelGroupAgent):
         messages: list[dict[str, Any]],
     ) -> tuple[bool, dict[str, Any]]:
         """Independent LLM review of a gated action before it executes: the
-        verdict model group resolves via the dedicated second_opinion binding
-        when set, else the assistant's own group (a different model group is
-        the point — a reviewer with different failure modes — but reviewing
-        with the same group still catches what the deciding pass missed).
+        verdict model group resolves via `assistant.second_opinion`, else
+        `assistant.default` (a different model group is the point — a reviewer
+        with different failure modes — but reviewing with the same group still
+        catches what the deciding pass missed).
 
         Returns (approved, review) where `review` is the trace payload for
         observation.data. Fails OPEN: the gated actions are side-effect-free
@@ -4524,14 +4619,12 @@ class AssistantAgent(ModelGroupAgent):
         bound or the review call itself fails, the action runs and the review
         payload records why the check was skipped — blocking pure compute on a
         reviewer outage would degrade the assistant for no safety gain."""
-        from agents.config import SECOND_OPINION_UUID
         from agents.query_filter_router import (
-            resolve_model_uuids, structured_llm_call,
+            resolve_assistant_model_uuids, structured_llm_call,
         )
 
-        model_uuids, group_from = resolve_model_uuids(
-            [(SECOND_OPINION_UUID, "second_opinion"), (self.agent_uuid, "own")]
-        )
+        model_uuids, group_from = resolve_assistant_model_uuids(
+            ASSISTANT_SECOND_OPINION_UUID)
         if model_uuids is None:
             return True, {"skipped": "no_model_group"}
         user_prompt = self._build_second_opinion_prompt(
@@ -4819,10 +4912,10 @@ class AssistantAgent(ModelGroupAgent):
         """Audit a finished reply message before it posts.
 
         Returns (send, payload) where `payload` is the trace record. The model
-        group resolves through the dedicated reply_audit binding when set,
-        else the assistant's own group — a different model is the point (the
-        author is the worst reviewer of its own work), but auditing with the
-        same group still catches what the writing pass did not look for.
+        group resolves through `assistant.reply_audit`, else
+        `assistant.default` — a different model is the point (the author is the
+        worst reviewer of its own work), but auditing with the same group still
+        catches what the writing pass did not look for.
 
         Fails OPEN. `second_opinion` fails open because the gated action is
         side-effect-free compute; this fails open for a stronger reason: the
@@ -4830,14 +4923,12 @@ class AssistantAgent(ModelGroupAgent):
         because a checker was unreachable is worse than one that produces an
         unaudited reply.
         """
-        from agents.config import REPLY_AUDIT_UUID
         from agents.query_filter_router import (
-            resolve_model_uuids, structured_llm_call,
+            resolve_assistant_model_uuids, structured_llm_call,
         )
 
-        model_uuids, group_from = resolve_model_uuids(
-            [(REPLY_AUDIT_UUID, "reply_audit"), (self.agent_uuid, "own")]
-        )
+        model_uuids, group_from = resolve_assistant_model_uuids(
+            ASSISTANT_REPLY_AUDIT_UUID)
         if model_uuids is None:
             return True, {"skipped": "no_model_group"}
         message = str(decision.args.get("message") or "")
@@ -5039,26 +5130,22 @@ class AssistantAgent(ModelGroupAgent):
     ) -> ResponseLanguageClassification | None:
         """Run the independent classifier model.
 
-        A dedicated binding is preferred so scorer models can be compared on
-        ``/agentmodel``. When it is unbound, the assistant's own model group is
-        used. Returning ``None`` means neither binding has usable candidates;
+        ``assistant.response_language_classifier`` is preferred so scorer
+        models can be compared on ``/agentmodel``; unbound, it falls back to
+        ``assistant.default``. Returning ``None`` means neither has candidates;
         bare unit-test agents and unconfigured installations record a skipped
         step instead of a failed one — nothing failed, and a reply in the wrong
         language because the classifier never ran is a different problem from
         one whose classifier errored.
         """
-        from agents.config import RESPONSE_LANGUAGE_CLASSIFIER_UUID
         from agents.query_filter_router import (
-            resolve_model_group,
+            resolve_assistant_model_group,
             structured_llm_call,
         )
         from llm import capture_reasoning
 
-        group_uuid, group_from = resolve_model_group([
-            (RESPONSE_LANGUAGE_CLASSIFIER_UUID,
-             "response_language_classifier"),
-            (self.agent_uuid, "own"),
-        ])
+        group_uuid, group_from = resolve_assistant_model_group(
+            ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID)
         if group_uuid is None or group_from is None:
             return None
         model_uuids = db.get_model_group_member_uuids(group_uuid)
@@ -5125,7 +5212,8 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 requested_at=requested_at,
-                model_group_uuid=self.model_group_uuid,
+                model_group_uuid=self._slot_group(
+                    ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID),
             )
         try:
             classification = self._request_response_language_classification(
@@ -5398,17 +5486,18 @@ class AssistantAgent(ModelGroupAgent):
         self, *, system_prompt: str, user_prompt: str
     ) -> RequestSummary | None:
         """The summary live-model seam (tests stub this): one structured call
-        on the assistant's own model group, the same binding the criteria call
-        uses.
+        on the `assistant.request_summary` slot.
 
         Returns None when no model group is bound — the caller records that as
         a skipped step rather than a failed one, on the rule the other
         code-driven calls follow."""
-        if not self.candidate_model_uuids:
+        models, _group, _slot = self._slot_models(ASSISTANT_REQUEST_SUMMARY_UUID)
+        if not models:
             return None
         result = self._structured_completion(
             system_prompt=system_prompt, user_prompt=user_prompt,
-            response_model=RequestSummary, purpose="request_summary")
+            response_model=RequestSummary, purpose="request_summary",
+            candidate_model_uuids=models)
         return cast(RequestSummary, result)
 
     @staticmethod
@@ -5457,7 +5546,8 @@ class AssistantAgent(ModelGroupAgent):
                 self._run, step_index=step_index,
                 system_prompt=system_prompt, user_prompt=user_prompt,
                 requested_at=requested_at,
-                model_group_uuid=self.model_group_uuid)
+                model_group_uuid=self._slot_group(
+                    ASSISTANT_REQUEST_SUMMARY_UUID))
         try:
             summary = self._summarize_request(
                 system_prompt=system_prompt, user_prompt=user_prompt)
@@ -5544,7 +5634,7 @@ class AssistantAgent(ModelGroupAgent):
             code_driven=True,
             requested_at=requested_at,
             observation_preview=observation_preview, error=error,
-            model_group_uuid=self.model_group_uuid,
+            model_group_uuid=self._slot_group(ASSISTANT_REQUEST_SUMMARY_UUID),
             model_uuid=self._last_model_uuid,
             input_tokens=usage.get("input"),
             output_tokens=usage.get("output"),
@@ -5658,20 +5748,21 @@ class AssistantAgent(ModelGroupAgent):
         self, *, system_prompt: str, user_prompt: str
     ) -> AcceptanceCriteria | None:
         """The criteria live-model seam (tests stub this): one structured
-        call on the assistant's own model group. A dedicated binding (like
-        SECOND_OPINION_UUID) is a later option if another model proves
-        better at it.
+        call on the `assistant.acceptance_criteria` slot.
 
         Returns None when no model group is bound — the same rule the
         response-language classifier follows. The caller records that as a
         skipped step rather than a failed one: nothing failed, and a run whose
         criteria never ran is a different problem from one whose criteria call
         errored."""
-        if not self.candidate_model_uuids:
+        models, _group, _slot = self._slot_models(
+            ASSISTANT_ACCEPTANCE_CRITERIA_UUID)
+        if not models:
             return None
         result = self._structured_completion(
             system_prompt=system_prompt, user_prompt=user_prompt,
-            response_model=AcceptanceCriteria, purpose="acceptance_criteria")
+            response_model=AcceptanceCriteria, purpose="acceptance_criteria",
+            candidate_model_uuids=models)
         return cast(AcceptanceCriteria, result)
 
     def _set_acceptance_criteria(self, criteria: AcceptanceCriteria) -> None:
@@ -5734,7 +5825,8 @@ class AssistantAgent(ModelGroupAgent):
                 self._run, step_index=step_index,
                 system_prompt=system_prompt, user_prompt=user_prompt,
                 requested_at=requested_at,
-                model_group_uuid=self.model_group_uuid)
+                model_group_uuid=self._slot_group(
+                    ASSISTANT_ACCEPTANCE_CRITERIA_UUID))
         try:
             criteria = self._request_acceptance_criteria(
                 system_prompt=system_prompt, user_prompt=user_prompt)
@@ -5798,7 +5890,8 @@ class AssistantAgent(ModelGroupAgent):
             code_driven=True,
             requested_at=requested_at,
             observation_preview=observation_preview, error=error,
-            model_group_uuid=self.model_group_uuid,
+            model_group_uuid=self._slot_group(
+                ASSISTANT_ACCEPTANCE_CRITERIA_UUID),
             model_uuid=self._last_model_uuid,
             input_tokens=usage.get("input"),
             output_tokens=usage.get("output"),
@@ -5864,7 +5957,8 @@ class AssistantAgent(ModelGroupAgent):
                 self._run, step_index=step_index,
                 system_prompt=system_prompt, user_prompt=user_prompt,
                 requested_at=self._criteria_call_requested_at,
-                model_group_uuid=self.model_group_uuid)
+                model_group_uuid=self._slot_group(
+                    ASSISTANT_ACCEPTANCE_CRITERIA_UUID))
         try:
             criteria = self._request_acceptance_criteria(
                 system_prompt=system_prompt, user_prompt=user_prompt)
@@ -6220,7 +6314,7 @@ class AssistantAgent(ModelGroupAgent):
                  if payload.get(k) is not None},
                 ensure_ascii=False, indent=1),
             error=payload.get("error"),
-            model_group_uuid=self.model_group_uuid,
+            model_group_uuid=self._slot_group(ASSISTANT_REPLY_AUDIT_UUID),
             model_uuid=(UUID(payload["model_uuid"])
                         if payload.get("model_uuid") else None),
             # The whole usage dict, not just the clock: the audit reads the
@@ -6495,7 +6589,11 @@ class AssistantAgent(ModelGroupAgent):
         if self._run is not None:
             db.append_assistant_step(
                 run_uuid=self._run.uuid, step_index=step_index, phase="control",
-                action=command, reason=detail, model_group_uuid=self.model_group_uuid,
+                action=command, reason=detail,
+                # No model call happens on a control row (stop / redirect), so
+                # it carries no slot's group — the agent's own is what the
+                # column has always held for rows that are not a call.
+                model_group_uuid=self.model_group_uuid,
             )
 
     def _open_step(
@@ -6537,7 +6635,7 @@ class AssistantAgent(ModelGroupAgent):
             model_response=model_response,
             rejected_attempts=rejected_attempts,
             requested_at=requested_at,
-            model_group_uuid=self.model_group_uuid,
+            model_group_uuid=self._decide_group_uuid or self.model_group_uuid,
             model_uuid=model_uuid,
             input_tokens=(usage or {}).get("input"),
             output_tokens=(usage or {}).get("output"),
@@ -6622,7 +6720,7 @@ class AssistantAgent(ModelGroupAgent):
                 requested_at=requested_at,
                 observation_preview=observation_preview,
                 error=error,
-                model_group_uuid=self.model_group_uuid,
+                model_group_uuid=self._decide_group_uuid or self.model_group_uuid,
                 model_uuid=model_uuid,
                 input_tokens=(usage or {}).get("input"),
                 output_tokens=(usage or {}).get("output"),

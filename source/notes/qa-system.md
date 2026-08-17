@@ -176,8 +176,8 @@ action for facts. It:
 2. Retrieves memory-claim candidates (`retrieve_memories_hybrid`) and seed
    candidates (`_hybrid_seed_ranked`, ungated, per-signal budgets).
 3. Runs ONE shared **recall filter** call over both candidate kinds
-   (`_filter_recalled_candidates`): the scorer LLM (the `memory_filter`
-   binding) rates every candidate on the Likert scales, code keeps/drops via
+   (`_filter_recalled_candidates`): the scorer LLM (the
+   `assistant.memory_filter` slot) rates every candidate on the Likert scales, code keeps/drops via
    `apply_filter_scores`, kept seed entries are resolved (dynamic handlers run
    only for kept candidates), kept claims are injected. In a live run the
    scoring call is made by the loop (`AssistantAgent._recall_filter_call`)
@@ -255,12 +255,12 @@ in `agents/__main__.py`):
   **route** call produces the reply from the kept candidates. Memory commands
   short-circuit before any Q&A retrieval.
 
-The filter's scorer model resolves via `resolve_filter_model_group`: the
-dedicated **`memory_filter`** binding on `/agentmodel` when set (one scorer
-identity for every filter caller — the router, the assistant's `memory_query`,
-and the `/memory/developer` page), else per-caller fallbacks. Different model
-groups calibrate Likert scales very differently, so a shared scorer is what
-keeps the pipelines' keep/drop decisions comparable.
+Each pipeline resolves its own scorer model. The assistant's `memory_query`
+(and the `/memory/developer` panel that reproduces it) uses the
+**`assistant.memory_filter`** slot on `/agentmodel`, else `assistant.default`;
+the router uses its own binding. Different model groups calibrate Likert
+scales very differently, so a keep/drop comparison across the two pipelines is
+only meaningful when they are pointed at the same group deliberately.
 
 All share the seed-memory matching functions; they differ in how much LLM
 judgment sits between retrieval and reply.

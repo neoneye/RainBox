@@ -161,9 +161,9 @@ def resolve_model_group(
     """The generic binding-chain resolver: the first of `candidates`
     (`(agent_uuid, label)` pairs, tried in order) with a non-empty bound model
     group. Returns `(group_uuid, label)`, or `(None, None)` when nothing is
-    bound anywhere. Callers own their chain — the filter callers prepend the
-    memory_filter binding via `resolve_filter_model_group`; the assistant's
-    second_opinion review passes its own chain directly."""
+    bound anywhere. Callers own their chain — the assistant's is always
+    `<slot> -> assistant.default` (`resolve_assistant_model_group`); this
+    agent passes its own binding directly."""
     for agent_uuid, label in candidates:
         binding = db.get_agent_model_binding(agent_uuid)
         if binding is None or binding.model_group_uuid is None:
@@ -173,17 +173,23 @@ def resolve_model_group(
     return None, None
 
 
-def resolve_filter_model_group(
-    fallbacks: list[tuple[UUID, str]],
+def resolve_assistant_model_group(
+    slot_uuid: UUID,
 ) -> tuple[UUID, str] | tuple[None, None]:
-    """Model group for the relevance-scoring call, resolved the same way for
-    every filter caller so keep/drop decisions come from ONE model identity:
-    the dedicated `memory_filter` binding when the operator has set one on
-    /agentmodel (the knob for experimenting with scorer models), else the
-    first of `fallbacks` with a non-empty bound group."""
-    from agents.config import MEMORY_FILTER_UUID
+    """Model group for one assistant model call: the `assistant.*` slot bound
+    to that call, else `assistant.default`.
 
-    return resolve_model_group([(MEMORY_FILTER_UUID, "memory_filter"), *fallbacks])
+    Two links, the same for every call the assistant makes — so binding only
+    the default configures the whole assistant, and binding one slot moves
+    exactly one call. The returned label is the slot's own name, which is also
+    its /activity caller tag, so the trace says which row on /agentmodel
+    answered rather than a word that has to be mapped back to one."""
+    from agents.config import ASSISTANT_DEFAULT_UUID, role_name
+
+    chain = [(slot_uuid, role_name(slot_uuid) or str(slot_uuid))]
+    if slot_uuid != ASSISTANT_DEFAULT_UUID:
+        chain.append((ASSISTANT_DEFAULT_UUID, "assistant.default"))
+    return resolve_model_group(chain)
 
 
 def resolve_model_uuids(
@@ -197,12 +203,12 @@ def resolve_model_uuids(
     return db.get_model_group_member_uuids(group_uuid), label
 
 
-def resolve_filter_model_uuids(
-    fallbacks: list[tuple[UUID, str]],
+def resolve_assistant_model_uuids(
+    slot_uuid: UUID,
 ) -> tuple[list[UUID], str] | tuple[None, None]:
-    """`resolve_filter_model_group`, unpacked to the group's priority-ordered
+    """`resolve_assistant_model_group`, unpacked to the group's priority-ordered
     member uuids — what `structured_llm_call` consumes."""
-    group_uuid, label = resolve_filter_model_group(fallbacks)
+    group_uuid, label = resolve_assistant_model_group(slot_uuid)
     if group_uuid is None or label is None:
         return None, None
     return db.get_model_group_member_uuids(group_uuid), label
@@ -694,10 +700,11 @@ class QueryFilterRouterAgent(ModelGroupAgent):
             if candidates:
                 db.post_progress(room_uuid, self.agent_uuid, "step 1 of 2: filtering candidates")
                 filter_prompt = build_filter_prompt(query, candidates)
-                # Scorer group: the dedicated memory_filter binding when set,
-                # else this agent's own group — same resolution as the
-                # assistant's recall filter, so both pipelines score alike.
-                scorer_uuids, scorer_src = resolve_filter_model_uuids(
+                # Scorer group: this agent's own. The assistant's recall filter
+                # scores on assistant.memory_filter; the two used to share one
+                # scorer binding, which made either pipeline's model choice the
+                # other's too.
+                scorer_uuids, scorer_src = resolve_model_uuids(
                     [(self.agent_uuid, "own")])
                 filter_decision, scorer_model = structured_llm_call(
                     self.name, scorer_uuids or [],

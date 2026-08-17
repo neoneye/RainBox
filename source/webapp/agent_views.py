@@ -36,6 +36,10 @@ AGENT_MODELS_TEMPLATE: str = """
   .bind-form button{padding:0.3em 0.9em;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
   .bind-form button:hover{background:#1d4ed8}
   .ok{color:#080}
+  tr.section td{background:#f7f7f7;border-top:2px solid #ccc}
+  tr.section .section-title{font-weight:600;font-family:ui-monospace,monospace}
+  tr.section .desc{color:#555;font-size:90%;font-weight:400}
+  .current .inherited{color:#555}
 </style>
 {% include "_nav.html" %}
 <div class="pp-content">
@@ -46,11 +50,24 @@ controls which <b>model group</b> each agent runs &mdash; a prioritized fallback
 group vs a slow/high-quality one. Stored in <code>agent_model_binding</code>, editable
 without code changes. Manage the groups themselves on the
 <a href="{{ url_for('modelgroups_page') }}">Model groups</a> page.</p>
+<p>A dotted name is one <b>call</b>, not one worker: <code>assistant.decide</code> is the
+assistant's step loop, <code>assistant.reply_audit</code> its reply check. Leave one
+unassigned and it runs on its family's <code>.default</code> &mdash; so binding only
+<code>assistant.default</code> configures the whole assistant, and binding one row moves
+exactly one call. The names match the caller labels on
+<a href="{{ url_for('activity_page') }}">Activity</a>.</p>
 {% if saved %}<p class="ok">Saved.</p>{% endif %}
 
 <table class="agents">
   <tr><th>Agent</th><th>Model group</th><th>Change to</th></tr>
-  {% for a in agents %}
+  {% for section in sections %}
+  {% if section.title %}
+  <tr class="section"><td colspan="3">
+    <span class="section-title">{{ section.title }}.*</span>
+    <span class="desc">&mdash; one row per call; a row left unassigned runs on <code>{{ section.title }}.default</code></span>
+  </td></tr>
+  {% endif %}
+  {% for a in section.agents %}
   <tr>
     <td>
       <div class="role">{{ a.name }}</div>
@@ -66,6 +83,13 @@ without code changes. Manage the groups themselves on the
         <br><small>{{ a.member_count }} model(s)</small>
       {% elif a.current_uuid %}
         <span class="unset">group missing</span>
+      {% elif a.fallback_name %}
+        <span class="inherited">&rarr; {{ a.fallback_name }}</span>
+        <br><small>
+          {%- if a.fallback_group %}
+          <a href="{{ url_for('modelgroups_page', id=a.fallback_uuid) }}">{{ a.fallback_group.name }}</a>
+          {%- else %}<span class="unset">unassigned too</span>{% endif %}
+        </small>
       {% else %}
         <span class="unset">none assigned</span>
       {% endif %}
@@ -86,6 +110,7 @@ without code changes. Manage the groups themselves on the
       </form>
     </td>
   </tr>
+  {% endfor %}
   {% endfor %}
 </table>
 </div>
@@ -138,6 +163,35 @@ def _agent_group_options(entry: Mapping[str, Any], groups: list[dict]) -> list[d
         and (not requires_struct or o["requires_structured_output"])
         and (not excludes_struct or o["structured_output_constraint"] == "must_not_have")
     ]
+
+
+def _fallback_name(name: str) -> str:
+    """The row `name` inherits from when it is left unassigned: its family's
+    `.default`, for a dotted name that is not itself the default. "" for an
+    undotted name and for a family with no default entry — those inherit
+    nothing, and a row must not claim a fallback the resolver does not have."""
+    prefix, _, rest = name.partition(".")
+    if not rest:
+        return ""
+    default = f"{prefix}.default"
+    return default if default != name and default in agent_config else ""
+
+
+def _sections(agents: list[dict]) -> list[dict]:
+    """The rows grouped by dotted prefix, in agent_config order.
+
+    A family of calls (`assistant.*`) reads as one block with one heading
+    rather than nine rows an operator has to recognize as related. Undotted
+    agents keep their own untitled section, so a page with no dotted names
+    looks exactly as it did before."""
+    sections: list[dict] = []
+    for a in agents:
+        prefix, _, rest = str(a["name"]).partition(".")
+        title = prefix if rest else ""
+        if not sections or sections[-1]["title"] != title:
+            sections.append({"title": title, "agents": []})
+        sections[-1]["agents"].append(a)
+    return sections
 
 
 @app.route("/agent_models", methods=["GET"])
@@ -202,6 +256,12 @@ def agent_models_page() -> str | Response:
         requires_struct = bool(entry.get("requires_structured_output"))
         excludes_struct = bool(entry.get("excludes_structured_output"))
         agent_groups = _agent_group_options(entry, groups)
+        fallback_name = _fallback_name(name)
+        fallback_uuid = None
+        if fallback_name:
+            fallback_binding = bindings.get(agent_config[fallback_name]["uuid"])
+            if fallback_binding is not None:
+                fallback_uuid = fallback_binding.model_group_uuid
         agents.append(
             {
                 "name": name,
@@ -214,10 +274,18 @@ def agent_models_page() -> str | Response:
                 "requires_structured_output": requires_struct,
                 "excludes_structured_output": excludes_struct,
                 "groups": agent_groups,
+                # What this row runs on when it is left unassigned. Shown in
+                # place of "none assigned", which would read as "this call does
+                # not happen" for a slot that in fact runs on the family default.
+                "fallback_name": fallback_name,
+                "fallback_uuid": str(fallback_uuid) if fallback_uuid else "",
+                "fallback_group": (
+                    get_model_group(fallback_uuid) if fallback_uuid else None
+                ),
             }
         )
     return render_template_string(
         AGENT_MODELS_TEMPLATE,
-        agents=agents,
+        sections=_sections(agents),
         saved=bool(request.args.get("saved")),
     )

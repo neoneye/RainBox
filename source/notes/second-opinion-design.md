@@ -112,15 +112,14 @@ conversation history: the current request is the whole contract.
 ## Model binding
 
 The reviewer's model group resolves through
-`query_filter_router.resolve_model_uuids` with the chain: the dedicated
-`second_opinion` binding-only agent (set on `/agentmodel`) → the assistant's
-own group. A different group is the point — a reviewer with different failure
-modes — but reviewing with the same group still catches what the deciding
-pass missed. Deliberately NOT `resolve_filter_model_uuids`: that resolver
-prepends the `memory_filter` scorer binding, which would silently hand the
-review to the relevance-scoring model. The call itself goes through
-`structured_llm_call` (one structured call, falling back across the group's
-members).
+`query_filter_router.resolve_assistant_model_group` on the chain every
+assistant call uses: the `assistant.second_opinion` slot (set on
+`/agentmodel`) → `assistant.default`. A different group is the point — a
+reviewer with different failure modes — but reviewing with the same group
+still catches what the deciding pass missed. No other slot is consulted: a
+bound `assistant.memory_filter` must never silently hand the review to the
+relevance-scoring model. The call itself goes through `structured_llm_call`
+(one structured call, falling back across the group's members).
 
 ## Fails open
 
@@ -216,7 +215,7 @@ action-result data so it is not shown twice. The markdown export
 sandbox, approval runs it, ungated actions never consult the reviewer), the
 verdict schema, the review call (prompt contents and order, payload keys,
 fail-open, no-group skip), and the resolver regression (the reviewer chain
-must not see the `memory_filter` binding). Rendering:
+must not see the `assistant.memory_filter` binding). Rendering:
 `webapp/test_assistant_views.py` (block position, prompt/reasoning/response
 rendering, markdown mirror). All deterministic — the decide seam is scripted,
 the review seam monkeypatched, the sandbox replaced with a recording fake.
@@ -227,4 +226,4 @@ the review seam monkeypatched, the sandbox replaced with a recording fake.
   registry; write tiers.
 - `docs/superpowers/specs/2026-07-19-python-sandbox-design.md` (repo root) —
   the sandbox the gated action runs in.
-- `llm-providers.md` — model groups and the `/agentmodel` bindings.
+- `llm-providers.md` — model groups and the `/agentmodel` slots.

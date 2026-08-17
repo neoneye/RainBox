@@ -41,7 +41,7 @@ def app_ctx():
 def _agent() -> AssistantRunSummarizerAgent:
     return AssistantRunSummarizerAgent(
         agent_uuid=ASSISTANT_RUN_SUMMARIZER_UUID,
-        name="assistant_run_summarizer", send=lambda _: None,
+        name="assistant.run_summarizer", send=lambda _: None,
     )
 
 
@@ -59,7 +59,7 @@ def _cleanup(run_id: int, room_uuid=None) -> None:
 
 
 def test_requires_structured_output():
-    assert agent_config["assistant_run_summarizer"].get("requires_structured_output") is True
+    assert agent_config["assistant.run_summarizer"].get("requires_structured_output") is True
 
 
 def test_summarizes_run_into_summary_column(app_ctx):

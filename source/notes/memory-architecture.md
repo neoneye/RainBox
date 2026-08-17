@@ -292,7 +292,7 @@ runs keep strict room isolation.
 In the assistant's `memory_query`, hybrid claim retrieval produces
 *candidates*, not the final injection set: the claims join the seed-KB
 candidates in one shared **recall filter** LLM call (Likert scoring on the
-`memory_filter` model binding; keep/drop decided in code — see
+`assistant.memory_filter` model slot; keep/drop decided in code — see
 `notes/qa-system.md`), and only kept claims are injected. When no scorer is
 bound or the call fails, claims pass through unfiltered.
 

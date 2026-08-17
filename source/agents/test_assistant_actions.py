@@ -563,7 +563,7 @@ def test_recall_filter_scores_through_the_loops_call_seam(app_ctx, monkeypatch):
     assert "PowerBook" in obs.text
     # The seam gets everything the row needs to attribute the call.
     assert seen["model_uuids"] and seen["model_group_uuid"]
-    assert seen["group_from"] == "memory_filter"
+    assert seen["group_from"] == "assistant.memory_filter"
     assert seen["system_prompt"] == ASSISTANT_SHARED_SYSTEM_PROMPT
     assert "qa-mac" in seen["user_prompt"]
     assert seen["step_index"] == 3
@@ -788,11 +788,11 @@ def test_query_memory_dropped_claim_leaves_the_observation(app_ctx, monkeypatch)
 
 
 def test_recall_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch):
-    """A bound memory_filter agent (the /agentmodel knob for scorer
-    experiments) outranks every fallback: the filter scores with ITS group
-    even when the router and the assistant have their own."""
+    """A bound assistant.memory_filter (the /agentmodel knob for scorer
+    experiments) outranks the default: the filter scores with ITS group even
+    when assistant.default has one of its own."""
     import agents.query_filter_router as qfr
-    from agents.config import MEMORY_FILTER_UUID
+    from agents.config import ASSISTANT_MEMORY_FILTER_UUID as MEMORY_FILTER_UUID
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -824,15 +824,17 @@ def test_recall_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
     assert seen_members == [filter_member]
-    assert obs.data["recall_filter"]["group_from"] == "memory_filter"
+    assert obs.data["recall_filter"]["group_from"] == "assistant.memory_filter"
 
 
-def test_recall_filter_prefers_the_query_filter_routers_model_group(app_ctx, monkeypatch):
-    """The filter is a shared subsystem: when the query_filter_router has a
-    model group bound, the assistant's recall filter scores with THAT group, so
-    both pipelines' keep/drop decisions come from one model identity."""
+def test_recall_filter_ignores_the_query_filter_routers_model_group(app_ctx, monkeypatch):
+    """The scorer is the assistant's own choice, not a shared one: a bound
+    query_filter_router group is invisible here. The two pipelines once shared
+    a scorer binding, which made either one's model choice the other's too."""
     import agents.query_filter_router as qfr
-    from agents.config import QUERY_FILTER_ROUTER_UUID
+    from agents.config import (
+        ASSISTANT_MEMORY_FILTER_UUID, QUERY_FILTER_ROUTER_UUID,
+    )
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -843,23 +845,21 @@ def test_recall_filter_prefers_the_query_filter_routers_model_group(app_ctx, mon
     monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
         Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
 
-    from agents.config import MEMORY_FILTER_UUID
-
-    router_member, assistant_member = uuid4(), uuid4()
-    router_group, assistant_group = uuid4(), uuid4()
+    router_member, default_member = uuid4(), uuid4()
+    router_group, default_group = uuid4(), uuid4()
 
     def binding_for(agent_uuid):
-        if agent_uuid == MEMORY_FILTER_UUID:
+        if agent_uuid == ASSISTANT_MEMORY_FILTER_UUID:
             return None   # no dedicated scorer bound
         group = (router_group if agent_uuid == QUERY_FILTER_ROUTER_UUID
-                 else assistant_group)
+                 else default_group)
         return type("B", (), {"model_group_uuid": group})()
 
     monkeypatch.setattr(db, "get_agent_model_binding", binding_for)
     monkeypatch.setattr(
         db, "get_model_group_member_uuids",
         lambda group_uuid: ([router_member] if group_uuid == router_group
-                            else [assistant_member]))
+                            else [default_member]))
     seen_members = []
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
@@ -869,13 +869,13 @@ def test_recall_filter_prefers_the_query_filter_routers_model_group(app_ctx, mon
 
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
-    assert seen_members == [router_member]   # not the assistant's own group
-    assert obs.data["recall_filter"]["group_from"] == "query_filter_router"
+    assert seen_members == [default_member]   # not the router's group
+    assert obs.data["recall_filter"]["group_from"] == "assistant.default"
 
 
-def test_recall_filter_falls_back_to_own_group_when_router_unbound(app_ctx, monkeypatch):
+def test_recall_filter_falls_back_to_the_assistant_default(app_ctx, monkeypatch):
     import agents.query_filter_router as qfr
-    from agents.config import QUERY_FILTER_ROUTER_UUID
+    from agents.config import ASSISTANT_DEFAULT_UUID
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -885,22 +885,22 @@ def test_recall_filter_falls_back_to_own_group_when_router_unbound(app_ctx, monk
     })
     monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
         Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
-    from agents.config import MEMORY_FILTER_UUID
 
-    own_group = uuid4()
+    default_group = uuid4()
 
     def binding_for(agent_uuid):
-        if agent_uuid in (QUERY_FILTER_ROUTER_UUID, MEMORY_FILTER_UUID):
+        if agent_uuid != ASSISTANT_DEFAULT_UUID:
             return None
-        return type("B", (), {"model_group_uuid": own_group})()
+        return type("B", (), {"model_group_uuid": default_group})()
 
     monkeypatch.setattr(db, "get_agent_model_binding", binding_for)
     monkeypatch.setattr(db, "get_model_group_member_uuids", lambda g: [uuid4()])
     monkeypatch.setattr(qfr, "structured_llm_call", lambda *a, **k: (
         a[4](reasoning="fallback test", items=[_score("qa-1", direct="5")]), a[1][0]))
+    # assistant.memory_filter is unbound above, so the default answers.
     obs = _action_query_memory(_ctx(), {"query": "q"})
     assert obs.data["recall_filter"]["mode"] == "llm"
-    assert obs.data["recall_filter"]["group_from"] == "own"
+    assert obs.data["recall_filter"]["group_from"] == "assistant.default"
 
 
 def test_filter_prompt_asks_for_scores_not_decisions():

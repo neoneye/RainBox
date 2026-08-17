@@ -55,8 +55,8 @@ The auditor is shown the turn's observations but not the decide loop's
 reasoning. A message claiming a figure no step observed is exactly what an
 audit should catch, so the evidence has to be there — while the reasoning
 that produced the message is the rationalization a separate call exists to
-escape. Its model resolves through the `reply_audit` binding on
-`/agentmodel`, else the assistant's own group, and it fails open: an
+escape. Its model resolves through the `assistant.reply_audit`
+slot on `/agentmodel`, else `assistant.default`, and it fails open: an
 unbound or unreachable auditor sends the message rather than losing the
 turn's answer. Every verdict lands in its own `reply_audit` trace row with
 the model, duration and prompts that produced it.
@@ -142,7 +142,8 @@ This is the direct proof the assistant actually carries the blocks:
    row carrying its own model, duration and prompts. Open it: the
    observation shows the verdict and any problems. A `revise` verdict must
    appear as a rejected reply step followed by a corrected one. With no
-   model bound to `reply_audit`, the row records `no_model_group` and the
+   model bound to `assistant.reply_audit` or `assistant.default`, the row
+   records `no_model_group` and the
    message is sent — the audit fails open by design.
 5. Switch `profile.current` to another profile → the room's next turn is
    preceded by a visible one-time notice ("the active profile switched to
