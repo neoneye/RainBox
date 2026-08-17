@@ -18,9 +18,10 @@ import logging
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 import sqlalchemy as sa
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer
 
 from db.models import LlmCall, db
 
@@ -36,6 +37,13 @@ THROUGHPUT_WINDOW: int = 200
 PREFIX_WINDOW: int = 8
 
 RETENTION_DAYS: int = 90
+
+# How long the prompt and response TEXT is kept, as against the row it hangs
+# off. Far shorter because the text is the whole weight of the table and the
+# question it answers is a recent one: an operator inspects a call to find out
+# why the run they are watching behaved as it did. The metrics outlive it by
+# RETENTION_DAYS, so the charts keep their months of history either way.
+PROMPT_RETENTION_DAYS: int = 14
 
 # Dimensions the page may group by. A whitelist, not a format string: the
 # value arrives from a query parameter.
@@ -414,11 +422,28 @@ def _f(value: Any) -> float | None:
 
 
 def recent_llm_calls(limit: int = 50, model: str | None = None) -> list[LlmCall]:
-    """The newest calls, for the drill-down table."""
+    """The newest calls, for the drill-down table.
+
+    `messages` and `response_text` are deferred on the model, so this loads
+    fifty rows of metrics without fifty prompts behind them. The detail view
+    (`get_llm_call`) is what pays for the text, one row at a time."""
     query = db.session.query(LlmCall)
     if model:
         query = query.filter(LlmCall.model == model)
     return query.order_by(LlmCall.started_at.desc()).limit(limit).all()
+
+
+def get_llm_call(call_uuid: UUID) -> LlmCall | None:
+    """One recorded call WITH its prompt and response text, for the detail
+    view. None for an unknown uuid — and a row found with both text columns
+    NULL is the ordinary state of a call recorded before the columns existed,
+    or one whose text has aged out, not an error."""
+    return (
+        db.session.query(LlmCall)
+        .options(undefer(LlmCall.messages), undefer(LlmCall.response_text))
+        .filter(LlmCall.uuid == call_uuid)
+        .one_or_none()
+    )
 
 
 _last_prune_at: datetime | None = None
@@ -444,12 +469,16 @@ def maybe_prune_llm_calls(now: datetime) -> bool:
         return False
     try:
         deleted = prune_llm_calls()
+        cleared = prune_llm_call_prompts()
     except Exception:
         logger.warning("llm_call prune failed; will retry later", exc_info=True)
         return False
     _last_prune_at = now
     if deleted:
         logger.info("pruned %d llm_call rows past %d days", deleted, RETENTION_DAYS)
+    if cleared:
+        logger.info("cleared prompt text on %d llm_call rows past %d days",
+                    cleared, PROMPT_RETENTION_DAYS)
     return True
 
 
@@ -463,3 +492,26 @@ def prune_llm_calls(older_than_days: int = RETENTION_DAYS) -> int:
     )
     db.session.commit()
     return int(deleted)
+
+
+def prune_llm_call_prompts(older_than_days: int = PROMPT_RETENTION_DAYS) -> int:
+    """Clear the prompt/response text of rows past the TEXT horizon, keeping
+    the rows themselves. Returns how many were cleared.
+
+    An UPDATE rather than a DELETE: the metrics on these rows are still what
+    the charts are drawn from, and only the text has outlived its question.
+    Guarded on the text already being present so a steady-state daily pass
+    over an old table updates nothing."""
+    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    cleared = (
+        db.session.query(LlmCall)
+        .filter(
+            LlmCall.started_at < cutoff,
+            sa.or_(LlmCall.messages.isnot(None),
+                   LlmCall.response_text.isnot(None)),
+        )
+        .update({LlmCall.messages: None, LlmCall.response_text: None},
+                synchronize_session=False)
+    )
+    db.session.commit()
+    return int(cleared)

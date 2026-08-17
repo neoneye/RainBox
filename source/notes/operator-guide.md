@@ -80,6 +80,10 @@ fallback.
 - `/user` — identity card for a chat participant (`?id=<uuid>`).
 - `/model`, `/modelgroup`, `/agentmodel` — model configs, fallback
   groups, agent bindings.
+- `/activity` — every LLM call, its cost and its cache behaviour. Each row in
+  Recent calls has an `inspect` link to the call in full: the messages that
+  were sent, by role, and what came back. Prompt text is kept for 14 days;
+  the metrics for 90.
 - `/settings` — typed operator settings (DB → env → default) with provenance.
 - `/doctor` — environment health checks.
 

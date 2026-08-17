@@ -255,6 +255,78 @@ class TestPairing:
         assert len(recorder.pending) <= recorder.max_pending
 
 
+class TestStoredText:
+    """What the row carries for the /activity call detail view: the outgoing
+    messages and the model's reply."""
+
+    def test_the_row_carries_the_outgoing_messages_by_role(self):
+        recorder, rows = make_recorder()
+        recorder.handle(start_event(messages=[
+            ChatMessage(role="system", content="you are a calculator"),
+            ChatMessage(role="user", content="2+2"),
+        ]))
+        recorder.handle(end_event())
+        assert rows[0]["messages"] == [
+            {"role": "system", "content": "you are a calculator"},
+            {"role": "user", "content": "2+2"},
+        ]
+
+    def test_the_row_carries_the_response_text(self):
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        recorder.handle(end_event())
+        assert rows[0]["response_text"] == "hi"
+
+    def test_messages_come_from_the_start_event_not_the_end(self):
+        """The messages the provider was given are a Start-event fact; the End
+        event's own `messages` are the wrapper's view and may differ."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event(messages=[
+            ChatMessage(role="user", content="the real prompt")]))
+        recorder.handle(end_event())
+        assert rows[0]["messages"] == [
+            {"role": "user", "content": "the real prompt"}]
+
+    def test_the_stored_text_is_the_text_that_was_hashed(self):
+        """The prefix chain and the stored copy must read the message list the
+        same way, or the row's own bytes would not explain its own cache
+        reading."""
+        messages = [ChatMessage(role="system", content="a" * 100),
+                    ChatMessage(role="user", content="b" * 100)]
+        recorder, rows = make_recorder()
+        recorder.handle(start_event(messages=messages))
+        recorder.handle(end_event())
+        rebuilt = "\n".join(
+            f"<{m['role']}>{m['content']}" for m in rows[0]["messages"])
+        assert rebuilt == prompt_text(messages)
+        assert rows[0]["prefix_chain"] == prefix_chain(rebuilt)
+
+    def test_an_empty_response_stores_no_text(self):
+        """A call that streamed nothing gets NULL, not "" — the detail view
+        says "no response text", which is true, rather than showing a blank
+        block that looks like the model answered with silence."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        recorder.handle(LLMChatEndEvent(
+            span_id="span-1", messages=[],
+            response=ChatResponse(
+                message=ChatMessage(role="assistant", content=""),
+                raw=OLLAMA_RAW_WARM),
+        ))
+        assert rows[0]["response_text"] is None
+
+    def test_a_none_content_message_stores_an_empty_string(self):
+        """A tool-call turn carries no content. It still occupies a position
+        in the list, and dropping it would misalign the transcript."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event(messages=[
+            ChatMessage(role="assistant", content=None),
+            ChatMessage(role="user", content="go on"),
+        ]))
+        recorder.handle(end_event())
+        assert [m["content"] for m in rows[0]["messages"]] == ["", "go on"]
+
+
 class TestCacheMetrics:
     def test_the_estimate_is_withheld_while_a_model_is_calibrating(self):
         recorder, rows = make_recorder(FakeHistory(throughputs=[1000.0] * 3))

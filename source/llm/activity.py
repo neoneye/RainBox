@@ -42,8 +42,9 @@ logger = logging.getLogger(__name__)
 _NS_PER_MS = 1_000_000
 
 # Start events whose End never arrived (a crash, a timeout, a killed worker)
-# would otherwise pin their prompt chains in memory forever. The cap is far
-# above any plausible number of genuinely concurrent calls on one box.
+# would otherwise pin their prompt chains — and, since the row carries them,
+# their whole prompts — in memory forever. The cap is far above any plausible
+# number of genuinely concurrent calls on one box.
 _MAX_PENDING = 256
 
 
@@ -171,14 +172,41 @@ def prompt_text(messages: Any) -> str:
     unchanged prefix, and blocks line up the way the runtime's own template
     would lay them out.
     """
-    parts: list[str] = []
+    return "\n".join(
+        f"<{role}>{content}" for role, content in _role_content_pairs(messages)
+    )
+
+
+def _role_content_pairs(messages: Any) -> list[tuple[str, str]]:
+    """`(role, content)` for each outgoing message, content never None. The
+    one reading of the message list, shared by the prefix hash and the stored
+    copy so the text on a row is the text that was hashed."""
+    pairs: list[tuple[str, str]] = []
     for message in messages or []:
         role = getattr(getattr(message, "role", None), "value", None) or str(
             getattr(message, "role", "")
         )
         content = getattr(message, "content", None)
-        parts.append(f"<{role}>{content if content is not None else ''}")
-    return "\n".join(parts)
+        pairs.append((role, content if content is not None else ""))
+    return pairs
+
+
+def prompt_messages(messages: Any) -> list[dict[str, str]]:
+    """The outgoing prompt as `[{"role", "content"}]`, for `llm_call.messages`.
+
+    Stored as the message list rather than the flattened `prompt_text` blob:
+    a chat agent sends a whole history and a retried structured call sends its
+    own corrections, and which turn carried what is exactly what a reader of
+    the detail view is after."""
+    return [{"role": role, "content": content}
+            for role, content in _role_content_pairs(messages)]
+
+
+def response_text(response: Any) -> str | None:
+    """What the model returned, as text. None when the response carries no
+    content — a call that failed mid-stream still deserves its row."""
+    content = getattr(getattr(response, "message", None), "content", None)
+    return content if isinstance(content, str) and content else None
 
 
 class ActivityRecorder(BaseEventHandler):
@@ -230,6 +258,10 @@ class ActivityRecorder(BaseEventHandler):
             "origin": origin,
             "prefix_chain": prefix_chain(text),
             "prompt_chars": len(text),
+            # Captured here rather than at the End event: the messages the
+            # provider was given are a Start-event fact, and by End the
+            # structured wrapper has replaced them with its own view.
+            "messages": prompt_messages(event.messages),
         }
         if len(self._pending) > self.max_pending:
             self._drop_oldest_pending()
@@ -269,6 +301,8 @@ class ActivityRecorder(BaseEventHandler):
             "reusable_prefix_tokens": None,
             "saved_ms": None,
             "prefix_chain": start.get("prefix_chain"),
+            "messages": start.get("messages"),
+            "response_text": response_text(event.response),
         }
         self._add_cache_metrics(row, start, model)
         try:

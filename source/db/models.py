@@ -1701,15 +1701,36 @@ class LlmCall(db.Model):
     # baseline moves as more calls arrive, and a saving already banked should
     # not silently change afterwards. NULL when the call was not judged.
     saved_ms: Mapped[int | None] = mapped_column()
-    # Cumulative hashes of the outgoing prompt's fixed-size character blocks.
-    # The prompt text itself is never stored — the chain is enough to measure
-    # a shared prefix against later calls, and nothing else.
+    # Cumulative hashes of the outgoing prompt's fixed-size character blocks —
+    # enough to measure a shared prefix against later calls without reading the
+    # text back.
     #
     # none_as_null because the JSONB adapter otherwise stores a Python None as
     # the JSON scalar `null`, which is not SQL NULL: such a row slips past an
     # IS NOT NULL filter and reaches jsonb_array_length, which raises on a
     # scalar and aborts the whole transaction.
     prefix_chain: Mapped[list | None] = mapped_column(JSONB(none_as_null=True))
+    # What was actually sent and what came back, for the call detail view.
+    # `messages` is the outgoing list as `[{"role": ..., "content": ...}]` —
+    # the message list, not a flattened blob, because a chat agent sends a
+    # whole history and a retried structured call sends its own corrections,
+    # and reading which turn carried what is the point.
+    #
+    # These two answer the question the rest of the row only raises. A row
+    # saying a prompt reused none of its prefix is a finding without them and
+    # a diagnosis with them: the bytes are right there to compare against the
+    # call before it.
+    #
+    # DEFERRED, both of them: they are one to two orders of magnitude larger
+    # than every other column here put together, and the page's charts, the
+    # rollups and the recent-calls list all read rows without wanting them. A
+    # non-deferred column would make every one of those queries drag the
+    # prompts along. Pruned on their own, shorter horizon
+    # (`PROMPT_RETENTION_DAYS`) — inspection is about calls just made, while
+    # the metrics stay useful for months.
+    messages: Mapped[list | None] = mapped_column(
+        JSONB(none_as_null=True), deferred=True)
+    response_text: Mapped[str | None] = mapped_column(Text, deferred=True)
     __table_args__ = (
         Index("llm_call_by_started", "started_at"),
         Index("llm_call_by_model", "model", "started_at"),

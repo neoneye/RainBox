@@ -83,6 +83,82 @@ class TestRendering:
         assert "http://cdn" not in body
 
 
+class TestCallDetail:
+    """Inspecting one row: what was sent, message by message, and what came
+    back. The question every cache reading on the list raises."""
+
+    def test_each_recent_row_links_to_its_own_call(self, client, model):
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid)
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert f"/activity/call/{call_uuid}" in body
+
+    def test_the_detail_page_shows_every_message_with_its_role(
+        self, client, model
+    ):
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid,
+                 messages=[{"role": "system", "content": "be exact"},
+                           {"role": "user", "content": "how much is 12 feet"}],
+                 response_text="3.6576 meters")
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        assert "be exact" in body
+        assert "how much is 12 feet" in body
+        assert "3.6576 meters" in body
+        assert ">system<" in body and ">user<" in body
+
+    def test_the_detail_page_carries_the_rows_own_metrics(self, client, model):
+        """So a prompt is read next to the cache reading that prompted the
+        question, not on a page that has forgotten which call this was."""
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid, caller="assistant.decide",
+                 messages=[{"role": "user", "content": "x"}])
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        assert "assistant.decide" in body
+        assert model in body
+        assert "4000 tokens" in body   # prompt_tokens, exact
+
+    def test_a_row_with_no_stored_text_says_so_rather_than_showing_nothing(
+        self, client, model
+    ):
+        """Calls recorded before rainbox stored prompts, and calls whose text
+        has aged out, are the ordinary state of an old row — not an error."""
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid)
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        assert client.get(f"/activity/call/{call_uuid}").status_code == 200
+        assert "Not stored" in body
+        assert "No response text" in body
+
+    def test_an_unknown_call_is_a_404(self, client):
+        assert client.get(f"/activity/call/{uuid4()}").status_code == 404
+
+    def test_the_cached_tile_says_which_kind_of_number_it_is(
+        self, client, model
+    ):
+        """"Reported by the provider" and "estimated from prefill timing" are
+        different claims. On the list they are a hover; a page for reading one
+        call has the room to say it outright."""
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid, cached_tokens_estimated=3900,
+                 cached_tokens_reported=None)
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        assert "estimated from prefill timing" in body
+
+    def test_prompt_text_is_escaped_not_injected(self, client, model):
+        """A prompt carries XML sections and a response may carry anything the
+        model wrote. Neither is markup on this page."""
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid,
+                 messages=[{"role": "user",
+                            "content": "<script>alert(1)</script>"}],
+                 response_text="<img onerror=alert(2)>")
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        assert "<script>alert(1)</script>" not in body
+        assert "&lt;script&gt;" in body
+        assert "<img onerror=alert(2)>" not in body
+
+
 class TestEmptyState:
     def test_a_window_with_no_calls_says_so(self, client):
         body = client.get("/activity?range=15m").get_data(as_text=True)

@@ -457,6 +457,79 @@ class TestRecentCalls:
         assert len(db.recent_llm_calls(limit=3, model=model)) == 3
 
 
+class TestStoredPromptText:
+    """The prompt and response behind a row, for the call detail view."""
+
+    def test_get_llm_call_returns_the_text(self, model):
+        call_uuid = uuid4()
+        add_call(
+            model, uuid=call_uuid,
+            messages=[{"role": "system", "content": "be brief"},
+                      {"role": "user", "content": "2+2"}],
+            response_text="4",
+        )
+        found = db.get_llm_call(call_uuid)
+        assert found is not None
+        assert found.messages[1]["content"] == "2+2"
+        assert found.response_text == "4"
+
+    def test_an_unknown_uuid_is_none_not_an_error(self, model):
+        assert db.get_llm_call(uuid4()) is None
+
+    def test_the_list_query_does_not_load_the_text(self, model):
+        """The columns are deferred: fifty rows of metrics must not drag fifty
+        prompts along behind them."""
+        add_call(model, messages=[{"role": "user", "content": "x" * 5000}],
+                 response_text="y")
+        [row] = db.recent_llm_calls(limit=50, model=model)
+        assert "messages" in sa.inspect(row).unloaded
+        assert "response_text" in sa.inspect(row).unloaded
+
+    def test_a_row_with_no_text_is_an_ordinary_row(self, model):
+        """Calls recorded before the columns existed, and calls whose text has
+        aged out, both read as NULL rather than failing the view."""
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid)
+        found = db.get_llm_call(call_uuid)
+        assert found is not None
+        assert found.messages is None and found.response_text is None
+
+
+class TestPrunePromptText:
+    def test_old_text_is_cleared_but_the_row_survives(self, model):
+        call_uuid = uuid4()
+        add_call(
+            model, uuid=call_uuid,
+            started_at=datetime.now(UTC) - timedelta(
+                days=db.PROMPT_RETENTION_DAYS + 1),
+            messages=[{"role": "user", "content": "ancient"}],
+            response_text="ancient reply",
+        )
+        assert db.prune_llm_call_prompts() >= 1
+        db.db.session.expire_all()
+        found = db.get_llm_call(call_uuid)
+        assert found is not None            # the metrics stay
+        assert found.prompt_tokens == 1000
+        assert found.messages is None       # only the text goes
+        assert found.response_text is None
+
+    def test_recent_text_is_kept(self, model):
+        call_uuid = uuid4()
+        add_call(
+            model, uuid=call_uuid, started_at=datetime.now(UTC),
+            messages=[{"role": "user", "content": "today"}],
+            response_text="today's reply")
+        db.prune_llm_call_prompts()
+        db.db.session.expire_all()
+        found = db.get_llm_call(call_uuid)
+        assert found is not None and found.response_text == "today's reply"
+
+    def test_the_text_horizon_is_shorter_than_the_row_horizon(self):
+        """Otherwise the separate pass would never clear anything — the row
+        would already be gone."""
+        assert db.PROMPT_RETENTION_DAYS < db.RETENTION_DAYS
+
+
 class TestMaybePrune:
     """The scheduler calls this about once a second; it must do real work at
     most once a day."""

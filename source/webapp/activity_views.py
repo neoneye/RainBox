@@ -19,8 +19,9 @@ escapes in any inline script.
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
-from flask import render_template_string, request
+from flask import abort, render_template_string, request, url_for
 
 import db
 from llm.activity_metrics import MIN_CALIBRATION_CALLS
@@ -506,6 +507,8 @@ ACTIVITY_TEMPLATE = """
   .pp-act .gap { display: flex; gap: 2.2rem; flex-wrap: wrap; align-items: flex-start; }
   .pp-act .gap .reading { max-width: 34rem; color: #374151; font-size: 0.9rem;
                           line-height: 1.45; }
+  .pp-act a.inspect { color: #0653a8; text-decoration: none; font-size: 0.85rem; }
+  .pp-act a.inspect:hover { text-decoration: underline; }
 </style>
 <main class="pp-act">
   <h1>Activity</h1>
@@ -746,6 +749,7 @@ ACTIVITY_TEMPLATE = """
         <th class="num" title="Time spent processing the prompt before the first output token.">Prefill</th>
         <th class="num" title="Wall-clock time for the whole call.">Total</th>
         <th></th>
+        <th></th>
       </tr>
       {% for call in recent %}
       <tr>
@@ -763,6 +767,8 @@ ACTIVITY_TEMPLATE = """
         <td class="num" title="{{ exact(call.total_ms, 'ms') }}">{{ ms(call.total_ms) }}</td>
         <td>{% if not call.ok %}<span class="bad">{{ call.error_category
             or 'failed' }}</span>{% endif %}</td>
+        <td><a class="inspect" href="{{ url_for('activity_call_page',
+               call_uuid=call.uuid) }}">inspect</a></td>
       </tr>
       {% endfor %}
     </table>
@@ -773,8 +779,131 @@ ACTIVITY_TEMPLATE = """
 """
 
 
+CALL_TEMPLATE = """
+<!doctype html>
+<title>Call &mdash; rainbox</title>
+{% include "_nav.html" %}
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; color: #1a1a2e;
+         background: #fff; }
+  .pp-call { margin: 1rem 0; padding: 0 1rem 3rem; }
+  .pp-call h1 { margin: 0.2rem 0; font-size: 1.3rem; }
+  .pp-call .sub { color: #6c757d; margin: 0 0 1.2rem; }
+  .pp-call .sub a { color: #0653a8; text-decoration: none; }
+  .pp-call .facts { display: grid; gap: 0.9rem; margin-bottom: 1.6rem;
+                    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .pp-call .fact { border: 1px solid #e5e7eb; border-radius: 10px;
+                   padding: 0.7rem 0.8rem; }
+  .pp-call .fact .k { color: #6c757d; font-size: 0.78rem; text-transform: uppercase;
+                      letter-spacing: 0.04em; }
+  .pp-call .fact .v { font-size: 1.05rem; font-weight: 600; margin-top: 0.15rem;
+                      overflow-wrap: anywhere; }
+  /* The Cached tile carries its qualifier in full rather than in a hover:
+     "estimated from prefill timing" and "reported by the provider" are
+     different claims, and a page for reading one call has the room to say
+     which this is. */
+  .pp-call .fact .n { color: #6c757d; font-size: 0.78rem; margin-top: 0.25rem;
+                      font-weight: 400; line-height: 1.35; }
+  .pp-call .panel { border: 1px solid #e5e7eb; border-radius: 10px; padding: 1rem;
+                    margin-bottom: 1.2rem; }
+  .pp-call .panel h2 { margin: 0 0 0.1rem; font-size: 1rem; }
+  .pp-call .panel .note { color: #6c757d; font-size: 0.85rem; margin: 0.1rem 0 0.7rem; }
+  .pp-call .role { display: inline-block; font-family: ui-monospace, monospace;
+                   font-size: 0.75rem; text-transform: uppercase;
+                   letter-spacing: 0.04em; color: #6c757d; }
+  /* pre-wrap, not pre: a prompt has its own long lines and a horizontal
+     scrollbar per block would make comparing two calls a chore. */
+  .pp-call pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.3rem 0 0;
+                 font-family: ui-monospace, monospace; font-size: 0.82rem;
+                 line-height: 1.45; background: #f8fafc; border: 1px solid #eef2f7;
+                 border-radius: 8px; padding: 0.7rem 0.8rem; }
+  .pp-call .gone { color: #6c757d; font-style: italic; }
+</style>
+<main class="pp-call">
+  <h1>{{ call.caller }} &middot; {{ call.model or 'unknown model' }}</h1>
+  <p class="sub">{{ call.started_at.strftime('%b %-d %Y, %H:%M:%S')
+                    if call.started_at else 'unknown time' }}
+     &middot; <a href="{{ url_for('activity_page') }}">back to Activity</a></p>
+
+  <div class="facts">
+    <div class="fact"><div class="k">Prompt</div>
+      <div class="v">{{ exact(call.prompt_tokens, 'tokens') }}</div></div>
+    <div class="fact"><div class="k">Cached</div>
+      <div class="v">{{ cache_text }}</div>
+      <div class="n">{{ cache_hover }}</div></div>
+    <div class="fact"><div class="k">Reusable</div>
+      <div class="v">{{ exact(call.reusable_prefix_tokens, 'tokens') }}</div></div>
+    <div class="fact"><div class="k">Output</div>
+      <div class="v">{{ exact(call.completion_tokens, 'tokens') }}</div></div>
+    <div class="fact"><div class="k">Prefill</div>
+      <div class="v">{{ ms(call.prefill_ms) }}</div></div>
+    <div class="fact"><div class="k">Total</div>
+      <div class="v">{{ ms(call.total_ms) }}</div></div>
+    <div class="fact"><div class="k">Origin</div>
+      <div class="v">{{ call.origin or '—' }}</div></div>
+  </div>
+
+  {% if messages %}
+    {% for m in messages %}
+    <div class="panel">
+      <h2><span class="role">{{ m.role }}</span></h2>
+      <p class="note">{{ '{:,}'.format(m.content|length) }} characters</p>
+      <pre>{{ m.content }}</pre>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="panel">
+      <h2>Prompt</h2>
+      <p class="gone">Not stored. Calls recorded before rainbox kept prompt
+         text, and calls older than {{ prompt_retention_days }} days (whose text
+         is cleared while the metrics above stay), have nothing to show here.</p>
+    </div>
+  {% endif %}
+
+  <div class="panel">
+    <h2><span class="role">response</span></h2>
+    {% if call.response_text %}
+    <p class="note">{{ '{:,}'.format(call.response_text|length) }} characters</p>
+    <pre>{{ call.response_text }}</pre>
+    {% else %}
+    <p class="gone">No response text on this row &mdash; the call returned
+       nothing, or its text has been cleared.</p>
+    {% endif %}
+  </div>
+</main>
+"""
+
+
 @app.route("/activity")
 def activity_page() -> str:
     return render_template_string(
         ACTIVITY_TEMPLATE, **build_context(request.args, datetime.now(UTC))
+    )
+
+
+@app.route("/activity/call/<uuid:call_uuid>")
+def activity_call_page(call_uuid: UUID) -> str:
+    """One call in full: what was sent, message by message, and what came back.
+
+    Its own page rather than an expander in the list, because the text is
+    deferred on the row — fifty expanders would mean fifty prompts loaded to
+    show none of them."""
+    call = db.get_llm_call(call_uuid)
+    if call is None:
+        abort(404)
+    messages = [
+        {"role": str(m.get("role") or "?"), "content": str(m.get("content") or "")}
+        for m in (call.messages or [])
+        if isinstance(m, dict)
+    ]
+    cache_text, cache_hover, _cls = cache_reading(call)
+    return render_template_string(
+        CALL_TEMPLATE,
+        call=call,
+        messages=messages,
+        cache_text=cache_text,
+        cache_hover=cache_hover,
+        prompt_retention_days=db.PROMPT_RETENTION_DAYS,
+        exact=exact,
+        ms=ms,
     )

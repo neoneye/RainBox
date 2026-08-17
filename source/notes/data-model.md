@@ -474,6 +474,40 @@ Key fields:
 
 Counters should be derived from this table.
 
+### `llm_call`
+
+One row per LLM call rainbox makes, written by the always-on instrumentation
+handler (`llm/activity.py`) rather than by any call site. Everything on
+`/activity` reads this table. Observational only: nothing reads these rows
+back into a decision, so a missing row degrades a chart, never behaviour.
+
+Key fields:
+
+- `provider`, `model`, `model_uuid`
+- `caller`: which part of rainbox issued the call (`assistant.decide`,
+  `assistant.run_summarizer`, `benchmark.<story>`), from the call site's
+  `instrument_tags`. The same names as the `/agentmodel` rows
+- `origin`: the `file:line in function` that made the call, derived from the
+  stack rather than tagged, so a row is never a dead end
+- `prompt_tokens`, `completion_tokens`, `prefill_ms`, `decode_ms`, `total_ms`
+- `cached_tokens_reported` / `cached_tokens_estimated` /
+  `reusable_prefix_tokens`: three separate cache numbers that must not be
+  blended — what the provider said, what prefill timing implies, and how much
+  of this prompt had already been sent
+- `saved_ms`: prefill time this call banked, judged once at record time
+- `prefix_chain`: cumulative hashes of the prompt's fixed-size blocks, for
+  measuring a shared prefix against later calls
+- `messages`: the outgoing messages as `[{role, content}]`, and
+  `response_text`: what the model returned. Both **deferred** — they dwarf the
+  rest of the row, and the charts, rollups and recent-calls list all read rows
+  without wanting them. The call detail view (`/activity/call/<uuid>`) is what
+  loads them
+
+Two retention horizons: rows are pruned at `RETENTION_DAYS` (90), and the
+prompt/response text is cleared on its own shorter `PROMPT_RETENTION_DAYS`
+(14) while the metrics stay. So a row with NULL text is ordinary — an old
+call, or one recorded before the columns existed — not an error.
+
 ## Git Tables
 
 ### `git_folder`

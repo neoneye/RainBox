@@ -344,6 +344,12 @@ def init_db(app: Flask) -> None:
         # llm_call gained origin: the file:line that made the call, so an
         # odd-looking row can be traced back to code.
         _add_column_if_missing("llm_call", "origin", "origin TEXT")
+        # llm_call gained the prompt and response text behind each row, so
+        # /activity can show what a call actually sent — the question every
+        # cache reading on that page raises. Both NULL on rows recorded before
+        # this, and on rows whose text has aged past PROMPT_RETENTION_DAYS.
+        _add_column_if_missing("llm_call", "messages", "messages JSONB")
+        _add_column_if_missing("llm_call", "response_text", "response_text TEXT")
         _add_column_if_missing("model_config", "provider",
                                "provider TEXT NOT NULL DEFAULT "
                                f"'{PREFERRED_PROVIDER_ID}'")
