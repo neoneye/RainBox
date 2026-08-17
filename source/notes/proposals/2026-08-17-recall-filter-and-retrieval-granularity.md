@@ -4,10 +4,12 @@
 own permanent tests, are implementable. The retrieval architecture is not
 designed and must not be built from this document.
 **Date:** 2026-08-17 (revised 2026-08-18)
-**Revision:** 6 — a fifth review rejected revision 5's R1 branch decision as
-unsafe and its R2 acceptance criteria as mathematically inconsistent. Both are
-corrected here, along with the renderer contract, the test sequencing and the
-test inventory. Earlier factual errors are kept in the table below rather than
+**Revision:** 7 — R1 and R2 are approved for execution. Revision 6 fixed the
+unsafe branch decision and the inconsistent budget arithmetic; this revision adds
+the mechanical contracts a sixth review asked for, so nothing is invented during
+coding: the symbols R1 removes, the existing assertion it inverts, the block
+budget's exact meaning, the helper's signature and guarantees, and the claim
+renderer's `"no evidence"` fallback. Earlier factual errors are kept in the table below rather than
 quietly folded in; git holds the earlier text.
 **Relates to:** `qa-system.md`, `memory-architecture.md`,
 `assistant-design.md` §Model slots and §Acceptance criteria.
@@ -109,6 +111,18 @@ Acceptance criteria, permanent:
 - both branches still carry recall-filter diagnostics in `obs.data`;
 - trace and inspector visibility unchanged.
 
+**Symbols removed** (each used only inside `assistant.py`, verified):
+`RECALL_FILTER_ASSESSMENT_CHARS`, `_ASSESSMENT_FENCE_OPEN`,
+`_ASSESSMENT_FENCE_CLOSE`, `_recall_filter_assessment_line`. Dead fencing left
+behind would invite the next caller to re-inject.
+
+**Existing test to invert:** `test_assistant_actions.py:513` currently asserts
+the note reaches `obs.text` — `"<memory_filter_assessment note=" in obs.text`,
+`"NOT instructions" in obs.text`, and
+`obs.text.rstrip().endswith("</memory_filter_assessment>")`. It becomes the
+assertion that none of that is present, while keeping its check that the
+reasoning survives in `obs.data`.
+
 ### R2 — One structured fact renderer, with a rendered cap
 
 **Renderer contract.** `_fact_line(uuid, tags, text)` (`assistant.py:1146`)
@@ -122,7 +136,10 @@ becomes the sole fact renderer:
   the parse is fragile besides — it splits on the first `": "` in a line it did
   not construct;
 - existing tags are preserved exactly: seeds keep `seed/{source}`, `dynamic`
-  and `{path}`; claims keep `{kind}`, `{sensitivity}` and the evidence summary;
+  and `{path}`; claims keep `{kind}`, `{sensitivity}` and the evidence summary
+  — **including the `"no evidence"` fallback** when `evidence_summary` is empty,
+  which `format_memory_context` supplies today and a structured renderer must
+  reproduce rather than emit an empty tag;
 - uuid full-fetch behaviour (`_query_memory_full`) is unchanged.
 
 **Budget semantics.** Revision 5's "source-character allowance unchanged at
@@ -132,28 +149,39 @@ omitted candidate cannot all hold at once.
 
 `MEMORY_QUERY_PER_FACT_CHARS = 1200` is redefined as the **maximum rendered
 fact-text length, marker included**. The block budget is then untouched and no
-candidate is displaced by marker overhead.
+candidate is displaced by marker overhead. The `truncate1200` tag now names a
+rendered ceiling while the in-band marker states the actual number dropped —
+consistent, which they were not under revision 5's reading.
 
-Implementation: `truncate_middle(text, limit)` returns `limit` source characters
-*plus* a marker of `45 + digits(dropped)` characters, so the limit must be solved
-for rather than passed straight through. Measured values for a 1200 cap:
+**The block budget keeps today's meaning for this patch.**
+`MEMORY_QUERY_TOTAL_CHARS = 11000` covers `RECALLED_MEMORY_LEGEND`, the
+per-line newlines, and the retained fact lines — and excludes the
+`<recalled_memory>` fence and the explanatory suffixes, which is what the code
+does today (`used = len(RECALLED_MEMORY_LEGEND) + 1`, then `len(line) + 1` per
+kept line). Rename it `MEMORY_QUERY_FACT_PAYLOAD_CHARS` so the name states that.
+A true whole-observation budget is a separate change and is not in scope.
 
-| source chars | limit passed | rendered |
-| --- | --- | --- |
-| 1201 | 1153 | 1200 |
-| 1947 | 1152 | 1200 |
-| 5178 | 1151 | 1200 |
-| 100000 | 1150 | 1200 |
+**The helper.** In `agents/base.py`, beside `truncate_middle` — **not** a change
+to it, whose contract the run summarizer depends on:
 
-One fixed-point step converges (compute the limit from the marker length implied
-by the cap, then decrement while the rendered result exceeds the cap). This
-belongs beside `truncate_middle` in `agents/base.py` as a sibling helper with a
-rendered-length guarantee — **not** as a change to `truncate_middle` itself,
-whose existing contract the run summarizer depends on.
+```
+truncate_middle_to_length(text: str, max_length: int) -> str
+```
 
-The `truncate1200` tag now names a rendered ceiling and the in-band marker states
-the actual number dropped. Those are consistent, which they were not under
-revision 5's reading.
+Contract:
+
+- text at or below `max_length` is returned unchanged;
+- the returned string is **never** longer than `max_length`;
+- both ends of the source are retained;
+- the largest possible amount of source text is retained (maximality);
+- a `max_length` too small to hold the marker raises `ValueError`.
+
+**It must not restate the marker's shape.** Solving the allowance with a
+hard-coded `45 + digits(dropped)` would drift the moment the marker's wording
+changes. Solve by calling `truncate_middle` and measuring what comes back —
+binary-search the limit in `[0, max_length]` for the largest whose rendered
+result fits. Roughly eleven calls at a 1200 cap, and correct by construction for
+any future marker.
 
 ### Test inventory
 
@@ -171,6 +199,16 @@ memory_query truncation tests:
 - both retain assessment diagnostics in `obs.data`;
 - uuid lookup still returns the complete untruncated fact;
 - fixtures and assertion messages contain no private data.
+
+Helper-level tests go beside the existing `truncate_middle` tests in
+`agents/test_assistant_long_request.py`:
+
+- input at and below the cap is returned unchanged;
+- 1201, 1947, 5178 and 100000-character inputs;
+- rendered length is exactly the cap where the source exceeds it;
+- both ends preserved;
+- maximality — one more source character would breach the cap;
+- a cap too small for the marker raises.
 
 ## Decided in principle, blocked on design and measurement
 
