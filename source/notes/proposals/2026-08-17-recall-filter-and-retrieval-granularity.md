@@ -174,7 +174,8 @@ Contract:
 - the returned string is **never** longer than `max_length`;
 - both ends of the source are retained;
 - the largest possible amount of source text is retained (maximality);
-- a `max_length` too small to hold the marker raises `ValueError`.
+- a `max_length` too small to hold the marker plus at least one character from
+  each end raises `ValueError`.
 
 **It must not restate the marker's shape.** Solving the allowance with a
 hard-coded `45 + digits(dropped)` would drift the moment the marker's wording
