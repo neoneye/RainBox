@@ -194,9 +194,11 @@ action for facts. It:
    brackets sanitized). The fence holds only bare fact lines
    (`{uuid}, {tags}: {text}`); the format legend and the truncation note live
    *outside* it (they are the assistant's own instructions, not recalled
-   data). The scorer's think-before-scoring note is appended in its own
-   `<memory_filter_assessment>` fence — LLM output generated from stored
-   data, so it gets the same untrusted-data treatment.
+   data). The scorer's think-before-scoring note is NOT part of the
+   observation text: it is one model's summary of a candidate set, and a
+   traced run had it asserting that no candidate held an answer that was in
+   the candidate list. It stays in `observation.data["recall_filter"]`, on the
+   step row and in the inspector.
 
 Seed fact tags are, in order: `seed/<source>` (`seed/user-overlay` or
 `seed/upstream`), `dynamic` for handler entries, the entry's `path` (omitted

@@ -1439,18 +1439,39 @@ def test_query_memory_truncates_large_facts_and_tags_them(app_ctx):
     assert "characters dropped from the middle" in fact
 
 
+# The incident's geometry, synthetic: a 1947-character answer whose
+# answer-bearing span sits at offset 1795 with 133 characters after it. A
+# head-only cut at 1200 removes it; a middle cut keeps it. The numbers are
+# asserted rather than described so a later edit cannot quietly slide the span
+# into the head region, where this test would pass without proving anything.
+INCIDENT_SENTINEL = "THE-ANSWER-IS-HERE"
+INCIDENT_ANSWER = (
+    "opening. " + "middle. " * 223 + "x" * 2
+    + INCIDENT_SENTINEL
+    + " closing. " + "z" * 124
+)
+
+
+def _assert_incident_geometry(text: str) -> None:
+    """The fixture only guards the defect if the sentinel is where the incident
+    put it: past the head-only cut, and not flush with the end."""
+    assert len(text) == 1947, len(text)
+    assert text.index(INCIDENT_SENTINEL) == 1795, text.index(INCIDENT_SENTINEL)
+    trailing = len(text) - (text.index(INCIDENT_SENTINEL) + len(INCIDENT_SENTINEL))
+    assert trailing >= 91, trailing
+
+
 def test_query_memory_keeps_the_tail_of_a_long_seed_fact(app_ctx):
     """The defect this guards: a head-only cut dropped the end of a kept fact,
     and these answers accumulate by appending — so the newest and most specific
     material is exactly what a head-only cut removes."""
     from memory.seed_memory import SeedMemory
-    answer = "opening. " + "middle. " * 400 + "THE ANSWER IS HERE."
-    assert len(answer) > 1200
+    _assert_incident_geometry(INCIDENT_ANSWER)
     def fake_seed(query, *, qctx, **_):
         return [SeedMemory(uuid="u-tail", path="p", source="user-overlay",
-                           answer=answer, score=0.9, kind="static")]
+                           answer=INCIDENT_ANSWER, score=0.9, kind="static")]
     obs = _action_query_memory(_ctx(), {"query": "q"}, _seed_retriever=fake_seed)
-    assert "THE ANSWER IS HERE." in obs.text
+    assert INCIDENT_SENTINEL in obs.text
     assert obs.text.count("opening.") == 1
 
 
@@ -1458,11 +1479,9 @@ def test_query_memory_keeps_the_tail_of_a_long_remembered_fact(app_ctx, monkeypa
     """The same guarantee for claims, which reached the prompt through a second
     truncation path that cut head-only after this one was fixed. Both kinds now
     go through one renderer, so they cut identically."""
-    from agents import assistant as A
-
-    text = "opening. " + "middle. " * 400 + "THE ANSWER IS HERE."
+    _assert_incident_geometry(INCIDENT_ANSWER)
     claim = MemoryClaim(
-        uuid=uuid4(), kind="fact", scope="global", text=text,
+        uuid=uuid4(), kind="fact", scope="global", text=INCIDENT_ANSWER,
         confidence=0.9, sensitivity="private", status="active")
 
     class _Retrieved:
@@ -1472,14 +1491,13 @@ def test_query_memory_keeps_the_tail_of_a_long_remembered_fact(app_ctx, monkeypa
             self.confidence, self.reason = c.confidence, "fulltext"
             self.evidence_summary = []
 
-    monkeypatch.setattr(A, "retrieve_memories_hybrid",
-                        lambda *a, **k: [_Retrieved(claim)], raising=False)
+    # _action_query_memory imports this from memory.retrieval at call time.
     import memory.retrieval as retrieval
     monkeypatch.setattr(retrieval, "retrieve_memories_hybrid",
                         lambda *a, **k: [_Retrieved(claim)])
     obs = _action_query_memory(_ctx(), {"query": "q"},
                                _seed_retriever=lambda q, *, qctx, **_: [])
-    assert "THE ANSWER IS HERE." in obs.text
+    assert INCIDENT_SENTINEL in obs.text
     # Same shortening syntax as a seed fact: one renderer, one shape.
     assert "truncate1200:" in obs.text
     assert "characters dropped from the middle" in obs.text

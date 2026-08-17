@@ -961,8 +961,10 @@ observation says a fact was shortened/omitted and you need to fetch that
 specific fact by uuid.
 Do not reuse an answer from an earlier message: stored facts may have changed
 or become restricted since, and live values change between turns.
-A recalled fact tagged `truncateN` (e.g. `truncate1200`) is shortened to N
-characters, and an "omitted" note means lower-ranked facts were dropped to fit.
+A recalled fact tagged `truncateN` (e.g. `truncate1200`) had its MIDDLE
+dropped to fit N characters — both ends are present and the gap says in band
+how much went — and an "omitted" note means lower-ranked facts were dropped to
+fit.
 When you need the full text of such a fact, call `memory_query` again with that
 fact's uuid — `{"uuid": "<the fact's uuid>"}` — instead of a query.
 When a step fails, fix the specific problem it reports — never resubmit the same
@@ -1707,7 +1709,8 @@ def _action_query_memory(
         # DECIDE_TURN_INSTRUCTIONS.
         segs = []
         if truncated_count:
-            segs.append(f"Long facts shortened to {MEMORY_QUERY_PER_FACT_CHARS} chars "
+            segs.append(f"Long facts had their middle dropped to fit "
+                        f"{MEMORY_QUERY_PER_FACT_CHARS} chars "
                         f"(tagged truncate{MEMORY_QUERY_PER_FACT_CHARS}).")
         if omitted:
             segs.append(f"{omitted} lower-ranked fact(s) omitted.")

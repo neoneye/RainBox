@@ -81,9 +81,12 @@ Neither fix needs a model. Both are rendering changes on the
 `_action_query_memory` path, which is the real path and makes for less brittle
 tests than replaying fixed criteria/decide outputs.
 
-**Fixture data is synthetic.** A structurally equivalent neutral record — same
-length, same position of the answer-bearing span, same sibling shape — lives in
-the repository. The operator's actual case lives only under `customize.dir`. No
+**Fixture data is synthetic.** A neutral record reproducing the incident's
+geometry — 1947 characters, the answer-bearing sentinel at offset 1795, at least
+91 characters following it — lives in the repository, pinned by assertion so a
+later edit cannot quietly move the span into the region a head-only cut would
+have kept. Sibling arrangement is not reproduced: it bears on retrieval, which
+these two fixes do not touch. The operator's actual case lives only under `customize.dir`. No
 private text may appear in a repository fixture, an assertion message, a
 snapshot or CI output. The first implementation step must not violate N1.
 
