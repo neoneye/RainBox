@@ -1,104 +1,277 @@
-# Recall: three failures that agreed with each other
+# Recall: decisions, rollout, and the incident that prompted them
 
 **Status:** Proposed. Nothing implemented.
 **Date:** 2026-08-17
-**Revision:** 2 — rewritten after external review. Revision 1 named truncation
-as the cause, absolved the data model, and proposed a fix that made the
-relevance scorer *less* informed. All three positions were wrong; what changed
-and why is recorded in "What revision 1 got wrong" below, because the mistakes
-are instructive about how a single trace misleads.
+**Revision:** 3 — restructured as an implementation plan after a second review.
+Revisions 1 and 2 were post-mortems; the evidence now lives in an appendix and
+the body makes decisions. Git holds the earlier text.
 **Relates to:** `qa-system.md`, `memory-architecture.md`,
 `assistant-design.md` §Model slots and §Acceptance criteria.
 
-## Summary for a reviewer with no context
+## What happened, in five lines
 
-The assistant refused to answer a question whose answer is stored, verbatim, in
-the Q&A registry. It did not fail to find it. **Three independent defects lined
-up and pointed the same way:**
+A turn refused to answer a question whose answer is stored verbatim in the Q&A
+registry. Retrieval found the entry, the keep policy kept it, and three
+independent defects then agreed with each other: the acceptance-criteria call had
+already written that the answer must be a refusal; the recall scorer read the
+answering text and called it irrelevant; and the injection cut the answering
+sentence off head-only at 1200 characters. The reply audit approved the result in
+17 tokens. Full evidence in the appendix.
 
-1. **The acceptance-criteria call pre-committed the run to a refusal, before any
-   retrieval ran**, on a false premise about its own capabilities — violating its
-   own instructions in the exact manner those instructions warn about by name.
-2. **The recall filter's scorer read the answering text and judged it
-   irrelevant**, then had its wrong conclusion injected beside the evidence.
-3. **The injection then cut the answering sentence off**, head-only, at a
-   1200-character cap.
+## Decisions
 
-Any one alone might have been survivable. Together they produced a confident,
-well-formatted refusal that the reply audit approved as "sound".
+Each decision states what is rejected and what it costs. Nothing here is
+conditional on a later decision except where said.
 
-The lesson that generalises: **this system's checks are not independent.** The
-criteria, the scorer's assessment and the audit all consumed the same
-conversation history and the same model, and all three agreed with each other
-rather than with the stored data. A run's defences being correlated is worth
-more attention than any single one of them being wrong.
+### D1 — Model-generated `assumptions` stops reaching the answering prompts
 
-## The pipeline, for orientation
+`_format_criteria_markdown` emits `Processing`, `Formatting` and `Assumptions`,
+and that Markdown is injected into both the decide prompt and the reply-audit
+prompt. On the traced run `assumptions` carried a false claim about the system's
+own capabilities and an instruction that the answer be a reiteration of it.
 
-`memory_query` is an assistant read action. One call runs this chain
-(`agents/assistant.py:_filter_recalled_candidates`, `memory/seed_memory.py`):
+**Decision:** drop `assumptions` from the injected Markdown. Keep the field on
+the structured object, the trace row and the `/assistant` inspector.
 
-1. **Seed retrieval** — `_hybrid_seed_ranked` returns the top `TOP_K_VECTOR=5`
-   entries by embedding similarity over **questions only**, plus the top
-   `TOP_K_FULLTEXT=5` by lexical full-text over questions and answers,
-   deduplicated and interleaved. The two signals are not weighted against each
-   other.
-2. **Claim retrieval** — `retrieve_memories_hybrid` adds remembered facts from
-   the `/memory` store as further candidates.
-3. **One relevance-scoring LLM call** over the combined set, returning a
-   `reasoning` note plus three Likert scales per candidate (`direct`,
-   `indirect`, `relevancy`). Candidates are rendered here with their **full**
-   answer text — `seed_candidate_rows` applies no length cap.
-4. **A code-side keep/drop policy**, `apply_filter_scores`. The LLM supplies
-   numbers; the decision is code.
-5. **Injection** — kept candidates go into `<recalled_memory>` in the decide
-   prompt, each fact capped at `MEMORY_QUERY_PER_FACT_CHARS = 1200` and the
-   block at `MEMORY_QUERY_TOTAL_CHARS = 11000`. The scorer's `reasoning` is
-   injected alongside as `<memory_filter_assessment>`.
+The criteria call's job is the *shape* of the reply. `processing` and
+`formatting` are shape. `assumptions` is the only field that carries free-form
+prose about content, and it is the field that failed. Removing it from the prompt
+removes the mechanism rather than asking a model to police itself.
 
-Two calls bracket all of this: `acceptance_criteria` runs before step 0 and its
-output is injected into every later prompt at source-priority rank 4;
-`reply_audit` checks the finished message before it is sent.
+**Rejected — a code-side validator on the field.** Revision 2's checklist assumed
+one while its own design section left the choice open. Detecting prose that
+"settles the answer" needs either brittle keyword rules or another model call;
+both are new failure surfaces guarding a field that has no business in the prompt
+anyway.
 
-## The traced run
+**Rejected — reordering the criteria call after the first read.** It would make
+the call observe rather than assume, and it costs a step, reorders the loop, and
+leaves the field free to assert content once it has some.
 
-Anonymised worked example, structurally identical to the real one: three sibling
-entries under one topic, the answer in the parent, at the parent's end.
+**Cost, stated plainly:** `assumptions` is also where the criteria call records an
+ambiguity the settings cannot resolve — the signal that the assistant should ask
+a clarifying question rather than guess. Dropping it from the prompt weakens that
+path. This is a real regression and it is why the harness (D6) measures
+clarifying-question rate alongside unsupported-refusal rate. If the clarifying
+path degrades measurably, the answer is a separate narrow field carrying only
+unresolved ambiguities, not the return of free prose.
 
-### Step 2 — the criteria call, before any retrieval
+### D2 — `<memory_filter_assessment>` stops reaching the answering prompt
 
-The `assumptions` field came back as (domain nouns redacted):
+The scorer's `reasoning` is lossy commentary about a set of candidates, injected
+beside the candidates themselves. On the traced run it was the second voice
+asserting the answer was absent.
+
+**Decision:** stop injecting it. Keep it in the trace and in the `memory_query`
+observation data, where the operator reads it.
+
+**Rejected — inject only when the scorer kept nothing.** Plausible, and it keeps
+a genuinely useful "why nothing matched" note, but it adds a conditional prompt
+section for a case the harness has not yet shown to matter. Revisit after D6.
+
+### D3 — Both head-only truncation paths become `truncate_middle`, cap unchanged
+
+`_fact_line` (`assistant.py:1146`) cuts seed entries with `text[:1200]`; a second
+path cuts remembered facts the same way at `assistant.py:1679`.
+
+**Decision:** switch both to `truncate_middle`. **Do not change the cap in the
+same step.**
+
+`agents/base.py:truncate_middle` already calls itself "the one shortening shape
+every agent uses on text a model will read"; this restores a stated invariant and
+brings the in-band marker with it. The same bug was fixed once already for the
+run summarizer (`867cd4a`).
+
+**Rejected for now — resizing the cap, and "a share of remaining budget."**
+Revision 2 proposed both. The share-of-budget scheme is order-dependent: facts
+rendered first would starve later ones unless the budget is computed across the
+whole kept set with a reserved minimum per candidate, which is a design nobody
+has written. And resizing before the harness exists is exactly the
+measure-before-architecture violation this document keeps warning about. Cap
+sizing is benchmarked in D6, not guessed here.
+
+### D4 — Retrieval units are derived from parent entries, not authored
+
+The traced parent is 1947 characters covering onset, diagnosis, affected areas,
+treatment history, progress, time cost and current schedule, with three questions
+attached. 28 of 148 operator entries (18.9%) exceed today's cap; p90 is 1684, max
+5178.
+
+**Decision:** keep the parent entry as the authoritative record and derive child
+retrieval units from it. Children are **derived state, regenerated on
+repopulate** — the same lifecycle the registry already has (`rebuild_kb` replaces
+`_entries_by_id` wholesale).
+
+That answers the lifecycle questions the review raised, and it answers them by
+construction rather than by policy:
+
+| question | answer |
+| --- | --- |
+| IDs when a parent is edited and boundaries move | child id = deterministic hash of (parent id, subtopic slug), not of offsets — an edit that does not change the subtopic does not reissue the id |
+| persisted or regenerated | regenerated on repopulate; children are never authored |
+| stale removal | none needed: the index is rebuilt, not patched |
+| who authors child aliases | nobody — children carry a **contextual prefix** (subject + topic + subtopic) instead, which is what makes them self-contained |
+| alias inheritance and sibling crowding | aliases are **not** inherited; inheritance is precisely what would make four children of one parent compete as four copies of the same question |
+
+**Rejected — hand-authoring children.** ~150 entries, and it puts the operator in
+the loop for every future edit.
+
+**Open, and blocking D8 only:** the derivation pass is an LLM pass over the
+registry and is its own quality surface. It needs the harness before it, not
+after.
+
+### D5 — Parent diversity is an evaluated policy, not an invariant
+
+Revision 2 proposed capping each parent to one or two candidates. A question
+needing three facts from one record would break under that as an invariant.
+
+**Decision:** implement the per-parent cap as a configurable N applied **after
+reranking**, defaulting to 2, and report its effect in the harness. It is a
+diversity knob, not an architectural rule.
+
+### D6 — The regression harness lands before any behavioural change
+
+**Decision:** the first commit is a failing end-to-end regression reproducing the
+observed failure, with stage-level assertions. Every fix after it lands
+individually, and the harness is re-run between each.
+
+Stages asserted, because a single end-to-end assertion cannot tell these apart:
+
+| stage | assertion |
+| --- | --- |
+| retrieval | expected unit in candidates; chunk recall@k |
+| ranking | reranker MRR / nDCG over the case set |
+| injection | answer-bearing span present in the decide prompt; injected chars vs source chars |
+| answer | **the actual answer**, not the entry id and not a surviving substring |
+| refusal | unsupported-refusal rate |
+| clarification | clarifying-question rate (D1's stated cost) |
+| cost | latency and tokens per turn |
+
+The harness also records, per call: resolved model uuid, model family, sampling
+settings, and agreement between the criteria, scorer and audit calls — see D7.
+
+Neutral cases in the repo; operator-derived cases under `customize.dir`. Include
+cases that currently pass.
+
+**Counterfactual matrix**, run once the harness exists and before the
+architecture work: truncation only; D1 only; D2 only; a dedicated child unit
+only; then combinations. This is what settles whether the criteria or the
+truncation was decisive — the question revision 2 asserted an answer to and could
+not support.
+
+### D7 — "Different groups" is an experiment in decorrelation, not independence
+
+Every call in the traced run — criteria, decide, scorer, audit — was answered by
+one model, because the assistant had a single binding. The per-call slots make
+separation possible.
+
+**Decision:** bind `assistant.acceptance_criteria`, `assistant.memory_filter` and
+`assistant.reply_audit` away from `assistant.default`, and **treat it as an
+experiment whose effect the harness measures**, not as a guarantee. Distinct
+group uuids can still resolve to the same model config or the same family; the
+harness records the resolved model uuid and family per call and reports error
+correlation between them. No claim of independent defences is made on the basis
+of the binding alone.
+
+### D8 — The architecture, after the counterfactuals
+
+Embed question aliases **and child answer text**; run lexical retrieval over the
+same children; fuse the two rankings with reciprocal rank fusion (which needs no
+commensurable scores — the property the current code already relies on when it
+refuses to weight its two signals); rerank (query, chunk) pairs; inject the
+winning chunk, expanding to neighbours or the parent on demand.
+
+This is the shape Anthropic's
+[Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval)
+describes (chunk, contextualise, embeddings + BM25, fuse, rerank), that
+Elasticsearch's `semantic_text` implements by scoring a parent through its best
+passage, and that LlamaIndex's sentence-window implements by expanding a matched
+sentence to a local window rather than to the whole parent.
+
+**Rejected — deleting the generative Likert filter outright.** It cost 32.7
+seconds on the traced run, was wrong, and the code-side rank rule rather than the
+filter is what saved the candidate. All true, and still not grounds to delete a
+component on one trace: the same helper serves `query_filter_router`. It is
+*replaced* by a reranker if and when D6 shows the reranker better on the same
+cases.
+
+## Rollout sequence
+
+1. Failing end-to-end regression reproducing the observed failure (D6).
+2. Stage-level assertions: retrieval, ranking, injection, answer, refusal,
+   clarification, cost (D6).
+3. `truncate_middle` in both paths, cap unchanged (D3).
+4. Drop `assumptions` from the injected criteria Markdown (D1).
+5. Stop injecting `<memory_filter_assessment>` (D2).
+6. Run the counterfactual matrix; publish which change moved which metric (D6).
+7. Bind the three slots to distinct groups; record model identity and error
+   correlation (D7).
+8. Prototype derived child units on one parent family, with contextual prefixes,
+   without duplicating the authoritative record (D4).
+9. Define and test regeneration, id stability, fusion and parent diversity (D4,
+   D5).
+10. Compare child-chunk retrieval against entry retrieval on the harness.
+11. Select and integrate a reranker, or keep the filter, on that evidence (D8).
+12. Benchmark cap sizes (D3's deferred half).
+
+## Evaluation and rollback
+
+- **Gate for each of 3–5:** the harness's existing cases do not regress, and the
+  targeted metric moves. A change that fixes the traced case and lowers answer
+  correctness elsewhere is reverted, not tuned.
+- **Rollback:** 3–5 and 7 are each a small, independently revertible commit.
+  8–11 land behind the harness and are not enabled for live turns until the
+  chunk path beats the entry path on answer correctness at equal or lower cost.
+- **Stop condition for D1's cost:** if clarifying-question rate falls without a
+  matching fall in unsupported-refusal rate, D1 is wrong as implemented and the
+  narrow-field variant is built instead.
+
+## Open questions
+
+- **Was the criteria call or the truncation decisive?** Not answerable from one
+  trace; the counterfactual matrix in D6 answers it, and the answer determines
+  whether D1 or D4/D8 was the higher priority all along.
+- **Should a `truncateN` tag force a re-read rather than offer one?** The
+  affordance exists in `DECIDE_TURN_INSTRUCTIONS`, steps remained, and it was not
+  used. Cheap to settle: grep recorded runs for uuid-mode `memory_query`
+  following a `truncateN` tag.
+- **Do remembered facts and seed entries belong in one scored set?** Six short
+  facts against seven long entries under one policy and one budget, never tested.
+- **Where does a reranker run?** A second model server and a new dependency.
+
+## Appendix — the evidence
+
+### The criteria call, step 2, before any retrieval
+
+`assumptions` came back as (domain nouns redacted):
 
 > "The user is asking for specific […] information ([…] name) that requires
 > querying stored memory, **which I have previously determined I cannot access
 > due to privacy and security limitations**. The scope of the answer must
-> therefore be a reiteration of this limitation while maintaining a helpful tone
-> based on past context."
+> therefore be a reiteration of this limitation…"
 
-Three things are wrong with this and the third is the interesting one:
+False — stored memory is what `memory_query` reads. It also violates
+`ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS`, which says: *"You constrain the SHAPE of
+the reply, never where its content is found: never name a source for the answer's
+facts, and never settle what the answer will cover."*
 
-- **It is false.** Stored memory is exactly what `memory_query` reads.
-- **It violates `ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS`** (`agents/assistant.py`),
-  which states: *"You constrain the SHAPE of the reply, never where its content
-  is found: never name a source for the answer's facts, and never settle what
-  the answer will cover."* It settled both.
-- **It failed in the precise way its own prompt predicts.** The next sentence of
-  those instructions reads: *"The conversation history in front of you is the
-  standing trap — it is the one source you can see, so it is the one you will be
-  tempted to nominate, and nominating it tells the assistant to answer from the
-  transcript instead of reading what is stored."* The phrase "I have previously
-  determined" is the model doing precisely that: lifting a stance out of the
-  transcript and promoting it to a constraint. The warning is verbatim in the
-  prompt and did not hold.
+And it failed in the manner its own prompt names. The next sentence reads: *"The
+conversation history in front of you is the standing trap — it is the one source
+you can see, so it is the one you will be tempted to nominate."* "I have
+previously determined" is the model lifting a stance out of the transcript and
+promoting it to a constraint.
 
-This is not a soft influence. The criteria are injected into every later call as
-`<acceptance_criteria_markdown>`, ranked **above** conversation history and above
-the formatting guide in `SOURCE_PRIORITY_SECTION`. The run had committed to its
-answer before it looked anything up.
+**Bounded claim.** The criteria strongly predisposed the decide and audit calls
+toward refusal. It cannot be called decisive: in the decide prompt, successful
+current-turn observations are source-priority **rank 1** and
+`acceptance_criteria_markdown` is **rank 4**, so fresh evidence is explicitly
+supposed to override it. Whether it would have is what D6's counterfactual
+answers.
 
-### Step 3–4 — retrieval and scoring
+### Retrieval and scoring, steps 3–4
 
-Thirteen candidates: seven seed entries, six remembered facts.
+Thirteen candidates — seven seed entries, six remembered facts. Anonymised;
+structurally identical to the real case.
 
 | # | candidate | chars | similarity | direct | indirect | relevancy |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -106,344 +279,54 @@ Thirteen candidates: seven seed entries, six remembered facts.
 | 2 | `…hobby.overview` | 755 | 224 | 1 | 2 | 3 |
 | 1 | `…routes.2026` | 932 | 723 | 1 | 1 | 2 |
 | 4 | `…history` | 1152 | 581 | 1 | 1 | 2 |
-| 5–13 | 3 unrelated entries, 6 facts | 45–1303 | 218–699 | 1 | 1 | 1 |
-
-Candidate 3 contains the answer, by name, and was rendered to the scorer in
-full. The scorer's note:
-
-> "None of the provided candidates contain this direct, factual […] information.
-> The candidates are mostly about general history, locations, or other unrelated
-> facts."
-
-The filter call: 9571 input tokens, 589 output, **32.7 seconds**.
-
-**The keep policy saved it anyway.** `apply_filter_scores` is relative first:
-`FILTER_KEEP_TOP_N = 2` candidates survive on rank alone if their best scale
-reaches `FILTER_KEEP_TOP_FLOOR = 2`. Candidate 3's `indirect: 3` put it at rank 0.
-Kept.
-
-### Step 5 — injection, and the cut
-
-`_fact_line` (`agents/assistant.py:1146`) shortens anything over 1200 characters
-with `text[:MEMORY_QUERY_PER_FACT_CHARS]` — head only. The entry is 1947
-characters. The three nouns that answer the question sit at characters **1795,
-1843 and 1856**: the last 8% of the answer, inside the 38% the cap removed.
-
-So the decide model received a truncated fact carrying the topic but not the
-answer; a note from the scorer asserting no candidate held it; and criteria
-instructing it that the answer must be a reiteration of a limitation. It refused.
-
-### Step 6 — the audit
-
-`reply_audit` returned `{"reason": "The message is sound.", "verdict": "send"}` —
-17 output tokens. The check that exists to catch a reply that does not answer the
-request approved one whose entire content was a false statement about the
-system's own capabilities.
-
-## Every call in this run was the same model
-
-Classifier, criteria, decide, filter, audit: one binding, one model, because the
-assistant had a single model group at the time. The criteria's false premise, the
-scorer's false note and the audit's approval are **not three independent
-judgements**. They are one model's disposition, sampled five times, over
-substantially overlapping context.
-
-The per-call slots now on `/agentmodel` (`assistant.acceptance_criteria`,
-`assistant.memory_filter`, `assistant.reply_audit`, …) make independence
-*possible* for the first time. It is not automatic: binding them all to the same
-group reproduces exactly this.
-
-## What revision 1 got wrong
-
-Recorded because the errors are a pattern worth recognising, not out of ceremony.
-
-- **"The data is not the problem" / "a finer entry could not have ranked
-  higher."** Wrong. A dedicated retrieval unit for the requested subtopic could
-  have ranked first, scored `direct: 5`, and — being short — never been
-  truncated. *Presence in the candidate set is not effective retrievability.*
-  Revision 1 also contradicted itself: a later section conceded that smaller
-  entries would have avoided the failure. An internally inconsistent document
-  deserves to be read at its strongest claim.
-- **"Align the scorer and the loop by truncating the scorer's input too."**
-  Wrong, and worse than the disease: it buys consistency by making both stages
-  blind, and it contradicts the same document's own survey of standard practice.
-- **"Batch scoring is a property of the call's shape, not the prompt's
-  wording."** Overstated, and it missed the actual mechanism sitting in the
-  schema (below).
-- **Naming truncation as *the* cause.** It is one of three, and the one that
-  fired last.
-
-The common thread: revision 1 reasoned from a single trace, found a satisfying
-mechanism, and stopped. The trace contained a louder failure two steps earlier.
-
-## The defects, restated
-
-### A. The criteria call can decide the answer before the work starts
-
-Severity: highest. It runs first, its output outranks the transcript in every
-later prompt, and a wrong `assumptions` field is indistinguishable from a right
-one downstream. The instructions already forbid exactly this and were not enough.
-
-Structural options, none yet chosen:
-
-- **Validate the field in code.** The criteria call is structured output; a
-  validator can reject an `assumptions` value that asserts what the answer will
-  be or claims a capability limit, the same way `_structured_completion` already
-  rejects schema violations and retries with the reason attached.
-- **Run the criteria call after the first read**, so "what is available" is
-  observed rather than assumed. Costs a step and reorders the loop.
-- **Withhold conversation history from the criteria call**, since the transcript
-  is the named trap and the call's job is shape, not content.
-- **Give it its own model** (`assistant.acceptance_criteria`) so it is not the
-  same disposition as the audit that later approves its consequences.
-
-### B. Retrieval units are far coarser than the questions asked of them
-
-The traced parent covers onset, diagnosis, affected areas, treatment history,
-progress, time cost and the current schedule — in one 1947-character answer with
-three questions attached. That is several retrieval units in one record, and the
-requested fact was one sentence of it.
-
-Registry answer-length distribution (148 operator entries):
-
-| | chars |
-| --- | --- |
-| p50 | 482 |
-| p90 | 1684 |
-| max | 5178 |
-| over 1200 (today's cap) | 28 (18.9%) |
-| over 2500 | 4 (2.7%) |
-
-So 19% of entries are cut today. Raising the cap to 2500 would leave 4 — which is
-why cap-raising looks like a fix and is actually a way of not noticing the
-problem for a while.
-
-### C. Head-only truncation, in two places
-
-`_fact_line` (`agents/assistant.py:1146`) cuts seed entries with `text[:1200]`.
-**A second, independent path cuts remembered facts** the same way at
-`agents/assistant.py:1679`: `body[:MEMORY_QUERY_PER_FACT_CHARS]`. Revision 1's
-checklist fixed only the first.
-
-Both contradict a stated invariant: `agents/base.py:truncate_middle` calls itself
-*"the one shortening shape every agent uses on text a model will read"* and warns
-that *"a head-only cut throws away whichever end matters most, and does it
-silently."*
-
-**This bug has been fixed once already in this codebase.**
-`assistant_run_summarizer.py:_REPLY_PREVIEW_CHARS` carries the post-mortem: a
-500-char head-only cut showed the summarizer three and a half of six listed
-languages, "and the summarizer — correctly, for what it was shown — called a
-complete answer 'partial'." Same shape, different call, fixed in `867cd4a`.
-
-### D. The scorer is anchored by its own schema
-
-Revision 1 blamed the batch shape. The sharper mechanism is in the schema:
-`FilterDecision` declares `reasoning` **before** `items`, and the class docstring
-says this is deliberate — *"schema property order follows field order, so the
-model writes its overall does-anything-match assessment first and the scores are
-conditioned on it."*
-
-That is an anchoring pipeline by construction:
-
-1. summarise the whole set;
-2. conclude nothing matches;
-3. emit thirteen score rows consistent with the conclusion already written.
-
-The observed note — "mostly about general history, locations" — is an accurate
-description of candidates 5–13 and false of candidate 3. The design intended the
-note to *calibrate* the scores; on this run it *determined* them.
-
-Corrections to revision 1's framing: per-candidate scoring reduces cross-candidate
-contamination but is not "structurally incapable" of misreading a passage; and
-thirteen generative calls against a 32.7-second batch call is a poor latency
-trade. Cross-encoders are routinely run in batches — the property that matters is
-that each score is computed for one (query, passage) pair, not that batching is
-absent.
-
-### E. The scorer and the loop judge different documents
-
-`seed_candidate_rows` renders full text; `_fact_line` renders 1200 characters. A
-candidate can be kept on evidence the decide model never sees — this run — and,
-invisibly, dropped because its opening looks irrelevant while its tail answers
-the question, leaving only a score row.
-
-Revision 1's fix (truncate both) was wrong. **The right resolution is that the
-two representations differ by design:** match on small, self-contained units;
-inject the winning unit, expanded to a neighbour window or its parent only when
-needed. Then there is no disagreement to reconcile, because the scorer is judging
-the thing that will be injected.
-
-### F. A wrong assessment is injected beside the evidence
-
-`<memory_filter_assessment>` carried the scorer's false note into the decide
-prompt, next to a fact cut short of the answer, under criteria instructing a
-refusal. It is framed as untrusted data, which guards against injection but not
-against being wrong. It is lossy commentary, not evidence, and on this run it was
-the third voice saying the same wrong thing.
-
-### G. The escape hatch went unused
-
-`DECIDE_TURN_INSTRUCTIONS` tells the model a `truncateN` fact can be re-read in
-full via `memory_query {"uuid": ...}`, and the observation repeated the offer.
-Steps remained. It was not taken. Whether *any* recorded run has ever used it is
-an open question with a cheap answer.
-
-## What others actually do
-
-The production pattern is close to the instinct this proposal originally
-dismissed:
-
-- Split long records into passages or atomic propositions.
-- **Make each chunk self-contained** by prefixing subject/topic context —
-  Anthropic's own [Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval)
-  describes exactly this: chunk, contextualise each chunk, index with embeddings
-  **and** BM25, fuse, then rerank. Revision 1 surveyed several frameworks and
-  missed the clearest published description.
-- Retrieve broadly over chunks, fuse lexical and semantic rankings, rerank
-  (query, chunk) pairs.
-- Inject the winning chunk, expanding to neighbours or the parent when needed —
-  Elasticsearch's `semantic_text` chunks documents and scores the parent by its
-  best passage; LlamaIndex's sentence-window retrieves a sentence and expands to
-  a local window, not to the whole parent.
-- Chen et al., *[Dense X Retrieval](https://arxiv.org/abs/2312.06648)* (2023)
-  finds atomic self-contained propositions outperform passage-level retrieval on
-  downstream QA under a fixed context budget — the opposite of what revision 1
-  cited it beside.
-
-`truncate_middle` is an emergency patch. It is not retrieval.
-
-## Proposed direction
-
-### Now — stop the bleeding
-
-1. **Fix both head-only truncation paths** (`_fact_line` and the claims path at
-   `assistant.py:1679`) with `truncate_middle`.
-2. **Re-size the per-fact cap against the real distribution**, not by feel.
-   Revision 1's "2500–3000 fits comfortably" was wrong arithmetic: four
-   3000-character facts are 12000 against an 11000 block. Size the per-fact cap
-   as a share of remaining block budget, so one long fact is shortened only when
-   it would actually crowd others out.
-3. **Add a dedicated retrieval unit for the requested subtopic** — the concrete
-   instance, fixed by hand, as the first worked example of the target shape.
-
-### Next — measure, before any architecture
-
-4. **Build the regression harness.** Revision 1's single metric ("did the
-   answer-bearing substring reach the decide prompt") is necessary and
-   insufficient: this run also shows criteria poisoning the prompt and an audit
-   approving a false answer, neither of which that metric sees. Measure
-   separately:
-
-   | metric | catches |
-   | --- | --- |
-   | chunk recall@k | retrieval |
-   | reranker MRR / nDCG | ranking |
-   | answer-bearing evidence injected (chars vs answer chars) | truncation |
-   | final answer correctness | the whole chain |
-   | **unsupported-refusal rate** | defect A |
-   | latency and token cost per turn | every "fix" that costs seconds |
-
-   Neutral cases in the repo; operator-derived cases under `customize.dir`.
-   Include cases that currently pass. Assert the **actual answer**, not the entry
-   id and not a surviving substring.
-
-5. **Bind the assistant's slots to different groups** — at minimum
-   `assistant.acceptance_criteria`, `assistant.memory_filter` and
-   `assistant.reply_audit` away from `assistant.default`. Configuration only, and
-   it is the cheapest attack on the correlated-defences problem.
-
-### Then — the architecture
-
-6. **Derive child retrieval units from each parent entry**, keeping the parent as
-   the authoritative record:
-
-   ```
-   parent Q&A entry
-     ├── child: onset / history
-     ├── child: affected areas
-     ├── child: progress
-     └── child: current schedule
-   ```
-
-   Each child carries a stable child id and parent id, a contextual prefix
-   (subject + topic + subtopic) so it is self-contained, its own text, its own
-   question aliases, and offsets into the parent's answer.
-
-7. **Embed question aliases *and* child answer text** — not one vector per
-   1947-to-5178-character answer. Run lexical retrieval over the same children.
-   Fuse, and **cap each parent to one or two candidates** so siblings cannot
-   crowd the budget (the failure mode revision 1 identified correctly and is the
-   one thing it got right about granularity).
-8. **Rerank (query, chunk) pairs**, and inject the winning chunk, expanding to
-   neighbours or the parent only on demand.
-9. **Drop `<memory_filter_assessment>` from the answering prompt.**
-10. **Replace the generative Likert filter for seed Q&A.** On this run it cost
-    32.7 seconds, was wrong, and the code-side rank rule — not the filter — saved
-    the candidate. Replace with a reranker rather than delete outright: the same
-    helper serves `query_filter_router`, and the decision should rest on the
-    harness in (4), not on one trace.
-
-### Also fix, independently
-
-11. **Constrain the criteria call** — the options under defect A. This is the
-    highest-severity defect and the one least addressed by anything else on this
-    list; a perfect retrieval stack still loses to a run that has already decided
-    to refuse.
-
-## Traps
-
-- **Reading the truncation fix as the fix.** It is one of three causes and the
-  last to fire.
-- **Reading the rank rule's rescue as health.** `apply_filter_scores` did its job.
-  That it had to means scorer quality can degrade far before anything looks
-  broken.
-- **Measuring "kept" or "substring present" as success.** This run kept the right
-  entry; a variant that also injected the answer could still refuse, because the
-  criteria said to.
-- **Assuming the checks are independent.** Criteria, scorer note and audit agreed
-  with each other and disagreed with the data. Same model, overlapping context.
-- **Deriving child chunks with an LLM and trusting the output.** A derivation
-  pass over ~150 entries is itself a quality surface and needs the harness in (4)
-  before it, not after.
-- **Widening the candidate budget as a reflex.** More candidates make an anchored
-  batch call worse.
-
-## Open questions
-
-- **Would a dedicated child chunk have rescued *this* run?** The review argues
-  both that the run was already anchored on a refusal (defect A) and that a
-  dedicated chunk scoring `direct: 5` would have fixed it. Those are in tension.
-  Strong contrary evidence might have dislodged the criteria; it might have been
-  explained away. Only the harness settles it, and the answer determines whether
-  (11) or (6)–(8) is the real priority.
-- **Should a `truncateN` tag force a re-read rather than offer one?** If defect G
-  holds — the hatch is never used — either the loop re-reads automatically when a
-  kept fact was cut and the request is specific, or the affordance is decoration.
-- **Do remembered facts and seed entries belong in one scored set?** Six short
-  facts against seven long entries under one policy and one budget is an unequal
-  contest that has never been tested.
-- **Where does a reranker run?** A second model server and a new dependency.
-- **What is the derivation cost of child chunks?** ~150 entries, each needing a
-  contextual prefix and defensible split points. Hand-authored is slow;
-  LLM-derived needs its own gate.
-
-## Where to continue
-
-- [ ] Fix `_fact_line` and the claims path at `assistant.py:1679` with
-      `truncate_middle`.
-- [ ] Re-size the per-fact cap as a share of the block budget.
-- [ ] Add a dedicated retrieval unit for the traced subtopic; re-run the query.
-- [ ] Grep recorded runs for uuid-mode `memory_query` after a `truncateN` tag.
-- [ ] Build the harness with the six metrics above; assert actual answers.
-- [ ] Bind criteria, filter and audit slots to different groups; re-run.
-- [ ] Add a code-side validator rejecting an `assumptions` field that nominates a
-      source or settles the answer; measure unsupported-refusal rate before and
-      after.
-- [ ] Prototype child chunks with contextual prefixes on one parent family;
-      measure recall@k against the harness.
-- [ ] Embed child answer text; fuse lexical + semantic; cap candidates per parent.
-- [ ] Price a cross-encoder reranker; compare against the Likert filter on the
-      harness, including its 32.7-second baseline.
-- [ ] Drop `<memory_filter_assessment>` from the answering prompt; A/B on the
-      harness.
+| 5–13 | 3 entries, 6 facts | 45–1303 | 218–699 | 1 | 1 | 1 |
+
+Candidate 3 holds the answer and was rendered to the scorer **in full**. Its
+note: *"None of the provided candidates contain this direct, factual […]
+information. The candidates are mostly about general history, locations, or other
+unrelated facts."* — an accurate description of candidates 5–13 and false of
+candidate 3. The call took **32.7s** for 9571 in / 589 out.
+
+**The scorer did not receive the acceptance criteria.** `_recall_filter_prefix`
+is request + conversation history + identity only. Criteria poisoning explains
+the decide and audit behaviour; it does not explain this miss.
+
+**The anchoring mechanism is in the schema, not the batch.** `FilterDecision`
+declares `reasoning` before `items`, and its docstring says so deliberately —
+*"the model writes its overall does-anything-match assessment first and the
+scores are conditioned on it."* Summarise the set, conclude nothing matches, then
+emit thirteen rows consistent with the conclusion already written. Per-candidate
+scoring reduces cross-candidate contamination but is not *incapable* of
+misreading a passage, and thirteen generative calls against a 32.7-second batch
+call is a poor trade — which is why D8 reaches for a reranker rather than a loop.
+
+**The keep policy saved it.** `apply_filter_scores` is relative first:
+`FILTER_KEEP_TOP_N = 2` survive on rank alone above `FILTER_KEEP_TOP_FLOOR = 2`.
+Candidate 3's `indirect: 3` put it at rank 0. That the policy had to rescue the
+scorer means scorer quality can degrade a long way before anything looks broken.
+
+### Injection, step 5
+
+`_fact_line` cut at 1200 characters, head only. The entry is 1947 characters; the
+three nouns answering the question sit at **1795, 1843 and 1856** — the last 8%
+of the answer, inside the 38% the cap removed.
+
+The decide model therefore received: a fact carrying the topic but not the
+answer; a note asserting no candidate held it; and criteria instructing that the
+answer be a reiteration of a limitation.
+
+### The audit, step 6
+
+`{"reason": "The message is sound.", "verdict": "send"}` — 17 output tokens.
+
+### A correction carried from revision 2
+
+Revision 2 claimed a candidate could be **dropped** because its opening looked
+irrelevant while its tail answered the question. That cannot happen in the
+current pipeline: `seed_candidate_rows` renders the full answer to the scorer.
+The claim was inherited from revision 1's rejected "truncate the scorer's input
+too" design and should have gone with it.
+
+The real effect is weaker and still supports D4: a short relevant span is diluted
+inside a long document, and scores accordingly. That is an argument for chunking,
+not evidence of a truncation-driven drop.
