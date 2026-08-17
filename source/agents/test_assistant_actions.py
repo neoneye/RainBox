@@ -25,7 +25,9 @@ from agents.assistant import (
     _action_query_memory,
     _action_workspace_read_command,
 )
-from agents.assistant import DECIDE_TURN_INSTRUCTIONS, CAPABILITIES
+from agents.assistant import (
+    DECIDE_TURN_INSTRUCTIONS, CAPABILITIES, RECALLED_MEMORY_LEGEND,
+)
 from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
 
@@ -1427,8 +1429,62 @@ def test_query_memory_truncates_large_facts_and_tags_them(app_ctx):
                            answer=big, score=0.9, kind="static")]
     obs = _action_query_memory(_ctx(), {"query": "q"}, _seed_retriever=fake_seed)
     assert "u-big, seed/user-overlay, p, truncate1200:" in obs.text
-    assert ("x" * 1200) in obs.text and ("x" * 1201) not in obs.text  # capped at 1200
     assert obs.data["truncated"] == 1  # count of shortened facts
+    # The cap is on the RENDERED text, marker included — so the fact's line is
+    # its prefix plus exactly 1200, and no run of 1200 source characters
+    # survives, because the middle went.
+    fact = obs.text.split("truncate1200: ")[1].split("\n</recalled_memory>")[0]
+    assert len(fact) == 1200
+    assert ("x" * 1200) not in obs.text
+    assert "characters dropped from the middle" in fact
+
+
+def test_query_memory_keeps_the_tail_of_a_long_seed_fact(app_ctx):
+    """The defect this guards: a head-only cut dropped the end of a kept fact,
+    and these answers accumulate by appending — so the newest and most specific
+    material is exactly what a head-only cut removes."""
+    from memory.seed_memory import SeedMemory
+    answer = "opening. " + "middle. " * 400 + "THE ANSWER IS HERE."
+    assert len(answer) > 1200
+    def fake_seed(query, *, qctx, **_):
+        return [SeedMemory(uuid="u-tail", path="p", source="user-overlay",
+                           answer=answer, score=0.9, kind="static")]
+    obs = _action_query_memory(_ctx(), {"query": "q"}, _seed_retriever=fake_seed)
+    assert "THE ANSWER IS HERE." in obs.text
+    assert obs.text.count("opening.") == 1
+
+
+def test_query_memory_keeps_the_tail_of_a_long_remembered_fact(app_ctx, monkeypatch):
+    """The same guarantee for claims, which reached the prompt through a second
+    truncation path that cut head-only after this one was fixed. Both kinds now
+    go through one renderer, so they cut identically."""
+    from agents import assistant as A
+
+    text = "opening. " + "middle. " * 400 + "THE ANSWER IS HERE."
+    claim = MemoryClaim(
+        uuid=uuid4(), kind="fact", scope="global", text=text,
+        confidence=0.9, sensitivity="private", status="active")
+
+    class _Retrieved:
+        def __init__(self, c):
+            self.uuid, self.text, self.kind = c.uuid, c.text, c.kind
+            self.sensitivity, self.scope = c.sensitivity, c.scope
+            self.confidence, self.reason = c.confidence, "fulltext"
+            self.evidence_summary = []
+
+    monkeypatch.setattr(A, "retrieve_memories_hybrid",
+                        lambda *a, **k: [_Retrieved(claim)], raising=False)
+    import memory.retrieval as retrieval
+    monkeypatch.setattr(retrieval, "retrieve_memories_hybrid",
+                        lambda *a, **k: [_Retrieved(claim)])
+    obs = _action_query_memory(_ctx(), {"query": "q"},
+                               _seed_retriever=lambda q, *, qctx, **_: [])
+    assert "THE ANSWER IS HERE." in obs.text
+    # Same shortening syntax as a seed fact: one renderer, one shape.
+    assert "truncate1200:" in obs.text
+    assert "characters dropped from the middle" in obs.text
+    # Claim metadata survives the move to structured rendering.
+    assert "fact, private, no evidence" in obs.text
 
 
 def test_query_memory_data_splits_counts_and_tags_dynamic(app_ctx):
@@ -1463,15 +1519,34 @@ def test_query_memory_seed_without_path_omits_the_path_tag(app_ctx):
 
 
 def test_query_memory_omits_tail_and_notes_it(app_ctx):
-    """When more capped facts than fit the budget are retrieved, the tail is
-    dropped at a fact boundary (never mid-word) and the omission is noted."""
+    """When more facts than fit the payload budget are retrieved, the tail is
+    dropped at a fact boundary (never mid-word) and the omission is noted.
+
+    Pinned to an exact split rather than "some were dropped", so a change to
+    the budget's meaning cannot pass unnoticed. Each answer is exactly at the
+    per-fact cap, so nothing is truncated and no marker enters the arithmetic:
+    a line is `u{i}` + ", " + `seed/user-overlay, p` + ": " + 1200 = 1226, plus
+    a newline = 1227. The legend costs 44. Eight lines are 9860 and nine are
+    11087 against MEMORY_QUERY_FACT_PAYLOAD_CHARS = 11000."""
+    from agents.assistant import MEMORY_QUERY_FACT_PAYLOAD_CHARS
     from memory.seed_memory import SeedMemory
     def fake_seed(query, *, qctx, **_):
         return [SeedMemory(uuid=f"u{i}", path="p", source="user-overlay",
-                           answer="y" * 1200, score=0.9, kind="static") for i in range(15)]
+                           answer="y" * 1200, score=0.9, kind="static") for i in range(10)]
     obs = _action_query_memory(_ctx(), {"query": "q"}, _seed_retriever=fake_seed)
-    assert obs.data["omitted"] > 0
+    assert obs.data["omitted"] == 2
+    assert obs.data["truncated"] == 0     # exactly at the cap: nothing shortened
+    for kept in range(8):
+        assert f"u{kept}, seed/user-overlay, p:" in obs.text
+    for dropped in (8, 9):
+        assert f"u{dropped}, seed/user-overlay, p:" not in obs.text
     assert "omitted" in obs.text.lower()
+    # And the budgeted payload — legend, newlines, retained lines — is within it.
+    fence = obs.text.split("<recalled_memory", 1)[1].split(">", 1)[1]
+    lines = fence.split("</recalled_memory>")[0].strip("\n").split("\n")
+    payload = len(RECALLED_MEMORY_LEGEND) + 1 + sum(len(ln) + 1 for ln in lines)
+    assert payload <= MEMORY_QUERY_FACT_PAYLOAD_CHARS
+    assert payload == 9860
 
 
 def test_query_memory_uuid_returns_full_seed_entry(app_ctx, monkeypatch):

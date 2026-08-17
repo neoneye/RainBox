@@ -68,6 +68,45 @@ def truncate_middle(text: str, limit: int) -> str:
     return text[:head] + marker + (text[len(text) - tail:] if tail else "")
 
 
+def truncate_middle_to_length(text: str, max_length: int) -> str:
+    """`truncate_middle` bounded by what it RETURNS, not by how much source it
+    keeps.
+
+    `truncate_middle(text, n)` keeps n source characters and then adds its
+    marker, so the string it hands back is longer than n. A caller rendering
+    into a fixed budget needs the other guarantee: never longer than
+    `max_length`, and as much source as that allows.
+
+    Why this is not the marker's length subtracted from the cap: that would put
+    a second copy of the marker's shape here, and the two would drift the first
+    time its wording changed — which is the same defect that produced the
+    incident this helper exists for (two truncation paths, one updated). The
+    allowance is found by asking `truncate_middle` and measuring what comes
+    back, so the marker's shape stays in exactly one place.
+
+    Descending first-fit rather than a search: the first allowance that fits is
+    the largest that fits, and the floor of 2 is what keeps both ends. At an
+    allowance of 1 `truncate_middle` gives head=1, tail=0 and returns a head
+    plus a marker with no tail at all. The loop is short — the starting
+    allowance overshoots by exactly the marker's length and each step recovers
+    about one character, so it settles in tens of iterations, not `max_length`.
+
+    Raises ValueError when `max_length` is negative, and when no allowance
+    leaves room for the marker plus at least one character from each end.
+    """
+    if max_length < 0:
+        raise ValueError(f"max_length must be non-negative, got {max_length}")
+    if len(text) <= max_length:
+        return text
+    for allowance in range(max_length, 1, -1):
+        shortened = truncate_middle(text, allowance)
+        if len(shortened) <= max_length:
+            return shortened
+    raise ValueError(
+        f"max_length {max_length} cannot hold the truncation marker plus one "
+        f"character from each end")
+
+
 class RejectedResponse(ValueError):
     """A response that arrived whole and was then rejected — the schema said
     no, or the caller's validator did.

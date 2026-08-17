@@ -31,7 +31,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import db
 import skills
 import user_profile
-from agents.base import ModelGroupAgent, StatusSender, truncate_middle
+from agents.base import (
+    ModelGroupAgent, StatusSender, truncate_middle,
+    truncate_middle_to_length,
+)
 from agents.config import (
     ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
     ASSISTANT_DECIDE_UUID,
@@ -1131,25 +1134,48 @@ AssistantTurnEvent = AssistantTurnStep | AssistantTurnRedirect
 AssistantAction = Callable[[AssistantActionContext, dict[str, Any]], AssistantObservation]
 
 
-# memory_query keeps its observation readable and bounded: each fact is capped
-# to PER_FACT chars (long ones tagged `truncateN`), and the whole block to TOTAL
-# chars (lower-ranked facts past the budget are dropped at a fact boundary, never
-# mid-word). A shortened or omitted fact can be read in full via the uuid mode
-# (`{"uuid": ...}`) — see DECIDE_TURN_INSTRUCTIONS.
+# memory_query keeps its observation readable and bounded: each fact's text is
+# capped to PER_FACT chars (long ones tagged `truncateN`), and the budgeted
+# payload to FACT_PAYLOAD chars (lower-ranked facts past the budget are dropped
+# at a fact boundary, never mid-word). A shortened or omitted fact can be read in
+# full via the uuid mode (`{"uuid": ...}`) — see DECIDE_TURN_INSTRUCTIONS.
+#
+# PER_FACT is a RENDERED cap: the shortened text including its truncation
+# marker, not the source it kept. Capping the source instead would make the
+# rendered line longer than the number by the marker's length, and a fact could
+# then displace another from the payload budget purely through marker overhead.
 MEMORY_QUERY_PER_FACT_CHARS: int = 1200
-MEMORY_QUERY_TOTAL_CHARS: int = 11000
+# What the budget covers: RECALLED_MEMORY_LEGEND, the per-line newlines and the
+# retained fact lines. NOT the <recalled_memory> fence and not the explanatory
+# suffixes after it — the name says payload because that is what it counts. A
+# whole-observation budget would be a different number and a different change.
+MEMORY_QUERY_FACT_PAYLOAD_CHARS: int = 11000
 
 
 RECALLED_MEMORY_LEGEND: str = "{memory_uuid}, {memory_tags}: {memory_text}"
 
 
 def _fact_line(uuid: str, tags: str, text: str) -> tuple[str, bool]:
-    """Render one recalled-fact line (see RECALLED_MEMORY_LEGEND), shortening text
-    over the per-fact cap and marking it with a `truncate{cap}` tag. Returns
-    (line, was_truncated)."""
+    """Render one recalled-fact line (see RECALLED_MEMORY_LEGEND), shortening
+    text over the per-fact cap and marking it with a `truncate{cap}` tag.
+    Returns (line, was_truncated).
+
+    THE one fact renderer: seed entries and remembered facts both come through
+    here, as structured fields. They used to be rendered by two different paths
+    — this one, and a round trip that rendered claims to a string and parsed it
+    back apart — and the paths drifted, so a fix to one left the other cutting
+    head-only. One renderer is what stops that recurring.
+
+    The shortening drops the MIDDLE and stays within the cap once rendered
+    (`truncate_middle_to_length`). A head-only cut silently discards whichever
+    end matters most, and for these answers that is usually the end: they
+    accumulate by appending, so the newest and most specific material collects
+    at the tail. A live run refused a question whose answer sat 8% from the end
+    of a kept fact."""
     if len(text) > MEMORY_QUERY_PER_FACT_CHARS:
+        shortened = truncate_middle_to_length(text, MEMORY_QUERY_PER_FACT_CHARS)
         return (f"{uuid}, {tags}, truncate{MEMORY_QUERY_PER_FACT_CHARS}: "
-                f"{text[:MEMORY_QUERY_PER_FACT_CHARS]}", True)
+                f"{shortened}", True)
     return f"{uuid}, {tags}: {text}", False
 
 
@@ -1551,7 +1577,7 @@ def _action_query_memory(
     "(all rooms)" operator-inspection view (room-scoped claims from every
     room become candidates) — a Python-level kwarg only, never readable from
     the model-supplied `args`, so a live run can't request it."""
-    from memory.retrieval import fence_recalled_memory, format_memory_context, retrieve_memories_hybrid
+    from memory.retrieval import fence_recalled_memory, retrieve_memories_hybrid
     from memory import seed_memory as qkb
     from agents.query_handlers import QueryContext
     from llm import capture_embeddings
@@ -1623,7 +1649,6 @@ def _action_query_memory(
     # Tier seeds: user-overlay first, then upstream; preserve score order within tier.
     overlay = [s for s in seeds if s.source == "user-overlay"]
     upstream = [s for s in seeds if s.source != "user-overlay"]
-    dynamic_block = format_memory_context(memories, include_uuid=True) if memories else ""
 
     if not (overlay or upstream or memories):
         # The empty result is exactly when the operator wants to see what the
@@ -1650,18 +1675,16 @@ def _action_query_memory(
         line, tr = _fact_line(s.uuid, tags, s.answer)
         fact_lines.append(line)
         truncated_count += tr
-    if dynamic_block:
-        # format_memory_context(include_uuid=True) emits TWO header lines (title +
-        # legend); its fact lines are "- {uuid}, {tags}: {text}". Drop the leading
-        # "- " (the fence holds bare fact lines) and cap each text.
-        for raw in dynamic_block.split("\n")[2:]:
-            raw = raw[2:] if raw.startswith("- ") else raw
-            head, sep, body = raw.partition(": ")
-            if sep and len(body) > MEMORY_QUERY_PER_FACT_CHARS:
-                raw = (f"{head}, truncate{MEMORY_QUERY_PER_FACT_CHARS}: "
-                       f"{body[:MEMORY_QUERY_PER_FACT_CHARS]}")
-                truncated_count += 1
-            fact_lines.append(raw)
+    # Remembered facts go through the SAME renderer, from their fields — not by
+    # rendering format_memory_context() to a string and parsing it back apart.
+    # That round trip is how the two paths drifted into cutting differently, and
+    # it split on the first ": " in a line it had not built.
+    for m in memories:
+        tags = f"{m.kind}, {m.sensitivity}, " + (
+            ", ".join(m.evidence_summary) or "no evidence")
+        line, tr = _fact_line(str(m.uuid), tags, m.text)
+        fact_lines.append(line)
+        truncated_count += tr
 
     # (C) Overall budget: keep top-ranked facts up to TOTAL chars; drop the tail
     # at a fact boundary (never mid-word) and count what was omitted.
@@ -1669,7 +1692,7 @@ def _action_query_memory(
     kept: list[str] = []
     omitted = 0
     for i, line in enumerate(fact_lines):
-        if kept and used + len(line) + 1 > MEMORY_QUERY_TOTAL_CHARS:
+        if kept and used + len(line) + 1 > MEMORY_QUERY_FACT_PAYLOAD_CHARS:
             omitted = len(fact_lines) - i
             break
         used += len(line) + 1

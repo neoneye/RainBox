@@ -24,7 +24,7 @@ from agents.assistant import (
     SECOND_OPINION_TURN_INSTRUCTIONS,
     TRUNCATED_REQUEST_SECTION,
 )
-from agents.base import truncate_middle
+from agents.base import truncate_middle, truncate_middle_to_length
 from agents.config import ASSISTANT_UUID
 
 
@@ -83,6 +83,58 @@ def _summary() -> RequestSummary:
 
 def test_short_text_is_returned_unchanged():
     assert truncate_middle("hello", 8000) == "hello"
+
+
+# --- the rendered-length variant -------------------------------------------
+
+
+def test_to_length_leaves_short_text_alone():
+    assert truncate_middle_to_length("hello", 8000) == "hello"
+    assert truncate_middle_to_length("hello", 5) == "hello"
+
+
+@pytest.mark.parametrize("source_chars", [1201, 1947, 5178, 100_000])
+def test_to_length_never_exceeds_the_cap(source_chars):
+    """`truncate_middle` is bounded by source kept; this one by what it hands
+    back — the guarantee a caller rendering into a fixed budget needs."""
+    half = source_chars // 2
+    text = "A" * half + "B" * (source_chars - half)
+    assert len(truncate_middle_to_length(text, 1200)) == 1200
+
+
+def test_to_length_keeps_the_first_and_last_source_characters():
+    text = "A" + "x" * 3000 + "Z"
+    cut = truncate_middle_to_length(text, 1200)
+    assert cut.startswith("A")
+    assert cut.endswith("Z")
+
+
+def test_to_length_keeps_as_much_source_as_the_cap_allows():
+    """Maximality: one more source character in the result would breach the
+    cap. Descending first-fit gives this by construction — the guard is against
+    someone replacing it with a formula that leaves slack."""
+    text = "A" * 1200 + "B" * 1200
+    cut = truncate_middle_to_length(text, 1200)
+    assert len(cut) == 1200
+    head, _marker, tail = cut.split("\n\n")
+    kept = len(head) + len(tail)
+    # One more source character would push the rendered result past the cap.
+    assert len(truncate_middle(text, kept + 1)) > 1200
+
+
+def test_to_length_refuses_a_cap_that_cannot_hold_both_ends():
+    """The floor is 2 source characters, not 1: at an allowance of 1
+    `truncate_middle` returns a head and a marker with no tail, which would
+    satisfy the length bound while silently dropping an end."""
+    text = "A" * 600 + "B" * 600
+    assert len(truncate_middle_to_length(text, 51)) == 51
+    with pytest.raises(ValueError):
+        truncate_middle_to_length(text, 50)
+
+
+def test_to_length_refuses_a_negative_cap():
+    with pytest.raises(ValueError):
+        truncate_middle_to_length("A" * 100, -1)
 
 
 def test_truncate_middle_keeps_both_ends():
