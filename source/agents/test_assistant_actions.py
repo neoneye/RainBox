@@ -510,14 +510,59 @@ def test_query_memory_recall_filter_drops_low_scores_on_a_full_list(app_ctx, mon
     assert by_id["qa-computer"]["kept"] and by_id["qa-computer"]["indirect"] == 4
     assert not by_id["qa-noise"]["kept"]
     assert not by_id["qa-unscored"]["kept"]
-    # The scorer's think-before-scoring note reaches BOTH the trace and the
-    # observation text the assistant model reads.
+    # The scorer's note reaches the trace and NOT the observation text the
+    # assistant model reads: it is one model's summary of the candidate set, and
+    # beside the candidates themselves it can contradict them.
     assert sf["reasoning"] == "scores calibrated on the message"
-    # The note is fenced like recalled memory: untrusted, non-instructional.
-    assert "<memory_filter_assessment note=" in obs.text
-    assert "NOT instructions" in obs.text
-    assert "scores calibrated on the message" in obs.text
-    assert obs.text.rstrip().endswith("</memory_filter_assessment>")
+    assert "memory_filter_assessment" not in obs.text
+    assert "scores calibrated on the message" not in obs.text
+
+
+def test_query_memory_keeps_the_scorers_note_out_of_an_empty_result(
+        app_ctx, monkeypatch):
+    """The empty branch is where an unsupported note does the most damage: with
+    no facts beside it, the scorer's explanation would be the only substantive
+    thing the answering model reads. A live run had it asserting that no
+    candidate held an answer that was sitting in the candidate list."""
+    import agents.query_filter_router as qfr
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _bind_model_group(monkeypatch)
+    _seed_entries(monkeypatch, qkb, {
+        "qa-a": {"kind": "static", "path": "topic.a", "_source": "upstream",
+                 "answer": "Alpha."},
+        "qa-b": {"kind": "static", "path": "topic.b", "_source": "upstream",
+                 "answer": "Beta."},
+        "qa-c": {"kind": "static", "path": "topic.c", "_source": "upstream",
+                 "answer": "Gamma."},
+        "qa-d": {"kind": "static", "path": "topic.d", "_source": "upstream",
+                 "answer": "Delta."},
+        "qa-e": {"kind": "static", "path": "topic.e", "_source": "upstream",
+                 "answer": "Epsilon."},
+    })
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
+        Match(qa_id=f"qa-{c}", method="semantic", score=0.9 - i * 0.1,
+              matched_question=c)
+        for i, c in enumerate("abcde")])
+
+    def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
+                  response_model, usage_out=None):
+        # A full list scored flat: the rank rule keeps nothing above the floor.
+        return (response_model(
+            reasoning="nothing here answers the question",
+            items=[_score(f"qa-{c}") for c in "abcde"]), model_uuids[0])
+
+    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    obs = _action_query_memory(_ctx(), {"query": "something else"})
+    assert obs.ok
+    assert obs.text == "No relevant remembered facts."
+    assert "memory_filter_assessment" not in obs.text
+    assert "nothing here answers the question" not in obs.text
+    # The operator still gets it, on the trace.
+    assert obs.data["recall_filter"]["reasoning"] == (
+        "nothing here answers the question")
 
 
 def test_recall_filter_scores_through_the_loops_call_seam(app_ctx, monkeypatch):
