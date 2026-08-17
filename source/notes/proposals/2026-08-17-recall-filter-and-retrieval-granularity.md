@@ -193,8 +193,13 @@ memory_query truncation tests:
 - both render the identical middle-truncation syntax;
 - rendered **fact text** stays within the cap (tested separately from the line,
   whose length also varies with uuid and tags);
-- the total recalled-memory block stays within `MEMORY_QUERY_TOTAL_CHARS`;
-- the boundary omission count is deterministic;
+- the budgeted fact payload — `RECALLED_MEMORY_LEGEND`, per-line newlines and
+  retained fact lines — stays within `MEMORY_QUERY_FACT_PAYLOAD_CHARS`;
+- a boundary fixture containing ten ordered 1200-character facts retains `u0`
+  through `u7`, excludes `u8` and `u9`, and reports `obs.data["omitted"] == 2`
+  (the fixture pins its tag length: a truncated line renders at
+  `1254 + len(tags)`, and the 8/2 split holds for any tag string under 114
+  characters — verified at 26 and 32);
 - populated and empty outputs both omit assessment prose;
 - both retain assessment diagnostics in `obs.data`;
 - uuid lookup still returns the complete untruncated fact;
