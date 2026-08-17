@@ -178,10 +178,23 @@ Contract:
 
 **It must not restate the marker's shape.** Solving the allowance with a
 hard-coded `45 + digits(dropped)` would drift the moment the marker's wording
-changes. Solve by calling `truncate_middle` and measuring what comes back —
-binary-search the limit in `[0, max_length]` for the largest whose rendered
-result fits. Roughly eleven calls at a 1200 cap, and correct by construction for
-any future marker.
+changes. Solve by calling `truncate_middle` and measuring what comes back.
+
+Algorithm, for input longer than the cap: try source allowances from
+`max_length` **down to 2**, and return the first whose rendered result fits.
+First-fit from the top is maximal by construction, and the floor of 2 is what
+makes "both ends retained" true — `truncate_middle(text, 1)` gives
+`head = 1, tail = 0` and returns a head plus a marker with no tail at all
+(measured: length 50, and it does not end with the source's last character).
+Revision 6's binary search over `[0, max_length]` had no such floor, which is
+the inconsistency between its maximality and both-ends guarantees.
+
+Raise `ValueError` when no allowance fits, and when `max_length` is negative.
+Input within a non-negative cap is returned unchanged.
+
+The descent is short in practice: starting at `max_length` the result overshoots
+by exactly the marker's length, and each decrement recovers about one character,
+so it converges in roughly fifty steps rather than `max_length` of them.
 
 ### Test inventory
 
@@ -197,13 +210,34 @@ memory_query truncation tests:
   retained fact lines — stays within `MEMORY_QUERY_FACT_PAYLOAD_CHARS`;
 - a boundary fixture containing ten ordered 1200-character facts retains `u0`
   through `u7`, excludes `u8` and `u9`, and reports `obs.data["omitted"] == 2`
-  (the fixture pins its tag length: a truncated line renders at
-  `1254 + len(tags)`, and the 8/2 split holds for any tag string under 114
-  characters — verified at 26 and 32);
+  (specified exactly below);
 - populated and empty outputs both omit assessment prose;
 - both retain assessment diagnostics in `obs.data`;
 - uuid lookup still returns the complete untruncated fact;
 - fixtures and assertion messages contain no private data.
+
+#### The boundary fixture, exactly
+
+```python
+SeedMemory(uuid=f"u{i}", source="user-overlay", path="p",
+           answer="y" * 1200, score=1.0)          # i = 0..9
+```
+
+`score` is required by the dataclass and is not otherwise load-bearing here.
+The answer is exactly at the cap, so nothing is truncated and no marker enters
+the arithmetic:
+
+| quantity | value |
+| --- | --- |
+| tags | `seed/user-overlay, p` |
+| line (`u0` + `", "` + tags + `": "` + 1200) | 1226 |
+| line + newline | 1227 |
+| initial legend budget | 44 |
+| eight lines | `44 + 8 × 1227` = **9860** |
+| nine lines | `44 + 9 × 1227` = **11087** |
+
+11087 exceeds `MEMORY_QUERY_FACT_PAYLOAD_CHARS`, so the assertion is exactly
+eight retained and two omitted. Every number above is checked, not estimated.
 
 Helper-level tests go beside the existing `truncate_middle` tests in
 `agents/test_assistant_long_request.py`:
@@ -211,9 +245,11 @@ Helper-level tests go beside the existing `truncate_middle` tests in
 - input at and below the cap is returned unchanged;
 - 1201, 1947, 5178 and 100000-character inputs;
 - rendered length is exactly the cap where the source exceeds it;
-- both ends preserved;
+- the first and last source characters both survive;
 - maximality — one more source character would breach the cap;
-- a cap too small for the marker raises.
+- the smallest cap that fits marker-plus-both-ends succeeds (51 for a
+  1200-character source), and one below it (50) raises `ValueError`;
+- a negative cap raises `ValueError`.
 
 ## Decided in principle, blocked on design and measurement
 
