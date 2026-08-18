@@ -157,12 +157,18 @@ rendered ceiling while the in-band marker states the actual number dropped —
 consistent, which they were not under revision 5's reading.
 
 **The block budget keeps today's meaning for this patch.**
-`MEMORY_QUERY_TOTAL_CHARS = 11000` covers `RECALLED_MEMORY_LEGEND`, the
-per-line newlines, and the retained fact lines — and excludes the
-`<recalled_memory>` fence and the explanatory suffixes, which is what the code
-does today (`used = len(RECALLED_MEMORY_LEGEND) + 1`, then `len(line) + 1` per
-kept line). Rename it `MEMORY_QUERY_FACT_PAYLOAD_CHARS` so the name states that.
-A true whole-observation budget is a separate change and is not in scope.
+`MEMORY_QUERY_FACT_PAYLOAD_CHARS = 11000` (renamed from
+`MEMORY_QUERY_TOTAL_CHARS`, which named something wider than it counted) covers
+`RECALLED_MEMORY_LEGEND`, the per-line newlines, and the retained fact lines —
+and excludes the `<recalled_memory>` fence and the explanatory suffixes, which
+is what the code does today (`used = len(RECALLED_MEMORY_LEGEND) + 1`, then
+`len(line) + 1` per kept line).
+
+It is an **admission threshold for another fact, not a ceiling on the payload**:
+the loop admits the first fact whatever its size (`if kept and ...`), preferring
+one over-long line to returning nothing. Documenting that is in scope; enforcing
+a true ceiling is a behavioural change and is not. A whole-observation budget is
+a separate change again.
 
 **The helper.** In `agents/base.py`, beside `truncate_middle` — **not** a change
 to it, whose contract the run summarizer depends on:
@@ -210,8 +216,11 @@ memory_query truncation tests:
 - both render the identical middle-truncation syntax;
 - rendered **fact text** stays within the cap (tested separately from the line,
   whose length also varies with uuid and tags);
-- the budgeted fact payload — `RECALLED_MEMORY_LEGEND`, per-line newlines and
-  retained fact lines — stays within `MEMORY_QUERY_FACT_PAYLOAD_CHARS`;
+- for the ten-fact boundary fixture below, the budgeted payload —
+  `RECALLED_MEMORY_LEGEND`, per-line newlines and retained fact lines — comes to
+  exactly 9860, within `MEMORY_QUERY_FACT_PAYLOAD_CHARS`. Asserted for that
+  fixture only: staying within the threshold is not a universal invariant, since
+  the first fact is admitted whatever its size;
 - a boundary fixture containing ten ordered 1200-character facts retains `u0`
   through `u7`, excludes `u8` and `u9`, and reports `obs.data["omitted"] == 2`
   (specified exactly below);
