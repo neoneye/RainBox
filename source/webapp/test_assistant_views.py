@@ -536,8 +536,13 @@ def test_query_memory_data_renders_as_table_with_tooltips():
                 "number of memory items"]:
         assert f'title="{tip}"' in ASSISTANT_TEMPLATE
     # truncated / omitted carry an explanatory tooltip (what + how to recover).
-    assert "per-fact cap (tagged truncate1200)" in ASSISTANT_TEMPLATE
-    assert "exceeded the 11000-char budget" in ASSISTANT_TEMPLATE
+    # Both say what the number means, not just that it is a limit: the per-fact
+    # cap drops a middle and keeps both ends, and the payload budget decides
+    # what is ADMITTED rather than capping the observation.
+    assert "middle was dropped" in ASSISTANT_TEMPLATE
+    assert "both ends kept (tagged truncate1200)" in ASSISTANT_TEMPLATE
+    assert "not admitted because they no longer fit" in ASSISTANT_TEMPLATE
+    assert "not the whole observation" in ASSISTANT_TEMPLATE
     assert "io-data" in ASSISTANT_TEMPLATE
     for hdr in ["QA static", "QA dynamic"]:
         assert hdr in ASSISTANT_TEMPLATE

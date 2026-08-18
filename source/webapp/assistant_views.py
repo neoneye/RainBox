@@ -660,8 +660,8 @@ ASSISTANT_TEMPLATE = """
                 <th title="number of QA static items">QA static</th>
                 <th title="number of QA dynamic items">QA dynamic</th>
                 <th title="number of memory items">memory</th>
-                <th title="number of facts shortened because they exceeded the 1200-char per-fact cap (tagged truncate1200); read one in full via memory_query with its uuid">truncated</th>
-                <th title="number of lower-ranked facts dropped because the whole block exceeded the 11000-char budget; narrow the query or fetch a fact by its uuid">omitted</th>
+                <th title="number of facts whose middle was dropped to fit the 1200-char rendered per-fact cap, both ends kept (tagged truncate1200); read one in full via memory_query with its uuid">truncated</th>
+                <th title="number of lower-ranked facts not admitted because they no longer fit the 11000-char fact payload — the legend and the retained lines, not the whole observation; narrow the query or fetch a fact by its uuid">omitted</th>
               </tr></thead><tbody><tr>
                 <td>{{ odata.qa_static }}</td>
                 <td>{{ odata.qa_dynamic }}</td>

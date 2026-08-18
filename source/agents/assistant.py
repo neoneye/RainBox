@@ -1571,8 +1571,10 @@ def _action_query_memory(
     then upstream seed, then claims. Secrets are never returned
     (include_secret stays False).
 
-    Long facts are shortened (tagged `truncateN`) and the block is bounded; pass
-    `{"uuid": ...}` instead of `{"query": ...}` to read one fact in full.
+    A long fact has its MIDDLE dropped to fit the rendered per-fact cap, both
+    ends kept (tagged `truncateN`), and facts are admitted in rank order while
+    they fit the payload budget; pass `{"uuid": ...}` instead of
+    `{"query": ...}` to read one fact in full.
 
     `record_telemetry=False` skips the RetrievalEvent writes — for callers
     outside a real assistant run (the /memory/developer inspection page), whose
