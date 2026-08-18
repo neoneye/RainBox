@@ -1699,16 +1699,15 @@ def _action_query_memory(
         fact_lines.append(line)
         truncated_count += tr
 
-    # (C) Overall budget: admit facts in rank order while they fit; drop the
-    # tail at a fact boundary (never mid-word) and count what was omitted.
+    # (C) Admission: take facts in rank order while each still fits, drop the
+    # tail at a fact boundary (never mid-word), and count what was left out.
     #
-    # An ADMISSION THRESHOLD, not a hard cap. The first fact is admitted
-    # whatever its size (`if kept and ...`), so a payload can exceed the budget
-    # by one over-long line rather than return nothing. In practice the
-    # per-fact rendered cap keeps a line far below the threshold, but the
-    # guarantee this loop makes is "no fact is admitted that does not fit
-    # alongside what came before it" — not "the payload is never larger than
-    # the number".
+    # MEMORY_QUERY_FACT_PAYLOAD_CHARS is the threshold for admitting ANOTHER
+    # fact. It is not a ceiling on what this builds: the first fact is admitted
+    # whatever its size (`if kept and ...`), because one over-long lead fact is
+    # better than returning nothing — and the payload is then larger than the
+    # number. Every fact after it is admitted only if it fits alongside what
+    # came before.
     used = len(RECALLED_MEMORY_LEGEND) + 1
     kept: list[str] = []
     omitted = 0
