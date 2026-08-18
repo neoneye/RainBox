@@ -202,7 +202,7 @@ action for facts. It:
 
 Seed fact tags are, in order: `seed/<source>` (`seed/user-overlay` or
 `seed/upstream`), `dynamic` for handler entries, the entry's `path` (omitted
-when it has none), and `truncateN` when shortened. The path is what makes
+when it has none), and `truncateN` when the fact's middle was dropped to fit. The path is what makes
 answers whose text alone is ambiguous tellable apart, e.g.:
 
 ```text

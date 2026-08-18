@@ -515,9 +515,10 @@ only by `undo_write_intent`.
 
 - **`memory_query`** — hybrid retrieval over curated seed Q&A (static +
   dynamic handlers) and active memory claims, tiered user-overlay → upstream →
-  claims, fenced as untrusted data, with per-fact (1200 chars, tagged
-  `truncateN`) and total (11000 chars) budgets and a `{"uuid": ...}` mode to
-  read one fact in full. Seed fact lines carry the entry's `path` as a tag
+  claims, fenced as untrusted data, with a rendered per-fact cap (1200 chars —
+  the middle goes, both ends stay, tagged `truncateN`) and an 11000-char fact
+  payload that decides which further facts are admitted, and a `{"uuid": ...}`
+  mode to read one fact in full. Seed fact lines carry the entry's `path` as a tag
   (e.g. `seed/upstream, dynamic, system.uptime_host`) so look-alike answers
   stay tellable apart. Details in `qa-system.md` and `memory-architecture.md`.
 - **`workspace_read_command`** — one allowlisted, non-shell argv run in the

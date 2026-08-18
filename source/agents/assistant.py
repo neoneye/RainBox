@@ -1572,9 +1572,10 @@ def _action_query_memory(
     (include_secret stays False).
 
     A long fact has its MIDDLE dropped to fit the rendered per-fact cap, both
-    ends kept (tagged `truncateN`), and facts are admitted in rank order while
-    they fit the payload budget; pass `{"uuid": ...}` instead of
-    `{"query": ...}` to read one fact in full.
+    ends kept (tagged `truncateN`). Facts are then admitted in rank order while
+    they fit the payload budget — except the first, which is admitted whatever
+    its size, so an over-long lead fact is preferred to returning nothing. Pass
+    `{"uuid": ...}` instead of `{"query": ...}` to read one fact in full.
 
     `record_telemetry=False` skips the RetrievalEvent writes — for callers
     outside a real assistant run (the /memory/developer inspection page), whose
