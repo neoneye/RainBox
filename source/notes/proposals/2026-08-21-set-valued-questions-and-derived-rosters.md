@@ -268,9 +268,10 @@ time retrieval sees it the question is arity 1 again.
 
 **No new table, migration, or source of truth** — but not "nothing is
 persisted": a roster's question nodes and digest go into the existing pgvector
-table like any other entry's, which is what [Sync](#sync) reconciles. What
-stays in memory is the *relation index*; the registry is already fully resident
-at 190 entries.
+table like any other entry's, which is what [Sync](#sync) reconciles. What a
+roster adds beyond that is a string; membership itself is computed during
+synthesis and discarded, and the registry is already fully resident at 190
+entries.
 
 ### Relation vocabulary
 
