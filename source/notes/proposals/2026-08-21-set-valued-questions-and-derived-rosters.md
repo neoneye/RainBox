@@ -95,8 +95,6 @@ plural token in an alias.
 
 ## Three architectures considered and not adopted
 
-Asked directly, so recorded rather than left implicit.
-
 **A graph database.** The path already *is* a triple —
 `<subject>.<predicate>.<object>` — so the modelling win is real but already
 paid for. `MATCH (me)-[:FRIEND]->(x)` and a prefix scan over 190 in-memory
@@ -134,30 +132,29 @@ sit beside the text as an index and must then be kept in sync with it; and a
 fact table is a prerequisite either way. **R1 below produces that fact table.**
 Datalog over it is an increment that can be decided on evidence.
 
-## Correction to the approach I proposed in conversation
-
-I proposed a `(subject, predicate, object, qa_id)` table in Postgres plus a new
-`kb_enumerate` assistant action. Both are wrong and R1 replaces them.
-
-- **The table is unnecessary.** The registry is already fully in memory and is
-  190 entries. `_fulltext_index` already demonstrates the pattern for a cached
-  derived index keyed on registry identity. A Postgres table would add a
-  migration, a sync path and a second source of truth for data derived from a
-  string already in RAM.
-- **A new action is worse than no action.** It would require the model to
-  recognise that a question is set-valued and choose a different verb for it —
-  a decision it has no reliable basis for, added to a ~30-verb action list that
-  costs prompt budget on every turn.
-
-The better move is to stop asking retrieval to return sets: **synthesise the
-set as an ordinary entry, converting an arity-N question back into arity 1.**
-
 ## R1 — derived rosters
+
+Rather than teach retrieval to return sets, **synthesise the set as an ordinary
+entry, converting an arity-N question back into arity 1.**
 
 At load time, for every `(subject, predicate)` group with two or more members,
 synthesise a **roster entry**. It is an entry like any other: it embeds, it is
 full-text indexed, it competes for candidacy, it obeys shields. Retrieval is
 not modified. The assistant is not modified.
+
+Two things this deliberately does not do.
+
+- **No new storage.** The relation index is derived in memory, not persisted.
+  The registry is already fully resident and is 190 entries; `_fulltext_index`
+  is the existing pattern for a cached derived index keyed on registry
+  identity. A `(subject, predicate, object, qa_id)` table in Postgres would add
+  a migration, a sync path and a second source of truth for data derived from a
+  string already in RAM.
+- **No new action.** An `enumerate`-style verb would require the model to
+  recognise that a question is set-valued and select a different action for it
+  — a decision it has no reliable basis for, added to a ~30-verb list that
+  costs prompt budget on every turn. A roster needs no such recognition,
+  because by the time retrieval sees it the question is arity 1 again.
 
 ### Relation vocabulary
 
@@ -272,10 +269,9 @@ never otherwise. No new sync path.
 
 ### What R1 costs
 
-No new dependency, no new table, no migration, no model call, no change to
-retrieval or to the assistant's action set. One new `kind`, one derived index
-built beside `_fulltext_index`, one optional entry field, one operator-owned
-config file.
+One new `kind`, one derived index built beside `_fulltext_index`, one optional
+entry field, one operator-owned config file. No dependency, no migration, no
+model call, no change to retrieval.
 
 ## R2 — make the alias table non-lossy
 
