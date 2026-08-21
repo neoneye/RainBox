@@ -281,14 +281,19 @@ def _reject_reserved_keys(entry: dict[str, Any], path: Any, lineno: int) -> None
             )
 
 
-def _relations_path() -> Path | None:
+def _relations_path(overlay: Path | None = None) -> Path | None:
     """`<customize.dir>/relations.json`, or None when customize.dir is unset.
 
-    Derived from `_overlay_path()` rather than re-reading the setting: both
+    Derived from the overlay path rather than re-reading the setting: both
     files live in the operator's customize dir, so there is one resolution to
     get right, and anything that stubs the overlay away (tests, an operator
-    with no customize dir) gets no relations for free."""
-    overlay = _overlay_path()
+    with no customize dir) gets no relations for free.
+
+    Callers that have already resolved the overlay pass it in, so one load
+    cannot mix an overlay from one `customize.dir` value with relations from
+    another if the setting changes underneath."""
+    if overlay is None:
+        overlay = _overlay_path()
     if overlay is None:
         return None
     return overlay.parent / RELATIONS_FILENAME
@@ -377,9 +382,9 @@ def _parse_relations(doc: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _load_relations() -> list[dict[str, Any]]:
+def _load_relations(overlay: Path | None = None) -> list[dict[str, Any]]:
     """Declarations from the customize dir; an absent file means none."""
-    path = _relations_path()
+    path = _relations_path(overlay)
     if path is None or not path.exists():
         return []
     try:
@@ -498,14 +503,26 @@ def _synthesize_rosters(entries: list[dict[str, Any]],
     roster: shielding a member is data evolution, not malformed config, and
     must not take the knowledge base down until a declaration is edited. Every
     other failure raises."""
-    by_path = {e.get("path") for e in entries}
+    by_path = {str(e.get("path")): str(e.get("id")) for e in entries}
+    by_id = {str(e.get("id")): str(e.get("path")) for e in entries if e.get("id")}
     out: list[dict[str, Any]] = []
     for decl in relations:
         prefix = decl["prefix"]
-        if prefix in by_path:
+        occupant = by_path.get(prefix)
+        if occupant is not None:
             raise ValueError(
-                f"relation {prefix!r}: path already occupied by an authored "
-                f"entry — remove the declaration or move the entry")
+                f"relation {prefix!r}: path already occupied by authored entry "
+                f"{occupant!r} — remove the declaration or move the entry")
+        roster_id = _roster_id(prefix)
+        # The registry is keyed by id, so an authored entry holding the
+        # generated id would be silently replaced by the roster — its answer
+        # gone, with nothing reported.
+        clash = by_id.get(roster_id)
+        if clash is not None:
+            raise ValueError(
+                f"relation {prefix!r}: its generated id {roster_id} is already "
+                f"used by the authored entry at {clash!r} — change that entry's "
+                f"id or remove the declaration")
         members = _roster_members(entries, prefix)
 
         seen: dict[str, str] = {}
@@ -521,13 +538,13 @@ def _synthesize_rosters(entries: list[dict[str, Any]],
 
         declared = decl["shield"]
         if any((m.get("shield") or None) != declared for m in members):
-            logger.info(
-                "roster %s: members are not shield-uniform with the declaration; "
-                "no roster for this prefix", prefix)
+            # Silent by design: agents run in freshly spawned processes, so a
+            # warning here would re-fire on every turn. A persistent
+            # diagnostic is the right home and does not exist yet.
             continue
 
         roster = {
-            "id": _roster_id(prefix),
+            "id": roster_id,
             "path": prefix,
             "kind": "static",
             "questions": list(decl["questions"]),
@@ -621,7 +638,7 @@ def _load_jsonl() -> list[dict[str, Any]]:
     # Rosters are synthesised from the authored entries FROZEN here, and
     # appended afterwards, so no roster can become a member of another.
     authored = list(merged.values())
-    return authored + _synthesize_rosters(authored, _load_relations())
+    return authored + _synthesize_rosters(authored, _load_relations(overlay))
 
 
 def _build_alias_table(entries: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -748,7 +765,7 @@ def _source_snapshot() -> dict[str, tuple[int, int]]:
     overlay = _overlay_path()
     if overlay is not None:
         paths.append(overlay)
-    relations = _relations_path()
+    relations = _relations_path(overlay)
     if relations is not None:
         paths.append(relations)
     snap: dict[str, tuple[int, int]] = {}

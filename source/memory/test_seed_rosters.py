@@ -35,6 +35,10 @@ def _entry(path, **over):
     return e
 
 
+# Pinned in test_digest_is_pinned_including_non_ascii; see that test.
+_PINNED_DIGEST = "5cfb666ed8e4b71e84cfba899aa80737ea8b1aad55781f6c0299e390411530d0"
+
+
 def _members(n, prefix="human.subject.friend"):
     return [_entry(f"{prefix}.p{i}", label=f"Person {i}") for i in range(n)]
 
@@ -47,7 +51,8 @@ def test_valid_declaration_parses():
 
 
 def test_missing_file_yields_no_relations(tmp_path, monkeypatch):
-    monkeypatch.setattr(kb, "_relations_path", lambda: tmp_path / "absent.json")
+    monkeypatch.setattr(kb, "_relations_path",
+                        lambda overlay=None: tmp_path / "absent.json")
     assert kb._load_relations() == []
 
 
@@ -196,10 +201,14 @@ def test_canonical_encoding_is_pinned():
     assert kb._canonical({"b": 1, "a": "æø"}) == '{"a":"æø","b":1}'.encode("utf-8")
 
 
-def test_digest_is_stable_across_calls_including_non_ascii():
+def test_digest_is_pinned_including_non_ascii():
+    # Compared against a literal, not against itself: a change to the
+    # canonical encoding (escaping, separators, key order) must fail here
+    # rather than quietly orphaning every embedded roster row.
     decl = _decl(title="vænner")
-    members = _members(2)
-    assert kb._roster_digest(decl, members) == kb._roster_digest(decl, members)
+    members = [_entry("human.subject.friend.p0", _row_sha256="h0"),
+               _entry("human.subject.friend.p1", _row_sha256="h1")]
+    assert kb._roster_digest(decl, members) == _PINNED_DIGEST
 
 
 @pytest.mark.parametrize("mutate", [
@@ -219,11 +228,14 @@ def test_digest_changes_on_every_observable_input(mutate):
     assert kb._roster_digest(*mutate(decl, members)) != base
 
 
-def test_digest_ignores_an_unrelated_entry():
-    decl, members = _decl(), _members(2)
-    base = kb._roster_digest(decl, members)
-    _entry("somewhere.else")           # not a member; nothing to recompute
-    assert kb._roster_digest(decl, members) == base
+def test_digest_ignores_an_entry_outside_the_prefix():
+    # Synthesize twice, once with an unrelated entry present in the registry.
+    decl = _decl()
+    entries = _members(2)
+    [before] = kb._synthesize_rosters(entries, [decl])
+    [after] = kb._synthesize_rosters(entries + [_entry("somewhere.else")], [decl])
+    assert after["_row_sha256"] == before["_row_sha256"]
+    assert after["answer"] == before["answer"]
 
 
 # --- synthesis ---------------------------------------------------------------
@@ -282,9 +294,27 @@ def test_duplicate_member_paths_raise():
 
 
 def test_an_authored_entry_at_the_roster_path_raises():
-    entries = _members(2) + [_entry("human.subject.friend")]
-    with pytest.raises(ValueError, match="already occupied"):
+    authored = _entry("human.subject.friend", id="authored-1")
+    entries = _members(2) + [authored]
+    with pytest.raises(ValueError) as ei:
         kb._synthesize_rosters(entries, [_decl()])
+    msg = str(ei.value)
+    assert "already occupied" in msg
+    assert "authored-1" in msg, f"error should name the authored entry: {msg!r}"
+
+
+def test_an_authored_entry_holding_the_generated_id_raises():
+    # _load_kb keys the registry by id, so an authored entry sharing the
+    # roster's generated id would be silently replaced by it — the authored
+    # answer gone, with nothing reported.
+    rid = kb._roster_id("human.subject.friend")
+    authored = _entry("somewhere.else", id=rid, answer="AUTHORED")
+    with pytest.raises(ValueError) as ei:
+        kb._synthesize_rosters(_members(2) + [authored], [_decl()])
+    msg = str(ei.value)
+    assert rid in msg
+    assert "human.subject.friend" in msg
+    assert "somewhere.else" in msg
 
 
 def test_a_roster_is_never_a_member_of_another_roster():
