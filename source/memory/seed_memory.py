@@ -481,16 +481,25 @@ def rebuild_kb() -> dict[str, int]:
 
     Lock order matters: _vector_store() and _load_kb() both take _lock,
     which is non-reentrant — so the store is resolved BEFORE the locked
-    section and the registry is rebuilt AFTER it."""
+    section and the registry is rebuilt AFTER it.
+
+    Order inside the lock matters too: the sources are parsed and the documents
+    built BEFORE the TRUNCATE. _load_jsonl() raises on malformed config (bad
+    JSON, duplicate id/path, a non-string shield), and truncating first would
+    empty the operator's table and only then report the typo — with nothing
+    left to serve and no rollback, since the TRUNCATE is its own transaction.
+    Parsing first makes a validation failure a no-op, matching what the
+    incremental path already guarantees."""
     global _populated, _entries_by_id, _alias_table
     vs = _vector_store()
     with _lock:
+        # Pure and side-effect free; safe to run before anything is destroyed.
+        entries = _load_jsonl()
+        docs = _build_documents(entries)
         _populated = False
         _entries_by_id = {}
         _alias_table = {}
         _truncate_table()
-        entries = _load_jsonl()
-        docs = _build_documents(entries)
         storage = StorageContext.from_defaults(vector_store=vs)
         VectorStoreIndex.from_documents(
             docs, storage_context=storage, embed_model=_embed_model()

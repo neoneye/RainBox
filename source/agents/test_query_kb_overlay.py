@@ -136,6 +136,34 @@ def test_rebuild_kb_resets_and_repopulates(customize_dir, monkeypatch):
     assert kb._populated is True
 
 
+def test_rebuild_kb_validates_before_truncating(customize_dir, monkeypatch):
+    """A loader validation error must leave the vector table alone.
+
+    rebuild_kb truncates and repopulates, so if it truncated first and parsed
+    second, one malformed overlay line plus the /settings rebuild button would
+    empty the table and then raise — the operator's whole KB gone to a typo.
+    The incremental sync path already promises this ("validation errors raise
+    before any write"); the rebuild path must match it."""
+    truncated = _wire_fakes(monkeypatch)
+    _write_overlay(customize_dir, [
+        {"id": "dup", "path": "a.b", "questions": ["one"], "answer": "x"},
+        {"id": "dup", "path": "a.c", "questions": ["two"], "answer": "y"},
+    ])
+    # Stand in for a healthy process: populated table, warm registry.
+    monkeypatch.setattr(kb, "_populated", True)
+    monkeypatch.setattr(kb, "_entries_by_id", {"keep": {"id": "keep"}})
+    monkeypatch.setattr(kb, "_alias_table", {"keep": ["keep"]})
+
+    with pytest.raises(ValueError, match="duplicate id"):
+        kb.rebuild_kb()
+
+    assert truncated["n"] == 0, "table was truncated before the config was validated"
+    # A rejected config is a no-op, not a reset: what was being served still is.
+    assert kb._populated is True
+    assert kb._entries_by_id == {"keep": {"id": "keep"}}
+    assert kb._alias_table == {"keep": ["keep"]}
+
+
 def test_truncate_table_is_noop_when_table_missing(app_ctx, monkeypatch):
     """After the data_query_agent_kb→data_seed_memory rename the new table may not
     exist on the first rebuild; TRUNCATE must not crash (PGVectorStore creates it
