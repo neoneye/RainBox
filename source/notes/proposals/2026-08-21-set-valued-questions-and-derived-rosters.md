@@ -1,13 +1,12 @@
 # Set-valued questions: the registry holds the answer and cannot return it
 
-**Status:** Implementable, as **two independent changes** that ship in order.
-PR 1 (non-lossy alias table) is a correctness fix confined to one module. PR 2
-(derived rosters) is scoped to a bounded MVP: rosters are synthesised as
-ordinary `static` entries, and over-long ones truncate deterministically at
-member boundaries. Pagination, the diagnostics UI, stemming and non-prefix sets
-are named and **not designed**; they must not be built from this document.
+**Status: IMPLEMENTED.** Both changes are merged with tests; see
+[What was delivered](#what-was-delivered). Pagination, the diagnostics UI,
+stemming and non-prefix sets remain **not designed** and must not be built from
+this document. The maintained description now lives in `qa-system.md`; this
+document is the reasoning behind it and is not updated further.
 **Date:** 2026-08-21
-**Revision:** 6.3
+**Revision:** 7 (closing)
 **Relates to:** `qa-system.md`, `2026-08-08-qa-navigation-routes.md`,
 `2026-08-17-recall-filter-and-retrieval-granularity.md`
 
@@ -661,8 +660,9 @@ a request costs a verb the model must choose — which is the thing rosters exis
 to avoid. Decide it against a real distribution of N, not in the abstract.
 
 **The diagnostics surface.** Endpoint schema and UI for load-time findings:
-duplicate aliases (PR 1) and suppressed non-uniform rosters (PR 2). Neither
-change blocks on it; both get better with it.
+duplicate aliases (PR 1, not reported at all as shipped) and suppressed
+non-uniform rosters (PR 2, silent as shipped). Neither change blocked on it;
+both get better with it.
 
 **Stemming (C4).** The measurement is recorded above so it is not lost. It is
 not designed here because a stemmer is language-coupled — `_tokenize` already
@@ -738,8 +738,9 @@ against current code before its fix lands.
    test**. It depends on `embeddinggemma`, its version, and the surrounding
    corpus, so a fake ranker would prove nothing and a real one would make the
    suite environment-dependent. It is the property that distinguishes this
-   design from alias→prefix→enumerate, so it is worth measuring: record it as a
-   benchmark alongside the existing ones, not in the permanent unit suite.
+   design from alias→prefix→enumerate, so it is measured as an opt-in
+   benchmark: `benchmarks/roster_paraphrase.py`. Result recorded in
+   [What was delivered](#what-was-delivered).
 9. Exact-alias resolution on a chat route, marked as that route's behaviour and
    not as the fix.
 
@@ -811,6 +812,54 @@ against current code before its fix lands.
     form. Unchanged on an edit to an unrelated entry.
 24. Removing `relations.json` removes the roster's vector nodes; an absent file
     yields zero rosters and no error.
+
+## What was delivered
+
+Five commits on `qa-derived-rosters`, in ship order:
+
+| commit | what |
+| --- | --- |
+| `41dfbc5` | PR 1 — `_alias_table` becomes `dict[str, list[str]]`, deduplicated by `qa_id`; `_exact_match` answers only on one visible claimant |
+| `8b13675` | `rebuild_kb` parses and builds documents **before** the TRUNCATE — a pre-existing hazard the roster work would have made routine |
+| `7161f42` | PR 2 — `relations.json` parsing, membership, bounded rendering, digests, synthesis, `_source_snapshot`, lexical-answer exclusion, reserved keys |
+| `234ebeb` | rejects a roster id already held by an authored entry (reproduced first: the registry is keyed by id, so the authored entry was silently replaced); silent suppression; the integration suite |
+| `4345f99` | two tests that bypassed the paths they claimed; `_relations_path` sentinel; collision maps stop coercing non-strings |
+
+Tests: `memory/test_seed_alias_table.py` (7), `memory/test_seed_rosters.py`
+(74 pure), `memory/test_seed_rosters_integration.py` (11, real pgvector +
+fake embedder), `agents/test_assistant_rosters.py` (6, the measured route),
+plus `test_rebuild_kb_validates_before_truncating`. Full suite at closure:
+2556 passed, 10 skipped.
+
+Two tests were verified by breaking the thing they watch: SQL shield exclusion
+(sabotage `_shield_filters` ⇒ the locked roster eats the only node slot and the
+ranking empties) and the recall-filter route (the fake filter records that it
+was reached).
+
+### Paraphrase benchmark
+
+`benchmarks/roster_paraphrase.py`, opt-in, synthetic corpus (6 members, 5
+distractors of the kind that outranked real members in the measured failure,
+1 roster), against `embeddinggemma:300m` (`kb_epoch embeddinggemma:300m|1`).
+Authored phrasings: `who are my friends`, `my friends`, `list my friends`.
+
+| query | kind | roster rank | score |
+| --- | --- | --- | --- |
+| who are my friends | authored | 1 | 1.0000 |
+| my friends | authored | 1 | 1.0000 |
+| list my friends | authored | 1 | 1.0000 |
+| who do I hang out with | paraphrase | 1 | 0.7867 |
+| name the people close to me | paraphrase | 1 | 0.7277 |
+| which people am I friendly with | paraphrase | 1 | 0.7764 |
+| tell me about my social circle | paraphrase | 1 | 0.7551 |
+| who are my mates | paraphrase | 1 | 0.8932 |
+| people I spend time with | paraphrase | 1 | 0.7579 |
+
+**6/6 paraphrases rank the roster first.** This is the property the
+alias→prefix→enumerate competitor cannot have — it matches authored wording
+only — and it is the evidence that the extra machinery bought something. It is
+one model at one version on a synthetic corpus, so it is a data point, not a
+guarantee; re-run it after an embedding-model change.
 
 ## What this does not fix
 

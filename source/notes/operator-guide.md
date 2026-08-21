@@ -292,6 +292,28 @@ The curated Q&A pairs live in the `data_seed_memory` pgvector table, embedded fr
 - Click **Repopulate Q&A memory** on `/settings` to re-embed after editing the
   JSONL (or set `QUERY_AGENT_REBUILD_KB=1`). This (re)creates `data_seed_memory`.
 
+### A declared relation produces no roster
+
+Rosters come from `relations.json` in your `customize.dir`, beside
+`question_answer.jsonl`. Two failure modes look different:
+
+- **Repopulate fails with an error naming the declaration** — the file is
+  malformed. Every field is validated: `prefix` (no empty segments, no
+  newline), `title`, `questions` (non-empty, none collapsing to the same alias
+  as another in the same declaration), `complete` (a boolean), and `shield`
+  (**required** — `null` for unshielded, or a shield name). The registry is
+  left exactly as it was; fix the file and press again.
+- **Repopulate succeeds but the roster is missing** — the members are not
+  shield-uniform. Every member under the prefix must carry the same shield as
+  the declaration, with *unshielded* counting as its own class: one unshielded
+  member beside a shielded one suppresses the roster. This is deliberate and
+  silent, so that shielding a person never takes the knowledge base down. Check
+  the `shield` on each entry under the prefix against the declaration's.
+
+A roster reading `(0)` is not a failure — it means the declaration is valid and
+nothing matches its prefix yet. It is also how a mistyped `prefix` shows up, so
+check the spelling against the paths you meant.
+
 ### Tests Cannot Connect To Postgres
 
 In sandboxed runs, localhost Postgres can be blocked. Rerun tests with the
