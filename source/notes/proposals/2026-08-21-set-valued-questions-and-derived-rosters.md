@@ -1,14 +1,14 @@
 # Set-valued questions: the registry holds the answer and cannot return it
 
 **Status:** The failure analysis and C1–C4 are settled. R1 (derived rosters) is
-**blocked**, on six named items: the `kind` fan-out across existing consumers,
-provenance tiering, member dereference, completeness semantics, the large-N
-rendering cliff, and diagnostics delivery. Each has a proposed resolution
-below; none is built. R2 (lossy alias table) is ready at the reduced scope defined below.
+**blocked**, on five named items: the `kind` fan-out across existing consumers,
+provenance tiering, member dereference, completeness semantics, and the large-N
+rendering cliff. Each has a proposed resolution below except the last, which is
+an open design question; none is built. R2 (lossy alias table) is ready at the reduced scope defined below.
 Stemming and non-prefix sets are named and **not designed**; they must not be
 built from this document.
 **Date:** 2026-08-21
-**Revision:** 4
+**Revision:** 5
 **Relates to:** `qa-system.md`, `2026-08-08-qa-navigation-routes.md`,
 `2026-08-17-recall-filter-and-retrieval-granularity.md`
 
@@ -54,9 +54,10 @@ The measurement came from the assistant, so the route is
 `retrieve_seed_answers` → `_semantic_ranked` as the fallback when the filter
 call fails.
 
-**Neither branch calls `_exact_match`.** Exact alias matching exists only on the
-chat routes ([agents/query.py](../../agents/query.py),
-[agents/query_filter_router.py](../../agents/query_filter_router.py)). Any
+**Neither branch calls `_exact_match`.** Exact alias matching lives entirely
+outside the assistant, in four callers: `agents/query.py`,
+`agents/query_router.py`, `agents/query_filter_router.py`, and
+`webapp/memory_developer_views.py`. Any
 design that relies on an authored alias being matched deterministically fixes
 the chat route and leaves the measured route untouched. This constrains R1 and
 R2 below and is the single most important fact in this document.
@@ -183,8 +184,8 @@ index. Datalog over it is an increment decided later on evidence.
 Rather than teach retrieval to return sets, **synthesise the set as an ordinary
 entry, converting an arity-N question back into arity 1.**
 
-At load time, for every declared relation with two or more members, synthesise
-a **roster entry**. It is an entry like any other: it embeds, it is full-text
+At load time, for **every declared relation**, synthesise a **roster entry** —
+whatever its membership count, including one member and none. It is an entry like any other: it embeds, it is full-text
 indexed, it competes for candidacy, it obeys shields.
 
 Retrieval's *ranking* is not modified. Nothing else about "unmodified" survives
@@ -272,28 +273,49 @@ empty, or of the wrong type; a non-string or empty question; a `prefix` with a
 trailing dot or an empty segment; a non-boolean `complete`; two questions in one
 declaration that collapse under `_normalize_query`; two declarations sharing a
 `prefix`; two declarations whose distinct prefixes collide under `uuid5`; a
-declaration whose members are not **shield-uniform**; a declaration two of
+a declaration two of
 whose members share a `path`; and a declaration colliding with an authored
 entry at the same path (see below).
+
+**Shield-uniformity is the one soft failure**, and deliberately so. A
+declaration whose members are not shield-uniform yields **no roster for that
+prefix**, logged, while the rest of the registry loads normally. Raising would
+be disproportionate: shielding a member is data evolution — a privacy decision
+the operator is entitled to make at any time — and it must not take the whole
+knowledge base down until a declaration is edited. Every *other* failure listed
+above is malformed configuration, which raises.
 
 **Shield-uniform** means every member falls in the same shield class, where
 *unshielded* is a class of its own. One unshielded member alongside one
 `shield: A` member carries a single named shield and is still not uniform:
 stamping the roster `A` would hide public data, and leaving it unstamped would
 consume vector budget while locked. Both mixtures — two named shields, and
-named-plus-unshielded — raise.
+named-plus-unshielded — suppress.
 
-A declaration matching **fewer than two** members is not an error — membership
-is data and legitimately shrinks — but it produces no roster, and an operator
-who declared a relation and got nothing needs to know why.
+### Cardinality
 
-This is the one contract R1 cannot fulfil by raising. Everything else that can
-go wrong is now a hard error; this cannot be, because a member being removed
-must not break the registry. So it needs a **surface** — and
-`/settings/api/repopulate_memory` returns four sync counts, which the UI
-renders verbatim. **Diagnostics delivery is therefore R1's sixth blocker**, not
-a deferred nicety: endpoint schema and UI rendering must exist before R1 ships,
-or the contract must be dropped and the case left silent.
+**A declared relation always yields a roster**, at any membership count.
+Generating only at two or more members — on the reasoning that a set of one is
+not a set — manufactures the very failure this document exists to fix.
+
+Consider a relation shrinking from two members to one. The roster vanishes, and
+with it the authored plural aliases — which the surviving member need not
+carry, in a registry where singular and plural do not match each other (C4).
+The question that worked yesterday returns to top-k guessing, the completeness
+qualifier disappears, and the id and its vector nodes churn every time
+membership crosses the boundary. A cardinality rule that deletes aliases is a
+retrieval gap dressed as tidiness.
+
+Zero members is likewise a roster, and a useful one. `recorded friends (0)`
+answers the question honestly; the alternative is retrieval falling through to
+whatever else scores, which is the measured failure again. Under
+`"complete": true` it is a *stronger* answer, not a degenerate one.
+
+This also removes the only contract R1 could not meet by raising. Every load
+failure is now either a hard error or a logged suppression, so **R1 no longer
+blocks on a diagnostics surface**. A mistyped prefix surfaces as a roster
+reading `(0)` the first time the operator asks its own question — a better
+signal than a line in a log file.
 
 ### Membership, and the two collision cases
 
@@ -302,18 +324,19 @@ under a declared prefix the **`path` is the member's logical identity** — it i
 the relation's object — so two members sharing a path **raise**, naming both
 ids.
 
-Listing both was the earlier answer and produces a wrong roster: the same
-person twice and a count of 7 where the truth is 6, presented with the same
-confidence as a correct one. Cross-file path reuse being legal in the generic
-merge does not make it valid relation data, and a diagnostic cannot carry this
-while diagnostics are logs-only.
+Listing both and diagnosing it produces a wrong roster: the same person twice
+and a count of 7 where the truth is 6, presented with the same confidence as a
+correct one. Cross-file path reuse being legal in the generic merge does not
+make it valid relation data, and a log cannot carry a wrong answer the model
+has already been shown.
 
 If an **authored entry already occupies the roster's own path**, that is a
 **configuration error and raises**, naming both the declaration and the
-authored entry. Suppress-and-report was the earlier answer and is wrong while
-diagnostics are logs-only: the operator would add a declaration, press
-Repopulate, read a successful count, and never learn the declaration did
-nothing. Silent opt-out is indistinguishable from successful derivation.
+authored entry. Suppress-and-report is wrong here for the same reason it is
+right for shield mixtures: this failure is a declaration that can simply be
+deleted, not data evolving underneath one. An operator who added a declaration,
+pressed Repopulate and read a successful count would never learn it did
+nothing, and silent opt-out is indistinguishable from successful derivation.
 
 The cost is that hand-authoring a roster is no longer a way to opt out of
 generation for a prefix; the operator removes the declaration instead. That is
@@ -364,7 +387,7 @@ A third `kind` is not additive. Nine sites binary-branch on
 | site | behaviour on a roster | action |
 | --- | --- | --- |
 | `_resolve_match` | `"(unknown kind in match)"` | add the roster branch — planned |
-| `seed_candidate_rows` (`query_filter_router.py`) | row carries **neither `answer` nor `handler`** | must render the member list |
+| `seed_candidate_rows` (`query_filter_router.py`) | row carries **neither `answer` nor `handler`** | render `recorded <title> (N)` — *not* the member list; see below |
 | `_build_documents` | node metadata carries neither | acceptable; metadata is excluded from the vector |
 | `retrieve_seed_memories` | `kind != "static"` ⇒ **dropped** | acceptable: the always-on chat block is static-only by design. State it. |
 | `retrieve_seed_answers`, `assistant.py` answer extraction (2 sites) | `else` branch calls `_resolve_match` | already correct once the branch exists |
@@ -446,10 +469,9 @@ layer down. This is a real limit of the design and is stated, not solved.
 - <label>  [qa_id]
 ```
 
-Dropping the uuids to fit more members was the earlier answer and rested on a
-claim the registry does not support — that a member is reachable by name
-because "the members' own aliases already answer well". No such invariant
-exists. `label` is optional, the fallback path slug need not appear in
+Dropping the uuids to fit roughly three times as many members is tempting, and
+rests on a claim the registry does not support: that a member is reachable by
+name because its own aliases already answer well. No such invariant exists. `label` is optional, the fallback path slug need not appear in
 `questions` at all, labels need not be unique, and *this entire document is a
 measurement of member retrieval failing*. A label-only roster is a display
 list, not an index card, and cannot promise that a named member can be read in
@@ -514,8 +536,8 @@ occupies vector budget before being dropped — candidate starvation, in the
 document arguing about candidate starvation. So the roster's node metadata
 carries the members' common shield.
 
-**The residual is not bounded at one slot, and the earlier text saying so was
-wrong twice over.** `TOP_K_NODES = 50` counts *question nodes*, not entries —
+**The residual is not bounded at one slot, on two counts.**
+`TOP_K_NODES = 50` counts *question nodes*, not entries —
 the constant's own comment warns that "one strong entry's alternates can eat
 most slots". A roster with three aliases is three nodes, and several locked
 rosters multiply out against a budget of 50 before any in-memory filter runs.
@@ -523,10 +545,9 @@ rosters multiply out against a budget of 50 before any in-memory filter runs.
 The resolution is to make the mixed case impossible rather than to absorb it:
 **a roster is generated only when its members are shield-uniform** — all
 unshielded, or all carrying the same one shield, with *unshielded* counting as
-a class of its own (see
-[Configuration validation](#configuration-validation)). Any other mixture
-raises. The semantics are then exact: the roster's shield *is* its members'
-shield.
+a class of its own. Any other mixture suppresses the roster rather than raising
+(see [Configuration validation](#configuration-validation)). The semantics are
+then exact: the roster's shield *is* its members' shield.
 
 The alternative — list-valued shield metadata admitted when any member's shield
 is unlocked — is strictly more expressive and requires changing
@@ -549,7 +570,6 @@ alias→prefix→enumerate alive as the fallback:
   rule, one optional entry field.
 - One operator-owned config file, with a full validation pass in front of it.
 - A provenance decision that touches how the assistant tiers results.
-- A diagnostics endpoint and UI that do not exist yet.
 
 No dependency, no migration, no model call, and no change to retrieval
 *ranking*. The competitor needs none of the first four lines and pays instead
@@ -560,13 +580,21 @@ with a new call site and no paraphrase reach.
 Independent of R1, and a live silent-data-loss bug (C3). Scoped down from what
 a first reading suggests, because the callers do not support the obvious fix.
 
-`_exact_match` returns `Match | None`, and both callers act on a match
-immediately — `query.py` as `_exact_match(query) or _semantic_match(...)`,
-`query_filter_router.py` by resolving and returning. "Pass every matching id
-forward as candidates" is therefore not a local change: the filter router could
-hand them to its LLM filter, the plain query agent has no arbitration stage at
-all, and the assistant does not call exact matching in the first place. That is
-a caller redesign and is out of scope here.
+`_exact_match` returns `Match | None`, and all **four** callers act on a match
+immediately by resolving and returning. "Pass every matching id forward as
+candidates" is therefore not a local change — and the callers do not even share
+one notion of what to fall back to:
+
+| caller | behaviour when exact matching declines |
+| --- | --- |
+| `agents/query.py` | `_semantic_match` — gated on `MIN_SCORE` and `MIN_MARGIN` |
+| `agents/query_router.py` | ungated `_semantic_ranked[0]`, resolved and handed to an LLM as context |
+| `agents/query_filter_router.py` | the LLM relevance filter over hybrid candidates |
+| `webapp/memory_developer_views.py` | a debug view; reports no exact match |
+
+Three distinct fallbacks, one of them ungated. A candidate hand-off would have
+to mean something different in each, so it is a caller redesign and is out of
+scope here.
 
 The change that *is* local:
 
@@ -597,6 +625,13 @@ consolidate them. Raising was rejected: the live overlay holds at least two such
 collisions, so hard-failing would refuse to load the registry until roughly nine
 lines were edited, and ambiguity is representable rather than corrupt.
 
+**Reporting fires only from an explicit Repopulate request**, never from
+`_load_kb` or the automatic `_ensure_populated` reconcile. Agents run in freshly
+spawned processes, so a report emitted at load would re-log the same known
+collisions on every single agent turn. The report also names **qa_ids and
+`file:line`, never the alias text** — the alias is operator prose and does not
+belong in long-lived logs (see the PII rule that governs this registry).
+
 Detection compares **distinct qa_ids** per normalised alias, which is the same
 deduplication the table itself applies: the within-entry variants described
 above are one id and are not a collision.
@@ -626,9 +661,10 @@ predicates and a topic subtree. R1 covers exactly the sets the path already
 groups. Anything else needs the relation index plus rules — the Datalog
 increment, decided later on evidence.
 
-**The diagnostics surface.** Still undesigned, but no longer merely deferred:
-it is R1's sixth blocker (see [Configuration validation](#configuration-validation))
-and remains optional for R2, which ships logging-only.
+**The diagnostics surface.** Still undesigned, and no longer a blocker for
+either half: R1's load failures are hard errors or logged suppressions (see
+[Cardinality](#cardinality)), and R2 ships logging-only. It remains the right
+home for both once someone builds it.
 
 ## Relationship to `2026-08-08-qa-navigation-routes.md`
 
@@ -680,8 +716,10 @@ R1 — consumers (the fan-out):
 R1 — construction:
 
 8. A seventh member appears with no edit to `relations.json`.
-9. A one-member group and an undeclared prefix synthesise nothing, and the
-   under-two-member case is visible on the repopulate result.
+9. A declaration synthesises a roster at **one** member and at **zero**, with
+   its authored aliases intact in both cases; an undeclared prefix synthesises
+   nothing. The one-member case pins the rule that shrinking must not delete
+   aliases.
 10. A member's own deeper descendant is not a member.
 11. An authored entry at the roster path **raises**, naming both sides.
 12. Two members sharing a path across base and overlay **raise**, naming both
@@ -707,15 +745,21 @@ R1 — shields, completeness and size:
     present when unlocked.
 18. All members under one shield: the node metadata carries it, asserted at the
     metadata level so no vector budget is consumed while locked.
-19. Shield-uniformity raises for **both** non-uniform mixtures: two distinct
-    named shields, and one unshielded member alongside one shielded member.
-    The second is the case a "two or more distinct shields" check lets through.
+19. Shield-uniformity **suppresses** for both non-uniform mixtures — two
+    distinct named shields, and one unshielded member alongside one shielded
+    member — while the rest of the registry loads. The second mixture is the
+    case a "two or more distinct shields" check lets through; the "rest of the
+    registry still loads" half is what distinguishes suppression from raising.
 20. Default rendering says `recorded <title>`; `"complete": true` drops the
     qualifier. The count equals the number of entries in both cases.
-21. A roster large enough to cross `MEMORY_QUERY_PER_FACT_CHARS` renders a
-    defined, asserted result — not silent middle-loss — and the bound is
-    asserted at `_resolve_match`, so the **chat route** (which applies no cap of
-    its own) is covered by the same test.
+Not yet a test — an **acceptance criterion for the large-N blocker**. A roster
+crossing `MEMORY_QUERY_PER_FACT_CHARS` has no expected output until the design
+picks one, and "paginate or truncate" is not a choice. Settling it means
+deciding the continuation syntax, which members are kept, whether a member's id
+may be split across the boundary, how a continuation is requested, and whether
+the count reports total or displayed members. Once chosen, the test asserts the
+bound at `_resolve_match` so the **chat routes** — which apply no cap of their
+own — are covered by the same test.
 
 R2:
 
@@ -734,7 +778,10 @@ R2:
 - Reachability of an entry that is never a candidate (the other proposal).
 - Set questions whose members are not siblings under one path prefix.
 - Rosters beyond roughly 20 members.
-- Prefixes whose members carry more than one distinct shield: no roster.
+- Prefixes whose members are not shield-uniform: no roster, logged, while the
+  rest of the registry loads. Shielding one member of a relation silently costs
+  that relation its roster — the deliberate trade against taking the whole
+  knowledge base down over a privacy change the operator is entitled to make.
 - Whether a prefix is a *complete* real-world set. R1 renders what is recorded
   and lets the operator assert completeness; it cannot verify the assertion.
 - The `who are …` pull toward `identity.*`. A roster competes for the same
