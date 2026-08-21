@@ -107,22 +107,47 @@ def test_measured_route_returns_every_member(registry, app_ctx, monkeypatch):
     _assert_all_six(obs.text)
 
 
-def test_measured_route_through_the_recall_filter(registry, app_ctx, monkeypatch):
-    """The primary path: the filter keeps the roster and every member survives
-    into the observation."""
+def _seed(roster):
     from memory.seed_memory import SeedMemory
-    roster = registry
+    return SeedMemory(uuid=roster["id"], path=roster["path"],
+                      source=roster["_source"], answer=roster["answer"],
+                      score=0.9, kind="static")
 
-    def fake_seed(query, *, qctx, **_):
-        return [SeedMemory(uuid=roster["id"], path=roster["path"],
-                           source=roster["_source"], answer=roster["answer"],
-                           score=0.9, kind="static")]
 
-    obs = _action_query_memory(_ctx(), {"query": QUESTION}, _seed_retriever=fake_seed)
+def test_measured_route_through_the_recall_filter(registry, app_ctx, monkeypatch):
+    """The primary path: the recall filter keeps the roster and every member
+    survives into the observation.
+
+    `_seed_retriever` is deliberately NOT supplied — passing it is the hermetic
+    shortcut that skips `_filter_recalled_candidates` entirely, so a test using
+    it proves nothing about this route. The filter itself is faked, and the
+    fake asserts it was actually reached.
+    """
+    called = []
+
+    def fake_filter(query, **kwargs):
+        called.append(query)
+        return [_seed(registry)], [], {"mode": "llm"}
+
+    monkeypatch.setattr("agents.assistant._filter_recalled_candidates", fake_filter)
+    monkeypatch.setattr(kb, "_vector_store", lambda: object())
+    monkeypatch.setattr(kb, "_ensure_populated", lambda vs: None)
+
+    obs = _action_query_memory(_ctx(), {"query": QUESTION})
+    assert called == [QUESTION], "the recall filter was never reached"
     assert obs.ok
     _assert_all_six(obs.text)
     # Overlay provenance: the roster tiers with the operator's own facts.
     assert "user-overlay" in obs.text
+
+
+def test_injected_seed_path_renders_the_roster(registry, app_ctx):
+    """The hermetic `_seed_retriever` seam, named for what it is: it bypasses
+    the recall filter, so it covers rendering only."""
+    obs = _action_query_memory(_ctx(), {"query": QUESTION},
+                               _seed_retriever=lambda q, *, qctx, **_: [_seed(registry)])
+    assert obs.ok
+    _assert_all_six(obs.text)
 
 
 def test_every_printed_member_id_is_readable_in_full(registry, app_ctx, monkeypatch):

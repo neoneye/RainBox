@@ -281,7 +281,10 @@ def _reject_reserved_keys(entry: dict[str, Any], path: Any, lineno: int) -> None
             )
 
 
-def _relations_path(overlay: Path | None = None) -> Path | None:
+_UNRESOLVED: Any = object()
+
+
+def _relations_path(overlay: Any = _UNRESOLVED) -> Path | None:
     """`<customize.dir>/relations.json`, or None when customize.dir is unset.
 
     Derived from the overlay path rather than re-reading the setting: both
@@ -291,8 +294,10 @@ def _relations_path(overlay: Path | None = None) -> Path | None:
 
     Callers that have already resolved the overlay pass it in, so one load
     cannot mix an overlay from one `customize.dir` value with relations from
-    another if the setting changes underneath."""
-    if overlay is None:
+    another if the setting changes underneath. The sentinel default matters:
+    a resolved `None` means "no customize dir", and re-resolving it would put
+    the second read back."""
+    if overlay is _UNRESOLVED:
         overlay = _overlay_path()
     if overlay is None:
         return None
@@ -382,7 +387,7 @@ def _parse_relations(doc: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _load_relations(overlay: Path | None = None) -> list[dict[str, Any]]:
+def _load_relations(overlay: Any = _UNRESOLVED) -> list[dict[str, Any]]:
     """Declarations from the customize dir; an absent file means none."""
     path = _relations_path(overlay)
     if path is None or not path.exists():
@@ -503,8 +508,12 @@ def _synthesize_rosters(entries: list[dict[str, Any]],
     roster: shielding a member is data evolution, not malformed config, and
     must not take the knowledge base down until a declaration is edited. Every
     other failure raises."""
-    by_path = {str(e.get("path")): str(e.get("id")) for e in entries}
-    by_id = {str(e.get("id")): str(e.get("path")) for e in entries if e.get("id")}
+    # Only genuine strings participate: coercing a missing path to "None" or an
+    # integer id to its digits would invent collisions with legitimate values.
+    by_path = {e["path"]: e.get("id") for e in entries
+               if isinstance(e.get("path"), str)}
+    by_id = {e["id"]: e.get("path") for e in entries
+             if isinstance(e.get("id"), str)}
     out: list[dict[str, Any]] = []
     for decl in relations:
         prefix = decl["prefix"]

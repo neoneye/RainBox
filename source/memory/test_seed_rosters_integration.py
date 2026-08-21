@@ -175,24 +175,48 @@ def test_roster_is_eligible_for_the_always_on_chat_block(env):
 # --- test 18: a locked roster occupies no vector budget ----------------------
 
 
-def test_locked_roster_is_excluded_in_sql_and_visible_when_unlocked(env):
-    env.write([_member("alpha", shield="private"), _member("beta", shield="private")],
+def test_locked_roster_never_occupies_a_vector_slot(env, monkeypatch):
+    """SQL exclusion, not the in-memory backstop.
+
+    A shielded roster must be filtered out by `_shield_filters` at the pgvector
+    query, before it can take a top-K node slot. With the budget squeezed to a
+    single node and the query vector aimed exactly at the roster's question,
+    an admitted-then-dropped roster would leave the ranking EMPTY, while true
+    SQL exclusion leaves the slot for the visible competitor.
+
+    The vector path is what is under test, so the lexical signal is disabled
+    (`top_k_fulltext=0`) rather than the other way round.
+    """
+    competitor = {"id": "rival", "path": "other.topic", "kind": "static",
+                  "questions": ["an unrelated question"], "answer": "Rival."}
+    env.write([_member("alpha", shield="private"),
+               _member("beta", shield="private"), competitor],
               relations=[_decl(shield="private")])
     kb.sync_kb()
 
     nodes = _roster_nodes(env.table)
     assert nodes, "roster was not embedded"
-    # The shield rides in node metadata, so _shield_filters excludes the roster
-    # in SQL rather than after it has consumed a top-K slot.
-    assert all(m.get("shield") == "private" for m in nodes)
+    assert all(m.get("shield") == "private" for m in nodes), \
+        "the shield must ride in node metadata or SQL cannot filter on it"
 
-    locked = kb._hybrid_seed_ranked(QUESTION, env.vs, top_k_vector=0,
-                                    unlocked_shields=set())
-    assert kb._roster_id(PREFIX) not in {m.qa_id for m in locked}
+    # Aim the query vector exactly at the roster's own question, so the roster
+    # is the single best node and would win the only slot if SQL admitted it.
+    monkeypatch.setattr(kb, "embed_query", lambda q: _fake_vector(QUESTION))
+    monkeypatch.setattr(kb, "TOP_K_NODES", 1)
+    rid = kb._roster_id(PREFIX)
 
-    unlocked = kb._hybrid_seed_ranked(QUESTION, env.vs, top_k_vector=0,
-                                      unlocked_shields={"private"})
-    assert kb._roster_id(PREFIX) in {m.qa_id for m in unlocked}
+    locked = kb._semantic_ranked(QUESTION, env.vs, unlocked_shields=set())
+    assert rid not in {m.qa_id for m in locked}
+    assert locked, ("the locked roster consumed the only node slot and was then "
+                    "dropped in memory — SQL exclusion is not happening")
+    assert locked[0].qa_id == "rival"
+
+    unlocked = kb._semantic_ranked(QUESTION, env.vs, unlocked_shields={"private"})
+    assert unlocked[0].qa_id == rid
+
+    # And the hybrid path agrees once the shield is unlocked.
+    assert rid in {m.qa_id for m in kb._hybrid_seed_ranked(
+        QUESTION, env.vs, top_k_fulltext=0, unlocked_shields={"private"})}
 
 
 # --- test 19: mismatch suppresses one roster, registry still loads -----------

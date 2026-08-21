@@ -443,3 +443,32 @@ def test_roster_questions_become_vector_documents():
     # The answer rides along as excluded metadata, never as embedded text.
     assert docs[0].metadata["answer"] == roster["answer"]
     assert "answer" in docs[0].excluded_embed_metadata_keys
+
+
+def test_collision_maps_do_not_coerce_non_string_fields():
+    # A missing path must not become the string "None", and a numeric id must
+    # not become its digits — either would invent a collision with a
+    # legitimate prefix or id.
+    entries = _members(1) + [
+        {"id": "no-path", "kind": "static", "questions": [], "answer": "x"},
+        {"id": 12, "path": 34, "kind": "static", "questions": [], "answer": "y"},
+    ]
+    decl = _decl(prefix="None")
+    # "None" collides with nothing: the path-less entry contributes no path.
+    assert kb._synthesize_rosters(entries, [decl])[0]["path"] == "None"
+
+
+def test_relations_path_is_not_re_resolved_when_the_overlay_is_none(monkeypatch):
+    # A resolved None means "no customize dir". Re-resolving it would put back
+    # the second settings read that threading the path exists to remove.
+    calls = []
+
+    def counting_overlay():
+        calls.append(1)
+        return None
+
+    monkeypatch.setattr(kb, "_overlay_path", counting_overlay)
+    assert kb._relations_path(None) is None
+    assert calls == [], "_overlay_path was resolved a second time"
+    assert kb._relations_path() is None
+    assert calls == [1], "the default should still resolve once"
