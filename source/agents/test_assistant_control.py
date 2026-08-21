@@ -133,3 +133,44 @@ def test_heartbeat_reports_progress_activity(app_ctx):
     agent._activity = "running memory_query"
     extra = agent._heartbeat_extra()
     assert extra["activity"] == "running memory_query"
+
+
+def test_heartbeat_reads_no_orm_state_off_the_beating_thread(app_ctx, room):
+    """The heartbeat runs on a background thread, and a Flask app context is
+    pushed on the MAIN thread only (agents/__main__). SQLAlchemy expires every
+    loaded instance on commit, so reading `self._run.uuid` there turns into a
+    database round trip, which flask-sqlalchemy routes through `current_app` —
+    and the beat dies with "Working outside of application context".
+
+    Seen live as a run that kept logging "heartbeat send failed; still beating"
+    while a cold model held the main thread inside one long call, with nothing
+    touching the run to refresh it. Three silent beats is the supervisor's
+    60s watchdog, so a healthy turn gets SIGKILLed.
+    """
+    import threading
+    from sqlalchemy import inspect as sa_inspect
+
+    agent = _agent()
+    agent._run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room, agent_uuid=ASSISTANT_UUID)
+    run_uuid = str(agent._run.uuid)
+
+    # The state the failure needs, and the one every commit produces.
+    db.db.session.commit()
+    assert "uuid" in sa_inspect(agent._run).unloaded, (
+        "precondition: the run must be expired for this to test anything")
+
+    result: dict = {}
+
+    def beat_off_thread() -> None:
+        try:
+            result["extra"] = agent._heartbeat_extra()
+        except Exception as exc:                      # noqa: BLE001 — recorded
+            result["error"] = f"{type(exc).__name__}: {exc}"
+
+    thread = threading.Thread(target=beat_off_thread)
+    thread.start()
+    thread.join(timeout=10)
+
+    assert "error" not in result, result.get("error")
+    assert result["extra"]["assistant_run_uuid"] == run_uuid

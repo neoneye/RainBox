@@ -3372,6 +3372,7 @@ class AssistantAgent(ModelGroupAgent):
         # In-memory mirror of the trace for fast assertions/diagnostics; the
         # durable source of truth is the assistant_run/assistant_step tables.
         self._steps: list[dict[str, Any]] = []
+        self._run_uuid_text: str | None = None
         self._run: Any = None
         # Active-skill guidance for this turn, injected into every step's prompt.
         self._skill_block: str = ""
@@ -3494,6 +3495,21 @@ class AssistantAgent(ModelGroupAgent):
         every call whose slot is bound away from the default."""
         _models, group_uuid, _label = self._slot_models(slot_uuid)
         return group_uuid
+
+    # `_run` is a property so that the plain-text uuid the heartbeat thread
+    # reads is captured by the same assignment that sets the run. Two fields
+    # updated by hand at every assignment site is the shape of the bug this
+    # exists to prevent: one of them eventually is not.
+    @property
+    def _run(self) -> Any:
+        return self.__run
+
+    @_run.setter
+    def _run(self, run: Any) -> None:
+        self.__run = run
+        # Read here — on whichever thread opens the run, which is always the
+        # main one, under the app context. See _heartbeat_extra.
+        self._run_uuid_text = str(run.uuid) if run is not None else None
 
     @staticmethod
     def _room_uuid(payload: dict[str, Any]) -> UUID:
@@ -6490,9 +6506,27 @@ class AssistantAgent(ModelGroupAgent):
         )
 
     def _heartbeat_extra(self) -> dict[str, Any]:
+        """Progress fields for the heartbeat — PLAIN values only.
+
+        This runs on the heartbeat thread (Agent._handle_with_heartbeat), and
+        the Flask app context is pushed on the main thread alone
+        (agents/__main__). SQLAlchemy expires every loaded instance on commit,
+        so reading `self._run.uuid` here becomes a database round trip that
+        flask-sqlalchemy routes through `current_app` — and the beat dies with
+        "Working outside of application context".
+
+        It fails only in the window between a commit and the next main-thread
+        read of the run, which is why it looks intermittent: ordinarily the
+        loop touches the run every step and refreshes it. A cold model holds
+        the main thread inside one long call with nothing refreshing anything,
+        so the window stays open across beats — and three silent beats is the
+        supervisor's 60s watchdog killing a healthy turn.
+
+        `_run_uuid_text` is read once when the run opens, on the main thread.
+        Anything added here must be a plain value for the same reason."""
         extra: dict[str, Any] = {"activity": self._activity}
-        if self._run is not None:
-            extra["assistant_run_uuid"] = str(self._run.uuid)
+        if self._run_uuid_text is not None:
+            extra["assistant_run_uuid"] = self._run_uuid_text
         return extra
 
     def _run_meta(self, base: dict[str, Any] | None = None) -> dict[str, Any]:
