@@ -1,12 +1,14 @@
 # Set-valued questions: the registry holds the answer and cannot return it
 
 **Status:** The failure analysis and C1–C4 are settled. R1 (derived rosters) is
-specified but **not yet implementation-ready**: the large-N rendering cliff is
-bounded and stated rather than solved. R2 (lossy alias table) is ready at the
-reduced scope defined below. Stemming and non-prefix sets are named and **not
-designed**; they must not be built from this document.
+**blocked**, on five named items, not one: the `kind` fan-out across existing
+consumers, provenance tiering, member dereference, completeness semantics, and
+the large-N rendering cliff. Each has a proposed resolution below; none is
+built. R2 (lossy alias table) is ready at the reduced scope defined below.
+Stemming and non-prefix sets are named and **not designed**; they must not be
+built from this document.
 **Date:** 2026-08-21
-**Revision:** 2
+**Revision:** 3
 **Relates to:** `qa-system.md`, `2026-08-08-qa-navigation-routes.md`,
 `2026-08-17-recall-filter-and-retrieval-granularity.md`
 
@@ -183,8 +185,11 @@ entry, converting an arity-N question back into arity 1.**
 
 At load time, for every declared relation with two or more members, synthesise
 a **roster entry**. It is an entry like any other: it embeds, it is full-text
-indexed, it competes for candidacy, it obeys shields. Retrieval is not
-modified. The assistant is not modified.
+indexed, it competes for candidacy, it obeys shields.
+
+Retrieval's *ranking* is not modified. Nothing else about "unmodified" survives
+contact with the code — see [The `kind` fan-out](#the-kind-fan-out) and
+[Provenance](#provenance). A third `kind` is not a free extension point.
 
 **The roster wins on the measured route by ordinary retrieval, not by exact
 match.** Its authored questions give it full-text coverage 1.000 on the plural
@@ -250,6 +255,29 @@ A missing `relations.json` means no rosters and is not an error. The file joins
 `_source_snapshot()`, so an edit re-triggers the reconcile that `_ensure_populated`
 already performs on a source change.
 
+### Configuration validation
+
+`relations.json` is operator-authored input that drives persistent vector
+writes, so it is validated **before any write**, and every failure is a hard
+error naming the file and the offending declaration — the convention
+`_load_jsonl` already uses for the JSONL. Repopulate fails and the registry is
+left as it was; a half-declared relation never reaches Postgres.
+
+Rejected: unreadable or malformed JSON; `relations` absent or not a list; a
+declaration that is not an object; `prefix`, `title` or `questions` missing,
+empty, or of the wrong type; a non-string or empty question; a `prefix` with a
+trailing dot or an empty segment; two questions in one declaration that
+collapse under `_normalize_query`; two declarations sharing a `prefix`; two
+declarations whose distinct prefixes collide under `uuid5`; a declaration whose
+members carry two or more distinct shields (see [Shields](#shields)); and a
+declaration colliding with an authored entry at the same path (see below).
+
+A declaration matching **fewer than two** members is not an error — membership
+is data and legitimately shrinks — but it produces no roster and must be
+**visible** on the repopulate result, for the same reason suppression is a hard
+error: an operator who declared a relation and got nothing needs to know which
+of the two happened.
+
 ### Membership, and the two collision cases
 
 Membership is keyed by **`id`**, the only field unique after merge (C1). Two
@@ -257,11 +285,17 @@ members sharing a `path` across base and overlay are both listed and are
 reported as a diagnostic; this is legal per the merge rules and is almost
 certainly an operator mistake, so it is surfaced rather than silently resolved.
 
-If an **authored entry already occupies the roster's own path**, generation for
-that prefix is **suppressed** and reported. The authored entry wins. This is
-what makes the existing hand-written roster safe: it keeps working, no
-migration is required, and hand-authoring one is the supported way to opt out
-of generation for a prefix.
+If an **authored entry already occupies the roster's own path**, that is a
+**configuration error and raises**, naming both the declaration and the
+authored entry. Suppress-and-report was the earlier answer and is wrong while
+diagnostics are logs-only: the operator would add a declaration, press
+Repopulate, read a successful count, and never learn the declaration did
+nothing. Silent opt-out is indistinguishable from successful derivation.
+
+The cost is that hand-authoring a roster is no longer a way to opt out of
+generation for a prefix; the operator removes the declaration instead. That is
+the correct direction — the declaration is the thing that should be absent when
+no derivation is wanted.
 
 ### Entry shape
 
@@ -273,11 +307,19 @@ A roster is a third `kind`, resolved in `_resolve_match` beside `static` and
   "id":        <uuid5(_ROSTER_NS, prefix)>,
   "path":      prefix,
   "kind":      "roster",
-  "questions": [...],          # from relations.json, verbatim
-  "_members":  [qa_id, ...],   # source order
-  "_source":   "derived",
+  "title":     "friends",       # from relations.json; rendering needs it
+  "questions": [...],           # from relations.json, verbatim
+  "shield":    <str | absent>,  # the members' single common shield, if any
+  "complete":  <bool>,          # see Completeness semantics
+  "_members":  [qa_id, ...],    # source order
+  "_source":   "user-overlay",  # see Provenance
+  "_derived":  True,
 }
 ```
+
+`title` and `shield` are real keys, not derived at render time: `title` because
+two sections need it, and `shield` because `_build_documents` reads node shield
+metadata from `entry["shield"]` and must keep working unchanged.
 
 The id is `uuid5` over the **canonical prefix string** — the whole identity,
 not a subject/predicate pair, which would collide across roots. Two
@@ -290,6 +332,45 @@ raises like any other duplicate id.
 
 Rosters are built **after** the base/overlay merge, so an overlay override of a
 member is reflected without special handling.
+
+### The `kind` fan-out
+
+A third `kind` is not additive. Nine sites binary-branch on
+`static` / `dynamic`, and a roster falls through all of them:
+
+| site | behaviour on a roster | action |
+| --- | --- | --- |
+| `_resolve_match` | `"(unknown kind in match)"` | add the roster branch — planned |
+| `seed_candidate_rows` (`query_filter_router.py`) | row carries **neither `answer` nor `handler`** | must render the member list |
+| `_build_documents` | node metadata carries neither | acceptable; metadata is excluded from the vector |
+| `retrieve_seed_memories` | `kind != "static"` ⇒ **dropped** | acceptable: the always-on chat block is static-only by design. State it. |
+| `retrieve_seed_answers`, `assistant.py` answer extraction (2 sites) | `else` branch calls `_resolve_match` | already correct once the branch exists |
+| `assistant.py` telemetry (`qa_static` / `qa_dynamic`) | counted as neither — invisible | add a counter |
+| `/memory/developer` rendering | shows neither | add the branch |
+
+**`seed_candidate_rows` is the one that matters.** Those rows are what the
+recall filter judges relevance from. A roster presented to the filter with no
+content at all is a roster the filter drops — which would defeat R1's entire
+mechanism on the measured route. It is listed here rather than in "what this
+does not fix" because it is fixable, but it is not optional and it is not
+"the assistant is not modified".
+
+### Provenance
+
+`SeedMemory.source` is documented as `"user-overlay" | "upstream"` and is
+populated from the entry's `_source`. The assistant tiers on exactly that
+distinction — `overlay = [s for s in seeds if s.source == "user-overlay"]`,
+everything else second.
+
+A roster tagged `_source = "derived"` therefore lands in the **upstream** tier
+and sorts below unrelated overlay facts, despite being derived from a
+declaration that lives in the operator's own customize directory. That is a
+behaviour change smuggled in through a string.
+
+So a roster carries `_source = "user-overlay"`, matching where its declaration
+lives, and derivation is recorded separately in `_derived`. Any consumer that
+wants to distinguish derived from authored reads `_derived`; no consumer that
+tiers on provenance changes meaning.
 
 ### Sync
 
@@ -323,29 +404,59 @@ long-lived webapp process is where a stale registry actually persists.
 large enough roster loses its middle members — the original failure moved one
 layer down. This is a real limit of the design and is stated, not solved.
 
-Mitigation, which raises the cliff rather than removing it: render **labels
-only**, comma-joined, with no qa_ids.
+**Each line keeps its qa_id**, at a cost of about 36 characters:
 
 ```text
-<title> (<n>): <label>, <label>, …
+<title> (<n>):
+- <label>  [qa_id]
 ```
 
-At roughly 20 characters per name that fits about 60 members, against about 20
-if each line carried a 36-character uuid. The model reaches any member's full
-text by calling `memory_query` with that member's name — an ordinary query that
-the members' own aliases already answer well — so dropping the uuids costs
-nothing that the registry does not already provide.
+Dropping the uuids to fit more members was the earlier answer and rested on a
+claim the registry does not support — that a member is reachable by name
+because "the members' own aliases already answer well". No such invariant
+exists. `label` is optional, the fallback path slug need not appear in
+`questions` at all, labels need not be unique, and *this entire document is a
+measurement of member retrieval failing*. A label-only roster is a display
+list, not an index card, and cannot promise that a named member can be read in
+full.
+
+The qa_id is the only deterministic dereference the registry offers, so it
+stays. The ceiling drops accordingly: roughly **20 members** against the
+1200-character `MEMORY_QUERY_PER_FACT_CHARS` cap, not the ~60 that labels-only
+would have bought. The observed N is 6.
 
 `<label>` comes from a new optional `label` field on an entry, falling back to
 the raw final path segment. Deriving a display name from a slug is not
 attempted: casing and diacritics are unrecoverable from it, and guessing them
 would print people's names wrong.
 
-Beyond the cliff the roster must either paginate or truncate with an explicit
+Beyond the ceiling the roster must paginate or truncate with an explicit
 continuation marker. Pagination needs a verb the model must choose, which is
-the thing R1 was built to avoid. **This is the open question that keeps R1 out
-of implementation**, and it should be settled against a real distribution of N
-rather than in the abstract.
+the thing R1 was built to avoid. This is one of R1's five blockers and should
+be settled against a real distribution of N rather than in the abstract.
+
+### Completeness semantics
+
+Datalog is rejected above because a personal-memory store must never read
+"never written down" as "false". A roster rendered as `friends (6)` in answer
+to *"who are all my friends"* makes a weaker version of that same inference: it
+presents a registry prefix as a complete real-world set.
+
+The two are not equally dangerous — Datalog would *derive negations*, while a
+roster only over-claims exhaustiveness in its own rendering — but the root is
+identical, and it would be incoherent to reject one and adopt the other
+silently.
+
+So completeness is **declared, not assumed**. A declaration may set
+`"complete": true`, which is the operator asserting the prefix holds everyone.
+The default is `false`, and the rendering says so:
+
+```text
+recorded friends (6):        # default
+friends (6):                 # "complete": true
+```
+
+The count is always the number of *entries*, never a claim about the world.
 
 ### Shields
 
@@ -357,23 +468,46 @@ surfacing as an empty list.
 
 That in-memory backstop is not sufficient on its own. `_shield_filters` admits
 a node with no `shield` metadata via `IS_EMPTY`, so a roster carrying no shield
-would occupy a vector slot before being dropped — candidate starvation, in the
-document arguing about candidate starvation. So the roster's **node metadata**
-carries the members' single common shield when all members share exactly one,
-and no shield otherwise.
+occupies vector budget before being dropped — candidate starvation, in the
+document arguing about candidate starvation. So the roster's node metadata
+carries the members' common shield.
 
-The residual case — every member locked, under two or more different shields —
-still consumes one slot and is dropped in memory. It is bounded at one slot and
-is accepted.
+**The residual is not bounded at one slot, and the earlier text saying so was
+wrong twice over.** `TOP_K_NODES = 50` counts *question nodes*, not entries —
+the constant's own comment warns that "one strong entry's alternates can eat
+most slots". A roster with three aliases is three nodes, and several locked
+rosters multiply out against a budget of 50 before any in-memory filter runs.
+
+The resolution is to make the mixed case impossible rather than to absorb it:
+**a roster is generated only when its members' shields are uniform** — all
+unshielded, or all carrying one shield. A prefix whose members carry two or
+more distinct shields yields no roster and raises as a configuration error.
+The semantics are then exact: the roster's shield *is* its members' shield.
+
+The alternative — list-valued shield metadata admitted when any member's shield
+is unlocked — is strictly more expressive and requires changing
+`_shield_filters` to handle a list-valued key. That is a retrieval change, and
+this design claims not to make one. If the uniform-shield restriction proves
+too tight in practice, that is the way out, and the claim must be retracted
+with it.
 
 A roster's own `questions` carry no member content, so embedding them leaks
 nothing about locked members.
 
 ### What R1 costs
 
-One new `kind`, one derived index built beside `_fulltext_index`, one optional
-entry field, one operator-owned config file, one node-metadata rule, one
-digest. No dependency, no migration, no model call, no change to retrieval.
+More than it first appeared, and the honest tally is the argument for keeping
+alias→prefix→enumerate alive as the fallback:
+
+- One new `kind`, plus **branches at four consumer sites** it fans out to.
+- One derived index beside `_fulltext_index`, one digest, one node-metadata
+  rule, one optional entry field.
+- One operator-owned config file, with a full validation pass in front of it.
+- A provenance decision that touches how the assistant tiers results.
+
+No dependency, no migration, no model call, and no change to retrieval
+*ranking*. The competitor needs none of the first four lines and pays instead
+with a new call site and no paraphrase reach.
 
 ## R2 — make the alias table non-lossy
 
@@ -390,11 +524,20 @@ a caller redesign and is out of scope here.
 
 The change that *is* local:
 
-- `_alias_table` becomes `dict[str, list[str]]`, so no id is discarded at load.
+- `_alias_table` becomes `dict[str, list[str]]`, **deduplicated by `qa_id`**,
+  order-preserving, so no id is discarded at load and none is repeated.
 - `_exact_match` filters the candidate ids by shield **first**, then returns a
   `Match` only if exactly one visible id remains. Two or more visible ids means
   the alias is **ambiguous, so exact matching declines** and the caller
   proceeds down its existing semantic path unchanged.
+
+The deduplication is load-bearing, not tidiness. One entry may carry two
+questions that collapse under `_normalize_query`, and the **shipped base
+registry contains two such entries** (casing, and a trailing `?`). Without
+dedup their alias maps to `[id, id]`, `_exact_match` counts two ids, declares
+the alias ambiguous, and a lookup that works today stops working — a
+regression introduced by a fix for silent loss, in entries that were never
+ambiguous at all.
 
 **This can regress a currently-correct answer.** Today an ambiguous alias
 returns one arbitrary entry at `score=1.0`; sometimes that entry is the right
@@ -408,10 +551,9 @@ consolidate them. Raising was rejected: the live overlay holds at least two such
 collisions, so hard-failing would refuse to load the registry until roughly nine
 lines were edited, and ambiguity is representable rather than corrupt.
 
-Detection must **normalise per entry before comparing across entries**. The
-shipped base registry contains two entries whose own question lists collapse
-under `_normalize_query` (casing and a trailing `?`); those are harmless
-within-entry variants and must not be reported as competing ids.
+Detection compares **distinct qa_ids** per normalised alias, which is the same
+deduplication the table itself applies: the within-entry variants described
+above are one id and are not a collision.
 
 The reporting surface is **not designed here**. `/settings/api/repopulate_memory`
 returns sync counts and the UI renders exactly those four counts
@@ -476,48 +618,71 @@ R1 — route:
 4. Exact-alias resolution on the chat route, marked as the chat route's
    behaviour and not as the fix.
 
+R1 — consumers (the fan-out):
+
+5. `seed_candidate_rows` renders a roster row carrying its member list — not a
+   row with neither `answer` nor `handler`. Asserted directly, because the
+   recall filter judges from these rows and an empty one defeats R1.
+6. A roster's `SeedMemory.source` is `"user-overlay"`, and the assistant's
+   overlay/upstream partition places it in the overlay tier.
+7. `/memory/developer` and the `qa_*` telemetry counters account for a roster
+   rather than silently omitting it.
+
 R1 — construction:
 
-5. A seventh member appears with no edit to `relations.json`.
-6. A one-member group and an undeclared prefix synthesise nothing.
-7. A member's own deeper descendant is not a member.
-8. An authored entry at the roster path suppresses generation and reports.
-9. Two members sharing a path across base and overlay: both listed, reported.
-10. Roster id byte-identical across two independent loads; two declarations
-    sharing a prefix raise.
+8. A seventh member appears with no edit to `relations.json`.
+9. A one-member group and an undeclared prefix synthesise nothing, and the
+   under-two-member case is visible on the repopulate result.
+10. A member's own deeper descendant is not a member.
+11. An authored entry at the roster path **raises**, naming both sides.
+12. Two members sharing a path across base and overlay: both listed, reported.
+13. Roster id byte-identical across two independent loads; two declarations
+    sharing a prefix raise; two distinct prefixes colliding under `uuid5` raise.
+14. Each rejected `relations.json` case from
+    [Configuration validation](#configuration-validation) raises **before** any
+    vector write, asserted by the table being unchanged afterwards.
 
 R1 — sync:
 
-11. Digest changes on: a member's answer, member addition, member removal,
-    member reordering, an alias edit, a title edit. Digest unchanged on an
-    edit to an unrelated entry.
-12. Removing `relations.json` removes the roster's nodes; an absent file yields
+15. Digest changes on: a member's answer, member addition, member removal,
+    member reordering, an alias edit, a title edit, a `complete` flip. Digest
+    unchanged on an edit to an unrelated entry.
+16. Removing `relations.json` removes the roster's nodes; an absent file yields
     zero rosters and no error.
 
-R1 — shields and size:
+R1 — shields, completeness and size:
 
-13. A shielded member is omitted from the list and the count while locked, and
+17. A shielded member is omitted from the list and the count while locked, and
     present when unlocked.
-14. Every member locked ⇒ not a candidate; with all members under one shield,
-    assert the node metadata carries it so no vector slot is consumed.
-15. A roster large enough to cross `MEMORY_QUERY_PER_FACT_CHARS` renders a
+18. All members under one shield: the node metadata carries it, asserted at the
+    metadata level so no vector budget is consumed while locked.
+19. Members under two distinct shields raise at load — the uniform-shield rule
+    — asserted rather than left to the in-memory backstop.
+20. Default rendering says `recorded <title>`; `"complete": true` drops the
+    qualifier. The count equals the number of entries in both cases.
+21. A roster large enough to cross `MEMORY_QUERY_PER_FACT_CHARS` renders a
     defined, asserted result — not silent middle-loss.
 
 R2:
 
-16. Two entries sharing one normalised question ⇒ both ids retained in
+22. Two entries sharing one normalised question ⇒ both ids retained in
     `_alias_table`; `_exact_match` declines and the caller reaches its semantic
     path.
-17. A unique alias still yields exactly one id at `score=1.0` — the
+23. A unique alias still yields exactly one id at `score=1.0` — the
     no-regression case.
-18. An entry whose own questions collapse under `_normalize_query` is **not**
-    reported as a duplicate.
+24. An entry whose **own** questions collapse under `_normalize_query` keeps a
+    single-element alias list and `_exact_match` **still returns that entry**.
+    Asserting only that no diagnostic fires would miss the regression this
+    guards. Run it against the two real base-registry entries, by id.
 
 ## What this does not fix
 
 - Reachability of an entry that is never a candidate (the other proposal).
 - Set questions whose members are not siblings under one path prefix.
-- Rosters beyond the rendering cliff.
+- Rosters beyond roughly 20 members.
+- Prefixes whose members carry more than one distinct shield: no roster.
+- Whether a prefix is a *complete* real-world set. R1 renders what is recorded
+  and lets the operator assert completeness; it cannot verify the assertion.
 - The `who are …` pull toward `identity.*`. A roster competes for the same
   slots as everything else and merely needs one instead of N.
 - The same person existing as a subject under one root and an object under
