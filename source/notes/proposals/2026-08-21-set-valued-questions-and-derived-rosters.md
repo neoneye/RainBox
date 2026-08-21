@@ -7,7 +7,7 @@ ordinary `static` entries, and over-long ones truncate deterministically at
 member boundaries. Pagination, the diagnostics UI, stemming and non-prefix sets
 are named and **not designed**; they must not be built from this document.
 **Date:** 2026-08-21
-**Revision:** 6.2
+**Revision:** 6.3
 **Relates to:** `qa-system.md`, `2026-08-08-qa-navigation-routes.md`,
 `2026-08-17-recall-filter-and-retrieval-granularity.md`
 
@@ -245,9 +245,10 @@ entry, converting an arity-N question back into arity 1.**
 At load time, for **every declared relation**, synthesise a roster entry —
 whatever its membership count, including one member and none.
 
-**The roster is a `static` entry.** Not a new `kind`: shield-uniform membership
-(below) means a roster is wholly visible or wholly hidden, so there is nothing
-to evaluate at resolve time and its answer can be rendered once, at load. That
+**The roster is a `static` entry.** Not a new `kind`: a declared shield over
+verified-uniform membership (below) means a roster is wholly visible or wholly
+hidden, so there is nothing to evaluate at resolve time and its answer can be
+rendered once, at load. That
 single decision removes `_resolve_match` changes, the fan-out across every
 consumer that branches on `static`/`dynamic`, new telemetry columns, developer
 view branches, `SeedMemory` handling, and the provenance-tiering problem — all
@@ -290,23 +291,40 @@ The vocabulary lives in `<customize.dir>/relations.json`, beside the overlay:
       "prefix": "human.<subject>.friend",
       "title": "friends",
       "complete": false,
+      "shield": null,
       "questions": ["who are my friends", "my friends", "list my friends"]
     }
   ]
 }
 ```
 
-Members are the entries whose `path` begins with `prefix` plus **exactly one
-further segment**. Deeper descendants are not members: a member's own subtree
-(`…friend.<person-a>.travel`) belongs to that person, not to the roster.
+A member's path is exactly `prefix + "." + <one non-empty segment>`. Deeper
+descendants are not members: a member's own subtree
+(`…friend.<person-a>.travel`) belongs to that person, not to the roster. The
+segment must be **non-empty**, so a path equal to `prefix + "."` is not a
+member — rejecting empty segments inside a declaration's `prefix` says nothing
+about the entry paths that match it.
 
-**Members keep post-merge `_load_jsonl()` order and are never sorted.** The
-order is observable three ways — it is what the digest hashes, what truncation
-keeps a prefix of, and what the operator reads — so leaving it to the
-implementation would let two reasonable versions render different answers and
-compute different digests from identical data. Source order also means an
-operator who cares about the ordering controls it by editing the file, which is
-the only lever that needs no further design.
+**Synthesis is a two-phase pass over a frozen list:**
+
+1. Freeze the post-merge **authored** entries.
+2. Compute every declaration's membership from that frozen list alone.
+3. Append the resulting rosters afterwards, in declaration order.
+
+Appending each roster as it is computed would let one roster become a member of
+another — a roster at `human.<subject>.friend` is a legal member of a
+declaration for `human.<subject>` — and whether it did would depend on the
+order the declarations happen to appear in. Freezing first makes the result
+independent of that order, and keeps a roster made only of things the operator
+wrote.
+
+**Members keep post-merge authored-entry order, before synthesis, and are never
+sorted.** The order is observable three ways — it is what the digest hashes,
+what truncation keeps a prefix of, and what the operator reads — so leaving it
+to the implementation would let two reasonable versions render different
+answers and compute different digests from identical data. Source order also
+means an operator who cares about the ordering controls it by editing the file,
+which is the only lever that needs no further design.
 
 `questions` are the roster's aliases and are **authored**. Shipping a
 predicate→phrasing table in the repository would put an anglocentric table in a
@@ -341,8 +359,9 @@ delete nor a truncate on invalid configuration.
 Rejected: unreadable or malformed JSON; `relations` absent or not a list; a
 declaration that is not an object; `prefix`, `title` or `questions` missing,
 empty, or of the wrong type; a non-string or empty question; a `prefix` with a
-trailing dot or an empty segment; a non-boolean `complete`; two questions in
-one declaration that collapse under `_normalize_query`; two declarations
+trailing dot or an empty segment; a non-boolean `complete`; a `shield` that is
+absent, or neither `null` nor a non-empty string; two questions in one
+declaration that collapse under `_normalize_query`; two declarations
 sharing a `prefix`; two declarations whose distinct prefixes collide under
 `uuid5`; a declaration two of whose members share a `path`; and a declaration
 colliding with an authored entry at the same path.
@@ -394,7 +413,7 @@ own question — a better signal than a log line.
   "kind":        "static",
   "questions":   [...],            # from relations.json, verbatim
   "answer":      <rendered roster text, already bounded>,
-  "shield":      <str | absent>,   # the members' common shield
+  "shield":      <str | absent>,   # the declared shield; absent when null
   "_source":     "user-overlay",   # where the declaration lives
   "_derived":    "roster",
   "_row_sha256": <digest, below>,
@@ -407,8 +426,26 @@ roster tagged anything else sorts below unrelated overlay facts. `_derived`
 records provenance for the one consumer that needs it (below) and for anyone
 distinguishing derived from authored.
 
-The id is `uuid5` over the **canonical prefix string** — the whole identity,
-not a subject/predicate pair, which would collide across roots. **Identity is
+```python
+_ROSTER_NS = UUID("94cacd83-3427-5460-80c5-239a56244707")
+# = uuid5(NAMESPACE_URL, "https://rainbox.local/qa/roster"), fixed forever.
+
+def _canonical(obj) -> bytes:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False).encode("utf-8")
+```
+
+Both are pinned because rows outlive the code that wrote them: once a roster is
+embedded under a namespace and a digest, changing either silently orphans every
+existing row instead of updating it. The specific values are arbitrary; their
+permanence is not. `ensure_ascii=False` with an explicit UTF-8 encode matters
+in particular — titles and labels are operator prose in the operator's own
+language, and escaping them would make the digest depend on the escaping rule
+rather than the text.
+
+The id is `uuid5(_ROSTER_NS, prefix)` over the **canonical prefix string** —
+the whole identity, not a subject/predicate pair, which would collide across
+roots. **Identity is
 deterministic because its inputs are:** the prefix is a string the operator
 wrote, no model involved. This is not the pattern rejected in
 `recall-filter-and-retrieval-granularity`, where a stable hash was proposed
@@ -449,11 +486,12 @@ A roster has no source line, so its `_row_sha256` is a digest over its
 stored or rendered:
 
 ```text
-sha256(canonical_json({
+sha256(_canonical({
   "prefix":    prefix,
   "title":     title,
   "questions": questions,                    # ordered
   "complete":  complete,
+  "shield":    shield,                       # null or the name
   "render":    [ROSTER_RENDER_VERSION, ROSTER_ANSWER_MAX_CHARS],
   "members":   [[qa_id, row_sha256], ...],   # ordered
 }))
@@ -495,8 +533,9 @@ test 22 promises each printed id dereferences:
 
 - `label` present ⇒ must be a **non-empty string**. `12`, `""` and `null` are
   configuration errors, not values to coerce.
-- `label` absent ⇒ the final path segment, which is non-empty by construction
-  (a `prefix` with an empty segment is already rejected).
+- `label` absent ⇒ the member's final path segment, which is non-empty because
+  membership requires it (above) — not because the declaration's `prefix` was
+  checked, which says nothing about matching entry paths.
 - A participating member's `qa_id` ⇒ must be a **non-empty string**.
 - `prefix`, `title`, the label, the fallback segment and the id ⇒ must contain
   **neither `\n` nor `\r`**. Either would forge a line boundary inside a
@@ -563,17 +602,27 @@ The count is always the number of *entries*, never a claim about the world.
 
 ### Shields
 
-A roster carries its members' shield, so `_entry_locked` treats it exactly like
-any other entry — visible when the shield is unlocked, hidden otherwise, and
-excluded in SQL by `_shield_filters` so it occupies no vector budget while
-locked. This is what makes a `static` roster possible at all: there is no
-per-member visibility to evaluate at resolve time.
+**The shield is declared, not inferred.** Every declaration carries a required
+`shield` — `null` for unshielded, or a shield name — and the roster is stamped
+with it. `_entry_locked` then treats a roster exactly like any other entry:
+visible when unlocked, hidden otherwise, and excluded in SQL by
+`_shield_filters` so it occupies no vector budget while locked. This is what
+makes a `static` roster possible at all: there is no per-member visibility to
+evaluate at resolve time.
 
-That requires **shield-uniform** membership: every member in the same shield
-class, where *unshielded* is a class of its own. One unshielded member
-alongside one `shield: A` member carries a single named shield and is still not
-uniform — stamping the roster `A` would hide public data, and leaving it
-unstamped would expose member labels that are supposed to be shielded.
+Deriving the shield from the members instead is unsound, because **a roster may
+have zero members** and then there is nothing to derive from. Defaulting that
+case to unshielded would publish the declaration's own `title` and `questions`
+— operator-authored prose that may be exactly what the shield exists to hide,
+and which a roster reading `(0)` would then hand to any caller. A privacy
+default must not be a fallback for missing information.
+
+Synthesis then **verifies** rather than infers: every member's shield must
+equal the declared one, where *unshielded* is a class of its own (`null`
+matches only an entry with no shield). One unshielded member alongside one
+`shield: A` member is non-uniform whatever the declaration says — stamping `A`
+would hide public data, stamping nothing would expose labels that are supposed
+to be shielded.
 
 A non-uniform declaration **yields no roster for that prefix**, and the rest of
 the registry loads normally. Raising would be disproportionate: shielding a
@@ -699,12 +748,19 @@ against current code before its fix lands.
 10. Rosters synthesise at **zero, one, six and seven** members, aliases intact
     at every count; an undeclared prefix synthesises nothing. The one-member
     case pins the rule that shrinking must not delete aliases.
-11. A member's own deeper descendant is not a member.
+11. A member's own deeper descendant is not a member, and neither is an entry
+    whose path is exactly `prefix + "."` — the empty final segment that would
+    otherwise render a blank label.
 12. Two members sharing a path **raise**, naming both ids.
 13. An authored entry at the roster path **raises**, naming both sides.
-14. Roster id byte-identical across two independent loads; two declarations
-    sharing a prefix raise; two distinct prefixes colliding under `uuid5`
-    raise.
+14. Roster id byte-identical across two independent loads, and pinned against
+    a literal expected uuid so a namespace change cannot pass silently. Two
+    declarations sharing a prefix raise; two distinct prefixes colliding under
+    `uuid5` raise.
+14a. The digest is stable across loads and pinned against a literal, with a
+    non-ASCII title in the fixture so an encoding change is caught.
+14b. A roster is never a member of another roster: declarations for
+    `<p>` and `<p>.<q>` produce the same result in either declaration order.
 15. Each rejected `relations.json` case from
     [Configuration validation](#configuration-validation) raises **before** any
     vector write, through **both** the incremental sync and the manual rebuild,
@@ -728,9 +784,15 @@ against current code before its fix lands.
     at the metadata level, so it consumes no vector budget; unlocked ⇒ present.
 19. Both non-uniform mixtures — two named shields, and one unshielded member
     beside one shielded member — yield no roster **while the rest of the
-    registry loads**. The second is the case a "two or more distinct shields"
-    check lets through; the still-loads half distinguishes suppression from
+    registry loads**. The still-loads half distinguishes suppression from
     raising.
+19a. A **zero-member** roster is stamped with the declared shield: locked when
+    the declaration names a shield that is not unlocked, visible when it is
+    `null`. This is the case that cannot be derived from members, and the one
+    where getting it wrong publishes the declaration's own questions.
+19b. A member whose shield differs from the declared one suppresses the roster,
+    in both directions (declared `null` with a shielded member, and declared
+    `A` with an unshielded member).
 20. Default rendering says `recorded <title>`; `"complete": true` drops the
     qualifier. The count equals the number of entries in both cases.
 21. A roster exceeding the character limit truncates at a **member boundary**:
