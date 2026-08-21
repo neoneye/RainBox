@@ -132,7 +132,7 @@ def test_rebuild_kb_resets_and_repopulates(customize_dir, monkeypatch):
     assert counts["documents"] == len(_FakeIndex.last_docs)
     # in-process registry rebuilt: the overlay entry is reachable
     assert kb._entries_by_id["test.rebuild"]["answer"] == "fresh"
-    assert kb._alias_table.get("rebuild test") == "test.rebuild"
+    assert kb._alias_table.get("rebuild test") == ["test.rebuild"]
     assert kb._populated is True
 
 

@@ -86,9 +86,9 @@ _populated: bool = False
 # has-anything-moved guard in _ensure_populated.
 _sync_snapshot: dict[str, tuple[int, int]] | None = None
 # In-memory registry built from the JSONL: qa_id -> entry, and normalized
-# question -> qa_id (the exact-alias table).
+# question -> every qa_id claiming it (the exact-alias table).
 _entries_by_id: dict[str, dict[str, Any]] = {}
-_alias_table: dict[str, str] = {}
+_alias_table: dict[str, list[str]] = {}
 
 
 @dataclass
@@ -297,9 +297,35 @@ def _load_jsonl() -> list[dict[str, Any]]:
     return list(merged.values())
 
 
+def _build_alias_table(entries: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """normalized-question → the qa_ids claiming it, in first-seen order and
+    distinct.
+
+    A question text may legitimately appear on two entries; mapping the alias
+    to a single id (the last one built) silently discarded every other
+    claimant, and `_exact_match` then answered one of them at score 1.0 as
+    though it were unambiguous. Keeping the list makes the ambiguity
+    representable so `_exact_match` can decline instead.
+
+    Deduplication is by qa_id and is load-bearing, not tidiness: one entry may
+    carry several questions that collapse under `_normalize_query` (casing, a
+    trailing "?"), and the shipped base registry does. Without it such an alias
+    would map to [id, id], read as two claimants, and stop resolving."""
+    table: dict[str, list[str]] = {}
+    for e in entries:
+        qa_id = e.get("id")
+        if not qa_id:
+            continue
+        for q in e.get("questions") or []:
+            ids = table.setdefault(_normalize_query(q), [])
+            if qa_id not in ids:
+                ids.append(qa_id)
+    return table
+
+
 def _load_kb() -> None:
-    """Build the in-memory registry (qa_id → entry; normalized-question → qa_id)
-    from the JSONL. Cheap, runs once per process."""
+    """Build the in-memory registry (qa_id → entry; normalized-question →
+    qa_ids) from the JSONL. Cheap, runs once per process."""
     global _entries_by_id, _alias_table
     if _entries_by_id and _alias_table:
         return
@@ -308,12 +334,7 @@ def _load_kb() -> None:
             return
         entries = _load_jsonl()
         _entries_by_id = {e["id"]: e for e in entries if e.get("id")}
-        _alias_table = {
-            _normalize_query(q): e["id"]
-            for e in entries
-            for q in (e.get("questions") or [])
-            if e.get("id")
-        }
+        _alias_table = _build_alias_table(entries)
 
 
 def get_entry(qa_id: str) -> dict[str, Any] | None:
@@ -796,14 +817,26 @@ def _shield_filters(unlocked: set[str]) -> MetadataFilters:
 
 
 def _exact_match(query: str, *, unlocked_shields: set[str] | None = None) -> Match | None:
+    """The alias lookup: an answer only when exactly one *visible* entry claims
+    the normalized query.
+
+    Shield filtering happens before the count, so a locked claimant never makes
+    an otherwise-unambiguous alias ambiguous. Two surviving claimants are not
+    an answer — returning either at score 1.0 would be an arbitrary pick
+    dressed as certainty — so this declines and the caller falls through to its
+    own retrieval path."""
     norm = _normalize_query(query)
-    qa_id = _alias_table.get(norm)
-    if qa_id is None:
+    qa_ids = _alias_table.get(norm)
+    if not qa_ids:
         return None
     unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
-    if _entry_locked(_entries_by_id.get(qa_id) or {}, unlocked):
+    visible = [
+        qa_id for qa_id in qa_ids
+        if not _entry_locked(_entries_by_id.get(qa_id) or {}, unlocked)
+    ]
+    if len(visible) != 1:
         return None
-    return Match(qa_id=qa_id, method="exact", score=1.0, matched_question=norm)
+    return Match(qa_id=visible[0], method="exact", score=1.0, matched_question=norm)
 
 
 def _semantic_ranked(query: str, vs: PGVectorStore, *,
