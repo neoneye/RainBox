@@ -7,7 +7,7 @@ ordinary `static` entries, and over-long ones truncate deterministically at
 member boundaries. Pagination, the diagnostics UI, stemming and non-prefix sets
 are named and **not designed**; they must not be built from this document.
 **Date:** 2026-08-21
-**Revision:** 6
+**Revision:** 6.1
 **Relates to:** `qa-system.md`, `2026-08-08-qa-navigation-routes.md`,
 `2026-08-17-recall-filter-and-retrieval-granularity.md`
 
@@ -174,8 +174,10 @@ Three things stop it being first: the closed-world assumption reads "never
 written down" as "false", which is the one inference a personal-memory store
 must never make; the members' value is several hundred words of prose each, so
 facts can only sit beside the text as an index and must then be kept in sync
-with it; and a relation index is a prerequisite either way. PR 2 produces that
-index. Datalog over it is an increment decided later on evidence.
+with it; and a relation index is a prerequisite either way. That index is
+cheap to recompute from paths whenever something needs it — PR 2 does not
+persist one, because nothing in it reads one. Datalog is an increment decided
+later on evidence.
 ## PR 1 — make the alias table non-lossy
 
 Independent of rosters, a live silent-data-loss bug (C3), and confined to
@@ -436,6 +438,7 @@ sha256(canonical_json({
   "title":     title,
   "questions": questions,                    # ordered
   "complete":  complete,
+  "render":    [ROSTER_RENDER_VERSION, ROSTER_ANSWER_MAX_CHARS],
   "members":   [[qa_id, row_sha256], ...],   # ordered
 }))
 ```
@@ -471,19 +474,38 @@ the raw final path segment. Deriving a display name from a slug is not
 attempted: casing and diacritics are unrecoverable from it, and guessing them
 would print people's names wrong.
 
-**Truncation is deterministic and happens at member boundaries.** Whole lines
-are emitted until a fixed roster character limit, then:
+**Truncation is deterministic and happens at member boundaries.**
+
+```python
+ROSTER_ANSWER_MAX_CHARS = 1100   # below MEMORY_QUERY_PER_FACT_CHARS = 1200
+ROSTER_RENDER_VERSION = 1
+```
+
+The algorithm, which never slices rendered text:
+
+1. Build the header and every complete member line.
+2. If the whole thing fits in `ROSTER_ANSWER_MAX_CHARS`, return it.
+3. Otherwise emit the **largest prefix of member lines** for which
+   `header + lines + omission marker` fits.
+4. Zero displayed members is a legal outcome — header plus marker alone.
+5. If even `header + marker` cannot fit, **reject the declaration**: its title
+   is too long to render anything.
+6. **Reject any member whose label or qa_id contains a newline**, which would
+   otherwise forge a line boundary.
 
 ```text
 - … 14 additional recorded members omitted
 ```
 
-A label is never split, a qa_id is never split, and a line is never half
-emitted. The **header count is total membership**; the marker reports omitted
-membership; the two always sum. The limit lives in the synthesis code and is
-below `MEMORY_QUERY_PER_FACT_CHARS = 1200`, so the roster is bounded before any
-consumer's cap applies — which matters because the chat routes post
-`_resolve_match` output with no cap of their own.
+The **header count is total membership**; the marker reports omitted
+membership; the two always sum. Bounding at synthesis rather than at a
+consumer matters because the chat routes post `_resolve_match` output with no
+cap of their own.
+
+`ROSTER_RENDER_VERSION` and `ROSTER_ANSWER_MAX_CHARS` both enter the digest, so
+changing the format or the budget dirties every existing roster row instead of
+leaving old renderings embedded — the same failure the `complete` field would
+have had if it were omitted.
 
 This does not solve arbitrary N and is not pretending to. It is safe, testable,
 and correct for the observed N of 6. Pagination is deferred (see [Named, not
@@ -540,11 +562,17 @@ fix](#what-this-does-not-fix).
 
 ### What PR 2 costs
 
-One derived index built beside `_fulltext_index`, one digest, one id scheme,
-one bounded renderer, one optional entry field, one operator-owned config file
-with a validation pass, and **one narrow retrieval rule** (skip a roster's
-answer in full-text indexing). No new `kind`, no new action, no dependency, no
-migration, no model call, no consumer fan-out.
+One digest, one id scheme, one bounded renderer, one optional entry field, one
+operator-owned config file with a validation pass, and **one narrow retrieval
+rule** (skip a roster's answer in full-text indexing). No new `kind`, no new
+action, no dependency, no migration, no model call, no consumer fan-out.
+
+**No persisted relation index.** Membership is computed during synthesis, used
+for the answer and the digest, and discarded. Nothing keeps a queryable
+`(subject, predicate, object)` structure, because nothing in this MVP reads
+one. A future consumer that needs an index can recompute it from paths — the
+data is the same either way, and carrying unused structure for a hypothetical
+caller is how the third `kind` got here.
 
 ## Named, not designed
 
@@ -581,9 +609,10 @@ and specifies an LLM-generated, operator-reviewed `qa_edge` graph with a full
 candidate/decision lifecycle. It is unbuilt and gated behind its own
 experiment; nothing here changes its status or consumes its design.
 
-The one interaction worth noting: PR 2's derived relation index is a
-deterministic, zero-cost source for that proposal's `same_subject` edge type.
-If both ship, that edge type need not be model-generated or reviewed at all.
+The one interaction worth noting: the path grouping PR 2 relies on is also a
+deterministic source for that proposal's `same_subject` edge type, so that edge
+type need not be model-generated or reviewed. PR 2 does not hand it an index —
+it persists none — but it establishes that the grouping is trustworthy.
 Neither blocks the other and the ordering is free.
 
 ## Tests
@@ -615,9 +644,16 @@ against current code before its fix lands.
    reason.
 7. The same with the recall filter forced to fail, exercising the
    `retrieve_seed_answers` fallback.
-8. The roster is a `_hybrid_seed_ranked` candidate for a **paraphrase** absent
-   from `questions` — the property that distinguishes this from
-   alias→prefix→enumerate.
+8. The roster's questions become vector documents, and the **authored**
+   phrasing surfaces it through `_hybrid_seed_ranked`. Deterministic: it
+   asserts plumbing, which is what a unit test can hold.
+
+   Paraphrase reach — an unseen phrasing surfacing the roster — is **not a unit
+   test**. It depends on `embeddinggemma`, its version, and the surrounding
+   corpus, so a fake ranker would prove nothing and a real one would make the
+   suite environment-dependent. It is the property that distinguishes this
+   design from alias→prefix→enumerate, so it is worth measuring: record it as a
+   benchmark alongside the existing ones, not in the permanent unit suite.
 9. Exact-alias resolution on a chat route, marked as that route's behaviour and
    not as the fix.
 
@@ -638,10 +674,12 @@ against current code before its fix lands.
 
 ### PR 2 — retrieval, shields, rendering
 
-16. A query matching one member's label does **not** surface the roster: the
-    roster's answer is absent from the full-text index, and the member outranks
-    it. Assert the IDF side too — the member's name token must not have gained
-    a document.
+16. A query matching one member's label does **not** surface the roster, and
+    the roster's indexed token set is asserted directly: its answer-token set
+    is empty, and the member's name token is absent from it. Do **not** compare
+    IDF values before and after — adding any document changes `n_docs`, so
+    every token's IDF moves whether or not the roster mentions it. The claim
+    is about which tokens the roster contributes, not about arithmetic.
 17. A roster is eligible for the always-on chat block (`retrieve_seed_memories`
     returns it), since it is now `static`.
 18. Common shield locked ⇒ the roster is absent from candidates *and* excluded
