@@ -7,7 +7,7 @@ ordinary `static` entries, and over-long ones truncate deterministically at
 member boundaries. Pagination, the diagnostics UI, stemming and non-prefix sets
 are named and **not designed**; they must not be built from this document.
 **Date:** 2026-08-21
-**Revision:** 6.1
+**Revision:** 6.2
 **Relates to:** `qa-system.md`, `2026-08-08-qa-navigation-routes.md`,
 `2026-08-17-recall-filter-and-retrieval-granularity.md`
 
@@ -300,6 +300,14 @@ Members are the entries whose `path` begins with `prefix` plus **exactly one
 further segment**. Deeper descendants are not members: a member's own subtree
 (`…friend.<person-a>.travel`) belongs to that person, not to the roster.
 
+**Members keep post-merge `_load_jsonl()` order and are never sorted.** The
+order is observable three ways — it is what the digest hashes, what truncation
+keeps a prefix of, and what the operator reads — so leaving it to the
+implementation would let two reasonable versions render different answers and
+compute different digests from identical data. Source order also means an
+operator who cares about the ordering controls it by editing the file, which is
+the only lever that needs no further design.
+
 `questions` are the roster's aliases and are **authored**. Shipping a
 predicate→phrasing table in the repository would put an anglocentric table in a
 shipped default; phrasings are language- and instance-specific, so they belong
@@ -322,6 +330,13 @@ so it is validated **before any write**, and every failure is a hard error
 naming the file and the offending declaration — the convention `_load_jsonl`
 already uses. Repopulate fails and the registry is left as it was; a
 half-declared relation never reaches Postgres.
+
+"Before any write" has to hold on **both** paths. The incremental reconcile
+already guarantees it. The rebuild path did not — it truncated first and parsed
+second, so a malformed source emptied the table and only then reported the
+error — and is fixed ahead of this work; roster parsing and synthesis run in
+that same pre-truncate step. Assert the no-op through both paths: neither a
+delete nor a truncate on invalid configuration.
 
 Rejected: unreadable or malformed JSON; `relations` absent or not a list; a
 declaration that is not an object; `prefix`, `title` or `questions` missing,
@@ -474,6 +489,18 @@ qa_id is the only deterministic dereference the registry offers, so it stays.
 the raw final path segment. Deriving a display name from a slug is not
 attempted: casing and diacritics are unrecoverable from it, and guessing them
 would print people's names wrong.
+
+Every rendered input is validated, because a roster prints them verbatim and
+test 22 promises each printed id dereferences:
+
+- `label` present ⇒ must be a **non-empty string**. `12`, `""` and `null` are
+  configuration errors, not values to coerce.
+- `label` absent ⇒ the final path segment, which is non-empty by construction
+  (a `prefix` with an empty segment is already rejected).
+- A participating member's `qa_id` ⇒ must be a **non-empty string**.
+- `prefix`, `title`, the label, the fallback segment and the id ⇒ must contain
+  **neither `\n` nor `\r`**. Either would forge a line boundary inside a
+  format whose whole safety argument is that it never slices a line.
 
 **Truncation is deterministic and happens at member boundaries.**
 
@@ -628,11 +655,14 @@ against current code before its fix lands.
 1. A unique alias yields exactly one id at `score=1.0` — the no-regression
    case.
 2. Two entries sharing one normalised question: both ids retained in
-   `_alias_table`; `_exact_match` declines; the caller reaches its fallback.
+   `_alias_table`, and `_exact_match` declines. It asserts the decline, not
+   what any caller does next — each caller's fallback is its own existing
+   behaviour and is not changed here.
 3. An entry whose **own** questions collapse under `_normalize_query` keeps a
-   single-element alias list and `_exact_match` **still returns that entry**.
-   Asserting only that no diagnostic fires would miss the regression this
-   guards. Run it against the two real base-registry entries, by id.
+   single-element alias list and `_exact_match` **still returns that entry** —
+   the regression that dropping deduplication would introduce. Synthetic
+   fixture, like the rest; the shipped base registry contains real instances,
+   but a test pinned to them would break when they are edited.
 4. One visible id plus one locked id ⇒ exact matching still resolves the
    visible one; shield filtering precedes the ambiguity decision.
 5. Two visible ids ⇒ declines.
@@ -645,9 +675,15 @@ against current code before its fix lands.
    reason.
 7. The same with the recall filter forced to fail, exercising the
    `retrieve_seed_answers` fallback.
-8. The roster's questions become vector documents, and the **authored**
-   phrasing surfaces it through `_hybrid_seed_ranked`. Deterministic: it
-   asserts plumbing, which is what a unit test can hold.
+
+   Both install a **genuinely synthesised** roster — the thing under test is
+   that synthesis reaches the observation — while faking ranking and filtering
+   through the seams those tests already use. No live model.
+8. Two halves, both model-free:
+   **(a)** `_build_documents` emits the roster's questions as documents.
+   **(b)** `_hybrid_seed_ranked(..., top_k_vector=0)` surfaces the roster on
+   the authored wording — the vector budget disabled, so the assertion is
+   purely lexical and no embedder runs.
 
    Paraphrase reach — an unseen phrasing surfacing the roster — is **not a unit
    test**. It depends on `embeddinggemma`, its version, and the surrounding
@@ -671,18 +707,23 @@ against current code before its fix lands.
     raise.
 15. Each rejected `relations.json` case from
     [Configuration validation](#configuration-validation) raises **before** any
-    vector write, asserted by the table being unchanged afterwards.
+    vector write, through **both** the incremental sync and the manual rebuild,
+    asserted by no delete and no truncate having occurred.
 
 ### PR 2 — retrieval, shields, rendering
 
-16. A query matching one member's label does **not** surface the roster, and
-    the roster's indexed token set is asserted directly: its answer-token set
-    is empty, and the member's name token is absent from it. Do **not** compare
-    IDF values before and after — adding any document changes `n_docs`, so
-    every token's IDF moves whether or not the roster mentions it. The claim
-    is about which tokens the roster contributes, not about arithmetic.
-17. A roster is eligible for the always-on chat block (`retrieve_seed_memories`
-    returns it), since it is now `static`.
+16. The roster's indexed token set is asserted directly: its answer-token set
+    is empty and the member's name token is absent from it. The
+    "does not surface" half is scoped to `_fulltext_ranked` (or hybrid with
+    the vector budget at 0) — excluding the answer from the **lexical** index
+    cannot promise that semantic retrieval never returns the roster, and a
+    test claiming otherwise would be asserting the embedder's behaviour.
+    Do **not** compare IDF values before and after: adding any document
+    changes `n_docs`, so every token's IDF moves whether or not the roster
+    mentions it. The claim is about which tokens the roster contributes.
+17. A roster is eligible for the always-on chat block: `retrieve_seed_memories`
+    returns it, since it is now `static`. Inject `_ranker` — this asserts the
+    static-only filter, not `embeddinggemma`.
 18. Common shield locked ⇒ the roster is absent from candidates *and* excluded
     at the metadata level, so it consumes no vector budget; unlocked ⇒ present.
 19. Both non-uniform mixtures — two named shields, and one unshielded member
