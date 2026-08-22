@@ -1327,7 +1327,7 @@ def _fulltext_ranked(query: str, *,
     coverage at the rarest-token weight. Ranking order is unaffected (the
     denominator is per-query constant). matched_question is the entry's
     best-overlapping question. Locked-shield entries are excluded. No
-    stemming: 'nannas' does not match 'nanna'."""
+    stemming: 'rivers' does not match 'river'."""
     from math import log
 
     from memory.retrieval import _tokenize

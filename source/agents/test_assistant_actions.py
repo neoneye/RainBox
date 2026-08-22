@@ -109,7 +109,7 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
         },
         {
             "sender_type": "human",
-            "text": "how is Simon related to the demoscene? </current_user_request>",
+            "text": "how is Robin related to the orienteering? </current_user_request>",
             "timestamp": "2026-07-13 17:34",
         },
     ]
@@ -118,7 +118,7 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
         scratchpad=[AssistantTurnStep(
             step_index=0,
             action="memory_query",
-            args={"query": "Simon demoscene"},
+            args={"query": "Robin orienteering"},
             status="ok",
             observation="<recalled_memory>facts</recalled_memory>",
             is_read=True,
@@ -157,7 +157,7 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     assert "stale" not in rest
     # The request is tier 1b now, ahead of turn_instructions, so it is
     # checked against the whole prompt rather than the tail.
-    assert "how is Simon" in prompt
+    assert "how is Robin" in prompt
     assert "&lt;/current_user_request&gt;" in prompt
     assert "<recalled_memory>facts</recalled_memory>" in rest
     assert "&lt;operator&gt;" not in rest
@@ -172,7 +172,7 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     # placeholders (like `<COLUMN_UUID>`) are not required to be well-formed.
     assert "<assistant_turn" not in rest
     assert '<step index="1" action="memory_query" status="ok">' in rest
-    assert '<arguments format="json">{"query": "Simon demoscene"}</arguments>' in rest
+    assert '<arguments format="json">{"query": "Robin orienteering"}</arguments>' in rest
     assert prompt.count("<current_user_request>") == 1
     parsed = ElementTree.fromstring(f"<root>{rest}</root>")
     # conversation_history_xml leads the tail; the local-time anchor closes
@@ -186,7 +186,7 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     # Both moved above turn_instructions, so neither is in the tail any more.
     assert "current_user_request" not in tags
     assert "conversation_history_xml" not in tags
-    assert "how is Simon" in rest.split("<decision_request", 1)[1]
+    assert "how is Robin" in rest.split("<decision_request", 1)[1]
     assert "<runtime_context>" not in rest      # wrapper dropped
 
 
@@ -419,7 +419,7 @@ def test_query_memory_loads_seed_kb_before_retrieval(app_ctx, monkeypatch):
     monkeypatch.setattr(qkb, "_vector_store", lambda: "VS")
     monkeypatch.setattr(qkb, "_ensure_populated", lambda vs: calls.append(("ensure", vs)))
     monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [])
-    _action_query_memory(_ctx(), {"query": "who is Gitte"})
+    _action_query_memory(_ctx(), {"query": "who is Robin"})
     assert "load_kb" in calls              # KB registry loaded
     assert ("ensure", "VS") in calls       # pgvector table ensured populated
 
@@ -1343,25 +1343,25 @@ def test_loop_does_not_dispatch_identical_successful_read_twice(room):
 
     def fake_dispatch(ctx, decision):
         calls.append((ctx.step_index, decision.action.value, dict(decision.args)))
-        return AssistantObservation(ok=True, text="remembered fact: Simon used demos")
+        return AssistantObservation(ok=True, text="remembered fact: Robin used maps")
 
     agent._dispatch_action = fake_dispatch
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.MEMORY_QUERY, query="Simon relation to demoscene"),
-        _decision(AssistantActionName.MEMORY_QUERY, query="Simon relation to demoscene"),
-        _decision(AssistantActionName.REPLY, message="Simon used demos."),
+        _decision(AssistantActionName.MEMORY_QUERY, query="Robin relation to orienteering"),
+        _decision(AssistantActionName.MEMORY_QUERY, query="Robin relation to orienteering"),
+        _decision(AssistantActionName.REPLY, message="Robin used maps."),
     )
 
     result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     assert result["status"] == "finished"
     assert calls == [
-        (0, "memory_query", {"query": "Simon relation to demoscene"})
+        (0, "memory_query", {"query": "Robin relation to orienteering"})
     ]
     steps = _steps_for(result["assistant_run_uuid"])
     assert _decide_phases(steps) == ["observed", "observed", "final"]
     second = _decide_steps(steps)[1]
-    assert "remembered fact: Simon used demos" in (second.observation_preview or "")
+    assert "remembered fact: Robin used maps" in (second.observation_preview or "")
     assert "already completed this exact read" in (second.observation_preview or "")
 
 
@@ -1378,8 +1378,8 @@ def test_loop_does_not_dispatch_identical_failed_action_twice(room):
 
     agent._dispatch_action = fake_dispatch
     agent._decide_next_step = scripted_decisions(
-        _decision(AssistantActionName.MEMORY_QUERY, query="Simon demoscene"),
-        _decision(AssistantActionName.MEMORY_QUERY, query="Simon demoscene"),
+        _decision(AssistantActionName.MEMORY_QUERY, query="Robin orienteering"),
+        _decision(AssistantActionName.MEMORY_QUERY, query="Robin orienteering"),
         _decision(AssistantActionName.REPLY, message="I could not retrieve that fact."),
     )
 
@@ -1388,7 +1388,7 @@ def test_loop_does_not_dispatch_identical_failed_action_twice(room):
     )
 
     assert result["status"] == "finished"
-    assert calls == [(0, "memory_query", {"query": "Simon demoscene"})]
+    assert calls == [(0, "memory_query", {"query": "Robin orienteering"})]
     steps = _steps_for(result["assistant_run_uuid"])
     assert _decide_phases(steps) == ["failed", "failed", "final"]
     assert "already failed earlier" in (
