@@ -96,6 +96,31 @@ The fallback is never prettified. Capitalisation, spacing and diacritics are
 unrecoverable from a slug, and a wrong guess misspells somebody's name — so the
 slug is printed exactly as filed, and `label` is how an operator overrides it.
 
+**Choosing one.** Four rules, each learned from getting it wrong:
+
+- *Read the name off the entry, never off the slug.* A slug has already lost
+  the word boundaries, so reconstructing one guesses where they were — and a
+  two-word given name compressed into a slug reads convincingly as a different
+  one-word name. The entry's own `questions` and `answer` spell it correctly;
+  take it from there.
+- *Do not repeat what the roster already says.* A roster titled `families`
+  renders `recorded families (4):` directly above its members, so labelling a
+  member `<name>'s family` says "family" twice and adds nothing. The label only
+  has to say **which one**.
+- *Prefer names over relational words.* Relational words are language-specific,
+  and a possessive-plus-noun construction is English — it reads as an
+  intrusion in a registry written in another language. Names joined by a
+  separator carry across languages unchanged.
+- *Informative beats defensive.* A label naming somebody other than the entry's
+  own subject — both partners of a couple, say — goes stale if that
+  relationship changes. That is a smaller cost than it looks: the entry's
+  `answer` names them too, so the same change already forces an edit there, and
+  the label is one more field in a pass you are making anyway. Prefer the label
+  that tells the reader more.
+
+A label is only worth adding to an entry that a roster will list. Everywhere
+else it is inert.
+
 **Where it is read.** In exactly one place: `_member_label`, called only from
 `_render_roster`. An entry that is never a roster member never has its `label`
 read, and it is validated only at that point (non-empty string, no `\n` or

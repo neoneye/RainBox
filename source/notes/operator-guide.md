@@ -225,7 +225,14 @@ the raw final path segment when there is none — so a member filed under a
 squashed slug shows up as that slug. Add `"label": "Albert Einstein"` to the entry to
 control what is printed. It is display only: it is not indexed, so it does
 **not** make that person findable by name. Reachability is what `questions` is
-for. See `notes/qa-system.md`, "`label`, and why there are no tags".
+for.
+
+Take the name from the entry's own `questions` or `answer`, not from the slug:
+the slug has lost its word boundaries, and reconstructing them guesses. A
+two-word given name squashed into a slug reads convincingly as a different
+one-word name, and the roster would then print somebody's name wrong. See
+`notes/qa-system.md`, "`label`, and why there are no tags", for how to choose
+one.
 
 **6. Confirm membership stays derived.** Add a new entry under the prefix,
 repopulate, and ask again — the new person appears with **no edit to
