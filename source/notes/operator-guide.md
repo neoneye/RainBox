@@ -149,6 +149,76 @@ query on `/memory/developer`. The recall filter's scorer model is the
 `assistant.memory_filter` slot on `/agentmodel` (else `assistant.default`);
 the KPI retention window is the `memory.recall_fifo_capacity` setting.
 
+### Declaring a relation, and checking it works
+
+A **relation** turns a path prefix into one entry that answers "who are all my
+X". Without it, a question with an N-entry answer set only ever reaches the
+handful of entries the retrieval budget allows. See `notes/qa-system.md`,
+"Derived rosters", for the schema.
+
+**1. Declare it.** Create `relations.json` next to `question_answer.jsonl` in
+your `customize.dir`:
+
+```json
+{
+  "relations": [
+    {
+      "prefix": "human.<subject>.friend",
+      "title": "friends",
+      "complete": false,
+      "shield": null,
+      "questions": ["who are my friends", "my friends", "list my friends"]
+    }
+  ]
+}
+```
+
+`prefix` must match the paths you already file those entries under, minus the
+person segment. `shield` is required — `null` unless every entry under the
+prefix carries the same shield name, in which case use that name.
+
+**2. Repopulate.** Press **Repopulate Q&A memory** on `/settings`. A
+validation error names the offending declaration and changes nothing; fix and
+press again.
+
+**3. Check the roster before asking anything.** On `/memory/developer`, run one
+of your authored questions verbatim. You should get an **exact** hit whose
+reply is the rendered roster:
+
+```text
+recorded friends (6):
+- Alpha  [<qa_id>]
+- Bravo  [<qa_id>]
+...
+```
+
+Read the count first. `(6)` when you expect six means membership is right.
+`(0)` means the declaration is valid but nothing matches `prefix` — almost
+always a typo in it. A *missing* roster after a successful repopulate means the
+members are not shield-uniform; see the troubleshooting entry below.
+
+**4. Check retrieval reaches it.** Still on `/memory/developer`, run a phrasing
+you did *not* author — "who do I hang out with", or the same question in your
+other language. The roster should appear among the candidates with a `semantic`
+signal. This is the part that authored aliases alone cannot do.
+
+**5. Ask the assistant.** In a chatroom, ask your question normally. The reply
+should name every member, not two or three of them. If you want to see the
+retrieval behind it, the run's `memory_query` step shows the candidates it was
+given.
+
+**6. Confirm membership stays derived.** Add a new entry under the prefix,
+repopulate, and ask again — the new person appears with **no edit to
+`relations.json`**. That is the whole point: you maintain the entries, not the
+list.
+
+To undo, delete `relations.json` and repopulate; the roster's rows are removed
+and nothing else changes.
+
+**Reading a member in full.** Each roster line carries the member's `qa_id`.
+The assistant can pull that entry's whole text with `memory_query` by uuid, so
+a roster is an index into your entries rather than a replacement for them.
+
 Memory tables are inspectable in Flask-Admin under the Memory category:
 
 - `MemoryClaim`
@@ -313,6 +383,20 @@ Rosters come from `relations.json` in your `customize.dir`, beside
 A roster reading `(0)` is not a failure — it means the declaration is valid and
 nothing matches its prefix yet. It is also how a mistyped `prefix` shows up, so
 check the spelling against the paths you meant.
+
+### An exact question suddenly gives a different answer
+
+The exact-alias table maps a normalized question to **every** entry claiming
+it, and answers only when exactly one is visible. If two entries carry the same
+question text, that alias is now ambiguous: exact matching declines and the
+query falls through to normal retrieval, which may answer differently — or
+better — than the arbitrary pick it used to get.
+
+To find such an alias, run it on `/memory/developer`: an ambiguous one shows no
+**exact** hit but several candidates whose `matched_question` is the same
+string. Give each entry its own distinct phrasing to make the question exact
+again. (Several near-identical phrasings on *one* entry are fine; those are one
+claimant, not several.)
 
 ### Tests Cannot Connect To Postgres
 
