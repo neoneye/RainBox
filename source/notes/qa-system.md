@@ -180,10 +180,24 @@ Each declaration in `relations.json` becomes one synthesised entry:
   carries the same shield class (*unshielded* is a class of its own) and
   otherwise produces **no roster for that prefix**, silently — shielding a
   member is data evolution, not malformed configuration, and must not take the
-  registry down. Every other validation failure raises with the file named.
+  registry down. Every other validation failure raises before any write.
 - `questions` — authored aliases, exactly like an entry's. Phrasings are
   language- and instance-specific, so no predicate→phrasing table ships in the
   repository.
+
+**How a rejected declaration is reported.** JSON has no line numbers, so an
+error names the declaration by its `prefix` — a string the operator can search
+for, which is the affordance `file:line` provides for the JSONL loader. When
+`prefix` is itself the broken field the message falls back to `title`, and to
+the ordinal only when neither is usable. The path is the resolved one, not the
+bare filename, so it is clear which file to open:
+
+```text
+…/relations.json: relation 1 (prefix 'human.<subject>.colleague'): 'shield' is required — …
+…/relations.json: relation 1 (title 'neighbours'): 'prefix' must be a non-empty string
+```
+
+Malformed JSON is reported with the decoder's own line number instead.
 
 A roster is an ordinary `kind: "static"` entry tagged `_derived: "roster"` and
 `_source: "user-overlay"`, with a `uuid5(_ROSTER_NS, prefix)` id. It embeds,
