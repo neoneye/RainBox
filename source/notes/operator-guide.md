@@ -220,6 +220,13 @@ fits its character budget lists everyone; a longer one ends in an explicit
 reading a short list as a failure. If you want to see the retrieval behind it,
 the run's `memory_query` step shows the candidates it was given.
 
+**Names in the list.** A roster prints each member's `label`, falling back to
+the raw final path segment when there is none — so a member filed under a
+squashed slug shows up as that slug. Add `"label": "A. Person"` to the entry to
+control what is printed. It is display only: it is not indexed, so it does
+**not** make that person findable by name. Reachability is what `questions` is
+for. See `notes/qa-system.md`, "`label`, and why there are no tags".
+
 **6. Confirm membership stays derived.** Add a new entry under the prefix,
 repopulate, and ask again — the new person appears with **no edit to
 `relations.json`**. That is the whole point: you maintain the entries, not the

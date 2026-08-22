@@ -73,6 +73,76 @@ One JSON object per line:
 - `_source` — injected at load time (`upstream` / `user-overlay`), not in the file.
 - `_row_sha256`, `_derived` — injected at load time; see above.
 
+### `label`, and why there are no tags
+
+`label` reads like a tag, and it is not one. It is worth being precise about,
+because the field it *looks* like is the field this schema does not have.
+
+**What it is.** One string, one entry, purely presentational: the name printed
+for this entry when a roster lists it as a member.
+
+```json
+{"path": "human.<subject>.friend.<person-a>", "label": "A. Person", ...}
+```
+
+```text
+recorded friends (2):
+- A. Person  [<qa_id>]      ← with a label
+- personb    [<qa_id>]      ← without one: the raw final path segment
+```
+
+The fallback is never prettified. Capitalisation, spacing and diacritics are
+unrecoverable from a slug, and a wrong guess misspells somebody's name — so the
+slug is printed exactly as filed, and `label` is how an operator overrides it.
+
+**Where it is read.** In exactly one place: `_member_label`, called only from
+`_render_roster`. An entry that is never a roster member never has its `label`
+read, and it is validated only at that point (non-empty string, no `\n` or
+`\r`; a number, `""` or `null` is a configuration error, not something to
+coerce).
+
+**What it is not.**
+
+- *Not a list.* One entry, one label. `["a", "b"]` is rejected.
+- *Not searchable.* The label is not embedded and not lexically indexed. In
+  fact the roster answer carrying it is **deliberately excluded** from the
+  full-text index (see [Derived rosters](#derived-rosters)), so a label
+  contributes nothing to retrieval anywhere. **Adding a label does not make a
+  person findable by that name.**
+- *Not a category, tag, or second path.* It groups nothing and is queried by
+  nothing.
+
+Where each concern actually lives:
+
+| field | job | cardinality |
+| --- | --- | --- |
+| `path` | where the entry is filed; what makes it a roster member | one |
+| `questions` | how the entry is **found** | many |
+| `label` | how the entry is **printed** in a roster | one |
+| `answer` | what is read once it is found | one |
+
+So the field closest to "many handles on one row" is `questions`: every
+phrasing there becomes an alias and an embedded document pointing at the same
+entry. When something cannot be found, a phrasing in `questions` is the fix —
+never a label.
+
+**Why there is no tag field.** `path` gives each entry exactly one home in a
+tree, and that is the whole grouping mechanism. A person filed under
+`human.<subject>.friend.<person-a>` is *a friend*; if the same person is also a
+former colleague, a neighbour, and connected to a third party, none of that is
+expressible as structure. It survives only as prose inside the answer and as
+phrasings in `questions`, and nothing can enumerate either.
+
+This is why `who are all my <relation>` is answerable and
+`who did I meet through <context>` is not: the first is a path prefix, the
+second is a cross-cutting set. Rosters deliberately solve only the prefix case.
+
+Tags — or typed edges between entries — are the design that would close the
+gap, and neither exists. See the tree-versus-graph note at the end of
+`notes/proposals/2026-08-21-set-valued-questions-and-derived-rosters.md`, and
+the separate `qa_edge` design in
+`notes/proposals/2026-08-08-qa-navigation-routes.md`, which is unbuilt.
+
 ### Derived rosters
 
 A question like "who are all my X" has an N-entry answer set, while the
