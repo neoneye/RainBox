@@ -239,8 +239,11 @@ def test_every_printed_id_resolves_through_the_registry(env):
               relations=[_decl()])
     kb._load_kb()
     roster = kb.get_entry(kb._roster_id(PREFIX))
+    # Member lines by shape, not by offset: the header block is one line when
+    # the roster is complete and two when it carries the incompleteness caveat.
     printed = [line.split("[")[1].rstrip("]")
-               for line in roster["answer"].split("\n")[1:]]
+               for line in roster["answer"].split("\n")
+               if line.startswith("- ") and "[" in line]
     assert printed == ["m-alpha", "m-beta", "m-gamma"]
     for qa_id in printed:
         # memory_query's uuid mode reads the registry; an unresolvable id would

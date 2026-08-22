@@ -36,7 +36,7 @@ def _entry(path, **over):
 
 
 # Pinned in test_digest_is_pinned_including_non_ascii; see that test.
-_PINNED_DIGEST = "5cfb666ed8e4b71e84cfba899aa80737ea8b1aad55781f6c0299e390411530d0"
+_PINNED_DIGEST = "0666907ccedce1e03facd26aeee32f86e3b622879114c8ee3fd1329a470565ee"
 
 
 def _members(n, prefix="human.subject.friend"):
@@ -129,7 +129,24 @@ def test_render_complete_drops_the_recorded_qualifier():
 
 def test_render_zero_members():
     text = kb._render_roster(_decl(), [])
-    assert text == "recorded friends (0):"
+    assert text.split("\n")[0] == "recorded friends (0):"
+    assert text.split("\n")[1] == kb.ROSTER_INCOMPLETE_NOTE
+
+
+def test_incomplete_roster_carries_an_explicit_caveat():
+    # "recorded" is a one-word hedge, and hedges are the first thing a model
+    # drops. The caveat is an instruction instead: it says what not to conclude.
+    text = kb._render_roster(_decl(complete=False), _members(2))
+    assert kb.ROSTER_INCOMPLETE_NOTE in text
+    assert "not evidence" in kb.ROSTER_INCOMPLETE_NOTE
+
+
+def test_complete_roster_carries_no_caveat():
+    text = kb._render_roster(_decl(complete=True), _members(2))
+    assert kb.ROSTER_INCOMPLETE_NOTE not in text
+    assert text.split("\n")[0] == "friends (2):"
+    # Line 2 is a member, not a caveat.
+    assert text.split("\n")[1].startswith("- ")
 
 
 def test_render_label_falls_back_to_the_final_path_segment():
@@ -145,18 +162,25 @@ def test_render_truncates_at_a_member_boundary():
     assert text.startswith("recorded friends (200):")
     lines = text.split("\n")
     marker = lines[-1]
-    shown = len(lines) - 2                      # header + marker
+    shown = len(lines) - 3                      # header + caveat + marker
     assert marker == f"- … {200 - shown} additional recorded members omitted"
     # Every shown line is whole: no sliced label, no sliced id.
-    for line in lines[1:-1]:
+    for line in lines[2:-1]:            # skip header and caveat
         assert line.startswith("- Person ") and line.endswith("]")
 
 
 def test_render_permits_zero_displayed_members():
-    long_title = "t" * (kb.ROSTER_ANSWER_MAX_CHARS - 80)
-    text = kb._render_roster(_decl(title=long_title), _members(5))
+    # A title long enough that header + caveat + marker exactly fills the
+    # budget, so no member line can fit. Derived from the constants rather
+    # than a magic offset, so a wording change cannot silently defeat it.
+    marker = "- … 5 additional recorded members omitted"
+    overhead = (len("recorded ") + len(" (5):") + len(kb.ROSTER_INCOMPLETE_NOTE)
+                + len(marker) + 2)   # 2 newlines
+    text = kb._render_roster(
+        _decl(title="t" * (kb.ROSTER_ANSWER_MAX_CHARS - overhead)), _members(5))
     assert len(text) <= kb.ROSTER_ANSWER_MAX_CHARS
-    assert text.split("\n")[-1] == "- … 5 additional recorded members omitted"
+    assert text.split("\n")[-1] == marker
+    assert kb.ROSTER_INCOMPLETE_NOTE in text
 
 
 def test_render_rejects_a_title_too_long_to_render_anything():
@@ -518,3 +542,14 @@ def test_invalid_json_reports_the_line(tmp_path, monkeypatch):
         kb._load_relations()
     msg = str(ei.value)
     assert str(rel) in msg and "line 3" in msg
+
+
+def test_render_version_is_in_the_digest():
+    # The caveat wording lives in the rendered answer, so changing it (or the
+    # budget) must dirty every stored roster rather than leaving the old text
+    # embedded. ROSTER_RENDER_VERSION is what carries that.
+    decl, members = _decl(), _members(2)
+    base = kb._roster_digest(decl, members)
+    import unittest.mock as m
+    with m.patch.object(kb, "ROSTER_RENDER_VERSION", kb.ROSTER_RENDER_VERSION + 1):
+        assert kb._roster_digest(decl, members) != base

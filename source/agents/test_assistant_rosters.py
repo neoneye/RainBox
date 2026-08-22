@@ -153,8 +153,11 @@ def test_injected_seed_path_renders_the_roster(registry, app_ctx):
 def test_every_printed_member_id_is_readable_in_full(registry, app_ctx, monkeypatch):
     """The roster is an index card, not a display list: each id it prints must
     resolve through memory_query's uuid mode."""
+    # Member lines by shape, not by offset: the header block is one line when
+    # the roster is complete and two when it carries the incompleteness caveat.
     printed = [line.split("[")[1].rstrip("]")
-               for line in registry["answer"].split("\n")[1:]]
+               for line in registry["answer"].split("\n")
+               if line.startswith("- ") and "[" in line]
     assert len(printed) == 6
 
     monkeypatch.setattr(kb, "_vector_store", lambda: object())

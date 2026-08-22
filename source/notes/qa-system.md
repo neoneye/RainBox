@@ -171,9 +171,41 @@ Each declaration in `relations.json` becomes one synthesised entry:
   entries at exactly `prefix + "." + <one non-empty segment>`; a member's own
   subtree belongs to that member, not the roster.
 - `title` — the noun in the rendered answer.
-- `complete` — `false` (default) renders `recorded friends (6):`; `true` drops
-  the qualifier, the operator asserting the prefix holds everyone. The count is
-  always the number of *entries*, never a claim about the world.
+- `complete` — whether the operator asserts the prefix holds *everyone*.
+  Default `false`, which renders the qualifier **and an explicit caveat line**;
+  `true` renders neither. The count is always the number of *entries*, never a
+  claim about the world.
+
+  ```text
+  recorded friends (6):
+  (Recorded entries only, not necessarily everyone — absence from this list is not evidence.)
+  - Albert Einstein  [<qa_id>]
+  ```
+
+  The caveat is a sentence rather than the adjective alone because a hedge is
+  the first thing a model drops when it summarises: "recorded" relies on the
+  connotation surviving, while the caveat states the inference not to make.
+  This exists because a personal-memory store must never read "never written
+  down" as "false" — the same reasoning that rules out a Datalog-style design,
+  which a roster claiming exhaustiveness would have reintroduced.
+
+  **How well it works is measured, not assumed** —
+  `benchmarks/roster_completeness.py`, and the honest answer is *sometimes*.
+  Asked about somebody absent from the list, with the caveat present versus
+  absent:
+
+  | model | `complete: false` | `complete: true` |
+  | --- | --- | --- |
+  | `llama3.2:3b` | flat answer | flat answer |
+  | `granite3.3:8b` | flat answer | flat answer |
+  | `qwen3.5:9b` | **names the limit** | flat answer |
+
+  So the caveat changes behaviour on the 9B and is ignored by the smaller two,
+  which answer "no, not on the list" either way. What `complete` guarantees
+  unconditionally is that the **stored artifact** stops over-claiming; that a
+  given model acts on it is a property of the model, and small local models
+  should be assumed not to. Re-run the benchmark after changing the wording or
+  the model.
 - `shield` — **required**, `null` or a name. Declared rather than derived: a
   roster may have zero members, and defaulting that to unshielded would publish
   the declaration's own title and questions. Synthesis verifies every member

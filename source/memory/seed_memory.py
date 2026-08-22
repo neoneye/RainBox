@@ -231,7 +231,17 @@ RELATIONS_FILENAME: str = "relations.json"
 # arbitrary, their permanence is not.
 _ROSTER_NS: UUID = UUID("94cacd83-3427-5460-80c5-239a56244707")
 ROSTER_ANSWER_MAX_CHARS: int = 1100   # below MEMORY_QUERY_PER_FACT_CHARS (1200)
-ROSTER_RENDER_VERSION: int = 1
+ROSTER_RENDER_VERSION: int = 2
+
+# What an incomplete roster says about its own limits. A one-word hedge
+# ("recorded friends") relies on the model inferring the connotation, and a
+# hedge is the first thing a model drops when it summarises — so this states
+# the inference not to make, rather than implying it. Only a declaration that
+# does NOT assert completeness carries it.
+ROSTER_INCOMPLETE_NOTE: str = (
+    "(Recorded entries only, not necessarily everyone — "
+    "absence from this list is not evidence.)"
+)
 
 # Local alias so the renderer reads as line assembly rather than escape soup.
 NL: str = chr(10)
@@ -459,7 +469,10 @@ def _render_roster(decl: dict[str, Any], members: list[dict[str, Any]]) -> str:
     reports the omitted count, so the two sum."""
     qualifier = "" if decl["complete"] else "recorded "
     total = len(members)
-    header = f"{qualifier}{decl['title']} ({total}):"
+    head = [f"{qualifier}{decl['title']} ({total}):"]
+    if not decl["complete"]:
+        head.append(ROSTER_INCOMPLETE_NOTE)
+    header = NL.join(head)
 
     lines = []
     for m in members:
