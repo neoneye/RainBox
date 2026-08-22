@@ -472,3 +472,49 @@ def test_relations_path_is_not_re_resolved_when_the_overlay_is_none(monkeypatch)
     assert calls == [], "_overlay_path was resolved a second time"
     assert kb._relations_path() is None
     assert calls == [1], "the default should still resolve once"
+
+
+# --- error messages name the declaration, not its index ----------------------
+
+
+def test_error_names_the_offending_declaration_by_prefix():
+    # An index means counting declarations by hand. A prefix can be searched
+    # for — the file:line equivalent for a format that has no lines.
+    doc = {"relations": [_decl(), _decl(prefix="human.subject.colleague", title="")]}
+    with pytest.raises(ValueError) as ei:
+        kb._parse_relations(doc)
+    msg = str(ei.value)
+    assert "human.subject.colleague" in msg
+    assert "title" in msg
+
+
+def test_error_falls_back_to_title_when_the_prefix_is_unusable():
+    with pytest.raises(ValueError) as ei:
+        kb._parse_relations({"relations": [_decl(prefix=None, title="friends")]})
+    msg = str(ei.value)
+    assert "friends" in msg, f"should name what it can: {msg!r}"
+
+
+def test_error_falls_back_to_the_index_when_nothing_is_nameable():
+    with pytest.raises(ValueError) as ei:
+        kb._parse_relations({"relations": [_decl(), {}]})
+    assert "relation 1" in str(ei.value)
+
+
+def test_errors_name_the_resolved_file_not_just_the_basename(tmp_path, monkeypatch):
+    rel = tmp_path / "relations.json"
+    rel.write_text(json.dumps({"relations": [_decl(shield=12)]}))
+    monkeypatch.setattr(kb, "_relations_path", lambda overlay=None: rel)
+    with pytest.raises(ValueError) as ei:
+        kb._load_relations()
+    assert str(rel) in str(ei.value), "the operator must know which file to open"
+
+
+def test_invalid_json_reports_the_line(tmp_path, monkeypatch):
+    rel = tmp_path / "relations.json"
+    rel.write_text('{\n  "relations": [\n    {"prefix": "a" "b"}\n  ]\n}')
+    monkeypatch.setattr(kb, "_relations_path", lambda overlay=None: rel)
+    with pytest.raises(ValueError) as ei:
+        kb._load_relations()
+    msg = str(ei.value)
+    assert str(rel) in msg and "line 3" in msg

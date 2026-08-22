@@ -304,23 +304,40 @@ def _relations_path(overlay: Any = _UNRESOLVED) -> Path | None:
     return overlay.parent / RELATIONS_FILENAME
 
 
-def _parse_relations(doc: Any) -> list[dict[str, Any]]:
+def _decl_label(decl: Any, i: int) -> str:
+    """How an error names one declaration.
+
+    JSON has no line numbers, so the ordinal alone would make the operator
+    count declarations by hand — worse than the `file:line` the JSONL loader
+    gives. Naming the `prefix` (or the `title`, when the prefix is the broken
+    field) gives them a string to search for, which is the same affordance."""
+    if isinstance(decl, dict):
+        for key in ("prefix", "title"):
+            value = decl.get(key)
+            if isinstance(value, str) and value.strip():
+                return f"relation {i} ({key} {value!r})"
+    return f"relation {i}"
+
+
+def _parse_relations(doc: Any, source: Any = RELATIONS_FILENAME) -> list[dict[str, Any]]:
     """Validate a parsed relations.json into a list of declarations.
 
     Every failure raises: this is operator-authored input that drives
     persistent vector writes, and both write paths parse before they mutate
-    anything, so a rejected file is a no-op rather than a half-applied one."""
+    anything, so a rejected file is a no-op rather than a half-applied one.
+    `source` is what errors name — the resolved path when there is one, so the
+    operator knows which file to open."""
     if not isinstance(doc, dict) or "relations" not in doc:
-        raise ValueError(f"{RELATIONS_FILENAME}: missing top-level 'relations'")
+        raise ValueError(f"{source}: missing top-level 'relations'")
     relations = doc["relations"]
     if not isinstance(relations, list):
-        raise ValueError(f"{RELATIONS_FILENAME}: 'relations' must be a list")
+        raise ValueError(f"{source}: 'relations' must be a list")
 
     out: list[dict[str, Any]] = []
     seen_prefix: dict[str, int] = {}
     seen_id: dict[str, str] = {}
     for i, decl in enumerate(relations):
-        where = f"{RELATIONS_FILENAME}: relation {i}"
+        where = f"{source}: {_decl_label(decl, i)}"
         if not isinstance(decl, dict):
             raise ValueError(f"{where}: must be an object")
 
@@ -396,7 +413,7 @@ def _load_relations(overlay: Any = _UNRESOLVED) -> list[dict[str, Any]]:
         doc = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
         raise ValueError(f"{path}: invalid JSON — {exc.msg} (line {exc.lineno})") from exc
-    return _parse_relations(doc)
+    return _parse_relations(doc, source=path)
 
 
 def _roster_members(entries: list[dict[str, Any]], prefix: str) -> list[dict[str, Any]]:
