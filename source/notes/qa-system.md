@@ -43,10 +43,12 @@ Within one file, a duplicate `id` or a duplicate `path` is an operator mistake
 and is rejected — repopulate fails hard with a `file:line` message naming the
 first occurrence. Reuse *across* files is the override mechanism and is fine.
 
-Keys beginning with `_` are **reserved for the loader** and are rejected in a
-source file with a `file:line`. `_source`, `_row_sha256` and `_derived` are
-injected during loading; an authored `_derived` in particular would let an
-entry suppress full-text indexing of its own answer.
+Three keys are **reserved for the loader** and are rejected in a source file
+with a `file:line` (`_RESERVED_ENTRY_KEYS`): `_source` and `_row_sha256`, both
+injected into every entry during loading, and `_derived`, which is set only on
+synthesised rosters. Other `_`-prefixed keys are not policed. An authored
+`_derived` is the one that matters — it would let an entry suppress full-text
+indexing of its own answer.
 (The overlay schema is under active design — see the
 `notes/proposals/2026-07-*-qa-overlay-*` proposals.)
 
@@ -114,8 +116,9 @@ Each declaration in `relations.json` becomes one synthesised entry:
 
 A roster is an ordinary `kind: "static"` entry tagged `_derived: "roster"` and
 `_source: "user-overlay"`, with a `uuid5(_ROSTER_NS, prefix)` id. It embeds,
-ranks, obeys shields and renders like any entry — nothing in retrieval or the
-assistant special-cases it. Rendering is bounded at `ROSTER_ANSWER_MAX_CHARS`
+ranks, obeys shields and renders like any entry: apart from the full-text
+exclusion below, existing consumers otherwise treat it like any static
+entry. Rendering is bounded at `ROSTER_ANSWER_MAX_CHARS`
 (1100, under `memory_query`'s 1200-char per-fact cap, so the uncapped chat
 routes are covered too) and truncates only at member boundaries:
 

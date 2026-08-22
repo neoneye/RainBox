@@ -1,6 +1,7 @@
 # Set-valued questions: the registry holds the answer and cannot return it
 
-**Status: IMPLEMENTED.** Both changes are merged with tests; see
+**Status: IMPLEMENTED** on the `qa-derived-rosters` branch, not yet merged.
+Both changes carry tests; see
 [What was delivered](#what-was-delivered). Pagination, the diagnostics UI,
 stemming and non-prefix sets remain **not designed** and must not be built from
 this document. The maintained description now lives in `qa-system.md`; this
@@ -828,8 +829,8 @@ Five commits on `qa-derived-rosters`, in ship order:
 Tests: `memory/test_seed_alias_table.py` (7), `memory/test_seed_rosters.py`
 (74 pure), `memory/test_seed_rosters_integration.py` (11, real pgvector +
 fake embedder), `agents/test_assistant_rosters.py` (6, the measured route),
-plus `test_rebuild_kb_validates_before_truncating`. Full suite at closure:
-2556 passed, 10 skipped.
+plus `test_rebuild_kb_validates_before_truncating`. Full suite at closure —
+`memory/ agents/ webapp/ db/ benchmarks/ tools/` — 2846 passed, 10 skipped.
 
 Two tests were verified by breaking the thing they watch: SQL shield exclusion
 (sabotage `_shield_filters` ⇒ the locked roster eats the only node slot and the
