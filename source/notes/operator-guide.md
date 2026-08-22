@@ -182,8 +182,11 @@ validation error names the offending declaration and changes nothing; fix and
 press again.
 
 **3. Check the roster before asking anything.** On `/memory/developer`, run one
-of your authored questions verbatim. You should get an **exact** hit whose
-reply is the rendered roster:
+of your authored questions verbatim. You get an **exact** hit — whose reply is
+the rendered roster — provided no other visible entry claims that same
+question. If one does, the alias is ambiguous and exact matching declines by
+design; the roster then shows up among the candidates instead, which is equally
+good for this check. Either way you are looking at the rendered roster:
 
 ```text
 recorded friends (6):
@@ -194,26 +197,37 @@ recorded friends (6):
 
 Read the count first. `(6)` when you expect six means membership is right.
 `(0)` means the declaration is valid but nothing matches `prefix` — almost
-always a typo in it. A *missing* roster after a successful repopulate means the
-members are not shield-uniform; see the troubleshooting entry below.
+always a typo in it.
 
-**4. Check retrieval reaches it.** Still on `/memory/developer`, run a phrasing
-you did *not* author — "who do I hang out with", or the same question in your
-other language. The roster should appear among the candidates with a `semantic`
-signal. This is the part that authored aliases alone cannot do.
+If the roster is *missing* after a successful repopulate, check the
+declaration's `shield` before anything else: a shielded roster is hidden until
+that shield is unlocked on `/settings`, which looks exactly like absence. Only
+once it is unlocked (or `null`) does a missing roster mean the members are not
+shield-uniform — see the troubleshooting entry below.
+
+**4. Test an unauthored phrasing.** Still on `/memory/developer`, try one you
+did *not* author — "who do I hang out with". Whether the roster surfaces is a
+property of the embedding model, not a guarantee of this design, so treat this
+as something to test rather than expect: look for the roster among the
+candidates carrying a `semantic` signal. It is worth testing because it is the
+one thing authored aliases alone cannot do, and because a phrasing that fails
+here is a phrasing worth adding to `questions`.
 
 **5. Ask the assistant.** In a chatroom, ask your question normally. The reply
-should name every member, not two or three of them. If you want to see the
-retrieval behind it, the run's `memory_query` step shows the candidates it was
-given.
+should draw on the whole roster rather than two or three members. A roster that
+fits its character budget lists everyone; a longer one ends in an explicit
+`… N additional recorded members omitted` line, so check for that marker before
+reading a short list as a failure. If you want to see the retrieval behind it,
+the run's `memory_query` step shows the candidates it was given.
 
 **6. Confirm membership stays derived.** Add a new entry under the prefix,
 repopulate, and ask again — the new person appears with **no edit to
 `relations.json`**. That is the whole point: you maintain the entries, not the
 list.
 
-To undo, delete `relations.json` and repopulate; the roster's rows are removed
-and nothing else changes.
+To undo, remove that declaration from `relations.json` and repopulate; its rows
+are deleted and nothing else changes. Delete the whole file only when you want
+every roster gone.
 
 **Reading a member in full.** Each roster line carries the member's `qa_id`.
 The assistant can pull that entry's whole text with `memory_query` by uuid, so
