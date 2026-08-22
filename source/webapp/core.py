@@ -81,6 +81,26 @@ _log = logging.getLogger(__name__)
 app = make_app()
 init_db(app)
 
+
+@app.after_request
+def _single_date_header(resp):
+    """Emit exactly one `Date` header.
+
+    Flask stamps `Date` on static-file responses (`send_file`), and the WSGI
+    server stamps its own afterwards — so static assets went out with the
+    header twice, which RFC 9110 forbids. Chrome tolerates it; Firefox stalls
+    the request, and a page whose body is rendered by an external script then
+    renders as a blank page that never finishes loading (`/git`, `/cron`,
+    `/kanban`, `/memory`, `/profile`).
+
+    Dropping Flask's copy here leaves the server's, which is always added.
+    This hook runs before the server writes, so it cannot remove that one —
+    verified by counting the headers actually on the wire, not the ones Flask
+    reports."""
+    del resp.headers["Date"]
+    return resp
+
+
 # Record every LLM call this process makes to `llm_call` (the /activity page).
 # After init_db, because the recorder's sink writes through db.session.
 from llm.activity import install_activity_recorder  # noqa: E402
