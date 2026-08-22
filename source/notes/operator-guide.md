@@ -222,7 +222,7 @@ the run's `memory_query` step shows the candidates it was given.
 
 **Names in the list.** A roster prints each member's `label`, falling back to
 the raw final path segment when there is none — so a member filed under a
-squashed slug shows up as that slug. Add `"label": "A. Person"` to the entry to
+squashed slug shows up as that slug. Add `"label": "Albert Einstein"` to the entry to
 control what is printed. It is display only: it is not indexed, so it does
 **not** make that person findable by name. Reachability is what `questions` is
 for. See `notes/qa-system.md`, "`label`, and why there are no tags".

@@ -82,13 +82,14 @@ because the field it *looks* like is the field this schema does not have.
 for this entry when a roster lists it as a member.
 
 ```json
-{"path": "human.<subject>.friend.<person-a>", "label": "A. Person", ...}
+{"path": "human.<subject>.friend.alberteinstein", "label": "Albert Einstein", ...}
+{"path": "human.<subject>.friend.nielsbohr", ...}
 ```
 
 ```text
 recorded friends (2):
-- A. Person  [<qa_id>]      ← with a label
-- personb    [<qa_id>]      ← without one: the raw final path segment
+- Albert Einstein  [<qa_id>]      ← with a label
+- nielsbohr        [<qa_id>]      ← without one: the raw final path segment
 ```
 
 The fallback is never prettified. Capitalisation, spacing and diacritics are
@@ -128,7 +129,7 @@ never a label.
 
 **Why there is no tag field.** `path` gives each entry exactly one home in a
 tree, and that is the whole grouping mechanism. A person filed under
-`human.<subject>.friend.<person-a>` is *a friend*; if the same person is also a
+`human.<subject>.friend.nielsbohr` is *a friend*; if the same person is also a
 former colleague, a neighbour, and connected to a third party, none of that is
 expressible as structure. It survives only as prose inside the answer and as
 phrasings in `questions`, and nothing can enumerate either.
