@@ -19,7 +19,7 @@ def registry(app_ctx, monkeypatch):
     # Seed the in-memory registry directly (no embeddings, no pgvector).
     entries = {
         "u-candy": {"id": "u-candy", "path": "food.candy", "kind": "static",
-                    "answer": "Simon likes licorice.", "_source": "user-overlay"},
+                    "answer": "Robin likes licorice.", "_source": "user-overlay"},
         "up-name": {"id": "up-name", "path": "identity.name", "kind": "static",
                     "answer": "EgonBot.", "_source": "upstream"},
         "dyn-git": {"id": "dyn-git", "path": "dev.git", "kind": "dynamic",
@@ -36,7 +36,7 @@ def test_retrieve_seed_memories_filters_static_and_tags(registry):
     out = kb.retrieve_seed_memories("candy", _ranker=lambda q: ranked)
     assert [m.uuid for m in out] == ["u-candy", "up-name"]   # dynamic dropped, score order
     assert out[0].source == "user-overlay" and out[0].path == "food.candy"
-    assert out[0].answer == "Simon likes licorice."
+    assert out[0].answer == "Robin likes licorice."
 
 
 def test_retrieve_seed_memories_drops_below_min_score_and_caps(registry):

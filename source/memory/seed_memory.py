@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import psycopg
 import sqlalchemy as sa
@@ -86,9 +86,9 @@ _populated: bool = False
 # has-anything-moved guard in _ensure_populated.
 _sync_snapshot: dict[str, tuple[int, int]] | None = None
 # In-memory registry built from the JSONL: qa_id -> entry, and normalized
-# question -> qa_id (the exact-alias table).
+# question -> every qa_id claiming it (the exact-alias table).
 _entries_by_id: dict[str, dict[str, Any]] = {}
-_alias_table: dict[str, str] = {}
+_alias_table: dict[str, list[str]] = {}
 
 
 @dataclass
@@ -219,6 +219,385 @@ def _overlay_path() -> Path | None:
     return Path(str(value)) / "question_answer.jsonl"
 
 
+# --- Derived rosters ---------------------------------------------------------
+
+# A relation declaration turns a path prefix into one entry answering "who are
+# all my X". See notes/proposals/2026-08-21-set-valued-questions-and-derived-rosters.md.
+RELATIONS_FILENAME: str = "relations.json"
+
+# Pinned forever: rows outlive the code that wrote them, so changing either of
+# these orphans every embedded roster instead of updating it. _ROSTER_NS is
+# uuid5(NAMESPACE_URL, "https://rainbox.local/qa/roster"); the values are
+# arbitrary, their permanence is not.
+_ROSTER_NS: UUID = UUID("94cacd83-3427-5460-80c5-239a56244707")
+ROSTER_ANSWER_MAX_CHARS: int = 1100   # below MEMORY_QUERY_PER_FACT_CHARS (1200)
+ROSTER_RENDER_VERSION: int = 2
+
+# What an incomplete roster says about its own limits. A one-word hedge
+# ("recorded friends") relies on the model inferring the connotation, and a
+# hedge is the first thing a model drops when it summarises — so this states
+# the inference not to make, rather than implying it. Only a declaration that
+# does NOT assert completeness carries it.
+ROSTER_INCOMPLETE_NOTE: str = (
+    "(Recorded entries only, not necessarily everyone — "
+    "absence from this list is not evidence.)"
+)
+
+# Local alias so the renderer reads as line assembly rather than escape soup.
+NL: str = chr(10)
+
+# Keys the loader owns. An authored entry must not supply them: `_derived`
+# drives the full-text answer exclusion, so an entry claiming it could suppress
+# indexing of its own answer, and `_source`/`_row_sha256` decide provenance
+# tiering and dirty detection.
+_RESERVED_ENTRY_KEYS: tuple[str, ...] = ("_source", "_row_sha256", "_derived")
+
+
+def _canonical(obj: Any) -> bytes:
+    """The one serialization used for roster digests. `ensure_ascii=False` plus
+    an explicit UTF-8 encode matters: titles and labels are operator prose in
+    the operator's own language, and escaping them would make the digest depend
+    on the escaping rule rather than on the text."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False).encode("utf-8")
+
+
+def _roster_id(prefix: str) -> str:
+    """Deterministic because its input is: the prefix is a string the operator
+    wrote, with no model involved."""
+    return str(uuid5(_ROSTER_NS, prefix))
+
+
+def _blank(value: Any) -> bool:
+    """True unless `value` is a string with non-whitespace content. Used for
+    every field a roster prints, so `""`, `"   "` and non-strings are rejected
+    rather than coerced."""
+    return not isinstance(value, str) or not value.strip()
+
+
+def _has_newline(value: str) -> bool:
+    """Either newline forges a line boundary in a format whose whole safety
+    argument is that it never slices a line."""
+    return "\n" in value or "\r" in value
+
+
+def _reject_reserved_keys(entry: dict[str, Any], path: Any, lineno: int) -> None:
+    """Refuse an authored entry that claims a loader-owned key."""
+    for key in _RESERVED_ENTRY_KEYS:
+        if key in entry:
+            raise ValueError(
+                f"{path}:{lineno}: {key!r} is reserved for the loader and "
+                f"must not appear in the source file"
+            )
+
+
+_UNRESOLVED: Any = object()
+
+
+def _relations_path(overlay: Any = _UNRESOLVED) -> Path | None:
+    """`<customize.dir>/relations.json`, or None when customize.dir is unset.
+
+    Derived from the overlay path rather than re-reading the setting: both
+    files live in the operator's customize dir, so there is one resolution to
+    get right, and anything that stubs the overlay away (tests, an operator
+    with no customize dir) gets no relations for free.
+
+    Callers that have already resolved the overlay pass it in, so one load
+    cannot mix an overlay from one `customize.dir` value with relations from
+    another if the setting changes underneath. The sentinel default matters:
+    a resolved `None` means "no customize dir", and re-resolving it would put
+    the second read back."""
+    if overlay is _UNRESOLVED:
+        overlay = _overlay_path()
+    if overlay is None:
+        return None
+    return overlay.parent / RELATIONS_FILENAME
+
+
+def _decl_label(decl: Any, i: int) -> str:
+    """How an error names one declaration.
+
+    JSON has no line numbers, so the ordinal alone would make the operator
+    count declarations by hand — worse than the `file:line` the JSONL loader
+    gives. Naming the `prefix` (or the `title`, when the prefix is the broken
+    field) gives them a string to search for, which is the same affordance."""
+    if isinstance(decl, dict):
+        for key in ("prefix", "title"):
+            value = decl.get(key)
+            if isinstance(value, str) and value.strip():
+                return f"relation {i} ({key} {value!r})"
+    return f"relation {i}"
+
+
+def _parse_relations(doc: Any, source: Any = RELATIONS_FILENAME) -> list[dict[str, Any]]:
+    """Validate a parsed relations.json into a list of declarations.
+
+    Every failure raises: this is operator-authored input that drives
+    persistent vector writes, and both write paths parse before they mutate
+    anything, so a rejected file is a no-op rather than a half-applied one.
+    `source` is what errors name — the resolved path when there is one, so the
+    operator knows which file to open."""
+    if not isinstance(doc, dict) or "relations" not in doc:
+        raise ValueError(f"{source}: missing top-level 'relations'")
+    relations = doc["relations"]
+    if not isinstance(relations, list):
+        raise ValueError(f"{source}: 'relations' must be a list")
+
+    out: list[dict[str, Any]] = []
+    seen_prefix: dict[str, int] = {}
+    seen_id: dict[str, str] = {}
+    for i, decl in enumerate(relations):
+        where = f"{source}: {_decl_label(decl, i)}"
+        if not isinstance(decl, dict):
+            raise ValueError(f"{where}: must be an object")
+
+        prefix = decl.get("prefix")
+        if _blank(prefix):
+            raise ValueError(f"{where}: 'prefix' must be a non-empty string")
+        assert isinstance(prefix, str)
+        if _has_newline(prefix):
+            raise ValueError(f"{where}: 'prefix' must not contain a newline")
+        if any(not seg.strip() for seg in prefix.split(".")):
+            raise ValueError(f"{where}: 'prefix' has an empty segment")
+
+        title = decl.get("title")
+        if _blank(title):
+            raise ValueError(f"{where}: 'title' must be a non-empty string")
+        assert isinstance(title, str)
+        if _has_newline(title):
+            raise ValueError(f"{where}: 'title' must not contain a newline")
+
+        questions = decl.get("questions")
+        if not isinstance(questions, list) or not questions:
+            raise ValueError(f"{where}: 'questions' must be a non-empty list")
+        norms: dict[str, int] = {}
+        for j, q in enumerate(questions):
+            if _blank(q) or _normalize_query(q) == "":
+                raise ValueError(
+                    f"{where}: question {j} must be a non-empty string that "
+                    f"normalizes to something searchable")
+            norm = _normalize_query(q)
+            if norm in norms:
+                raise ValueError(
+                    f"{where}: questions {norms[norm]} and {j} collapse to the "
+                    f"same alias {norm!r}")
+            norms[norm] = j
+
+        complete = decl.get("complete", False)
+        if not isinstance(complete, bool):
+            raise ValueError(f"{where}: 'complete' must be a boolean")
+
+        if "shield" not in decl:
+            raise ValueError(
+                f"{where}: 'shield' is required — null for unshielded, or a "
+                f"shield name. A roster with no members has no member shield "
+                f"to inherit, so it cannot be inferred")
+        shield = decl["shield"]
+        if shield is not None and _blank(shield):
+            raise ValueError(f"{where}: 'shield' must be null or a non-empty string")
+
+        first = seen_prefix.get(prefix)
+        if first is not None:
+            raise ValueError(
+                f"{where}: duplicate prefix {prefix!r} (first seen at relation "
+                f"{first}) — one declaration is one roster")
+        seen_prefix[prefix] = i
+        rid = _roster_id(prefix)
+        clash = seen_id.get(rid)
+        if clash is not None:
+            raise ValueError(
+                f"{where}: prefix {prefix!r} collides with {clash!r} under uuid5")
+        seen_id[rid] = prefix
+
+        out.append({"prefix": prefix, "title": title, "complete": complete,
+                    "shield": shield, "questions": list(questions)})
+    return out
+
+
+def _load_relations(overlay: Any = _UNRESOLVED) -> list[dict[str, Any]]:
+    """Declarations from the customize dir; an absent file means none."""
+    path = _relations_path(overlay)
+    if path is None or not path.exists():
+        return []
+    try:
+        doc = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path}: invalid JSON — {exc.msg} (line {exc.lineno})") from exc
+    return _parse_relations(doc, source=path)
+
+
+def _roster_members(entries: list[dict[str, Any]], prefix: str) -> list[dict[str, Any]]:
+    """Entries at exactly `prefix + "." + <one non-empty segment>`, in source
+    order. A member's own subtree belongs to that member, not to the roster,
+    and an empty final segment is not a member — validating the declaration's
+    prefix says nothing about the entry paths that match it."""
+    head = prefix + "."
+    out = []
+    for e in entries:
+        path = e.get("path")
+        if not isinstance(path, str) or not path.startswith(head):
+            continue
+        segment = path[len(head):]
+        if segment and "." not in segment:
+            out.append(e)
+    return out
+
+
+def _member_label(entry: dict[str, Any]) -> str:
+    """The printed name: an authored `label`, else the final path segment.
+    A slug is never prettified — casing and diacritics are unrecoverable from
+    it, and guessing them prints people's names wrong."""
+    if "label" in entry:
+        label = entry["label"]
+        if _blank(label):
+            raise ValueError(
+                f"entry {entry.get('id')!r}: 'label' must be a non-empty string")
+        assert isinstance(label, str)
+    else:
+        label = str(entry.get("path", "")).rsplit(".", 1)[-1]
+        if not label.strip():
+            raise ValueError(f"entry {entry.get('id')!r}: empty final path segment")
+    if _has_newline(label):
+        raise ValueError(f"entry {entry.get('id')!r}: 'label' must not contain a newline")
+    return label
+
+
+def _render_roster(decl: dict[str, Any], members: list[dict[str, Any]]) -> str:
+    """The roster's answer, bounded at ROSTER_ANSWER_MAX_CHARS and never
+    sliced. Whole member lines are emitted while they fit alongside the
+    omission marker; the header always reports TOTAL membership and the marker
+    reports the omitted count, so the two sum."""
+    qualifier = "" if decl["complete"] else "recorded "
+    total = len(members)
+    head = [f"{qualifier}{decl['title']} ({total}):"]
+    if not decl["complete"]:
+        head.append(ROSTER_INCOMPLETE_NOTE)
+    header = NL.join(head)
+
+    lines = []
+    for m in members:
+        qa_id = m.get("id")
+        if _blank(qa_id):
+            raise ValueError(f"roster member at {m.get('path')!r}: 'id' must be "
+                             f"a non-empty string")
+        assert isinstance(qa_id, str)
+        if _has_newline(qa_id):
+            raise ValueError(f"roster member {qa_id!r}: 'id' must not contain a newline")
+        lines.append(f"- {_member_label(m)}  [{qa_id}]")
+
+    whole = NL.join([header, *lines])
+    if len(whole) <= ROSTER_ANSWER_MAX_CHARS:
+        return whole
+
+    # Largest prefix of member lines that fits alongside the marker. Zero shown
+    # is legal; a header that cannot even carry the marker is a config error.
+    def marker(omitted: int) -> str:
+        return f"- … {omitted} additional recorded members omitted"
+
+    if len("\n".join([header, marker(total)])) > ROSTER_ANSWER_MAX_CHARS:
+        raise ValueError(
+            f"relation {decl['prefix']!r}: 'title' is too long to render a "
+            f"roster within {ROSTER_ANSWER_MAX_CHARS} characters")
+    shown = 0
+    for n in range(len(lines), -1, -1):
+        candidate = "\n".join([header, *lines[:n], marker(total - n)])
+        if len(candidate) <= ROSTER_ANSWER_MAX_CHARS:
+            shown = n
+            break
+    return "\n".join([header, *lines[:shown], marker(total - shown)])
+
+
+def _roster_digest(decl: dict[str, Any], members: list[dict[str, Any]]) -> str:
+    """Dirty detector over the roster's COMPLETE synthesised representation.
+
+    Hashing members alone is insufficient: an alias, title, shield or
+    completeness edit, a reordering, or a render-format change would all leave
+    stale vectors embedded and — because sync_kb only clears the registry when
+    a row actually changed — stale aliases in memory too."""
+    return hashlib.sha256(_canonical({
+        "prefix": decl["prefix"],
+        "title": decl["title"],
+        "questions": decl["questions"],
+        "complete": decl["complete"],
+        "shield": decl["shield"],
+        "render": [ROSTER_RENDER_VERSION, ROSTER_ANSWER_MAX_CHARS],
+        "members": [[m.get("id"), m.get("_row_sha256")] for m in members],
+    })).hexdigest()
+
+
+def _synthesize_rosters(entries: list[dict[str, Any]],
+                        relations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One `static` entry per declaration, computed over `entries` frozen.
+
+    Every membership is read from the same authored list, and the rosters are
+    appended only afterwards, so a roster can never become a member of another
+    roster — a roster at `<p>.<q>` is otherwise a legal member of a declaration
+    for `<p>`, and whether it was would depend on declaration order.
+
+    A declaration whose members are not shield-uniform with it yields no
+    roster: shielding a member is data evolution, not malformed config, and
+    must not take the knowledge base down until a declaration is edited. Every
+    other failure raises."""
+    # Only genuine strings participate: coercing a missing path to "None" or an
+    # integer id to its digits would invent collisions with legitimate values.
+    by_path = {e["path"]: e.get("id") for e in entries
+               if isinstance(e.get("path"), str)}
+    by_id = {e["id"]: e.get("path") for e in entries
+             if isinstance(e.get("id"), str)}
+    out: list[dict[str, Any]] = []
+    for decl in relations:
+        prefix = decl["prefix"]
+        occupant = by_path.get(prefix)
+        if occupant is not None:
+            raise ValueError(
+                f"relation {prefix!r}: path already occupied by authored entry "
+                f"{occupant!r} — remove the declaration or move the entry")
+        roster_id = _roster_id(prefix)
+        # The registry is keyed by id, so an authored entry holding the
+        # generated id would be silently replaced by the roster — its answer
+        # gone, with nothing reported.
+        clash = by_id.get(roster_id)
+        if clash is not None:
+            raise ValueError(
+                f"relation {prefix!r}: its generated id {roster_id} is already "
+                f"used by the authored entry at {clash!r} — change that entry's "
+                f"id or remove the declaration")
+        members = _roster_members(entries, prefix)
+
+        seen: dict[str, str] = {}
+        for m in members:
+            path = str(m.get("path"))
+            first = seen.get(path)
+            if first is not None:
+                raise ValueError(
+                    f"relation {prefix!r}: entries {first!r} and {m.get('id')!r} "
+                    f"share the path {path!r} — under a declared prefix the path "
+                    f"is the member's identity")
+            seen[path] = str(m.get("id"))
+
+        declared = decl["shield"]
+        if any((m.get("shield") or None) != declared for m in members):
+            # Silent by design: agents run in freshly spawned processes, so a
+            # warning here would re-fire on every turn. A persistent
+            # diagnostic is the right home and does not exist yet.
+            continue
+
+        roster = {
+            "id": roster_id,
+            "path": prefix,
+            "kind": "static",
+            "questions": list(decl["questions"]),
+            "answer": _render_roster(decl, members),
+            "_source": "user-overlay",
+            "_derived": "roster",
+            "_row_sha256": _roster_digest(decl, members),
+        }
+        if declared is not None:
+            roster["shield"] = declared
+        out.append(roster)
+    return out
+
+
 def _load_jsonl() -> list[dict[str, Any]]:
     """Base entries merged with the operator overlay (see _overlay_path),
     keyed by id — an overlay entry with the same id replaces the base entry
@@ -266,6 +645,7 @@ def _load_jsonl() -> list[dict[str, Any]]:
                     f"(a name matched against qa.unlocked_shields), got "
                     f"{type(shield).__name__}"
                 )
+            _reject_reserved_keys(entry, path, lineno)
             entry_id = entry.get("id")
             if entry_id:
                 first = seen_ids.get(entry_id)
@@ -294,12 +674,41 @@ def _load_jsonl() -> list[dict[str, Any]]:
                 # is the one hashed.
                 entry["_row_sha256"] = hashlib.sha256(line.encode("utf-8")).hexdigest()
                 merged[entry_id] = entry
-    return list(merged.values())
+    # Rosters are synthesised from the authored entries FROZEN here, and
+    # appended afterwards, so no roster can become a member of another.
+    authored = list(merged.values())
+    return authored + _synthesize_rosters(authored, _load_relations(overlay))
+
+
+def _build_alias_table(entries: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """normalized-question → the qa_ids claiming it, in first-seen order and
+    distinct.
+
+    A question text may legitimately appear on two entries; mapping the alias
+    to a single id (the last one built) silently discarded every other
+    claimant, and `_exact_match` then answered one of them at score 1.0 as
+    though it were unambiguous. Keeping the list makes the ambiguity
+    representable so `_exact_match` can decline instead.
+
+    Deduplication is by qa_id and is load-bearing, not tidiness: one entry may
+    carry several questions that collapse under `_normalize_query` (casing, a
+    trailing "?"), and the shipped base registry does. Without it such an alias
+    would map to [id, id], read as two claimants, and stop resolving."""
+    table: dict[str, list[str]] = {}
+    for e in entries:
+        qa_id = e.get("id")
+        if not qa_id:
+            continue
+        for q in e.get("questions") or []:
+            ids = table.setdefault(_normalize_query(q), [])
+            if qa_id not in ids:
+                ids.append(qa_id)
+    return table
 
 
 def _load_kb() -> None:
-    """Build the in-memory registry (qa_id → entry; normalized-question → qa_id)
-    from the JSONL. Cheap, runs once per process."""
+    """Build the in-memory registry (qa_id → entry; normalized-question →
+    qa_ids) from the JSONL. Cheap, runs once per process."""
     global _entries_by_id, _alias_table
     if _entries_by_id and _alias_table:
         return
@@ -308,12 +717,7 @@ def _load_kb() -> None:
             return
         entries = _load_jsonl()
         _entries_by_id = {e["id"]: e for e in entries if e.get("id")}
-        _alias_table = {
-            _normalize_query(q): e["id"]
-            for e in entries
-            for q in (e.get("questions") or [])
-            if e.get("id")
-        }
+        _alias_table = _build_alias_table(entries)
 
 
 def get_entry(qa_id: str) -> dict[str, Any] | None:
@@ -400,6 +804,9 @@ def _source_snapshot() -> dict[str, tuple[int, int]]:
     overlay = _overlay_path()
     if overlay is not None:
         paths.append(overlay)
+    relations = _relations_path(overlay)
+    if relations is not None:
+        paths.append(relations)
     snap: dict[str, tuple[int, int]] = {}
     for p in paths:
         try:
@@ -460,16 +867,25 @@ def rebuild_kb() -> dict[str, int]:
 
     Lock order matters: _vector_store() and _load_kb() both take _lock,
     which is non-reentrant — so the store is resolved BEFORE the locked
-    section and the registry is rebuilt AFTER it."""
+    section and the registry is rebuilt AFTER it.
+
+    Order inside the lock matters too: the sources are parsed and the documents
+    built BEFORE the TRUNCATE. _load_jsonl() raises on malformed config (bad
+    JSON, duplicate id/path, a non-string shield), and truncating first would
+    empty the operator's table and only then report the typo — with nothing
+    left to serve and no rollback, since the TRUNCATE is its own transaction.
+    Parsing first makes a validation failure a no-op, matching what the
+    incremental path already guarantees."""
     global _populated, _entries_by_id, _alias_table
     vs = _vector_store()
     with _lock:
+        # Pure and side-effect free; safe to run before anything is destroyed.
+        entries = _load_jsonl()
+        docs = _build_documents(entries)
         _populated = False
         _entries_by_id = {}
         _alias_table = {}
         _truncate_table()
-        entries = _load_jsonl()
-        docs = _build_documents(entries)
         storage = StorageContext.from_defaults(vector_store=vs)
         VectorStoreIndex.from_documents(
             docs, storage_context=storage, embed_model=_embed_model()
@@ -796,14 +1212,26 @@ def _shield_filters(unlocked: set[str]) -> MetadataFilters:
 
 
 def _exact_match(query: str, *, unlocked_shields: set[str] | None = None) -> Match | None:
+    """The alias lookup: an answer only when exactly one *visible* entry claims
+    the normalized query.
+
+    Shield filtering happens before the count, so a locked claimant never makes
+    an otherwise-unambiguous alias ambiguous. Two surviving claimants are not
+    an answer — returning either at score 1.0 would be an arbitrary pick
+    dressed as certainty — so this declines and the caller falls through to its
+    own retrieval path."""
     norm = _normalize_query(query)
-    qa_id = _alias_table.get(norm)
-    if qa_id is None:
+    qa_ids = _alias_table.get(norm)
+    if not qa_ids:
         return None
     unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
-    if _entry_locked(_entries_by_id.get(qa_id) or {}, unlocked):
+    visible = [
+        qa_id for qa_id in qa_ids
+        if not _entry_locked(_entries_by_id.get(qa_id) or {}, unlocked)
+    ]
+    if len(visible) != 1:
         return None
-    return Match(qa_id=qa_id, method="exact", score=1.0, matched_question=norm)
+    return Match(qa_id=visible[0], method="exact", score=1.0, matched_question=norm)
 
 
 def _semantic_ranked(query: str, vs: PGVectorStore, *,
@@ -898,7 +1326,11 @@ def _fulltext_index(
             continue
         per_question = [(q, _tokenize(q)) for q in (entry.get("questions") or [])]
         q_tokens: set[str] = set().union(*(t for _, t in per_question), set())
-        a_tokens = _tokenize(str(entry.get("answer") or ""))
+        # A roster's answer is every member's label. Indexing it would surface
+        # the roster on single-person queries and hand the document frequency
+        # of exactly the rarest name tokens an extra document.
+        a_tokens = (set() if entry.get("_derived") == "roster"
+                    else _tokenize(str(entry.get("answer") or "")))
         docs.append((qa_id, per_question, q_tokens, a_tokens))
         for tok in q_tokens | a_tokens:
             df[tok] = df.get(tok, 0) + 1
@@ -925,7 +1357,7 @@ def _fulltext_ranked(query: str, *,
     coverage at the rarest-token weight. Ranking order is unaffected (the
     denominator is per-query constant). matched_question is the entry's
     best-overlapping question. Locked-shield entries are excluded. No
-    stemming: 'nannas' does not match 'nanna'."""
+    stemming: 'rivers' does not match 'river'."""
     from math import log
 
     from memory.retrieval import _tokenize

@@ -104,7 +104,7 @@ def test_remember_dedupes_an_existing_claim(room):
     second claim — the action returns the existing one with a /memory link and
     records no extra ledger row."""
     agent = _agent()
-    text = f"Simon has a Triangle Draw mug {uuid4().hex[:6]}"
+    text = f"Robin has a Triangle Draw mug {uuid4().hex[:6]}"
     agent._decide_next_step = scripted_decisions(
         _decision(AssistantActionName.MEMORY_REMEMBER, text=text),
         _decision(AssistantActionName.REPLY, message="Noted."))
@@ -117,7 +117,7 @@ def test_remember_dedupes_an_existing_claim(room):
         # Ask again with different casing/spacing — should resolve to the same claim.
         agent2 = _agent()
         agent2._decide_next_step = scripted_decisions(
-            _decision(AssistantActionName.MEMORY_REMEMBER, text="  simon HAS a triangle draw MUG " + text.split(" ")[-1]),
+            _decision(AssistantActionName.MEMORY_REMEMBER, text="  robin HAS a triangle draw MUG " + text.split(" ")[-1]),
             _decision(AssistantActionName.REPLY, message="Already have it."))
         agent2.handle(uuid4(), {"room_uuid": str(room)})
         # still exactly one claim with the original text; no second row created

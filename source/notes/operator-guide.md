@@ -149,6 +149,97 @@ query on `/memory/developer`. The recall filter's scorer model is the
 `assistant.memory_filter` slot on `/agentmodel` (else `assistant.default`);
 the KPI retention window is the `memory.recall_fifo_capacity` setting.
 
+### Declaring a relation, and checking it works
+
+A **relation** turns a path prefix into one entry that answers "who are all my
+X". Without it, a question with an N-entry answer set only ever reaches the
+handful of entries the retrieval budget allows. See `notes/qa-system.md`,
+"Derived rosters", for the schema.
+
+**1. Declare it.** Create `relations.json` next to `question_answer.jsonl` in
+your `customize.dir`:
+
+```json
+{
+  "relations": [
+    {
+      "prefix": "human.<subject>.friend",
+      "title": "friends",
+      "complete": false,
+      "shield": null,
+      "questions": ["who are my friends", "my friends", "list my friends"]
+    }
+  ]
+}
+```
+
+`prefix` must match the paths you already file those entries under, minus the
+person segment. `shield` is required — `null` unless every entry under the
+prefix carries the same shield name, in which case use that name.
+
+**2. Repopulate.** Press **Repopulate Q&A memory** on `/settings`. A
+validation error names the offending declaration and changes nothing; fix and
+press again.
+
+**3. Check the roster before asking anything.** On `/memory/developer`, run one
+of your authored questions verbatim. You get an **exact** hit — whose reply is
+the rendered roster — provided no other visible entry claims that same
+question. If one does, the alias is ambiguous and exact matching declines by
+design; the roster then shows up among the candidates instead, which is equally
+good for this check. Either way you are looking at the rendered roster:
+
+```text
+recorded friends (6):
+- Alpha  [<qa_id>]
+- Bravo  [<qa_id>]
+...
+```
+
+Read the count first. `(6)` when you expect six means membership is right.
+`(0)` means the declaration is valid but nothing matches `prefix` — almost
+always a typo in it.
+
+If the roster is *missing* after a successful repopulate, check the
+declaration's `shield` before anything else: a shielded roster is hidden until
+that shield is unlocked on `/settings`, which looks exactly like absence. Only
+once it is unlocked (or `null`) does a missing roster mean the members are not
+shield-uniform — see the troubleshooting entry below.
+
+**4. Test an unauthored phrasing.** Still on `/memory/developer`, try one you
+did *not* author — "who do I hang out with". Whether the roster surfaces is a
+property of the embedding model, not a guarantee of this design, so treat this
+as something to test rather than expect: look for the roster among the
+candidates carrying a `semantic` signal. It is worth testing because it is the
+one thing authored aliases alone cannot do, and because a phrasing that fails
+here is a phrasing worth adding to `questions`.
+
+**5. Ask the assistant.** In a chatroom, ask your question normally. The reply
+should draw on the whole roster rather than two or three members. A roster that
+fits its character budget lists everyone; a longer one ends in an explicit
+`… N additional recorded members omitted` line, so check for that marker before
+reading a short list as a failure. If you want to see the retrieval behind it,
+the run's `memory_query` step shows the candidates it was given.
+
+**Names in the list.** A roster prints each member's `label`, falling back to
+the raw final path segment when there is none — so a member filed under a
+squashed slug shows up as that slug. Add `"label": "Albert Einstein"` to the entry to
+control what is printed. It is display only: it is not indexed, so it does
+**not** make that person findable by name. Reachability is what `questions` is
+for. See `notes/qa-system.md`, "`label`, and why there are no tags".
+
+**6. Confirm membership stays derived.** Add a new entry under the prefix,
+repopulate, and ask again — the new person appears with **no edit to
+`relations.json`**. That is the whole point: you maintain the entries, not the
+list.
+
+To undo, remove that declaration from `relations.json` and repopulate; its rows
+are deleted and nothing else changes. Delete the whole file only when you want
+every roster gone.
+
+**Reading a member in full.** Each roster line carries the member's `qa_id`.
+The assistant can pull that entry's whole text with `memory_query` by uuid, so
+a roster is an index into your entries rather than a replacement for them.
+
 Memory tables are inspectable in Flask-Admin under the Memory category:
 
 - `MemoryClaim`
@@ -291,6 +382,42 @@ The curated Q&A pairs live in the `data_seed_memory` pgvector table, embedded fr
 - Ollama is running and has `embeddinggemma:300m` available.
 - Click **Repopulate Q&A memory** on `/settings` to re-embed after editing the
   JSONL (or set `QUERY_AGENT_REBUILD_KB=1`). This (re)creates `data_seed_memory`.
+
+### A declared relation produces no roster
+
+Rosters come from `relations.json` in your `customize.dir`, beside
+`question_answer.jsonl`. Two failure modes look different:
+
+- **Repopulate fails with an error naming the declaration** — the file is
+  malformed. Every field is validated: `prefix` (no empty segments, no
+  newline), `title`, `questions` (non-empty, none collapsing to the same alias
+  as another in the same declaration), `complete` (a boolean), and `shield`
+  (**required** — `null` for unshielded, or a shield name). The registry is
+  left exactly as it was; fix the file and press again.
+- **Repopulate succeeds but the roster is missing** — the members are not
+  shield-uniform. Every member under the prefix must carry the same shield as
+  the declaration, with *unshielded* counting as its own class: one unshielded
+  member beside a shielded one suppresses the roster. This is deliberate and
+  silent, so that shielding a person never takes the knowledge base down. Check
+  the `shield` on each entry under the prefix against the declaration's.
+
+A roster reading `(0)` is not a failure — it means the declaration is valid and
+nothing matches its prefix yet. It is also how a mistyped `prefix` shows up, so
+check the spelling against the paths you meant.
+
+### An exact question suddenly gives a different answer
+
+The exact-alias table maps a normalized question to **every** entry claiming
+it, and answers only when exactly one is visible. If two entries carry the same
+question text, that alias is now ambiguous: exact matching declines and the
+query falls through to normal retrieval, which may answer differently — or
+better — than the arbitrary pick it used to get.
+
+To find such an alias, run it on `/memory/developer`: an ambiguous one shows no
+**exact** hit but several candidates whose `matched_question` is the same
+string. Give each entry its own distinct phrasing to make the question exact
+again. (Several near-identical phrasings on *one* entry are fine; those are one
+claimant, not several.)
 
 ### Tests Cannot Connect To Postgres
 

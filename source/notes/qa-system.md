@@ -24,7 +24,9 @@ The module is `memory/seed_memory.py`; dynamic handlers live in
 
 ### Registry files
 
-Entries are loaded from two JSONL files, merged by `id` (`_load_jsonl`):
+Entries are loaded from two JSONL files, merged by `id` (`_load_jsonl`), plus
+one optional JSON file declaring **relations** (see
+[Derived rosters](#derived-rosters)):
 
 - **Base** — `data/question_answer.jsonl` (`QA_JSONL_PATH`), tagged
   `_source="upstream"`. Stays publishable — no PII.
@@ -33,9 +35,20 @@ Entries are loaded from two JSONL files, merged by `id` (`_load_jsonl`):
   operator's private customizations (PII / persona). An overlay entry replaces a
   base entry with the same `id` wholesale.
 
+- **Relations** — `<customize.dir>/relations.json` (`RELATIONS_FILENAME`),
+  optional. Each declaration turns a path prefix into one synthesised roster
+  entry. Absent file means no rosters and is not an error.
+
 Within one file, a duplicate `id` or a duplicate `path` is an operator mistake
 and is rejected — repopulate fails hard with a `file:line` message naming the
 first occurrence. Reuse *across* files is the override mechanism and is fine.
+
+Three keys are **reserved for the loader** and are rejected in a source file
+with a `file:line` (`_RESERVED_ENTRY_KEYS`): `_source` and `_row_sha256`, both
+injected into every entry during loading, and `_derived`, which is set only on
+synthesised rosters. Other `_`-prefixed keys are not policed. An authored
+`_derived` is the one that matters — it would let an entry suppress full-text
+indexing of its own answer.
 (The overlay schema is under active design — see the
 `notes/proposals/2026-07-*-qa-overlay-*` proposals.)
 
@@ -53,7 +66,208 @@ One JSON object per line:
 - `handler` — a function name in `HANDLERS` (dynamic entries).
 - `shield` — optional shield name; the entry is hidden from the LLM unless that
   shield is unlocked (see [Shields](#shields)).
+- `label` — optional display name, used when the entry is listed as a roster
+  member. Must be a non-empty string with no newline. Without it a roster falls
+  back to the entry's final path segment, which is never prettified: casing and
+  diacritics are unrecoverable from a slug.
 - `_source` — injected at load time (`upstream` / `user-overlay`), not in the file.
+- `_row_sha256`, `_derived` — injected at load time; see above.
+
+### `label`, and why there are no tags
+
+`label` reads like a tag, and it is not one. It is worth being precise about,
+because the field it *looks* like is the field this schema does not have.
+
+**What it is.** One string, one entry, purely presentational: the name printed
+for this entry when a roster lists it as a member.
+
+```json
+{"path": "human.<subject>.friend.alberteinstein", "label": "Albert Einstein", ...}
+{"path": "human.<subject>.friend.nielsbohr", ...}
+```
+
+```text
+recorded friends (2):
+- Albert Einstein  [<qa_id>]      ← with a label
+- nielsbohr        [<qa_id>]      ← without one: the raw final path segment
+```
+
+The fallback is never prettified. Capitalisation, spacing and diacritics are
+unrecoverable from a slug, and a wrong guess misspells somebody's name — so the
+slug is printed exactly as filed, and `label` is how an operator overrides it.
+
+**Where it is read.** In exactly one place: `_member_label`, called only from
+`_render_roster`. An entry that is never a roster member never has its `label`
+read, and it is validated only at that point (non-empty string, no `\n` or
+`\r`; a number, `""` or `null` is a configuration error, not something to
+coerce).
+
+**What it is not.**
+
+- *Not a list.* One entry, one label. `["a", "b"]` is rejected.
+- *Not searchable.* The label is not embedded and not lexically indexed. In
+  fact the roster answer carrying it is **deliberately excluded** from the
+  full-text index (see [Derived rosters](#derived-rosters)), so a label
+  contributes nothing to retrieval anywhere. **Adding a label does not make a
+  person findable by that name.**
+- *Not a category, tag, or second path.* It groups nothing and is queried by
+  nothing.
+
+Where each concern actually lives:
+
+| field | job | cardinality |
+| --- | --- | --- |
+| `path` | where the entry is filed; what makes it a roster member | one |
+| `questions` | how the entry is **found** | many |
+| `label` | how the entry is **printed** in a roster | one |
+| `answer` | what is read once it is found | one |
+
+So the field closest to "many handles on one row" is `questions`: every
+phrasing there becomes an alias and an embedded document pointing at the same
+entry. When something cannot be found, a phrasing in `questions` is the fix —
+never a label.
+
+**Why there is no tag field.** `path` gives each entry exactly one home in a
+tree, and that is the whole grouping mechanism. A person filed under
+`human.<subject>.friend.nielsbohr` is *a friend*; if the same person is also a
+former colleague, a neighbour, and connected to a third party, none of that is
+expressible as structure. It survives only as prose inside the answer and as
+phrasings in `questions`, and nothing can enumerate either.
+
+This is why `who are all my <relation>` is answerable and
+`who did I meet through <context>` is not: the first is a path prefix, the
+second is a cross-cutting set. Rosters deliberately solve only the prefix case.
+
+Tags — or typed edges between entries — are the design that would close the
+gap, and neither exists. See the tree-versus-graph note at the end of
+`notes/proposals/2026-08-21-set-valued-questions-and-derived-rosters.md`, and
+the separate `qa_edge` design in
+`notes/proposals/2026-08-08-qa-navigation-routes.md`, which is unbuilt.
+
+### Derived rosters
+
+A question like "who are all my X" has an N-entry answer set, while the
+candidate budget is a fixed top-k — so members past k are unreachable however
+good the ranker. A **roster** collapses those N entries into one, and one
+candidate slot then carries the whole set.
+
+Each declaration in `relations.json` becomes one synthesised entry:
+
+```json
+{
+  "relations": [
+    {
+      "prefix": "human.<subject>.friend",
+      "title": "friends",
+      "complete": false,
+      "shield": null,
+      "questions": ["who are my friends", "my friends", "list my friends"]
+    }
+  ]
+}
+```
+
+- `prefix` — the path prefix whose children are the members. Members are
+  entries at exactly `prefix + "." + <one non-empty segment>`; a member's own
+  subtree belongs to that member, not the roster.
+- `title` — the noun in the rendered answer.
+- `complete` — whether the operator asserts the prefix holds *everyone*.
+  Default `false`, which renders the qualifier **and an explicit caveat line**;
+  `true` renders neither. The count is always the number of *entries*, never a
+  claim about the world.
+
+  ```text
+  recorded friends (6):
+  (Recorded entries only, not necessarily everyone — absence from this list is not evidence.)
+  - Albert Einstein  [<qa_id>]
+  ```
+
+  The caveat is a sentence rather than the adjective alone because a hedge is
+  the first thing a model drops when it summarises: "recorded" relies on the
+  connotation surviving, while the caveat states the inference not to make.
+  This exists because a personal-memory store must never read "never written
+  down" as "false" — the same reasoning that rules out a Datalog-style design,
+  which a roster claiming exhaustiveness would have reintroduced.
+
+  **How well it works is measured, not assumed** —
+  `benchmarks/roster_completeness.py`, and the honest answer is *sometimes*.
+  Asked about somebody absent from the list, with the caveat present versus
+  absent:
+
+  | model | `complete: false` | `complete: true` |
+  | --- | --- | --- |
+  | `llama3.2:3b` | flat answer | flat answer |
+  | `granite3.3:8b` | flat answer | flat answer |
+  | `qwen3.5:9b` | **names the limit** | flat answer |
+
+  So the caveat changes behaviour on the 9B and is ignored by the smaller two,
+  which answer "no, not on the list" either way. What `complete` guarantees
+  unconditionally is that the **stored artifact** stops over-claiming; that a
+  given model acts on it is a property of the model, and small local models
+  should be assumed not to. Re-run the benchmark after changing the wording or
+  the model.
+- `shield` — **required**, `null` or a name. Declared rather than derived: a
+  roster may have zero members, and defaulting that to unshielded would publish
+  the declaration's own title and questions. Synthesis verifies every member
+  carries the same shield class (*unshielded* is a class of its own) and
+  otherwise produces **no roster for that prefix**, silently — shielding a
+  member is data evolution, not malformed configuration, and must not take the
+  registry down. Every other validation failure raises before any write.
+- `questions` — authored aliases, exactly like an entry's. Phrasings are
+  language- and instance-specific, so no predicate→phrasing table ships in the
+  repository.
+
+**How a rejected declaration is reported.** JSON has no line numbers, so an
+error names the declaration by its `prefix` — a string the operator can search
+for, which is the affordance `file:line` provides for the JSONL loader. When
+`prefix` is itself the broken field the message falls back to `title`, and to
+the ordinal only when neither is usable. The path is the resolved one, not the
+bare filename, so it is clear which file to open:
+
+```text
+…/relations.json: relation 1 (prefix 'human.<subject>.colleague'): 'shield' is required — …
+…/relations.json: relation 1 (title 'neighbours'): 'prefix' must be a non-empty string
+```
+
+Malformed JSON is reported with the decoder's own line number instead.
+
+A roster is an ordinary `kind: "static"` entry tagged `_derived: "roster"` and
+`_source: "user-overlay"`, with a `uuid5(_ROSTER_NS, prefix)` id. It embeds,
+ranks, obeys shields and renders like any entry: apart from the full-text
+exclusion below, existing consumers otherwise treat it like any static
+entry. Rendering is bounded at `ROSTER_ANSWER_MAX_CHARS`
+(1100, under `memory_query`'s 1200-char per-fact cap, so the uncapped chat
+routes are covered too) and truncates only at member boundaries:
+
+```text
+recorded friends (6):
+- Alpha  [<qa_id>]
+- … 3 additional recorded members omitted
+```
+
+The header reports total membership and the marker the omitted count; a label
+or id is never split. Each line keeps its `qa_id` so a member can be read in
+full via `memory_query`'s uuid mode — the roster is an index card, not a
+display list.
+
+Three rules the rest of the system depends on:
+
+- **A roster's answer is excluded from the lexical index.** It holds every
+  member label, so indexing it would surface the roster on single-person
+  queries and hand the rarest name tokens an extra document. `_fulltext_index`
+  skips the answer when `_derived == "roster"`. This is the only retrieval-side
+  change rosters make.
+- **Synthesis runs over frozen authored entries** and appends rosters
+  afterwards, so a roster at `<p>.<q>` can never become a member of a
+  declaration for `<p>` depending on declaration order.
+- **Collisions raise, naming both sides**: an authored entry at the roster's
+  path, an authored entry holding its generated id (the registry is keyed by
+  id, so this would silently replace the authored entry), or two members
+  sharing a path (under a declared prefix the path is the member's identity).
+
+`_ROSTER_NS` and the canonical JSON encoding (`sort_keys`, compact separators,
+`ensure_ascii=False`, UTF-8) are pinned: rows outlive the code that wrote them,
+so changing either orphans every embedded roster instead of updating it.
 
 ### Storage
 
@@ -67,10 +281,27 @@ One JSON object per line:
   line) and `kb_epoch` (`EMBED_MODEL_NAME|KB_SCHEMA_VERSION`) — which is what
   makes incremental reconciling possible (see
   [Sync (incremental reconcile)](#sync-incremental-reconcile)).
+
+  A roster has no source line, so its `row_sha256` is a digest over its
+  **complete synthesised representation** — prefix, title, questions,
+  `complete`, `shield`, the render version and budget, and each member's
+  `(qa_id, row_sha256)` in order. Hashing members alone would leave an alias,
+  title or format edit embedded as stale text; and because `sync_kb` clears the
+  registry caches only when a row actually changed, a digest missing an input
+  also misses the invalidation.
 - **In-memory registry** (`_entries_by_id`, `_alias_table`) — built by
-  `_load_kb`: `qa_id → entry` and normalized-question → `qa_id`. Required to
-  resolve a match back to its answer/handler; a caller that retrieves without
-  loading the registry gets nothing.
+  `_load_kb`: `qa_id → entry`, and normalized-question → **the list of
+  `qa_id`s claiming it** (`_build_alias_table`, distinct and in first-seen
+  order). Required to resolve a match back to its answer/handler; a caller
+  that retrieves without loading the registry gets nothing.
+
+  The alias list is not cosmetic. Two entries may legitimately carry the same
+  question text, and mapping the alias to one id silently discarded every other
+  claimant while `_exact_match` answered one of them at `score=1.0`. It is also
+  deduplicated **by `qa_id`**, because one entry may carry several questions
+  that collapse under `_normalize_query` (casing, a trailing `?`) — the base
+  registry has such entries, and treating them as two claimants would stop a
+  working lookup.
 
 ## Retrieval
 
@@ -82,7 +313,16 @@ budgets for the filter pipelines), `MIN_SCORE = 0.60`, `MIN_MARGIN = 0.05`
 (gates for the legacy/gated paths only).
 
 - **Exact alias** (`_exact_match`) — normalize the query, look it up in
-  `_alias_table`. No embedding call; deterministic.
+  `_alias_table`, drop locked claimants, and answer **only if exactly one
+  visible entry remains**. Two surviving claimants mean the alias is
+  ambiguous, and an arbitrary pick at `score=1.0` is not an answer: exact
+  matching declines and the caller falls through to its own retrieval path
+  (four callers, three different fallbacks — `agents/query.py` gated
+  `_semantic_match`, `agents/query_router.py` ungated top-1 into an LLM,
+  `agents/query_filter_router.py` the relevance filter, and
+  `webapp/memory_developer_views.py` a debug view). No embedding call;
+  deterministic. Note the assistant's `memory_query` is **not** among them —
+  it never consults the alias table.
 - **Semantic, ungated** (`_semantic_ranked`) — pgvector top-`TOP_K_NODES`
   nodes, aggregated to the max score per `qa_id`, returned ranked descending.
   No score gate — the caller decides. The query vector comes from
@@ -327,17 +567,25 @@ validation errors (duplicate id/path, bad JSON, non-string shield) raise with
   `customize.dir` (or the base file). The edit is picked up on the next
   message (see [Sync](#sync-incremental-reconcile)); the /settings button
   forces it immediately.
+- **Add/edit relations** — edit `relations.json` in the same directory. It
+  joins the same mtime/size snapshot, so a declaration edit is picked up on the
+  next message like a JSONL edit, and the roster's digest covers every field
+  that changes what is stored or rendered. Adding a member to a declared prefix
+  needs no edit here at all — membership is derived.
 - **Repopulate** — the /settings "Repopulate Q&A memory" button
   (`POST /settings/api/repopulate_memory` → `sync_kb`) reconciles without a
   restart and reports `{unchanged, updated, embedded, deleted}` row counts. A
-  failure (embedding backend down, or a JSONL parse error carrying
-  `file:line:column`) leaves synced rows intact; pressing again retries the
-  stale ones.
+  failure (embedding backend down, a JSONL parse error carrying
+  `file:line:column`, or a `relations.json` validation error naming the
+  declaration) leaves synced rows intact; pressing again retries the stale
+  ones.
 - **Rebuild (full)** — the escape hatch next to it
   (`POST /settings/api/rebuild_memory` → `rebuild_kb`) keeps the TRUNCATE +
   re-embed-everything semantics for genuine table corruption. Equivalent to
   setting `QUERY_AGENT_REBUILD_KB=1` (`REBUILD_ENV`) and restarting. A failure
   here can leave the table empty/partial; the next successful run heals it.
+  Sources are parsed **before** the TRUNCATE, so a malformed JSONL or
+  `relations.json` is a no-op rather than an emptied table.
 - **Unlock a shield** — check it on /settings and Save; this writes
   `qa.unlocked_shields`. Shielded entries become visible to the LLM immediately
   (the in-memory backstop applies on the next query; no repopulate needed).

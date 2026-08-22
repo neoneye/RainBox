@@ -18,6 +18,25 @@ background runner, and live-updating results grid:
   agent-facing kanban operation shape. Code: `benchmarks/kanban.py`,
   `webapp/benchmark_kanban_views.py`.
 
+Two further benchmarks have no page and no runner.
+**`benchmarks/roster_completeness.py`** asks whether an incomplete roster's
+caveat actually stops a model inferring absence — a claim about model
+behaviour, so it cannot be a unit test. It renders the same list twice, with
+and without the caveat, asks about somebody absent from it, and reports whether
+each answer names the limit. `ROSTER_BENCH_MODELS` overrides the model list.
+
+**`benchmarks/roster_paraphrase.py`**
+is a CLI script measuring whether a derived roster is retrieved by phrasings
+nobody authored (see `qa-system.md`, "Derived rosters"). It builds a synthetic
+registry in a throwaway pgvector table, embeds it with the real embedding
+model, and prints each query's roster rank and score. It refuses to run against
+any database but `rainbox_claude`:
+
+```
+DATABASE_URL=postgresql+psycopg://localhost/rainbox_claude \
+    python -m benchmarks.roster_paraphrase
+```
+
 The basic and edit-document harnesses share the same subprocess-runner shape;
 this doc covers that shape, and in particular how each row runs in a
 **killable child process** so Stop actually stops the model. The kanban harness

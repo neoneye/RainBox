@@ -83,7 +83,7 @@ def test_shield_filters_adds_sorted_in_clause_when_unlocked():
 
 
 def test_exact_match_hidden_when_locked_and_shown_when_unlocked(monkeypatch):
-    monkeypatch.setattr(kb, "_alias_table", {"who is alice": "u1"})
+    monkeypatch.setattr(kb, "_alias_table", {"who is alice": ["u1"]})
     monkeypatch.setattr(kb, "_entries_by_id",
                         {"u1": {"id": "u1", "shield": "alice.travel"}})
     assert kb._exact_match("Who is alice?", unlocked_shields=set()) is None
@@ -92,7 +92,7 @@ def test_exact_match_hidden_when_locked_and_shown_when_unlocked(monkeypatch):
 
 
 def test_exact_match_unshielded_entry_unaffected(monkeypatch):
-    monkeypatch.setattr(kb, "_alias_table", {"hello": "u2"})
+    monkeypatch.setattr(kb, "_alias_table", {"hello": ["u2"]})
     monkeypatch.setattr(kb, "_entries_by_id", {"u2": {"id": "u2"}})
     m = kb._exact_match("Hello?", unlocked_shields=set())
     assert m is not None and m.qa_id == "u2"
