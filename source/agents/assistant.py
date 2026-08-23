@@ -6785,3 +6785,110 @@ class AssistantAgent(ModelGroupAgent):
                 duration_ms=(usage or {}).get("ms"),
             )
             db.clear_assistant_call_checkpoint(self._run)
+
+
+class AssistantPromptBuilder:
+    """Every assistant call's user prompt, assembled in one place.
+
+    Tier 0 (the request and the conversation history) and tier 1 (the static
+    head) are emitted on construction; the caller appends its own tier-1
+    extras, its turn_instructions and its tier-3 tail, then renders.
+
+    Tier 0 being emitted by __init__ rather than by an append_ method is the
+    point of the class. A prefix cache reuses a matched run counting from
+    token 0, and conversation_history_xml sits second in the prompt, so two
+    calls slicing history differently share nothing past their first
+    <message>. The window lives here and nowhere else, which is what makes
+    tier 0 byte-identical across the calls.
+
+    The builder owns the ORDER; the agent keeps owning its BLOCKS. The
+    _append_* helpers stay on AssistantAgent because each reads agent state —
+    the five _*_block attributes, the long-request summary — and this class
+    calls them rather than reaching into those attributes itself.
+    """
+
+    def __init__(
+        self,
+        agent: "AssistantAgent",
+        container_tag: str,
+        *,
+        messages: list[dict[str, Any]],
+        blocks: tuple[str, ...] = AssistantAgent._ALL_STATIC_BLOCKS,
+    ) -> None:
+        """`container_tag` names the tree for a reader and never reaches the
+        model: _render_sections serializes the root's children as top-level
+        siblings, so the root itself is a container, not output.
+
+        `blocks` selects this call's tier-1 head. Keep the per-call sets
+        nested (see _ALL_STATIC_BLOCKS): a call taking a block another call
+        skips ends the shared prefix there.
+        """
+        self._agent = agent
+        self._root = ET.Element(container_tag)
+        # The turn's request, kept as an attribute because several callers
+        # need it again for their closing re-anchor.
+        self.current: dict[str, Any] | None = messages[-1] if messages else None
+
+        # Tier 0. The request changes every turn, but within a turn it is
+        # byte-identical across every call and every step, and it is unbounded
+        # up to CURRENT_REQUEST_MAX_CHARS — a pasted document makes it the
+        # largest invariant a turn has. It leads because the calls carry
+        # different-length static heads: anything placed after those heads
+        # sits at a different offset in each prompt and can never be shared
+        # between them. The callers that re-quote it at the tail
+        # (decision_request, criteria_request) are what keeps the model
+        # reading the question last.
+        agent._append_current_user_request(self._root, self.current)
+
+        # Every message of the recent window, the assistant's replies
+        # included, for the whole turn. A bare tag: the `_xml` suffix states
+        # the format, the source-priority block ranks the section, and
+        # turn_instructions says old assistant answers are never authoritative
+        # evidence — so an `authority` attribute would only repeat what the
+        # prompt already says.
+        #
+        # The section is constant for the turn, which is why it can sit this
+        # high: it renders identically on every step and every call, so
+        # everything from the request through the end of this block is a
+        # prefix the backend reuses across the whole turn. Filtering the
+        # assistant's messages out partway through would move that boundary
+        # to here.
+        context = messages[:-1][-agent.MAX_RECENT_MESSAGES:] if messages else []
+        history = ET.SubElement(self._root, "conversation_history_xml")
+        if context:
+            for message in context:
+                agent._append_prompt_message(history, message)
+        else:
+            ET.SubElement(history, "none")
+
+        # Tier 1. Within a turn nothing here changes, so it sits ahead of
+        # everything that does.
+        agent._append_static_head(self._root, blocks=blocks)
+
+    def append_text(self, tag: str, text: str, **attrs: str) -> None:
+        """A leaf section. Goes through ET.SubElement, so `text` cannot close
+        or forge a section tag however hostile it is."""
+        ET.SubElement(self._root, tag, attrs).text = text
+
+    def append_element(self, tag: str, **attrs: str) -> ET.Element:
+        """An empty section, returned so the caller can nest children into it.
+        For the three tails that carry trees rather than text:
+        proposed_step, current_turn_steps and turn_observations."""
+        return ET.SubElement(self._root, tag, attrs)
+
+    def append_turn_instructions(self, instructions: str) -> None:
+        """Tier 2: this call's job description, from module constants only."""
+        self._agent._append_turn_instructions(self._root, instructions)
+
+    def append_local_time(self) -> None:
+        """The operator's clock, which the model needs because the only other
+        time anchor is the conversation's UTC timestamps — relative reminders
+        ("in 10 minutes") resolved in UTC without it. Last in any prompt that
+        carries it: it changes every minute, so anywhere else it would
+        invalidate the cached prefix of every section after it."""
+        now_local = datetime.now().astimezone()
+        self.append_text(
+            "current_local_time", now_local.strftime("%Y-%m-%d %H:%M %Z"))
+
+    def render(self) -> str:
+        return _render_sections(self._root)
