@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`rainbox` has three benchmark harnesses, each with its own page,
+`rainbox` has four benchmark harnesses, each with its own page,
 background runner, and live-updating results grid:
 
 - **`/benchmark_basic`** — coding/format probes (base64 decode/encode, reverse
@@ -17,6 +17,11 @@ background runner, and live-updating results grid:
   (markdown vs JSON context, structured output vs function calling) for the
   agent-facing kanban operation shape. Code: `benchmarks/kanban.py`,
   `webapp/benchmark_kanban_views.py`.
+- **`/benchmark_story`** — ten-turn conversations across the
+  text/structured × no-tools/tools matrix, three trials each because one trial
+  is ten LLM calls. The suite read for *cache* behaviour, which is why it is
+  the one with a warm-up toggle. Code: `benchmarks/story.py`,
+  `webapp/benchmark_story_views.py`.
 
 Two further benchmarks have no page and no runner.
 **`benchmarks/roster_completeness.py`** asks whether an incomplete roster's
@@ -54,11 +59,96 @@ Each page owns one long-lived runner instance (`BenchmarkRunner` /
   `target_uuids=None` runs every row; a single uuid runs just that row (the
   per-row **Start** buttons) while other rows keep their cached results.
 - `stop()` sets `_stop_event`.
+- (`BenchmarkRunner` only) stores each cell's result to `benchmark_result` as
+  it reaches a terminal state, so the grid outlives the process (see
+  **Result history**).
 
 A "target" / "row" is a `ModelConfigOverride` — the unconfigured base
 `ModelConfig` rows are skipped, since you only benchmark configs you've
 actually dialed in. `/benchmark_editdocument` further restricts to
 function-calling overrides.
+
+## Result history
+
+`_state` is in memory, so on its own a restart empties every grid and there is
+no earlier number to read a newly-added model against. `benchmark_result`
+(`db/benchmark.py`) is what survives, for `/benchmark_basic`,
+`/benchmark_story` and `/benchmark_kanban` — the three that share
+`BenchmarkRunner`. `/benchmark_editdocument` has its own runner and keeps no
+history.
+
+The unit is a **cell**: one `(spec_set, benchmark_name, target)` triple. That
+is already the atomic thing the runner executes — `start()` takes
+`target_uuids` and `bench_indices`, and the per-cell Start buttons use both —
+so a grid is a patchwork of separately started cells rather than one coherent
+run, and there is nothing coherent to snapshot at table level.
+
+Each cell keeps the newest **3 complete** results (the run finished *and*
+every trial ran) and the newest **3 partial** ones (stopped or errored), in
+separate buckets so a run of failures cannot evict the last known-good
+baseline. Pruning happens inside the write, which keeps the table bounded
+without a scheduled job.
+
+Two details in the schema are load-bearing:
+
+- Rows are keyed on `benchmark_name`, never the benchmark's index into a spec
+  list. Indices shift whenever a set is reordered, which would silently
+  re-point a cell's history at a different column — the kind of corruption
+  nobody notices, because the numbers still look plausible.
+- `model_name` / `target_label` are denormalized rather than joined. Targets
+  are `ModelConfigOverride` rows, which get deleted and recreated freely; a
+  join would make a removed override's history unreadable, while a stored name
+  still says what was measured.
+
+### When a result is written
+
+`_set_benchmark_status` stores on `done` and `error`. `_finish` stores the
+cells a Stop caught mid-trial, *before* resetting them to pending — that reset
+is what would otherwise erase the evidence that they were the interrupted
+ones.
+
+A stop before the first trial writes nothing: it measured nothing, and a row
+of zeroes would put a fake result into the baseline. An error writes whatever
+the trial count, because "this target cannot do this benchmark" is itself the
+finding.
+
+Both paths snapshot under `_lock` and write outside it — every open benchmark
+page polls `get_state()` on that same lock once a second, and a DB round-trip
+inside it would stall all of them. `_run`'s `finally` opens its own app
+context, since the one it holds for the run has already exited by then.
+
+`_persist_cell` logs and swallows. A run costs real model time; losing one to
+a telemetry bug is far worse than losing the telemetry (the same posture
+`llm/activity.py` takes for its own recording).
+
+### How the page reads it
+
+`_state` stays purely live, so a stored result can never be mistaken for a
+running one. Each page serves its history from `…/history` instead —
+deliberately **not** a field on `…/state`, which is polled once a second and
+would then carry the whole table's past on the wire every second for as long
+as the page is open. Story artifacts are held off the polled state for exactly
+the same reason.
+
+The page fetches history before its first paint, and again whenever `running`
+goes true → false so a cell that just completed shows its new entry without a
+reload. A cell with no live result renders its newest stored one, greyed and
+italic behind an hourglass so a stale number is never read as fresh; hovering
+any cell with history shows the retained runs, complete then partial. A cell
+with no history shows no card at all — an empty box on hover is worse than no
+box.
+
+Historic cells count toward the row score. Without that, a grid restored after
+a restart would rank every row 0.0000, which is less useful than showing
+nothing.
+
+Each row stores a fingerprint of the target's resolved model kwargs and of the
+benchmark's spec params. An entry whose fingerprint differs from the newest is
+**flagged in the hover card, never hidden or deleted**: seeing what changed
+when you retuned a model is the reason to keep the earlier number at all.
+
+Rows also appear read-only under Admin → Feedback. Editing one there would be
+discarded by the next write's pruning pass, so the view does not offer it.
 
 ## Warm up
 
