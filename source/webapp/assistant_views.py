@@ -308,6 +308,16 @@ ASSISTANT_TEMPLATE = """
      back, and against neutral bars it is the row the eye finds first. */
   .as-main .wf-bar.kind-rejected { background:#e8746f; }
   .as-main .wf-name.kind-rejected { color:#c0392b; }
+  /* A phase contains the calls drawn under it, so it reads as an outline
+     rather than as work of its own. */
+  .as-main .wf-bar.kind-phase { background:transparent; border:1px solid #94a3b8; }
+  /* Visibly not a measurement of anything: nothing reported this time, which
+     is why it is worth looking at. */
+  .as-main .wf-bar.kind-unaccounted {
+        background:repeating-linear-gradient(45deg,#fde68a,#fde68a 4px,
+                                             transparent 4px,transparent 8px);
+        border:1px solid #f0c674; }
+  .as-main .wf-name.kind-unaccounted { color:#b45309; font-style:italic; }
   .as-main .wf-undated { position:absolute; left:4px; font-size:0.68rem; color:#98a2b3; }
   .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;
                       font-variant-numeric:tabular-nums; }
@@ -467,20 +477,22 @@ ASSISTANT_TEMPLATE = """
       </div>
 
       {% if waterfall %}
-      {# Where the run's wall-clock went. Each bar is one model call, placed on
-         the run's span and scaled by its duration — so the gaps between bars
-         are the time no model was working, which is the half a per-step
-         duration figure cannot show. #}
+      {# Where the run's wall-clock went, in full. Model calls, the phases an
+         action recorded inside itself, and an `unaccounted` bar for every
+         stretch neither covers — so a gap is a measured row saying how long
+         nothing observable ran, rather than empty space nobody can
+         investigate. The summary still counts model calls only. #}
       <div class="card">
         <div class="hd">
-          <div class="card-title">Model calls</div>
+          <div class="card-title">Timeline</div>
           <span class="outcome muted">{{ dash.llm_calls }} calls · model {{ dash.model_time }}{% if dash.embed_calls %} · {{ dash.embed_calls }} embed {{ dash.embed_time }}{% endif %} · total {{ dash.total_time }}</span>
         </div>
         <div class="card-body">
           <div class="wf">
             {% for c in waterfall %}
             <a class="wf-row" href="#step-{{ c.anchor }}" title="{{ c.label }} — {{ c.seconds }}{% if c.start %} at {{ c.start.strftime('%H:%M:%S') }}{% endif %}{% if c.detail %}&#10;&#10;{{ c.detail }}{% endif %}">
-              <span class="wf-name kind-{{ c.kind }}">{{ c.label }}</span>
+              <span class="wf-name kind-{{ c.kind }}"
+                    style="padding-left:{{ (c.depth or 0) * 1.1 }}em">{{ c.label }}</span>
               <span class="wf-track">
                 {% if c.width_pct is not none %}
                 <span class="wf-bar kind-{{ c.kind }}" style="left:{{ c.offset_pct }}%;width:{{ c.width_pct }}%"></span>
@@ -989,7 +1001,7 @@ def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
     progress row reads the same helper, so the two cannot quote different
     figures for one run."""
     label, cls = _dash_status(run)
-    stats = db.assistant_run_stats(steps, reviews)
+    stats = db.assistant_run_stats(steps, reviews, run=run)
     in_tokens, out_tokens = stats["input_tokens"], stats["output_tokens"]
     llm_ms = stats["duration_ms"]
     llm_seconds = llm_ms / 1000
@@ -1661,6 +1673,9 @@ def _run_markdown(run, ctx: dict) -> str:
             # is no longer a fixed vocabulary: a pipe in it would split the
             # row into columns that aren't there.
             label = " ".join(c["label"].split()).replace("|", "\\|")
+            # Nesting survives the export: a phase and the calls inside it read
+            # as contained here the same way they do on the page.
+            label = ("&nbsp;" * 4 * (c.get("depth") or 0)) + label
             out.append(f"| {label} | {c['kind']} | {at} | {c['seconds']} |")
         out.append("")
 
@@ -1889,7 +1904,8 @@ def _load_run_detail(selected) -> dict:
         "pending_controls": db.list_pending_controls(selected.uuid),
         "trigger": _with_trigger_peek(db.get_run_trigger_message(selected)),
         "dash": _run_dashboard(selected, steps, review_rows),
-        "waterfall": _waterfall(db.assistant_llm_calls(steps, review_rows), selected),
+        "waterfall": _waterfall(
+            db.assistant_llm_calls(steps, review_rows, run=selected), selected),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,

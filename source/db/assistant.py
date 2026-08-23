@@ -867,6 +867,121 @@ def _embedding_calls(step, data: dict) -> list[dict]:
     return calls
 
 
+#: A gap shorter than this is not drawn. Sub-second scheduling jitter between
+#: two adjacent calls is not a finding, and a row per 0.1s gap would bury the
+#: ones that are.
+UNACCOUNTED_MIN_MS: int = 1000
+
+
+def _phase_calls(step, data: dict) -> list[dict]:
+    """The named phases a step's action recorded, from its `timing` payload.
+
+    Not model calls — spans of the action's own wall-clock, which is exactly
+    the part a per-call waterfall leaves as empty space. `_PhaseTimer` records
+    them with start times for this purpose.
+    """
+    timing = data.get("timing") or {}
+    calls: list[dict] = []
+    for phase in timing.get("phases") or []:
+        name = phase.get("name") or "phase"
+        calls.append(_call(
+            name, "phase",
+            start=_parse_ts(phase.get("started_at")),
+            duration_ms=phase.get("ms"), anchor=str(step.uuid)))
+    return calls
+
+
+def _end_of(call):
+    """When a row stopped, or None if it cannot be placed."""
+    if not call["start"]:
+        return None
+    return call["start"] + timedelta(milliseconds=call["duration_ms"] or 0)
+
+
+def _assign_depth(calls: list[dict]) -> None:
+    """Indent each row under what contains it.
+
+    The only containment that exists is phase-inside-step and call-inside-
+    phase, so this is a flat rule rather than a tree walk: a phase is a child
+    of its step's own call row, and anything starting inside a phase's span is
+    a child of that phase.
+    """
+    spans = [(c["start"], _end_of(c)) for c in calls if c["kind"] == "phase"]
+    spans = [(a, b) for a, b in spans if a and b]
+    for c in calls:
+        if c["kind"] == "phase":
+            c["depth"] = 1
+            continue
+        start = c["start"]
+        inside = bool(start) and any(a <= start < b for a, b in spans)
+        c["depth"] = 2 if inside else 0
+
+
+def _gap_rows(covered: list[dict], window_start, window_end, depth: int,
+              anchor: str) -> list[dict]:
+    """`unaccounted` rows for the parts of a window no row in `covered` fills.
+
+    Deliberately unlabelled beyond a duration: it is the absence of evidence,
+    and naming it "model load" would be a guess printed as a fact.
+    """
+    if window_start is None or window_end is None:
+        return []
+    placed = sorted(
+        ((c["start"], _end_of(c)) for c in covered if c["start"]),
+        key=lambda pair: pair[0])
+    rows: list[dict] = []
+    cursor = window_start
+    for start, end in placed:
+        if start > cursor:
+            ms = int((start - cursor).total_seconds() * 1000)
+            if ms >= UNACCOUNTED_MIN_MS:
+                rows.append(_call("unaccounted", "unaccounted", start=cursor,
+                                  duration_ms=ms, anchor=anchor))
+        cursor = max(cursor, end or start)
+    if window_end > cursor:
+        ms = int((window_end - cursor).total_seconds() * 1000)
+        if ms >= UNACCOUNTED_MIN_MS:
+            rows.append(_call("unaccounted", "unaccounted", start=cursor,
+                              duration_ms=ms, anchor=anchor))
+    for r in rows:
+        r["depth"] = depth
+    return rows
+
+
+def _unaccounted_calls(calls: list[dict], run) -> list[dict]:
+    """Every stretch of the run no row covers, measured per level.
+
+    Per level, not globally: a phase covers its own internal holes, so a
+    whole-run complement finds nothing inside one. The ten seconds a phase
+    spends before its model call only appear when the phase's children are
+    measured against the phase's own span.
+    """
+    rows: list[dict] = []
+    # A phase is drawn indented but it is measured wall-clock all the same, so
+    # it covers the top level too. Counting only depth-0 rows reported a gap
+    # the length of every phase inside an action.
+    covering = [c for c in calls
+                if c["start"] and (c.get("depth") == 0 or c["kind"] == "phase")]
+    if run is not None and covering:
+        starts = [c["start"] for c in covering]
+        first = min(starts + ([run.started_at] if run.started_at else []))
+        ends = [e for e in (_end_of(c) for c in covering) if e]
+        last = max(ends + ([run.finished_at] if run.finished_at else []))
+        rows += _gap_rows(covering, first, last, 0, "")
+    for phase in [c for c in calls if c["kind"] == "phase" and c["start"]]:
+        end = _end_of(phase)
+        children = [c for c in calls
+                    if c.get("depth") == 2 and c["start"]
+                    and phase["start"] <= c["start"] < (end or c["start"])]
+        # A phase with nothing inside it already says what its time was spent
+        # on. Reporting it as unaccounted as well double-counts it and buries
+        # the gaps that genuinely have no explanation.
+        if not children:
+            continue
+        rows += _gap_rows(children, phase["start"], end, 2, phase["anchor"])
+    return rows
+
+
 def _inner_calls(step, data: dict) -> list[dict]:
     """The model calls a step made from inside its action, which have no row of
     their own: the criteria revision's inner call. It records `requested_at` +
@@ -908,8 +1023,21 @@ def retry_resumed_at(step):
     return resumed
 
 
-def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
-    """Every model call the run made, oldest first.
+def assistant_llm_calls(steps: list, reviews: list | None = None,
+                        run=None) -> list[dict]:
+    """Every row of the run's timeline, oldest first.
+
+    Model calls, the phases an action recorded inside itself, and — given
+    `run`, which bounds the window — an `unaccounted` row for every stretch
+    neither covers. A gap in a per-call waterfall is the one thing an operator
+    cannot investigate: nothing to click, nothing named, no way to tell a model
+    load from a slow query. Synthesizing the gaps makes the timeline sum to the
+    run's wall-clock however little of it is instrumented, and the bars
+    themselves say where instrumenting would pay.
+
+    Each row carries `depth` for the renderer (see `_assign_depth`). `phase`
+    and `unaccounted` rows are spans rather than calls and are excluded from
+    the totals in `assistant_run_stats`.
 
     A call with no recorded start is placed at its row's end minus its
     duration — the response landed when the row was written, so that is where
@@ -940,6 +1068,7 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
                 output_tokens=s.output_tokens))
         calls.extend(_inner_calls(s, data))
         calls.extend(_embedding_calls(s, data))
+        calls.extend(_phase_calls(s, data))
     by_uuid = {str(s.uuid): s for s in steps}
     for r in reviews or []:
         # A review runs between its step's decide call returning and the action
@@ -956,10 +1085,21 @@ def assistant_llm_calls(steps: list, reviews: list | None = None) -> list[dict]:
     # Undated calls sort last rather than crashing the comparison — they are
     # legacy rows, and the waterfall renders them without a bar.
     calls.sort(key=lambda c: (c["start"] is None, c["start"] or datetime.min))
+    # Depth first: the gap computation reads it to know which rows share a
+    # level, and a gap row inherits the level it was measured on.
+    _assign_depth(calls)
+    calls.extend(_unaccounted_calls(calls, run))
+    calls.sort(key=lambda c: (c["start"] is None, c["start"] or datetime.min,
+                              c["depth"]))
     return calls
 
 
-def assistant_run_stats(steps: list, reviews: list | None = None) -> dict:
+#: Timeline rows that describe a stretch of wall-clock rather than a call.
+_SPAN_KINDS: frozenset[str] = frozenset({"embedding", "phase", "unaccounted"})
+
+
+def assistant_run_stats(steps: list, reviews: list | None = None,
+                        run=None) -> dict:
     """What a run has cost so far: `{calls, input_tokens, output_tokens,
     duration_ms, tps, embedding_calls, embedding_ms}`. Summed from the call
     enumeration rather than the step rows, so the inner calls are in the
@@ -973,9 +1113,13 @@ def assistant_run_stats(steps: list, reviews: list | None = None) -> dict:
     Rejected attempts DO count. The run paid their tokens and their seconds,
     and leaving them out is what made a retried step look like a fast call
     followed by a gap where nothing ran."""
-    calls = assistant_llm_calls(steps, reviews)
+    calls = assistant_llm_calls(steps, reviews, run=run)
     embeddings = [c for c in calls if c["kind"] == "embedding"]
-    llm = [c for c in calls if c["kind"] != "embedding"]
+    # `phase` and `unaccounted` are spans, not calls: a phase overlaps the
+    # calls inside it and a gap is the absence of one, so counting either
+    # would inflate the call count and double-count seconds already inside a
+    # model bar.
+    llm = [c for c in calls if c["kind"] not in _SPAN_KINDS]
     in_tokens = sum((c["input_tokens"] or 0) for c in llm)
     out_tokens = sum((c["output_tokens"] or 0) for c in llm)
     llm_ms = sum((c["duration_ms"] or 0) for c in llm)
