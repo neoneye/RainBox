@@ -4805,12 +4805,6 @@ class AssistantAgent(ModelGroupAgent):
     # cannot crowd out the message itself.
     REPLY_AUDIT_MAX_OBSERVATION_CHARS: int = 2_000
 
-    # Enough prior turns to resolve who a follow-up is about, and no more: the
-    # auditor checks the message, and a long transcript both dilutes that and
-    # invites checking the reply against remembered facts read off the
-    # history instead of against the turn's observations.
-    REPLY_AUDIT_MAX_MESSAGES: int = 6
-
     def _build_reply_audit_prompt(
         self,
         message: str,
@@ -4829,47 +4823,38 @@ class AssistantAgent(ModelGroupAgent):
         rebuild, in the auditor's context, the bias that made a self-audit
         weak.
 
-        A bounded slice of the conversation rides along for one purpose: the
+        The turn's conversation history rides along for one purpose: the
         subject check. A request like "who is her mom" has no subject on its
         own, and an auditor without the prior turns cannot tell a reply about
         the right person from one about the wrong person — it said as much,
         "the context is unclear without prior turns", and passed a reply that
-        had lost a generation. It leads the dynamic tail, ahead of the
-        proposed reply and the request it disambiguates, and the system
-        prompt scopes it to reference rather than evidence.
+        had lost a generation. It sits at tier 0, ahead of the proposed reply
+        and the request it disambiguates, and turn_instructions scopes it to
+        reference rather than evidence: the auditor checks the message against
+        turn_observations, never against facts read off the transcript.
 
         Same tier convention as the other builders: static head, then
-        turn_instructions, then the dynamic tail ending with the request and
-        the clock. Same ElementTree escaping guarantee too.
+        turn_instructions, then the dynamic tail ending with the message under
+        audit and the clock. Unlike the others this prompt has no closing
+        re-anchor of the request: proposed_reply at the tail is what the
+        auditor reads last, and check 1 of its instructions sends it back to
+        the request. Same ElementTree escaping guarantee too.
         """
-        root = ET.Element("reply_audit")
-        current = messages[-1] if messages else None
-        # Leads for the same reason as the decide prompt. Unlike the others
-        # this prompt has no closing re-anchor: proposed_reply at the tail is
-        # what the auditor reads last, and check 1 of its instructions sends it
-        # back to the request.
-        self._append_current_user_request(root, current)
-        context = (messages[:-1] if messages else [])[
-            -self.REPLY_AUDIT_MAX_MESSAGES:]
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for entry in context:
-                self._append_prompt_message(history, entry)
-        else:
-            ET.SubElement(history, "none")
-        self._append_static_head(root, blocks=("identity", "formatting"))
-        self._append_turn_instructions(root, REPLY_AUDIT_TURN_INSTRUCTIONS)
+        # Tiers 0 and 1.
+        prompt = AssistantPromptBuilder(
+            self, "reply_audit", messages=messages,
+            blocks=("identity", "formatting"))
+        prompt.append_turn_instructions(REPLY_AUDIT_TURN_INSTRUCTIONS)
         if self._criteria_markdown:
-            criteria = ET.SubElement(root, "acceptance_criteria_markdown")
-            criteria.text = self._criteria_markdown
+            prompt.append_text(
+                "acceptance_criteria_markdown", self._criteria_markdown)
         if self._reply_language_markdown:
-            language = ET.SubElement(
-                root, "reply_language_markdown")
-            language.text = self._reply_language_markdown
+            prompt.append_text(
+                "reply_language_markdown", self._reply_language_markdown)
         steps = [e for e in scratchpad if isinstance(e, AssistantTurnStep)]
         if steps:
-            observations = ET.SubElement(
-                root, "turn_observations", {"authority": "fresh_evidence"})
+            observations = prompt.append_element(
+                "turn_observations", authority="fresh_evidence")
             for step in steps:
                 # action + args + result. No `reason`: see the docstring.
                 entry = ET.SubElement(
@@ -4879,12 +4864,9 @@ class AssistantAgent(ModelGroupAgent):
                     : self.REPLY_AUDIT_MAX_OBSERVATION_CHARS]
         # The message under audit closes the prompt — the last thing the
         # auditor reads is the thing it is judging.
-        proposed = ET.SubElement(root, "proposed_reply")
-        proposed.text = message
-        now_local = datetime.now().astimezone()
-        ET.SubElement(root, "current_local_time").text = now_local.strftime(
-            "%Y-%m-%d %H:%M %Z")
-        return _render_sections(root)
+        prompt.append_text("proposed_reply", message)
+        prompt.append_local_time()
+        return prompt.render()
 
     def _reply_audit(
         self,
