@@ -33,7 +33,9 @@ from agents.assistant import (
     REQUEST_SUMMARY_TURN_INSTRUCTIONS,
     RESPONSE_LANGUAGE_TURN_INSTRUCTIONS,
     SECOND_OPINION_TURN_INSTRUCTIONS,
+    AssistantActionName,
     AssistantAgent,
+    AssistantStepDecision,
     _render_sections,
 )
 
@@ -542,3 +544,74 @@ def test_recall_filter_escapes_candidate_text():
 
     assert prompt.count("<turn_instructions") == 1
     assert "&lt;/recall_candidates&gt;" in prompt
+
+
+def all_turn_prompts(agent, messages: list[dict]) -> dict[str, str]:
+    """Every assistant user prompt for one turn state, by call name.
+
+    request_summary is absent by design: it runs before the turn proper, at
+    its own much larger request budget, and carries no turn context to share.
+    """
+    from agents.assistant import _build_recall_filter_prompt
+
+    decision = AssistantStepDecision(
+        reason="run the sum",
+        action=AssistantActionName.PYTHON_RUN,
+        args={"code": "print(2 + 2)"},
+    )
+    return {
+        "decide": agent._build_user_prompt(
+            messages=messages, scratchpad=[], step_index=0),
+        "acceptance_criteria": agent._build_acceptance_criteria_prompt(messages),
+        "reply_audit": agent._build_reply_audit_prompt(
+            "here is the answer", messages=messages, scratchpad=[]),
+        "second_opinion": agent._build_second_opinion_prompt(
+            decision, reasoning="because", messages=messages),
+        "response_language_classifier":
+            agent._build_response_language_classifier_prompt(messages, None),
+        "recall_filter": _build_recall_filter_prompt(
+            "what is 2+2", [{"id": "qa-1"}],
+            prompt_prefix=agent._recall_filter_prefix(messages)),
+    }
+
+
+# Long enough that a six-message window and a thirty-message one cannot
+# coincide. Distinct text per message so a wrong slice is visible in the diff
+# rather than hiding behind repeated filler.
+TURN_MESSAGES = [
+    {"sender_type": "human" if i % 2 == 0 else "agent",
+     "text": f"turn message number {i}"}
+    for i in range(20)
+] + [{"sender_type": "human", "text": "what is 2+2"}]
+
+
+def test_every_assistant_call_shares_the_turn_prefix(fully_populated_agent):
+    """The property the single prompt builder exists to create.
+
+    A KV cache reuses a prefix, counting from token 0. conversation_history_xml
+    sits at tier 0, so any two calls slicing history differently diverge on
+    their first <message> and share nothing past it. Every call therefore
+    renders the same window, and every call carries `identity` — the one
+    tier-1 block they all have — so the shared run reaches the end of
+    user_settings_json.
+
+    Written as a loop over all six calls rather than as pairs, so a seventh
+    call added later cannot quietly opt out.
+    """
+    prompts = all_turn_prompts(fully_populated_agent, TURN_MESSAGES)
+    required = "<user_settings_json>identity</user_settings_json>"
+
+    for name, prompt in prompts.items():
+        assert required in prompt, f"{name} carries no identity block"
+
+    for name, prompt in prompts.items():
+        for other_name, other in prompts.items():
+            if name >= other_name:
+                continue
+            shared = common_prefix_len(prompt, other)
+            # A slice shorter than the target cannot contain it, so this pins
+            # a lower bound on `shared` rather than merely asserting overlap.
+            assert required in prompt[:shared], (
+                f"{name} x {other_name} share only {shared} chars, "
+                f"which does not reach the end of user_settings_json"
+            )
