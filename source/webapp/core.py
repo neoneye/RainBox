@@ -186,9 +186,10 @@ NAV_TEMPLATE = """
       <summary>Benchmark &#9662;</summary>
       <div class="pp-dd-menu">
         <a href="{{ url_for('benchmark_basic_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_basic_page' }}">Basic</a>
-        <a href="{{ url_for('benchmark_editdocument_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_editdocument_page' }}">Edit document</a>
         <a href="{{ url_for('benchmark_kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_kanban_page' }}">Kanban</a>
         <a href="{{ url_for('benchmark_story_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_story_page' }}">Story</a>
+        {# Last, and out of alphabetical order with it: the experimental one. #}
+        <a href="{{ url_for('benchmark_editdocument_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_editdocument_page' }}">Edit document</a>
       </div>
     </details>
     <details class="pp-dd {{ 'pp-active' if request.endpoint in ('demo_tts_kokoro', 'demo_tts_dotstts', 'demo_stt_whisper', 'demo_voice_echo') }}">
