@@ -1513,7 +1513,7 @@ def _recall_filter_step(run, scorer_uuid):
         system_prompt="You score recalled candidates for relevance.",
         user_prompt="<candidates>rows go here</candidates>",
         reasoning="Two rows answer the question; the rest are unrelated.",
-        model_response='{"items": [{"id": "7cd64094", "direct": "5"}]}',
+        model_response='{"items": [{"id": "7cd64094", "direct": 5}]}',
         code_driven=True, requested_at=datetime.now(UTC),
         model_uuid=scorer_uuid,
         input_tokens=3100, output_tokens=216, duration_ms=2500)

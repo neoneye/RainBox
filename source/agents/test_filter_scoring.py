@@ -49,11 +49,11 @@ def test_filter_prompt_asks_for_reasoning_first():
 def test_full_list_keeps_threshold_and_top_ranked():
     candidates = [_match(f"qa-{n}") for n in range(5)]
     decision = _decision(
-        ("qa-0", "5", "1", "5"),   # direct at threshold → kept (rank 0)
-        ("qa-1", "1", "4", "2"),   # indirect at threshold → kept (rank 2)
-        ("qa-2", "3", "3", "3"),   # below threshold, but rank 1 → kept
-        ("qa-3", "1", "1", "1"),   # noise, low rank → dropped
-        ("qa-4", "1", "1", "4"),   # relevancy at threshold → kept
+        ("qa-0", 5, 1, 5),   # direct at threshold → kept (rank 0)
+        ("qa-1", 1, 4, 2),   # indirect at threshold → kept (rank 2)
+        ("qa-2", 3, 3, 3),   # below threshold, but rank 1 → kept
+        ("qa-3", 1, 1, 1),   # noise, low rank → dropped
+        ("qa-4", 1, 1, 4),   # relevancy at threshold → kept
     )
     scored = apply_filter_scores(decision, candidates)
     kept = {s.qa_id for s in scored if s.kept}
@@ -70,11 +70,11 @@ def test_full_list_low_calibrated_scorer_keeps_best_by_rank():
     candidates survive on relative merit; pure 1/1/1 noise still drops."""
     candidates = [_match(f"qa-{n}") for n in range(5)]
     decision = _decision(
-        ("qa-0", "2", "1", "3"),   # best-ranked → kept by rank
-        ("qa-1", "1", "2", "2"),   # second-ranked, above floor → kept by rank
-        ("qa-2", "1", "1", "1"),   # noise → dropped
-        ("qa-3", "1", "1", "1"),   # noise → dropped
-        ("qa-4", "1", "1", "1"),   # noise → dropped
+        ("qa-0", 2, 1, 3),   # best-ranked → kept by rank
+        ("qa-1", 1, 2, 2),   # second-ranked, above floor → kept by rank
+        ("qa-2", 1, 1, 1),   # noise → dropped
+        ("qa-3", 1, 1, 1),   # noise → dropped
+        ("qa-4", 1, 1, 1),   # noise → dropped
     )
     scored = apply_filter_scores(decision, candidates)
     kept = {s.qa_id for s in scored if s.kept}
@@ -86,7 +86,7 @@ def test_full_list_of_pure_noise_keeps_nothing():
     above the noise floor, the list empties — an off-topic query must not
     feed junk to the route LLM."""
     candidates = [_match(f"qa-{n}") for n in range(5)]
-    decision = _decision(*((f"qa-{n}", "1", "1", "1") for n in range(5)))
+    decision = _decision(*((f"qa-{n}", 1, 1, 1) for n in range(5)))
     scored = apply_filter_scores(decision, candidates)
     assert not any(s.kept for s in scored)
 
@@ -96,8 +96,8 @@ def test_fewer_than_top_k_keeps_everything():
     competition — keep all, even those the LLM scored as droppable."""
     candidates = [_match("qa-good"), _match("qa-weak")]
     decision = _decision(
-        ("qa-good", "5", "5", "5"),
-        ("qa-weak", "1", "1", "1"),
+        ("qa-good", 5, 5, 5),
+        ("qa-weak", 1, 1, 1),
     )
     scored = apply_filter_scores(decision, candidates)
     assert all(s.kept for s in scored)
@@ -105,7 +105,7 @@ def test_fewer_than_top_k_keeps_everything():
 
 def test_hallucinated_ids_are_ignored():
     candidates = [_match(f"qa-{n}") for n in range(5)]
-    decision = _decision(("qa-invented", "5", "5", "5"))
+    decision = _decision(("qa-invented", 5, 5, 5))
     scored = apply_filter_scores(decision, candidates)
     assert {s.qa_id for s in scored} == {f"qa-{n}" for n in range(5)}
     assert not any(s.kept for s in scored)  # real candidates were unscored
@@ -113,7 +113,7 @@ def test_hallucinated_ids_are_ignored():
 
 def test_unscored_candidates_default_to_zero_on_a_full_list():
     candidates = [_match(f"qa-{n}") for n in range(5)]
-    decision = _decision(("qa-0", "5", "1", "1"))  # the other four omitted
+    decision = _decision(("qa-0", 5, 1, 1))  # the other four omitted
     scored = apply_filter_scores(decision, candidates)
     by_id = {s.qa_id: s for s in scored}
     assert by_id["qa-0"].kept
@@ -123,9 +123,9 @@ def test_unscored_candidates_default_to_zero_on_a_full_list():
 def test_ordering_is_best_first_direct_dominates():
     candidates = [_match("qa-a"), _match("qa-b"), _match("qa-c")]
     decision = _decision(
-        ("qa-a", "2", "5", "5"),
-        ("qa-b", "5", "1", "1"),
-        ("qa-c", "2", "5", "4"),
+        ("qa-a", 2, 5, 5),
+        ("qa-b", 5, 1, 1),
+        ("qa-c", 2, 5, 4),
     )
     scored = apply_filter_scores(decision, candidates)
     assert [s.qa_id for s in scored] == ["qa-b", "qa-a", "qa-c"]
@@ -134,8 +134,8 @@ def test_ordering_is_best_first_direct_dominates():
 def test_duplicate_score_rows_first_one_wins():
     candidates = [_match(f"qa-{n}") for n in range(5)]
     decision = _decision(
-        ("qa-0", "5", "5", "5"),
-        ("qa-0", "1", "1", "1"),   # duplicate row for the same id
+        ("qa-0", 5, 5, 5),
+        ("qa-0", 1, 1, 1),   # duplicate row for the same id
     )
     scored = apply_filter_scores(decision, candidates)
     by_id = {s.qa_id: s for s in scored}

@@ -557,17 +557,17 @@ class RequestSummary(BaseModel):
 RECALL_FILTER_TURN_INSTRUCTIONS: str = """\
 You are a relevance scorer. Given the user's latest chat message and a list of
 candidates — knowledge-base Q&A entries and/or remembered facts — score EVERY
-candidate on three Likert scales from "1" (not at all) to "5" (fully):
+candidate on three Likert scales from 1 (not at all) to 5 (fully):
 
 - `direct`: how directly the candidate's question/answer addresses what the
-  user is asking, telling, or doing ("1" = not at all, "5" = answers it
+  user is asking, telling, or doing (1 = not at all, 5 = answers it
   outright).
 - `indirect`: how much closely related context the candidate adds without
   answering the message itself — e.g. for a question about a person, an entry
-  about that person's family or household ("1" = none, "5" = strongly
+  about that person's family or household (1 = none, 5 = strongly
   related).
-- `relevancy`: overall topical relevance to the message ("1" = a different
-  topic entirely, "5" = the same topic).
+- `relevancy`: overall topical relevance to the message (1 = a different
+  topic entirely, 5 = the same topic).
 
 A candidate about a different topic, or one the user's message does not speak
 to (for example: the user says where THEY are from, but the candidate is about
@@ -588,8 +588,8 @@ Return exactly one JSON object with two fields, in this order:
 - `reasoning`: first, 1-3 short sentences calibrating yourself — does any
   candidate genuinely match the user's message, and why or why not.
 - `items`: then a list with one entry per listed candidate:
-  {"id": "<candidate id>", "direct": "1".."5", "indirect": "1".."5",
-   "relevancy": "1".."5"}"""
+  {"id": "<candidate id>", "direct": 1..5, "indirect": 1..5,
+   "relevancy": 1..5}"""
 
 
 REQUEST_SUMMARY_TURN_INSTRUCTIONS: str = """\

@@ -456,7 +456,7 @@ def _seed_entries(monkeypatch, qkb, entries):
     monkeypatch.setattr(qkb, "get_entry", lambda qa_id: entries.get(qa_id))
 
 
-def _score(qa_id, direct="1", indirect="1", relevancy="1"):
+def _score(qa_id, direct=1, indirect=1, relevancy=1):
     return {"id": qa_id, "direct": direct, "indirect": indirect,
             "relevancy": relevancy}
 
@@ -500,11 +500,11 @@ def test_query_memory_recall_filter_drops_low_scores_on_a_full_list(app_ctx, mon
                   response_model, usage_out=None):
         assert "qa-noise" in user_prompt   # ungated candidates reach the scorer
         return (response_model(reasoning="scores calibrated on the message", items=[
-            _score("qa-mac", direct="5", relevancy="5"),
-            _score("qa-computer", indirect="4", relevancy="3"),
-            _score("qa-noise", relevancy="2"),
+            _score("qa-mac", direct=5, relevancy=5),
+            _score("qa-computer", indirect=4, relevancy=3),
+            _score("qa-noise", relevancy=2),
             _score("qa-food"),
-            _score("qa-hallucinated", direct="5"),
+            _score("qa-hallucinated", direct=5),
             # qa-unscored deliberately omitted by the LLM.
         ]), model_uuids[0])
 
@@ -615,7 +615,7 @@ def test_recall_filter_scores_through_the_loops_call_seam(app_ctx, monkeypatch):
                     group_from=group_from, system_prompt=system_prompt,
                     user_prompt=user_prompt, step_index=step_index)
         return qfr.FilterDecision(reasoning="r", items=[
-            _score("qa-mac", direct="5", relevancy="5")]), answering_model
+            _score("qa-mac", direct=5, relevancy=5)]), answering_model
 
     ctx = replace(_ctx(), recall_filter_call=seam, step_index=3)
     obs = _action_query_memory(ctx, {"query": "first mac"})
@@ -660,7 +660,7 @@ def test_query_memory_recall_filter_keeps_all_when_fewer_than_top_k(app_ctx, mon
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
                   response_model, usage_out=None):
         return (response_model(reasoning="scores calibrated on the message", items=[
-            _score("qa-brother", direct="5", relevancy="5"),
+            _score("qa-brother", direct=5, relevancy=5),
             _score("qa-family"),   # scored 1/1/1 — would drop on a full list
         ]), model_uuids[0])
 
@@ -694,7 +694,7 @@ def test_query_memory_forwards_per_signal_budgets(app_ctx, monkeypatch):
 
     monkeypatch.setattr(qkb, "_hybrid_seed_ranked", fake_ranked)
     monkeypatch.setattr(qfr, "structured_llm_call", lambda *a, **k: (
-        a[4](reasoning="budget test", items=[_score("qa-1", direct="5")]), a[1][0]))
+        a[4](reasoning="budget test", items=[_score("qa-1", direct=5)]), a[1][0]))
     obs = _action_query_memory(_ctx(), {"query": "q"},
                                top_k_vector=7, top_k_fulltext=2)
     assert obs.ok
@@ -730,7 +730,7 @@ def test_query_memory_claims_go_through_the_filter_too(app_ctx, monkeypatch):
         assert "remembered fact" in user_prompt   # claims presented to the scorer
         assert "prod-web-01" in user_prompt
         return (response_model(reasoning="one claim matches", items=[
-            _score(str(claim_good), direct="5"),
+            _score(str(claim_good), direct=5),
             _score(str(claim_noise)),   # 1/1/1 noise
         ]), model_uuids[0])
 
@@ -831,8 +831,8 @@ def test_query_memory_dropped_claim_leaves_the_observation(app_ctx, monkeypatch)
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
                   response_model, usage_out=None):
         return (response_model(reasoning="claim is off-topic", items=[
-            _score("qa-0", direct="5"),
-            _score("qa-1", direct="4"),
+            _score("qa-0", direct=5),
+            _score("qa-1", direct=4),
             _score("qa-2"),
             _score("qa-3"),
             _score(str(claim_noise)),   # 1/1/1 on a full list → dropped
@@ -879,7 +879,7 @@ def test_recall_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
                   response_model, usage_out=None):
         seen_members.extend(model_uuids)
-        return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct="5")]), model_uuids[0])
+        return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct=5)]), model_uuids[0])
 
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
@@ -925,7 +925,7 @@ def test_recall_filter_ignores_the_query_filter_routers_model_group(app_ctx, mon
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt,
                   response_model, usage_out=None):
         seen_members.extend(model_uuids)
-        return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct="5")]), model_uuids[0])
+        return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct=5)]), model_uuids[0])
 
     monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
@@ -956,7 +956,7 @@ def test_recall_filter_falls_back_to_the_assistant_default(app_ctx, monkeypatch)
     monkeypatch.setattr(db, "get_agent_model_binding", binding_for)
     monkeypatch.setattr(db, "get_model_group_member_uuids", lambda g: [uuid4()])
     monkeypatch.setattr(qfr, "structured_llm_call", lambda *a, **k: (
-        a[4](reasoning="fallback test", items=[_score("qa-1", direct="5")]), a[1][0]))
+        a[4](reasoning="fallback test", items=[_score("qa-1", direct=5)]), a[1][0]))
     # assistant.memory_filter is unbound above, so the default answers.
     obs = _action_query_memory(_ctx(), {"query": "q"})
     assert obs.data["recall_filter"]["mode"] == "llm"
@@ -1319,7 +1319,7 @@ def test_recall_filter_lands_as_its_own_step_row(room, monkeypatch):
         agent._last_response_text = '{"items": [{"id": "qa-mac"}]}'
         agent._last_rejected_attempts = []
         return FilterDecision(reasoning="One row answers the question.", items=[
-            _score("qa-mac", direct="5", relevancy="5")])
+            _score("qa-mac", direct=5, relevancy=5)])
 
     agent._structured_completion = fake_completion
     agent._decide_next_step = scripted_decisions(
@@ -1876,3 +1876,41 @@ def test_an_unclosed_fence_stays_escaped():
 
     assert "&lt;recalled_memory" in prompt
     assert "<recalled_memory" not in prompt
+
+
+def test_likert_scores_are_integers():
+    """The three filter scales are integers, not strings.
+
+    They are compared numerically against FILTER_KEEP_THRESHOLD and rendered
+    as numbers everywhere they surface, so a quoted "3" only travelled to be
+    cast back. The schema still pins the allowed values as an enum, which is
+    what keeps a constrained decoder from emitting 7 or 3.5.
+    """
+    import json
+
+    from agents.query_filter_router import FilterScore
+
+    schema = FilterScore.model_json_schema()["properties"]
+    for scale in ("direct", "indirect", "relevancy"):
+        assert schema[scale]["type"] == "integer", scale
+        assert schema[scale]["enum"] == [1, 2, 3, 4, 5], scale
+
+    row = FilterScore.model_validate_json(
+        json.dumps({"id": "x", "direct": 3, "indirect": 4, "relevancy": 4}))
+    assert (row.direct, row.indirect, row.relevancy) == (3, 4, 4)
+    assert all(isinstance(v, int)
+               for v in (row.direct, row.indirect, row.relevancy))
+
+
+def test_the_scoring_prompts_ask_for_unquoted_numbers():
+    """Models copy the shape a prompt shows them. A prompt writing "1".."5"
+    nudges toward quoted values, which the integer schema rejects."""
+    from agents.assistant import RECALL_FILTER_TURN_INSTRUCTIONS
+    from agents.query_filter_router import FILTER_SYSTEM_PROMPT
+
+    # Both scoring prompts: the standalone filter and the assistant's nested
+    # recall filter carry the same scale prose and must not drift apart.
+    for prompt in (RECALL_FILTER_TURN_INSTRUCTIONS, FILTER_SYSTEM_PROMPT):
+        assert '"1".."5"' not in prompt
+        assert '"1" (not at all)' not in prompt
+        assert "1..5" in prompt

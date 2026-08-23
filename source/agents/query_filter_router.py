@@ -56,29 +56,35 @@ logger = logging.getLogger(__name__)
 
 class FilterScore(BaseModel):
     """One candidate's relevance scores from the filter LLM. The LLM only
-    scores; keeping or dropping is decided in code (`apply_filter_scores`)."""
+    scores; keeping or dropping is decided in code (`apply_filter_scores`).
+
+    The scales are `Literal[1..5]` rather than a bare `int`: that renders as a
+    JSON-schema enum, which a grammar-constrained decoder enforces, so a model
+    cannot answer 7 or 3.5. A plain `int` with ge/le would leave the bound to
+    validation, which costs a whole model attempt when it trips.
+    """
 
     id: str = Field(
         description="The candidate's id, copied verbatim from the list."
     )
-    direct: Literal["1", "2", "3", "4", "5"] = Field(
+    direct: Literal[1, 2, 3, 4, 5] = Field(
         description=(
-            'How directly this candidate answers the user\'s message: '
-            '"1" = does not answer it at all, "5" = answers it outright.'
+            "How directly this candidate answers the user's message: "
+            "1 = does not answer it at all, 5 = answers it outright."
         )
     )
-    indirect: Literal["1", "2", "3", "4", "5"] = Field(
+    indirect: Literal[1, 2, 3, 4, 5] = Field(
         description=(
-            'How much closely related context this candidate adds without '
-            'answering the message itself (e.g. the family or household of a '
-            'person the user asks about): "1" = no related context, '
-            '"5" = strongly related context.'
+            "How much closely related context this candidate adds without "
+            "answering the message itself (e.g. the family or household of a "
+            "person the user asks about): 1 = no related context, "
+            "5 = strongly related context."
         )
     )
-    relevancy: Literal["1", "2", "3", "4", "5"] = Field(
+    relevancy: Literal[1, 2, 3, 4, 5] = Field(
         description=(
-            'Overall topical relevance to the user\'s message: '
-            '"1" = a different topic entirely, "5" = the same topic.'
+            "Overall topical relevance to the user's message: "
+            "1 = a different topic entirely, 5 = the same topic."
         )
     )
 
@@ -109,17 +115,17 @@ class FilterDecision(BaseModel):
 FILTER_SYSTEM_PROMPT: str = """\
 You are a relevance scorer. Given the user's latest chat message and a list of
 candidates — knowledge-base Q&A entries and/or remembered facts — score EVERY
-candidate on three Likert scales from "1" (not at all) to "5" (fully):
+candidate on three Likert scales from 1 (not at all) to 5 (fully):
 
 - `direct`: how directly the candidate's question/answer addresses what the
-  user is asking, telling, or doing ("1" = not at all, "5" = answers it
+  user is asking, telling, or doing (1 = not at all, 5 = answers it
   outright).
 - `indirect`: how much closely related context the candidate adds without
   answering the message itself — e.g. for a question about a person, an entry
-  about that person's family or household ("1" = none, "5" = strongly
+  about that person's family or household (1 = none, 5 = strongly
   related).
-- `relevancy`: overall topical relevance to the message ("1" = a different
-  topic entirely, "5" = the same topic).
+- `relevancy`: overall topical relevance to the message (1 = a different
+  topic entirely, 5 = the same topic).
 
 A candidate about a different topic, or one the user's message does not speak
 to (for example: the user says where THEY are from, but the candidate is about
@@ -136,8 +142,8 @@ Return exactly one JSON object with two fields, in this order:
 - `reasoning`: first, 1-3 short sentences calibrating yourself — does any
   candidate genuinely match the user's message, and why or why not.
 - `items`: then a list with one entry per listed candidate:
-  {"id": "<candidate id>", "direct": "1".."5", "indirect": "1".."5",
-   "relevancy": "1".."5"}
+  {"id": "<candidate id>", "direct": 1..5, "indirect": 1..5,
+   "relevancy": 1..5}
 
 Output only the JSON object. No prose outside it, no markdown fences."""
 
@@ -252,7 +258,7 @@ def apply_filter_scores(
     scored: list[ScoredCandidate] = []
     for c in candidates:
         item = by_id.get(c.qa_id)
-        d, i, r = ((int(item.direct), int(item.indirect), int(item.relevancy))
+        d, i, r = ((item.direct, item.indirect, item.relevancy)
                    if item is not None else (0, 0, 0))
         scored.append(ScoredCandidate(
             qa_id=c.qa_id, direct=d, indirect=i, relevancy=r, kept=keep_all))
