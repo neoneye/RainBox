@@ -4512,18 +4512,9 @@ class AssistantAgent(ModelGroupAgent):
         group. The memory_filter / query_filter_router bindings resolve first
         (see _filter_recalled_candidates), and a different model is a different
         cache no matter how the prompt is shaped."""
-        root = ET.Element("recall_filter_call")
-        self._append_current_user_request(
-            root, messages[-1] if messages else None)
-        context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for message in context:
-                self._append_prompt_message(history, message)
-        else:
-            ET.SubElement(history, "none")
-        self._append_static_head(root, blocks=("identity",))
-        return _render_sections(root)
+        return AssistantPromptBuilder(
+            self, "recall_filter_call", messages=messages,
+            blocks=("identity",)).render()
 
     def _build_user_prompt(
         self,
@@ -4532,58 +4523,26 @@ class AssistantAgent(ModelGroupAgent):
         scratchpad: list[AssistantTurnEvent],
         step_index: int,
     ) -> str:
-        root = ET.Element("assistant_turn")
-        current = messages[-1] if messages else None
-        context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
-
-        # Tier 0 of the user prompt: the request. It changes every turn, but
-        # within a turn it is byte-identical across every call and every step,
-        # and it is unbounded up to CURRENT_REQUEST_MAX_CHARS — a pasted
-        # document makes it the largest invariant a turn has. It leads because
-        # the calls carry different-length static heads: anything placed after
-        # those heads sits at a different offset in each prompt and can never
-        # be shared between them. The closing decision_request re-quotes it, so
-        # the model still reads the question last (see _request_anchor).
-        self._append_current_user_request(root, current)
-
-        # Every message of the recent window, the assistant's replies included,
-        # for the whole turn. A bare tag: the `_xml` suffix states the format,
-        # the source-priority block ranks the section, and turn_instructions
-        # says old assistant answers are never authoritative evidence — so an
-        # `authority` attribute would only repeat what the prompt already says.
-        #
-        # The section is constant for the turn, which is why it can sit this
-        # high: it renders identically on every step, so everything from the
-        # request through the end of this block is a prefix the backend reuses
-        # across the whole decide loop. Filtering the assistant's messages out
-        # partway through the turn would move that boundary to here.
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for message in context:
-                self._append_prompt_message(history, message)
-        else:
-            ET.SubElement(history, "none")
-
-        # Tier 1: static head.
-        self._append_static_head(root)
+        # Tiers 0 and 1 — the request, the history, the full static head.
+        prompt = AssistantPromptBuilder(
+            self, "assistant_turn", messages=messages)
+        current = prompt.current
 
         # Tier 2: what this call is for.
-        self._append_turn_instructions(root, self._decide_turn_instructions())
+        prompt.append_turn_instructions(self._decide_turn_instructions())
 
         # Tier 3: dynamic tail, least volatile first. active_skills is
         # retrieved per request, so it is dynamic despite reading as static.
         if self._skill_block:
-            ET.SubElement(
-                root, "active_skills", {"authority": "instructions"}
-            ).text = self._skill_block
+            prompt.append_text(
+                "active_skills", self._skill_block, authority="instructions")
 
         # The classifier's score-free Markdown follows the history into every
         # reasoning step. It is model-derived context, while turn_instructions
         # owns the instruction explaining how its ranked list is interpreted.
         if self._reply_language_markdown:
-            ET.SubElement(
-                root, "reply_language_markdown"
-            ).text = self._reply_language_markdown
+            prompt.append_text(
+                "reply_language_markdown", self._reply_language_markdown)
 
         # Only the LATEST criteria render — a revision replaces this section,
         # never appends (the trace keeps the history). A bare suffixed tag:
@@ -4592,15 +4551,13 @@ class AssistantAgent(ModelGroupAgent):
         # authority lives in the code-owned sentence in turn_instructions
         # rather than in an attribute here.
         if self._criteria_markdown:
-            ET.SubElement(
-                root, "acceptance_criteria_markdown"
-            ).text = self._criteria_markdown
+            prompt.append_text(
+                "acceptance_criteria_markdown", self._criteria_markdown)
 
         # Ahead of the request because it grows append-only within a turn:
         # step N+1 shares its whole prefix through step N's entry.
-        turn_steps = ET.SubElement(
-            root, "current_turn_steps", {"authority": "fresh_evidence"}
-        )
+        turn_steps = prompt.append_element(
+            "current_turn_steps", authority="fresh_evidence")
         kept, omitted = self._bounded_turn_events(scratchpad)
         if omitted:
             ET.SubElement(turn_steps, "omitted", {"count": str(omitted)})
@@ -4610,29 +4567,16 @@ class AssistantAgent(ModelGroupAgent):
         else:
             ET.SubElement(turn_steps, "none")
 
-        decision_request = ET.SubElement(
-            root,
+        prompt.append_text(
             "decision_request",
-            {"step": str(step_index + 1), "max_steps": str(self.step_limit)},
-        )
-        decision_request.text = (
             f"{self._request_anchor(current)} "
             "Choose exactly one next action. If current_turn_steps already "
             "answer that request, choose reply now. Never repeat "
-            "an identical successful or failed action."
-        )
+            "an identical successful or failed action.",
+            step=str(step_index + 1), max_steps=str(self.step_limit))
 
-        # The operator's clock — the model's only other time anchor is the
-        # conversation's (UTC) message timestamps, which made relative
-        # reminders ("in 10 minutes") resolve in UTC. Stating local time
-        # explicitly is what lets set_reminder land in the operator's zone.
-        # Last, because it changes every minute, and anywhere else it would
-        # invalidate the cached prefix of every section after it.
-        now_local = datetime.now().astimezone()
-        ET.SubElement(root, "current_local_time").text = now_local.strftime(
-            "%Y-%m-%d %H:%M %Z"
-        )
-        return _render_sections(root)
+        prompt.append_local_time()
+        return prompt.render()
 
     # The reviewer reads bounded excerpts: a runaway reasoning trace or program
     # must not blow the critic's context. Tail-truncation would drop the code's

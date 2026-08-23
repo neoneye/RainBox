@@ -697,3 +697,16 @@ def test_prompt_builder_history_window_is_the_decide_window(
     assert f"message {50 - kept}" in out
     assert f"message {50 - kept - 1}" not in out
     assert "the request" in out.split("<conversation_history_xml>")[0]
+
+
+def test_recall_filter_prefix_is_a_prefix_of_the_decide_prompt(
+    fully_populated_agent,
+):
+    """Not merely overlapping: the filter's whole rendered prefix is the
+    opening of the decide prompt, so the nested call reuses the loop's own
+    cached run instead of warming a second one."""
+    agent = fully_populated_agent
+    decide = agent._build_user_prompt(
+        messages=TURN_MESSAGES, scratchpad=[], step_index=0)
+
+    assert decide.startswith(agent._recall_filter_prefix(TURN_MESSAGES))
