@@ -45,7 +45,8 @@ measured, labelled row rather than empty space.
 
 Two parts:
 
-1. **Phases become rows**, indented under the step whose action recorded them.
+1. **Phases become activity bars**, contributing the time their calls do not
+   occupy, so nothing is drawn over anything else.
 2. **Whatever is still uncovered becomes an `unaccounted` row**, computed from
    the gaps rather than instrumented.
 
@@ -55,80 +56,80 @@ honest, and the bars themselves say where instrumenting would pay.
 
 ## Rows
 
-`db.assistant_llm_calls` gains two kinds beyond the existing
-`decide` / `code-driven` / `inner` / `review` / `rejected` / `embedding`:
+Every row is a **leaf**: one thing that spent time. No row contains another.
 
-- **`phase`** — one per entry in a step's `timing.phases`, with that phase's
-  `started_at` and `ms`.
-- **`unaccounted`** — synthesized, never stored.
+A bar drawn over other bars hides them, and hides any stall between them —
+which is the failure the page exists to expose, so a container bar reintroduces
+it one level down. `recall filter` as a 22.8s span over a 12.7s call is not an
+observation; it is two facts wearing one bar.
 
-### Nesting
+`db.assistant_llm_calls` therefore emits:
 
-Depth is assigned by a flat rule rather than a tree walk, because the only
-containment that exists is phase-inside-step and call-inside-phase:
+- the existing model calls (`decide`, `code-driven`, `inner`, `review`,
+  `rejected`) and `embedding` calls, unchanged
+- **`activity`** — a phase minus the calls made inside it
+- **`unaccounted`** — synthesized, never stored
 
-- a `phase` row is depth 1 — it is a child of its step's own call row
-- any other row whose start falls inside a phase's span is depth 2
-- everything else is depth 0
+### Phases become activities by subtraction
 
-Which reproduces the shape the operator asked for:
+A recorded phase is wall-clock that *overlaps* the calls made during it. What
+it contributes on its own is the remainder:
 
 ```
-memory_query (decide)          11.8s
-├─ claim retrieval             10.4s
-├─ seed KB load                 0.0s
-└─ recall filter               22.8s
-   ├─ unaccounted              10.0s
-   └─ recall_filter (model)    12.7s
+recall filter   |—————————————————————————|   22.8s recorded
+recall_filter             |———————————————|   12.7s call
+activity        |—————————|                   10.0s  ← the bar drawn
 ```
 
-### Where unaccounted rows come from
+A phase that made no calls yields one bar its own length — `claim retrieval`
+is 10.4s of work and nothing needs subtracting. A phase wrapping a call yields
+the slices around it, which is how ten seconds of model loading become a named
+bar instead of vanishing under the call that followed.
 
-Computed per level, not globally. A global complement would find nothing here:
-the `recall filter` phase covers its own 10s hole, so the hole only appears
-when the phase's children are measured against the phase's span.
+Leftovers below `MIN_ACTIVITY_MS` (100) are rounding, not activity, and are
+dropped.
 
-- **Top level** — gaps between consecutive depth-0 rows, plus any lead-in from
-  `run.started_at` and tail-out to `run.finished_at`.
-- **Inside each phase** — gaps between its child rows, bounded by the phase's
-  own span.
+### Unaccounted is now one thing
 
-Gaps shorter than `UNACCOUNTED_MIN_MS` (1000) are not emitted. Sub-second
-scheduling jitter between two adjacent calls is not a finding, and a row per
-0.1s gap would bury the ones that matter.
+With every row a leaf, the complement is taken once over the whole run rather
+than per level, and it means exactly one thing: **time nothing measured**.
 
-An unaccounted row is deliberately unlabelled beyond its duration. It is the
-absence of evidence; naming it "model load" would be a guess printed as fact.
+That is what makes a gap worth drawing. The waterfall is meant to be
+continuous — one activity ending where the next begins — so a break in it is a
+real hole in the instrumentation and nothing else. Gaps below
+`UNACCOUNTED_MIN_MS` (1000) are not drawn; sub-second jitter between adjacent
+calls is not a finding.
+
+An unaccounted row stays unlabelled beyond its duration. It is the absence of
+evidence; naming it "model load" would be a guess printed as a fact.
 
 ## What must not change
 
 **The dashboard totals.** `assistant_run_stats` derives `calls`, tokens,
-`duration_ms` and `tps` from this same enumeration. `phase` and `unaccounted`
-rows are spans, not calls — counting them would inflate the call count and
-double-count seconds already inside a model bar. They are excluded there
-alongside `embedding`, which is already excluded for its own reason (it
-produces no tokens, so its seconds would drag throughput down against work it
-never did).
+`duration_ms` and `tps` from this same enumeration. `activity` is an action's
+own seconds and `unaccounted` is the absence of a call — counting either would
+inflate the call count and its seconds. They are excluded there alongside
+`embedding`, which is already excluded for its own reason (it produces no
+tokens, so its seconds would drag throughput down against work it never did).
 
 The summary line stays `N calls · model Xs · total Ys`, and its `N` keeps
 meaning model calls.
 
 **The card title** becomes "Timeline". It no longer shows only model calls, and
-leaving it as "Model calls" while drawing phases and gaps would misdescribe it.
+leaving it as "Model calls" while drawing an action's own work would
+misdescribe it.
 
 ## Rendering
 
-The existing markup already applies `kind-{{ c.kind }}` to both the label and
-the bar, so the two new kinds need only CSS plus an indent:
+The existing markup already applies `kind-{{ c.kind }}` to the label and the
+bar, so the only addition is `unaccounted`: a hatched amber bar and an italic
+name, visibly not a measurement of anything.
 
-- `phase` — a lighter, outlined bar, reading as a span that contains things
-  rather than as work of its own.
-- `unaccounted` — a hatched or muted amber bar, visibly not a measurement of
-  anything.
-- indentation from `depth` on the label.
+`activity` is ordinary measured work and is styled like a call — neutral.
+Colour stays reserved for rows a reader should stop on, which is `rejected`
+and `unaccounted`.
 
-The Markdown export gains the same rows, since it exists so "the gaps that show
-where the time went survive the export" — which is now literal.
+There is no indentation, because there is no nesting left to show.
 
 ## Out of scope
 
@@ -140,12 +141,17 @@ where the time went survive the export" — which is now literal.
 
 ## Testing
 
-- A phase in a step's `timing.phases` becomes a row at depth 1.
-- A model call starting inside a phase's span is depth 2; one outside is 0.
-- A gap above the threshold becomes an `unaccounted` row; one below does not.
-- A hole inside a phase, covered globally but not by the phase's children,
-  is still emitted.
+- **No row contains another** — asserted over every pair, since this is the
+  property the layout rests on.
+- A phase wrapping a call contributes only the remainder; the phase's own
+  length appears nowhere.
+- A phase with no calls inside it is one whole bar.
+- An embedding call gets its own bar, and the phase around it shrinks by
+  exactly that much.
+- With everything measured the rows tile their span continuously and no
+  `unaccounted` row is emitted at all.
+- A stretch neither a call nor a phase covers does become one; one below the
+  threshold does not.
 - `assistant_run_stats` call count, tokens and duration are unchanged by the
-  presence of phase and unaccounted rows.
-- A run with no phases recorded renders exactly as it does today apart from
-  top-level unaccounted rows.
+  presence of activity and unaccounted rows.
+- A run with no phases recorded is unchanged apart from gaps.

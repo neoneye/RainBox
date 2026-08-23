@@ -927,10 +927,8 @@ def test_only_rows_worth_attention_are_coloured_in_the_waterfall():
     shows where the time went instead of asking anyone to decode a legend.
 
     Two kinds earn it, and both are a problem by definition: `rejected` is an
-    answer that was thrown away, and `unaccounted` is time nothing reported.
-    `phase` is styled but NOT coloured — an outlined bar, because a span that
-    contains other bars must not read as work of its own, and its name stays
-    neutral like every ordinary call.
+    answer that was thrown away, and `unaccounted` is time nothing measured.
+    An `activity` bar is ordinary measured work and stays neutral like a call.
     """
     import re
 
@@ -940,7 +938,7 @@ def test_only_rows_worth_attention_are_coloured_in_the_waterfall():
     barred = set(re.findall(r"\.wf-bar\.kind-([a-z-]+)", ASSISTANT_TEMPLATE))
 
     assert named == {"rejected", "unaccounted"}
-    assert barred == {"rejected", "unaccounted", "phase"}
+    assert barred == {"rejected", "unaccounted"}
 
 
 def test_review_written_before_start_times_still_gets_a_bar(app_ctx, client):
@@ -1662,11 +1660,7 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
         assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in page
         assert "embed embeddinggemma:300m" not in page
         assert "embed 0.9s (2 calls)" in md
-        # Indentation-agnostic: an embed call made during a recorded phase is
-        # nested under it, which is a fact about that call, not about this
-        # assertion. _rendered unescapes, so the indent arrives as U+00A0.
-        flat = md.replace("\u00a0", "").replace("&nbsp;", "")
-        assert '| embed "what languages do I know" | embedding |' in flat
+        assert '| embed "what languages do I know" | embedding |' in md
         # The LLM totals are the step's own, untouched by the two embed calls.
         assert "in 100" in page and "out 20" in page
         steps = db.list_assistant_steps(run.uuid)
