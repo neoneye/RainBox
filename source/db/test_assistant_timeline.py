@@ -102,7 +102,7 @@ def test_a_phase_contributes_only_the_time_no_call_occupies():
 
     calls = db.assistant_llm_calls([step, inner], run=_run(finished=34.5))
 
-    assert ("recall filter", "activity", 10.0) in _rows(calls)
+    assert ("memory_query › recall filter", "activity", 10.0) in _rows(calls)
     assert not [c for c in calls if (c["duration_ms"] or 0) == 22800]
 
 
@@ -113,7 +113,7 @@ def test_a_phase_with_no_calls_inside_it_is_one_whole_bar():
 
     calls = db.assistant_llm_calls([step], run=_run(finished=11.4))
 
-    assert ("claim retrieval", "activity", 10.4) in _rows(calls)
+    assert ("memory_query › claim retrieval", "activity", 10.4) in _rows(calls)
 
 
 def test_an_embedding_call_is_its_own_bar_inside_a_phase():
@@ -204,3 +204,19 @@ def test_the_enumeration_still_works_without_a_run():
     calls = db.assistant_llm_calls([_step("reply", at=0, ms=2000)])
 
     assert [c["label"] for c in calls] == ["reply"]
+
+
+def test_an_activity_is_named_for_the_step_that_recorded_it():
+    """A phase called "recall filter" sat next to the `recall_filter` call it
+    contains, and the two read as one thing listed twice. The prefix says
+    which step owns the bar — and so where clicking it goes."""
+    step = _step("memory_query", at=0, ms=11800,
+                 phases=[("recall filter", 11.8, 22.8)])
+    inner = _step("recall_filter", at=21.8, ms=12700)
+
+    calls = db.assistant_llm_calls([step, inner], run=_run(finished=34.5))
+    labels = [c["label"] for c in calls]
+
+    assert "memory_query › recall filter" in labels
+    assert "recall_filter" in labels
+    assert "recall filter" not in labels

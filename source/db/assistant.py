@@ -884,8 +884,12 @@ def _phase_calls(step, data: dict) -> list[dict]:
     calls: list[dict] = []
     for phase in timing.get("phases") or []:
         name = phase.get("name") or "phase"
+        # Named for the step that recorded it. A phase called "recall filter"
+        # sits beside the `recall_filter` call it contains, and the two read as
+        # one thing listed twice; the prefix says which step owns the bar, and
+        # so where following it goes.
         calls.append(_call(
-            name, "phase",
+            f"{step.action} › {name}", "phase",
             start=_parse_ts(phase.get("started_at")),
             duration_ms=phase.get("ms"), anchor=str(step.uuid)))
     return calls

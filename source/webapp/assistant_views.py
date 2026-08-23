@@ -488,7 +488,7 @@ ASSISTANT_TEMPLATE = """
         <div class="card-body">
           <div class="wf">
             {% for c in waterfall %}
-            <a class="wf-row" href="#step-{{ c.anchor }}" title="{{ c.label }} — {{ c.seconds }}{% if c.start %} at {{ c.start.strftime('%H:%M:%S') }}{% endif %}{% if c.detail %}&#10;&#10;{{ c.detail }}{% endif %}">
+            <a class="wf-row"{% if c.href %} href="{{ c.href }}"{% endif %} title="{{ c.label }} — {{ c.seconds }}{% if c.start %} at {{ c.start.strftime('%H:%M:%S') }}{% endif %}{% if c.detail %}&#10;&#10;{{ c.detail }}{% endif %}">
               <span class="wf-name kind-{{ c.kind }}">{{ c.label }}</span>
               <span class="wf-track">
                 {% if c.width_pct is not none %}
@@ -643,7 +643,7 @@ ASSISTANT_TEMPLATE = """
                action's parts in the order they finished; the embedder line
                below counts the calls those phases made (already inside their
                durations — the per-call bars are in the waterfall above). #}
-            <table class="io-data io-timing"><thead><tr>
+            <table class="io-data io-timing" id="phases-{{ step.uuid }}"><thead><tr>
               <th title="A named part of this action">phase</th>
               <th title="Wall-clock spent in this phase">took</th>
               <th title="When this phase started">at</th>
@@ -984,6 +984,17 @@ def _waterfall(calls: list[dict], run) -> list[dict]:
             row["width_pct"] = None
         row["seconds"] = (f"{c['duration_ms'] / 1000:.1f}s"
                           if c["duration_ms"] is not None else "—")
+        # Where following this bar lands. An activity is a slice of an action's
+        # phase table, so it goes to that table rather than to the top of a
+        # long step section. An unaccounted bar has nothing that explains it —
+        # that is what it means — so it is not a link at all rather than a
+        # dead one.
+        if not c["anchor"]:
+            row["href"] = None
+        elif c["kind"] == "activity":
+            row["href"] = f"#phases-{c['anchor']}"
+        else:
+            row["href"] = f"#step-{c['anchor']}"
         rows.append(row)
     return rows
 

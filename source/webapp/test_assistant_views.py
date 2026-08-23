@@ -1913,3 +1913,31 @@ def test_several_rejections_are_numbered_and_laid_end_to_end(app_ctx, client):
             2026, 8, 15, 12, 0, 10, tzinfo=UTC).astimezone()
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_every_waterfall_bar_links_to_the_detail_that_explains_it(
+        app_ctx, client):
+    """A bar the reader cannot follow is a number with no provenance.
+
+    A call links to its own step. An activity is a slice of an action's phase
+    table, so it links to that table rather than to the top of a long step
+    section. An unaccounted bar has nothing to explain it — by definition — so
+    it is not a link at all, rather than a dead one.
+    """
+    import re
+
+    room = _room()
+    run = _timed_memory_query_run(room)
+    try:
+        page, _ = _rendered(client, run)
+        ids = set(re.findall(r'id="((?:step|phases)-[0-9a-f-]+)"', page))
+        hrefs = re.findall(r'class="wf-row"[^>]*href="#([^"]*)"', page)
+
+        assert hrefs, "no waterfall rows rendered"
+        for target in hrefs:
+            assert target in ids, f"{target} has no landing element"
+        assert any(t.startswith("phases-") for t in hrefs)
+        # No row links to the bare prefix left by an empty anchor.
+        assert "step-" not in hrefs and "phases-" not in hrefs
+    finally:
+        _cleanup(run.uuid, room.uuid)
