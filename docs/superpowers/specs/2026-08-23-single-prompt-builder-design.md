@@ -152,11 +152,20 @@ tree belongs to when read in a debugger.
 `_*_block` attributes out of it; those are already built once per turn and
 read-only by the time a prompt is assembled.
 
-`_ALL_STATIC_BLOCKS` moves from an `AssistantAgent` class attribute to a
-module-level constant, so the builder — defined above `AssistantAgent` — can
-name it as a default. `_append_static_head` becomes a builder method and stops
-being an agent method; the block order and the nesting rule documented on the
-constant move with it.
+**The builder owns the order; the agent keeps owning its blocks.** The four
+existing `_append_*` helpers stay on `AssistantAgent`, because each reads
+agent state — `_append_static_head` reads five `_*_block` attributes,
+`_append_current_user_request` reads `_long_request_summary_markdown` — and
+moving them would mean one class reaching into another's privates. The
+builder holds a reference to the agent and calls them in the fixed tier
+order.
+
+The builder class is defined after `AssistantAgent` in the module, so
+`blocks` can default to `AssistantAgent._ALL_STATIC_BLOCKS` and nothing has to
+move. Python resolves the name at call time, so methods on `AssistantAgent`
+can construct it despite being defined earlier — the same forward reference
+`_build_recall_filter_prompt` already uses for
+`AssistantAgent._append_turn_instructions`.
 
 ### Call site shape
 
