@@ -37,6 +37,7 @@ from db.settings import *  # noqa: F401,F403  re-export app_setting registry/acc
 from db.find_uuid import *  # noqa: F401,F403  re-export the cross-table fuzzy uuid lookup
 from db.activity import *  # noqa: F401,F403  re-export llm_call recording + /activity aggregation
 from db.benchmark import *  # noqa: F401,F403  re-export benchmark_result recording + retention
+from db.assistant_log import *  # noqa: F401,F403  re-export the assistant run read model
 
 logger = logging.getLogger(__name__)
 
