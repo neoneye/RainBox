@@ -489,10 +489,10 @@ ASSISTANT_TEMPLATE = """
           <div class="wf">
             {% for c in waterfall %}
             <a class="wf-row"{% if c.href %} href="{{ c.href }}"{% endif %} title="{{ c.label }} — {{ c.seconds }}{% if c.start %} at {{ c.start.strftime('%H:%M:%S') }}{% endif %}{% if c.detail %}&#10;&#10;{{ c.detail }}{% endif %}">
-              <span class="wf-name kind-{{ c.kind }}">{{ c.label }}</span>
+              <span class="wf-name kind-{{ c.variant or c.kind }}">{{ c.label }}</span>
               <span class="wf-track">
                 {% if c.width_pct is not none %}
-                <span class="wf-bar kind-{{ c.kind }}" style="left:{{ c.offset_pct }}%;width:{{ c.width_pct }}%"></span>
+                <span class="wf-bar kind-{{ c.variant or c.kind }}" style="left:{{ c.offset_pct }}%;width:{{ c.width_pct }}%"></span>
                 {% else %}
                 <span class="wf-undated">not timed</span>
                 {% endif %}
@@ -1681,7 +1681,11 @@ def _run_markdown(run, ctx: dict) -> str:
             # is no longer a fixed vocabulary: a pipe in it would split the
             # row into columns that aren't there.
             label = " ".join(c["label"].split()).replace("|", "\\|")
-            out.append(f"| {label} | {c['kind']} | {at} | {c['seconds']} |")
+            # The finer `variant` (rejected, decide, code-driven) rather than
+            # the coarse kind, so the export names a row the way the page
+            # colours it.
+            out.append(
+                f"| {label} | {c.get('variant') or c['kind']} | {at} | {c['seconds']} |")
         out.append("")
 
     # Trigger message.

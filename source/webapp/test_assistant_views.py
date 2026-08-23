@@ -751,9 +751,13 @@ def test_the_timeline_reads_in_the_same_order_as_the_waterfall(app_ctx, client):
         assert [s.action for s in db.list_assistant_steps(run.uuid)] == [
             "response_language_classifier", "acceptance_criteria",
             "reply_audit", "reply"]
-        # And the two surfaces on the page now agree call for call.
+        # And the two surfaces on the page now agree call for call. A step the
+        # model chose is labelled by the decision it made; a call the loop
+        # issued itself is labelled by what it is, since presenting it as a
+        # decision would be a fiction.
         calls = db.assistant_llm_calls(steps)
-        assert [c["label"] for c in calls] == [s.action for s in steps]
+        assert [c["label"] for c in calls] == [
+            s.action if s.code_driven else f"decide → {s.action}" for s in steps]
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -906,7 +910,8 @@ def test_waterfall_places_each_call_on_the_run_span(app_ctx, client):
         rows = _waterfall(db.assistant_llm_calls(
             steps, db.list_second_opinion_reviews(run.uuid)), run)
         assert [r["label"] for r in rows] == [
-            "query_memory", "recall_filter", "python_run", "second opinion"]
+            "decide → query_memory", "recall_filter", "decide → python_run",
+            "second opinion"]
         # The span runs from the first call to the last one's end (41s), so the
         # first bar starts at 0 and the recall filter 10s in.
         assert rows[0]["offset_pct"] == 0.0
@@ -1878,7 +1883,7 @@ def test_the_kept_attempt_starts_where_the_rejected_one_ended(app_ctx, client):
         steps = db.list_assistant_steps(run.uuid)
         calls = db.assistant_llm_calls(steps)
 
-        assert [c["label"] for c in calls] == ["reply (rejected)", "reply"]
+        assert [c["label"] for c in calls] == ["reply (rejected)", "decide → reply"]
         rejected, kept = calls
         assert rejected["start"] == datetime(
             2026, 8, 15, 15, 53, 5, tzinfo=UTC).astimezone()
@@ -1907,7 +1912,7 @@ def test_several_rejections_are_numbered_and_laid_end_to_end(app_ctx, client):
     try:
         calls = db.assistant_llm_calls(db.list_assistant_steps(run.uuid))
         assert [c["label"] for c in calls] == [
-            "reply (rejected 1/2)", "reply (rejected 2/2)", "reply"]
+            "reply (rejected 1/2)", "reply (rejected 2/2)", "decide → reply"]
         # …and the kept attempt sits after the LAST rejection, not the first.
         assert calls[-1]["start"] == datetime(
             2026, 8, 15, 12, 0, 10, tzinfo=UTC).astimezone()
