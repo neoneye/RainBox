@@ -5,7 +5,9 @@ webapp polls."""
 import logging
 import threading
 import time
+from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from flask import Flask
 
@@ -91,6 +93,9 @@ def _empty_benchmark_entry(name: str, total: int) -> dict[str, Any]:
     return {
         "name": name,
         "status": "pending",  # pending | running | done | error
+        # Wall-clock start of this cell, stamped when it goes running. The
+        # stored result carries it so a history entry says when it was taken.
+        "started_at": None,
         "trials_done": 0,
         "trials_total": total,
         "correct": 0,
@@ -437,12 +442,87 @@ class BenchmarkRunner:
         with self._lock:
             entry = self._state["targets"][target_index]["benchmarks"][bench_index]
             entry["status"] = status
+            if status == "running" and not entry.get("started_at"):
+                entry["started_at"] = time.time()
             if error is not None:
                 entry["error"] = error
             if reasoning_chars is not None:
                 entry["reasoning_chars"] = reasoning_chars
             if content_chars is not None:
                 entry["content_chars"] = content_chars
+        # Outside the lock: _persist_cell takes it again for its own snapshot.
+        if status in ("done", "error"):
+            self._persist_cell(target_index, bench_index, status)
+
+    def _persist_cell(
+        self, target_index: int, bench_index: int, status: str
+    ) -> None:
+        """Store one cell's terminal result, so it outlives this process.
+
+        Snapshots under the lock and writes outside it: the page polls
+        get_state() on that same lock once a second, and a DB round-trip
+        inside it would stall every benchmark page on the box.
+
+        A stop before the first trial is not recorded — it measured nothing,
+        and a row of zeroes would put a fake result into the baseline. An
+        error IS recorded whatever the trial count, because "this target
+        cannot do this benchmark" is itself the finding.
+
+        Logs and swallows on failure. A run costs real model time; losing one
+        to a telemetry bug is far worse than losing the telemetry (the posture
+        llm/activity.py takes for the same reason).
+        """
+        try:
+            with self._lock:
+                target = self._state["targets"][target_index]
+                entry = dict(target["benchmarks"][bench_index])
+                target_uuid = target["uuid"]
+                target_label = target.get("display_name") or ""
+                model_name = target.get("model_name") or ""
+                provider = target.get("provider") or ""
+            if status != "error" and entry.get("trials_done", 0) <= 0:
+                return
+
+            name, _cls, params = self.specs[bench_index]
+            try:
+                resolved = db.resolved_model_kwargs(UUID(target_uuid))
+            except Exception:
+                # A row deleted mid-run still deserves its result stored; it
+                # just cannot report what it was configured with.
+                resolved = None
+
+            db.record_benchmark_result(
+                spec_set=self.spec_set,
+                benchmark_name=name,
+                target_uuid=UUID(target_uuid),
+                target_label=target_label,
+                model_name=model_name,
+                provider=provider,
+                status=status,
+                trials_done=entry.get("trials_done", 0),
+                trials_total=entry.get("trials_total", 0),
+                correct=entry.get("correct", 0),
+                mistakes=entry.get("mistakes", 0),
+                failures=entry.get("failures", 0),
+                total_elapsed=entry.get("total_elapsed", 0.0),
+                reasoning_chars=entry.get("reasoning_chars"),
+                content_chars=entry.get("content_chars"),
+                error=entry.get("error"),
+                config_fingerprint=(
+                    db.benchmark_fingerprint(resolved) if resolved else ""
+                ),
+                spec_fingerprint=db.benchmark_fingerprint(params),
+                started_at=(
+                    datetime.fromtimestamp(entry["started_at"], UTC)
+                    if entry.get("started_at") else None
+                ),
+                ended_at=datetime.now(UTC),
+            )
+        except Exception:
+            logger.warning(
+                "benchmark: could not store result for target %d bench %d",
+                target_index, bench_index, exc_info=True,
+            )
 
     def _record_trial(
         self,
@@ -497,6 +577,10 @@ class BenchmarkRunner:
         # raised. Releasing before taking self._lock keeps the slot from
         # outliving a failure in the state bookkeeping below.
         SLOT.release(self.label)
+        # (target_index, bench_index) of cells the stop caught mid-flight.
+        # Collected under the lock, written after it — the DB round-trip must
+        # not block the once-a-second get_state() poll.
+        interrupted: list[tuple[int, int]] = []
         with self._lock:
             self._state["running"] = False
             self._state["ended_at"] = time.time()
@@ -509,12 +593,19 @@ class BenchmarkRunner:
                 # (polling stops once running flips false). Reset any
                 # in-progress target/benchmark back to pending so the row
                 # clears and its Start button works again.
-                for t in self._state["targets"]:
+                for ti, t in enumerate(self._state["targets"]):
                     if t["status"] in ("warming_up", "running"):
                         t["status"] = "pending"
-                    for b in t["benchmarks"]:
+                    for bi, b in enumerate(t["benchmarks"]):
                         if b["status"] == "running":
+                            # Noted before the reset erases the evidence that
+                            # this cell was the one interrupted.
+                            interrupted.append((ti, bi))
                             b["status"] = "pending"
+        for ti, bi in interrupted:
+            # _persist_cell drops the ones with no trials done, so a cell
+            # killed before its first trial stores nothing.
+            self._persist_cell(ti, bi, "stopped")
 
     def _apply_event(self, ti: int, ev: dict[str, Any]) -> None:
         """Map one NDJSON progress event from the per-target child process onto
@@ -586,4 +677,7 @@ class BenchmarkRunner:
                     if killed:
                         break
         finally:
-            self._finish(aborted=self._stop_event.is_set())
+            # Its own context: the one above closed when the try block exited,
+            # and _finish now stores the results a stop interrupted.
+            with app.app_context():
+                self._finish(aborted=self._stop_event.is_set())
