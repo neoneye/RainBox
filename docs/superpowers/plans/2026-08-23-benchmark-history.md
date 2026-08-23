@@ -40,7 +40,7 @@
   - `db.COMPLETE_RETENTION = 3`, `db.PARTIAL_RETENTION = 3`
 - Tasks 2–4 consume these.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `db/test_benchmark.py`:
 
@@ -189,12 +189,12 @@ def test_fingerprint_is_stable_and_order_independent():
     assert a != db.benchmark_fingerprint({"temperature": 0.2, "context_window": 8192})
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `./venv/bin/python -m pytest db/test_benchmark.py -q`
 Expected: FAIL — `ImportError: cannot import name 'BenchmarkResult' from 'db.models'`.
 
-- [ ] **Step 3: Add the model**
+- [x] **Step 3: Add the model**
 
 Append to `db/models.py`, after the `EvalResult` class:
 
@@ -251,7 +251,7 @@ class BenchmarkResult(db.Model):
 If `Index` is not already imported in `db/models.py`, add it to the existing
 `from sqlalchemy import ...` line.
 
-- [ ] **Step 4: Add the accessors**
+- [x] **Step 4: Add the accessors**
 
 Create `db/benchmark.py`:
 
@@ -390,7 +390,7 @@ def _prune_cell(
     ).delete(synchronize_session=False)
 ```
 
-- [ ] **Step 5: Re-export from the db package**
+- [x] **Step 5: Re-export from the db package**
 
 In `db/__init__.py`, beside the other `from db.<module> import *` lines (near
 the `from db.activity import *` line), add:
@@ -403,12 +403,12 @@ If `db/benchmark.py` needs an `__all__` to satisfy the star import, add one
 listing `COMPLETE_RETENTION`, `PARTIAL_RETENTION`, `benchmark_fingerprint`,
 `record_benchmark_result`.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `./venv/bin/python -m pytest db/test_benchmark.py -q`
 Expected: PASS, 9 passed.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add db/models.py db/benchmark.py db/__init__.py db/test_benchmark.py
@@ -427,7 +427,7 @@ git commit -m "feat(db): store benchmark results with per-cell retention"
 - Consumes: `record_benchmark_result` from Task 1.
 - Produces: `db.benchmark_history(spec_set: str) -> dict[str, dict[str, dict[str, list[dict]]]]`, shaped `{benchmark_name: {target_uuid_str: {"complete": [entry, ...], "partial": [entry, ...]}}}`, newest first. Each `entry` is a JSON-safe dict with keys `status, completed, trials_done, trials_total, correct, mistakes, failures, total_elapsed, reasoning_chars, content_chars, error, config_fingerprint, spec_fingerprint, target_label, model_name, provider, ended_at` (ended_at as an ISO-8601 string). Tasks 5 and 6 consume this.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `db/test_benchmark.py`:
 
@@ -503,12 +503,12 @@ def test_history_is_empty_for_a_spec_set_with_no_rows():
         assert db.benchmark_history("story") == {}
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `./venv/bin/python -m pytest db/test_benchmark.py -q -k history`
 Expected: FAIL — `AttributeError: module 'db' has no attribute 'benchmark_history'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Append to `db/benchmark.py`:
 
@@ -563,12 +563,12 @@ def _entry(row: BenchmarkResult) -> dict[str, Any]:
 
 Add `benchmark_history` to `__all__` if Task 1 introduced one.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `./venv/bin/python -m pytest db/test_benchmark.py -q`
 Expected: PASS, 16 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add db/benchmark.py db/test_benchmark.py
@@ -587,7 +587,7 @@ git commit -m "feat(db): read benchmark history back grouped by cell"
 - Consumes: `db.record_benchmark_result`, `db.benchmark_fingerprint` from Task 1.
 - Produces: `BenchmarkRunner._persist_cell(target_index: int, bench_index: int, status: str) -> None`. Task 4 calls it too.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `benchmarks/test_runner_history.py`:
 
@@ -709,12 +709,12 @@ def test_setting_a_non_terminal_status_records_nothing(runner):
     rec.assert_not_called()
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `./venv/bin/python -m pytest benchmarks/test_runner_history.py -q`
 Expected: FAIL — `AttributeError: 'BenchmarkRunner' object has no attribute '_persist_cell'`.
 
-- [ ] **Step 3: Track when a cell started**
+- [x] **Step 3: Track when a cell started**
 
 In `benchmarks/runner.py`, add a `started_at` key to `_empty_benchmark_entry`'s
 returned dict, after `"status"`:
@@ -725,7 +725,7 @@ returned dict, after `"status"`:
         "started_at": None,
 ```
 
-- [ ] **Step 4: Add the persistence method**
+- [x] **Step 4: Add the persistence method**
 
 Add to `BenchmarkRunner`, after `_set_benchmark_status`:
 
@@ -807,7 +807,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 ```
 
-- [ ] **Step 5: Wire it into the status setter**
+- [x] **Step 5: Wire it into the status setter**
 
 In `_set_benchmark_status`, stamp the start and call the hook. Replace the
 method body's `with self._lock:` block so it reads:
@@ -829,17 +829,17 @@ method body's `with self._lock:` block so it reads:
             self._persist_cell(target_index, bench_index, status)
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `./venv/bin/python -m pytest benchmarks/test_runner_history.py -q`
 Expected: PASS, 8 passed.
 
-- [ ] **Step 7: Run the existing benchmark tests**
+- [x] **Step 7: Run the existing benchmark tests**
 
 Run: `./venv/bin/python -m pytest benchmarks/ -q`
 Expected: PASS, no regressions.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add benchmarks/runner.py benchmarks/test_runner_history.py
@@ -857,7 +857,7 @@ git commit -m "feat(benchmarks): store a cell's result when it reaches a termina
 **Interfaces:**
 - Consumes: `_persist_cell` from Task 3.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `benchmarks/test_runner_history.py`:
 
@@ -914,12 +914,12 @@ def test_a_clean_finish_stores_nothing_extra(runner):
     rec.assert_not_called()
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `./venv/bin/python -m pytest benchmarks/test_runner_history.py -q -k abort`
 Expected: FAIL — nothing is recorded on abort.
 
-- [ ] **Step 3: Persist partials before the reset**
+- [x] **Step 3: Persist partials before the reset**
 
 In `_finish`, the abort branch currently resets in-progress entries. Collect
 the running cells under the lock, then persist them after releasing it — and
@@ -964,7 +964,7 @@ and after the `with self._lock:` block, at the end of `_finish`:
             self._persist_cell(ti, bi, "stopped")
 ```
 
-- [ ] **Step 4: Give `_finish` an app context**
+- [x] **Step 4: Give `_finish` an app context**
 
 `_run` calls `_finish` from a `finally` that sits *outside* its
 `with app.app_context()`, so `_finish` has no context and its DB write would
@@ -978,12 +978,12 @@ raise. In `_run`, change the `finally` block to:
                 self._finish(aborted=self._stop_event.is_set())
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `./venv/bin/python -m pytest benchmarks/test_runner_history.py -q`
 Expected: PASS, 12 passed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add benchmarks/runner.py benchmarks/test_runner_history.py
@@ -1002,7 +1002,7 @@ git commit -m "feat(benchmarks): keep the partial result a stopped run measured"
 - Consumes: `db.benchmark_history` from Task 2.
 - Produces: `GET /benchmark_basic/history`, `/benchmark_story/history`, `/benchmark_kanban/history`, each returning the `benchmark_history` dict as JSON. Task 6 fetches them.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `webapp/test_benchmark_history_views.py`:
 
@@ -1082,12 +1082,12 @@ def test_state_does_not_carry_history():
     assert "complete" not in str(body)
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `./venv/bin/python -m pytest webapp/test_benchmark_history_views.py -q`
 Expected: FAIL — 404 on every `/history` route.
 
-- [ ] **Step 3: Add the three routes**
+- [x] **Step 3: Add the three routes**
 
 In `webapp/benchmark_views.py`, after `benchmark_basic_state`:
 
@@ -1126,7 +1126,7 @@ def benchmark_story_history() -> Response:
 
 Add `import db` and `from flask import Response` to each file if missing.
 
-- [ ] **Step 4: Pass the history URL into the page**
+- [x] **Step 4: Pass the history URL into the page**
 
 In `render_benchmark_page`'s signature add a parameter after `stop_endpoint`:
 
@@ -1152,12 +1152,12 @@ In `webapp/benchmark_kanban_views.py`, add
 call; in `webapp/benchmark_story_views.py`, add
 `history_endpoint="benchmark_story_history"`.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `./venv/bin/python -m pytest webapp/test_benchmark_history_views.py webapp/test_benchmark_story_views.py -q`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add webapp/benchmark_views.py webapp/benchmark_kanban_views.py \
@@ -1176,7 +1176,7 @@ git commit -m "feat(benchmarks): serve stored per-cell history on its own endpoi
 **Interfaces:**
 - Consumes: `history_url` from Task 5.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 These assert on the rendered page source, matching how the existing page tests
 in `webapp/test_benchmark_story_views.py` work. Append to
@@ -1207,12 +1207,12 @@ def test_page_has_the_hover_card_styles(page):
     assert "historic" in body
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `./venv/bin/python -m pytest webapp/test_benchmark_history_views.py -q -k page_`
 Expected: FAIL — none of those strings are in the page.
 
-- [ ] **Step 3: Add the CSS**
+- [x] **Step 3: Add the CSS**
 
 In `BENCHMARK_TEMPLATE`'s `<style>` block, after the `button.cell-start`
 rules:
@@ -1234,7 +1234,7 @@ rules:
         white-space:normal}
 ```
 
-- [ ] **Step 4: Add the fetch and merge**
+- [x] **Step 4: Add the fetch and merge**
 
 In the template's `<script>`, after the `benchmarkNames` declaration, add:
 
@@ -1312,7 +1312,7 @@ function historyCard(benchName, targetUuid) {
 }
 ```
 
-- [ ] **Step 5: Render history into the cell**
+- [x] **Step 5: Render history into the cell**
 
 Replace `renderBench(b, ti, bi)` with a version that takes the target uuid and
 falls back to stored results. Change its signature and its `pending` branch:
@@ -1352,7 +1352,7 @@ Update its one call site inside `render()`:
       return `<td class="bench">${cellStart(b, t.uuid, i, busy)}${renderBench(b, t.index, i, t.uuid)}</td>`;
 ```
 
-- [ ] **Step 6: Count historic cells in the score**
+- [x] **Step 6: Count historic cells in the score**
 
 In `render()`, the score multiplies `b.correct` and `b.trials_total` per cell.
 A restored table would otherwise score every row 0.0000, which is worse than
@@ -1379,7 +1379,7 @@ showing nothing. Replace the scoring loop body:
 Leave the rest of the scoring block (the `- 1` on each side, the ranking)
 untouched.
 
-- [ ] **Step 7: Load on start, refresh when a run ends**
+- [x] **Step 7: Load on start, refresh when a run ends**
 
 Find the polling loop that calls `render(state)`. Add a module-level flag and
 a refresh beside it:
@@ -1405,12 +1405,12 @@ At the point the page first kicks off polling, precede it with:
 loadHistory().then(() => { /* first render picks the table up from storage */ });
 ```
 
-- [ ] **Step 8: Run the tests**
+- [x] **Step 8: Run the tests**
 
 Run: `./venv/bin/python -m pytest webapp/test_benchmark_history_views.py -q`
 Expected: PASS.
 
-- [ ] **Step 9: Verify the page in a browser**
+- [x] **Step 9: Verify the page in a browser**
 
 The operator runs the server (`python -m tools.serve_ui`); do not add a
 launch config. With it running, load `/benchmark_basic` and confirm: cells
@@ -1420,7 +1420,7 @@ hovering one shows the card, and the score column is non-zero.
 If the server is not running, say so and leave this step unchecked rather than
 claiming it passed.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add webapp/benchmark_views.py webapp/test_benchmark_history_views.py
@@ -1434,22 +1434,22 @@ git commit -m "feat(benchmarks): show stored results in the table and on hover"
 **Files:**
 - Modify: `notes/` or the spec, only if a claim there is now wrong.
 
-- [ ] **Step 1: Run every affected suite**
+- [x] **Step 1: Run every affected suite**
 
 Run: `./venv/bin/python -m pytest db/ benchmarks/ webapp/ -q`
 Expected: no failures introduced by this branch.
 
-- [ ] **Step 2: Confirm editdocument was not touched**
+- [x] **Step 2: Confirm editdocument was not touched**
 
 Run: `git diff --stat main -- '*editdocument*'`
 Expected: empty. That page was explicitly out of scope.
 
-- [ ] **Step 3: Confirm no index-keyed history crept in**
+- [x] **Step 3: Confirm no index-keyed history crept in**
 
 Run: `grep -rn "bench_index" db/benchmark.py db/models.py`
 Expected: no output. History is keyed on the benchmark's name.
 
-- [ ] **Step 4: Commit any doc correction**
+- [x] **Step 4: Commit any doc correction**
 
 ```bash
 git add -A
