@@ -4852,8 +4852,13 @@ class AssistantAgent(ModelGroupAgent):
                 entry = ET.SubElement(
                     observations, "observation",
                     {"action": step.action, "status": step.status})
-                entry.text = step.observation[
-                    : self.REPLY_AUDIT_MAX_OBSERVATION_CHARS]
+                # Through the shared helper, so the auditor reads
+                # memory_query's fence as structure like every other call
+                # does, and so the observation cap shortens the fence's BODY
+                # rather than cutting through the fence itself.
+                self._set_observation_content(
+                    entry, step.action, step.observation,
+                    max_body_chars=self.REPLY_AUDIT_MAX_OBSERVATION_CHARS)
         # The message under audit closes the prompt — the last thing the
         # auditor reads is the thing it is judging.
         prompt.append_text("proposed_reply", message)
@@ -6152,30 +6157,47 @@ class AssistantAgent(ModelGroupAgent):
 
     @staticmethod
     def _set_observation_content(
-        node: ET.Element, action: str, text: str
+        node: ET.Element, action: str, text: str, max_body_chars: int | None = None
     ) -> None:
-        """Preserve memory_query's trusted outer fence as nested XML.
+        """Render memory_query's trusted outer fence as a nested element.
 
-        Recalled fact bodies have already had angle brackets neutralized by
-        `fence_recalled_memory`; all other observations remain ordinary escaped
-        text. Parsing is fail-closed: malformed fences are emitted as text.
+        The fence is code-owned and its body has already had angle brackets
+        neutralized by `fence_recalled_memory`, so it belongs in the prompt as
+        real structure rather than as escaped text the model has to see through.
+        Every other observation stays ordinary escaped text — only this one
+        action's fence is trusted, so nothing a model or tool returns can open
+        a prompt zone by containing the tag.
+
+        The fence is BUILT here, never re-parsed. Parsing made its survival
+        depend on the body being well-formed XML, which it never promised to
+        be: a stored fact reading "Ada Lovelace & Charles Babbage" raised, and
+        whole observation fell back to escaped text. Handed to ElementTree as
+        character data instead, an ampersand is simply escaped, and the body
+        still cannot forge structure.
+
+        `max_body_chars` shortens the BODY, so a caller with an observation
+        budget keeps the fence intact instead of cutting through it.
         """
-        start = text.find("<recalled_memory")
-        close = "</recalled_memory>"
-        end = text.find(close, start) if start >= 0 else -1
-        if action != AssistantActionName.MEMORY_QUERY.value or start < 0 or end < 0:
-            node.text = text
+        from memory.retrieval import (
+            RECALLED_FENCE_NOTE,
+            RECALLED_FENCE_TAG,
+            split_recalled_fence,
+        )
+
+        parts = (split_recalled_fence(text)
+                 if action == AssistantActionName.MEMORY_QUERY.value else None)
+        if parts is None:
+            node.text = (text if max_body_chars is None
+                         else text[:max_body_chars])
             return
-        end += len(close)
-        try:
-            recalled = ET.fromstring(text[start:end])
-        except ET.ParseError:
-            node.text = text
-            return
-        prefix = text[:start].rstrip()
-        suffix = text[end:].strip()
+        prefix, body, suffix = parts
+        if max_body_chars is not None and len(body) > max_body_chars:
+            body = truncate_middle(body, max_body_chars)
+        prefix, suffix = prefix.rstrip(), suffix.strip()
         node.text = f"{prefix}\n" if prefix else None
-        node.append(recalled)
+        recalled = ET.SubElement(
+            node, RECALLED_FENCE_TAG, {"note": RECALLED_FENCE_NOTE})
+        recalled.text = body
         if suffix:
             recalled.tail = f"\n{suffix}"
 
