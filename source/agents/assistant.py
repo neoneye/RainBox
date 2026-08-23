@@ -5946,10 +5946,18 @@ class AssistantAgent(ModelGroupAgent):
 
     # Tier 1. Fixed order, and ordered so the per-call block SETS nest:
     #
-    #   criteria {identity}
+    #   classifier / criteria / recall_filter {identity}
     #     ⊂ audit {identity, formatting}
     #       ⊂ second_opinion {identity, formatting, profile}
     #         ⊂ decide {identity, formatting, profile, persona, calibration}
+    #
+    # Every call takes `identity`, so it is the last block the whole turn has
+    # in common — and with tier 0 identical across the calls (see
+    # AssistantPromptBuilder), the run from the request through
+    # user_settings_json is shared by all six. The classifier and criteria
+    # calls each append a bespoke tier-1 block of their own after it
+    # (user_settings_languages_json, a criteria-snapshot formatting_guide),
+    # which is where those two leave the chain.
     #
     # Nesting is what makes the head a shared *prefix* between two different
     # calls rather than just a shared set. A block one call omits truncates

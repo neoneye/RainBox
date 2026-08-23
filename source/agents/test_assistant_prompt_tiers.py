@@ -2,19 +2,20 @@
 
 The tiers exist so a backend that reuses a matched prefix gets one to reuse.
 
-Two wins, measured. Within one call, consecutive steps of a decide loop share
-their whole prefix through the previous step's own entry (18555 shared
-characters between two real steps). Across the six different calls of one
-turn, current_user_request leads every prompt: it changes each turn but is
-byte-identical across every call and step within one, and it is unbounded up
-to CURRENT_REQUEST_MAX_CHARS, so a pasted document makes it the turn's largest
-invariant. Position 0 is the only place it can be shared, because the calls
-carry different-length static heads and anything after them sits at a
-different offset in each prompt. Behind it, _ALL_STATIC_BLOCKS is ordered so
-the per-call block sets nest (criteria then audit then second_opinion then
-decide), which extends the overlap past the request into the blocks two calls
-have in common. On a 5158-char request that took cross-call sharing from 619
-chars to 5823-7381.
+Two wins. Within one call, consecutive steps of a decide loop share their
+whole prefix through the previous step's own entry. Across the six calls of
+one turn, AssistantPromptBuilder emits an identical tier 0 — the request,
+then the conversation history at one window for every call — followed by the
+identity block every call carries, so the shared run reaches the end of
+user_settings_json before the per-call static heads diverge. Behind that,
+_ALL_STATIC_BLOCKS is ordered so the per-call block sets nest (criteria then
+audit then second_opinion then decide), extending the overlap further for the
+calls that have more blocks in common.
+
+The window is what makes tier 0 shareable at all. A tail slice of six
+messages is a SUFFIX of a tail slice of thirty, and a KV cache reuses a
+PREFIX; with the history second in the prompt, two calls slicing it
+differently diverged on their first <message> and shared nothing past it.
 
 Order is the whole property this file asserts, so it gets checked directly
 rather than implied by content tests.
