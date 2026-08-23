@@ -252,7 +252,7 @@ CRITERIA_EXPECTED = [
 ]
 
 SECOND_OPINION_EXPECTED = [
-    "current_user_request",
+    "current_user_request", "conversation_history_xml",
     "user_settings_json", "formatting_guide", "user_profile",
     "turn_instructions",
     "reply_language_markdown", "acceptance_criteria_markdown",
@@ -272,7 +272,8 @@ CRITERIA_ALWAYS = [
 ]
 SECOND_OPINION_ALWAYS = [
     "user_settings_json", "turn_instructions", "proposed_step",
-    "current_user_request", "verdict_request", "current_local_time",
+    "conversation_history_xml", "current_user_request", "verdict_request",
+    "current_local_time",
 ]
 
 

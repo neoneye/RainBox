@@ -4751,33 +4751,29 @@ class AssistantAgent(ModelGroupAgent):
         the local time. Same tier convention as the main prompt: static head,
         then turn_instructions, then the dynamic tail ending with the request
         and the clock. Built with ElementTree for the same escaping
-        guarantee; leaf sections only, no conversation history (the current
-        request is the contract the program is judged against)."""
-        root = ET.Element("second_opinion_review")
-        current = messages[-1] if messages else None
+        guarantee.
 
-        # Leads for the same reason as the decide prompt: it is the turn's
-        # largest cross-call invariant, and only position 0 shares it between
-        # calls whose static heads differ in length. verdict_request
-        # re-anchors it below.
-        self._append_current_user_request(root, current)
-        self._append_static_head(
-            root, blocks=("identity", "formatting", "profile"))
-        self._append_turn_instructions(root, SECOND_OPINION_TURN_INSTRUCTIONS)
+        The turn's conversation history rides along as reference, the same as
+        the other calls carry it. What is AUTHORITATIVE here is the request
+        and the criteria, which turn_instructions states; carrying no history
+        would only cost this call the shared prefix every other call of the
+        turn reuses."""
+        # Tiers 0 and 1. verdict_request re-anchors the request below.
+        prompt = AssistantPromptBuilder(
+            self, "second_opinion_review", messages=messages,
+            blocks=("identity", "formatting", "profile"))
+        prompt.append_turn_instructions(SECOND_OPINION_TURN_INSTRUCTIONS)
 
         if self._reply_language_markdown:
-            ET.SubElement(
-                root, "reply_language_markdown"
-            ).text = self._reply_language_markdown
+            prompt.append_text(
+                "reply_language_markdown", self._reply_language_markdown)
         # The criteria are part of what "serves the request" means: a program
         # converting to yards should fail review when the criteria say meters.
         if self._criteria_markdown:
-            ET.SubElement(
-                root, "acceptance_criteria_markdown"
-            ).text = self._criteria_markdown
-        proposed = ET.SubElement(
-            root, "proposed_step", {"action": decision.action.value}
-        )
+            prompt.append_text(
+                "acceptance_criteria_markdown", self._criteria_markdown)
+        proposed = prompt.append_element(
+            "proposed_step", action=decision.action.value)
         ET.SubElement(proposed, "stated_reason").text = decision.reason
         if reasoning:
             ET.SubElement(proposed, "model_reasoning").text = reasoning[
@@ -4787,16 +4783,13 @@ class AssistantAgent(ModelGroupAgent):
         ET.SubElement(proposed, "python_program").text = code[
             : self.SECOND_OPINION_MAX_CODE_CHARS
         ]
-        ET.SubElement(root, "verdict_request").text = (
+        prompt.append_text(
+            "verdict_request",
             "Review the proposed_step against the current_user_request and "
             "the user context above. List real problems (or none), then "
-            "set approved."
-        )
-        now_local = datetime.now().astimezone()
-        ET.SubElement(root, "current_local_time").text = now_local.strftime(
-            "%Y-%m-%d %H:%M %Z"
-        )
-        return _render_sections(root)
+            "set approved.")
+        prompt.append_local_time()
+        return prompt.render()
 
     # --- reply audit ----------------------------------------------------------
 
