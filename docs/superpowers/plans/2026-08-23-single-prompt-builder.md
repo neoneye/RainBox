@@ -34,7 +34,7 @@ The property the whole change exists to create, written first so it can be seen 
 - Consumes: `fully_populated_agent` fixture and `common_prefix_len(a, b)`, both already in this file.
 - Produces: `all_turn_prompts(agent, messages) -> dict[str, str]`, mapping a call name to its rendered user prompt, and `TURN_MESSAGES: list[dict]`, a 21-message turn. Tasks 3 and 4 reuse `TURN_MESSAGES`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `agents/test_assistant_prompt_tiers.py`:
 
@@ -114,7 +114,7 @@ Add `AssistantActionName` and `AssistantStepDecision` to the existing
 `from agents.assistant import (...)` block at the top of the file, keeping
 the list alphabetically ordered.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py::test_every_assistant_call_shares_the_turn_prefix -q`
 
@@ -133,7 +133,7 @@ acceptance_criteria  x reply_audit            shared= 530
 
 `decide x recall_filter` is the one pair that already reaches `identity`: those two are the only calls sharing a history window today. It is the shape every other pair should end up with.
 
-- [ ] **Step 3: Commit the failing test**
+- [x] **Step 3: Commit the failing test**
 
 ```bash
 git add agents/test_assistant_prompt_tiers.py
@@ -158,7 +158,7 @@ Add the class. Nothing calls it yet, so this task ends green with the Task 1 tes
 - Consumes: `AssistantAgent._append_current_user_request`, `._append_prompt_message`, `._append_static_head`, `._append_turn_instructions`, `.MAX_RECENT_MESSAGES`, `._ALL_STATIC_BLOCKS`; module-level `_render_sections`.
 - Produces: `AssistantPromptBuilder(agent, container_tag, *, messages, blocks=AssistantAgent._ALL_STATIC_BLOCKS)` with methods `append_text(tag, text, **attrs) -> None`, `append_element(tag, **attrs) -> ET.Element`, `append_turn_instructions(instructions) -> None`, `append_local_time() -> None`, `render() -> str`, and attribute `current: dict | None`. Tasks 3-7 all consume this.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `agents/test_assistant_prompt_tiers.py`:
 
@@ -245,13 +245,13 @@ def test_prompt_builder_history_window_is_the_decide_window(
     assert "the request" in out.split("<conversation_history_xml>")[0]
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py -q -k prompt_builder`
 
 Expected: FAIL, five errors, each `ImportError: cannot import name 'AssistantPromptBuilder' from 'agents.assistant'`.
 
-- [ ] **Step 3: Add the class**
+- [x] **Step 3: Add the class**
 
 `AssistantAgent` runs to the end of `agents/assistant.py` — there is no module-level code after it — so this goes at the **end of the file**, at column 0, after `db.clear_assistant_call_checkpoint(self._run)`.
 
@@ -340,19 +340,19 @@ class AssistantPromptBuilder:
         return _render_sections(self._root)
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py -q -k prompt_builder`
 
 Expected: PASS, 5 passed.
 
-- [ ] **Step 5: Confirm nothing else moved**
+- [x] **Step 5: Confirm nothing else moved**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py -q`
 
 Expected: the five new builder tests pass, `test_every_assistant_call_shares_the_turn_prefix` still FAILS (no call uses the builder yet), everything else passes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add agents/assistant.py agents/test_assistant_prompt_tiers.py
@@ -375,7 +375,7 @@ The reference call: it takes every static block and its section order is already
 - Consumes: `AssistantPromptBuilder` from Task 2.
 - Produces: no signature changes. `_build_user_prompt(*, messages, scratchpad, step_index) -> str` and `_recall_filter_prefix(messages) -> str` keep their signatures.
 
-- [ ] **Step 1: Write the characterization test**
+- [x] **Step 1: Write the characterization test**
 
 The existing `DECIDE_EXPECTED` order test already covers this call, and it must stay green through the move. Add one test that pins the byte-level equivalence explicitly, in `agents/test_assistant_prompt_tiers.py`:
 
@@ -393,13 +393,13 @@ def test_recall_filter_prefix_is_a_prefix_of_the_decide_prompt(
     assert decide.startswith(agent._recall_filter_prefix(TURN_MESSAGES))
 ```
 
-- [ ] **Step 2: Run it to see it pass before the change**
+- [x] **Step 2: Run it to see it pass before the change**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py::test_recall_filter_prefix_is_a_prefix_of_the_decide_prompt -q`
 
 Expected: PASS. This one starts green on purpose — it is a characterization test, guarding a property the refactor must not break.
 
-- [ ] **Step 3: Rewrite `_recall_filter_prefix`**
+- [x] **Step 3: Rewrite `_recall_filter_prefix`**
 
 Replace its body (keep the docstring exactly as it is) so that everything from `root = ET.Element("recall_filter_call")` through `return _render_sections(root)` becomes:
 
@@ -409,7 +409,7 @@ Replace its body (keep the docstring exactly as it is) so that everything from `
             blocks=("identity",)).render()
 ```
 
-- [ ] **Step 4: Rewrite `_build_user_prompt`**
+- [x] **Step 4: Rewrite `_build_user_prompt`**
 
 Replace everything from `root = ET.Element("assistant_turn")` down to and including the `self._append_static_head(root)` call with:
 
@@ -475,19 +475,19 @@ about this call. Then convert the rest of the method body:
         return prompt.render()
 ```
 
-- [ ] **Step 5: Run the decide tests**
+- [x] **Step 5: Run the decide tests**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py -q`
 
 Expected: `test_decide_prompt_follows_tier_order`, `test_recall_filter_prompt_follows_tier_order`, `test_recall_filter_shares_the_decide_prompts_opening_bytes`, `test_recall_filter_prefix_is_a_prefix_of_the_decide_prompt` and the consecutive-steps prefix test all PASS. `test_every_assistant_call_shares_the_turn_prefix` still FAILS.
 
-- [ ] **Step 6: Run the wider assistant suite**
+- [x] **Step 6: Run the wider assistant suite**
 
 Run: `./venv/bin/python -m pytest agents/ -q -k assistant`
 
 Expected: no new failures relative to the baseline. Record the baseline first if you have not: `git stash && ./venv/bin/python -m pytest agents/ -q -k assistant | tail -3 && git stash pop`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add agents/assistant.py agents/test_assistant_prompt_tiers.py
@@ -508,7 +508,7 @@ First call whose history window actually changes: six messages become thirty.
 - Consumes: `AssistantPromptBuilder` from Task 2.
 - Produces: `_build_acceptance_criteria_prompt(messages, *, prior_criteria=None, scratchpad=None) -> str` — signature unchanged.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `agents/test_assistant_prompt_tiers.py`:
 
@@ -531,13 +531,13 @@ def test_criteria_prompt_shares_the_decide_prompts_history(
     assert history(criteria) == history(decide)
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py::test_criteria_prompt_shares_the_decide_prompts_history -q`
 
 Expected: FAIL on the final assertion — criteria's history holds 6 `<message>` elements against decide's 20.
 
-- [ ] **Step 3: Delete the constant**
+- [x] **Step 3: Delete the constant**
 
 Remove these three lines from `agents/assistant.py` (around 5687-5689):
 
@@ -548,7 +548,7 @@ Remove these three lines from `agents/assistant.py` (around 5687-5689):
     ACCEPTANCE_CRITERIA_MAX_MESSAGES: int = 6
 ```
 
-- [ ] **Step 4: Rewrite the builder body**
+- [x] **Step 4: Rewrite the builder body**
 
 In `_build_acceptance_criteria_prompt`, replace everything from
 `root = ET.Element("acceptance_criteria_call")` through
@@ -601,13 +601,13 @@ Update the method's docstring: it currently says "a short operator history
 tail". Change that phrase to "the turn's conversation history" — the tail is
 no longer short, and the docstring must describe what the code does now.
 
-- [ ] **Step 5: Run the criteria tests**
+- [x] **Step 5: Run the criteria tests**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py agents/test_assistant_acceptance_criteria.py -q`
 
 Expected: PASS, including `test_criteria_prompt_follows_tier_order` and the new history test. `test_every_assistant_call_shares_the_turn_prefix` still FAILS — audit, second_opinion and the classifier have not moved yet.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add agents/assistant.py agents/test_assistant_prompt_tiers.py
@@ -628,7 +628,7 @@ decide call of a turn start against a warm prefix instead of a cold one."
 - Consumes: `AssistantPromptBuilder` from Task 2.
 - Produces: `_build_reply_audit_prompt(message, *, messages, scratchpad) -> str` — signature unchanged.
 
-- [ ] **Step 1: Delete the constant**
+- [x] **Step 1: Delete the constant**
 
 Remove these five lines from `agents/assistant.py` (around 4864-4868). Leave `REPLY_AUDIT_MAX_OBSERVATION_CHARS` and its own comment, directly above, alone:
 
@@ -642,7 +642,7 @@ Remove these five lines from `agents/assistant.py` (around 4864-4868). Leave `RE
 
 That comment states a real concern, and deleting the constant does not answer it — the auditor now sees thirty messages. What answers it is `REPLY_AUDIT_TURN_INSTRUCTIONS`, which already tells the auditor the history is there to "resolve what the request refers to" and is "not evidence for what is true", and which `test_reply_audit_prompt_names_the_history_as_referent_only` pins. Do not weaken that instruction.
 
-- [ ] **Step 2: Rewrite the builder body**
+- [x] **Step 2: Rewrite the builder body**
 
 In `_build_reply_audit_prompt`, replace everything from
 `root = ET.Element("reply_audit")` through
@@ -689,13 +689,13 @@ Update the docstring: "A bounded slice of the conversation rides along" becomes
 subject check, the "who is her mom" example — stays exactly as written; it is
 still why the history is there.
 
-- [ ] **Step 3: Run the audit tests**
+- [x] **Step 3: Run the audit tests**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py agents/test_assistant_acceptance_criteria.py -q`
 
 Expected: PASS, including `test_reply_audit_prompt_follows_tier_order` and `test_reply_audit_sees_the_conversation_it_needs_to_resolve_a_referent`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add agents/assistant.py
@@ -716,7 +716,7 @@ This call gains conversation history, which it does not carry today.
 - Consumes: `AssistantPromptBuilder` from Task 2.
 - Produces: `_build_second_opinion_prompt(decision, *, reasoning, messages) -> str` — signature unchanged.
 
-- [ ] **Step 1: Update the expected section order**
+- [x] **Step 1: Update the expected section order**
 
 In `agents/test_assistant_prompt_tiers.py`, change `SECOND_OPINION_EXPECTED` to
 insert `conversation_history_xml` after the request, and add it to
@@ -738,13 +738,13 @@ SECOND_OPINION_ALWAYS = [
 ]
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py::test_second_opinion_prompt_follows_tier_order -q`
 
 Expected: FAIL on `set(SECOND_OPINION_ALWAYS) <= set(order)` — the prompt has no `conversation_history_xml` section.
 
-- [ ] **Step 3: Rewrite the builder body**
+- [x] **Step 3: Rewrite the builder body**
 
 In `_build_second_opinion_prompt`, replace everything from
 `root = ET.Element("second_opinion_review")` through
@@ -802,13 +802,13 @@ with:
         of the turn reuses.
 ```
 
-- [ ] **Step 4: Run the second-opinion tests**
+- [x] **Step 4: Run the second-opinion tests**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py agents/test_assistant_second_opinion.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add agents/assistant.py agents/test_assistant_prompt_tiers.py
@@ -832,7 +832,7 @@ This call gains `user_settings_json`. It runs first in the turn, so it is the ca
 - Consumes: `AssistantPromptBuilder` from Task 2.
 - Produces: `_build_response_language_classifier_prompt(messages, profile) -> str` — signature unchanged.
 
-- [ ] **Step 1: Update the expected section order**
+- [x] **Step 1: Update the expected section order**
 
 In `agents/test_assistant_prompt_tiers.py`, replace `CLASSIFIER_EXPECTED` and
 `CLASSIFIER_ALWAYS`, including the comment above them:
@@ -856,13 +856,13 @@ CLASSIFIER_ALWAYS = [
 ]
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py::test_response_language_classifier_prompt_follows_tier_order -q`
 
 Expected: FAIL — `user_settings_json` is absent from the rendered order.
 
-- [ ] **Step 3: Delete the constant**
+- [x] **Step 3: Delete the constant**
 
 Remove from `agents/assistant.py` (around line 3347):
 
@@ -870,7 +870,7 @@ Remove from `agents/assistant.py` (around line 3347):
     RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES: int = 6
 ```
 
-- [ ] **Step 4: Rewrite the builder body**
+- [x] **Step 4: Rewrite the builder body**
 
 In `_build_response_language_classifier_prompt`, replace everything from
 `root = ET.Element("response_language_classifier_call")` through the
@@ -921,19 +921,19 @@ is taken, with:
 Also delete the stray double blank line left inside this method after the
 `append_turn_instructions` call.
 
-- [ ] **Step 5: Run the classifier tests**
+- [x] **Step 5: Run the classifier tests**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py agents/test_response_language_classifier.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Run the Task 1 contract test — it should now go green**
+- [x] **Step 6: Run the Task 1 contract test — it should now go green**
 
 Run: `./venv/bin/python -m pytest agents/test_assistant_prompt_tiers.py::test_every_assistant_call_shares_the_turn_prefix -q`
 
 Expected: PASS. Every call now renders the same tier 0 and carries `identity`. If it still fails, the failure message names the offending pair — go back to that call's task rather than weakening the assertion.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add agents/assistant.py agents/test_assistant_prompt_tiers.py
@@ -954,7 +954,7 @@ The tier-test module's docstring records measured numbers from the previous refa
 - Modify: `agents/test_assistant_prompt_tiers.py` (module docstring)
 - Modify: `agents/assistant.py` (the `_ALL_STATIC_BLOCKS` comment, if it still claims cross-call sharing is limited to the blocks two calls have in common)
 
-- [ ] **Step 1: Rewrite the module docstring's second paragraph**
+- [x] **Step 1: Rewrite the module docstring's second paragraph**
 
 Replace the paragraph beginning "Two wins, measured." with:
 
@@ -970,25 +970,25 @@ audit then second_opinion then decide), extending the overlap further for the
 calls that have more blocks in common.
 ```
 
-- [ ] **Step 2: Run the whole assistant suite**
+- [x] **Step 2: Run the whole assistant suite**
 
 Run: `./venv/bin/python -m pytest agents/ -q`
 
 Expected: no failures introduced by this branch. Compare against the baseline recorded in Task 3 Step 6 — this repo has pre-existing failures unrelated to this work, and those stay as they were.
 
-- [ ] **Step 3: Run the webapp and db suites that touch prompts**
+- [x] **Step 3: Run the webapp and db suites that touch prompts**
 
 Run: `./venv/bin/python -m pytest webapp/ db/ -q`
 
 Expected: unchanged from baseline.
 
-- [ ] **Step 4: Verify no dead constants remain**
+- [x] **Step 4: Verify no dead constants remain**
 
 Run: `grep -rn "ACCEPTANCE_CRITERIA_MAX_MESSAGES\|REPLY_AUDIT_MAX_MESSAGES\|RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES" agents/ webapp/ evals/`
 
 Expected: no output.
 
-- [ ] **Step 5: Verify every call goes through the builder**
+- [x] **Step 5: Verify every call goes through the builder**
 
 Run: `grep -n "ET.Element(" agents/assistant.py`
 
@@ -998,7 +998,7 @@ Expected: exactly two hits at module/class level for prompt roots —
 deliberately outside the builder. Any other `ET.Element(` creating a prompt
 root is a call that did not get moved.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add agents/assistant.py agents/test_assistant_prompt_tiers.py
