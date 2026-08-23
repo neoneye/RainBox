@@ -3344,7 +3344,6 @@ class AssistantAgent(ModelGroupAgent):
     REPLY_AUDIT_ACTION: str = "reply_audit"
     RECALL_FILTER_ACTION: str = "recall_filter"
     RESPONSE_LANGUAGE_CLASSIFIER_ACTION: str = "response_language_classifier"
-    RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES: int = 6
 
     # No /agentmodel row of its own: this agent's models come from the
     # `assistant.*` slots (agents/config.py), one per call it makes, each
@@ -4512,18 +4511,9 @@ class AssistantAgent(ModelGroupAgent):
         group. The memory_filter / query_filter_router bindings resolve first
         (see _filter_recalled_candidates), and a different model is a different
         cache no matter how the prompt is shaped."""
-        root = ET.Element("recall_filter_call")
-        self._append_current_user_request(
-            root, messages[-1] if messages else None)
-        context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for message in context:
-                self._append_prompt_message(history, message)
-        else:
-            ET.SubElement(history, "none")
-        self._append_static_head(root, blocks=("identity",))
-        return _render_sections(root)
+        return AssistantPromptBuilder(
+            self, "recall_filter_call", messages=messages,
+            blocks=("identity",)).render()
 
     def _build_user_prompt(
         self,
@@ -4532,58 +4522,26 @@ class AssistantAgent(ModelGroupAgent):
         scratchpad: list[AssistantTurnEvent],
         step_index: int,
     ) -> str:
-        root = ET.Element("assistant_turn")
-        current = messages[-1] if messages else None
-        context = messages[:-1][-self.MAX_RECENT_MESSAGES:] if messages else []
-
-        # Tier 0 of the user prompt: the request. It changes every turn, but
-        # within a turn it is byte-identical across every call and every step,
-        # and it is unbounded up to CURRENT_REQUEST_MAX_CHARS — a pasted
-        # document makes it the largest invariant a turn has. It leads because
-        # the calls carry different-length static heads: anything placed after
-        # those heads sits at a different offset in each prompt and can never
-        # be shared between them. The closing decision_request re-quotes it, so
-        # the model still reads the question last (see _request_anchor).
-        self._append_current_user_request(root, current)
-
-        # Every message of the recent window, the assistant's replies included,
-        # for the whole turn. A bare tag: the `_xml` suffix states the format,
-        # the source-priority block ranks the section, and turn_instructions
-        # says old assistant answers are never authoritative evidence — so an
-        # `authority` attribute would only repeat what the prompt already says.
-        #
-        # The section is constant for the turn, which is why it can sit this
-        # high: it renders identically on every step, so everything from the
-        # request through the end of this block is a prefix the backend reuses
-        # across the whole decide loop. Filtering the assistant's messages out
-        # partway through the turn would move that boundary to here.
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for message in context:
-                self._append_prompt_message(history, message)
-        else:
-            ET.SubElement(history, "none")
-
-        # Tier 1: static head.
-        self._append_static_head(root)
+        # Tiers 0 and 1 — the request, the history, the full static head.
+        prompt = AssistantPromptBuilder(
+            self, "assistant_turn", messages=messages)
+        current = prompt.current
 
         # Tier 2: what this call is for.
-        self._append_turn_instructions(root, self._decide_turn_instructions())
+        prompt.append_turn_instructions(self._decide_turn_instructions())
 
         # Tier 3: dynamic tail, least volatile first. active_skills is
         # retrieved per request, so it is dynamic despite reading as static.
         if self._skill_block:
-            ET.SubElement(
-                root, "active_skills", {"authority": "instructions"}
-            ).text = self._skill_block
+            prompt.append_text(
+                "active_skills", self._skill_block, authority="instructions")
 
         # The classifier's score-free Markdown follows the history into every
         # reasoning step. It is model-derived context, while turn_instructions
         # owns the instruction explaining how its ranked list is interpreted.
         if self._reply_language_markdown:
-            ET.SubElement(
-                root, "reply_language_markdown"
-            ).text = self._reply_language_markdown
+            prompt.append_text(
+                "reply_language_markdown", self._reply_language_markdown)
 
         # Only the LATEST criteria render — a revision replaces this section,
         # never appends (the trace keeps the history). A bare suffixed tag:
@@ -4592,15 +4550,13 @@ class AssistantAgent(ModelGroupAgent):
         # authority lives in the code-owned sentence in turn_instructions
         # rather than in an attribute here.
         if self._criteria_markdown:
-            ET.SubElement(
-                root, "acceptance_criteria_markdown"
-            ).text = self._criteria_markdown
+            prompt.append_text(
+                "acceptance_criteria_markdown", self._criteria_markdown)
 
         # Ahead of the request because it grows append-only within a turn:
         # step N+1 shares its whole prefix through step N's entry.
-        turn_steps = ET.SubElement(
-            root, "current_turn_steps", {"authority": "fresh_evidence"}
-        )
+        turn_steps = prompt.append_element(
+            "current_turn_steps", authority="fresh_evidence")
         kept, omitted = self._bounded_turn_events(scratchpad)
         if omitted:
             ET.SubElement(turn_steps, "omitted", {"count": str(omitted)})
@@ -4610,29 +4566,16 @@ class AssistantAgent(ModelGroupAgent):
         else:
             ET.SubElement(turn_steps, "none")
 
-        decision_request = ET.SubElement(
-            root,
+        prompt.append_text(
             "decision_request",
-            {"step": str(step_index + 1), "max_steps": str(self.step_limit)},
-        )
-        decision_request.text = (
             f"{self._request_anchor(current)} "
             "Choose exactly one next action. If current_turn_steps already "
             "answer that request, choose reply now. Never repeat "
-            "an identical successful or failed action."
-        )
+            "an identical successful or failed action.",
+            step=str(step_index + 1), max_steps=str(self.step_limit))
 
-        # The operator's clock — the model's only other time anchor is the
-        # conversation's (UTC) message timestamps, which made relative
-        # reminders ("in 10 minutes") resolve in UTC. Stating local time
-        # explicitly is what lets set_reminder land in the operator's zone.
-        # Last, because it changes every minute, and anywhere else it would
-        # invalidate the cached prefix of every section after it.
-        now_local = datetime.now().astimezone()
-        ET.SubElement(root, "current_local_time").text = now_local.strftime(
-            "%Y-%m-%d %H:%M %Z"
-        )
-        return _render_sections(root)
+        prompt.append_local_time()
+        return prompt.render()
 
     # The reviewer reads bounded excerpts: a runaway reasoning trace or program
     # must not blow the critic's context. Tail-truncation would drop the code's
@@ -4807,33 +4750,29 @@ class AssistantAgent(ModelGroupAgent):
         the local time. Same tier convention as the main prompt: static head,
         then turn_instructions, then the dynamic tail ending with the request
         and the clock. Built with ElementTree for the same escaping
-        guarantee; leaf sections only, no conversation history (the current
-        request is the contract the program is judged against)."""
-        root = ET.Element("second_opinion_review")
-        current = messages[-1] if messages else None
+        guarantee.
 
-        # Leads for the same reason as the decide prompt: it is the turn's
-        # largest cross-call invariant, and only position 0 shares it between
-        # calls whose static heads differ in length. verdict_request
-        # re-anchors it below.
-        self._append_current_user_request(root, current)
-        self._append_static_head(
-            root, blocks=("identity", "formatting", "profile"))
-        self._append_turn_instructions(root, SECOND_OPINION_TURN_INSTRUCTIONS)
+        The turn's conversation history rides along as reference, the same as
+        the other calls carry it. What is AUTHORITATIVE here is the request
+        and the criteria, which turn_instructions states; carrying no history
+        would only cost this call the shared prefix every other call of the
+        turn reuses."""
+        # Tiers 0 and 1. verdict_request re-anchors the request below.
+        prompt = AssistantPromptBuilder(
+            self, "second_opinion_review", messages=messages,
+            blocks=("identity", "formatting", "profile"))
+        prompt.append_turn_instructions(SECOND_OPINION_TURN_INSTRUCTIONS)
 
         if self._reply_language_markdown:
-            ET.SubElement(
-                root, "reply_language_markdown"
-            ).text = self._reply_language_markdown
+            prompt.append_text(
+                "reply_language_markdown", self._reply_language_markdown)
         # The criteria are part of what "serves the request" means: a program
         # converting to yards should fail review when the criteria say meters.
         if self._criteria_markdown:
-            ET.SubElement(
-                root, "acceptance_criteria_markdown"
-            ).text = self._criteria_markdown
-        proposed = ET.SubElement(
-            root, "proposed_step", {"action": decision.action.value}
-        )
+            prompt.append_text(
+                "acceptance_criteria_markdown", self._criteria_markdown)
+        proposed = prompt.append_element(
+            "proposed_step", action=decision.action.value)
         ET.SubElement(proposed, "stated_reason").text = decision.reason
         if reasoning:
             ET.SubElement(proposed, "model_reasoning").text = reasoning[
@@ -4843,16 +4782,13 @@ class AssistantAgent(ModelGroupAgent):
         ET.SubElement(proposed, "python_program").text = code[
             : self.SECOND_OPINION_MAX_CODE_CHARS
         ]
-        ET.SubElement(root, "verdict_request").text = (
+        prompt.append_text(
+            "verdict_request",
             "Review the proposed_step against the current_user_request and "
             "the user context above. List real problems (or none), then "
-            "set approved."
-        )
-        now_local = datetime.now().astimezone()
-        ET.SubElement(root, "current_local_time").text = now_local.strftime(
-            "%Y-%m-%d %H:%M %Z"
-        )
-        return _render_sections(root)
+            "set approved.")
+        prompt.append_local_time()
+        return prompt.render()
 
     # --- reply audit ----------------------------------------------------------
 
@@ -4860,12 +4796,6 @@ class AssistantAgent(ModelGroupAgent):
     # figure against what a step actually returned, bounded so a large read
     # cannot crowd out the message itself.
     REPLY_AUDIT_MAX_OBSERVATION_CHARS: int = 2_000
-
-    # Enough prior turns to resolve who a follow-up is about, and no more: the
-    # auditor checks the message, and a long transcript both dilutes that and
-    # invites checking the reply against remembered facts read off the
-    # history instead of against the turn's observations.
-    REPLY_AUDIT_MAX_MESSAGES: int = 6
 
     def _build_reply_audit_prompt(
         self,
@@ -4885,47 +4815,38 @@ class AssistantAgent(ModelGroupAgent):
         rebuild, in the auditor's context, the bias that made a self-audit
         weak.
 
-        A bounded slice of the conversation rides along for one purpose: the
+        The turn's conversation history rides along for one purpose: the
         subject check. A request like "who is her mom" has no subject on its
         own, and an auditor without the prior turns cannot tell a reply about
         the right person from one about the wrong person — it said as much,
         "the context is unclear without prior turns", and passed a reply that
-        had lost a generation. It leads the dynamic tail, ahead of the
-        proposed reply and the request it disambiguates, and the system
-        prompt scopes it to reference rather than evidence.
+        had lost a generation. It sits at tier 0, ahead of the proposed reply
+        and the request it disambiguates, and turn_instructions scopes it to
+        reference rather than evidence: the auditor checks the message against
+        turn_observations, never against facts read off the transcript.
 
         Same tier convention as the other builders: static head, then
-        turn_instructions, then the dynamic tail ending with the request and
-        the clock. Same ElementTree escaping guarantee too.
+        turn_instructions, then the dynamic tail ending with the message under
+        audit and the clock. Unlike the others this prompt has no closing
+        re-anchor of the request: proposed_reply at the tail is what the
+        auditor reads last, and check 1 of its instructions sends it back to
+        the request. Same ElementTree escaping guarantee too.
         """
-        root = ET.Element("reply_audit")
-        current = messages[-1] if messages else None
-        # Leads for the same reason as the decide prompt. Unlike the others
-        # this prompt has no closing re-anchor: proposed_reply at the tail is
-        # what the auditor reads last, and check 1 of its instructions sends it
-        # back to the request.
-        self._append_current_user_request(root, current)
-        context = (messages[:-1] if messages else [])[
-            -self.REPLY_AUDIT_MAX_MESSAGES:]
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for entry in context:
-                self._append_prompt_message(history, entry)
-        else:
-            ET.SubElement(history, "none")
-        self._append_static_head(root, blocks=("identity", "formatting"))
-        self._append_turn_instructions(root, REPLY_AUDIT_TURN_INSTRUCTIONS)
+        # Tiers 0 and 1.
+        prompt = AssistantPromptBuilder(
+            self, "reply_audit", messages=messages,
+            blocks=("identity", "formatting"))
+        prompt.append_turn_instructions(REPLY_AUDIT_TURN_INSTRUCTIONS)
         if self._criteria_markdown:
-            criteria = ET.SubElement(root, "acceptance_criteria_markdown")
-            criteria.text = self._criteria_markdown
+            prompt.append_text(
+                "acceptance_criteria_markdown", self._criteria_markdown)
         if self._reply_language_markdown:
-            language = ET.SubElement(
-                root, "reply_language_markdown")
-            language.text = self._reply_language_markdown
+            prompt.append_text(
+                "reply_language_markdown", self._reply_language_markdown)
         steps = [e for e in scratchpad if isinstance(e, AssistantTurnStep)]
         if steps:
-            observations = ET.SubElement(
-                root, "turn_observations", {"authority": "fresh_evidence"})
+            observations = prompt.append_element(
+                "turn_observations", authority="fresh_evidence")
             for step in steps:
                 # action + args + result. No `reason`: see the docstring.
                 entry = ET.SubElement(
@@ -4935,12 +4856,9 @@ class AssistantAgent(ModelGroupAgent):
                     : self.REPLY_AUDIT_MAX_OBSERVATION_CHARS]
         # The message under audit closes the prompt — the last thing the
         # auditor reads is the thing it is judging.
-        proposed = ET.SubElement(root, "proposed_reply")
-        proposed.text = message
-        now_local = datetime.now().astimezone()
-        ET.SubElement(root, "current_local_time").text = now_local.strftime(
-            "%Y-%m-%d %H:%M %Z")
-        return _render_sections(root)
+        prompt.append_text("proposed_reply", message)
+        prompt.append_local_time()
+        return prompt.render()
 
     def _reply_audit(
         self,
@@ -5116,42 +5034,35 @@ class AssistantAgent(ModelGroupAgent):
         messages: list[dict[str, Any]],
         profile: dict[str, Any] | None,
     ) -> str:
-        """Build the narrow classifier request with assistant history omitted.
+        """Build the narrow classifier request.
 
-        No static head from _append_static_head: user_settings_languages_json
-        is this call's own tier-1 block, built here from the profile rather
-        than from the shared identity/persona/formatting blocks, so it leads
-        the prompt in that role instead."""
-        root = ET.Element("response_language_classifier_call")
-        # Leads for the same reason as the decide prompt; the
-        # classification_request below re-anchors it.
-        current = messages[-1] if messages else None
-        self._append_current_user_request(root, current)
+        Takes the shared `identity` block and then its own tier-1
+        user_settings_languages_json, built here from the profile. This call
+        runs first in the turn, so it is the one that warms the prefix the
+        other five reuse — and it can only warm the blocks it carries.
 
-        # Both roles: an earlier assistant reply is the only record of what
-        # language the conversation has actually been running in, and dropping
-        # it hid that from the one call whose job is to decide the language.
-        # The prompt carries the anti-perpetuation rule instead — a wrong-
-        # language reply loses to the current request rather than being
-        # withheld from the classifier.
-        context = (messages[:-1] if messages else [])[
-            -self.RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES:]
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for message in context:
-                self._append_prompt_message(history, message)
-        else:
-            ET.SubElement(history, "none")
+        The history is here in both roles: an earlier assistant reply is the
+        only record of what language the conversation has actually been
+        running in, and dropping it hid that from the one call whose job is to
+        decide the language. The prompt carries the anti-perpetuation rule
+        instead — a wrong-language reply loses to the current request rather
+        than being withheld from the classifier."""
+        # Tiers 0 and 1 (identity only). classification_request below
+        # re-anchors the request.
+        prompt = AssistantPromptBuilder(
+            self, "response_language_classifier_call", messages=messages,
+            blocks=("identity",))
 
-        rows = ET.SubElement(root, "user_settings_languages_json")
-        candidates = user_profile.declared_language_candidates(profile)
-        rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
+        prompt.append_text(
+            "user_settings_languages_json",
+            json.dumps(
+                user_profile.declared_language_candidates(profile),
+                ensure_ascii=False, indent=1))
 
-        self._append_turn_instructions(root, RESPONSE_LANGUAGE_TURN_INSTRUCTIONS)
+        prompt.append_turn_instructions(RESPONSE_LANGUAGE_TURN_INSTRUCTIONS)
 
-
-        ask = ET.SubElement(root, "classification_request")
-        ask.text = (
+        prompt.append_text(
+            "classification_request",
             "Predict the language or languages the next reply should use. "
             "First copy every declared profile-language code exactly into the "
             "result and score it, even when its score is negative. A broad "
@@ -5160,10 +5071,9 @@ class AssistantAgent(ModelGroupAgent):
             "exact code with a broad tag. Then add any language or dialect "
             "required by current_user_request that is absent from the "
             "declared rows. If there are no declared rows, include the "
-            "candidates supported by the request."
-        )
+            "candidates supported by the request.")
 
-        return _render_sections(root)
+        return prompt.render()
 
     def _request_response_language_classification(
         self, *, system_prompt: str, user_prompt: str
@@ -5683,11 +5593,6 @@ class AssistantAgent(ModelGroupAgent):
 
     # --- acceptance criteria --------------------------------------------------
 
-    # How many prior conversation messages the criteria call sees: constraint
-    # planning can need operator context but not the decide loop's full
-    # MAX_RECENT_MESSAGES window.
-    ACCEPTANCE_CRITERIA_MAX_MESSAGES: int = 6
-
     @staticmethod
     def _acceptance_criteria_system_prompt() -> str:
         """The shared system prompt every call sends; the criteria call's job
@@ -5702,52 +5607,43 @@ class AssistantAgent(ModelGroupAgent):
         scratchpad: list[AssistantTurnEvent] | None = None,
     ) -> str:
         """The criteria call's user prompt: who is asking (identity) and the
-        formatting guide, then the request, a short operator history tail,
+        formatting guide, then the request, the turn's conversation history,
         and — for a revision — the prior criteria and the run's steps so
         far, without which the call would reproduce the same criteria
         deterministically and the revision would be a no-op. NOT the action
         catalog: this call plans constraints, not actions. Same ElementTree
-        escaping guarantee as the other prompt builders."""
-        root = ET.Element("acceptance_criteria_call")
-        current = messages[-1] if messages else None
+        escaping guarantee as the other prompt builders.
 
-        # Tier 1 (identity only) and tier 2. The formatting guide is tier 1
-        # too, but NOT the shared _formatting_block — it is this call's own
+        The history is here in both roles. The operator's requests and
+        preferences are the authoritative context, but how the assistant has
+        been formatting and phrasing its replies is exactly the continuity
+        these criteria are meant to establish, and the system prompt already
+        declares everything here data rather than instruction."""
+        # Tiers 0 and 1 (identity only).
+        prompt = AssistantPromptBuilder(
+            self, "acceptance_criteria_call", messages=messages,
+            blocks=("identity",))
+        current = prompt.current
+
+        # The formatting guide is tier 1 too, but NOT the shared
+        # _formatting_block — it is this call's own
         # _criteria_formatting_guide(), read from the criteria snapshot
         # profile regardless of the separate assistant.formatting_guide
         # switch (see that method's docstring), so it stays a bespoke append
         # rather than going through _append_static_head's generic
         # "formatting" block.
-        # Leads for the same reason as the decide prompt; criteria_request
-        # below re-anchors it.
-        self._append_current_user_request(root, current)
-        # Both roles. The operator's requests and preferences are the
-        # authoritative context, but how the assistant has been formatting and
-        # phrasing its replies is exactly the continuity these criteria are
-        # meant to establish, and the system prompt already declares everything
-        # here data rather than instruction.
-        context = (messages[:-1] if messages else [])[
-            -self.ACCEPTANCE_CRITERIA_MAX_MESSAGES:]
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for message in context:
-                self._append_prompt_message(history, message)
-        else:
-            ET.SubElement(history, "none")
-        self._append_static_head(root, blocks=("identity",))
         guide = self._criteria_formatting_guide()
         if guide:
-            formatting = ET.SubElement(root, "formatting_guide")
-            formatting.text = guide
-        self._append_turn_instructions(
-            root, ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
+            prompt.append_text("formatting_guide", guide)
+        prompt.append_turn_instructions(ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
         revising = prior_criteria is not None
         if revising:
-            prior = ET.SubElement(root, "prior_acceptance_criteria",
-                                  {"format": "markdown"})
-            prior.text = self._format_criteria_markdown(prior_criteria)
-            steps = ET.SubElement(root, "current_turn_steps",
-                                  {"authority": "fresh_evidence"})
+            prompt.append_text(
+                "prior_acceptance_criteria",
+                self._format_criteria_markdown(prior_criteria),
+                format="markdown")
+            steps = prompt.append_element(
+                "current_turn_steps", authority="fresh_evidence")
             kept, omitted = self._bounded_turn_events(scratchpad or [])
             if omitted:
                 ET.SubElement(steps, "omitted", {"count": str(omitted)})
@@ -5756,17 +5652,16 @@ class AssistantAgent(ModelGroupAgent):
                     self._append_turn_event(steps, event)
             else:
                 ET.SubElement(steps, "none")
-        ask = ET.SubElement(root, "criteria_request")
-        ask.text = (
+        prompt.append_text(
+            "criteria_request",
             "Revise the acceptance criteria: compare the prior criteria "
             "with the steps so far — what changed, and which criteria does "
             "it invalidate? Emit the full revised criteria; keep everything "
             "the change does not touch."
             if revising else
             f"{self._request_anchor(current)} Establish the acceptance "
-            "criteria the reply to that request must satisfy."
-        )
-        return _render_sections(root)
+            "criteria the reply to that request must satisfy.")
+        return prompt.render()
 
     def _criteria_formatting_guide(self) -> str:
         """The formatting guide as a criteria-call INPUT, rendered from the
@@ -6051,10 +5946,18 @@ class AssistantAgent(ModelGroupAgent):
 
     # Tier 1. Fixed order, and ordered so the per-call block SETS nest:
     #
-    #   criteria {identity}
+    #   classifier / criteria / recall_filter {identity}
     #     ⊂ audit {identity, formatting}
     #       ⊂ second_opinion {identity, formatting, profile}
     #         ⊂ decide {identity, formatting, profile, persona, calibration}
+    #
+    # Every call takes `identity`, so it is the last block the whole turn has
+    # in common — and with tier 0 identical across the calls (see
+    # AssistantPromptBuilder), the run from the request through
+    # user_settings_json is shared by all six. The classifier and criteria
+    # calls each append a bespoke tier-1 block of their own after it
+    # (user_settings_languages_json, a criteria-snapshot formatting_guide),
+    # which is where those two leave the chain.
     #
     # Nesting is what makes the head a shared *prefix* between two different
     # calls rather than just a shared set. A block one call omits truncates
@@ -6785,3 +6688,110 @@ class AssistantAgent(ModelGroupAgent):
                 duration_ms=(usage or {}).get("ms"),
             )
             db.clear_assistant_call_checkpoint(self._run)
+
+
+class AssistantPromptBuilder:
+    """Every assistant call's user prompt, assembled in one place.
+
+    Tier 0 (the request and the conversation history) and tier 1 (the static
+    head) are emitted on construction; the caller appends its own tier-1
+    extras, its turn_instructions and its tier-3 tail, then renders.
+
+    Tier 0 being emitted by __init__ rather than by an append_ method is the
+    point of the class. A prefix cache reuses a matched run counting from
+    token 0, and conversation_history_xml sits second in the prompt, so two
+    calls slicing history differently share nothing past their first
+    <message>. The window lives here and nowhere else, which is what makes
+    tier 0 byte-identical across the calls.
+
+    The builder owns the ORDER; the agent keeps owning its BLOCKS. The
+    _append_* helpers stay on AssistantAgent because each reads agent state —
+    the five _*_block attributes, the long-request summary — and this class
+    calls them rather than reaching into those attributes itself.
+    """
+
+    def __init__(
+        self,
+        agent: "AssistantAgent",
+        container_tag: str,
+        *,
+        messages: list[dict[str, Any]],
+        blocks: tuple[str, ...] = AssistantAgent._ALL_STATIC_BLOCKS,
+    ) -> None:
+        """`container_tag` names the tree for a reader and never reaches the
+        model: _render_sections serializes the root's children as top-level
+        siblings, so the root itself is a container, not output.
+
+        `blocks` selects this call's tier-1 head. Keep the per-call sets
+        nested (see _ALL_STATIC_BLOCKS): a call taking a block another call
+        skips ends the shared prefix there.
+        """
+        self._agent = agent
+        self._root = ET.Element(container_tag)
+        # The turn's request, kept as an attribute because several callers
+        # need it again for their closing re-anchor.
+        self.current: dict[str, Any] | None = messages[-1] if messages else None
+
+        # Tier 0. The request changes every turn, but within a turn it is
+        # byte-identical across every call and every step, and it is unbounded
+        # up to CURRENT_REQUEST_MAX_CHARS — a pasted document makes it the
+        # largest invariant a turn has. It leads because the calls carry
+        # different-length static heads: anything placed after those heads
+        # sits at a different offset in each prompt and can never be shared
+        # between them. The callers that re-quote it at the tail
+        # (decision_request, criteria_request) are what keeps the model
+        # reading the question last.
+        agent._append_current_user_request(self._root, self.current)
+
+        # Every message of the recent window, the assistant's replies
+        # included, for the whole turn. A bare tag: the `_xml` suffix states
+        # the format, the source-priority block ranks the section, and
+        # turn_instructions says old assistant answers are never authoritative
+        # evidence — so an `authority` attribute would only repeat what the
+        # prompt already says.
+        #
+        # The section is constant for the turn, which is why it can sit this
+        # high: it renders identically on every step and every call, so
+        # everything from the request through the end of this block is a
+        # prefix the backend reuses across the whole turn. Filtering the
+        # assistant's messages out partway through would move that boundary
+        # to here.
+        context = messages[:-1][-agent.MAX_RECENT_MESSAGES:] if messages else []
+        history = ET.SubElement(self._root, "conversation_history_xml")
+        if context:
+            for message in context:
+                agent._append_prompt_message(history, message)
+        else:
+            ET.SubElement(history, "none")
+
+        # Tier 1. Within a turn nothing here changes, so it sits ahead of
+        # everything that does.
+        agent._append_static_head(self._root, blocks=blocks)
+
+    def append_text(self, tag: str, text: str, **attrs: str) -> None:
+        """A leaf section. Goes through ET.SubElement, so `text` cannot close
+        or forge a section tag however hostile it is."""
+        ET.SubElement(self._root, tag, attrs).text = text
+
+    def append_element(self, tag: str, **attrs: str) -> ET.Element:
+        """An empty section, returned so the caller can nest children into it.
+        For the three tails that carry trees rather than text:
+        proposed_step, current_turn_steps and turn_observations."""
+        return ET.SubElement(self._root, tag, attrs)
+
+    def append_turn_instructions(self, instructions: str) -> None:
+        """Tier 2: this call's job description, from module constants only."""
+        self._agent._append_turn_instructions(self._root, instructions)
+
+    def append_local_time(self) -> None:
+        """The operator's clock, which the model needs because the only other
+        time anchor is the conversation's UTC timestamps — relative reminders
+        ("in 10 minutes") resolved in UTC without it. Last in any prompt that
+        carries it: it changes every minute, so anywhere else it would
+        invalidate the cached prefix of every section after it."""
+        now_local = datetime.now().astimezone()
+        self.append_text(
+            "current_local_time", now_local.strftime("%Y-%m-%d %H:%M %Z"))
+
+    def render(self) -> str:
+        return _render_sections(self._root)
