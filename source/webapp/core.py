@@ -38,6 +38,7 @@ from db import (
     CronJob,
     CronRun,
     EvalCase,
+    BenchmarkResult,
     EvalResult,
     EvalRun,
     FeedbackEvent,
@@ -843,6 +844,29 @@ class EvalResultView(ModelView):
 
 admin.add_view(EvalRunView(EvalRun, db, category="Feedback"))
 admin.add_view(EvalResultView(EvalResult, db, category="Feedback"))
+
+
+class BenchmarkResultView(ModelView):
+    """Stored benchmark cell results, behind the three /benchmark_* pages.
+
+    Read-only: rows are written by BenchmarkRunner and pruned to their per-cell
+    retention on every write, so an edit here would be silently discarded the
+    next time that cell runs. Newest first, which is the order the pages read
+    them in.
+    """
+
+    column_list = (
+        "ended_at", "spec_set", "benchmark_name", "model_name", "target_label",
+        "completed", "status", "trials_done", "trials_total",
+        "correct", "mistakes", "failures", "total_elapsed",
+    )
+    column_default_sort = ("ended_at", True)
+    column_filters = ("spec_set", "benchmark_name", "completed", "status")
+    can_create = False
+    can_edit = False
+
+
+admin.add_view(BenchmarkResultView(BenchmarkResult, db, category="Feedback"))
 
 
 # Cron tables backing the /cron page (folder tree + jobs, + the future run log).

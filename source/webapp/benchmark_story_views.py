@@ -11,6 +11,8 @@ import json
 
 from flask import Response, abort, request
 
+import db
+
 from benchmarks.runner import STORY_BENCHMARK_SPECS
 
 from .benchmark_views import render_benchmark_page
@@ -57,6 +59,7 @@ def benchmark_story_page() -> str:
         "Benchmark story", STORY_INTRO,
         STORY_BENCHMARK_SPECS, STORY_BENCHMARK_DESCRIPTIONS,
         "benchmark_story_state", "benchmark_story_start", "benchmark_story_stop",
+        history_endpoint="benchmark_story_history",
         show_artifacts=True,
         artifact_endpoint="benchmark_story_artifact",
         show_warmup_toggle=True,
@@ -102,6 +105,16 @@ def benchmark_story_state() -> Response:
     story_benchmark_runner.ensure_targets_populated()
     return app.response_class(
         json.dumps(story_benchmark_runner.get_state()),
+        mimetype="application/json",
+    )
+
+
+@app.route("/benchmark_story/history")
+def benchmark_story_history() -> Response:
+    """Stored per-cell results for this suite; kept off the once-a-second
+    /state poll (see benchmark_basic_history)."""
+    return app.response_class(
+        json.dumps(db.benchmark_history("story")),
         mimetype="application/json",
     )
 

@@ -2,6 +2,8 @@ import json
 
 from flask import Response, abort, render_template_string, request
 
+import db
+
 from benchmarks.runner import BENCHMARK_SPECS
 
 from .core import app, benchmark_runner
@@ -45,6 +47,20 @@ BENCHMARK_TEMPLATE: str = """
         background:#fff;color:#475569}
   button.cell-start:hover:enabled{border-color:#9aa3af;color:#1a1a2e}
   button.cell-start:disabled{opacity:0.35;cursor:default}
+  td.bench .historic{color:#64748b;font-style:italic}
+  td.bench .historic-mark{font-style:normal;opacity:0.7;margin-right:0.25em}
+  .cell-history{display:none;position:absolute;z-index:20;left:0;top:100%;
+        min-width:22em;padding:0.5em 0.6em;border:1px solid #cbd5e1;
+        border-radius:5px;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,0.14);
+        font-style:normal;color:#1a1a2e;text-align:left;white-space:nowrap}
+  td.bench:hover .cell-history{display:block}
+  .cell-history h4{margin:0 0 0.35em;font-size:90%;color:#475569;font-weight:600}
+  .cell-history .hrow{display:flex;gap:0.8em;justify-content:space-between}
+  .cell-history .hwhen{color:#475569}
+  .cell-history .hsep{margin:0.4em 0 0.25em;padding-top:0.3em;
+        border-top:1px solid #e2e8f0;color:#94a3b8;font-size:85%}
+  .cell-history .hwarn{margin-top:0.4em;color:#b45309;font-size:85%;
+        white-space:normal}
   progress{width:100%;height:12px}
   .ok{color:#080}
   .err{color:#a00}
@@ -115,6 +131,78 @@ BENCHMARK_TEMPLATE: str = """
 
 <script>
 const benchmarkNames = {{ benchmark_names_json|safe }};
+
+// Stored results, {benchmark_name: {target_uuid: {complete:[], partial:[]}}}.
+// Fetched from its own endpoint rather than read off the once-a-second /state
+// poll: putting every cell's history on that poll would put the whole table's
+// past on the wire every second for as long as the page is open.
+let history = {};
+const historyUrl = {{ history_url|tojson }};
+
+async function loadHistory() {
+  if (!historyUrl) return;
+  try {
+    const resp = await fetch(historyUrl);
+    if (resp.ok) history = await resp.json();
+  } catch (e) {
+    // A missing history is a degraded page, never a broken one.
+    history = {};
+  }
+}
+
+function cellHistory(benchName, targetUuid) {
+  const byTarget = history[benchName];
+  return (byTarget && byTarget[targetUuid]) || null;
+}
+
+// The newest complete result, else the newest partial — what a cell shows
+// when this session has not run it yet.
+function historicEntry(benchName, targetUuid) {
+  const h = cellHistory(benchName, targetUuid);
+  if (!h) return null;
+  return (h.complete && h.complete[0]) || (h.partial && h.partial[0]) || null;
+}
+
+function fmtWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleString();
+}
+
+function historyRow(e) {
+  const counts = '&#10003;' + e.correct + ' &#10007;' + e.mistakes + ' !' + e.failures;
+  const per = e.trials_done > 0
+    ? (e.total_elapsed / e.trials_done).toFixed(1) + 's/tr'
+    : (e.status === 'done' ? '' : escapeHtml(e.status));
+  return '<div class="hrow"><span class="hwhen">' + escapeHtml(fmtWhen(e.ended_at)) + '</span>' +
+         '<span>' + e.trials_done + '/' + e.trials_total + '</span>' +
+         '<span>' + counts + '</span><span>' + per + '</span></div>';
+}
+
+// The card. Absent entirely when a cell has no stored history — an empty box
+// on hover is worse than no box.
+function historyCard(benchName, targetUuid) {
+  const h = cellHistory(benchName, targetUuid);
+  if (!h) return '';
+  const complete = h.complete || [];
+  const partial = h.partial || [];
+  if (!complete.length && !partial.length) return '';
+  let inner = '<h4>' + escapeHtml(benchName) + '</h4>';
+  inner += complete.map(historyRow).join('');
+  if (partial.length) {
+    inner += '<div class="hsep">partial</div>' + partial.map(historyRow).join('');
+  }
+  // Flagged, never hidden: seeing what changed when you retuned the model is
+  // the reason to keep the earlier number at all.
+  const newest = complete[0] || partial[0];
+  const stale = complete.concat(partial).find(
+    e => newest && e.config_fingerprint !== newest.config_fingerprint);
+  if (stale) {
+    inner += '<div class="hwarn">&#9888; model arguments changed since ' +
+             escapeHtml(fmtWhen(stale.ended_at)) + '</div>';
+  }
+  return '<div class="cell-history">' + inner + '</div>';
+}
 // Whether trials of this spec set carry a readable artifact to copy.
 const SHOW_ARTIFACTS = {{ 'true' if show_artifacts else 'false' }};
 const ARTIFACT_URL = {{ artifact_url|tojson }};
@@ -233,21 +321,31 @@ function cellStart(b, uuid, bi, running) {
          `${running ? ' disabled' : ''} title="Run just this benchmark">&#9654;</button>`;
 }
 
-function renderBench(b, ti, bi) {
+function renderBench(b, ti, bi, targetUuid) {
+  const bname = benchmarkNames[bi];
+  const card = historyCard(bname, targetUuid);
   if (b.status === 'done') {
-    return `<div>${fmtCounts(b)}</div>${benchDetails(b)}${benchStories(b, ti, bi)}`;
+    return `<div>${fmtCounts(b)}</div>${benchDetails(b)}${benchStories(b, ti, bi)}${card}`;
   }
   if (b.status === 'error') {
     const errText = b.error ? `<div class="err" style="font-size:85%">${escapeHtml(b.error)}</div>` : '';
-    return `<div>${fmtCounts(b)}<span class="pill error" style="margin-left:0.4em">error</span></div>${errText}${benchDetails(b)}${benchStories(b, ti, bi)}`;
+    return `<div>${fmtCounts(b)}<span class="pill error" style="margin-left:0.4em">error</span></div>${errText}${benchDetails(b)}${benchStories(b, ti, bi)}${card}`;
   }
   if (b.status === 'pending') {
-    return `<div class="muted">pending</div>`;
+    // Nothing ran this session, so the last stored result stands in — marked
+    // historic so a stale number is never mistaken for a fresh one.
+    const e = historicEntry(bname, targetUuid);
+    if (e) {
+      const counts = '&#10003;' + e.correct + ' &#10007;' + e.mistakes + ' !' + e.failures;
+      return `<div class="historic"><span class="historic-mark">&#8987;</span>` +
+             `${e.trials_done}/${e.trials_total} ${counts}</div>${card}`;
+    }
+    return `<div class="muted">pending</div>${card}`;
   }
   // status === 'running'
   const pct = b.trials_total > 0 ? (b.trials_done / b.trials_total) : 0;
   return `<progress max="1" value="${pct}"></progress>` +
-         `<div>${b.trials_done}/${b.trials_total} ${fmtCounts(b)}</div>`;
+         `<div>${b.trials_done}/${b.trials_total} ${fmtCounts(b)}</div>${card}`;
 }
 
 // Friendly name for a provider id. Falls back to the raw id for unknown
@@ -295,9 +393,18 @@ function render(state) {
   const scored = state.targets.map(t => {
     let num = 1;
     let denom = 1;
-    for (const b of t.benchmarks) {
-      num *= (b.correct + 1);
-      denom *= (b.trials_total + 1);
+    for (let i = 0; i < t.benchmarks.length; i++) {
+      const b = t.benchmarks[i];
+      // A cell with no live result contributes its stored one, so a table
+      // restored after a restart still ranks instead of showing 0.0000 for
+      // every row. Cells with neither contribute (0 + 1)/(total + 1) exactly
+      // as they do today.
+      const e = b.status === 'pending'
+        ? historicEntry(benchmarkNames[i], t.uuid) : null;
+      const correct = e ? e.correct : b.correct;
+      const total = e ? e.trials_total : b.trials_total;
+      num *= (correct + 1);
+      denom *= (total + 1);
     }
     return { t, score: (num - 1) / (denom - 1) };
   });
@@ -338,7 +445,7 @@ function render(state) {
     const startBtn = `<button class="row-start" data-uuid="${escapeHtml(t.uuid)}" ${busy ? 'disabled' : ''}>Start</button>`;
     const benchCells = benchmarkNames.map((bname, i) => {
       const b = t.benchmarks[i];
-      return `<td class="bench">${cellStart(b, t.uuid, i, busy)}${renderBench(b, t.index, i)}</td>`;
+      return `<td class="bench">${cellStart(b, t.uuid, i, busy)}${renderBench(b, t.index, i, t.uuid)}</td>`;
     }).join('');
     const rank = rankByIndex.get(t.index);
     const rankBadge = rank ? `<span class="rank rank-${rank}">${rankLabel[rank - 1]}</span>` : '';
@@ -383,9 +490,19 @@ function startPolling() {
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
+// History is refetched when a run finishes, so a cell that just completed
+// shows its new entry without a page reload.
+let wasRunning = false;
+async function refreshHistoryIfRunEnded(state) {
+  if (wasRunning && !state.running) {
+    await loadHistory();
+  }
+  wasRunning = !!state.running;
+}
 async function poll() {
   try {
     const state = await call('{{ state_url }}');
+    await refreshHistoryIfRunEnded(state);
     render(state);
     // Only auto-refresh while a run is in progress. Once the run is done
     // (or aborted) we stop polling so the user can select text / copy
@@ -432,9 +549,11 @@ document.getElementById('stop-btn').addEventListener('click', async () => {
   } catch (e) { alert(e); }
 });
 
-// Initial render: one fetch to populate the table. poll() will start the
-// timer only if a run is already active (e.g. user reloaded mid-run).
-poll().then(() => { /* timer already started inside poll() if needed */ });
+// Initial render: history first, so the very first paint already shows the
+// stored baseline rather than a grid of "pending" that fills in a beat later.
+// poll() will start the timer only if a run is already active (e.g. user
+// reloaded mid-run).
+loadHistory().then(poll).then(() => { /* timer started inside poll() if needed */ });
 </script>
 </div>
 """
@@ -443,6 +562,7 @@ poll().then(() => { /* timer already started inside poll() if needed */ });
 def render_benchmark_page(
     page_title: str, page_intro: str, specs: list, descriptions: dict[str, str],
     state_endpoint: str, start_endpoint: str, stop_endpoint: str,
+    history_endpoint: str | None = None,
     show_artifacts: bool = False,
     artifact_endpoint: str | None = None,
     show_warmup_toggle: bool = False,
@@ -472,6 +592,7 @@ def render_benchmark_page(
         state_url=url_for(state_endpoint),
         start_url=url_for(start_endpoint),
         stop_url=url_for(stop_endpoint),
+        history_url=url_for(history_endpoint) if history_endpoint else '',
         show_artifacts=show_artifacts,
         artifact_url=url_for(artifact_endpoint) if artifact_endpoint else '',
         show_warmup_toggle=show_warmup_toggle,
@@ -492,6 +613,7 @@ def benchmark_basic_page() -> str:
     return render_benchmark_page(
         "Benchmark basic", GENERAL_INTRO, BENCHMARK_SPECS, BENCHMARK_DESCRIPTIONS,
         "benchmark_basic_state", "benchmark_basic_start", "benchmark_basic_stop",
+        history_endpoint="benchmark_basic_history",
     )
 
 
@@ -500,6 +622,21 @@ def benchmark_basic_state() -> Response:
     benchmark_runner.ensure_targets_populated()
     return app.response_class(
         json.dumps(benchmark_runner.get_state()),
+        mimetype="application/json",
+    )
+
+
+@app.route("/benchmark_basic/history")
+def benchmark_basic_history() -> Response:
+    """Stored per-cell results for this suite.
+
+    Its own endpoint rather than a field on /state: that one is polled once a
+    second, and history on it would put every stored result on the wire every
+    second for as long as the page is open — the same reason story artifacts
+    are fetched on demand.
+    """
+    return app.response_class(
+        json.dumps(db.benchmark_history("general")),
         mimetype="application/json",
     )
 

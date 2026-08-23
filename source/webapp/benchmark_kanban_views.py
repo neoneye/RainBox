@@ -12,6 +12,8 @@ import json
 
 from flask import Response, abort, request
 
+import db
+
 from benchmarks.runner import KANBAN_BENCHMARK_SPECS
 
 from .benchmark_views import render_benchmark_page
@@ -53,6 +55,7 @@ def benchmark_kanban_page() -> str:
         "Benchmark kanban", KANBAN_INTRO,
         KANBAN_BENCHMARK_SPECS, KANBAN_BENCHMARK_DESCRIPTIONS,
         "benchmark_kanban_state", "benchmark_kanban_start", "benchmark_kanban_stop",
+        history_endpoint="benchmark_kanban_history",
     )
 
 
@@ -61,6 +64,16 @@ def benchmark_kanban_state() -> Response:
     kanban_benchmark_runner.ensure_targets_populated()
     return app.response_class(
         json.dumps(kanban_benchmark_runner.get_state()),
+        mimetype="application/json",
+    )
+
+
+@app.route("/benchmark_kanban/history")
+def benchmark_kanban_history() -> Response:
+    """Stored per-cell results for this suite; kept off the once-a-second
+    /state poll (see benchmark_basic_history)."""
+    return app.response_class(
+        json.dumps(db.benchmark_history("kanban")),
         mimetype="application/json",
     )
 
