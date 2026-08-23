@@ -307,14 +307,14 @@ AUDIT_EXPECTED = [
     "current_local_time",
 ]
 
-# user_settings_languages_json is this call's own tier-1 block (built from
-# the profile, not from _append_static_head), so it leads the prompt in that
-# role. The brief's version of this list omitted current_user_request, even
-# though _append_current_user_request always renders it; it is included here
-# so the equality check below stays accurate against what the builder emits.
+# user_settings_languages_json is this call's own tier-1 block, built from the
+# profile rather than by _append_static_head. It follows the shared identity
+# block rather than standing in for it: the classifier runs first in the turn,
+# so it is the call that warms the prefix, and it can only warm what it
+# carries.
 CLASSIFIER_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_languages_json",
+    "user_settings_json", "user_settings_languages_json",
     "turn_instructions", "classification_request",
 ]
 
@@ -329,8 +329,8 @@ AUDIT_ALWAYS = [
     "current_local_time",
 ]
 CLASSIFIER_ALWAYS = [
-    "user_settings_languages_json", "turn_instructions",
-    "conversation_history_xml", "current_user_request",
+    "user_settings_json", "user_settings_languages_json",
+    "turn_instructions", "conversation_history_xml", "current_user_request",
     "classification_request",
 ]
 

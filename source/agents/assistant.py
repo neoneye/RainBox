@@ -3344,7 +3344,6 @@ class AssistantAgent(ModelGroupAgent):
     REPLY_AUDIT_ACTION: str = "reply_audit"
     RECALL_FILTER_ACTION: str = "recall_filter"
     RESPONSE_LANGUAGE_CLASSIFIER_ACTION: str = "response_language_classifier"
-    RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES: int = 6
 
     # No /agentmodel row of its own: this agent's models come from the
     # `assistant.*` slots (agents/config.py), one per call it makes, each
@@ -5035,42 +5034,35 @@ class AssistantAgent(ModelGroupAgent):
         messages: list[dict[str, Any]],
         profile: dict[str, Any] | None,
     ) -> str:
-        """Build the narrow classifier request with assistant history omitted.
+        """Build the narrow classifier request.
 
-        No static head from _append_static_head: user_settings_languages_json
-        is this call's own tier-1 block, built here from the profile rather
-        than from the shared identity/persona/formatting blocks, so it leads
-        the prompt in that role instead."""
-        root = ET.Element("response_language_classifier_call")
-        # Leads for the same reason as the decide prompt; the
-        # classification_request below re-anchors it.
-        current = messages[-1] if messages else None
-        self._append_current_user_request(root, current)
+        Takes the shared `identity` block and then its own tier-1
+        user_settings_languages_json, built here from the profile. This call
+        runs first in the turn, so it is the one that warms the prefix the
+        other five reuse — and it can only warm the blocks it carries.
 
-        # Both roles: an earlier assistant reply is the only record of what
-        # language the conversation has actually been running in, and dropping
-        # it hid that from the one call whose job is to decide the language.
-        # The prompt carries the anti-perpetuation rule instead — a wrong-
-        # language reply loses to the current request rather than being
-        # withheld from the classifier.
-        context = (messages[:-1] if messages else [])[
-            -self.RESPONSE_LANGUAGE_CLASSIFIER_MAX_MESSAGES:]
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for message in context:
-                self._append_prompt_message(history, message)
-        else:
-            ET.SubElement(history, "none")
+        The history is here in both roles: an earlier assistant reply is the
+        only record of what language the conversation has actually been
+        running in, and dropping it hid that from the one call whose job is to
+        decide the language. The prompt carries the anti-perpetuation rule
+        instead — a wrong-language reply loses to the current request rather
+        than being withheld from the classifier."""
+        # Tiers 0 and 1 (identity only). classification_request below
+        # re-anchors the request.
+        prompt = AssistantPromptBuilder(
+            self, "response_language_classifier_call", messages=messages,
+            blocks=("identity",))
 
-        rows = ET.SubElement(root, "user_settings_languages_json")
-        candidates = user_profile.declared_language_candidates(profile)
-        rows.text = json.dumps(candidates, ensure_ascii=False, indent=1)
+        prompt.append_text(
+            "user_settings_languages_json",
+            json.dumps(
+                user_profile.declared_language_candidates(profile),
+                ensure_ascii=False, indent=1))
 
-        self._append_turn_instructions(root, RESPONSE_LANGUAGE_TURN_INSTRUCTIONS)
+        prompt.append_turn_instructions(RESPONSE_LANGUAGE_TURN_INSTRUCTIONS)
 
-
-        ask = ET.SubElement(root, "classification_request")
-        ask.text = (
+        prompt.append_text(
+            "classification_request",
             "Predict the language or languages the next reply should use. "
             "First copy every declared profile-language code exactly into the "
             "result and score it, even when its score is negative. A broad "
@@ -5079,10 +5071,9 @@ class AssistantAgent(ModelGroupAgent):
             "exact code with a broad tag. Then add any language or dialect "
             "required by current_user_request that is absent from the "
             "declared rows. If there are no declared rows, include the "
-            "candidates supported by the request."
-        )
+            "candidates supported by the request.")
 
-        return _render_sections(root)
+        return prompt.render()
 
     def _request_response_language_classification(
         self, *, system_prompt: str, user_prompt: str
