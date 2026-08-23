@@ -1731,6 +1731,13 @@ class LlmCall(db.Model):
     messages: Mapped[list | None] = mapped_column(
         JSONB(none_as_null=True), deferred=True)
     response_text: Mapped[str | None] = mapped_column(Text, deferred=True)
+    # Which assistant run and step this call belongs to, from the
+    # instrumentation tags the call site sets alongside `caller`. NULL for
+    # every call made outside an assistant turn, and on rows recorded before
+    # the tags existed. This is what lets /assistant show a call's prefill and
+    # decode split and its cache reuse — the numbers that explain a slow call,
+    # and which the step row has never carried.
+    run_uuid: Mapped[UUID | None] = mapped_column(index=True)
     __table_args__ = (
         Index("llm_call_by_started", "started_at"),
         Index("llm_call_by_model", "model", "started_at"),

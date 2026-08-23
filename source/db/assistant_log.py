@@ -480,15 +480,27 @@ def run_events(run, steps: list, reviews: list | None = None) -> list[dict]:
     out = leaves + rest
     out.sort(key=lambda e: (e["start"] is None, e["start"] or datetime.min,
                             0 if e["kind"] != "action" else 1))
-    _attach_llm_call_kpis(out, steps)
+    _attach_llm_call_kpis(out, run)
     return out
 
 
-def _attach_llm_call_kpis(events: list[dict], steps: list) -> None:
-    """Fill each llm event's prefill/decode/cache KPIs from its `llm_call` row.
+#: How far an llm_call row's start may sit from an event's before the two are
+#: not the same call. Generous: the row is stamped when the request goes out
+#: and the event from the step's own `requested_at`, which can differ by the
+#: time it takes to build a prompt.
+_LLM_CALL_MATCH_TOLERANCE = timedelta(seconds=5)
 
-    One query for the run rather than a lookup per event, which would be a
-    query per bar on the page. An event with no row keeps the KPIs the step
+
+def _attach_llm_call_kpis(events: list[dict], run) -> None:
+    """Fill each llm event's prefill, decode and cache KPIs from `llm_call`.
+
+    Matched on the run plus the closest start time. Within a run that is exact
+    rather than a guess: the assistant makes one model call at a time, so the
+    calls and the events are the same sequence. `run_uuid` is what makes it
+    safe — matching on time alone would confuse two runs happening at once.
+
+    One query for the run, not a lookup per event, which would be a query per
+    bar on the page. An event with no matching row keeps the KPIs the step
     itself carries, so a run predating the linkage still renders.
     """
     for event in events:
@@ -496,33 +508,43 @@ def _attach_llm_call_kpis(events: list[dict], steps: list) -> None:
             event["kpis"].setdefault("prefill_ms", None)
             event["kpis"].setdefault("decode_ms", None)
             event["kpis"].setdefault("cached_tokens", None)
-    ids = [s.uuid for s in steps if getattr(s, "uuid", None)]
-    if not ids:
+    run_uuid = getattr(run, "uuid", None)
+    if run_uuid is None:
         return
     try:
         rows = (db.session.query(LlmCall)
-                .filter(LlmCall.step_uuid.in_(ids)).all())
+                .filter(LlmCall.run_uuid == run_uuid)
+                .order_by(LlmCall.started_at)
+                .all())
     except Exception:
         # The read model must never take the page down over telemetry.
         return
-    by_step = {str(r.step_uuid): r for r in rows}
+    unused = [r for r in rows if r.started_at]
     for event in events:
-        row = by_step.get(event["uuid"]) if event["kind"] == "llm" else None
-        if row is None:
+        if event["kind"] != "llm" or not event["start"]:
             continue
+        best, best_gap = None, None
+        for row in unused:
+            gap = abs(row.started_at - event["start"])
+            if best_gap is None or gap < best_gap:
+                best, best_gap = row, gap
+        if best is None or best_gap > _LLM_CALL_MATCH_TOLERANCE:
+            continue
+        unused.remove(best)
         event["kpis"].update({
-            "prefill_ms": row.prefill_ms,
-            "decode_ms": row.decode_ms,
-            "cached_tokens": (row.cached_tokens_reported
-                              if row.cached_tokens_reported is not None
-                              else row.cached_tokens_estimated),
-            "model": row.model,
-            "provider": row.provider,
+            "prefill_ms": best.prefill_ms,
+            "decode_ms": best.decode_ms,
+            "cached_tokens": (best.cached_tokens_reported
+                              if best.cached_tokens_reported is not None
+                              else best.cached_tokens_estimated),
+            "model": best.model,
+            "provider": best.provider,
+            "call_uuid": str(best.uuid),
         })
-        if row.prompt_tokens is not None:
-            event["kpis"]["input_tokens"] = row.prompt_tokens
-        if row.completion_tokens is not None:
-            event["kpis"]["output_tokens"] = row.completion_tokens
+        if best.prompt_tokens is not None:
+            event["kpis"]["input_tokens"] = best.prompt_tokens
+        if best.completion_tokens is not None:
+            event["kpis"]["output_tokens"] = best.completion_tokens
 
 
 def assistant_llm_calls(steps: list, reviews: list | None = None,

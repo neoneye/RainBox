@@ -389,6 +389,21 @@ class ModelGroupAgent(Agent):
     ) -> None:
         """Hook for throttled persistence of an in-flight model stream."""
 
+    def _instrument_tags(self, caller_tag: str) -> dict[str, str]:
+        """Tags that ride the instrumentation events into the `llm_call` row.
+
+        `caller` labels the call on /activity. The run and step are added when
+        the agent is tracking them — the assistant sets them around each call —
+        so a row can be joined back to the turn that made it, which is what
+        lets /assistant show a call's prefill/decode split and cache reuse.
+        Absent for every other agent, whose calls simply record no linkage.
+        """
+        tags = {"caller": caller_tag}
+        run_uuid = getattr(self, "_log_run_uuid", None)
+        if run_uuid:
+            tags["run_uuid"] = str(run_uuid)
+        return tags
+
     def _caller_tag(self, purpose: str | None = None) -> str:
         """How this call labels itself on /activity: `name` or `name.purpose`.
 
@@ -559,7 +574,8 @@ class ModelGroupAgent(Agent):
                     # result, so instrumentation is the only place it's visible.
                     # Recorded per attempt, even on failure (the partial reasoning
                     # of a timed-out call is exactly what one wants to inspect).
-                    with instrument_tags({"caller": caller_tag}), capture_reasoning() as tally:
+                    with instrument_tags(self._instrument_tags(caller_tag)), \
+                            capture_reasoning() as tally:
                         try:
                             for last in sllm.stream_chat(messages + corrections):
                                 # Prefer the instrumentation capture: it holds the

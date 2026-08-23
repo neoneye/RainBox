@@ -620,3 +620,43 @@ class TestProviderForBaseUrl:
 
     def test_no_url_is_not_a_crash(self):
         assert provider_for_base_url(None) is None
+
+
+def test_a_tagged_call_records_the_run_it_belongs_to():
+    """Without the linkage the assistant page cannot reach prefill/decode or
+    cache reuse — the data that explains a slow call, which the step row has
+    never carried."""
+    from uuid import uuid4
+
+    from llm.activity import _uuid_tag
+
+    run_uuid = uuid4()
+    assert _uuid_tag({"run_uuid": str(run_uuid)}, "run_uuid") == run_uuid
+
+
+def test_an_untagged_or_malformed_call_records_no_run():
+    """Every non-assistant call still records; the column is simply empty. A
+    bad tag must never break the inference call it was riding on."""
+    from llm.activity import _uuid_tag
+
+    assert _uuid_tag({"caller": "benchmark.story"}, "run_uuid") is None
+    assert _uuid_tag({"run_uuid": "not-a-uuid"}, "run_uuid") is None
+    assert _uuid_tag(None, "run_uuid") is None
+
+
+def test_the_agent_tags_its_calls_with_the_run():
+    """The tag has to be set at the call site or the column stays empty."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from agents.base import StructuredLLMAgent
+
+    agent = SimpleNamespace(_log_run_uuid=uuid4())
+    tags = StructuredLLMAgent._instrument_tags(agent, "assistant.decide")
+
+    assert tags["caller"] == "assistant.decide"
+    assert tags["run_uuid"] == str(agent._log_run_uuid)
+
+    # An agent that tracks no run tags only the caller.
+    plain = StructuredLLMAgent._instrument_tags(SimpleNamespace(), "eval.x")
+    assert plain == {"caller": "eval.x"}

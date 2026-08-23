@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from uuid import UUID
 from typing import Any, Callable
 
 from llama_index.core.instrumentation.event_handlers import BaseEventHandler
@@ -256,6 +257,7 @@ class ActivityRecorder(BaseEventHandler):
             "provider": provider_for_base_url(model_dict.get("base_url")),
             "caller": _caller_from(event.tags, derived_caller),
             "origin": origin,
+            "run_uuid": _uuid_tag(event.tags, "run_uuid"),
             "prefix_chain": prefix_chain(text),
             "prompt_chars": len(text),
             # Captured here rather than at the End event: the messages the
@@ -287,6 +289,7 @@ class ActivityRecorder(BaseEventHandler):
             "model": model,
             "caller": start.get("caller") or _caller_from(event.tags),
             "origin": start.get("origin"),
+            "run_uuid": start.get("run_uuid"),
             "ok": True,
             "error_category": None,
             "prompt_tokens": usage["prompt_tokens"],
@@ -493,6 +496,19 @@ def _live_frames() -> list[Any]:
         )
         depth += 1
     return out
+
+
+def _uuid_tag(tags: Any, key: str):
+    """A UUID tag set by the call site, or None.
+
+    Total over whatever arrives: a malformed tag drops the linkage for that
+    row, never the inference call it was riding on.
+    """
+    try:
+        raw = (tags or {}).get(key)
+        return UUID(str(raw)) if raw else None
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def _caller_from(tags: Any, derived: str | None = None) -> str:

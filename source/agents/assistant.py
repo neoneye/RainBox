@@ -3541,6 +3541,11 @@ class AssistantAgent(ModelGroupAgent):
             step_limit=self.step_limit,
         )
         run = self._run
+        # Every model call this turn makes records the run it belongs to, so
+        # /assistant can join its llm_call row and show the prefill/decode
+        # split and cache reuse that explain a slow call (see
+        # StructuredLLMAgent._instrument_tags).
+        self._log_run_uuid = run.uuid
         # ONE declared-profile context snapshot per turn: the room marker and
         # all declared-profile prompt blocks below must come from this capture,
         # never from separate setting reads (a switch between reads could mix
