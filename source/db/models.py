@@ -1738,6 +1738,55 @@ class LlmCall(db.Model):
     )
 
 
+class BenchmarkResult(db.Model):
+    """One benchmark cell's outcome — a (spec_set, benchmark, target) triple.
+
+    The durable record behind the three benchmark pages, whose live state is
+    an in-memory dict on a BenchmarkRunner and does not survive a restart.
+    Retention is per cell: the newest COMPLETE_RETENTION complete results and
+    the newest PARTIAL_RETENTION partial ones (see db.benchmark).
+
+    `benchmark_name` rather than the benchmark's index into its spec list:
+    indices shift whenever a spec set is reordered, which would silently
+    re-attach a cell's history to a different column.
+
+    The target label columns are denormalized rather than joined. Targets are
+    model_config_override rows, which the operator deletes and recreates
+    freely; a join would make a removed override's history unreadable, while
+    a stored name still says what was measured.
+    """
+
+    __tablename__ = "benchmark_result"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    spec_set: Mapped[str] = mapped_column(Text)
+    benchmark_name: Mapped[str] = mapped_column(Text)
+    target_uuid: Mapped[UUID] = mapped_column()
+    target_label: Mapped[str] = mapped_column(Text, default="")
+    model_name: Mapped[str] = mapped_column(Text, default="")
+    provider: Mapped[str] = mapped_column(Text, default="")
+    completed: Mapped[bool] = mapped_column(default=False)
+    status: Mapped[str] = mapped_column(Text)
+    trials_done: Mapped[int] = mapped_column(default=0)
+    trials_total: Mapped[int] = mapped_column(default=0)
+    correct: Mapped[int] = mapped_column(default=0)
+    mistakes: Mapped[int] = mapped_column(default=0)
+    failures: Mapped[int] = mapped_column(default=0)
+    total_elapsed: Mapped[float] = mapped_column(default=0.0)
+    reasoning_chars: Mapped[int | None] = mapped_column()
+    content_chars: Mapped[int | None] = mapped_column()
+    error: Mapped[str | None] = mapped_column(Text)
+    config_fingerprint: Mapped[str] = mapped_column(Text, default="")
+    spec_fingerprint: Mapped[str] = mapped_column(Text, default="")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (
+        Index("ix_benchmark_result_cell", "spec_set", "benchmark_name", "target_uuid"),
+    )
+
+
 def psycopg_dsn() -> str:
     """The DATABASE_URL as a plain libpq DSN (no SQLAlchemy `+psycopg` driver
     tag), for opening a raw psycopg connection — used by the chat SSE stream to

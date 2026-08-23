@@ -36,6 +36,7 @@ from db.profile_languages import *  # noqa: F401,F403  re-export multilingual pr
 from db.settings import *  # noqa: F401,F403  re-export app_setting registry/accessors
 from db.find_uuid import *  # noqa: F401,F403  re-export the cross-table fuzzy uuid lookup
 from db.activity import *  # noqa: F401,F403  re-export llm_call recording + /activity aggregation
+from db.benchmark import *  # noqa: F401,F403  re-export benchmark_result recording + retention
 
 logger = logging.getLogger(__name__)
 
