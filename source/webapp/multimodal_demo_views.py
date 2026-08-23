@@ -564,7 +564,14 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     except ImageConversionError as e:
         return jsonify({"error": str(e)}), 400
     headers = {"Content-Type": "application/json"}
-    api_key = target.arguments.get("api_key")
+    # Through the registry, not straight off target.arguments: OpenRouter's key
+    # is the one that does not ride along in the row (see
+    # providers.request_api_key). Reading the blob directly worked for the
+    # three local providers and sent OpenRouter an unauthenticated request.
+    try:
+        api_key = providers.request_api_key(target.provider, target.arguments)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 

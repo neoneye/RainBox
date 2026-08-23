@@ -15,7 +15,7 @@ from .base import (  # noqa: E402  .env must be in place before providers read i
     ProviderId,
     provider_sort_key,
 )
-from .registry import all_providers, get  # noqa: E402
+from .registry import all_providers, get, request_api_key  # noqa: E402
 
 __all__ = [
     "PREFERRED_PROVIDER_ID",
@@ -25,4 +25,5 @@ __all__ = [
     "all_providers",
     "get",
     "provider_sort_key",
+    "request_api_key",
 ]

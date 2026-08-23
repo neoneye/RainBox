@@ -59,3 +59,34 @@ def test_each_provider_default_arguments_has_required_keys():
         # base_url/request_timeout.
         assert "api_base" in args or "base_url" in args, f"{p.id} missing an endpoint"
         assert "timeout" in args or "request_timeout" in args, f"{p.id} missing a timeout"
+
+
+def test_request_api_key_prefers_the_key_stored_on_the_row():
+    """The local providers persist a dummy key in their arguments; it wins."""
+    assert providers.request_api_key("jan", {"api_key": "jan"}) == "jan"
+    assert providers.request_api_key("lm_studio", {"api_key": "lm-studio"}) == "lm-studio"
+
+
+def test_request_api_key_is_none_for_a_provider_that_needs_none():
+    """Ollama is local and unauthenticated — no header should be sent."""
+    assert providers.request_api_key("ollama", {}) is None
+
+
+def test_request_api_key_reads_openrouter_from_the_environment(monkeypatch):
+    """OpenRouter's key is deliberately absent from the row's arguments (see
+    providers/openrouter.py). Anything not going through llm.prepare_llm has
+    to get it from here, or it sends an unauthenticated request."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+
+    assert providers.request_api_key("openrouter", {}) == "sk-or-test"
+
+
+def test_request_api_key_raises_when_openrouter_has_no_key(monkeypatch):
+    """Named so the caller can report the real problem. Returning None here
+    would send an unauthenticated request, and OpenRouter answers those by
+    trying its browser cookie path — a 401 about cookies, which describes
+    nothing an operator can act on."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+        providers.request_api_key("openrouter", {})

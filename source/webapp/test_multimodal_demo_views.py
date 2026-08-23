@@ -633,3 +633,79 @@ def test_complete_resolves_override_to_base_model_name_and_merged_args(
     assert captured["url"] == "http://base-b/v1/chat/completions"
     assert captured["json"]["model"] == "m-base"
     assert captured["headers"]["Authorization"] == "Bearer k1"
+
+
+@pytest.fixture
+def seeded_model_openrouter():
+    """Seed an OpenRouter row, whose arguments carry no api_key.
+
+    That absence is deliberate — see providers/openrouter.py's docstring: the
+    key is a real secret, and `arguments` is JSONB-persisted and rendered
+    verbatim on /model. It is read from the environment instead.
+    """
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        m = ModelConfig(
+            provider="openrouter",
+            model_name="vendor/some-model",
+            display_name="Some cloud model",
+            arguments={"api_base": "https://openrouter.ai/api/v1"},
+        )
+        db.session.add(m)
+        db.session.commit()
+        uid = str(m.uuid)
+        try:
+            yield uid
+        finally:
+            db.session.delete(m)
+            db.session.commit()
+
+
+def test_complete_authorizes_openrouter_from_the_environment(
+    seeded_model_openrouter, monkeypatch,
+):
+    """OpenRouter is the one provider whose key is not in the row's arguments.
+    Reading only from there sent an unauthenticated request, and OpenRouter
+    answered by trying its browser cookie path:
+
+        {"error":{"message":"No cookie auth credentials found","code":401}}
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    client = app.test_client()
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        captured["headers"] = headers
+        return FakeStreamResponse(chunks=[b"data: [DONE]\n\n"])
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post):
+        resp = client.post(
+            f"/demo/multimodal/complete?id={seeded_model_openrouter}",
+            data={"user": "hi"},
+            content_type="multipart/form-data",
+        )
+        resp.get_data()
+
+    assert captured["headers"]["Authorization"] == "Bearer sk-or-test"
+
+
+def test_complete_400_when_openrouter_key_is_unset(
+    seeded_model_openrouter, monkeypatch,
+):
+    """Without a key the demo must say so itself. Relaying OpenRouter's cookie
+    complaint instead sends the operator looking for a browser-session bug that
+    does not exist."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    client = app.test_client()
+
+    with patch("webapp.multimodal_demo_views.requests.post") as post:
+        resp = client.post(
+            f"/demo/multimodal/complete?id={seeded_model_openrouter}",
+            data={"user": "hi"},
+            content_type="multipart/form-data",
+        )
+
+    assert resp.status_code == 400
+    assert "OPENROUTER_API_KEY" in resp.get_data(as_text=True)
+    post.assert_not_called()
