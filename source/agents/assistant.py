@@ -5627,11 +5627,6 @@ class AssistantAgent(ModelGroupAgent):
 
     # --- acceptance criteria --------------------------------------------------
 
-    # How many prior conversation messages the criteria call sees: constraint
-    # planning can need operator context but not the decide loop's full
-    # MAX_RECENT_MESSAGES window.
-    ACCEPTANCE_CRITERIA_MAX_MESSAGES: int = 6
-
     @staticmethod
     def _acceptance_criteria_system_prompt() -> str:
         """The shared system prompt every call sends; the criteria call's job
@@ -5646,52 +5641,43 @@ class AssistantAgent(ModelGroupAgent):
         scratchpad: list[AssistantTurnEvent] | None = None,
     ) -> str:
         """The criteria call's user prompt: who is asking (identity) and the
-        formatting guide, then the request, a short operator history tail,
+        formatting guide, then the request, the turn's conversation history,
         and — for a revision — the prior criteria and the run's steps so
         far, without which the call would reproduce the same criteria
         deterministically and the revision would be a no-op. NOT the action
         catalog: this call plans constraints, not actions. Same ElementTree
-        escaping guarantee as the other prompt builders."""
-        root = ET.Element("acceptance_criteria_call")
-        current = messages[-1] if messages else None
+        escaping guarantee as the other prompt builders.
 
-        # Tier 1 (identity only) and tier 2. The formatting guide is tier 1
-        # too, but NOT the shared _formatting_block — it is this call's own
+        The history is here in both roles. The operator's requests and
+        preferences are the authoritative context, but how the assistant has
+        been formatting and phrasing its replies is exactly the continuity
+        these criteria are meant to establish, and the system prompt already
+        declares everything here data rather than instruction."""
+        # Tiers 0 and 1 (identity only).
+        prompt = AssistantPromptBuilder(
+            self, "acceptance_criteria_call", messages=messages,
+            blocks=("identity",))
+        current = prompt.current
+
+        # The formatting guide is tier 1 too, but NOT the shared
+        # _formatting_block — it is this call's own
         # _criteria_formatting_guide(), read from the criteria snapshot
         # profile regardless of the separate assistant.formatting_guide
         # switch (see that method's docstring), so it stays a bespoke append
         # rather than going through _append_static_head's generic
         # "formatting" block.
-        # Leads for the same reason as the decide prompt; criteria_request
-        # below re-anchors it.
-        self._append_current_user_request(root, current)
-        # Both roles. The operator's requests and preferences are the
-        # authoritative context, but how the assistant has been formatting and
-        # phrasing its replies is exactly the continuity these criteria are
-        # meant to establish, and the system prompt already declares everything
-        # here data rather than instruction.
-        context = (messages[:-1] if messages else [])[
-            -self.ACCEPTANCE_CRITERIA_MAX_MESSAGES:]
-        history = ET.SubElement(root, "conversation_history_xml")
-        if context:
-            for message in context:
-                self._append_prompt_message(history, message)
-        else:
-            ET.SubElement(history, "none")
-        self._append_static_head(root, blocks=("identity",))
         guide = self._criteria_formatting_guide()
         if guide:
-            formatting = ET.SubElement(root, "formatting_guide")
-            formatting.text = guide
-        self._append_turn_instructions(
-            root, ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
+            prompt.append_text("formatting_guide", guide)
+        prompt.append_turn_instructions(ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
         revising = prior_criteria is not None
         if revising:
-            prior = ET.SubElement(root, "prior_acceptance_criteria",
-                                  {"format": "markdown"})
-            prior.text = self._format_criteria_markdown(prior_criteria)
-            steps = ET.SubElement(root, "current_turn_steps",
-                                  {"authority": "fresh_evidence"})
+            prompt.append_text(
+                "prior_acceptance_criteria",
+                self._format_criteria_markdown(prior_criteria),
+                format="markdown")
+            steps = prompt.append_element(
+                "current_turn_steps", authority="fresh_evidence")
             kept, omitted = self._bounded_turn_events(scratchpad or [])
             if omitted:
                 ET.SubElement(steps, "omitted", {"count": str(omitted)})
@@ -5700,17 +5686,16 @@ class AssistantAgent(ModelGroupAgent):
                     self._append_turn_event(steps, event)
             else:
                 ET.SubElement(steps, "none")
-        ask = ET.SubElement(root, "criteria_request")
-        ask.text = (
+        prompt.append_text(
+            "criteria_request",
             "Revise the acceptance criteria: compare the prior criteria "
             "with the steps so far — what changed, and which criteria does "
             "it invalidate? Emit the full revised criteria; keep everything "
             "the change does not touch."
             if revising else
             f"{self._request_anchor(current)} Establish the acceptance "
-            "criteria the reply to that request must satisfy."
-        )
-        return _render_sections(root)
+            "criteria the reply to that request must satisfy.")
+        return prompt.render()
 
     def _criteria_formatting_guide(self) -> str:
         """The formatting guide as a criteria-call INPUT, rendered from the

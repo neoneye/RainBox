@@ -710,3 +710,21 @@ def test_recall_filter_prefix_is_a_prefix_of_the_decide_prompt(
         messages=TURN_MESSAGES, scratchpad=[], step_index=0)
 
     assert decide.startswith(agent._recall_filter_prefix(TURN_MESSAGES))
+
+
+def test_criteria_prompt_shares_the_decide_prompts_history(
+    fully_populated_agent,
+):
+    """The criteria call is the one that runs immediately before the first
+    decide call, so its history slice is what decides whether decide starts
+    warm or cold."""
+    agent = fully_populated_agent
+    decide = agent._build_user_prompt(
+        messages=TURN_MESSAGES, scratchpad=[], step_index=0)
+    criteria = agent._build_acceptance_criteria_prompt(TURN_MESSAGES)
+
+    def history(prompt: str) -> str:
+        start = prompt.index("<conversation_history_xml>")
+        return prompt[start:prompt.index("</conversation_history_xml>") + 27]
+
+    assert history(criteria) == history(decide)
