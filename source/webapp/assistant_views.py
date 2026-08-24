@@ -516,11 +516,11 @@ ASSISTANT_TEMPLATE = """
          none of them drawn over another — a bar spanning other bars hides
          them, and hides any stall between them. So one activity ends where
          the next begins, and a remaining gap is genuinely unmeasured time.
-         The summary still counts model calls only. #}
+         The run's totals are in the dashboard above; repeating them here only
+         asked the reader which of the two to believe. #}
       <div class="card">
         <div class="card-header">
           <div class="card-title">Timeline</div>
-          <span class="outcome muted">{{ dash.llm_calls }} calls · model {{ dash.model_time }}{% if dash.embed_calls %} · {{ dash.embed_calls }} embed {{ dash.embed_time }}{% endif %} · total {{ dash.total_time }}</span>
         </div>
         <div class="card-body">
           <div class="wf">
