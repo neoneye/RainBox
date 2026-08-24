@@ -36,7 +36,7 @@
 - Produces: `db.run_events(run, steps, reviews=None) -> list[dict]`. Each event is `{"uuid", "kind", "label", "start", "duration_ms", "anchor", "kpis", "payload"}` where `kind` is one of `llm|embedding|action|activity|control|unaccounted`. Tasks 2–8 consume this.
 - Produces: `db.EVENT_KINDS: tuple[str, ...]`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_one_step_becomes_a_call_and_an_action():
@@ -55,12 +55,12 @@ Plus: an action event carries `args` and the observation in `payload`; a
 `code_driven` step's llm label is the action name itself (no "decide →"); a
 step with no action yields only the llm event.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `./venv/bin/python -m pytest db/test_assistant_log.py -q`
 Expected: `AttributeError: module 'db' has no attribute 'run_events'`.
 
-- [ ] **Step 3: Create the module with the interval machinery moved in**
+- [x] **Step 3: Create the module with the interval machinery moved in**
 
 Move `_parse_ts`, `_call`, `_rejected_calls`, `embed_call_label`,
 `_embedding_calls`, `_phase_calls`, `_end_of`, `_span`, `_subtract`,
@@ -80,7 +80,7 @@ def _event(kind, label, *, start, duration_ms, anchor="", uuid="",
 `code_driven` one) and, when the step has an action, the action event placed
 at the end of the call.
 
-- [ ] **Step 4: Keep `assistant_llm_calls` working as a projection**
+- [x] **Step 4: Keep `assistant_llm_calls` working as a projection**
 
 In `db/assistant.py`, replace the body with a filter over the new model so the
 two enumerations cannot disagree:
@@ -95,12 +95,12 @@ def assistant_llm_calls(steps, reviews=None, run=None) -> list[dict]:
             if e["kind"] not in ("action", "control")]
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `./venv/bin/python -m pytest db/ -q`
 Expected: PASS, including the existing `db/test_assistant_timeline.py`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add db/assistant_log.py db/assistant.py db/__init__.py db/test_assistant_log.py
@@ -118,7 +118,7 @@ git commit -m "feat(assistant): derive a typed event stream from a run's records
 **Interfaces:**
 - Consumes: `run_events` from Task 1.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_every_kind_appears_for_a_rich_step():
@@ -148,12 +148,12 @@ def test_no_event_contains_another():
             assert i == j or not (a0 <= b0 and b1 <= a1)
 ```
 
-- [ ] **Step 2: Run and watch fail**
+- [x] **Step 2: Run and watch fail**
 
 Run: `./venv/bin/python -m pytest db/test_assistant_log.py -q -k "every_kind or contains_another"`
 Expected: FAIL — the extra kinds are absent.
 
-- [ ] **Step 3: Emit them**
+- [x] **Step 3: Emit them**
 
 In `run_events`, after the per-step llm/action events, extend with
 `_embedding_calls(step, data)`, `_rejected_calls(step)` and `_inner_calls(step,
@@ -172,12 +172,12 @@ gap synthesis exactly as `assistant_llm_calls` did:
 The action event must be excluded from the `occupied` set passed to
 `_activity_rows`, or an action spanning its own phases would zero them out.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `./venv/bin/python -m pytest db/ -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add db/assistant_log.py db/test_assistant_log.py
@@ -196,7 +196,7 @@ git commit -m "feat(assistant): add embedding, activity, control and gap events"
 **Interfaces:**
 - Produces: `llm_call.run_uuid` and `llm_call.step_uuid`, nullable.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_a_tagged_call_records_its_run_and_step():
@@ -217,12 +217,12 @@ def test_an_untagged_call_records_nulls():
     assert rows[0]["run_uuid"] is None
 ```
 
-- [ ] **Step 2: Run and watch fail**
+- [x] **Step 2: Run and watch fail**
 
 Run: `./venv/bin/python -m pytest llm/test_activity_recorder.py -q -k run_and_step`
 Expected: FAIL — no such key on the recorded row.
 
-- [ ] **Step 3: Add the columns**
+- [x] **Step 3: Add the columns**
 
 In `db/models.py`, on `LlmCall`:
 
@@ -243,7 +243,7 @@ In `db/__init__.py`, beside the other idempotent additions:
         _add_column_if_missing("llm_call", "step_uuid", "step_uuid UUID")
 ```
 
-- [ ] **Step 4: Record them**
+- [x] **Step 4: Record them**
 
 In `llm/activity.py`'s `_on_start`, beside `"caller"`:
 
@@ -266,7 +266,7 @@ def _uuid_tag(tags: Any, key: str):
 
 Carry both through `_on_end` the way `caller` and `origin` are carried.
 
-- [ ] **Step 5: Set them at the assistant's call site**
+- [x] **Step 5: Set them at the assistant's call site**
 
 `agents/base.py` builds `instrument_tags({"caller": caller_tag})`. Extend it
 with the run and step when the agent has them — `StructuredLLMAgent` gains two
@@ -282,12 +282,12 @@ around a call, defaulting to `None` so every other agent is unaffected:
                     with instrument_tags(tags), capture_reasoning() as tally:
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `./venv/bin/python -m pytest llm/ db/ -q`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add db/models.py db/__init__.py llm/activity.py agents/base.py llm/test_activity_recorder.py
@@ -302,7 +302,7 @@ git commit -m "feat(activity): tie an llm_call row to the assistant run that mad
 - Modify: `db/assistant_log.py`
 - Test: `db/test_assistant_log.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_an_llm_event_takes_prefill_and_cache_from_its_llm_call_row():
@@ -326,12 +326,12 @@ def test_an_event_without_an_llm_call_row_still_renders():
     assert event["kpis"]["input_tokens"] == 10
 ```
 
-- [ ] **Step 2: Run and watch fail**
+- [x] **Step 2: Run and watch fail**
 
 Run: `./venv/bin/python -m pytest db/test_assistant_log.py -q -k prefill`
 Expected: FAIL — no such KPI.
 
-- [ ] **Step 3: Implement the join**
+- [x] **Step 3: Implement the join**
 
 One query per run, not per event:
 
@@ -350,7 +350,7 @@ def _llm_call_kpis(steps) -> dict:
 Populate `kpis` from the row when present, else from the step's own fields,
 with `prefill_ms`/`decode_ms`/`cached_tokens` as `None`.
 
-- [ ] **Step 4: Run and commit**
+- [x] **Step 4: Run and commit**
 
 Run: `./venv/bin/python -m pytest db/ -q` — expect PASS.
 
@@ -370,7 +370,7 @@ git commit -m "feat(assistant): show a call's prefill, decode and cache reuse"
 **Interfaces:**
 - Produces: `render_event_detail(event) -> str` (HTML), `event_kpis(event) -> list[tuple[str, str]]`, `EVENT_GLYPH: dict[str, str]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_every_kind_renders_without_a_bespoke_component():
@@ -405,16 +405,16 @@ def test_python_run_shows_its_code_and_output():
 Plus: an `llm` pane shows the model and token KPIs and escapes its prompt; an
 `unaccounted` pane says nothing measured it.
 
-- [ ] **Step 2: Run and watch fail** — module does not exist.
+- [x] **Step 2: Run and watch fail** — module does not exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 A dispatch dict from kind to renderer, with `action` consulting a second dict
 keyed by action name and falling back to the generic renderer. Every renderer
 returns escaped HTML built with `markupsafe.escape`, never string
 concatenation of untrusted text.
 
-- [ ] **Step 4: Run and commit**
+- [x] **Step 4: Run and commit**
 
 ```bash
 git add webapp/assistant_components.py webapp/test_assistant_components.py
@@ -433,7 +433,7 @@ git commit -m "feat(assistant): one detail component per event kind"
 - Consumes: `db.run_events`, `render_event_detail`.
 - Produces: `log_view(run, steps, reviews) -> dict` with `events` (view-models carrying `offset_pct`, `width_pct`, `seconds`, `glyph`, `detail_html`) and `span_seconds`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_bars_and_rows_are_the_same_events():
@@ -447,7 +447,7 @@ def test_a_bar_is_never_wider_than_the_span():
         assert e["offset_pct"] + e["width_pct"] <= 100.5
 ```
 
-- [ ] **Step 2–4: Implement, run, commit**
+- [x] **Step 2–4: Implement, run, commit**
 
 The percentage arithmetic is `_waterfall`'s, moved. Commit:
 
@@ -457,33 +457,27 @@ git commit -m "feat(assistant): lay the event stream out as a gantt and a list"
 
 ---
 
-### Task 7: The page
+### Task 7: The page — LANDED AS AN ADDITION, NOT A REPLACEMENT
 
-**Files:**
-- Modify: `webapp/assistant_views.py` — replace the step sections with the three bands
-- Test: `webapp/test_assistant_views.py`
+The gantt now reads the event stream and a Log card sits beneath it. The
+"Step N of 6" sections were NOT removed.
 
-- [ ] **Step 1: Write the failing test**
+Replacing them was the design and remains the intent. It was not done because
+those sections carry machinery the event model does not reproduce yet, and one
+piece of it is interactive: the write-intent confirm/reject/undo controls are
+the operator's only way to approve a pending write. Deleting them unattended
+would have been a functional regression that could block a turn.
 
-```python
-def test_the_page_renders_the_log_not_step_sections(app_ctx, client):
-    page, _ = _rendered(client, run)
+What must move into components before the sections can go:
 
-    assert 'class="log-list"' in page and 'class="log-detail"' in page
-    assert "Step 1 of" not in page
-```
+- write intents — confirm / reject / undo, per step (`render_intent`)
+- second-opinion verdicts, their problems, and the skipped-review reason
+- the skipped-call row, which reads as skipped rather than as a silent gap
+- the memory_query QA counts table (static / dynamic / memory / truncated)
+- the per-step permalink and the model link
 
-- [ ] **Step 2–5: Implement, run the whole webapp suite, commit**
-
-Selecting a row swaps the detail pane client-side from data already in the
-page — no round trip, because a run's events are all rendered once. Keep the
-existing `#step-<uuid>` ids as anchors so old links still land.
-
-```bash
-git commit -m "feat(assistant): render a run as a gantt over a split view"
-```
-
----
+Each is a component plus a payload field; none is open-ended. That is the
+follow-up, and it wants an operator awake to confirm a write still confirms.
 
 ### Task 8: The Markdown export follows
 
@@ -491,7 +485,7 @@ git commit -m "feat(assistant): render a run as a gantt over a split view"
 - Modify: `webapp/assistant_views.py` (the markdown builder)
 - Test: `webapp/test_assistant_views.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_the_export_lists_the_same_events_as_the_page(app_ctx, client):
@@ -500,7 +494,7 @@ def test_the_export_lists_the_same_events_as_the_page(app_ctx, client):
         assert e["label"] in md
 ```
 
-- [ ] **Step 2–4: Implement, run, commit**
+- [x] **Step 2–4: Implement, run, commit**
 
 ```bash
 git commit -m "docs(assistant): export the same event stream the page shows"
@@ -510,10 +504,10 @@ git commit -m "docs(assistant): export the same event stream the page shows"
 
 ### Task 9: Verify
 
-- [ ] **Step 1:** `./venv/bin/python -m pytest db/ webapp/ agents/ llm/ -q` — no failures.
-- [ ] **Step 2:** Render a real run through `tools.serve_ui` on 5055 against `rainbox_production` (read-only) and confirm in a browser: gantt contiguous, list and gantt agree, selecting a row changes the pane, no console errors.
-- [ ] **Step 3:** Confirm `git diff --stat main -- '*editdocument*'` is empty and `assistant_run_stats` totals match the pre-change values for the same run.
-- [ ] **Step 4:** Commit any doc correction.
+- [x] **Step 1:** `./venv/bin/python -m pytest db/ webapp/ agents/ llm/ -q` — no failures.
+- [x] **Step 2:** Render a real run through `tools.serve_ui` on 5055 against `rainbox_production` (read-only) and confirm in a browser: gantt contiguous, list and gantt agree, selecting a row changes the pane, no console errors.
+- [x] **Step 3:** Confirm `git diff --stat main -- '*editdocument*'` is empty and `assistant_run_stats` totals match the pre-change values for the same run.
+- [x] **Step 4:** Commit any doc correction.
 
 ---
 
