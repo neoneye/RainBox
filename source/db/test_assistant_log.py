@@ -232,3 +232,56 @@ def test_the_start_event_is_not_a_model_call():
 
     assert not [c for c in calls if c["kind"] == "start"]
     assert stats["calls"] == 1
+
+
+def test_an_action_sits_where_it_settled_not_where_its_call_ended():
+    """An action event is the record of what came back, and what came back is
+    known when the action settles — after the phases it ran, not before them.
+    Placed at the call's end it sorted above its own work."""
+    # The phase starts a second AFTER the call ends, so a tie-break at the
+    # same instant cannot be what orders these.
+    step = _step("memory_query", at=0, ms=10000,
+                 phases=[("claim retrieval", 11, 5.0)],
+                 observation={"text": "facts"})
+    step.settled_at = _at(16)
+
+    events = db.run_events(_run(finished=20), [step])
+    order = [e["label"] for e in events]
+
+    assert order.index("memory_query") > order.index(
+        "memory_query › claim retrieval")
+
+
+def test_an_action_without_a_settled_time_still_places():
+    """Legacy rows predate settled_at; they keep the call's end."""
+    step = _step("memory_query", at=0, ms=10000, observation={"text": "f"})
+    step.settled_at = None
+
+    action = _first(db.run_events(_run(finished=20), [step]), "action")
+
+    assert action["start"] == _at(10)
+
+
+def test_a_memory_query_reports_what_it_recalled():
+    """The counts the step's table shows — how much was found, how much was
+    cut — belong on the event too, or the inspector is the poorer surface."""
+    step = _step("memory_query", at=0, ms=1000,
+                 observation={"text": "facts"})
+    step.observation["data"].update(
+        {"qa_static": 3, "qa_dynamic": 0, "memory": 0,
+         "truncated": 1, "omitted": 0})
+
+    action = _first(db.run_events(_run(finished=5), [step]), "action")
+
+    assert action["kpis"]["qa_static"] == 3
+    assert action["kpis"]["truncated"] == 1
+    assert action["kpis"]["omitted"] == 0
+
+
+def test_an_action_with_no_counts_reports_none():
+    """Only memory_query carries them; every other action's line stays clean."""
+    step = _step("python_run", at=0, ms=1000, observation={"text": "4"})
+
+    action = _first(db.run_events(_run(finished=5), [step]), "action")
+
+    assert "qa_static" not in action["kpis"]

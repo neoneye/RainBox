@@ -281,3 +281,18 @@ def test_every_block_renders_in_one_typeface():
     for html in (start, call):
         assert "ev-text" not in html
         assert 'class="ev-pre"' in html
+
+
+def test_a_memory_query_pane_reports_what_it_found():
+    """The counts the step's table shows, on the event's own meta line."""
+    html = render_event_detail(_event(
+        "action", "memory_query",
+        kpis={"status": "ok", "qa_static": 3, "qa_dynamic": 0,
+              "memory": 0, "truncated": 1, "omitted": 0},
+        payload={"args": {}, "observation": {"text": "facts"}}))
+
+    for shown in ("QA static 3", "QA dynamic 0", "memory 0",
+                  "truncated 1", "omitted 0"):
+        assert shown in html, shown
+    # And each says what it means, as the table's headers do.
+    assert "number of QA static items" in html

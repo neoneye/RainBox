@@ -103,6 +103,23 @@ _KPI_FIELDS: list[tuple[str, str, Any, str]] = [
     ("decode_ms", "decode", lambda v: f"decode {v / 1000:.1f}s",
      "Decode: time spent generating the response"),
     ("status", "status", str, "How the action ended"),
+    # What a retrieval found and what it had to cut. The hovers are the ones
+    # the step's own counts table carries, so the two surfaces explain a
+    # number the same way.
+    ("qa_static", "qa_static", lambda v: f"QA static {v}",
+     "number of QA static items"),
+    ("qa_dynamic", "qa_dynamic", lambda v: f"QA dynamic {v}",
+     "number of QA dynamic items"),
+    ("memory", "memory", lambda v: f"memory {v}",
+     "number of memory items"),
+    ("truncated", "truncated", lambda v: f"truncated {v}",
+     "number of facts whose middle was dropped to fit the 1200-char rendered "
+     "per-fact cap, both ends kept (tagged truncate1200); read one in full "
+     "via memory_query with its uuid"),
+    ("omitted", "omitted", lambda v: f"omitted {v}",
+     "number of lower-ranked facts not admitted because they no longer fit "
+     "the 11000-char fact payload — the legend and the retained lines, not "
+     "the whole observation; narrow the query or fetch a fact by its uuid"),
     ("chars", "chars", lambda v: f"{v} chars",
      "Characters sent to the embedder"),
     ("texts", "texts", lambda v: f"{v} texts",

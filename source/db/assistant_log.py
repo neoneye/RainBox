@@ -356,6 +356,25 @@ def _as_event(call: dict) -> dict:
         payload={"detail": call.get("detail", "")})
 
 
+#: Counts an action's observation may report about what it found. Only
+#: memory_query carries them today; an action without them reports none, so
+#: every other action's meta line stays clean.
+_OBSERVATION_COUNTS: tuple[str, ...] = (
+    "qa_static", "qa_dynamic", "memory", "truncated", "omitted")
+
+
+def _observation_counts(step) -> dict:
+    """The counts an action reported, for its meta line.
+
+    Same numbers the step's own table shows. Read here so the inspector is not
+    the poorer surface — how much was found and how much was cut is the first
+    thing asked of a retrieval.
+    """
+    data = (step.observation or {}).get("data") or {}
+    return {key: data[key] for key in _OBSERVATION_COUNTS
+            if isinstance(data.get(key), int)}
+
+
 def _observation_without_timing(step) -> dict:
     """The observation an action pane shows, minus its `timing` block.
 
@@ -430,10 +449,16 @@ def _step_events(step) -> list[dict]:
         # while a step was a single row.
         events.append(_event(
             "action", step.action,
-            start=_end_of({"start": step_started_at(step),
-                           "duration_ms": step.duration_ms}),
+            # Where it SETTLED: an action event records what came back, and
+            # that is known when the observation lands — after the phases the
+            # action ran, not before them. Legacy rows predate settled_at and
+            # keep the call's end.
+            start=getattr(step, "settled_at", None) or _end_of(
+                {"start": step_started_at(step),
+                 "duration_ms": step.duration_ms}),
             duration_ms=None, anchor=str(step.uuid), uuid=str(step.uuid),
-            kpis={"status": "error" if getattr(step, "error", None) else "ok"},
+            kpis={"status": "error" if getattr(step, "error", None) else "ok",
+                  **_observation_counts(step)},
             payload={"args": getattr(step, "args", None) or {},
                      "reason": getattr(step, "reason", None),
                      "observation": _observation_without_timing(step),
