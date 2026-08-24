@@ -245,8 +245,12 @@ ASSISTANT_TEMPLATE = """
   .as-main .step-anchor { text-decoration:none; padding:0.05rem 0.3rem; border-radius:4px; }
   .as-main .step .step-anchor:hover { color:#2563eb; background:#eef2ff; }
   .as-main .step:target .step-anchor { color:#2563eb; }
-  .as-main .step .card-header, .as-main .card .card-header { display:flex; gap:0.5rem; align-items:center;
-                       flex-wrap:wrap; padding:10px 14px; background:#fbfdff;
+  /* One gap for every header, matching the padding the divider box adds on
+     its other side — otherwise each part sits closer to the rule on its right
+     than to the one on its left. The horizontal padding matches the body
+     below, so a header's first word starts where the body's text does. */
+  .as-main .step .card-header, .as-main .card .card-header { display:flex; gap:1rem; align-items:center;
+                       flex-wrap:wrap; padding:10px 16px; background:#fbfdff;
                        border-bottom:1px solid #e5e7eb; }
   .as-main .card .card-header .card-title { font-size:1rem; font-weight:400; }
   .as-main .card .card-header .card-link { margin-left:auto; font-size:0.82rem; color:#2563eb; text-decoration:none; }
@@ -262,12 +266,14 @@ ASSISTANT_TEMPLATE = """
   .as-main .card .card-header .out-unresolved { color:#c0392b; }
   .as-main .card .card-header .out-running { color:#1d4ed8; }
   .as-main .card .card-header .out-pending { color:#98a2b3; }
-  .as-main .step-body, .as-main .card-body { padding:14px 16px; }
+  /* The inspector's pane is a card body and takes the same padding as one,
+     rather than restating a near-miss of it — its content lined up two pixels
+     inside the header above it. */
+  .as-main .step-body, .as-main .card-body, .as-main .log-detail { padding:14px 16px; }
   .as-main .step-body > :first-child { margin-top:0; }
   .as-main .step-body > :last-child { margin-bottom:0; }
   .as-main .step.phase-control .step-body { background:#faf5ff; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
-  .as-main .step .card-header { gap:1rem; }
   /* The divider between a header's parts: a rule drawn by the box, not a
      pipe character typed between them. Shared so the inspect header and a
      step's header separate the same way. */
@@ -309,7 +315,7 @@ ASSISTANT_TEMPLATE = """
   .as-main .wf-row.on .wf-name { font-weight:600; }
   .as-main .wf-row:hover .wf-name { color:#1a1a2e; }
   .as-main .wf-row.on { background:#eef4ff; }
-  .as-main .log-detail { padding:0.7rem 0.9rem; overflow-x:auto; }
+  .as-main .log-detail { overflow-x:auto; }
   .as-main .ev-pane { display:none; }
   .as-main .ev-pane.on { display:block; }
   .as-main .ev-detail h4 { margin:0 0 0.1rem; font-size:0.95rem; }

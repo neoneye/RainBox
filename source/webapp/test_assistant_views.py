@@ -2131,6 +2131,61 @@ def test_a_collapsible_summary_is_not_selectable_text():
     assert "user-select:none" in rule.group(0).replace(" ", "")
 
 
+def test_a_header_divider_has_the_same_space_on_both_sides():
+    """The gap before a divider is the flex gap; the gap after it is the
+    padding of the box drawing it. They have to be one value or every part of
+    a header sits closer to the rule on its right than the one on its left.
+
+    They drifted because the divider was shared between the step and inspect
+    headers but the gap was not: steps overrode it, so only the inspect header
+    read lopsided.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    header = re.search(
+        r"\.as-main \.step \.card-header, \.as-main \.card \.card-header \{"
+        r"[^}]*\}", ASSISTANT_TEMPLATE)
+    assert header, "the shared header rule is gone"
+    gap = re.search(r"gap:([\d.]+rem)", header.group(0))
+    assert gap, header.group(0)
+
+    divider = re.search(
+        r"\.as-main \.step \.card-header > span:not\(:first-child\),\s*"
+        r"\.as-main \.inspect \.card-header > span:not\(:first-child\) \{"
+        r"[^}]*\}", ASSISTANT_TEMPLATE)
+    assert divider, "the shared divider rule is gone"
+    after = re.search(r"padding:[\d.]+px 0 [\d.]+px ([\d.]+rem)",
+                      divider.group(0))
+    assert after, divider.group(0)
+    assert gap.group(1) == after.group(1)
+
+    # And nothing may set a different gap on one of the two headers again.
+    assert not re.search(r"\.as-main \.step \.card-header \{ gap:",
+                         ASSISTANT_TEMPLATE)
+
+
+def test_a_card_header_lines_up_with_the_body_under_it():
+    """Header text 2px left of the body text below reads as a mistake rather
+    than as a choice."""
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    header = re.search(
+        r"\.as-main \.step \.card-header, \.as-main \.card \.card-header \{"
+        r"[^}]*\}", ASSISTANT_TEMPLATE)
+    body = re.search(r"\.as-main \.step-body, \.as-main \.card-body, "
+                     r"\.as-main \.log-detail \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert body, "the shared body rule is gone"
+    assert re.search(r"padding:[\d.]+px (\d+px)", header.group(0)).group(1) \
+        == re.search(r"padding:[\d.]+px (\d+px)", body.group(0)).group(1)
+    # The inspector's pane is a body too, and shares the rule rather than
+    # restating a near-miss of it.
+    assert ".as-main .log-detail" in body.group(0)
+
+
 def test_a_live_refresh_keeps_the_row_the_reader_is_inspecting():
     """A running run refreshes every few seconds and the page swaps its whole
     pane. The server renders the first row selected, so without carrying the
