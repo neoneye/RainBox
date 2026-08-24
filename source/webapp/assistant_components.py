@@ -294,6 +294,11 @@ def _llm(event: dict) -> Markup:
     rejected = payload.get("rejected_attempts") or []
     key = event.get("uuid") or event.get("label") or "ev"
     parts = [
+        # First: what the call was working from — the profile in force, the
+        # switch states. It frames everything below it, and it is short, so
+        # putting it after the prompts left it past tens of thousands of
+        # characters. The step sections read in this order too.
+        _block("log", payload.get("log"), collapsed=True, key=f"{key}-log"),
         # The prompts shut by default: they are the largest thing here and the
         # least often the answer. The response is what the reader came for.
         _block("system prompt", payload.get("system_prompt"),
@@ -303,7 +308,6 @@ def _llm(event: dict) -> Markup:
         _block("response", payload.get("model_response")),
         _block("reasoning", payload.get("reasoning"),
                collapsed=True, key=f"{key}-reasoning"),
-        _block("log", payload.get("log"), collapsed=True, key=f"{key}-log"),
         _block("error", payload.get("error")),
     ]
     if rejected:

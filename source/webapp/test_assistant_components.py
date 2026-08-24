@@ -194,6 +194,21 @@ def test_the_prompts_are_collapsed_and_toggleable():
     assert "data-k=" in html
 
 
+def test_the_log_reads_before_the_prompts():
+    """The log is what the call was working from — the profile in force, the
+    switch states — so it frames everything below it. Put after the prompts it
+    sat past tens of thousands of characters, which is where the step sections
+    do NOT put it.
+    """
+    html = render_event_detail(_event(
+        "llm", "reply",
+        payload={"system_prompt": "S", "user_prompt": "U",
+                 "model_response": "{}", "log": {"profile": "x"}}))
+
+    assert html.index("log (") < html.index("system prompt (")
+    assert html.index("system prompt (") < html.index("user prompt (")
+
+
 def test_an_llm_pane_shows_the_model_link_and_throughput():
     html = render_event_detail(_event(
         "llm", "reply",
