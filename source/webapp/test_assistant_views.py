@@ -1938,9 +1938,9 @@ def test_several_rejections_are_numbered_and_laid_end_to_end(app_ctx, client):
 def test_every_gantt_bar_selects_the_event_that_explains_it(app_ctx, client):
     """A bar the reader cannot follow is a number with no provenance.
 
-    Every bar names an event id that the log below renders a pane for, so
-    clicking one shows what that stretch of time was — including the bars
-    that carry no detail of their own, whose pane says exactly that.
+    The gantt IS the list — there is no second column of the same events, so
+    every bar has to name an event the pane below can render, including the
+    bars carrying no detail of their own, whose pane says exactly that.
     """
     import re
 
@@ -1948,15 +1948,19 @@ def test_every_gantt_bar_selects_the_event_that_explains_it(app_ctx, client):
     run = _timed_memory_query_run(room)
     try:
         page, _ = _rendered(client, run)
-        panes = set(re.findall(r'class="ev-pane[^"]*" id="(ev-\d+)"', page))
-        picked = re.findall(r'class="wf-row ev-pick" data-ev="(ev-\d+)"', page)
+        panes = re.findall(r'class="ev-pane[^"]*" id="(ev-\d+)"', page)
+        picked = re.findall(r'class="wf-row ev-pick[^"]*"\s+data-ev="(ev-\d+)"',
+                            page)
 
         assert picked, "no gantt rows rendered"
         for target in picked:
             assert target in panes, f"{target} has no detail pane"
-        # And the list offers the same events, not a second enumeration.
-        rows = re.findall(r'class="log-row ev-pick[^"]*"\s+data-ev="(ev-\d+)"',
-                          page)
-        assert set(picked) <= set(rows)
+        # One pane per bar, and one bar per event: a second enumeration of the
+        # same run is what this layout exists to avoid.
+        assert sorted(picked) == sorted(panes)
+        assert "log-row" not in page
+        # Exactly one pane is open to begin with, or the page opens on a wall
+        # of every prompt the run sent.
+        assert page.count('class="ev-pane on"') == 1
     finally:
         _cleanup(run.uuid, room.uuid)

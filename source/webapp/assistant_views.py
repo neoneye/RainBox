@@ -293,9 +293,13 @@ ASSISTANT_TEMPLATE = """
      column, so colouring it too said nothing twice and left the row that is
      actually a problem as one colour among five. */
   .as-main .wf { display:flex; flex-direction:column; gap:2px; }
+  /* A button, because the row selects the pane below rather than navigating.
+     The reset is what keeps it looking like a row and not a form control. */
   .as-main .wf-row { display:grid; grid-template-columns:14rem 1fr 4rem; gap:0.8rem;
                      align-items:center; text-decoration:none; color:inherit;
-                     padding:2px 4px; border-radius:4px; }
+                     padding:2px 4px; border-radius:4px;
+                     width:100%; text-align:left; background:none; border:0;
+                     font:inherit; cursor:pointer; }
   .as-main .wf-row:hover { background:#f3f4f6; }
   .as-main .wf-name { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
                       font-size:0.76rem; white-space:nowrap; overflow:hidden;
@@ -310,19 +314,8 @@ ASSISTANT_TEMPLATE = """
   .as-main .wf-tick { position:absolute; top:0; bottom:0; width:2px;
         background:#9aa3af; }
   .as-main .wf-row.on .wf-name { font-weight:600; }
-  .as-main .log-split { display:grid; grid-template-columns:22rem 1fr;
-        min-height:18rem; }
-  .as-main .log-list { border-right:1px solid #e5e7eb; max-height:32rem;
-        overflow-y:auto; }
-  .as-main .log-row { display:grid;
-        grid-template-columns:4.2rem 1.1rem 1fr auto; gap:0.4rem;
-        align-items:baseline; width:100%; text-align:left; background:none;
-        border:0; border-bottom:1px solid #f1f2f4; padding:0.3rem 0.6rem;
-        font-family:ui-monospace,monospace; font-size:80%; cursor:pointer; }
-  .as-main .log-row:hover { background:#f7f8fa; }
-  .as-main .log-row.on { background:#eef4ff; box-shadow:inset 2px 0 0 #2563eb; }
-  .as-main .log-row .lg-t { color:#9aa3af; }
-  .as-main .log-row .lg-d { color:#6b7280; }
+  .as-main .wf-row:hover .wf-name { color:#1a1a2e; }
+  .as-main .wf-row.on { background:#eef4ff; }
   .as-main .log-detail { padding:0.7rem 0.9rem; overflow-x:auto; }
   .as-main .ev-pane { display:none; }
   .as-main .ev-pane.on { display:block; }
@@ -525,8 +518,9 @@ ASSISTANT_TEMPLATE = """
         <div class="card-body">
           <div class="wf">
             {% for e in log.events %}
-            <a class="wf-row ev-pick" data-ev="{{ e.row_id }}" href="#{{ e.row_id }}-row"
-               title="{{ e.label }} — {{ e.seconds }} at {{ e.clock }}">
+            <button type="button" class="wf-row ev-pick{% if loop.first %} on{% endif %}"
+                    data-ev="{{ e.row_id }}"
+                    title="{{ e.label }} — {{ e.seconds }} at {{ e.clock }}">
               <span class="wf-name kind-{{ e.variant or e.kind }}">{{ e.label }}</span>
               <span class="wf-track">
                 {% if e.width_pct is not none %}
@@ -538,7 +532,7 @@ ASSISTANT_TEMPLATE = """
                 {% endif %}
               </span>
               <span class="wf-secs">{{ e.seconds }}</span>
-            </a>
+            </button>
             {% endfor %}
           </div>
         </div>
@@ -546,10 +540,10 @@ ASSISTANT_TEMPLATE = """
       {% endif %}
 
       {% if log.events %}
-      {# The log. Left: every event in the order it happened. Right: the
-         component for whichever is selected — one renderer per kind, so a
-         new kind costs a component rather than more markup here. Clicking a
-         gantt bar above selects the same event: both read one stream.
+      {# The detail for whichever event the gantt above has selected — one
+         renderer per kind, so a new kind costs a component rather than more
+         markup here. The gantt IS the list: a second list beside this pane
+         said the same thing twice and made the reader choose which to read.
          Every pane is rendered once into the page, which is what makes
          selection a client-side swap rather than a round trip. #}
       <div class="card">
@@ -557,24 +551,10 @@ ASSISTANT_TEMPLATE = """
           <div class="card-title">Log</div>
           <span class="outcome muted">{{ log.events|length }} events</span>
         </div>
-        <div class="log-split">
-          <div class="log-list">
-            {% for e in log.events %}
-            <button type="button" class="log-row ev-pick{% if loop.first %} on{% endif %}"
-                    data-ev="{{ e.row_id }}" id="{{ e.row_id }}-row"
-                    {% if e.anchor %}data-step="{{ e.anchor }}"{% endif %}>
-              <span class="lg-t">{{ e.clock }}</span>
-              <span class="lg-g kind-{{ e.variant or e.kind }}">{{ e.glyph }}</span>
-              <span class="lg-n">{{ e.label }}</span>
-              <span class="lg-d">{{ e.seconds }}</span>
-            </button>
-            {% endfor %}
-          </div>
-          <div class="log-detail">
-            {% for e in log.events %}
-            <div class="ev-pane{% if loop.first %} on{% endif %}" id="{{ e.row_id }}">{{ e.detail_html|safe }}</div>
-            {% endfor %}
-          </div>
+        <div class="log-detail">
+          {% for e in log.events %}
+          <div class="ev-pane{% if loop.first %} on{% endif %}" id="{{ e.row_id }}">{{ e.detail_html|safe }}</div>
+          {% endfor %}
         </div>
       </div>
       {% endif %}
@@ -834,8 +814,6 @@ ASSISTANT_TEMPLATE = """
     document.querySelectorAll(".ev-pick").forEach(function (b) {
       b.classList.toggle("on", b.dataset.ev === id);
     });
-    var row = document.getElementById(id + "-row");
-    if (row) { row.scrollIntoView({block: "nearest"}); }
   }
   document.addEventListener("click", function (ev) {
     var pick = ev.target.closest(".ev-pick");
