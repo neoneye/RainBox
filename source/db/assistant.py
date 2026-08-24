@@ -251,9 +251,15 @@ def finish_run(
 
 def set_run_summary(run: AssistantRun, summary: dict[str, Any]) -> AssistantRun:
     """Store the assistant_run_summarizer agent's post-completion digest on a run, stamping
-    `summarized_at`. Overwrites any prior summary (the latest summarization wins)."""
+    `summarized_at`. Overwrites any prior summary (the latest summarization wins).
+
+    Notifies like every other write to a run. This one lands AFTER the run is
+    finished, so the page showing it has already had its last refresh — and
+    what arrives is not only the digest but the summarizer's own call on the
+    timeline. Without this the reader has to reload to see either."""
     run.summary = {**summary, "summarized_at": datetime.now(UTC).isoformat()}
     db.session.add(run)
+    _assistant_notify(run.uuid, "run")
     db.session.commit()
     return run
 

@@ -84,6 +84,27 @@ def test_run_lifecycle_notifies(app_ctx, listener):
         _cleanup_run(run.uuid)
 
 
+def test_storing_the_digest_notifies(app_ctx, listener):
+    """The summarizer runs after the run is finished, so the page showing that
+    run has already had its last refresh. Without a NOTIFY here the digest —
+    and the summarizer's own rows on the timeline — appear only if the reader
+    happens to reload."""
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4(), step_limit=6
+    )
+    db.finish_run(run, "finished")
+    _assistant_events(listener, count=2)  # drain start + finish
+    try:
+        db.set_run_summary(run, {"trigger": "t", "obstacles": [],
+                                 "outcome": "resolved"})
+
+        events = _assistant_events(listener)
+        assert events == [{"assistant_run_uuid": str(run.uuid), "event": "run"}]
+        assert "room_uuid" not in events[0]
+    finally:
+        _cleanup_run(run.uuid)
+
+
 def test_step_open_and_settle_notify(app_ctx, listener):
     # A real room: the settle posts a debug-assistant chat row into it.
     room = _room()
