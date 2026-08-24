@@ -75,9 +75,6 @@ _KIND_CAPTION: dict[str, str] = {
     "unaccounted": "unmeasured",
 }
 
-_MAX_TEXT_CHARS: int = 40_000
-
-
 def _fmt_ms(value: Any) -> str | None:
     if value is None:
         return None
@@ -178,36 +175,33 @@ def _kpi_html(event: dict) -> Markup:
 
 def _block(title: str, body: Any, *, mono: bool = True,
            collapsed: bool = False, key: str = "") -> Markup:
-    """A labelled block of text, escaped and length-capped.
+    """A labelled block of text, escaped.
 
     `collapsed` renders a shut `<details>` — for the prompts above all, where a
     50k-token payload open by default buries every number above it. `key` is
     the `data-k` the live refresh reopens by, the same mechanism every other
     collapsed block on the page uses.
 
-    Capped because a payload here can be a whole retrieved corpus, and a pane
-    that takes a second to paint is a pane nobody opens.
+    Never truncated. This is the pane that exists to inspect a prompt, and the
+    prompt-cache work turns on reading the exact bytes a call sent — a clipped
+    tail hides the divergence being hunted. Nothing is bought by clipping
+    either: a collapsed block costs no paint until it is opened, and what a
+    step recorded was already bounded when it was captured.
     """
     if body in (None, "", {}, []):
         return Markup("")
     text = body if isinstance(body, str) else json.dumps(
         body, indent=2, sort_keys=True, default=str, ensure_ascii=False)
-    length = len(text)
-    clipped = length > _MAX_TEXT_CHARS
-    if clipped:
-        text = text[:_MAX_TEXT_CHARS]
-    note = Markup('<span class="ev-clip"> — first {} characters</span>').format(
-        _MAX_TEXT_CHARS) if clipped else Markup("")
     cls = "ev-pre" if mono else "ev-text"
     if collapsed:
         return Markup(
             '<details class="prompt ev-block" data-k="{}">'
-            '<summary>{} ({} chars){}</summary>'
+            '<summary>{} ({} chars)</summary>'
             '<pre class="{}">{}</pre></details>'
-        ).format(key or title, title, length, note, cls, text)
+        ).format(key or title, title, len(text), cls, text)
     return Markup(
-        '<div class="ev-block"><h5>{}{}</h5><pre class="{}">{}</pre></div>'
-    ).format(title, note, cls, text)
+        '<div class="ev-block"><h5>{}</h5><pre class="{}">{}</pre></div>'
+    ).format(title, cls, text)
 
 
 def _generic_action(event: dict) -> Markup:

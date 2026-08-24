@@ -207,3 +207,23 @@ def test_an_llm_pane_shows_the_model_link_and_throughput():
     assert "in 6180" in html and "out 1024" in html
     assert "tok/s" in html
     assert "took 14.6s" in html
+
+
+def test_a_long_prompt_is_shown_whole():
+    """The inspector exists to inspect prompts. Truncating one is the single
+    thing it must not do — and the prompt-cache work turns on reading the exact
+    bytes a call sent, where a clipped tail hides the divergence being hunted.
+
+    Nothing is paid for it either: the block is collapsed until opened, so a
+    long prompt costs no paint, and the page already carries the same text in
+    the step section below.
+    """
+    prompt = "".join(f"line {i}\n" for i in range(9000))
+    assert len(prompt) > 40_000
+
+    html = render_event_detail(_event(
+        "llm", "decide → reply", payload={"user_prompt": prompt}))
+
+    assert f"user prompt ({len(prompt)} chars)" in html
+    assert "line 8999" in html
+    assert "first 40000 characters" not in html

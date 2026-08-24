@@ -324,7 +324,6 @@ ASSISTANT_TEMPLATE = """
         max-height:24rem; overflow:auto; white-space:pre-wrap;
         word-break:break-word; font-size:80%; }
   .as-main .ev-text { font-family:inherit; }
-  .as-main .ev-clip { color:#b45309; text-transform:none; letter-spacing:0; }
   .as-main .ev-links { margin:0 0 0.6rem; font-size:85%; }
   .as-main .ev-links a { color:#2563eb; text-decoration:none; }
   .as-main .ev-links a:hover { text-decoration:underline; }
