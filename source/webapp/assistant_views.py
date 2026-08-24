@@ -173,8 +173,12 @@ ASSISTANT_TEMPLATE = """
   .as-main .dash { position:relative; display:grid; grid-template-columns:1.1fr 0.6fr 0.6fr 1.2fr 1fr;
                    gap:24px; margin:-12px -18px 1.4rem; padding:18px 18px;
                    border-bottom:1px solid #e5e7eb; }
-  /* Kebab sits in the dash's top-right free space (over the Tokens cell). */
-  .as-main .dash .as-kebab { position:absolute; top:12px; right:14px; margin:0; }
+  /* The run's controls sit in the dash's top-right free space (over the
+     Tokens cell): the kebab, and — while the run is live — Stop and Redirect,
+     which are only ever wanted while watching it from up here. */
+  .as-main .dash .dash-actions { grid-column:1 / -1; justify-self:end;
+        display:flex; align-items:center; gap:0.5rem; margin-bottom:-14px; }
+  .as-main .dash .dash-actions .as-kebab { margin:0; }
   .as-main .dash .dcell { display:flex; flex-direction:column; }
   .as-main .dash .dlabel { font-size:0.66rem; font-weight:700; text-transform:uppercase;
                            letter-spacing:0.05em; color:#9ca3af; margin-bottom:8px; }
@@ -462,8 +466,18 @@ ASSISTANT_TEMPLATE = """
         to pick a run.</div>
     {% else %}
       <div class="dash">
-        <button class="as-kebab" title="actions"
-                onclick="asKebab(event, '{{ selected.uuid }}', '{{ selected.status }}', '{{ selected.journal_id or '' }}')"></button>
+        <div class="dash-actions">
+          {# Acting on a live run belongs where the reader already is. The
+             dashboard says it is still going and the timeline below is what
+             they are reading, so the controls sit here rather than under a
+             timeline that grows for as long as the run does. #}
+          {% if selected.status in ('running', 'stopping') %}
+          <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
+          <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
+          {% endif %}
+          <button class="as-kebab" title="actions"
+                  onclick="asKebab(event, '{{ selected.uuid }}', '{{ selected.status }}', '{{ selected.journal_id or '' }}')"></button>
+        </div>
         <div class="dcell">
           <div class="dlabel">Status</div>
           <div class="dval-big dstatus-{{ dash.status_class }}">{{ dash.status }}</div>
@@ -585,10 +599,6 @@ ASSISTANT_TEMPLATE = """
       <div class="card">
         <div class="card-header">
           <div class="card-title">{% if trigger %}Started by <a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a>{% else %}Run{% endif %}</div>
-          {% if selected.status in ('running', 'stopping') %}
-            <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
-            <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
-          {% endif %}
           <a class="card-link" href="/chat?id={{ selected.room_uuid }}{% if trigger %}&msg={{ trigger.id }}{% endif %}">chat ↗</a>
         </div>
         <div class="card-body">

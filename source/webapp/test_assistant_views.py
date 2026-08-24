@@ -248,6 +248,36 @@ def test_stop_redirect_only_for_running_run(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_the_live_controls_sit_at_the_top_of_the_page(app_ctx, client):
+    """Stopping or redirecting a run is what a reader does WHILE watching it,
+    and the reader is at the top: the dashboard says the run is still going and
+    the timeline below is what they are reading. The controls sat under both,
+    past a timeline that grows all run — so the one moment they are useful is
+    the one moment they have scrolled off.
+    """
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    # With a step, so the timeline the controls used to sit below is drawn.
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="look")
+    db.settle_assistant_step(step, phase="observed", observation={"text": "x"})
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+
+        stop = body.index(f"/chat/api/assistant/runs/{run.uuid}/stop")
+        redirect = body.index("ppRedirect(")
+        # Inside the dashboard: before the timeline, and before the card that
+        # used to hold them.
+        assert stop < body.index('class="wf"')
+        assert redirect < body.index('class="wf"')
+        assert body.index('class="dash"') < stop
+        # And not left behind in the trigger card as well.
+        assert body.count("ppRedirect('") == 1
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_verdict_shows_the_full_reply_not_the_truncated_summary(app_ctx, client):
     room = _room()
     agent_uuid = uuid4()
