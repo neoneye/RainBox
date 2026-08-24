@@ -2029,3 +2029,16 @@ def test_an_inspector_block_looks_like_every_other_pre():
     for restated in ("font-size", "background", "border-radius", "padding"):
         assert restated not in rule.group(0), restated
     assert "max-height" in rule.group(0)
+
+
+def test_the_inspector_meta_line_is_right_aligned_like_a_step_s():
+    """A step's io-meta sits at the right end of its row. The inspector's meta
+    line reports the same things about the same call, so it lands in the same
+    place rather than reading as a different kind of row."""
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    rule = re.search(r"\.as-main \.ev-kpis \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert rule, "the .ev-kpis rule is gone"
+    assert "justify-content:flex-end" in rule.group(0).replace(" ", "")

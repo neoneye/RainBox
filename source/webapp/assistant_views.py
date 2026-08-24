@@ -306,10 +306,13 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-detail h4 { margin:0 0 0.1rem; font-size:0.95rem; }
   .as-main .ev-caption { color:#6b7280; font-size:80%; margin-bottom:0.6rem; }
   /* One meta line, the way a step's io-label has always read: each field
-     carries its own word, so no number floats free of what it counts. */
+     carries its own word, so no number floats free of what it counts. Right
+     aligned for the same reason a step's io-meta is — it reports the same
+     things about the same call, so it belongs in the same place. */
   .as-main .ev-kpis { display:flex; flex-wrap:wrap; gap:0.9rem;
-        margin-bottom:0.7rem; font-family:ui-monospace,monospace;
-        font-size:80%; color:#4b5563; }
+        justify-content:flex-end; margin-bottom:0.7rem;
+        font-family:ui-monospace,monospace; font-size:80%; color:#4b5563;
+        font-variant-numeric:tabular-nums; }
   .as-main .ev-crumb { display:flex; align-items:baseline; gap:0.5rem;
         min-width:0; font-size:0.9rem; }
   .as-main .ev-crumb-sep { color:#cbd5e1; }
