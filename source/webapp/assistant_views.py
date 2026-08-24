@@ -319,9 +319,6 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-kpis { flex-wrap:wrap; justify-content:flex-end;
         margin-bottom:0.7rem; }
   .as-main .ev-kpi { white-space:nowrap; }
-  .as-main details.ev-block > summary { cursor:pointer; font-size:70%;
-        letter-spacing:0.05em; text-transform:uppercase; color:#6b7280;
-        margin-bottom:0.2rem; }
   .as-main details.ev-block > summary:hover { color:#1a1a2e; }
   .as-main .ev-block { margin-bottom:0.7rem; }
   .as-main .ev-block h5 { margin:0 0 0.2rem; font-size:70%;
@@ -423,7 +420,8 @@ ASSISTANT_TEMPLATE = """
      <details>. The summaries mirror .io-label but a notch smaller. */
   .as-main .step .prompt { margin:0.25rem 0 0; }
   .as-main .step .prompt > summary,
-  .as-main .step .steplog > summary { font-size:0.64rem; text-transform:uppercase;
+  .as-main .step .steplog > summary,
+  .as-main details.ev-block > summary { font-size:0.64rem; text-transform:uppercase;
                              letter-spacing:0.04em; color:#6b7280; margin-bottom:0.15rem;
                              cursor:pointer; -webkit-user-select:none; user-select:none; }
   .as-main .err { color:#c0392b; }

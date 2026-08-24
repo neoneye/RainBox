@@ -2082,3 +2082,21 @@ def test_every_styled_inspector_class_has_a_rule():
     for name in styled:
         assert re.search(rf"\.{re.escape(name)}\b[^{{]*\{{", ASSISTANT_TEMPLATE), (
             f".{name} is used but has no CSS rule")
+
+
+def test_a_collapsible_summary_is_not_selectable_text():
+    """Clicking a toggle repeatedly selects its label, which is never what the
+    click meant. The step's prompt summaries already opt out; the inspector's
+    take the same rule rather than a near-copy of it — 70% beside 0.64rem,
+    0.05em beside 0.04em, and no user-select at all.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    rule = re.search(
+        r"\.as-main \.step \.prompt > summary,[^{]*\{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert rule, "the shared summary rule is gone"
+    assert "details.ev-block > summary" in rule.group(0), (
+        "the inspector's summaries have their own rule again")
+    assert "user-select:none" in rule.group(0).replace(" ", "")
