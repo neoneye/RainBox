@@ -2007,3 +2007,18 @@ def test_the_inspector_names_the_override_a_call_ran_on(app_ctx, client):
         assert f"{cfg.model_name} · t0.15 probe" in page
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_the_inspector_blocks_keep_the_default_pre_size():
+    """`.trigmsg` is legible because it sets no font-size and lets <pre> keep
+    its own. An inspector block holds the same kind of thing — a prompt, a
+    response, a request — so shrinking it made the run's own text the smallest
+    text on the page.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    rule = re.search(r"\.as-main \.ev-pre \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert rule, "the .ev-pre rule is gone"
+    assert "font-size" not in rule.group(0)
