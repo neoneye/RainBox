@@ -660,3 +660,40 @@ def test_the_agent_tags_its_calls_with_the_run():
     # An agent that tracks no run tags only the caller.
     plain = StructuredLLMAgent._instrument_tags(SimpleNamespace(), "eval.x")
     assert plain == {"caller": "eval.x"}
+
+
+def test_the_agent_tags_its_calls_with_the_model_it_chose():
+    """The provider reports a model NAME, which is not a model this app can be
+    asked about: /model is keyed on the config uuid, and the name does not say
+    which config or which tuning of it answered. Only the agent knows, and only
+    while the attempt is running."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from agents.base import StructuredLLMAgent
+
+    chosen = uuid4()
+    agent = SimpleNamespace(_last_model_uuid=chosen)
+    tags = StructuredLLMAgent._instrument_tags(agent, "assistant.decide")
+
+    assert tags["model_uuid"] == str(chosen)
+
+
+def test_the_model_tag_lands_on_the_row():
+    from uuid import uuid4
+
+    chosen = uuid4()
+    recorder, rows = make_recorder()
+    recorder.handle(start_event(tags={"model_uuid": str(chosen)}))
+    recorder.handle(end_event(tags={"model_uuid": str(chosen)}))
+
+    assert rows[0]["model_uuid"] == chosen
+
+
+def test_an_untagged_call_records_no_model_uuid():
+    """A guess would link the reader to the wrong model's page."""
+    recorder, rows = make_recorder()
+    recorder.handle(start_event())
+    recorder.handle(end_event())
+
+    assert rows[0]["model_uuid"] is None

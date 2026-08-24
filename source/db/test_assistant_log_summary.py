@@ -17,6 +17,7 @@ import pytest
 
 import db
 from db import LlmCall
+from db.models import ModelConfig
 
 T0 = datetime(2026, 8, 24, 20, 30, 0, tzinfo=UTC)
 
@@ -175,6 +176,47 @@ def test_the_wait_before_the_summarizer_is_named_not_unaccounted(caller):
     assert wait["duration_ms"] == 2000
     assert not [e for e in events if e["kind"] == "unaccounted"
                 and e["start"] >= _at(70.0)]
+
+
+def test_the_summary_call_links_to_the_model_that_answered(caller):
+    """Every other row on the timeline links its model. A row that names one
+    and does not link it is the odd one out for no reason a reader can see."""
+    run = _run()
+    config = db.create_model_config(
+        model_name=f"test-model-{uuid4().hex[:8]}", arguments={},
+        provider="ollama")
+    db.db.session.commit()
+    try:
+        _summarizer_row(caller, at=72, run_uuid=run.uuid)
+        db.db.session.query(LlmCall).filter(
+            LlmCall.uuid == caller[-1]).update({"model": config.model_name})
+        db.db.session.commit()
+
+        event = _one(db.run_events(run, [_step("reply", at=0, ms=2000)]),
+                     kind="llm", label=db.SUMMARY_LABEL)
+
+        assert event["kpis"]["model_uuid"] == str(config.uuid)
+    finally:
+        db.db.session.query(ModelConfig).filter(
+            ModelConfig.uuid == config.uuid).delete(synchronize_session=False)
+        db.db.session.commit()
+
+
+def test_a_model_name_matching_nothing_leaves_the_row_unlinked(caller):
+    """A link is only offered where the name resolves to exactly one config.
+    Guessing would send the reader to the wrong model's page, which is worse
+    than the plain name the row already shows."""
+    run = _run()
+    _summarizer_row(caller, at=72, run_uuid=run.uuid)
+    db.db.session.query(LlmCall).filter(
+        LlmCall.uuid == caller[-1]).update({"model": "not-a-configured-model"})
+    db.db.session.commit()
+
+    event = _one(db.run_events(run, [_step("reply", at=0, ms=2000)]),
+                 kind="llm", label=db.SUMMARY_LABEL)
+
+    assert event["kpis"]["model_uuid"] is None
+    assert event["kpis"]["model"] == "not-a-configured-model"
 
 
 def test_the_summary_call_is_not_part_of_what_the_turn_cost(caller):

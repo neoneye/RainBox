@@ -397,11 +397,22 @@ class ModelGroupAgent(Agent):
         so a row can be joined back to the turn that made it, which is what
         lets /assistant show a call's prefill/decode split and cache reuse.
         Absent for every other agent, whose calls simply record no linkage.
+
+        The model rides along for the same reason. What instrumentation sees is
+        the NAME the provider was given, which is not something this app can be
+        asked about: /model is keyed on the config uuid, and one name can be
+        configured more than once. The agent is the only place that knows which
+        uuid it picked, and only while the attempt it picked for is running —
+        `_run_with_model_fallback` sets `_last_model_uuid` before the call goes
+        out, which is what makes this the moment to read it.
         """
         tags = {"caller": caller_tag}
         run_uuid = getattr(self, "_log_run_uuid", None)
         if run_uuid:
             tags["run_uuid"] = str(run_uuid)
+        model_uuid = getattr(self, "_last_model_uuid", None)
+        if model_uuid:
+            tags["model_uuid"] = str(model_uuid)
         return tags
 
     def _caller_tag(self, purpose: str | None = None) -> str:

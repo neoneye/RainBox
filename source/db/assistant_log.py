@@ -25,7 +25,11 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from db.model_config import get_model_config, get_model_config_override
+from db.model_config import (
+    get_model_config,
+    get_model_config_override,
+    list_model_configs,
+)
 from db.models import AssistantStep, LlmCall, db
 
 
@@ -729,6 +733,25 @@ def _summarizer_call(run):
     return min(near, key=lambda r: abs(r.finished_at - stamp))
 
 
+def _config_uuid_for_model(provider, model_name) -> str | None:
+    """The model config a recorded call ran on, found by the name it answered.
+
+    For rows written before a call recorded which config it chose. Only when
+    the name resolves to exactly one config: a link to the wrong model's page
+    is worse than the plain name the row already shows, and nothing stops a
+    model from being configured twice.
+    """
+    if not model_name:
+        return None
+    try:
+        rows = [c for c in list_model_configs()
+                if c.model_name == model_name
+                and (not provider or c.provider == provider)]
+    except Exception:
+        return None
+    return str(rows[0].uuid) if len(rows) == 1 else None
+
+
 def _summary_events(run) -> list[dict]:
     """The summarizer's call, and the queue wait in front of it.
 
@@ -750,7 +773,9 @@ def _summary_events(run) -> list[dict]:
         "llm", SUMMARY_LABEL, variant="summary", start=row.started_at,
         duration_ms=row.total_ms, uuid=str(row.uuid),
         kpis={"model": row.model, "provider": row.provider,
-              "model_uuid": str(row.model_uuid) if row.model_uuid else None,
+              "model_uuid": (str(row.model_uuid) if row.model_uuid
+                             else _config_uuid_for_model(row.provider,
+                                                         row.model)),
               "input_tokens": row.prompt_tokens,
               "output_tokens": row.completion_tokens,
               "prefill_ms": row.prefill_ms, "decode_ms": row.decode_ms,
