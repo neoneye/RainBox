@@ -363,6 +363,21 @@ def _as_event(call: dict) -> dict:
         payload={"detail": call.get("detail", "")})
 
 
+def _observation_without_timing(step) -> dict:
+    """The observation an action pane shows, minus its `timing` block.
+
+    Those seconds are already on the stream as their own activity and
+    embedding events; dumping the payload again would show the same numbers
+    twice, as JSON nobody reads.
+    """
+    observation = dict(step.observation or {})
+    data = observation.get("data")
+    if isinstance(data, dict) and "timing" in data:
+        data = {k: v for k, v in data.items() if k != "timing"}
+        observation["data"] = data
+    return observation
+
+
 def _step_events(step) -> list[dict]:
     """The events one step row stands for.
 
@@ -428,7 +443,7 @@ def _step_events(step) -> list[dict]:
             kpis={"status": "error" if getattr(step, "error", None) else "ok"},
             payload={"args": getattr(step, "args", None) or {},
                      "reason": getattr(step, "reason", None),
-                     "observation": step.observation or {},
+                     "observation": _observation_without_timing(step),
                      "observation_preview": getattr(
                          step, "observation_preview", None),
                      "error": getattr(step, "error", None)}))

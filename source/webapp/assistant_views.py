@@ -19,6 +19,7 @@ from flask import Response, render_template_string, request
 
 import db
 from agents.assistant import CAPABILITIES, problem_texts
+from .assistant_log_view import log_view
 from .core import app
 
 # action value -> short human-readable summary, for the timeline's "action
@@ -306,6 +307,42 @@ ASSISTANT_TEMPLATE = """
   /* The one exception: a call whose response was thrown away and asked for
      again. Same red as the error text — the run paid for it and got nothing
      back, and against neutral bars it is the row the eye finds first. */
+  .as-main .wf-tick { position:absolute; top:0; bottom:0; width:2px;
+        background:#9aa3af; }
+  .as-main .wf-row.on .wf-name { font-weight:600; }
+  .as-main .log-split { display:grid; grid-template-columns:22rem 1fr;
+        min-height:18rem; }
+  .as-main .log-list { border-right:1px solid #e5e7eb; max-height:32rem;
+        overflow-y:auto; }
+  .as-main .log-row { display:grid;
+        grid-template-columns:4.2rem 1.1rem 1fr auto; gap:0.4rem;
+        align-items:baseline; width:100%; text-align:left; background:none;
+        border:0; border-bottom:1px solid #f1f2f4; padding:0.3rem 0.6rem;
+        font-family:ui-monospace,monospace; font-size:80%; cursor:pointer; }
+  .as-main .log-row:hover { background:#f7f8fa; }
+  .as-main .log-row.on { background:#eef4ff; box-shadow:inset 2px 0 0 #2563eb; }
+  .as-main .log-row .lg-t { color:#9aa3af; }
+  .as-main .log-row .lg-d { color:#6b7280; }
+  .as-main .log-detail { padding:0.7rem 0.9rem; overflow-x:auto; }
+  .as-main .ev-pane { display:none; }
+  .as-main .ev-pane.on { display:block; }
+  .as-main .ev-detail h4 { margin:0 0 0.1rem; font-size:0.95rem; }
+  .as-main .ev-caption { color:#6b7280; font-size:80%; margin-bottom:0.6rem; }
+  .as-main .ev-kpis { display:flex; flex-wrap:wrap; gap:1.2rem;
+        margin-bottom:0.7rem; }
+  .as-main .ev-kpis div span { display:block; font-size:65%;
+        letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }
+  .as-main .ev-kpis div b { font-size:0.95rem; }
+  .as-main .ev-block { margin-bottom:0.7rem; }
+  .as-main .ev-block h5 { margin:0 0 0.2rem; font-size:70%;
+        letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }
+  .as-main .ev-pre, .as-main .ev-text { margin:0; padding:0.5rem 0.6rem;
+        background:#f7f8fa; border:1px solid #eceef1; border-radius:4px;
+        max-height:24rem; overflow:auto; white-space:pre-wrap;
+        word-break:break-word; font-size:80%; }
+  .as-main .ev-text { font-family:inherit; }
+  .as-main .ev-clip { color:#b45309; text-transform:none; letter-spacing:0; }
+  .as-main .ev-note { color:#6b7280; font-size:85%; }
   .as-main .wf-bar.kind-rejected { background:#e8746f; }
   .as-main .wf-name.kind-rejected { color:#c0392b; }
   /* Visibly not a measurement of anything: nothing reported this time, which
@@ -473,7 +510,7 @@ ASSISTANT_TEMPLATE = """
         </div>
       </div>
 
-      {% if waterfall %}
+      {% if log.events %}
       {# Where the run's wall-clock went, in full: one bar per activity, laid
          end to end. Model calls, embedding calls, and each action's own work,
          none of them drawn over another — a bar spanning other bars hides
@@ -487,18 +524,55 @@ ASSISTANT_TEMPLATE = """
         </div>
         <div class="card-body">
           <div class="wf">
-            {% for c in waterfall %}
-            <a class="wf-row"{% if c.href %} href="{{ c.href }}"{% endif %} title="{{ c.label }} — {{ c.seconds }}{% if c.start %} at {{ c.start.strftime('%H:%M:%S') }}{% endif %}{% if c.detail %}&#10;&#10;{{ c.detail }}{% endif %}">
-              <span class="wf-name kind-{{ c.variant or c.kind }}">{{ c.label }}</span>
+            {% for e in log.events %}
+            <a class="wf-row ev-pick" data-ev="{{ e.row_id }}" href="#{{ e.row_id }}-row"
+               title="{{ e.label }} — {{ e.seconds }} at {{ e.clock }}">
+              <span class="wf-name kind-{{ e.variant or e.kind }}">{{ e.label }}</span>
               <span class="wf-track">
-                {% if c.width_pct is not none %}
-                <span class="wf-bar kind-{{ c.variant or c.kind }}" style="left:{{ c.offset_pct }}%;width:{{ c.width_pct }}%"></span>
+                {% if e.width_pct is not none %}
+                <span class="wf-bar kind-{{ e.variant or e.kind }}" style="left:{{ e.offset_pct }}%;width:{{ e.width_pct }}%"></span>
+                {% elif e.offset_pct is not none %}
+                <span class="wf-tick" style="left:{{ e.offset_pct }}%"></span>
                 {% else %}
                 <span class="wf-undated">not timed</span>
                 {% endif %}
               </span>
-              <span class="wf-secs">{{ c.seconds }}</span>
+              <span class="wf-secs">{{ e.seconds }}</span>
             </a>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if log.events %}
+      {# The log. Left: every event in the order it happened. Right: the
+         component for whichever is selected — one renderer per kind, so a
+         new kind costs a component rather than more markup here. Clicking a
+         gantt bar above selects the same event: both read one stream.
+         Every pane is rendered once into the page, which is what makes
+         selection a client-side swap rather than a round trip. #}
+      <div class="card">
+        <div class="hd">
+          <div class="card-title">Log</div>
+          <span class="outcome muted">{{ log.events|length }} events</span>
+        </div>
+        <div class="log-split">
+          <div class="log-list">
+            {% for e in log.events %}
+            <button type="button" class="log-row ev-pick{% if loop.first %} on{% endif %}"
+                    data-ev="{{ e.row_id }}" id="{{ e.row_id }}-row"
+                    {% if e.anchor %}data-step="{{ e.anchor }}"{% endif %}>
+              <span class="lg-t">{{ e.clock }}</span>
+              <span class="lg-g kind-{{ e.variant or e.kind }}">{{ e.glyph }}</span>
+              <span class="lg-n">{{ e.label }}</span>
+              <span class="lg-d">{{ e.seconds }}</span>
+            </button>
+            {% endfor %}
+          </div>
+          <div class="log-detail">
+            {% for e in log.events %}
+            <div class="ev-pane{% if loop.first %} on{% endif %}" id="{{ e.row_id }}">{{ e.detail_html|safe }}</div>
             {% endfor %}
           </div>
         </div>
@@ -749,6 +823,28 @@ ASSISTANT_TEMPLATE = """
 <div id="as-toast" class="as-toast"></div>
 
 <script>
+// The gantt bars and the log rows are the same events, so selecting is one
+// operation on a shared data-ev id. Every pane is already in the page, which
+// is why this is a class swap rather than a fetch.
+(function initEventLog() {
+  function select(id) {
+    document.querySelectorAll(".ev-pane").forEach(function (p) {
+      p.classList.toggle("on", p.id === id);
+    });
+    document.querySelectorAll(".ev-pick").forEach(function (b) {
+      b.classList.toggle("on", b.dataset.ev === id);
+    });
+    var row = document.getElementById(id + "-row");
+    if (row) { row.scrollIntoView({block: "nearest"}); }
+  }
+  document.addEventListener("click", function (ev) {
+    var pick = ev.target.closest(".ev-pick");
+    if (!pick) { return; }
+    ev.preventDefault();
+    select(pick.dataset.ev);
+  });
+})();
+
   // --- kebab menu on the selected run ----------------------------------------
   var asMenu = document.getElementById('as-menu');
   function asCloseMenu() { asMenu.hidden = true; asMenu.replaceChildren(); }
@@ -1672,10 +1768,10 @@ def _run_markdown(run, ctx: dict) -> str:
     # Model calls. The page draws these as a waterfall; flat text keeps the
     # same reading — start offset from the run's beginning, then duration — so
     # the gaps that show where the time went survive the export.
-    if ctx.get("waterfall"):
+    if ctx.get("log", {}).get("events"):
         out += ["## Model calls", "",
                 "| call | kind | at | took |", "|---|---|---|---|"]
-        for c in ctx["waterfall"]:
+        for c in ctx["log"]["events"]:
             at = c["start"].strftime("%H:%M:%S") if c["start"] else "—"
             # An embed row's label quotes the text it was given, so the label
             # is no longer a fixed vocabulary: a pipe in it would split the
@@ -1913,8 +2009,9 @@ def _load_run_detail(selected) -> dict:
         "pending_controls": db.list_pending_controls(selected.uuid),
         "trigger": _with_trigger_peek(db.get_run_trigger_message(selected)),
         "dash": _run_dashboard(selected, steps, review_rows),
-        "waterfall": _waterfall(
-            db.assistant_llm_calls(steps, review_rows, run=selected), selected),
+        # The gantt and the log read one stream, so a kind added to
+        # db.assistant_log appears in both without either learning about it.
+        "log": log_view(selected, steps, review_rows),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,
@@ -1950,6 +2047,7 @@ def assistant_page() -> str:
         exchanges=ctx.get("exchanges", {}),
         step_kinds=ctx.get("step_kinds", {}),
         duplicate_result=ctx.get("duplicate_result", set()),
+        log=ctx.get("log", {"events": [], "span_seconds": 0.0}),
         second_opinion=ctx.get("second_opinion", {}),
         obs_data=ctx.get("obs_data", {}),
         timing=ctx.get("timing", {}),

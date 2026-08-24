@@ -60,6 +60,19 @@ def _room():
     return db.create_chatroom(f"as-view-{uuid4().hex[:8]}", human.uuid, [])
 
 
+def _steps_region(body: str) -> str:
+    """The per-step sections only, with the log above them cut away.
+
+    The log and the step sections both render a run's content, so a
+    "renders once" guard has to say WHERE. These guards are about one step
+    not printing the same payload under two headings — the bug they were
+    written for — not about the page having a second surface.
+    """
+    marker = 'class="step phase-'
+    index = body.find(marker)
+    return body[index:] if index >= 0 else body
+
+
 def _rendered(client, run) -> tuple[str, str]:
     """The run as both renderers show it — the HTML page and the markdown
     export. HTML-unescaped, so an assertion about JSON text reads the same
@@ -775,10 +788,11 @@ def test_code_driven_row_shows_its_payload_once_and_calls_no_action(
     db.finish_run(run, "finished")
     try:
         for text in _rendered(client, run):
+            steps_only = _steps_region(text)
             # Indentation differs between the raw response and the stored
             # preview, so the duplicate is caught on content, not bytes.
-            assert text.count("answer in meters") == 1
-            assert text.count("action call") == 1  # the reply step's, only
+            assert steps_only.count("answer in meters") == 1
+            assert steps_only.count("action call") == 1  # the reply step's
             # The classifier's rendered result is NOT its raw response, so both
             # blocks survive there.
             assert "en-US" in text
@@ -1805,9 +1819,10 @@ def test_a_rejected_attempt_renders_as_a_full_exchange(app_ctx, client):
         for body in (page, md):
             assert "model request (attempt 1)" in body
             assert "model request (attempt 2)" in body
-            assert body.count("system prompt") == 2      # one per attempt
-            assert body.count("thinking about it") == 1     # attempt 1's
-            assert body.count("thinking again") == 1        # attempt 2's
+            steps_only = _steps_region(body)
+            assert steps_only.count("system prompt") == 2   # one per attempt
+            assert steps_only.count("thinking about it") == 1  # attempt 1's
+            assert steps_only.count("thinking again") == 1     # attempt 2's
         # The rejected attempt's collapsible blocks are addressable, like
         # every other block on the page (the live refresh reopens by key).
         assert 'data-k="attempt1-system"' in page
@@ -1827,7 +1842,7 @@ def test_the_retry_shows_the_turns_the_first_attempt_never_saw(app_ctx, client):
         page, md = _rendered(client, run)
         for body in (page, md):
             assert "<rejected_response>" in body
-            assert body.count("<rejected_response>") == 1   # only the retry's
+            assert _steps_region(body).count("<rejected_response>") == 1
         assert 'data-k="attempt1-turn1"' not in page        # nothing preceded it
         assert 'data-k="turn1"' in page and 'data-k="turn2"' in page
     finally:
@@ -1920,14 +1935,12 @@ def test_several_rejections_are_numbered_and_laid_end_to_end(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
-def test_every_waterfall_bar_links_to_the_detail_that_explains_it(
-        app_ctx, client):
+def test_every_gantt_bar_selects_the_event_that_explains_it(app_ctx, client):
     """A bar the reader cannot follow is a number with no provenance.
 
-    A call links to its own step. An activity is a slice of an action's phase
-    table, so it links to that table rather than to the top of a long step
-    section. An unaccounted bar has nothing to explain it — by definition — so
-    it is not a link at all, rather than a dead one.
+    Every bar names an event id that the log below renders a pane for, so
+    clicking one shows what that stretch of time was — including the bars
+    that carry no detail of their own, whose pane says exactly that.
     """
     import re
 
@@ -1935,14 +1948,15 @@ def test_every_waterfall_bar_links_to_the_detail_that_explains_it(
     run = _timed_memory_query_run(room)
     try:
         page, _ = _rendered(client, run)
-        ids = set(re.findall(r'id="((?:step|phases)-[0-9a-f-]+)"', page))
-        hrefs = re.findall(r'class="wf-row"[^>]*href="#([^"]*)"', page)
+        panes = set(re.findall(r'class="ev-pane[^"]*" id="(ev-\d+)"', page))
+        picked = re.findall(r'class="wf-row ev-pick" data-ev="(ev-\d+)"', page)
 
-        assert hrefs, "no waterfall rows rendered"
-        for target in hrefs:
-            assert target in ids, f"{target} has no landing element"
-        assert any(t.startswith("phases-") for t in hrefs)
-        # No row links to the bare prefix left by an empty anchor.
-        assert "step-" not in hrefs and "phases-" not in hrefs
+        assert picked, "no gantt rows rendered"
+        for target in picked:
+            assert target in panes, f"{target} has no detail pane"
+        # And the list offers the same events, not a second enumeration.
+        rows = re.findall(r'class="log-row ev-pick[^"]*"\s+data-ev="(ev-\d+)"',
+                          page)
+        assert set(picked) <= set(rows)
     finally:
         _cleanup(run.uuid, room.uuid)
