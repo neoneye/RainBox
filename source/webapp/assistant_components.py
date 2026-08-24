@@ -42,6 +42,12 @@ ACTION_DESCRIPTIONS.update({
     "request_summary": (
         "describe a request too long to fit in the prompt whole"
     ),
+    "run_summarizer": (
+        "condense the finished run into the digest at the top of this page"
+    ),
+    "summary queued": (
+        "the finished run waiting for the summarizer to come off the queue"
+    ),
 })
 # Consulted first for a `code_driven` row. `acceptance_criteria` is the one
 # action that is both: the catalog summary describes the revision the model can

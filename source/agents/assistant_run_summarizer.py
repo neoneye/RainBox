@@ -243,6 +243,11 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
         steps = db.list_assistant_steps(run.uuid)
         trigger = db.get_run_trigger_message(run)
         reply = db.get_run_final_reply(run)
+        # The call records the run it describes. This agent writes no step row,
+        # so its `llm_call` row is the only trace it leaves — and that row is
+        # how /assistant puts the digest's own call on the run's timeline,
+        # where the prompt behind a digest that reads wrong can be read.
+        self._log_run_uuid = run.uuid
         summary: RunSummary = self._structured_call(  # type: ignore[assignment]
             self._build_prompt(run, steps, trigger, reply)
         )

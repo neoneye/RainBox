@@ -519,6 +519,8 @@ def run_events(run, steps: list, reviews: list | None = None,
                   "input_tokens": r.input_tokens,
                   "output_tokens": r.output_tokens}))
 
+    events.extend(_summary_events(run))
+
     # Undated events sort last rather than crashing the comparison — they are
     # legacy rows, and the page renders them without a bar.
     events.sort(key=lambda e: (e["start"] is None, e["start"] or datetime.min))
@@ -657,6 +659,110 @@ def _attach_llm_call_kpis(events: list[dict], run) -> None:
             event["kpis"]["output_tokens"] = best.completion_tokens
 
 
+#: The caller name the run summarizer's model call records
+#: (`AssistantRunSummarizerAgent.caller_name`). Its row is the only trace that
+#: call leaves: it runs off a queue after the run is finished, so it has no
+#: step row to be derived from.
+SUMMARIZER_CALLER: str = "assistant.run_summarizer"
+
+#: What the stream calls that call, and the wait in front of it.
+SUMMARY_LABEL: str = "run_summarizer"
+SUMMARY_WAIT_LABEL: str = "summary queued"
+
+#: How far a summarizer row's finish may sit from the moment its digest was
+#: stored before the two are not the same call. Milliseconds in practice — the
+#: digest is written as soon as the call returns — so this is slack, not a
+#: search radius.
+_SUMMARY_MATCH_WINDOW = timedelta(seconds=10)
+
+
+def _prompts_from_messages(messages) -> dict:
+    """The system and user text of a recorded call, as the llm renderer wants
+    them. First of each role: a structured call sends one of each, and a later
+    one would be a continuation rather than the request."""
+    out: dict = {}
+    for message in messages or []:
+        role = (message or {}).get("role")
+        key = f"{role}_prompt"
+        if role in ("system", "user") and key not in out:
+            out[key] = (message or {}).get("content") or ""
+    return out
+
+
+def _summarizer_call(run):
+    """The `llm_call` row behind the digest on the run's dashboard.
+
+    By `run_uuid` where the summarizer recorded it. Where it did not — every
+    run summarized before it tagged its calls — by the moment the digest was
+    stored, which the summary itself records and which lands within
+    milliseconds of the call returning. That fallback is why no row has to be
+    rewritten for an old run to read back whole.
+    """
+    run_uuid = getattr(run, "uuid", None)
+    if run_uuid is None:
+        return None
+    try:
+        rows = (db.session.query(LlmCall)
+                .filter(LlmCall.caller == SUMMARIZER_CALLER,
+                        LlmCall.run_uuid == run_uuid)
+                .order_by(LlmCall.started_at)
+                .all())
+        if rows:
+            # The last: a re-summarized run is described by its newest digest.
+            return rows[-1]
+        stamp = _parse_ts(
+            (getattr(run, "summary", None) or {}).get("summarized_at"))
+        if stamp is None:
+            return None
+        near = (db.session.query(LlmCall)
+                .filter(LlmCall.caller == SUMMARIZER_CALLER,
+                        LlmCall.run_uuid.is_(None),
+                        LlmCall.finished_at >= stamp - _SUMMARY_MATCH_WINDOW,
+                        LlmCall.finished_at <= stamp + _SUMMARY_MATCH_WINDOW)
+                .all())
+    except Exception:
+        # The read model must never take the page down over telemetry.
+        return None
+    near = [r for r in near if r.finished_at]
+    if not near:
+        return None
+    return min(near, key=lambda r: abs(r.finished_at - stamp))
+
+
+def _summary_events(run) -> list[dict]:
+    """The summarizer's call, and the queue wait in front of it.
+
+    The wait is named rather than left to `_unaccounted_rows`. It is not a hole
+    in the instrumentation — it is the run sitting in a queue, which is known
+    and worth seeing — and an `unaccounted` bar would say the opposite.
+    """
+    row = _summarizer_call(run)
+    if row is None or not row.started_at:
+        return []
+    events: list[dict] = []
+    finished = getattr(run, "finished_at", None)
+    if finished and row.started_at > finished:
+        waited = int((row.started_at - finished).total_seconds() * 1000)
+        if waited >= MIN_ACTIVITY_MS:
+            events.append(_event("activity", SUMMARY_WAIT_LABEL,
+                                 start=finished, duration_ms=waited))
+    events.append(_event(
+        "llm", SUMMARY_LABEL, variant="summary", start=row.started_at,
+        duration_ms=row.total_ms, uuid=str(row.uuid),
+        kpis={"model": row.model, "provider": row.provider,
+              "model_uuid": str(row.model_uuid) if row.model_uuid else None,
+              "input_tokens": row.prompt_tokens,
+              "output_tokens": row.completion_tokens,
+              "prefill_ms": row.prefill_ms, "decode_ms": row.decode_ms,
+              "cached_tokens": (row.cached_tokens_reported
+                                if row.cached_tokens_reported is not None
+                                else row.cached_tokens_estimated),
+              "call_uuid": str(row.uuid)},
+        payload={"model_response": row.response_text or "",
+                 **_prompts_from_messages(row.messages)}))
+    return events
+
+
 def assistant_llm_calls(steps: list, reviews: list | None = None,
                         run=None) -> list[dict]:
     """The run's timeline rows: everything but the action and control records.
@@ -664,9 +770,16 @@ def assistant_llm_calls(steps: list, reviews: list | None = None,
     A filter over `run_events`, so the page, the export, the run stats and the
     in-chat progress row cannot quote different numbers for one run. Two
     enumerations that could disagree is the bug this module exists against.
+
+    The summarizer's call is held out too, though it is a real call: it runs
+    off a queue after the reply was delivered, so counting it would put
+    seconds in the run's model total that the operator never waited for — and
+    on a short run those seconds can exceed the run's own wall clock. It is on
+    the stream, where its cost is its own; it is not part of the turn's.
     """
     return [e for e in run_events(run, steps, reviews)
-            if e["kind"] not in ("action", "control", "start")]
+            if e["kind"] not in ("action", "control", "start")
+            and e["variant"] != "summary"]
 
 
 #: Timeline rows that are not LLM calls. `embedding` is a real call but a
