@@ -305,14 +305,10 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-pane.on { display:block; }
   .as-main .ev-detail h4 { margin:0 0 0.1rem; font-size:0.95rem; }
   .as-main .ev-caption { color:#6b7280; font-size:80%; margin-bottom:0.6rem; }
-  /* One meta line, the way a step's io-label has always read: each field
-     carries its own word, so no number floats free of what it counts. Right
-     aligned for the same reason a step's io-meta is — it reports the same
-     things about the same call, so it belongs in the same place. */
-  .as-main .ev-kpis { display:flex; flex-wrap:wrap; gap:0.9rem;
-        justify-content:flex-end; margin-bottom:0.7rem;
-        font-family:ui-monospace,monospace; font-size:80%; color:#4b5563;
-        font-variant-numeric:tabular-nums; }
+  /* Only what a line standing on its own needs: the step's version is
+     right-aligned by margin-left:auto inside its label row, which does
+     nothing for a flex container that already fills the width. */
+  /* What is being inspected, in the card header beside "Inspect". */
   .as-main .ev-crumb { display:flex; align-items:baseline; gap:0.5rem;
         min-width:0; font-size:0.9rem; }
   .as-main .ev-crumb-sep { color:#cbd5e1; }
@@ -320,9 +316,9 @@ ASSISTANT_TEMPLATE = """
         font-weight:600; white-space:nowrap; }
   .as-main .ev-crumb-desc { color:#6b7280; overflow:hidden;
         text-overflow:ellipsis; white-space:nowrap; }
+  .as-main .ev-kpis { flex-wrap:wrap; justify-content:flex-end;
+        margin-bottom:0.7rem; }
   .as-main .ev-kpi { white-space:nowrap; }
-  .as-main .ev-kpi a { color:#2563eb; text-decoration:none; }
-  .as-main .ev-kpi a:hover { text-decoration:underline; }
   .as-main details.ev-block > summary { cursor:pointer; font-size:70%;
         letter-spacing:0.05em; text-transform:uppercase; color:#6b7280;
         margin-bottom:0.2rem; }
@@ -361,12 +357,18 @@ ASSISTANT_TEMPLATE = """
   .as-main .step .card-header .kind { color:#7e22ce; font-weight:600; }
   /* Right-aligned metadata on io-labels: model link, token counts, duration, timestamp.
      Fields are separated by the flex gap, not punctuation. */
-  .as-main .step .io-meta { margin-left:auto; display:flex; gap:1rem; align-items:center;
+  /* One rule for both meta lines. A step's io-meta and the inspector's
+     ev-kpis report the same things about the same call, so they are the same
+     line in two places rather than two looks for one fact. */
+  .as-main .step .io-meta, .as-main .ev-kpis {
+                            margin-left:auto; display:flex; gap:1rem; align-items:center;
                             font-size:0.72rem; font-weight:400; text-transform:none;
                             letter-spacing:normal; color:#98a2b3;
                             font-variant-numeric:tabular-nums; }
-  .as-main .step .io-model { color:#2563eb; text-decoration:none; }
-  .as-main .step .io-model:hover { text-decoration:underline; }
+  .as-main .step .io-model, .as-main .ev-kpi a {
+                            color:#2563eb; text-decoration:none; }
+  .as-main .step .io-model:hover, .as-main .ev-kpi a:hover {
+                            text-decoration:underline; }
   .as-main .step .action { font-weight:400; }
   .as-main .step .reason { color:#475467; margin:0.3rem 0; }
   /* Each step bundles the model's structured output (request) and the action's

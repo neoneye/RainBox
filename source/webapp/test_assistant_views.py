@@ -2042,3 +2042,43 @@ def test_the_inspector_meta_line_is_right_aligned_like_a_step_s():
     rule = re.search(r"\.as-main \.ev-kpis \{[^}]*\}", ASSISTANT_TEMPLATE)
     assert rule, "the .ev-kpis rule is gone"
     assert "justify-content:flex-end" in rule.group(0).replace(" ", "")
+
+
+def test_the_inspector_meta_line_shares_the_step_meta_styling():
+    """The inspector's meta line and a step's io-meta report the same things
+    about the same call. They take one rule rather than two sets of values, so
+    a monospace face here against a sans-serif one there cannot come back.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    shared = re.search(r"\.as-main \.step \.io-meta[^{]*\{[^}]*\}",
+                       ASSISTANT_TEMPLATE)
+    assert shared and ".ev-kpis" in shared.group(0), "ev-kpis has its own rule"
+
+    link = re.search(r"\.as-main \.step \.io-model[^{]*\{[^}]*\}",
+                     ASSISTANT_TEMPLATE)
+    assert link and ".ev-kpi a" in link.group(0), "the model link diverged"
+
+    # Whatever ev-kpis still declares must not restate the shared look.
+    own = re.search(r"\.as-main \.ev-kpis \{[^}]*\}", ASSISTANT_TEMPLATE)
+    for restated in ("font-family", "font-size", "color:"):
+        assert restated not in (own.group(0) if own else ""), restated
+
+
+def test_every_styled_inspector_class_has_a_rule():
+    """A class in the markup with no rule behind it fails silently — the page
+    still renders, just wrong. Editing the stylesheet by slicing a range is
+    exactly how a neighbouring rule disappears unnoticed.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    styled = {"ev-crumb", "ev-crumb-sep", "ev-crumb-label", "ev-crumb-desc",
+              "ev-kpis", "ev-kpi", "ev-pre", "ev-block", "ev-pane",
+              "ev-detail", "ev-links", "ev-note", "log-detail", "wf-tick"}
+    for name in styled:
+        assert re.search(rf"\.{re.escape(name)}\b[^{{]*\{{", ASSISTANT_TEMPLATE), (
+            f".{name} is used but has no CSS rule")
