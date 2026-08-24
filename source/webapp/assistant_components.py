@@ -27,6 +27,7 @@ from markupsafe import Markup
 #: The glyph the list and the gantt put in front of a row. Kept here so the
 #: two surfaces cannot disagree about what a kind looks like.
 EVENT_GLYPH: dict[str, str] = {
+    "start": "▶",
     "llm": "◆",
     "embedding": "◇",
     "action": "▸",
@@ -37,6 +38,7 @@ EVENT_GLYPH: dict[str, str] = {
 
 #: What each kind's pane says it is, under the label.
 _KIND_CAPTION: dict[str, str] = {
+    "start": "the request that began the run",
     "llm": "model call",
     "embedding": "embedding call",
     "action": "action",
@@ -210,6 +212,33 @@ def _control(event: dict) -> Markup:
     ])
 
 
+def _start(event: dict) -> Markup:
+    """The question the run was given, and both ways back to where it came
+    from: the person who asked, and the message in the room.
+
+    The run already had a "Started by" card beside the trace. On the stream it
+    sits where it belongs — first — so reading the log top to bottom starts
+    with the question rather than with whatever the loop did about it.
+    """
+    payload = event.get("payload") or {}
+    links = []
+    if payload.get("sender_uuid"):
+        links.append(Markup(
+            'Started by <a href="/user?id={}">{} ↗</a>').format(
+                payload["sender_uuid"], payload.get("sender_name") or "user"))
+    elif payload.get("sender_name"):
+        links.append(Markup("Started by {}").format(payload["sender_name"]))
+    if payload.get("room_uuid"):
+        target = Markup('/chat?id={}').format(payload["room_uuid"])
+        if payload.get("message_id") is not None:
+            target = Markup('/chat?id={}&msg={}').format(
+                payload["room_uuid"], payload["message_id"])
+        links.append(Markup('<a href="{}">chat ↗</a>').format(target))
+    header = Markup('<p class="ev-links">{}</p>').format(
+        Markup(" · ").join(links)) if links else Markup("")
+    return header + _block("request", payload.get("text"), mono=False)
+
+
 def _unaccounted(_event: dict) -> Markup:
     return Markup(
         '<p class="ev-note">Nothing measured this stretch. It is the absence '
@@ -224,6 +253,7 @@ def _activity(_event: dict) -> Markup:
 
 
 _KIND_RENDERERS = {
+    "start": _start,
     "llm": _llm,
     "embedding": _embedding,
     "action": _generic_action,

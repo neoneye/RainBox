@@ -173,3 +173,62 @@ def test_run_stats_ignores_everything_that_is_not_a_call():
     assert stats["calls"] == 1
     assert stats["duration_ms"] == 11800
     assert stats["input_tokens"] == 10
+
+
+def _trigger(text="tell me about my siblings"):
+    return {"id": 42, "uuid": "11111111-1111-1111-1111-111111111111",
+            "sender_uuid": "22222222-2222-2222-2222-222222222222",
+            "sender_name": "Operator", "text": text,
+            "timestamp": "2026-08-24 00:46"}
+
+
+def test_a_run_opens_with_a_start_event():
+    """The request that set the run going is the first thing that happened, so
+    it belongs on the stream rather than only in a card beside it."""
+    step = _step("reply", at=5, ms=2000, code_driven=True)
+
+    events = db.run_events(_run(finished=10), [step], trigger=_trigger())
+
+    assert events[0]["kind"] == "start"
+    assert events[0]["label"] == "start"
+    assert events[0]["payload"]["text"] == "tell me about my siblings"
+    assert events[0]["payload"]["sender_name"] == "Operator"
+
+
+def test_the_start_event_has_no_duration():
+    """It is the moment the run began, not a stretch of work — a bar would
+    claim time nothing spent."""
+    events = db.run_events(_run(finished=10),
+                           [_step("reply", at=5, ms=2000, code_driven=True)],
+                           trigger=_trigger())
+
+    assert events[0]["duration_ms"] == 0
+
+
+def test_the_start_event_sits_at_the_run_start():
+    events = db.run_events(_run(started=0, finished=10),
+                           [_step("reply", at=5, ms=2000, code_driven=True)],
+                           trigger=_trigger())
+
+    assert events[0]["start"] == _at(0)
+
+
+def test_a_run_with_no_trigger_has_no_start_event():
+    """A run seeded outside the chat flow has no message that began it, and an
+    empty Start row would say one existed."""
+    events = db.run_events(_run(finished=10),
+                           [_step("reply", at=5, ms=2000, code_driven=True)])
+
+    assert not [e for e in events if e["kind"] == "start"]
+
+
+def test_the_start_event_is_not_a_model_call():
+    """It costs nothing, so it must not reach the call count or the totals."""
+    step = _step("reply", at=5, ms=2000, code_driven=True)
+    run = _run(finished=10)
+
+    calls = db.assistant_llm_calls([step], run=run)
+    stats = db.assistant_run_stats([step], run=run)
+
+    assert not [c for c in calls if c["kind"] == "start"]
+    assert stats["calls"] == 1

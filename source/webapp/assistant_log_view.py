@@ -29,7 +29,8 @@ def _end_of(event: dict):
     return event["start"] + timedelta(milliseconds=event["duration_ms"] or 0)
 
 
-def log_view(run, steps: list, reviews: list | None = None) -> dict:
+def log_view(run, steps: list, reviews: list | None = None,
+             trigger: dict | None = None) -> dict:
     """`{"events": [...], "span_seconds": float}` for the page.
 
     Each event gains what the two surfaces need to draw it: `offset_pct` and
@@ -37,8 +38,11 @@ def log_view(run, steps: list, reviews: list | None = None) -> dict:
     the rendered `detail_html` its component produced. The detail is built
     here, once per event, so selecting a row is a client-side swap rather than
     a round trip.
+
+    `trigger` is the chat message that began the run; given one, the stream
+    opens with the request it carried.
     """
-    events = db.run_events(run, steps, reviews)
+    events = db.run_events(run, steps, reviews, trigger=trigger)
     if not events:
         return {"events": [], "span_seconds": 0.0}
 

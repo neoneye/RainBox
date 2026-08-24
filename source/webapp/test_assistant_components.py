@@ -104,3 +104,42 @@ def test_an_llm_pane_without_a_joined_row_still_renders():
         payload={"system_prompt": "sys"}))
 
     assert html and "reply" in html
+
+
+def test_the_start_pane_links_to_the_user_and_the_chat_message():
+    """The run's question, with both ways back to where it came from — the
+    person who asked and the message in the room."""
+    html = render_event_detail(_event(
+        "start", "start", duration_ms=0,
+        payload={"text": "tell me about my siblings",
+                 "sender_name": "Operator",
+                 "sender_uuid": "2222", "message_id": 42,
+                 "room_uuid": "3333", "timestamp": "2026-08-24 00:46"}))
+
+    assert "Started by" in html
+    assert '/user?id=2222' in html
+    assert '/chat?id=3333&amp;msg=42' in html or '/chat?id=3333&msg=42' in html
+    assert "tell me about my siblings" in html
+
+
+def test_the_start_pane_without_a_room_still_names_the_asker():
+    """A run seeded outside a room has no message to link to; the question and
+    who asked it are still worth showing."""
+    html = render_event_detail(_event(
+        "start", "start", duration_ms=0,
+        payload={"text": "hello", "sender_name": "Operator",
+                 "sender_uuid": "2222", "message_id": None,
+                 "room_uuid": "", "timestamp": ""}))
+
+    assert "Operator" in html and "hello" in html
+    assert "/chat?id=" not in html
+
+
+def test_the_start_pane_escapes_the_question():
+    html = render_event_detail(_event(
+        "start", "start", duration_ms=0,
+        payload={"text": "<script>x</script>", "sender_name": "<b>x</b>",
+                 "sender_uuid": "2", "message_id": 1, "room_uuid": "3"}))
+
+    assert "<script>" not in html
+    assert "<b>x</b>" not in html

@@ -335,6 +335,9 @@ ASSISTANT_TEMPLATE = """
         word-break:break-word; font-size:80%; }
   .as-main .ev-text { font-family:inherit; }
   .as-main .ev-clip { color:#b45309; text-transform:none; letter-spacing:0; }
+  .as-main .ev-links { margin:0 0 0.6rem; font-size:85%; }
+  .as-main .ev-links a { color:#2563eb; text-decoration:none; }
+  .as-main .ev-links a:hover { text-decoration:underline; }
   .as-main .ev-note { color:#6b7280; font-size:85%; }
   .as-main .wf-bar.kind-rejected { background:#e8746f; }
   .as-main .wf-name.kind-rejected { color:#c0392b; }
@@ -1989,7 +1992,9 @@ def _load_run_detail(selected) -> dict:
         "dash": _run_dashboard(selected, steps, review_rows),
         # The gantt and the log read one stream, so a kind added to
         # db.assistant_log appears in both without either learning about it.
-        "log": log_view(selected, steps, review_rows),
+        "log": log_view(selected, steps, review_rows,
+                        trigger=_with_trigger_peek(
+                            db.get_run_trigger_message(selected))),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,

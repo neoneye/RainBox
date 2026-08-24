@@ -326,7 +326,8 @@ def retry_resumed_at(step):
 #: Every kind a run event can be. `llm` covers every model call whatever made
 #: it; `variant` on the event keeps the finer distinction the page colours by.
 EVENT_KINDS: tuple[str, ...] = (
-    "llm", "embedding", "action", "activity", "control", "unaccounted",
+    "start", "llm", "embedding", "action", "activity", "control",
+    "unaccounted",
 )
 
 #: Which `variant` values are model calls. Everything produced by the call
@@ -450,7 +451,8 @@ def _step_events(step) -> list[dict]:
     return events
 
 
-def run_events(run, steps: list, reviews: list | None = None) -> list[dict]:
+def run_events(run, steps: list, reviews: list | None = None,
+               trigger: dict | None = None) -> list[dict]:
     """A run as a flat stream of typed events, oldest first.
 
     Derived from records that already exist, so a run that happened before
@@ -459,8 +461,29 @@ def run_events(run, steps: list, reviews: list | None = None) -> list[dict]:
     No event contains another. A phase contributes only the time its calls do
     not occupy, and an action carries no span at all, so the stream lays out
     as a staircase and no bar can hide what ran inside it.
+
+    `trigger` is the chat message that set the run going
+    (`get_run_trigger_message`). Given one, the stream opens with a `start`
+    event: the request is the first thing that happened, and a reader who has
+    to look somewhere else for it is reading the run without its question.
+    Omitted when there is none — a run seeded outside the chat flow has no
+    message that began it, and an empty Start row would claim one existed.
     """
     events: list[dict] = []
+    if trigger is not None:
+        events.append(_event(
+            "start", "start",
+            start=getattr(run, "started_at", None),
+            # Zero, not None: the run began at a moment, it did not spend a
+            # stretch. A duration would put a bar on the gantt for time
+            # nothing worked.
+            duration_ms=0, anchor="", uuid="start",
+            payload={"text": trigger.get("text") or "",
+                     "sender_name": trigger.get("sender_name") or "",
+                     "sender_uuid": trigger.get("sender_uuid") or "",
+                     "message_id": trigger.get("id"),
+                     "room_uuid": str(getattr(run, "room_uuid", "") or ""),
+                     "timestamp": trigger.get("timestamp") or ""}))
     for step in steps:
         events.extend(_step_events(step))
 
@@ -488,13 +511,13 @@ def run_events(run, steps: list, reviews: list | None = None) -> list[dict]:
     # control events are held out of the subtraction.
     phases = [e for e in events if e["kind"] == "phase"]
     spanning = [e for e in events
-                if e["kind"] not in ("phase", "action", "control")]
-    rest = [e for e in events if e["kind"] in ("action", "control")]
+                if e["kind"] not in ("phase", "action", "control", "start")]
+    rest = [e for e in events if e["kind"] in ("action", "control", "start")]
     leaves = spanning + [_as_event(c) for c in _activity_rows(phases, spanning)]
     leaves.extend(_as_event(c) for c in _unaccounted_rows(leaves, run))
     out = leaves + rest
     out.sort(key=lambda e: (e["start"] is None, e["start"] or datetime.min,
-                            0 if e["kind"] != "action" else 1))
+                            _ORDER_AT_SAME_INSTANT.get(e["kind"], 1)))
     _attach_llm_call_kpis(out, run)
     return out
 
@@ -504,6 +527,11 @@ def run_events(run, steps: list, reviews: list | None = None) -> list[dict]:
 #: and the event from the step's own `requested_at`, which can differ by the
 #: time it takes to build a prompt.
 _LLM_CALL_MATCH_TOLERANCE = timedelta(seconds=5)
+
+
+#: Ties at one instant: the run's opening event leads, an action trails the
+#: call that chose it.
+_ORDER_AT_SAME_INSTANT: dict[str, int] = {"start": 0, "action": 2}
 
 
 def _attach_llm_call_kpis(events: list[dict], run) -> None:
@@ -571,7 +599,7 @@ def assistant_llm_calls(steps: list, reviews: list | None = None,
     enumerations that could disagree is the bug this module exists against.
     """
     return [e for e in run_events(run, steps, reviews)
-            if e["kind"] not in ("action", "control")]
+            if e["kind"] not in ("action", "control", "start")]
 
 
 #: Timeline rows that are not LLM calls. `embedding` is a real call but a
