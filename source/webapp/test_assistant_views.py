@@ -2009,11 +2009,16 @@ def test_the_inspector_names_the_override_a_call_ran_on(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
-def test_the_inspector_blocks_keep_the_default_pre_size():
-    """`.trigmsg` is legible because it sets no font-size and lets <pre> keep
-    its own. An inspector block holds the same kind of thing — a prompt, a
-    response, a request — so shrinking it made the run's own text the smallest
-    text on the page.
+def test_an_inspector_block_looks_like_every_other_pre():
+    """`.as-main pre` already gives every block its box and its size, which is
+    why `.trigmsg` needs to declare almost nothing. An inspector block holds
+    the same kind of thing — a prompt, a response, a request — so it takes the
+    same box rather than restating it in near-miss values: a 4px radius beside
+    a 6px one, #f7f8fa beside #f6f8fa.
+
+    What it may add is a bound on height. A prompt here runs to tens of
+    thousands of characters, which is a property of the payload rather than a
+    difference of style.
     """
     import re
 
@@ -2021,4 +2026,6 @@ def test_the_inspector_blocks_keep_the_default_pre_size():
 
     rule = re.search(r"\.as-main \.ev-pre \{[^}]*\}", ASSISTANT_TEMPLATE)
     assert rule, "the .ev-pre rule is gone"
-    assert "font-size" not in rule.group(0)
+    for restated in ("font-size", "background", "border-radius", "padding"):
+        assert restated not in rule.group(0), restated
+    assert "max-height" in rule.group(0)

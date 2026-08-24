@@ -327,13 +327,12 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-block { margin-bottom:0.7rem; }
   .as-main .ev-block h5 { margin:0 0 0.2rem; font-size:70%;
         letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }
-  /* No font-size: a block holds a prompt, a response or a request, and it is
-     the run's own text — the last thing on the page that should be the
-     smallest. Left alone, <pre> keeps its own size, which is what makes
-     .trigmsg legible. */
-  .as-main .ev-pre { margin:0; padding:0.5rem 0.6rem;
-        background:#f7f8fa; border:1px solid #eceef1; border-radius:4px;
-        max-height:24rem; overflow:auto; white-space:pre-wrap;
+  /* Only what `.as-main pre` does not already give it. The box and the size
+     come from there — restating them produced a 4px radius beside a 6px one
+     and #f7f8fa beside #f6f8fa, which reads as two kinds of block when it is
+     one. The height bound is the real difference: a prompt here runs to tens
+     of thousands of characters. */
+  .as-main .ev-pre { margin:0; max-height:24rem; overflow:auto;
         word-break:break-word; }
   .as-main .ev-links { margin:0 0 0.6rem; font-size:85%; }
   .as-main .ev-links a { color:#2563eb; text-decoration:none; }
