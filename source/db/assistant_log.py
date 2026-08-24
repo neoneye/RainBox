@@ -74,12 +74,12 @@ def _parse_ts(value):
 
 def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
           model_uuid=None, input_tokens=None, output_tokens=None,
-          detail: str = "") -> dict:
+          detail: str = "", found=None) -> dict:
     return {"label": label, "kind": kind, "start": start,
             "duration_ms": duration_ms, "anchor": anchor,
             "model_uuid": str(model_uuid) if model_uuid else None,
             "input_tokens": input_tokens, "output_tokens": output_tokens,
-            "detail": detail}
+            "detail": detail, "found": found}
 
 
 def _rejected_calls(step) -> list[dict]:
@@ -158,17 +158,32 @@ def _embedding_calls(step, data: dict) -> list[dict]:
 UNACCOUNTED_MIN_MS: int = 1000
 
 
+#: Phases whose findings the action records elsewhere in its observation, by
+#: the key holding them. The general channel is `found` on the phase itself
+#: (`_PhaseTimer.phase`); this covers the phases whose payload was already
+#: being written before that existed, so a run that has already happened shows
+#: what it found without a single row being rewritten.
+_PHASE_FINDINGS_KEY: dict[str, str] = {"recall filter": "recall_filter"}
+
+
 def _phase_calls(step, data: dict) -> list[dict]:
     """The named phases a step's action recorded, from its `timing` payload.
 
     Not model calls — spans of the action's own wall-clock, which is exactly
     the part a per-call waterfall leaves as empty space. `_PhaseTimer` records
     them with start times for this purpose.
+
+    A phase carries what it produced where that was recorded. Without it the
+    row can only say how long it took, which sends a reader hunting through
+    another step's user prompt for the one thing the row is about.
     """
     timing = data.get("timing") or {}
     calls: list[dict] = []
     for phase in timing.get("phases") or []:
         name = phase.get("name") or "phase"
+        found = phase.get("found")
+        if found is None:
+            found = data.get(_PHASE_FINDINGS_KEY.get(name, ""))
         # Named for the step that recorded it. A phase called "recall filter"
         # sits beside the `recall_filter` call it contains, and the two read as
         # one thing listed twice; the prefix says which step owns the bar, and
@@ -176,7 +191,7 @@ def _phase_calls(step, data: dict) -> list[dict]:
         calls.append(_call(
             f"{step.action} › {name}", "phase",
             start=_parse_ts(phase.get("started_at")),
-            duration_ms=phase.get("ms"), anchor=str(step.uuid)))
+            duration_ms=phase.get("ms"), anchor=str(step.uuid), found=found))
     return calls
 
 
@@ -245,8 +260,13 @@ def _activity_rows(phases: list[dict], calls: list[dict]) -> list[dict]:
             ms = int((piece_end - piece_start).total_seconds() * 1000)
             if ms < MIN_ACTIVITY_MS:
                 continue
-            rows.append(_call(phase["label"], "activity", start=piece_start,
-                              duration_ms=ms, anchor=phase["anchor"]))
+            rows.append(_call(
+                phase["label"], "activity", start=piece_start,
+                duration_ms=ms, anchor=phase["anchor"],
+                # What the phase found travels with every slice of it: the
+                # slices are one phase cut around the calls it made, and the
+                # reader clicking any of them is asking the same question.
+                found=(phase.get("payload") or {}).get("found")))
     return rows
 
 
@@ -353,7 +373,8 @@ def _as_event(call: dict) -> dict:
         kpis={"model_uuid": call.get("model_uuid"),
               "input_tokens": call.get("input_tokens"),
               "output_tokens": call.get("output_tokens")},
-        payload={"detail": call.get("detail", "")})
+        payload={"detail": call.get("detail", ""),
+                 "found": call.get("found")})
 
 
 #: Counts an action's observation may report about what it found. Only

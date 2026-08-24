@@ -362,10 +362,20 @@ def _unaccounted(_event: dict) -> Markup:
         'where instrumenting would pay.</p>')
 
 
-def _activity(_event: dict) -> Markup:
-    return Markup(
-        '<p class="ev-note">An action\'s own work, outside the calls it made. '
-        'Nothing finer was recorded inside it.</p>')
+def _activity(event: dict) -> Markup:
+    """A stretch of an action's own work — and what it produced, where the
+    action recorded that.
+
+    The findings are the point. A phase pane that could only say how long it
+    took sent the reader to another step's user prompt to learn what the phase
+    had actually retrieved, which is the trip this page exists to remove.
+    """
+    found = (event.get("payload") or {}).get("found")
+    if found in (None, {}, []):
+        return Markup(
+            '<p class="ev-note">An action\'s own work, outside the calls it '
+            'made. Nothing finer was recorded inside it.</p>')
+    return _block("found", found)
 
 
 _KIND_RENDERERS = {

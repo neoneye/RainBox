@@ -58,6 +58,31 @@ def test_an_llm_pane_reports_the_call_cost():
     assert "11100" in html or "11,100" in html or "11.1k" in html
 
 
+def test_an_activity_pane_shows_what_the_phase_found():
+    """The reason the pane exists. "Nothing finer was recorded inside it" was
+    a dead end printed over a payload that was sitting right there."""
+    html = render_event_detail(_event(
+        "activity", "memory_query \u203a recall filter",
+        payload={"found": {"mode": "llm", "candidates": [
+            {"path": "human.x.location", "kept": True, "score": 1000}]}}))
+
+    assert "human.x.location" in html
+    assert "Nothing finer" not in html
+
+
+def test_an_activity_pane_with_no_findings_still_says_what_it_is():
+    html = render_event_detail(_event("activity", "python_run \u203a execute"))
+
+    assert "own work" in html
+
+
+def test_an_activity_s_findings_are_escaped():
+    html = render_event_detail(_event(
+        "activity", "x", payload={"found": {"path": "<script>x</script>"}}))
+
+    assert "<script>" not in html
+
+
 def test_an_unaccounted_pane_says_nothing_measured_it():
     """It is the absence of evidence; a pane that looked like a measurement
     would be worse than an empty one."""

@@ -371,3 +371,45 @@ def test_a_run_with_no_steps_claims_no_step():
     events = db.run_events(_run(finished=10), [], trigger=_trigger())
 
     assert all(e["step_ref"] == "" for e in events)
+
+
+def test_a_phase_carries_what_it_found():
+    """A phase row that can only say how long it took is a dead end: the
+    reader is told 21 seconds went somewhere and sent to read another step's
+    user prompt to find out where."""
+    step = _step("memory_query", at=0, ms=1000,
+                 phases=[("recall filter", 1, 21.0)],
+                 observation={"text": "facts"})
+    step.observation["data"]["recall_filter"] = {
+        "mode": "llm",
+        "candidates": [{"path": "human.x.location", "kept": True,
+                        "score": 1000}]}
+
+    phase = next(e for e in db.run_events(_run(finished=30), [step])
+                 if e["kind"] == "activity")
+
+    assert phase["payload"]["found"]["candidates"][0]["kept"] is True
+
+
+def test_a_phase_that_recorded_its_own_findings_carries_those():
+    """The general channel: a phase records what it produced beside its
+    timing, and the row shows it without anyone naming that phase here."""
+    step = _step("memory_query", at=0, ms=1000,
+                 phases=[("seed KB load", 1, 0.3)],
+                 observation={"text": "facts"})
+    step.observation["data"]["timing"]["phases"][0]["found"] = {"entries": 412}
+
+    phase = next(e for e in db.run_events(_run(finished=5), [step])
+                 if e["kind"] == "activity")
+
+    assert phase["payload"]["found"] == {"entries": 412}
+
+
+def test_a_phase_with_nothing_recorded_carries_nothing():
+    step = _step("python_run", at=0, ms=1000,
+                 phases=[("execute", 1, 2.0)], observation={"text": "4"})
+
+    phase = next(e for e in db.run_events(_run(finished=5), [step])
+                 if e["kind"] == "activity")
+
+    assert not phase["payload"].get("found")

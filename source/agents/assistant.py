@@ -1494,6 +1494,33 @@ def _record_recall_verdicts(
 # the operator reads it and no prompt does.
 
 
+#: How much of a retrieved claim the phase row shows. Enough to recognise the
+#: fact and judge the match; the whole text is on the action's own row.
+_CLAIM_FOUND_CHARS: int = 160
+
+
+def _claim_found(memory: Any) -> dict[str, Any]:
+    """One retrieved claim, as its phase row reports it."""
+    text = str(getattr(memory, "text", "") or "")
+    return {"uuid": str(getattr(memory, "uuid", "")),
+            "score": round(float(getattr(memory, "score", 0.0) or 0.0), 4),
+            "kind": getattr(memory, "kind", ""),
+            "reason": getattr(memory, "reason", ""),
+            "text": text[:_CLAIM_FOUND_CHARS]}
+
+
+class _PhaseRecord:
+    """The handle a phase uses to say what it produced."""
+
+    def __init__(self) -> None:
+        self.findings: Any = None
+
+    def found(self, findings: Any) -> None:
+        """Record what this phase obtained. The last call wins, so a phase
+        that narrows its result as it goes reports where it ended up."""
+        self.findings = findings
+
+
 class _PhaseTimer:
     """Wall-clock for the named phases of one action, for the trace.
 
@@ -1504,26 +1531,39 @@ class _PhaseTimer:
     another model — and which one dominates changes with the query.
 
     Phases are recorded in completion order with their start times, so the
-    trace can lay them out on the same wall-clock as the model calls."""
+    trace can lay them out on the same wall-clock as the model calls.
+
+    A phase may also record WHAT it produced, via the handle the context
+    manager yields. Timing alone makes a trace row a dead end: it says twenty
+    seconds went here and leaves the reader to find another step's prompt to
+    learn what came back."""
 
     def __init__(self) -> None:
         self.phases: list[dict[str, Any]] = []
 
     @contextmanager
-    def phase(self, name: str) -> Iterator[None]:
+    def phase(self, name: str) -> Iterator["_PhaseRecord"]:
         started = datetime.now(UTC)
         t0 = time.perf_counter()
+        record = _PhaseRecord()
         try:
-            yield
+            yield record
         finally:
             # Recorded in `finally`: a phase that raised is a phase that spent
             # time, and a failed retrieval is exactly when the operator asks
-            # where the time went.
-            self.phases.append({
+            # where the time went. Its findings keep the same footing — what a
+            # phase collected before it died is the evidence for why.
+            entry = {
                 "name": name,
                 "ms": int((time.perf_counter() - t0) * 1000),
                 "started_at": started.isoformat(),
-            })
+            }
+            # Absent rather than null when a phase reports nothing: most have
+            # nothing to report, and an empty block on every one of their rows
+            # would be noise the reader has to learn to skip.
+            if record.findings is not None:
+                entry["found"] = record.findings
+            self.phases.append(entry)
 
 
 #: How many individual embedding calls a step's timing payload keeps. One
@@ -1608,12 +1648,13 @@ def _action_query_memory(
     with capture_embeddings() as embeds:
         # Claim candidates first: they join the seed candidates in the one shared
         # filter call below (or pass through unfiltered on the fallback paths).
-        with timer.phase("claim retrieval"):
+        with timer.phase("claim retrieval") as phase:
             memories = retrieve_memories_hybrid(
                 query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
                 include_secret=False, journal_id=ctx.journal_id,
                 record_telemetry=record_telemetry, any_room=any_room,
             )
+            phase.found({"claims": [_claim_found(m) for m in memories]})
         seeds = []
         recall_filter_debug: dict[str, Any] = {}
         try:
@@ -1625,9 +1666,17 @@ def _action_query_memory(
                 with timer.phase("seed retrieval"):
                     seeds = _seed_retriever(query, qctx=qctx)
             else:
-                with timer.phase("seed KB load"):
+                with timer.phase("seed KB load") as phase:
                     qkb._load_kb()
                     qkb._ensure_populated(qkb._vector_store())
+                    # What the load left behind. This phase retrieves nothing
+                    # for the query — it builds the registry and reconciles
+                    # the vector table — so the honest answer to "what came
+                    # back" is how much is now loadable, and a phase that ran
+                    # long with an unchanged registry says the cost was the
+                    # sync rather than the size.
+                    phase.found({"seed entries": len(qkb._entries_by_id),
+                                 "aliases": len(qkb._alias_table)})
                 filtered = None
                 kept_claims = None
                 try:
