@@ -209,6 +209,32 @@ def test_an_llm_pane_shows_the_model_link_and_throughput():
     assert "took 14.6s" in html
 
 
+def test_a_call_bound_by_a_group_links_to_the_group(event=None):
+    """Some calls record the group they resolved rather than the config they
+    landed on — which model answers is settled by the binding, and that is the
+    page a reader wants."""
+    html = render_event_detail(_event(
+        "llm", "run_summarizer",
+        kpis={"model": "gemma4:e4b",
+              "model_group_uuid": "a5941783", "model_uuid": None}))
+
+    assert "/modelgroup?id=a5941783" in html
+    assert "model \u2197" in html
+    assert "/model?id=" not in html
+
+
+def test_the_config_link_still_wins_where_one_was_recorded():
+    """A step records the exact override it ran on. That is finer than the
+    group and stays the link."""
+    html = render_event_detail(_event(
+        "llm", "reply",
+        kpis={"model": "gemma4:e4b", "model_uuid": "9999",
+              "model_group_uuid": "a5941783"}))
+
+    assert "/model?id=9999" in html
+    assert "/modelgroup" not in html
+
+
 def test_a_long_prompt_is_shown_whole():
     """The inspector exists to inspect prompts. Truncating one is the single
     thing it must not do — and the prompt-cache work turns on reading the exact

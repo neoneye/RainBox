@@ -150,12 +150,22 @@ def event_kpis(event: dict) -> list[dict]:
     kpis = event.get("kpis") or {}
     fields: list[dict] = []
     model_uuid = kpis.get("model_uuid")
+    group_uuid = kpis.get("model_group_uuid")
     name = kpis.get("model") or (str(model_uuid)[:8] if model_uuid else "")
     if model_uuid:
         fields.append(_kpi(
             "model", name or str(model_uuid)[:8],
             f"The model that answered: {name or model_uuid}",
             href=f"/model?id={model_uuid}", html="model ↗"))
+    elif group_uuid:
+        # No config recorded, but the group that picked one is. Which model
+        # answers is settled by the binding, so that is the page to reach —
+        # and the name the provider answered on still says what ran.
+        fields.append(_kpi(
+            "model", name or str(group_uuid)[:8],
+            f"The model group this call resolved"
+            + (f", which answered on {name}" if name else ""),
+            href=f"/modelgroup?id={group_uuid}", html="model ↗"))
     elif name:
         fields.append(_kpi("model", name, f"The model that answered: {name}"))
 

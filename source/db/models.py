@@ -1669,6 +1669,12 @@ class LlmCall(db.Model):
     # The ModelConfig this call resolved to, when the caller knew it. Plain
     # column, no FK: a call's record must outlive the config being deleted.
     model_uuid: Mapped[UUID | None] = mapped_column()
+    # The ModelGroup the caller resolved before picking that config — the
+    # binding an operator would change to make a different model answer. Kept
+    # beside the config rather than derived from it: a group's membership is
+    # edited over time, so which group a call went through is only knowable if
+    # the call says so.
+    model_group_uuid: Mapped[UUID | None] = mapped_column()
     # Which part of rainbox issued the call, from instrument_tags({"caller":
     # ...}) at the call site. "unknown" for a site that isn't tagged yet.
     # Written as "<owner>" or "<owner>.<call>" with no blanket prefix — the

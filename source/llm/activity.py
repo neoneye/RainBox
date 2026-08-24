@@ -259,6 +259,7 @@ class ActivityRecorder(BaseEventHandler):
             "origin": origin,
             "run_uuid": _uuid_tag(event.tags, "run_uuid"),
             "model_uuid": _uuid_tag(event.tags, "model_uuid"),
+            "model_group_uuid": _uuid_tag(event.tags, "model_group_uuid"),
             "prefix_chain": prefix_chain(text),
             "prompt_chars": len(text),
             # Captured here rather than at the End event: the messages the
@@ -291,6 +292,7 @@ class ActivityRecorder(BaseEventHandler):
             # The name the provider answered on, and the config it came from.
             # The name alone cannot be looked up: /model is keyed on the uuid.
             "model_uuid": start.get("model_uuid"),
+            "model_group_uuid": start.get("model_group_uuid"),
             "caller": start.get("caller") or _caller_from(event.tags),
             "origin": start.get("origin"),
             "run_uuid": start.get("run_uuid"),

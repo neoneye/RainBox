@@ -413,6 +413,9 @@ class ModelGroupAgent(Agent):
         model_uuid = getattr(self, "_last_model_uuid", None)
         if model_uuid:
             tags["model_uuid"] = str(model_uuid)
+        group_uuid = getattr(self, "model_group_uuid", None)
+        if group_uuid:
+            tags["model_group_uuid"] = str(group_uuid)
         return tags
 
     def _caller_tag(self, purpose: str | None = None) -> str:

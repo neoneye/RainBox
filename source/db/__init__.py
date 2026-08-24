@@ -355,6 +355,10 @@ def init_db(app: Flask) -> None:
         # llm_call gained the assistant run and step it belongs to, so
         # /assistant can reach a call's prefill/decode split and cache reuse.
         _add_column_if_missing("llm_call", "run_uuid", "run_uuid UUID")
+        # The model config and the group the call resolved before it, so a
+        # trace row can be followed back to the binding that chose the model.
+        _add_column_if_missing("llm_call", "model_group_uuid",
+                               "model_group_uuid UUID")
         _add_column_if_missing("model_config", "provider",
                                "provider TEXT NOT NULL DEFAULT "
                                f"'{PREFERRED_PROVIDER_ID}'")

@@ -17,7 +17,7 @@ import pytest
 
 import db
 from db import LlmCall
-from db.models import ModelConfig
+from db.models import AgentModelBinding, ModelConfig
 
 T0 = datetime(2026, 8, 24, 20, 30, 0, tzinfo=UTC)
 
@@ -53,7 +53,7 @@ def caller(app_ctx) -> str:
         db.db.session.commit()
 
 
-def _summarizer_row(written, *, at, ms=1770, run_uuid=None,
+def _summarizer_row(written, *, at, ms=1770, run_uuid=None, group_uuid=None,
                     system="You summarize a run.", user="Run status: finished",
                     response='{"outcome": "resolved"}') -> LlmCall:
     row = LlmCall(
@@ -62,6 +62,7 @@ def _summarizer_row(written, *, at, ms=1770, run_uuid=None,
         model="gemma4:e4b", caller=db.SUMMARIZER_CALLER, ok=True,
         prompt_tokens=863, completion_tokens=30, prefill_ms=1500,
         decode_ms=270, total_ms=ms, run_uuid=run_uuid,
+        model_group_uuid=group_uuid,
         messages=[{"role": "system", "content": system},
                   {"role": "user", "content": user}],
         response_text=response)
@@ -69,6 +70,71 @@ def _summarizer_row(written, *, at, ms=1770, run_uuid=None,
     db.db.session.commit()
     written.append(row.uuid)
     return row
+
+
+_BINDING_BACKUP: dict = {}
+_GROUPS: list = []
+
+
+def _a_group():
+    """A model group of this test's own, removed with the binding.
+
+    With a member: an empty group does not resolve (`resolve_model_group`
+    skips one, so the chain falls through to `assistant.default`), and a group
+    nothing can answer from is not the case under test.
+    """
+    config = db.create_model_config(
+        model_name=f"test-model-{uuid4().hex[:8]}", arguments={})
+    group = db.create_model_group(name=f"test-group-{uuid4().hex[:8]}")
+    db.set_model_group_members(group.uuid, [config.uuid])
+    _GROUPS.append((group.uuid, config.uuid))
+    return group.uuid
+
+
+def _bind_summarizer(group_uuid, *, at):
+    """Point the summarizer's slot at a group, stamped as last changed at
+    `at`. The original binding is restored by `_restore_summarizer_binding`."""
+    from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID as SLOT
+
+    row = db.db.session.query(AgentModelBinding).filter(
+        AgentModelBinding.agent_uuid == SLOT).one_or_none()
+    if row is None:
+        row = AgentModelBinding(agent_uuid=SLOT)
+        db.db.session.add(row)
+        _BINDING_BACKUP["absent"] = True
+    else:
+        _BINDING_BACKUP["group"] = row.model_group_uuid
+        _BINDING_BACKUP["updated_at"] = row.updated_at
+    row.model_group_uuid = group_uuid
+    db.db.session.commit()
+    # After the commit: `updated_at` carries an onupdate that would overwrite
+    # a value set in the same flush.
+    db.db.session.query(AgentModelBinding).filter(
+        AgentModelBinding.agent_uuid == SLOT).update(
+            {"updated_at": at}, synchronize_session=False)
+    db.db.session.commit()
+    return group_uuid
+
+
+def _restore_summarizer_binding() -> None:
+    from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID as SLOT
+
+    q = db.db.session.query(AgentModelBinding).filter(
+        AgentModelBinding.agent_uuid == SLOT)
+    if _BINDING_BACKUP.pop("absent", None):
+        q.delete(synchronize_session=False)
+    elif _BINDING_BACKUP:
+        q.update({"model_group_uuid": _BINDING_BACKUP.pop("group"),
+                  "updated_at": _BINDING_BACKUP.pop("updated_at")},
+                 synchronize_session=False)
+    _BINDING_BACKUP.clear()
+    db.db.session.commit()
+    while _GROUPS:
+        group_uuid, config_uuid = _GROUPS.pop()
+        db.delete_model_group(group_uuid)
+        db.db.session.query(ModelConfig).filter(
+            ModelConfig.uuid == config_uuid).delete(synchronize_session=False)
+        db.db.session.commit()
 
 
 def _step(action, *, at, ms):
@@ -178,45 +244,67 @@ def test_the_wait_before_the_summarizer_is_named_not_unaccounted(caller):
                 and e["start"] >= _at(70.0)]
 
 
-def test_the_summary_call_links_to_the_model_that_answered(caller):
-    """Every other row on the timeline links its model. A row that names one
-    and does not link it is the odd one out for no reason a reader can see."""
+def test_the_summary_call_links_to_the_group_that_chose_its_model(caller):
+    """Which model summarizes a run is settled by the agent's model GROUP, so
+    that is what a reader following the link wants: the binding they would
+    change. The config the call landed on is a consequence of it."""
     run = _run()
-    config = db.create_model_config(
-        model_name=f"test-model-{uuid4().hex[:8]}", arguments={},
-        provider="ollama")
-    db.db.session.commit()
-    try:
-        _summarizer_row(caller, at=72, run_uuid=run.uuid)
-        db.db.session.query(LlmCall).filter(
-            LlmCall.uuid == caller[-1]).update({"model": config.model_name})
-        db.db.session.commit()
-
-        event = _one(db.run_events(run, [_step("reply", at=0, ms=2000)]),
-                     kind="llm", label=db.SUMMARY_LABEL)
-
-        assert event["kpis"]["model_uuid"] == str(config.uuid)
-    finally:
-        db.db.session.query(ModelConfig).filter(
-            ModelConfig.uuid == config.uuid).delete(synchronize_session=False)
-        db.db.session.commit()
-
-
-def test_a_model_name_matching_nothing_leaves_the_row_unlinked(caller):
-    """A link is only offered where the name resolves to exactly one config.
-    Guessing would send the reader to the wrong model's page, which is worse
-    than the plain name the row already shows."""
-    run = _run()
-    _summarizer_row(caller, at=72, run_uuid=run.uuid)
-    db.db.session.query(LlmCall).filter(
-        LlmCall.uuid == caller[-1]).update({"model": "not-a-configured-model"})
-    db.db.session.commit()
+    group = uuid4()
+    _summarizer_row(caller, at=72, run_uuid=run.uuid, group_uuid=group)
 
     event = _one(db.run_events(run, [_step("reply", at=0, ms=2000)]),
                  kind="llm", label=db.SUMMARY_LABEL)
 
-    assert event["kpis"]["model_uuid"] is None
-    assert event["kpis"]["model"] == "not-a-configured-model"
+    assert event["kpis"]["model_group_uuid"] == str(group)
+
+
+def test_a_call_recorded_before_the_group_was_reads_it_off_the_binding(caller):
+    """Rows written before the group was recorded can still be resolved: the
+    summarizer's slot names one, and a binding untouched since the call ran is
+    the binding the call ran under."""
+    run = _run()
+    _summarizer_row(caller, at=72, run_uuid=run.uuid, group_uuid=None)
+    bound = _bind_summarizer(_a_group(), at=_at(0))
+    try:
+        event = _one(db.run_events(run, [_step("reply", at=0, ms=2000)]),
+                     kind="llm", label=db.SUMMARY_LABEL)
+
+        assert event["kpis"]["model_group_uuid"] == str(bound)
+    finally:
+        _restore_summarizer_binding()
+
+
+def test_a_binding_changed_since_the_call_leaves_the_row_unlinked(caller):
+    """Today's binding is not evidence about a call that ran before it was
+    made. Sending the reader to a group this call never used would be worse
+    than the plain model name the row already shows."""
+    run = _run()
+    _summarizer_row(caller, at=72, run_uuid=run.uuid, group_uuid=None)
+    _bind_summarizer(_a_group(), at=_at(600))
+    try:
+        event = _one(db.run_events(run, [_step("reply", at=0, ms=2000)]),
+                     kind="llm", label=db.SUMMARY_LABEL)
+
+        assert event["kpis"]["model_group_uuid"] is None
+        assert event["kpis"]["model"] == "gemma4:e4b"
+    finally:
+        _restore_summarizer_binding()
+
+
+def test_the_summary_call_does_not_guess_a_model_config(caller):
+    """The name a provider answered on identifies no config this app can be
+    asked about: the assistant runs on a tuned override, and the bare config of
+    the same name is a page it never used."""
+    run = _run()
+    _summarizer_row(caller, at=72, run_uuid=run.uuid, group_uuid=None)
+    _bind_summarizer(None, at=_at(600))
+    try:
+        event = _one(db.run_events(run, [_step("reply", at=0, ms=2000)]),
+                     kind="llm", label=db.SUMMARY_LABEL)
+
+        assert event["kpis"]["model_uuid"] is None
+    finally:
+        _restore_summarizer_binding()
 
 
 def test_the_summary_call_is_not_part_of_what_the_turn_cost(caller):

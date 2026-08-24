@@ -25,12 +25,8 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from db.model_config import (
-    get_model_config,
-    get_model_config_override,
-    list_model_configs,
-)
-from db.models import AssistantStep, LlmCall, db
+from db.model_config import get_model_config, get_model_config_override
+from db.models import AgentModelBinding, AssistantStep, LlmCall, db
 
 
 def step_started_at(step):
@@ -733,23 +729,38 @@ def _summarizer_call(run):
     return min(near, key=lambda r: abs(r.finished_at - stamp))
 
 
-def _config_uuid_for_model(provider, model_name) -> str | None:
-    """The model config a recorded call ran on, found by the name it answered.
+def _summarizer_group_uuid(started_at) -> str | None:
+    """The model group the summarizer resolved for a call recorded without it.
 
-    For rows written before a call recorded which config it chose. Only when
-    the name resolves to exactly one config: a link to the wrong model's page
-    is worse than the plain name the row already shows, and nothing stops a
-    model from being configured twice.
+    Which model summarizes a run is settled by the group bound to the
+    `assistant.run_summarizer` slot, falling back to `assistant.default` — so
+    the group, not the config the call landed on, is the thing a reader
+    follows the link to change.
+
+    Only offered when neither binding in that chain has been touched since the
+    call ran. A binding is current configuration, and current configuration is
+    not evidence about a call made before it: pointing the reader at a group
+    this call never went through would be worse than the plain model name the
+    row already shows.
     """
-    if not model_name:
+    from agents.config import ASSISTANT_DEFAULT_UUID, ASSISTANT_RUN_SUMMARIZER_UUID
+    from agents.query_filter_router import resolve_assistant_model_group
+
+    if started_at is None:
         return None
     try:
-        rows = [c for c in list_model_configs()
-                if c.model_name == model_name
-                and (not provider or c.provider == provider)]
+        rows = (db.session.query(AgentModelBinding)
+                .filter(AgentModelBinding.agent_uuid.in_(
+                    [ASSISTANT_RUN_SUMMARIZER_UUID, ASSISTANT_DEFAULT_UUID]))
+                .all())
+        if any(r.updated_at and r.updated_at > started_at for r in rows):
+            return None
+        group_uuid, _label = resolve_assistant_model_group(
+            ASSISTANT_RUN_SUMMARIZER_UUID)
     except Exception:
+        # The read model must never take the page down over telemetry.
         return None
-    return str(rows[0].uuid) if len(rows) == 1 else None
+    return str(group_uuid) if group_uuid else None
 
 
 def _summary_events(run) -> list[dict]:
@@ -773,9 +784,14 @@ def _summary_events(run) -> list[dict]:
         "llm", SUMMARY_LABEL, variant="summary", start=row.started_at,
         duration_ms=row.total_ms, uuid=str(row.uuid),
         kpis={"model": row.model, "provider": row.provider,
-              "model_uuid": (str(row.model_uuid) if row.model_uuid
-                             else _config_uuid_for_model(row.provider,
-                                                         row.model)),
+              # The config the call landed on is not offered as a link. What
+              # answers is a tuned override of a group member, and the bare
+              # config of the same name is a page the assistant never used —
+              # so the group is the link, and the config would only mislead.
+              "model_uuid": None,
+              "model_group_uuid": (
+                  str(row.model_group_uuid) if row.model_group_uuid
+                  else _summarizer_group_uuid(row.started_at)),
               "input_tokens": row.prompt_tokens,
               "output_tokens": row.completion_tokens,
               "prefill_ms": row.prefill_ms, "decode_ms": row.decode_ms,
