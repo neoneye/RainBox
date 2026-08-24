@@ -296,3 +296,39 @@ def test_a_memory_query_pane_reports_what_it_found():
         assert shown in html, shown
     # And each says what it means, as the table's headers do.
     assert "number of QA static items" in html
+
+
+def test_an_action_s_status_is_a_block_not_a_meta_field():
+    """The meta line reports what a call cost — tokens, timings, a clock. How
+    the action ENDED is an outcome, so it reads as one of the labelled blocks
+    the pane already uses for what was asked and what came back.
+    """
+    html = render_event_detail(_event(
+        "action", "memory_query", kpis={"status": "ok"},
+        payload={"args": {}, "observation": {"text": "facts"}}))
+
+    assert '<h5>status</h5>' in html
+    assert 'title="How the action ended"' not in html
+    assert '<span class="ev-kpi" title="How the action ended">' not in html
+
+
+def test_every_action_renderer_shows_the_status():
+    """Bespoke renderers must not be the ones that quietly drop it."""
+    for label, payload in (
+        ("python_run", {"args": {"code": "x"}, "observation": {"text": "y"}}),
+        ("memory_query", {"args": {"query": "q"}, "observation": {"text": "r"}}),
+        ("kanban_task_teleport", {"args": {}, "observation": {"text": "ok"}}),
+    ):
+        html = render_event_detail(_event(
+            "action", label, kpis={"status": "error"}, payload=payload))
+        assert "<h5>status</h5>" in html, label
+        assert ">error<" in html, label
+
+
+def test_a_call_has_no_status_block():
+    """Only an action ends in a way worth naming; a model call reports its
+    cost and its answer."""
+    html = render_event_detail(_event(
+        "llm", "reply", payload={"model_response": "{}"}))
+
+    assert "<h5>status</h5>" not in html

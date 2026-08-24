@@ -102,7 +102,6 @@ _KPI_FIELDS: list[tuple[str, str, Any, str]] = [
      "Prefill: time reading the prompt before the first output token"),
     ("decode_ms", "decode", lambda v: f"decode {v / 1000:.1f}s",
      "Decode: time spent generating the response"),
-    ("status", "status", str, "How the action ended"),
     # What a retrieval found and what it had to cut. The hovers are the ones
     # the step's own counts table carries, so the two surfaces explain a
     # number the same way.
@@ -386,7 +385,12 @@ def render_event_detail(event: dict) -> str:
     kind = event.get("kind") or "action"
     label = event.get("label") or kind
     if kind == "action":
-        body = _ACTION_RENDERERS.get(label, _generic_action)(event)
+        # How the action ended is an outcome, not a cost, so it reads as a
+        # labelled block rather than a figure on the meta line. Prepended here
+        # so a bespoke renderer cannot be the one that drops it.
+        status = (event.get("kpis") or {}).get("status")
+        body = (_block("status", status)
+                + _ACTION_RENDERERS.get(label, _generic_action)(event))
     else:
         body = _KIND_RENDERERS.get(kind, _generic_action)(event)
     # The label and the description ride as data rather than as markup: the
