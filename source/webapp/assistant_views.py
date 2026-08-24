@@ -231,7 +231,8 @@ ASSISTANT_TEMPLATE = """
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
   /* The run header and each ReAct step are self-contained cards: a header band
-     (.hd) over a padded body, so each reads as one grouped unit. */
+     (.card-header) over a padded body, so each reads as one grouped
+     unit. The name matches its children, card-title and card-link. */
   .as-main .step, .as-main .card { border:1px solid #e5e7eb; border-radius:8px;
                    overflow:hidden; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05);
                    margin-bottom:16px; }
@@ -240,33 +241,33 @@ ASSISTANT_TEMPLATE = """
   .as-main .step-anchor { text-decoration:none; padding:0.05rem 0.3rem; border-radius:4px; }
   .as-main .step .step-anchor:hover { color:#2563eb; background:#eef2ff; }
   .as-main .step:target .step-anchor { color:#2563eb; }
-  .as-main .step .hd, .as-main .card .hd { display:flex; gap:0.5rem; align-items:center;
+  .as-main .step .card-header, .as-main .card .card-header { display:flex; gap:0.5rem; align-items:center;
                        flex-wrap:wrap; padding:10px 14px; background:#fbfdff;
                        border-bottom:1px solid #e5e7eb; }
-  .as-main .card .hd .card-title { font-size:1rem; font-weight:400; }
-  .as-main .card .hd .card-link { margin-left:auto; font-size:0.82rem; color:#2563eb; text-decoration:none; }
-  .as-main .card .hd .card-link:hover { text-decoration:underline; }
+  .as-main .card .card-header .card-title { font-size:1rem; font-weight:400; }
+  .as-main .card .card-header .card-link { margin-left:auto; font-size:0.82rem; color:#2563eb; text-decoration:none; }
+  .as-main .card .card-header .card-link:hover { text-decoration:underline; }
   /* Outcome chip after the card title, separated like the step header's spans. */
-  .as-main .card .hd .outcome { align-self:stretch; display:flex; align-items:center;
+  .as-main .card .card-header .outcome { align-self:stretch; display:flex; align-items:center;
                                 margin:-10px 0; padding:10px 0 10px 1rem;
                                 border-left:1px solid #e5e7eb; font-weight:600; }
   /* The chip carries the run's outcome (same reading as the dashboard's
      headline status), not its lifecycle status: "finished" only means the loop
      terminated, so colouring it green would sell an unresolved run as a win. */
-  .as-main .card .hd .out-resolved { color:#1e7e34; }
-  .as-main .card .hd .out-unresolved { color:#c0392b; }
-  .as-main .card .hd .out-running { color:#1d4ed8; }
-  .as-main .card .hd .out-pending { color:#98a2b3; }
+  .as-main .card .card-header .out-resolved { color:#1e7e34; }
+  .as-main .card .card-header .out-unresolved { color:#c0392b; }
+  .as-main .card .card-header .out-running { color:#1d4ed8; }
+  .as-main .card .card-header .out-pending { color:#98a2b3; }
   .as-main .step-body, .as-main .card-body { padding:14px 16px; }
   .as-main .step-body > :first-child { margin-top:0; }
   .as-main .step-body > :last-child { margin-bottom:0; }
   .as-main .step.phase-control .step-body { background:#faf5ff; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
-  .as-main .step .hd { gap:1rem; }
-  .as-main .step .hd > span:not(:first-child) { align-self:stretch; display:flex; align-items:center;
+  .as-main .step .card-header { gap:1rem; }
+  .as-main .step .card-header > span:not(:first-child) { align-self:stretch; display:flex; align-items:center;
                        margin:-10px 0; padding:10px 0 10px 1rem; border-left:1px solid #e5e7eb; }
-  .as-main .step .hd .ix { color:inherit; }
-  .as-main .step .hd .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .as-main .step .card-header .ix { color:inherit; }
+  .as-main .step .card-header .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   /* Model-call waterfall: name | track | duration. Bars are positioned on the
      run's wall-clock span, so a wide gap between two bars is time no model was
      working — which is what the chart is FOR, and what a bar per kind in a
@@ -340,12 +341,12 @@ ASSISTANT_TEMPLATE = """
   .as-main .wf-undated { position:absolute; left:4px; font-size:0.68rem; color:#98a2b3; }
   .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;
                       font-variant-numeric:tabular-nums; }
-  .as-main .card .hd .outcome.muted { color:#667085; font-weight:400; font-size:0.85rem; }
+  .as-main .card .card-header .outcome.muted { color:#667085; font-weight:400; font-size:0.85rem; }
   /* Rows the loop produced itself (warm-up / follow-up calls). Purple like the
      control badge, which marks the other kind of row the model didn't decide;
      the tinted header keeps the real ReAct steps scannable between them. */
-  .as-main .step.aux .hd { background:#faf5ff; }
-  .as-main .step .hd .kind { color:#7e22ce; font-weight:600; }
+  .as-main .step.aux .card-header { background:#faf5ff; }
+  .as-main .step .card-header .kind { color:#7e22ce; font-weight:600; }
   /* Right-aligned metadata on io-labels: model link, token counts, duration, timestamp.
      Fields are separated by the flex gap, not punctuation. */
   .as-main .step .io-meta { margin-left:auto; display:flex; gap:1rem; align-items:center;
@@ -386,7 +387,7 @@ ASSISTANT_TEMPLATE = """
      font-size:0.72rem; padding-left:1.6rem; max-width:34rem;
      overflow-wrap:anywhere; }
   /* The chosen action's human description, shown after the action in the header band. */
-  .as-main .step .hd .action-desc { color:inherit; font-size:inherit; font-weight:400; }
+  .as-main .step .card-header .action-desc { color:inherit; font-size:inherit; font-weight:400; }
   /* The observation's ok flag, derived from the step phase (observed=ok). */
   .as-main .step .fn-ok { text-transform:none; font-weight:600; margin-left:0.3rem; }
   .as-main .step .fn-ok.ok-true { color:#1e7e34; }
@@ -503,7 +504,7 @@ ASSISTANT_TEMPLATE = """
          the next begins, and a remaining gap is genuinely unmeasured time.
          The summary still counts model calls only. #}
       <div class="card">
-        <div class="hd">
+        <div class="card-header">
           <div class="card-title">Timeline</div>
           <span class="outcome muted">{{ dash.llm_calls }} calls · model {{ dash.model_time }}{% if dash.embed_calls %} · {{ dash.embed_calls }} embed {{ dash.embed_time }}{% endif %} · total {{ dash.total_time }}</span>
         </div>
@@ -539,7 +540,7 @@ ASSISTANT_TEMPLATE = """
          Every pane is rendered once into the page, which is what makes
          selection a client-side swap rather than a round trip. #}
       <div class="card">
-        <div class="hd">
+        <div class="card-header">
           <div class="card-title">Log</div>
           <span class="outcome muted">{{ log.events|length }} events</span>
         </div>
@@ -552,7 +553,7 @@ ASSISTANT_TEMPLATE = """
       {% endif %}
 
       <div class="card">
-        <div class="hd">
+        <div class="card-header">
           <div class="card-title">{% if trigger %}Started by <a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a>{% else %}Run{% endif %}</div>
           {% if selected.status in ('running', 'stopping') %}
             <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
@@ -597,7 +598,7 @@ ASSISTANT_TEMPLATE = """
       {% for step, intents in timeline %}
       {% set kind = step_kinds.get(step.uuid|string) %}
       <div class="step phase-{{ step.phase }}{% if kind %} aux{% endif %}" id="step-{{ step.uuid }}">
-        <div class="hd">
+        <div class="card-header">
           {# Numbered by position in the timeline, not by `step_index`: the
              code-driven rows deliberately share the decide index they sit
              beside, so numbering by it repeated "Step 1 of 4" three times. The
@@ -748,7 +749,7 @@ ASSISTANT_TEMPLATE = """
          mirrored in _run_markdown(), which exports the durable run record. #}
       {% if active_call %}
       <div class="step phase-running" id="active-call">
-        <div class="hd">
+        <div class="card-header">
           {# The in-flight call has no row yet, so it takes the position right
              after the last one — the number the timeline will give it. #}
           <span class="ix" title="{% if active_call.step_index is not none %}decide-loop step index={{ active_call.step_index }}{% endif %}">Step {{ timeline|length + 1 }}</span>
@@ -778,7 +779,7 @@ ASSISTANT_TEMPLATE = """
 
       {% if verdict %}
       <div class="card">
-        <div class="hd">
+        <div class="card-header">
           <div class="card-title">Verdict</div>
           <span class="outcome out-{{ dash.status_class }}">{{ dash.status }}</span>
           {% if reply %}<a class="card-link" href="/chat?id={{ selected.room_uuid }}&msg={{ reply.id }}">chat ↗</a>{% endif %}
