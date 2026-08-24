@@ -16,7 +16,11 @@ from __future__ import annotations
 from datetime import timedelta
 
 import db
-from webapp.assistant_components import EVENT_GLYPH, render_event_detail
+from webapp.assistant_components import (
+    EVENT_GLYPH,
+    event_description,
+    render_event_detail,
+)
 
 #: A bar this narrow would be invisible; a sub-second call against a
 #: two-minute run still has to be clickable.
@@ -79,6 +83,9 @@ def log_view(run, steps: list, reviews: list | None = None,
                           if event["duration_ms"] is not None else "—")
         row["clock"] = (event["start"].strftime("%H:%M:%S")
                         if event["start"] else "—")
+        # The header names what is being inspected, so the row carries the
+        # description the header shows for whichever event is selected.
+        row["description"] = event_description(event)
         row["detail_html"] = render_event_detail(event)
         rows.append(row)
     return {"events": rows, "span_seconds": span}

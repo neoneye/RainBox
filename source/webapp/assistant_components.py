@@ -341,17 +341,20 @@ _KIND_RENDERERS = {
 }
 
 
-def _description(event: dict) -> str:
-    """What this event was for, in the words the action catalog uses.
+def event_description(event: dict) -> str:
+    """What this event was for, in one line.
 
-    Looked up from the label: a decide call is described by the action it
-    chose, and a loop-issued call by its own entry where the two differ (see
-    CODE_DRIVEN_DESCRIPTIONS). Empty for the kinds that describe themselves.
+    Looked up from the label in the words the action catalog uses: a decide
+    call is described by the action it chose, and a loop-issued call by its own
+    entry where the two differ (see CODE_DRIVEN_DESCRIPTIONS). A kind with no
+    catalog entry falls back to what that kind is, so no event is ever nameless
+    in the header.
     """
     label = event.get("label") or ""
     action = label.split("→")[-1].strip() if "→" in label else label
     return (CODE_DRIVEN_DESCRIPTIONS.get(action)
-            or ACTION_DESCRIPTIONS.get(action) or "")
+            or ACTION_DESCRIPTIONS.get(action)
+            or _KIND_CAPTION.get(event.get("kind") or "", ""))
 
 
 def render_event_detail(event: dict) -> str:
@@ -367,10 +370,10 @@ def render_event_detail(event: dict) -> str:
         body = _ACTION_RENDERERS.get(label, _generic_action)(event)
     else:
         body = _KIND_RENDERERS.get(kind, _generic_action)(event)
-    description = _description(event)
-    caption = (f"{_KIND_CAPTION.get(kind, kind)} · {description}"
-               if description else _KIND_CAPTION.get(kind, kind))
+    # The label and the description ride as data rather than as markup: the
+    # card header is what names the thing being inspected, and printing them
+    # here too would say it twice on one screen.
     return str(Markup(
-        '<div class="ev-detail" data-kind="{}">'
-        '<h4>{}</h4><div class="ev-caption">{}</div>{}{}</div>'
-    ).format(kind, label, caption, _kpi_html(event), body))
+        '<div class="ev-detail" data-kind="{}" data-label="{}" data-desc="{}">'
+        '{}{}</div>'
+    ).format(kind, label, event_description(event), _kpi_html(event), body))

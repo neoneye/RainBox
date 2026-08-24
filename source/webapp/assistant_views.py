@@ -310,6 +310,13 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-kpis { display:flex; flex-wrap:wrap; gap:0.9rem;
         margin-bottom:0.7rem; font-family:ui-monospace,monospace;
         font-size:80%; color:#4b5563; }
+  .as-main .ev-crumb { display:flex; align-items:baseline; gap:0.5rem;
+        min-width:0; font-size:0.9rem; }
+  .as-main .ev-crumb-sep { color:#cbd5e1; }
+  .as-main .ev-crumb-label { font-family:ui-monospace,monospace;
+        font-weight:600; white-space:nowrap; }
+  .as-main .ev-crumb-desc { color:#6b7280; overflow:hidden;
+        text-overflow:ellipsis; white-space:nowrap; }
   .as-main .ev-kpi { white-space:nowrap; }
   .as-main .ev-kpi a { color:#2563eb; text-decoration:none; }
   .as-main .ev-kpi a:hover { text-decoration:underline; }
@@ -541,7 +548,16 @@ ASSISTANT_TEMPLATE = """
          selection a client-side swap rather than a round trip. #}
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Log</div>
+          <div class="card-title">Inspect</div>
+          {# What is being inspected right now. Filled from the selected
+             event's own data attributes, so the header and the pane cannot
+             describe different things. #}
+          <span class="ev-crumb">
+            <span class="ev-crumb-sep">|</span>
+            <span class="ev-crumb-label">{{ log.events[0].label }}</span>
+            <span class="ev-crumb-sep">|</span>
+            <span class="ev-crumb-desc">{{ log.events[0].description }}</span>
+          </span>
           <span class="outcome muted">{{ log.events|length }} events</span>
         </div>
         <div class="log-detail">
@@ -807,6 +823,13 @@ ASSISTANT_TEMPLATE = """
     document.querySelectorAll(".ev-pick").forEach(function (b) {
       b.classList.toggle("on", b.dataset.ev === id);
     });
+    // The header says what is being inspected, read off the pane itself so
+    // the two cannot drift apart.
+    var detail = document.querySelector("#" + id + " .ev-detail");
+    var label = document.querySelector(".ev-crumb-label");
+    var desc = document.querySelector(".ev-crumb-desc");
+    if (detail && label) { label.textContent = detail.dataset.label || ""; }
+    if (detail && desc) { desc.textContent = detail.dataset.desc || ""; }
   }
   document.addEventListener("click", function (ev) {
     var pick = ev.target.closest(".ev-pick");

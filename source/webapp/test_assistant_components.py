@@ -227,3 +227,39 @@ def test_a_long_prompt_is_shown_whole():
     assert f"user prompt ({len(prompt)} chars)" in html
     assert "line 8999" in html
     assert "first 40000 characters" not in html
+
+
+def test_a_pane_carries_its_identity_for_the_header_to_show():
+    """The header names what is being inspected, so the pane exposes its label
+    and description rather than printing them again above the content."""
+    from webapp.assistant_components import event_description
+
+    html = render_event_detail(_event("llm", "recall_filter"))
+
+    assert 'data-label="recall_filter"' in html
+    assert 'data-desc="score what memory_query recalled for relevance"' in html
+    # Not repeated inside the pane: the header is where identity lives now.
+    assert "<h4>" not in html
+    assert "ev-caption" not in html
+
+    assert event_description({"kind": "llm", "label": "recall_filter"}) == (
+        "score what memory_query recalled for relevance")
+
+
+def test_a_kind_with_no_action_description_falls_back_to_what_it_is():
+    """Every event says something in the header; an unaccounted stretch has no
+    catalog entry but is not nameless."""
+    from webapp.assistant_components import event_description
+
+    assert event_description({"kind": "unaccounted", "label": "unaccounted"})
+    assert event_description({"kind": "start", "label": "start"}) == (
+        "the request that began the run")
+
+
+def test_the_pane_still_carries_its_kpis_and_body():
+    html = render_event_detail(_event(
+        "llm", "reply", kpis={"input_tokens": 10, "output_tokens": 2},
+        payload={"model_response": "{}"}, duration_ms=1000))
+
+    assert "in 10" in html and "took 1.0s" in html
+    assert "response" in html
