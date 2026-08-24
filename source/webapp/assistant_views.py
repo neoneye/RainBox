@@ -19,35 +19,18 @@ from flask import Response, render_template_string, request
 
 import db
 from agents.assistant import CAPABILITIES, problem_texts
+from .assistant_components import (
+    CODE_DRIVEN_DESCRIPTIONS as _CODE_DRIVEN_DESCRIPTIONS,
+)
+from .assistant_components import (
+    ACTION_DESCRIPTIONS as _ACTION_DESCRIPTIONS,
+)
 from .assistant_log_view import log_view
 from .core import app
 
 # action value -> short human-readable summary, for the timeline's "action
 # call" section (the verbose `description` is LLM-facing). Static (the capability
 # registry is defined in code), so resolve once at import.
-_ACTION_DESCRIPTIONS = {
-    n.value: (c.summary or c.description) for n, c in CAPABILITIES.items()
-}
-# Code-driven trace rows are not model-selectable capabilities, so they do not
-# belong in CAPABILITIES. Give them the same compact timeline description via
-# this companion registry.
-_ACTION_DESCRIPTIONS.update({
-    "response_language_classifier": (
-        "determine which language(s) the reply should use"
-    ),
-    "reply_audit": "check the finished reply before it is sent",
-    "request_summary": (
-        "describe a request too long to fit in the prompt whole"
-    ),
-})
-# Consulted first for a `code_driven` row. `acceptance_criteria` is the one
-# action that is both: the catalog summary describes the revision the model can
-# request, which is not what the loop's own call does.
-_CODE_DRIVEN_DESCRIPTIONS = {
-    "acceptance_criteria": "establish what a good reply must satisfy",
-    "recall_filter": "score what memory_query recalled for relevance",
-}
-
 ASSISTANT_TEMPLATE = """
 <!doctype html>
 <title>Assistant run &mdash; rainbox</title>
@@ -321,11 +304,18 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-pane.on { display:block; }
   .as-main .ev-detail h4 { margin:0 0 0.1rem; font-size:0.95rem; }
   .as-main .ev-caption { color:#6b7280; font-size:80%; margin-bottom:0.6rem; }
-  .as-main .ev-kpis { display:flex; flex-wrap:wrap; gap:1.2rem;
-        margin-bottom:0.7rem; }
-  .as-main .ev-kpis div span { display:block; font-size:65%;
-        letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }
-  .as-main .ev-kpis div b { font-size:0.95rem; }
+  /* One meta line, the way a step's io-label has always read: each field
+     carries its own word, so no number floats free of what it counts. */
+  .as-main .ev-kpis { display:flex; flex-wrap:wrap; gap:0.9rem;
+        margin-bottom:0.7rem; font-family:ui-monospace,monospace;
+        font-size:80%; color:#4b5563; }
+  .as-main .ev-kpi { white-space:nowrap; }
+  .as-main .ev-kpi a { color:#2563eb; text-decoration:none; }
+  .as-main .ev-kpi a:hover { text-decoration:underline; }
+  .as-main details.ev-block > summary { cursor:pointer; font-size:70%;
+        letter-spacing:0.05em; text-transform:uppercase; color:#6b7280;
+        margin-bottom:0.2rem; }
+  .as-main details.ev-block > summary:hover { color:#1a1a2e; }
   .as-main .ev-block { margin-bottom:0.7rem; }
   .as-main .ev-block h5 { margin:0 0 0.2rem; font-size:70%;
         letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }

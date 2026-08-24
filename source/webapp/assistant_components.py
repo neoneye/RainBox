@@ -22,7 +22,35 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agents.assistant import CAPABILITIES
 from markupsafe import Markup
+
+#: What each action is for, keyed by action name. Every pane says what
+#: the call was doing: a reader should not have to know from the name
+#: alone what `response_language_classifier` does.
+ACTION_DESCRIPTIONS = {
+    n.value: (c.summary or c.description) for n, c in CAPABILITIES.items()
+}
+# Code-driven trace rows are not model-selectable capabilities, so they do not
+# belong in CAPABILITIES. Give them the same compact timeline description via
+# this companion registry.
+ACTION_DESCRIPTIONS.update({
+    "response_language_classifier": (
+        "determine which language(s) the reply should use"
+    ),
+    "reply_audit": "check the finished reply before it is sent",
+    "request_summary": (
+        "describe a request too long to fit in the prompt whole"
+    ),
+})
+# Consulted first for a `code_driven` row. `acceptance_criteria` is the one
+# action that is both: the catalog summary describes the revision the model can
+# request, which is not what the loop's own call does.
+CODE_DRIVEN_DESCRIPTIONS = {
+    "acceptance_criteria": "establish what a good reply must satisfy",
+    "recall_filter": "score what memory_query recalled for relevance",
+}
+
 
 #: The glyph the list and the gantt put in front of a row. Kept here so the
 #: two surfaces cannot disagree about what a kind looks like.
@@ -63,73 +91,123 @@ def _fmt_int(value: Any) -> str | None:
     return str(value)
 
 
-#: KPI key → (display name, formatter). Order is the order they lay out in.
-_KPI_FIELDS: list[tuple[str, str, Any]] = [
-    ("model", "model", str),
-    ("provider", "provider", str),
-    ("input_tokens", "in", _fmt_int),
-    ("output_tokens", "out", _fmt_int),
-    ("cached_tokens", "cached", _fmt_int),
-    ("prefill_ms", "prefill", _fmt_ms),
-    ("decode_ms", "decode", _fmt_ms),
-    ("status", "status", str),
-    ("chars", "chars", _fmt_int),
-    ("texts", "texts", _fmt_int),
+#: KPI key → (short key, how the value reads, hover). The text carries its own
+#: label — "in 6180" rather than a column headed "in" — so the line reads the
+#: way the step meta line always has, and a bare number never floats free.
+_KPI_FIELDS: list[tuple[str, str, Any, str]] = [
+    ("input_tokens", "in", lambda v: f"in {v}",
+     "Input tokens: the size of the prompt sent to the model"),
+    ("output_tokens", "out", lambda v: f"out {v}",
+     "Output tokens: the amount of text the model generated"),
+    ("cached_tokens", "cached", lambda v: f"cached {v}",
+     "Prompt tokens the runtime served from cache instead of prefilling"),
+    ("prefill_ms", "prefill", lambda v: f"prefill {v / 1000:.1f}s",
+     "Prefill: time reading the prompt before the first output token"),
+    ("decode_ms", "decode", lambda v: f"decode {v / 1000:.1f}s",
+     "Decode: time spent generating the response"),
+    ("status", "status", str, "How the action ended"),
+    ("chars", "chars", lambda v: f"{v} chars",
+     "Characters sent to the embedder"),
+    ("texts", "texts", lambda v: f"{v} texts",
+     "How many texts were embedded"),
 ]
 
 
-def event_kpis(event: dict) -> list[tuple[str, str]]:
-    """The KPI pairs a pane shows, in a fixed order.
+def _kpi(label: str, text: str, title: str, *, href: str = "",
+         html: str = "") -> dict:
+    """One field of the meta line. `html` overrides the shown text where a
+    link reads better short — "model ↗" on the page, the name on hover."""
+    return {"label": label, "text": text, "title": title,
+            "href": href, "html": html or text}
 
-    A KPI with nothing recorded is omitted rather than rendered as "None" — an
-    empty slot says "not measured", which is true, where the word None reads
-    like a value.
+
+def event_kpis(event: dict) -> list[dict]:
+    """The meta-line fields a pane shows, in a fixed order.
+
+    A field with nothing recorded is omitted rather than rendered as "None" —
+    an absent field says "not measured", which is true, where the word None
+    reads like a value.
     """
     kpis = event.get("kpis") or {}
-    pairs: list[tuple[str, str]] = []
-    for key, name, fmt in _KPI_FIELDS:
+    fields: list[dict] = []
+    model_uuid = kpis.get("model_uuid")
+    name = kpis.get("model") or (str(model_uuid)[:8] if model_uuid else "")
+    if model_uuid:
+        fields.append(_kpi(
+            "model", name or str(model_uuid)[:8],
+            f"The model that answered: {name or model_uuid}",
+            href=f"/model?id={model_uuid}", html="model ↗"))
+    elif name:
+        fields.append(_kpi("model", name, f"The model that answered: {name}"))
+
+    for key, label, fmt, title in _KPI_FIELDS:
         value = kpis.get(key)
         if value is None or value == "":
             continue
-        shown = fmt(value)
-        if shown is None or shown == "":
-            continue
-        pairs.append((name, str(shown)))
+        fields.append(_kpi(label, str(fmt(value)), title))
+
     duration = event.get("duration_ms")
+    tokens = (kpis.get("input_tokens") or 0) + (kpis.get("output_tokens") or 0)
+    if duration and tokens:
+        fields.append(_kpi(
+            "tok/s", f"{tokens * 1000 / duration:.0f} tok/s",
+            "Throughput: total tokens (input + output) per second"))
     if duration is not None:
-        pairs.insert(0, ("took", _fmt_ms(duration) or "—"))
-    return pairs
+        fields.append(_kpi(
+            "took", f"took {duration / 1000:.1f}s",
+            "Duration: how long this took"))
+    start = event.get("start")
+    if start is not None:
+        fields.append(_kpi(
+            "at", start.strftime("%H:%M:%S"), "When this began"))
+    return fields
 
 
 def _kpi_html(event: dict) -> Markup:
-    pairs = event_kpis(event)
-    if not pairs:
+    fields = event_kpis(event)
+    if not fields:
         return Markup("")
     cells = Markup("").join(
-        Markup('<div><span>{}</span><b>{}</b></div>').format(name, value)
-        for name, value in pairs)
+        Markup('<span class="ev-kpi" title="{}">{}</span>').format(
+            f["title"],
+            Markup('<a href="{}">{}</a>').format(f["href"], f["html"])
+            if f["href"] else f["html"])
+        for f in fields)
     return Markup('<div class="ev-kpis">{}</div>').format(cells)
 
 
-def _block(title: str, body: Any, *, mono: bool = True) -> Markup:
+def _block(title: str, body: Any, *, mono: bool = True,
+           collapsed: bool = False, key: str = "") -> Markup:
     """A labelled block of text, escaped and length-capped.
 
-    Capped because a payload here can be a 50k-token prompt or a whole
-    retrieved corpus, and a pane that takes a second to paint is a pane nobody
-    opens.
+    `collapsed` renders a shut `<details>` — for the prompts above all, where a
+    50k-token payload open by default buries every number above it. `key` is
+    the `data-k` the live refresh reopens by, the same mechanism every other
+    collapsed block on the page uses.
+
+    Capped because a payload here can be a whole retrieved corpus, and a pane
+    that takes a second to paint is a pane nobody opens.
     """
     if body in (None, "", {}, []):
         return Markup("")
     text = body if isinstance(body, str) else json.dumps(
         body, indent=2, sort_keys=True, default=str, ensure_ascii=False)
-    clipped = len(text) > _MAX_TEXT_CHARS
+    length = len(text)
+    clipped = length > _MAX_TEXT_CHARS
     if clipped:
         text = text[:_MAX_TEXT_CHARS]
     note = Markup('<span class="ev-clip"> — first {} characters</span>').format(
         _MAX_TEXT_CHARS) if clipped else Markup("")
     cls = "ev-pre" if mono else "ev-text"
-    return Markup('<div class="ev-block"><h5>{}{}</h5><pre class="{}">{}</pre></div>').format(
-        title, note, cls, text)
+    if collapsed:
+        return Markup(
+            '<details class="prompt ev-block" data-k="{}">'
+            '<summary>{} ({} chars){}</summary>'
+            '<pre class="{}">{}</pre></details>'
+        ).format(key or title, title, length, note, cls, text)
+    return Markup(
+        '<div class="ev-block"><h5>{}{}</h5><pre class="{}">{}</pre></div>'
+    ).format(title, note, cls, text)
 
 
 def _generic_action(event: dict) -> Markup:
@@ -185,12 +263,18 @@ _ACTION_RENDERERS = {
 def _llm(event: dict) -> Markup:
     payload = event.get("payload") or {}
     rejected = payload.get("rejected_attempts") or []
+    key = event.get("uuid") or event.get("label") or "ev"
     parts = [
-        _block("system prompt", payload.get("system_prompt")),
-        _block("user prompt", payload.get("user_prompt")),
+        # The prompts shut by default: they are the largest thing here and the
+        # least often the answer. The response is what the reader came for.
+        _block("system prompt", payload.get("system_prompt"),
+               collapsed=True, key=f"{key}-system"),
+        _block("user prompt", payload.get("user_prompt"),
+               collapsed=True, key=f"{key}-user"),
         _block("response", payload.get("model_response")),
-        _block("reasoning", payload.get("reasoning")),
-        _block("log", payload.get("log")),
+        _block("reasoning", payload.get("reasoning"),
+               collapsed=True, key=f"{key}-reasoning"),
+        _block("log", payload.get("log"), collapsed=True, key=f"{key}-log"),
         _block("error", payload.get("error")),
     ]
     if rejected:
@@ -263,6 +347,19 @@ _KIND_RENDERERS = {
 }
 
 
+def _description(event: dict) -> str:
+    """What this event was for, in the words the action catalog uses.
+
+    Looked up from the label: a decide call is described by the action it
+    chose, and a loop-issued call by its own entry where the two differ (see
+    CODE_DRIVEN_DESCRIPTIONS). Empty for the kinds that describe themselves.
+    """
+    label = event.get("label") or ""
+    action = label.split("→")[-1].strip() if "→" in label else label
+    return (CODE_DRIVEN_DESCRIPTIONS.get(action)
+            or ACTION_DESCRIPTIONS.get(action) or "")
+
+
 def render_event_detail(event: dict) -> str:
     """The detail pane for one event.
 
@@ -276,8 +373,10 @@ def render_event_detail(event: dict) -> str:
         body = _ACTION_RENDERERS.get(label, _generic_action)(event)
     else:
         body = _KIND_RENDERERS.get(kind, _generic_action)(event)
+    description = _description(event)
+    caption = (f"{_KIND_CAPTION.get(kind, kind)} · {description}"
+               if description else _KIND_CAPTION.get(kind, kind))
     return str(Markup(
         '<div class="ev-detail" data-kind="{}">'
         '<h4>{}</h4><div class="ev-caption">{}</div>{}{}</div>'
-    ).format(kind, label, _KIND_CAPTION.get(kind, kind),
-             _kpi_html(event), body))
+    ).format(kind, label, caption, _kpi_html(event), body))

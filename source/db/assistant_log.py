@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from db.model_config import get_model_config, get_model_config_override
 from db.models import AssistantStep, LlmCall, db
 
 
@@ -519,6 +520,7 @@ def run_events(run, steps: list, reviews: list | None = None,
     out.sort(key=lambda e: (e["start"] is None, e["start"] or datetime.min,
                             _ORDER_AT_SAME_INSTANT.get(e["kind"], 1)))
     _attach_llm_call_kpis(out, run)
+    _attach_model_names(out)
     return out
 
 
@@ -532,6 +534,55 @@ _LLM_CALL_MATCH_TOLERANCE = timedelta(seconds=5)
 #: Ties at one instant: the run's opening event leads, an action trails the
 #: call that chose it.
 _ORDER_AT_SAME_INSTANT: dict[str, int] = {"start": 0, "action": 2}
+
+
+def _model_label(model_uuid) -> str:
+    """What to call the model behind a uuid.
+
+    A step records the OVERRIDE it ran on, not the base config, so looking the
+    uuid up as a config alone finds nothing and the reader is left with eight
+    hex characters. An override is named by the model it tunes plus the tuning
+    itself — "gemma4:e4b · t0.15 c100k struct" — since neither half identifies
+    the call on its own.
+    """
+    config = get_model_config(model_uuid)
+    if config is not None:
+        return config.display_name or config.model_name
+    override = get_model_config_override(model_uuid)
+    if override is None:
+        return ""
+    base = get_model_config(override.model_config_uuid)
+    tuning = override.effective_display_name or ""
+    if base is None:
+        return tuning
+    return f"{base.model_name} · {tuning}" if tuning else base.model_name
+
+
+def _attach_model_names(events: list[dict]) -> None:
+    """Name the model each call ran on, from its uuid.
+
+    The llm_call join supplies this for runs recorded since the linkage; every
+    older run has only the uuid on its step row, and "the model that answered:
+    eca6dd6d" tells a reader nothing. One lookup per distinct model, not per
+    event.
+    """
+    wanted = {e["kpis"].get("model_uuid") for e in events
+              if e["kind"] == "llm" and e["kpis"].get("model_uuid")
+              and not e["kpis"].get("model")}
+    if not wanted:
+        return
+    names: dict[str, str] = {}
+    for model_uuid in wanted:
+        try:
+            name = _model_label(UUID(str(model_uuid)))
+        except Exception:
+            continue
+        if name:
+            names[str(model_uuid)] = name
+    for event in events:
+        name = names.get(str(event["kpis"].get("model_uuid") or ""))
+        if name:
+            event["kpis"]["model"] = name
 
 
 def _attach_llm_call_kpis(events: list[dict], run) -> None:

@@ -83,16 +83,19 @@ def test_a_label_with_markup_is_escaped():
     assert "<img" not in html
 
 
-def test_kpis_are_pairs_a_renderer_can_lay_out():
-    pairs = event_kpis(_event(
+def test_kpis_are_fields_a_renderer_can_lay_out():
+    fields = event_kpis(_event(
         "llm", "reply",
         kpis={"model": "gemma4:e4b", "input_tokens": 100,
               "output_tokens": 5, "prefill_ms": 900, "decode_ms": 100,
               "cached_tokens": None}))
+    by_label = {f["label"]: f["text"] for f in fields}
 
-    assert ("model", "gemma4:e4b") in pairs
+    assert by_label["model"] == "gemma4:e4b"
     # A KPI with nothing recorded is omitted rather than shown as None.
-    assert all(v not in (None, "None") for _, v in pairs)
+    assert all(f["text"] not in (None, "None") for f in fields)
+    # Every field carries the hover that says what the number means.
+    assert all(f["title"] for f in fields)
 
 
 def test_an_llm_pane_without_a_joined_row_still_renders():
@@ -143,3 +146,64 @@ def test_the_start_pane_escapes_the_question():
 
     assert "<script>" not in html
     assert "<b>x</b>" not in html
+
+
+def test_a_call_pane_always_says_what_the_call_was_for():
+    """A pane with no description leaves the reader to know from the name
+    alone what `response_language_classifier` does."""
+    html = render_event_detail(_event("llm", "response_language_classifier"))
+
+    assert "determine which language(s) the reply should use" in html
+
+
+def test_a_decide_call_is_described_by_the_action_it_chose():
+    html = render_event_detail(_event("llm", "decide → memory_query"))
+
+    assert "recall facts" in html
+
+
+def test_a_code_driven_call_gets_its_own_description():
+    """acceptance_criteria is both a capability and a loop-issued call, and
+    the two do different things."""
+    html = render_event_detail(_event("llm", "acceptance_criteria"))
+
+    assert "establish what a good reply must satisfy" in html
+
+
+def test_an_action_pane_is_described_too():
+    html = render_event_detail(_event(
+        "action", "python_run",
+        payload={"args": {"code": "x"}, "observation": {"text": "y"}}))
+
+    assert "python" in html.lower()
+
+
+def test_the_prompts_are_collapsed_and_toggleable():
+    """A 50k-token prompt open by default buries every KPI above it."""
+    html = render_event_detail(_event(
+        "llm", "reply",
+        payload={"system_prompt": "S" * 40, "user_prompt": "U" * 60,
+                 "model_response": "{}"}))
+
+    assert "<details" in html
+    assert "system prompt (40 chars)" in html
+    assert "user prompt (60 chars)" in html
+    # Collapsed: a <details> without `open`.
+    assert "<details open" not in html
+    # And addressable, so the live refresh can reopen what was open.
+    assert "data-k=" in html
+
+
+def test_an_llm_pane_shows_the_model_link_and_throughput():
+    html = render_event_detail(_event(
+        "llm", "reply",
+        kpis={"model": "gemma4:e4b",
+              "model_uuid": "9999", "input_tokens": 6180,
+              "output_tokens": 1024},
+        duration_ms=14600))
+
+    assert '/model?id=9999' in html
+    assert "model ↗" in html
+    assert "in 6180" in html and "out 1024" in html
+    assert "tok/s" in html
+    assert "took 14.6s" in html

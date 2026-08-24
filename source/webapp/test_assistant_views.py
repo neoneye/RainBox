@@ -400,8 +400,10 @@ def test_step_token_counts_render_in_timeline(app_ctx, client):
         # (412+87)/5.1s ≈ 98 tok/s
         assert "in 412" in body and "out 87" in body
         assert "98 tok/s" in body and "took 5.1s" in body
-        # exactly one step metrics line (the control step shows none)
-        assert body.count('title="Input tokens') == 1
+        # exactly one step metrics line (the control step shows none). Scoped
+        # to the step sections: the log pane above carries its own meta line
+        # for the same call, which is a second surface, not a second step.
+        assert _steps_region(body).count('title="Input tokens') == 1
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1962,5 +1964,29 @@ def test_every_gantt_bar_selects_the_event_that_explains_it(app_ctx, client):
         # Exactly one pane is open to begin with, or the page opens on a wall
         # of every prompt the run sent.
         assert page.count('class="ev-pane on"') == 1
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_the_inspector_names_the_override_a_call_ran_on(app_ctx, client):
+    """A step records the OVERRIDE it ran on, not the base config, so looking
+    the uuid up as a config alone left the reader eight hex characters. An
+    override is named by the model it tunes plus the tuning."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    cfg = db.list_model_configs()[0]
+    override = db.create_model_config_override(
+        cfg.uuid, {}, display_name="t0.15 probe")
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="answer", system_prompt="s", user_prompt="u",
+        model_response="{}", code_driven=True, model_uuid=override.uuid,
+        input_tokens=10, output_tokens=2, duration_ms=1000,
+        requested_at=datetime.now(UTC))
+    db.finish_run(run, "finished")
+    try:
+        page, _ = _rendered(client, run)
+        assert f"{cfg.model_name} · t0.15 probe" in page
     finally:
         _cleanup(run.uuid, room.uuid)
