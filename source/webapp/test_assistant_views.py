@@ -1681,7 +1681,7 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
         assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in page
         assert "embed embeddinggemma:300m" not in page
         assert "embed 0.9s (2 calls)" in md
-        assert '| embed "what languages do I know" | embedding |' in md
+        assert "| embed | embedding |" in md
         # The LLM totals are the step's own, untouched by the two embed calls.
         assert "in 100" in page and "out 20" in page
         steps = db.list_assistant_steps(run.uuid)
@@ -1696,9 +1696,13 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
 
 def test_each_embed_call_shows_the_text_it_was_given(app_ctx, client):
     """Two embed bars of the same length raise one question — same query or
-    different ones? — that neither the bars nor the char total can answer. The
-    text goes on the waterfall row itself and under the phases, so the answer
-    is on the page rather than in a psql session."""
+    different ones? — that neither the bars nor the char total can answer, so
+    the text has to be somewhere on the page.
+
+    Not on the timeline label, which is a fixed-width column: a query of any
+    length would push the timing off the row. It goes in the row's own detail
+    pane and in the step's timing table, both of which have room for it.
+    """
     room = _room()
     run = _timed_memory_query_run(room)
     try:
@@ -1706,30 +1710,43 @@ def test_each_embed_call_shows_the_text_it_was_given(app_ctx, client):
         for body in (page, md):
             assert "what languages do I know" in body
             assert "where do I live" in body
-        # On the waterfall row's own label, not only in the timing table: the
-        # Model calls card is where a repeated-looking row is noticed.
-        assert 'embed "what languages do I know"' in page
+        # The label stays the shape of the call, never its content.
+        assert 'embed "what languages do I know"' not in page
+        assert ">embed<" in page
+        # Reachable from the row: the text is inside an event pane, not only
+        # down in the timing table.
+        panes = page.split('class="ev-pane')
+        assert any("what languages do I know" in p for p in panes[1:])
         assert "io-embed-text" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
 
-def test_a_bulk_embed_is_named_by_its_size_and_a_legacy_one_still_renders():
-    """A first-run seed populate embeds the whole registry in one call — its
-    first chunk says nothing about it, so the row is named by its size. A
-    payload written before the text was captured keeps its bare `embed` row:
-    losing the call would lose time the trace cannot otherwise explain."""
+def test_an_embed_row_is_named_by_its_shape_never_by_its_text():
+    """The label sits in a fixed-width column beside a bar, so it cannot carry
+    a value of unbounded length: a query of any size would push the timing off
+    the row. The text goes to the detail, which has room for it.
+
+    A first-run seed populate embeds the whole registry in one call, and its
+    size IS the thing worth knowing, so a batch says how many.
+    """
     bulk, detail = db.embed_call_label(
         {"texts": 312, "chars": 90000, "preview": ["a fact", "another fact"]})
     assert bulk == "embed 312 texts"
     assert detail == "a fact / another fact"        # still readable in full
 
+    # One text, however long, is just "embed".
     assert db.embed_call_label({"texts": 1, "chars": 26}) == ("embed", "")
 
     long_query = "x" * 200
     label, detail = db.embed_call_label({"texts": 1, "preview": [long_query]})
-    assert label == f"embed \"{'x' * db.EMBED_LABEL_CHARS}…\""
-    assert detail == long_query                     # the tooltip keeps it whole
+    assert label == "embed"
+    assert detail == long_query                     # the detail keeps it whole
+
+    short_query = "street address"
+    label, detail = db.embed_call_label({"texts": 1, "preview": [short_query]})
+    assert label == "embed"
+    assert detail == short_query
 
 
 def test_timing_payload_is_not_dumped_as_json_in_the_result(app_ctx, client):

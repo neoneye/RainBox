@@ -108,35 +108,26 @@ def _rejected_calls(step) -> list[dict]:
     return calls
 
 
-#: How much of an embedded text the waterfall's name column carries. The
-#: column is 14rem wide; past this the row ellipsises either way, and the
-#: tooltip has the rest.
-EMBED_LABEL_CHARS: int = 40
-
-
 def embed_call_label(call: dict) -> tuple[str, str]:
-    """An embed row's label and its tooltip detail: WHAT went to the embedder.
+    """An embed row's label and its detail: the shape of the call, and WHAT
+    went to the embedder.
 
-    The model is deliberately not in either — a run embeds on one model, so
-    naming it per row is the same string repeated down the column; it is named
-    once per step, in the timing block's embedder line. The text IS worth
-    repeating, because it is the thing that differs: without it a column of
-    identical `embed` rows could equally be one query embedded repeatedly,
-    several different queries, or one call drawn more than once.
+    The label never carries the text. It sits in a fixed-width column beside a
+    bar, so a value of unbounded length pushes the timing off the row — and a
+    query is exactly that. The text belongs in the detail, which the inspector
+    pane and the step's timing table both have room to show whole.
 
-    A batched call — a first-run seed populate embeds the whole registry — is
-    named by its size instead: its first chunk says nothing about the call."""
+    The model is deliberately in neither: a run embeds on one model, so naming
+    it per row is the same string repeated down the column. It is named once
+    per step, in the timing block's embedder line.
+
+    A batch is named by its size. A first-run seed populate embeds the whole
+    registry in one call, and how many it took IS the thing worth knowing —
+    where the first chunk of it says nothing at all.
+    """
     preview = [str(t) for t in (call.get("preview") or [])]
     texts = call.get("texts") or 0
-    if texts > 1:
-        label = f"embed {texts} texts"
-    elif preview:
-        head = preview[0][:EMBED_LABEL_CHARS]
-        label = f'embed "{head}{"…" if len(preview[0]) > EMBED_LABEL_CHARS else ""}"'
-    else:
-        # A payload written before the text was captured, or a call that
-        # embedded nothing. Still a call, still worth its row.
-        label = "embed"
+    label = f"embed {texts} texts" if texts > 1 else "embed"
     return label, " / ".join(preview)
 
 
