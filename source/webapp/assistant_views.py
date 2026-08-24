@@ -319,6 +319,7 @@ ASSISTANT_TEMPLATE = """
      nothing for a flex container that already fills the width. */
   /* What is being inspected, in the card header beside "Inspect". The
      divider between them comes from the shared header rule below. */
+  .as-main .ev-crumb-step { color:#6b7280; white-space:nowrap; }
   .as-main .ev-crumb-label { font-family:ui-monospace,monospace;
         font-weight:600; white-space:nowrap; }
   .as-main .ev-crumb-desc { color:#6b7280; min-width:0; overflow:hidden;
@@ -585,6 +586,7 @@ ASSISTANT_TEMPLATE = """
              they take the same divider a step's header parts do. Filled from
              the selected event's data attributes, so the header and the pane
              cannot describe different things. #}
+          <span class="ev-crumb-step">{{ log.events[0].step_ref }}</span>
           <span class="ev-crumb-label">{{ log.events[0].label }}</span>
           <span class="ev-crumb-desc">{{ log.events[0].description }}</span>
         </div>
@@ -892,8 +894,10 @@ var asSelectEvent = null;
     var detail = document.querySelector("#" + id + " .ev-detail");
     var label = document.querySelector(".ev-crumb-label");
     var desc = document.querySelector(".ev-crumb-desc");
+    var step = document.querySelector(".ev-crumb-step");
     if (detail && label) { label.textContent = detail.dataset.label || ""; }
     if (detail && desc) { desc.textContent = detail.dataset.desc || ""; }
+    if (detail && step) { step.textContent = detail.dataset.step || ""; }
     clampBlocks(document.getElementById(id));
   }
   document.addEventListener("click", function (ev) {

@@ -539,6 +539,7 @@ def run_events(run, steps: list, reviews: list | None = None,
                             _ORDER_AT_SAME_INSTANT.get(e["kind"], 1)))
     _attach_llm_call_kpis(out, run)
     _attach_model_names(out)
+    _attach_step_refs(out, steps)
     return out
 
 
@@ -552,6 +553,84 @@ _LLM_CALL_MATCH_TOLERANCE = timedelta(seconds=5)
 #: Ties at one instant: the run's opening event leads, an action trails the
 #: call that chose it.
 _ORDER_AT_SAME_INSTANT: dict[str, int] = {"start": 0, "action": 2}
+
+
+def _step_span(step):
+    """When a step began and when it settled.
+
+    It opens at its model call and closes when the observation lands, which is
+    after the phases its action ran — the same two moments the call event and
+    the action event are placed at.
+    """
+    start = step_started_at(step)
+    end = getattr(step, "settled_at", None) or _end_of(
+        {"start": start, "duration_ms": getattr(step, "duration_ms", None)})
+    return start, end
+
+
+def _attach_step_refs(events: list[dict], steps: list) -> None:
+    """Say which step each row belongs to.
+
+    A row on its own does not answer the question the page is read for: a
+    twenty-second gap matters because of WHERE it fell, and a phase means
+    little until you know which step ran it.
+
+    An event that carries a step says so directly. One that carries none is
+    placed by when it happened, and the answer is which two steps it fell
+    between — an unaccounted stretch between step 3 settling and step 4 opening
+    is loop overhead, and naming both ends is what makes that legible.
+
+    A step's call is labelled its start and its action its end, because those
+    are the two moments the step is bounded by. A code-driven step has no
+    action, so its one row IS the step: calling that row a start would promise
+    an end the stream never delivers.
+    """
+    for event in events:
+        event["step_ref"] = ""
+    if not steps:
+        return
+    number = {str(s.uuid): i + 1 for i, s in enumerate(steps)}
+    bounded = {str(s.uuid) for s in steps
+               if getattr(s, "action", None) and not s.code_driven}
+    spans = [(_step_span(s), i + 1) for i, s in enumerate(steps)]
+    spans = [((a, b), n) for (a, b), n in spans if a and b]
+    spans.sort()
+    for event in events:
+        n = number.get(str(event.get("anchor") or ""))
+        if n is not None:
+            if str(event["anchor"]) in bounded and event["kind"] == "llm" \
+                    and event["variant"] in ("decide", "code-driven"):
+                event["step_ref"] = f"Step {n} start"
+            elif event["kind"] == "action":
+                event["step_ref"] = f"Step {n} end"
+            else:
+                event["step_ref"] = f"Step {n}"
+            continue
+        event["step_ref"] = _ref_by_time(event["start"], spans)
+
+
+def _ref_by_time(when, spans: list) -> str:
+    """Where a row with no step of its own fell, in terms of the steps."""
+    if when is None or not spans:
+        return ""
+    # Half-open at the end: a gap begins exactly where the step before it
+    # stopped, and counting that instant as still inside the step would hide
+    # the very stretch the row was synthesized to show.
+    inside = [n for (a, b), n in spans if a <= when < b]
+    if inside:
+        return f"Step {inside[0]}"
+    # `b <= when` pairs with the half-open test above: the instant a step ends
+    # belongs to what came after it, and every moment lands in exactly one of
+    # inside / before / after rather than in none of them.
+    before = [n for (a, b), n in spans if b <= when]
+    after = [n for (a, b), n in spans if a > when]
+    if before and after:
+        return f"Step {max(before)} \u2192 Step {min(after)}"
+    if before:
+        return f"after Step {max(before)}"
+    if after:
+        return f"before Step {min(after)}"
+    return ""
 
 
 def _model_label(model_uuid) -> str:

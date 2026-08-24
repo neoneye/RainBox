@@ -417,6 +417,7 @@ def render_event_detail(event: dict) -> str:
     # card header is what names the thing being inspected, and printing them
     # here too would say it twice on one screen.
     return str(Markup(
-        '<div class="ev-detail" data-kind="{}" data-label="{}" data-desc="{}">'
-        '{}{}</div>'
-    ).format(kind, label, event_description(event), _kpi_html(event), body))
+        '<div class="ev-detail" data-kind="{}" data-label="{}" data-desc="{}"'
+        ' data-step="{}">{}{}</div>'
+    ).format(kind, label, event_description(event),
+             event.get("step_ref") or "", _kpi_html(event), body))

@@ -285,3 +285,89 @@ def test_an_action_with_no_counts_reports_none():
     action = _first(db.run_events(_run(finished=5), [step]), "action")
 
     assert "qa_static" not in action["kpis"]
+
+
+def _ref(events, kind, label=None):
+    for e in events:
+        if e["kind"] == kind and (label is None or e["label"] == label):
+            return e["step_ref"]
+    raise AssertionError(_kinds(events))
+
+
+def test_a_step_s_call_opens_it_and_its_action_closes_it():
+    """A reader looking at one row wants to know which step it belongs to. A
+    step's call is the first thing in it and its action settles last, so those
+    two rows say where the step begins and ends."""
+    step = _step("memory_query", at=0, ms=11800,
+                 phases=[("claim retrieval", 11.8, 5.0)],
+                 observation={"text": "facts"})
+    step.settled_at = _at(17)
+
+    events = db.run_events(_run(finished=30),
+                           [step, _step("reply", at=25, ms=1000)])
+
+    assert _ref(events, "llm", "decide → memory_query") == "Step 1 start"
+    assert _ref(events, "action", "memory_query") == "Step 1 end"
+
+
+def test_work_inside_a_step_is_named_by_the_step_alone():
+    """A phase or an embed is neither where the step began nor where it
+    ended."""
+    step = _step("memory_query", at=0, ms=10000,
+                 phases=[("recall filter", 10, 4.0)],
+                 embeds=[("where do i live", 10.1, 0.5)],
+                 observation={"text": "facts"})
+    step.settled_at = _at(14)
+
+    events = db.run_events(_run(finished=20), [step])
+
+    assert _ref(events, "activity") == "Step 1"
+    assert _ref(events, "embedding") == "Step 1"
+
+
+def test_a_step_that_is_only_a_call_is_not_split_into_two_ends():
+    """A code-driven step has no action, so its one row IS the step. Calling
+    it the start would promise an end that never comes."""
+    events = db.run_events(_run(finished=10),
+                           [_step("reply_audit", at=0, ms=2000,
+                                  code_driven=True)])
+
+    assert _ref(events, "llm") == "Step 1"
+
+
+def test_time_between_two_steps_names_both():
+    """The gap the operator is hunting: nothing measured it, and which two
+    steps it fell between is the whole question."""
+    first = _step("memory_query", at=0, ms=1000, observation={"text": "f"})
+    first.settled_at = _at(1)
+    second = _step("reply", at=20, ms=1000, code_driven=True)
+
+    events = db.run_events(_run(finished=25), [first, second])
+
+    assert _ref(events, "unaccounted") == "Step 1 \u2192 Step 2"
+
+
+def test_the_run_s_opening_sits_before_the_first_step():
+    events = db.run_events(_run(finished=10),
+                           [_step("reply", at=5, ms=2000, code_driven=True)],
+                           trigger=_trigger())
+
+    assert _ref(events, "start") == "before Step 1"
+
+
+def test_work_after_the_last_step_says_so():
+    """The summarizer runs once the loop is over; no step owns it."""
+    step = _step("reply", at=0, ms=1000, code_driven=True)
+    run = _run(finished=2)
+
+    events = db.run_events(run, [step])
+    trailing = [e for e in events if e["start"] and e["start"] > _at(1)]
+
+    assert all(e["step_ref"] in ("Step 1", "after Step 1") for e in trailing), \
+        [(e["label"], e["step_ref"]) for e in trailing]
+
+
+def test_a_run_with_no_steps_claims_no_step():
+    events = db.run_events(_run(finished=10), [], trigger=_trigger())
+
+    assert all(e["step_ref"] == "" for e in events)

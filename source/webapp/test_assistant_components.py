@@ -279,6 +279,10 @@ def test_a_pane_carries_its_identity_for_the_header_to_show():
 
     assert 'data-label="recall_filter"' in html
     assert 'data-desc="score what memory_query recalled for relevance"' in html
+    # And which step it belongs to, which the header shows beside the name.
+    assert 'data-step=""' in html
+    assert 'data-step="Step 3 start"' in render_event_detail(
+        dict(_event("llm", "recall_filter"), step_ref="Step 3 start"))
     # Not repeated inside the pane: the header is where identity lives now.
     assert "<h4>" not in html
     assert "ev-caption" not in html
