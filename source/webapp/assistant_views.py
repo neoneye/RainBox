@@ -558,7 +558,6 @@ ASSISTANT_TEMPLATE = """
             <span class="ev-crumb-sep">|</span>
             <span class="ev-crumb-desc">{{ log.events[0].description }}</span>
           </span>
-          <span class="outcome muted">{{ log.events|length }} events</span>
         </div>
         <div class="log-detail">
           {% for e in log.events %}
