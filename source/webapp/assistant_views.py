@@ -537,7 +537,7 @@ ASSISTANT_TEMPLATE = """
           <div class="wf">
             {% for e in log.events %}
             <button type="button" class="wf-row ev-pick{% if loop.first %} on{% endif %}"
-                    data-ev="{{ e.row_id }}"
+                    data-ev="{{ e.row_id }}" data-key="{{ e.key }}"
                     title="{{ e.label }} — {{ e.seconds }} at {{ e.clock }}">
               <span class="wf-name kind-{{ e.variant or e.kind }}">{{ e.label }}</span>
               <span class="wf-track">
@@ -864,6 +864,11 @@ function clampBlocks(root) {
   });
 }
 
+// Set by initEventLog, called by the live refresh: after a swap the selected
+// row has to be restored through the same path a click takes, or the pane and
+// the header say different things.
+var asSelectEvent = null;
+
 (function initEventLog() {
   function select(id) {
     document.querySelectorAll(".ev-pane").forEach(function (p) {
@@ -894,6 +899,7 @@ function clampBlocks(root) {
     }
   }, true);
   clampBlocks(document.querySelector(".ev-pane.on"));
+  asSelectEvent = select;
 })();
 
   // --- kebab menu on the selected run ----------------------------------------
@@ -1010,6 +1016,22 @@ function clampBlocks(root) {
       var step = d.closest('.step');
       return (step ? step.id : '') + '/' + d.getAttribute('data-k');
     }
+    // The row being inspected, by the key that survives the run growing. The
+    // server renders the first row selected, so without this a reader is
+    // thrown back to `start` every few seconds — while watching the step they
+    // are inspecting actually run.
+    function selectedKey(root) {
+      var picked = root.querySelector('.ev-pick.on');
+      return picked ? picked.getAttribute('data-key') : null;
+    }
+    function reselect(root, key) {
+      if (!key || !asSelectEvent) { return; }
+      var pick = root.querySelector('.ev-pick[data-key="' + key + '"]');
+      // Gone: the row it named is no longer on the stream (an unaccounted gap
+      // that has since been filled). Leave the server's choice standing
+      // rather than selecting something the reader did not ask for.
+      if (pick) { asSelectEvent(pick.getAttribute('data-ev')); }
+    }
     function openDetails(root) {
       var open = {};
       Array.prototype.forEach.call(
@@ -1034,10 +1056,12 @@ function clampBlocks(root) {
           // open blocks (and the scroll) across the swap.
           var scrollTop = cur.scrollTop;
           var open = openDetails(cur);
+          var key = selectedKey(cur);
           cur.innerHTML = next.innerHTML;
           Array.prototype.forEach.call(
             cur.querySelectorAll('details[data-k]'),
             function (d) { if (open[detailsKey(d)]) d.open = true; });
+          reselect(cur, key);
           cur.scrollTop = scrollTop;
         })
         .catch(function () { dirty = true; });

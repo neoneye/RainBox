@@ -33,12 +33,40 @@ def _end_of(event: dict):
     return event["start"] + timedelta(milliseconds=event["duration_ms"] or 0)
 
 
+#: Characters a key may carry into an HTML attribute. A label can be an action
+#: name that arrived as data, so everything else is dropped rather than
+#: escaped — a key is matched, never read.
+_KEY_SAFE = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:+")
+
+
+def _row_key(event: dict) -> str:
+    """A name for a row that does not move when the run grows.
+
+    Position cannot be it. A live run gains events while it is being read, and
+    one with an earlier start slides every row below it down — so a reader
+    inspecting a step would be handed a different one on the next refresh.
+
+    What identifies a row is what it IS: its kind, the step or call it belongs
+    to, what it is called, and when it began. All four are needed. A step is a
+    model call AND the action that call chose, and both carry the step's uuid;
+    two embeds in one step share a label and differ only by their start.
+    """
+    start = event.get("start")
+    parts = (event.get("kind") or "",
+             str(event.get("uuid") or event.get("anchor") or ""),
+             event.get("label") or "",
+             start.isoformat() if start else "")
+    return "".join(c if c in _KEY_SAFE else "-" for c in ":".join(parts))
+
+
 def log_view(run, steps: list, reviews: list | None = None,
              trigger: dict | None = None) -> dict:
     """`{"events": [...], "span_seconds": float}` for the page.
 
     Each event gains what the two surfaces need to draw it: `offset_pct` and
-    `width_pct` (None when it has no span), `seconds`, `glyph`, `row_id`, and
+    `width_pct` (None when it has no span), `seconds`, `glyph`, `row_id`,
+    `key` (its identity across a live refresh, see `_row_key`), and
     the rendered `detail_html` its component produced. The detail is built
     here, once per event, so selecting a row is a client-side swap rather than
     a round trip.
@@ -64,6 +92,10 @@ def log_view(run, steps: list, reviews: list | None = None,
     for index, event in enumerate(events):
         row = dict(event)
         row["row_id"] = f"ev-{index}"
+        # What survives a live refresh. `row_id` addresses the pane in the
+        # document it was rendered into; `key` addresses the same event in the
+        # next one.
+        row["key"] = _row_key(event)
         row["glyph"] = EVENT_GLYPH.get(event["kind"], "·")
         if event["start"] and span > 0:
             offset = (event["start"] - first).total_seconds()

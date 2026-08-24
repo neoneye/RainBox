@@ -2101,6 +2101,23 @@ def test_a_collapsible_summary_is_not_selectable_text():
     assert "user-select:none" in rule.group(0).replace(" ", "")
 
 
+def test_a_live_refresh_keeps_the_row_the_reader_is_inspecting():
+    """A running run refreshes every few seconds and the page swaps its whole
+    pane. The server renders the first row selected, so without carrying the
+    selection the reader is thrown back to `start` every few seconds — while
+    inspecting the very step they are watching run.
+
+    Carried by key, never by position: an event can land ahead of the selected
+    one, and restoring by index would quietly show a different row.
+    """
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    assert "data-key=" in ASSISTANT_TEMPLATE
+    assert "selectedKey" in ASSISTANT_TEMPLATE
+    # The swap restores it through the same selection path the click uses.
+    assert "asSelectEvent" in ASSISTANT_TEMPLATE
+
+
 def test_a_long_block_clamps_instead_of_scrolling_inside_itself():
     """A scroll area inside a scrolling page traps the wheel: the reader aims
     at the page and moves the block, or the reverse. A long block is cut to a
