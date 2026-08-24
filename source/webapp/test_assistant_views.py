@@ -2076,7 +2076,7 @@ def test_every_styled_inspector_class_has_a_rule():
 
     from webapp.assistant_views import ASSISTANT_TEMPLATE
 
-    styled = {"ev-crumb", "ev-crumb-sep", "ev-crumb-label", "ev-crumb-desc",
+    styled = {"ev-crumb-label", "ev-crumb-desc",
               "ev-kpis", "ev-kpi", "ev-pre", "ev-block", "ev-pane",
               "ev-detail", "ev-links", "ev-note", "log-detail", "wf-tick"}
     for name in styled:

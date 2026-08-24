@@ -264,7 +264,12 @@ ASSISTANT_TEMPLATE = """
   .as-main .step.phase-control .step-body { background:#faf5ff; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
   .as-main .step .card-header { gap:1rem; }
-  .as-main .step .card-header > span:not(:first-child) { align-self:stretch; display:flex; align-items:center;
+  /* The divider between a header's parts: a rule drawn by the box, not a
+     pipe character typed between them. Shared so the inspect header and a
+     step's header separate the same way. */
+  .as-main .step .card-header > span:not(:first-child),
+  .as-main .inspect .card-header > span:not(:first-child) {
+                       align-self:stretch; display:flex; align-items:center;
                        margin:-10px 0; padding:10px 0 10px 1rem; border-left:1px solid #e5e7eb; }
   .as-main .step .card-header .ix { color:inherit; }
   .as-main .step .card-header .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -308,13 +313,11 @@ ASSISTANT_TEMPLATE = """
   /* Only what a line standing on its own needs: the step's version is
      right-aligned by margin-left:auto inside its label row, which does
      nothing for a flex container that already fills the width. */
-  /* What is being inspected, in the card header beside "Inspect". */
-  .as-main .ev-crumb { display:flex; align-items:baseline; gap:0.5rem;
-        min-width:0; font-size:0.9rem; }
-  .as-main .ev-crumb-sep { color:#cbd5e1; }
+  /* What is being inspected, in the card header beside "Inspect". The
+     divider between them comes from the shared header rule below. */
   .as-main .ev-crumb-label { font-family:ui-monospace,monospace;
         font-weight:600; white-space:nowrap; }
-  .as-main .ev-crumb-desc { color:#6b7280; overflow:hidden;
+  .as-main .ev-crumb-desc { color:#6b7280; min-width:0; overflow:hidden;
         text-overflow:ellipsis; white-space:nowrap; }
   .as-main .ev-kpis { flex-wrap:wrap; justify-content:flex-end;
         margin-bottom:0.7rem; }
@@ -551,18 +554,15 @@ ASSISTANT_TEMPLATE = """
          said the same thing twice and made the reader choose which to read.
          Every pane is rendered once into the page, which is what makes
          selection a client-side swap rather than a round trip. #}
-      <div class="card">
+      <div class="card inspect">
         <div class="card-header">
           <div class="card-title">Inspect</div>
-          {# What is being inspected right now. Filled from the selected
-             event's own data attributes, so the header and the pane cannot
-             describe different things. #}
-          <span class="ev-crumb">
-            <span class="ev-crumb-sep">|</span>
-            <span class="ev-crumb-label">{{ log.events[0].label }}</span>
-            <span class="ev-crumb-sep">|</span>
-            <span class="ev-crumb-desc">{{ log.events[0].description }}</span>
-          </span>
+          {# What is being inspected right now, as the header's own children so
+             they take the same divider a step's header parts do. Filled from
+             the selected event's data attributes, so the header and the pane
+             cannot describe different things. #}
+          <span class="ev-crumb-label">{{ log.events[0].label }}</span>
+          <span class="ev-crumb-desc">{{ log.events[0].description }}</span>
         </div>
         <div class="log-detail">
           {% for e in log.events %}
