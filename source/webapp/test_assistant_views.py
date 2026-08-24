@@ -2016,9 +2016,9 @@ def test_an_inspector_block_looks_like_every_other_pre():
     same box rather than restating it in near-miss values: a 4px radius beside
     a 6px one, #f7f8fa beside #f6f8fa.
 
-    What it may add is a bound on height. A prompt here runs to tens of
-    thousands of characters, which is a property of the payload rather than a
-    difference of style.
+    Its height is bounded, but not here: a long block is clamped to a few
+    lines by clampBlocks, which measures the block's own line-height. See
+    test_a_long_block_clamps_instead_of_scrolling_inside_itself.
     """
     import re
 
@@ -2028,7 +2028,6 @@ def test_an_inspector_block_looks_like_every_other_pre():
     assert rule, "the .ev-pre rule is gone"
     for restated in ("font-size", "background", "border-radius", "padding"):
         assert restated not in rule.group(0), restated
-    assert "max-height" in rule.group(0)
 
 
 def test_the_inspector_meta_line_is_right_aligned_like_a_step_s():
@@ -2100,3 +2099,25 @@ def test_a_collapsible_summary_is_not_selectable_text():
     assert "details.ev-block > summary" in rule.group(0), (
         "the inspector's summaries have their own rule again")
     assert "user-select:none" in rule.group(0).replace(" ", "")
+
+
+def test_a_long_block_clamps_instead_of_scrolling_inside_itself():
+    """A scroll area inside a scrolling page traps the wheel: the reader aims
+    at the page and moves the block, or the reverse. A long block is cut to a
+    few lines with a toggle instead, so there is only ever one scroller.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    rule = re.search(r"\.as-main \.ev-pre \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert rule, "the .ev-pre rule is gone"
+    flat = rule.group(0).replace(" ", "").replace("\n", "")
+    assert "max-height" not in flat, "the inner scroller is back"
+    assert "overflow:auto" not in flat
+
+    # Clamped state and its control exist, and the clamp is measured in lines.
+    assert ".ev-pre.clamped" in ASSISTANT_TEMPLATE
+    assert ".ev-more" in ASSISTANT_TEMPLATE
+    assert "EV_CLAMP_LINES" in ASSISTANT_TEMPLATE
+    assert "function clampBlocks" in ASSISTANT_TEMPLATE

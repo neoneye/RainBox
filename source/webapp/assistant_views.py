@@ -329,10 +329,20 @@ ASSISTANT_TEMPLATE = """
   /* Only what `.as-main pre` does not already give it. The box and the size
      come from there — restating them produced a 4px radius beside a 6px one
      and #f7f8fa beside #f6f8fa, which reads as two kinds of block when it is
-     one. The height bound is the real difference: a prompt here runs to tens
-     of thousands of characters. */
-  .as-main .ev-pre { margin:0; max-height:24rem; overflow:auto;
-        word-break:break-word; }
+     one.
+     No inner scroller: a scroll area inside a scrolling page traps the wheel,
+     and a prompt here runs to tens of thousands of characters. A long block is
+     clamped to EV_CLAMP_LINES lines with a toggle, so the page is the only
+     thing that scrolls. */
+  .as-main .ev-pre { margin:0; word-break:break-word; }
+  .as-main .ev-pre.clamped { overflow-y:hidden;
+        -webkit-mask-image:linear-gradient(#000 72%, transparent);
+        mask-image:linear-gradient(#000 72%, transparent); }
+  .as-main .ev-more { display:block; margin:0.25rem 0 0; padding:0;
+        border:0; background:none; font:inherit; font-size:0.72rem;
+        color:#2563eb; cursor:pointer;
+        -webkit-user-select:none; user-select:none; }
+  .as-main .ev-more:hover { text-decoration:underline; }
   .as-main .ev-links { margin:0 0 0.6rem; font-size:85%; }
   .as-main .ev-links a { color:#2563eb; text-decoration:none; }
   .as-main .ev-links a:hover { text-decoration:underline; }
@@ -819,6 +829,41 @@ ASSISTANT_TEMPLATE = """
 // The gantt bars and the log rows are the same events, so selecting is one
 // operation on a shared data-ev id. Every pane is already in the page, which
 // is why this is a class swap rather than a fetch.
+// How many lines of a long block are shown before its toggle. Measured in
+// lines rather than pixels because that is the unit a reader scans in, and
+// the block's own line-height is what says how tall a line is.
+var EV_CLAMP_LINES = 6;
+
+// A block is only measurable once its pane is shown and its <details> open,
+// so this runs then rather than at load, and once per block.
+function clampBlocks(root) {
+  if (!root) { return; }
+  root.querySelectorAll(".ev-pre").forEach(function (pre) {
+    if (pre.dataset.clamped || !pre.offsetHeight) { return; }
+    pre.dataset.clamped = "1";
+    var cs = getComputedStyle(pre);
+    var line = parseFloat(cs.lineHeight);
+    if (!line) { line = parseFloat(cs.fontSize) * 1.2; }
+    var max = Math.round(line * EV_CLAMP_LINES);
+    // A block that already fits gets no control: a toggle that does nothing
+    // is worse than no toggle.
+    if (pre.scrollHeight <= max + 4) { return; }
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ev-more";
+    function apply(on) {
+      pre.classList.toggle("clamped", on);
+      pre.style.maxHeight = on ? max + "px" : "";
+      btn.textContent = on ? "show more" : "show less";
+    }
+    btn.addEventListener("click", function () {
+      apply(!pre.classList.contains("clamped"));
+    });
+    apply(true);
+    pre.parentNode.insertBefore(btn, pre.nextSibling);
+  });
+}
+
 (function initEventLog() {
   function select(id) {
     document.querySelectorAll(".ev-pane").forEach(function (p) {
@@ -834,6 +879,7 @@ ASSISTANT_TEMPLATE = """
     var desc = document.querySelector(".ev-crumb-desc");
     if (detail && label) { label.textContent = detail.dataset.label || ""; }
     if (detail && desc) { desc.textContent = detail.dataset.desc || ""; }
+    clampBlocks(document.getElementById(id));
   }
   document.addEventListener("click", function (ev) {
     var pick = ev.target.closest(".ev-pick");
@@ -841,6 +887,13 @@ ASSISTANT_TEMPLATE = """
     ev.preventDefault();
     select(pick.dataset.ev);
   });
+  // A collapsed block has no height until it opens, so it is measured then.
+  document.addEventListener("toggle", function (ev) {
+    if (ev.target.classList && ev.target.classList.contains("ev-block")) {
+      clampBlocks(ev.target);
+    }
+  }, true);
+  clampBlocks(document.querySelector(".ev-pane.on"));
 })();
 
   // --- kebab menu on the selected run ----------------------------------------
