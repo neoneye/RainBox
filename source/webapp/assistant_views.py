@@ -327,11 +327,10 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-block { margin-bottom:0.7rem; }
   .as-main .ev-block h5 { margin:0 0 0.2rem; font-size:70%;
         letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }
-  .as-main .ev-pre, .as-main .ev-text { margin:0; padding:0.5rem 0.6rem;
+  .as-main .ev-pre { margin:0; padding:0.5rem 0.6rem;
         background:#f7f8fa; border:1px solid #eceef1; border-radius:4px;
         max-height:24rem; overflow:auto; white-space:pre-wrap;
         word-break:break-word; font-size:80%; }
-  .as-main .ev-text { font-family:inherit; }
   .as-main .ev-links { margin:0 0 0.6rem; font-size:85%; }
   .as-main .ev-links a { color:#2563eb; text-decoration:none; }
   .as-main .ev-links a:hover { text-decoration:underline; }

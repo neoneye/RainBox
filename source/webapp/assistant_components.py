@@ -173,14 +173,18 @@ def _kpi_html(event: dict) -> Markup:
     return Markup('<div class="ev-kpis">{}</div>').format(cells)
 
 
-def _block(title: str, body: Any, *, mono: bool = True,
-           collapsed: bool = False, key: str = "") -> Markup:
+def _block(title: str, body: Any, *, collapsed: bool = False,
+           key: str = "") -> Markup:
     """A labelled block of text, escaped.
 
     `collapsed` renders a shut `<details>` — for the prompts above all, where a
     50k-token payload open by default buries every number above it. `key` is
     the `data-k` the live refresh reopens by, the same mechanism every other
     collapsed block on the page uses.
+
+    One typeface for every block, the same as the trigger card's: what a block
+    holds is text exactly as it was sent or returned, and a second font would
+    have said a request and a response are different kinds of thing.
 
     Never truncated. This is the pane that exists to inspect a prompt, and the
     prompt-cache work turns on reading the exact bytes a call sent — a clipped
@@ -192,16 +196,15 @@ def _block(title: str, body: Any, *, mono: bool = True,
         return Markup("")
     text = body if isinstance(body, str) else json.dumps(
         body, indent=2, sort_keys=True, default=str, ensure_ascii=False)
-    cls = "ev-pre" if mono else "ev-text"
     if collapsed:
         return Markup(
             '<details class="prompt ev-block" data-k="{}">'
             '<summary>{} ({} chars)</summary>'
-            '<pre class="{}">{}</pre></details>'
-        ).format(key or title, title, len(text), cls, text)
+            '<pre class="ev-pre">{}</pre></details>'
+        ).format(key or title, title, len(text), text)
     return Markup(
-        '<div class="ev-block"><h5>{}</h5><pre class="{}">{}</pre></div>'
-    ).format(title, cls, text)
+        '<div class="ev-block"><h5>{}</h5><pre class="ev-pre">{}</pre></div>'
+    ).format(title, text)
 
 
 def _generic_action(event: dict) -> Markup:
@@ -214,7 +217,7 @@ def _generic_action(event: dict) -> Markup:
     observation = payload.get("observation") or {}
     text = observation.get("text") if isinstance(observation, dict) else None
     return Markup("").join([
-        _block("reason", payload.get("reason"), mono=False),
+        _block("reason", payload.get("reason")),
         _block("arguments", payload.get("args")),
         _block("result", text or payload.get("observation_preview")),
         _block("error", payload.get("error")),
@@ -241,7 +244,7 @@ def _memory_query(event: dict) -> Markup:
     text = observation.get("text") if isinstance(observation, dict) else None
     data = observation.get("data") if isinstance(observation, dict) else None
     return Markup("").join([
-        _block("query", (payload.get("args") or {}).get("query"), mono=False),
+        _block("query", (payload.get("args") or {}).get("query")),
         _block("recalled", text),
         _block("retrieval", data),
     ])
@@ -278,14 +281,13 @@ def _llm(event: dict) -> Markup:
 
 
 def _embedding(event: dict) -> Markup:
-    return _block("text", (event.get("payload") or {}).get("detail"),
-                  mono=False)
+    return _block("text", (event.get("payload") or {}).get("detail"))
 
 
 def _control(event: dict) -> Markup:
     payload = event.get("payload") or {}
     return Markup("").join([
-        _block("instruction", payload.get("reason"), mono=False),
+        _block("instruction", payload.get("reason")),
         _block("payload", payload.get("args")),
     ])
 
@@ -314,7 +316,7 @@ def _start(event: dict) -> Markup:
         links.append(Markup('<a href="{}">chat ↗</a>').format(target))
     header = Markup('<p class="ev-links">{}</p>').format(
         Markup(" · ").join(links)) if links else Markup("")
-    return header + _block("request", payload.get("text"), mono=False)
+    return header + _block("request", payload.get("text"))
 
 
 def _unaccounted(_event: dict) -> Markup:

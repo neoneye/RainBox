@@ -263,3 +263,21 @@ def test_the_pane_still_carries_its_kpis_and_body():
 
     assert "in 10" in html and "took 1.0s" in html
     assert "response" in html
+
+
+def test_every_block_renders_in_one_typeface():
+    """A prose block and a payload block read as the same kind of thing: text
+    exactly as it was sent or returned. Splitting them into two typefaces made
+    the request under a start event sans-serif while the same message rendered
+    monospace in the trigger card a few hundred pixels below.
+    """
+    start = render_event_detail(_event(
+        "start", "start", duration_ms=0,
+        payload={"text": "tell me where I live", "sender_name": "Operator",
+                 "sender_uuid": "2", "message_id": 1, "room_uuid": "3"}))
+    call = render_event_detail(_event(
+        "llm", "reply", payload={"model_response": "{}"}))
+
+    for html in (start, call):
+        assert "ev-text" not in html
+        assert 'class="ev-pre"' in html
