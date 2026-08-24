@@ -2108,7 +2108,8 @@ def _load_run_detail(selected) -> dict:
         # db.assistant_log appears in both without either learning about it.
         "log": log_view(selected, steps, review_rows,
                         trigger=_with_trigger_peek(
-                            db.get_run_trigger_message(selected))),
+                            db.get_run_trigger_message(selected)),
+                        intents=intents),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,

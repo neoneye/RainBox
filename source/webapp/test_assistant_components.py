@@ -16,6 +16,12 @@ def _event(kind, label="x", *, kpis=None, payload=None, duration_ms=1000):
             "kpis": kpis or {}, "payload": payload or {}}
 
 
+def _review_event(**kw):
+    """The gate's row as the read model builds it: an `llm` event whose
+    variant is what selects the reviewer's renderer."""
+    return dict(_event("llm", "second opinion", **kw), variant="review")
+
+
 def test_every_kind_renders_without_a_bespoke_component():
     for kind in db.EVENT_KINDS:
         html = render_event_detail(_event(kind, label="the label"))
@@ -81,6 +87,55 @@ def test_an_activity_s_findings_are_escaped():
         "activity", "x", payload={"found": {"path": "<script>x</script>"}}))
 
     assert "<script>" not in html
+
+
+def test_a_skipped_pane_says_the_call_was_never_made():
+    """Not a failure and not a success — nothing ran. A pane that looked like
+    either would be worse than one that says so."""
+    html = render_event_detail(_event(
+        "skipped", "recall_filter", duration_ms=None,
+        payload={"reason": "no model group bound"}))
+
+    assert "never made" in html or "not made" in html
+    assert "no model group bound" in html
+
+
+def test_the_gate_says_what_it_is_for():
+    """It reads "second opinion" on a row between a decision and the action it
+    gated; without a description that is a name and no explanation."""
+    html = render_event_detail(_review_event(kpis={"verdict": "approved"}))
+
+    assert "before it is allowed to run" in html
+
+
+def test_a_review_pane_leads_with_its_verdict():
+    """The one thing a review is read for. It gated an action that then ran or
+    did not, so it reads as an outcome rather than as a figure on the meta
+    line beside the token counts."""
+    html = render_event_detail(_review_event(
+        kpis={"verdict": "rejected"},
+        payload={"problems": [{"category": "safety", "text": "writes a file"}],
+                 "model_response": "{}"}))
+
+    assert "<h5>verdict</h5>" in html
+    assert "rejected" in html
+    assert "writes a file" in html
+
+
+def test_a_review_that_never_ran_shows_the_reason_not_a_verdict():
+    html = render_event_detail(_review_event(
+        kpis={"verdict": "skipped"},
+        payload={"skip_reason": "no model group bound", "problems": []}))
+
+    assert "no model group bound" in html
+
+
+def test_a_review_with_no_problems_shows_no_empty_block():
+    html = render_event_detail(_review_event(
+        kpis={"verdict": "approved"},
+        payload={"problems": [], "model_response": "{}"}))
+
+    assert "problems" not in html
 
 
 def test_an_unaccounted_pane_says_nothing_measured_it():

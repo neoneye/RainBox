@@ -61,7 +61,7 @@ def _row_key(event: dict) -> str:
 
 
 def log_view(run, steps: list, reviews: list | None = None,
-             trigger: dict | None = None) -> dict:
+             trigger: dict | None = None, intents: list | None = None) -> dict:
     """`{"events": [...], "span_seconds": float}` for the page.
 
     Each event gains what the two surfaces need to draw it: `offset_pct` and
@@ -72,9 +72,11 @@ def log_view(run, steps: list, reviews: list | None = None,
     a round trip.
 
     `trigger` is the chat message that began the run; given one, the stream
-    opens with the request it carried.
+    opens with the request it carried. `intents` are the run's write intents,
+    which ride on the action that proposed each of them.
     """
-    events = db.run_events(run, steps, reviews, trigger=trigger)
+    events = db.run_events(run, steps, reviews, trigger=trigger,
+                           intents=intents)
     if not events:
         return {"events": [], "span_seconds": 0.0}
 

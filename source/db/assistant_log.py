@@ -339,7 +339,7 @@ def retry_resumed_at(step):
 #: it; `variant` on the event keeps the finer distinction the page colours by.
 EVENT_KINDS: tuple[str, ...] = (
     "start", "llm", "embedding", "action", "activity", "control",
-    "unaccounted",
+    "unaccounted", "skipped",
 )
 
 #: Which `variant` values are model calls. Everything produced by the call
@@ -431,7 +431,16 @@ def _step_events(step) -> list[dict]:
                      "args": getattr(step, "args", None) or {}}))
         return events
     if step.phase == "skipped":
-        # A call the loop could not make. Worth a row, but it cost nothing.
+        # A call the loop could not make. It cost nothing, so it carries no
+        # duration and draws no bar — but a run where a call was skipped and
+        # one where it was never scheduled are different runs, and without a
+        # row the stream cannot tell them apart.
+        events.append(_event(
+            "skipped", step.action or "skipped",
+            start=step_started_at(step) or getattr(step, "created_at", None),
+            duration_ms=None, anchor=str(step.uuid), uuid=str(step.uuid),
+            payload={"reason": getattr(step, "reason", None),
+                     "error": getattr(step, "error", None)}))
         return events
 
     # The attempts thrown away came first, so they enumerate first.
@@ -489,8 +498,50 @@ def _step_events(step) -> list[dict]:
     return events
 
 
+def _intent_payload(intent) -> dict:
+    """One write intent, as a pane shows it. The uuid leads because it is what
+    the confirm/reject/undo endpoints are keyed on."""
+    return {"uuid": str(getattr(intent, "uuid", "")),
+            "capability_name": getattr(intent, "capability_name", ""),
+            "state": getattr(intent, "state", ""),
+            "preview_text": getattr(intent, "preview_text", ""),
+            "payload": getattr(intent, "payload", None) or {},
+            "result": getattr(intent, "result", None) or {}}
+
+
+def _attach_intents(events: list[dict], intents: list) -> None:
+    """Hang each write intent on the row that proposed it.
+
+    The action's pane says what the action did, so what it wants to write —
+    and the decision the operator still owes it — belongs in the same place.
+
+    An intent with no step has no such row. It belongs to the run, so it hangs
+    off the run's opening event rather than inventing a row for it: a write
+    waiting on approval is the last thing that may go missing.
+    """
+    if not intents:
+        return
+    by_step: dict[str, list[dict]] = {}
+    run_level: list[dict] = []
+    for intent in intents:
+        step_uuid = getattr(intent, "step_uuid", None)
+        payload = _intent_payload(intent)
+        if step_uuid:
+            by_step.setdefault(str(step_uuid), []).append(payload)
+        else:
+            run_level.append(payload)
+    for event in events:
+        if event["kind"] == "action":
+            owned = by_step.get(str(event["uuid"]))
+            if owned:
+                event["payload"]["intents"] = owned
+        elif event["kind"] == "start" and run_level:
+            event["payload"]["intents"] = run_level
+
+
 def run_events(run, steps: list, reviews: list | None = None,
-               trigger: dict | None = None) -> list[dict]:
+               trigger: dict | None = None, intents: list | None = None
+               ) -> list[dict]:
     """A run as a flat stream of typed events, oldest first.
 
     Derived from records that already exist, so a run that happened before
@@ -536,9 +587,21 @@ def run_events(run, steps: list, reviews: list | None = None,
             start=r.requested_at or (gated.created_at if gated else None),
             duration_ms=r.duration_ms,
             anchor=str(r.step_uuid) if r.step_uuid else "",
+            uuid=str(r.uuid),
             kpis={"model_uuid": str(r.model_uuid) if r.model_uuid else None,
                   "input_tokens": r.input_tokens,
-                  "output_tokens": r.output_tokens}))
+                  "output_tokens": r.output_tokens,
+                  # Four-valued on purpose: the fail-open verdicts let the
+                  # action run and neither is an approval, so the row has to
+                  # say which one it was rather than just "not approved".
+                  "verdict": getattr(r, "verdict", None)},
+            payload={"system_prompt": getattr(r, "system_prompt", None),
+                     "user_prompt": getattr(r, "user_prompt", None),
+                     "reasoning": getattr(r, "reasoning", None),
+                     "model_response": getattr(r, "response", None),
+                     "problems": getattr(r, "problems", None) or [],
+                     "skip_reason": getattr(r, "skip_reason", None),
+                     "error": getattr(r, "error", None)}))
 
     events.extend(_summary_events(run))
 
@@ -561,6 +624,7 @@ def run_events(run, steps: list, reviews: list | None = None,
     _attach_llm_call_kpis(out, run)
     _attach_model_names(out)
     _attach_step_refs(out, steps)
+    _attach_intents(out, intents or [])
     return out
 
 
@@ -919,7 +983,7 @@ def assistant_llm_calls(steps: list, reviews: list | None = None,
     the stream, where its cost is its own; it is not part of the turn's.
     """
     return [e for e in run_events(run, steps, reviews)
-            if e["kind"] not in ("action", "control", "start")
+            if e["kind"] not in ("action", "control", "start", "skipped")
             and e["variant"] != "summary"]
 
 

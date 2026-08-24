@@ -413,3 +413,119 @@ def test_a_phase_with_nothing_recorded_carries_nothing():
                  if e["kind"] == "activity")
 
     assert not phase["payload"].get("found")
+
+
+# --- slice 0: what the step sections hold and the stream did not -------------
+
+
+def _review(step_uuid, **over):
+    row = SimpleNamespace(
+        uuid=uuid4(), step_uuid=step_uuid, requested_at=_at(5),
+        duration_ms=900, model_uuid=None, input_tokens=40, output_tokens=8,
+        verdict="approved", skip_reason=None, error=None, problems=[],
+        system_prompt="review sys", user_prompt="review usr",
+        reasoning=None, response='{"approved": true}', action="python_run")
+    for k, v in over.items():
+        setattr(row, k, v)
+    return row
+
+
+def _intent(step_uuid, **over):
+    row = SimpleNamespace(
+        uuid=uuid4(), step_uuid=step_uuid, capability_name="memory_write",
+        state="proposed", payload={"text": "x"}, preview_text="remember x",
+        result={})
+    for k, v in over.items():
+        setattr(row, k, v)
+    return row
+
+
+def test_a_skipped_step_is_still_on_the_stream():
+    """The loop could not make this call. It cost nothing, which is why it has
+    no bar — but a run where a call was skipped and a run where it was never
+    scheduled are different runs, and the stream has to be able to say so."""
+    step = _step("recall_filter", at=0, ms=0, phase="skipped",
+                 code_driven=True)
+
+    events = db.run_events(_run(finished=10), [step])
+
+    assert ("skipped", "recall_filter") in _kinds(events)
+
+
+def test_a_skipped_step_costs_the_run_nothing():
+    """It is not a model call. Counted as one it would inflate the run's call
+    count with a call that was never made."""
+    step = _step("recall_filter", at=0, ms=0, phase="skipped",
+                 code_driven=True)
+    run = _run(finished=10)
+
+    stats = db.assistant_run_stats([step], run=run)
+
+    assert stats["calls"] == 0
+    assert not [c for c in db.assistant_llm_calls([step], run=run)
+                if c["kind"] == "skipped"]
+
+
+def test_the_review_event_carries_its_verdict():
+    """The review was already a row on the stream carrying nothing but its
+    cost, so the one thing it is read for — whether it approved — was only in
+    the step section."""
+    step = _step("python_run", at=0, ms=1000, observation={"text": "4"})
+    review = _review(step.uuid, verdict="rejected",
+                     problems=[{"category": "safety", "text": "writes a file"}])
+
+    event = next(e for e in db.run_events(_run(finished=10), [step], [review])
+                 if e["variant"] == "review")
+
+    assert event["kpis"]["verdict"] == "rejected"
+    assert event["payload"]["problems"][0]["text"] == "writes a file"
+    assert event["payload"]["system_prompt"] == "review sys"
+    assert event["payload"]["model_response"] == '{"approved": true}'
+
+
+def test_a_review_that_never_ran_says_why():
+    """Skipped and errored both let the action run, and neither is an
+    approval. A run that went wrong because the gate never ran is a different
+    bug from one the gate approved."""
+    step = _step("python_run", at=0, ms=1000, observation={"text": "4"})
+    review = _review(step.uuid, verdict="skipped",
+                     skip_reason="no model group bound")
+
+    event = next(e for e in db.run_events(_run(finished=10), [step], [review])
+                 if e["variant"] == "review")
+
+    assert event["payload"]["skip_reason"] == "no model group bound"
+
+
+def test_an_action_carries_the_writes_it_proposed():
+    """The pane that says what an action did is where what it wants to write
+    belongs — and where the button to approve it will go."""
+    step = _step("memory_write", at=0, ms=1000, observation={"text": "ok"})
+    intent = _intent(step.uuid)
+
+    action = _first(db.run_events(_run(finished=10), [step],
+                                  intents=[intent]), "action")
+
+    assert action["payload"]["intents"][0]["capability_name"] == "memory_write"
+    assert action["payload"]["intents"][0]["state"] == "proposed"
+
+
+def test_a_write_with_no_step_belongs_to_the_run():
+    """It has no step to hang off, and a write the operator has to approve is
+    the last thing that may go missing."""
+    step = _step("reply", at=0, ms=1000, code_driven=True)
+    intent = _intent(None)
+
+    events = db.run_events(_run(finished=10), [step], intents=[intent],
+                           trigger=_trigger())
+
+    assert _first(events, "start")["payload"]["intents"][0]["uuid"] == str(
+        intent.uuid)
+
+
+def test_an_action_with_no_writes_carries_none():
+    step = _step("memory_query", at=0, ms=1000, observation={"text": "f"})
+
+    action = _first(db.run_events(_run(finished=10), [step]), "action")
+
+    assert action["payload"].get("intents") in (None, [])

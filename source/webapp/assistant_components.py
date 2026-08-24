@@ -42,6 +42,9 @@ ACTION_DESCRIPTIONS.update({
     "request_summary": (
         "describe a request too long to fit in the prompt whole"
     ),
+    "second opinion": (
+        "review a gated action independently before it is allowed to run"
+    ),
     "run_summarizer": (
         "condense the finished run into the digest at the top of this page"
     ),
@@ -68,6 +71,7 @@ EVENT_GLYPH: dict[str, str] = {
     "activity": "▤",
     "control": "●",
     "unaccounted": "·",
+    "skipped": "⊘",
 }
 
 #: What each kind's pane says it is, under the label.
@@ -79,6 +83,7 @@ _KIND_CAPTION: dict[str, str] = {
     "activity": "action's own work",
     "control": "operator",
     "unaccounted": "unmeasured",
+    "skipped": "a call the loop could not make",
 }
 
 def _fmt_ms(value: Any) -> str | None:
@@ -378,6 +383,47 @@ def _activity(event: dict) -> Markup:
     return _block("found", found)
 
 
+def _skipped(event: dict) -> Markup:
+    """A call that was never made.
+
+    Not a failure and not a success: nothing ran. A pane that looked like
+    either would say something untrue about the run.
+    """
+    payload = event.get("payload") or {}
+    return (Markup('<p class="ev-note">This call was never made \u2014 nothing '
+                   'ran, and nothing failed.</p>')
+            + _block("reason", payload.get("reason"))
+            + _block("error", payload.get("error")))
+
+
+def _review(event: dict) -> Markup:
+    """The pre-execution gate on an action, led by its verdict.
+
+    The verdict is what the row is read for, and it is an outcome rather than
+    a cost — so it reads as a block like an action's status, not as a figure
+    on the meta line beside the token counts.
+
+    `skipped` and `error` are verdicts too. Both let the action run and
+    neither is an approval, so the reason one of them happened is the pane's
+    substance: a run that went wrong because the gate never ran is a different
+    bug from one the gate approved.
+    """
+    payload = event.get("payload") or {}
+    problems = payload.get("problems") or []
+    parts = [
+        _block("verdict", (event.get("kpis") or {}).get("verdict")),
+        _block("reason", payload.get("skip_reason")),
+        _block("error", payload.get("error")),
+    ]
+    if problems:
+        # Present on approvals too: "approved with problems" is the
+        # right-answer-wrong-reasons signal, and folding it behind the verdict
+        # would lose exactly the reviews worth reading.
+        parts.append(_block(f"problems ({len(problems)})", problems))
+    parts.append(_llm(event))
+    return Markup("").join(parts)
+
+
 _KIND_RENDERERS = {
     "start": _start,
     "llm": _llm,
@@ -386,6 +432,7 @@ _KIND_RENDERERS = {
     "activity": _activity,
     "control": _control,
     "unaccounted": _unaccounted,
+    "skipped": _skipped,
 }
 
 
@@ -421,6 +468,10 @@ def render_event_detail(event: dict) -> str:
         status = (event.get("kpis") or {}).get("status")
         body = (_block("status", status)
                 + _ACTION_RENDERERS.get(label, _generic_action)(event))
+    elif event.get("variant") == "review":
+        # A variant earns a renderer on the same terms an action does: its
+        # payload genuinely differs from a plain model call's.
+        body = _review(event)
     else:
         body = _KIND_RENDERERS.get(kind, _generic_action)(event)
     # The label and the description ride as data rather than as markup: the
