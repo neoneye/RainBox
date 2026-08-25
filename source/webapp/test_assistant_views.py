@@ -16,10 +16,7 @@ import db
 import webapp  # noqa: F401 — registers all views (incl. /assistant) on the app
 from db import AssistantRun
 from webapp.assistant_views import (
-    TRIGGER_PEEK_CHARS,
-    TRIGGER_PEEK_LINES,
     _format_duration,
-    _trigger_peek,
     _review_meta,
     _review_payload,
 )
@@ -1509,47 +1506,26 @@ def test_review_payload_carries_the_rows_usage_forward():
         "input": 11, "output": 22, "ms": 33}
 
 
-def test_trigger_peek_leaves_a_short_message_alone():
-    """The common card keeps exactly the shape it had, with no toggle to
-    ignore."""
-    assert _trigger_peek("convert 12 feet") is None
-    assert _trigger_peek("line\n" * TRIGGER_PEEK_LINES) is None
-
-
-def test_trigger_peek_clamps_by_lines():
-    peek = _trigger_peek("\n".join(f"line {i}" for i in range(400)))
-
-    assert peek["head"].count("\n") == TRIGGER_PEEK_LINES - 1
-    assert peek["head"].startswith("line 0")
-    assert peek["more"] == "show all 400 lines (3,489 characters)"
-
-
-def test_trigger_peek_clamps_a_single_enormous_line_too():
-    """A pasted document can be one line thousands of characters long, which a
-    line-count clamp would let through whole."""
-    peek = _trigger_peek("x" * 20_000)
-
-    assert len(peek["head"]) <= TRIGGER_PEEK_CHARS + 2  # + the ellipsis
-    assert peek["more"] == "show all 1 lines (20,000 characters)"
-
-
-def test_a_long_trigger_message_renders_collapsed_but_whole(app_ctx, client):
-    """Collapsed, not truncated: the reader can still get the whole message,
-    and the open state rides the live-refresh swap like every other block."""
+def test_a_long_request_renders_whole_but_not_at_full_height(app_ctx, client):
+    """Clamped, not truncated: the reader can still get the whole message.
+    It reads on the run's opening row now, through the same clamp every long
+    block on the page uses — the trigger had its own hand-rolled peek."""
     room = _room()
     human = db.get_human_user()
     text = "OPENING LINE\n" + "\n".join(f"pasted line {i}" for i in range(400))
     db.post_chat_message(room.uuid, human.uuid, text)
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="reply", reason="answer")
+    db.settle_assistant_step(step, phase="final", observation={"text": "ok"})
     db.finish_run(run, "finished")
     try:
-        body = html.unescape(
-            client.get(f"/assistant?id={run.uuid}").get_data(as_text=True))
-        assert 'data-k="trigger"' in body          # carried across a refresh
-        assert "show all 401 lines" in body
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+
         assert "OPENING LINE" in body
-        assert "pasted line 399" in body           # the whole message is there
+        assert "pasted line 399" in body       # whole, not clipped
+        assert "EV_CLAMP_LINES" in body        # and bounded by the shared clamp
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -2239,6 +2215,39 @@ def test_a_row_belonging_to_no_step_draws_no_empty_divider():
     # the same element and would otherwise win on element count.
     assert (".as-main .inspect .card-header > span.ev-crumb-step:empty "
             "{ display:none; }") in ASSISTANT_TEMPLATE
+
+
+def test_the_run_s_question_is_shown_once(app_ctx, client):
+    """The trigger had a card of its own beside the stream, and the stream
+    opens with the same question, the same asker and the same chat link. Two
+    copies on one screen invite the reader to wonder how they differ."""
+    room = _room()
+    human = db.get_human_user()
+    db.post_chat_message(room.uuid, human.uuid, "tell me where I live")
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="reply", reason="answer")
+    db.settle_assistant_step(step, phase="final", observation={"text": "ok"})
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+
+        assert body.count("tell me where I live") == 1
+        assert "trigmsg" not in body
+        assert "Started by" in body            # on the run's opening row
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_the_chat_room_is_reachable_from_the_menu(app_ctx, client):
+    """The trigger card carried the only guaranteed link to the room. The
+    opening row carries one for every run that has a triggering message — all
+    of them, today — but a run seeded outside the chat flow has no such row,
+    and the room is still where it happened."""
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    assert "Open chat room" in ASSISTANT_TEMPLATE
 
 
 def test_a_row_can_be_linked_to(app_ctx, client):
