@@ -359,6 +359,11 @@ def init_db(app: Flask) -> None:
         # llm_call gained the assistant run and step it belongs to, so
         # /assistant can reach a call's prefill/decode split and cache reuse.
         _add_column_if_missing("llm_call", "run_uuid", "run_uuid UUID")
+        # The step, so a call joins the event it belongs to by record rather
+        # than by nearest start time — which two attempts of one retried step
+        # sit inside the tolerance of. NULL on every row recorded before this,
+        # which keeps reading back through the time match.
+        _add_column_if_missing("llm_call", "step_uuid", "step_uuid UUID")
         # The model config and the group the call resolved before it, so a
         # trace row can be followed back to the binding that chose the model.
         _add_column_if_missing("llm_call", "model_group_uuid",

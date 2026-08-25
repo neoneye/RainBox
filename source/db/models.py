@@ -1760,7 +1760,18 @@ class LlmCall(db.Model):
     # the tags existed. This is what lets /assistant show a call's prefill and
     # decode split and its cache reuse — the numbers that explain a slow call,
     # and which the step row has never carried.
+    #
+    # `step_uuid` is the step's uuid minted BEFORE the call goes out, not read
+    # off a row: the step row is written once the response is in hand, so
+    # while a call is in flight there is no row to read. Without it the read
+    # model can only match a call to its event by nearest start time — and on
+    # a step that retried, the attempt that was thrown away and the one that
+    # replaced it sit inside any workable tolerance of each other.
+    #
+    # Plain columns, no FK, for the reason `model_uuid` gives: a call's record
+    # must outlive the rows it points at.
     run_uuid: Mapped[UUID | None] = mapped_column(index=True)
+    step_uuid: Mapped[UUID | None] = mapped_column(index=True)
     __table_args__ = (
         Index("llm_call_by_started", "started_at"),
         Index("llm_call_by_model", "model", "started_at"),

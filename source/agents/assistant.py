@@ -22,7 +22,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import unescape as _xml_unescape
 
@@ -3412,6 +3412,11 @@ class AssistantAgent(ModelGroupAgent):
         # would answer a moment later. None until a decide call runs (the
         # scripted-seam test path never runs one).
         self._decide_group_uuid: UUID | None = None
+        # The step whose call is in flight right now, for the instrumentation
+        # tag that lands on its `llm_call` row (see `_logging_step`). None
+        # between calls, which is what keeps a call made outside a step — the
+        # summarizer, an embed inside an action — from inheriting a stale one.
+        self._log_step_uuid: UUID | None = None
         # The capabilities this turn may use. Defaults to the code-enabled set;
         # handle() refreshes it with the operator's disable setting (which needs
         # an app context). Catalog, validation, and dispatch all read from it, so
@@ -3738,9 +3743,18 @@ class AssistantAgent(ModelGroupAgent):
                 # the room's progress row with the step just finished.
                 self._set_activity(f"deciding step {step_index}")
                 requested_at = datetime.now(UTC)
-                decision = self._decide_next_step(
-                    messages=messages, scratchpad=scratchpad, step_index=step_index
-                )
+                # Minted before the call, not read off the row afterwards: the
+                # row is written once the response is in hand, so this is the
+                # only moment at which the call and the step it belongs to can
+                # be given the same name. Every attempt the call makes —
+                # including the ones it throws away — records it, which is what
+                # narrows the llm_call join to one step's calls exactly.
+                step_uuid = uuid4()
+                with self._logging_step(step_uuid):
+                    decision = self._decide_next_step(
+                        messages=messages, scratchpad=scratchpad,
+                        step_index=step_index
+                    )
                 # Token counts + the model used for THIS step's decide call (None
                 # if the seam set nothing). Carried explicitly so a later control
                 # step can't inherit them.
@@ -3770,6 +3784,7 @@ class AssistantAgent(ModelGroupAgent):
                         reasoning=reasoning, model_response=model_response,
                         rejected_attempts=rejected_attempts,
                         requested_at=requested_at,
+                        step_uuid=step_uuid,
                     )
                     scratchpad.append(AssistantTurnStep(
                         step_index=step_index,
@@ -3788,11 +3803,15 @@ class AssistantAgent(ModelGroupAgent):
                     if decision.action is AssistantActionName.REPLY:
                         self._set_activity("auditing the reply")
                         audit_requested_at = datetime.now(UTC)
-                        send, audit_payload = self._reply_audit(
-                            decision, messages=messages, scratchpad=scratchpad)
+                        audit_step_uuid = uuid4()
+                        with self._logging_step(audit_step_uuid):
+                            send, audit_payload = self._reply_audit(
+                                decision, messages=messages,
+                                scratchpad=scratchpad)
                         self._record_reply_audit_step(
                             step_index=step_index, payload=audit_payload,
-                            requested_at=audit_requested_at)
+                            requested_at=audit_requested_at,
+                            step_uuid=audit_step_uuid)
                         if not send:
                             rejection = self._audit_correction(audit_payload)
                     if rejection is not None:
@@ -3813,6 +3832,7 @@ class AssistantAgent(ModelGroupAgent):
                                 model_response=model_response,
                                 rejected_attempts=rejected_attempts,
                                 requested_at=requested_at,
+                                step_uuid=step_uuid,
                             )
                             scratchpad.append(AssistantTurnStep(
                                 step_index=step_index,
@@ -3830,6 +3850,7 @@ class AssistantAgent(ModelGroupAgent):
                         reasoning=reasoning, model_response=model_response,
                         rejected_attempts=rejected_attempts,
                         requested_at=requested_at,
+                        step_uuid=step_uuid,
                     )
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
@@ -3857,7 +3878,7 @@ class AssistantAgent(ModelGroupAgent):
                     system_prompt=system_prompt, user_prompt=user_prompt,
                     reasoning=reasoning, model_response=model_response,
                     rejected_attempts=rejected_attempts,
-                    requested_at=requested_at)
+                    requested_at=requested_at, step_uuid=step_uuid)
                 action_ctx = AssistantActionContext(
                     journal_id=journal_id,
                     room_uuid=room_uuid,
@@ -5214,6 +5235,7 @@ class AssistantAgent(ModelGroupAgent):
         user_prompt = self._build_response_language_classifier_prompt(
             messages, profile)
         requested_at = datetime.now(UTC)
+        step_uuid = uuid4()
         if self._run is not None:
             db.checkpoint_assistant_call(
                 self._run,
@@ -5225,8 +5247,9 @@ class AssistantAgent(ModelGroupAgent):
                     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID),
             )
         try:
-            classification = self._request_response_language_classification(
-                system_prompt=system_prompt, user_prompt=user_prompt)
+            with self._logging_step(step_uuid):
+                classification = self._request_response_language_classification(
+                    system_prompt=system_prompt, user_prompt=user_prompt)
         except Exception as exc:
             logger.warning(
                 "assistant: response-language classifier failed open: %s", exc)
@@ -5238,6 +5261,7 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 requested_at=requested_at,
+                step_uuid=step_uuid,
             )
             return
         if classification is None:
@@ -5252,6 +5276,7 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 requested_at=requested_at,
+                step_uuid=step_uuid,
             )
             return
 
@@ -5270,6 +5295,7 @@ class AssistantAgent(ModelGroupAgent):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             requested_at=requested_at,
+            step_uuid=step_uuid,
         )
 
     def _record_response_language_classifier_step(
@@ -5283,6 +5309,7 @@ class AssistantAgent(ModelGroupAgent):
         system_prompt: str,
         user_prompt: str,
         requested_at: datetime,
+        step_uuid: "UUID | None" = None,
     ) -> None:
         """Persist the standalone classifier call without entering step budget."""
         action = self.RESPONSE_LANGUAGE_CLASSIFIER_ACTION
@@ -5299,6 +5326,7 @@ class AssistantAgent(ModelGroupAgent):
         meta = self._response_language_classifier_meta
         db.append_assistant_step(
             run_uuid=self._run.uuid,
+            uuid=step_uuid,
             step_index=step_index,
             phase=phase,  # type: ignore[arg-type]
             action=action,
@@ -5351,6 +5379,7 @@ class AssistantAgent(ModelGroupAgent):
         from agents.query_filter_router import FilterDecision
 
         requested_at = datetime.now(UTC)
+        step_uuid = uuid4()
         if self._run is not None:
             db.checkpoint_assistant_call(
                 self._run,
@@ -5361,26 +5390,27 @@ class AssistantAgent(ModelGroupAgent):
                 model_group_uuid=model_group_uuid,
             )
         try:
-            decision = self._structured_completion(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                response_model=FilterDecision,
-                purpose="memory_filter",
-                candidate_model_uuids=model_uuids,
-            )
+            with self._logging_step(step_uuid):
+                decision = self._structured_completion(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response_model=FilterDecision,
+                    purpose="memory_filter",
+                    candidate_model_uuids=model_uuids,
+                )
         except Exception as exc:
             self._record_recall_filter_step(
                 step_index=step_index, phase="failed", group_from=group_from,
                 model_group_uuid=model_group_uuid,
                 system_prompt=system_prompt, user_prompt=user_prompt,
-                requested_at=requested_at,
+                requested_at=requested_at, step_uuid=step_uuid,
                 error=f"{type(exc).__name__}: {exc}")
             raise
         self._record_recall_filter_step(
             step_index=step_index, phase="observed", group_from=group_from,
             model_group_uuid=model_group_uuid,
             system_prompt=system_prompt, user_prompt=user_prompt,
-            requested_at=requested_at)
+            requested_at=requested_at, step_uuid=step_uuid)
         return cast(FilterDecision, decision), self._last_model_uuid
 
     def _record_recall_filter_step(
@@ -5394,6 +5424,7 @@ class AssistantAgent(ModelGroupAgent):
         user_prompt: str,
         requested_at: datetime,
         error: str | None = None,
+        step_uuid: "UUID | None" = None,
     ) -> None:
         """Persist the recall-filter call as its own code-driven step row.
 
@@ -5421,6 +5452,7 @@ class AssistantAgent(ModelGroupAgent):
         usage = self._last_usage or {}
         db.append_assistant_step(
             run_uuid=self._run.uuid,
+            uuid=step_uuid,
             step_index=step_index,
             phase=phase,  # type: ignore[arg-type]
             action=self.RECALL_FILTER_ACTION,
@@ -5549,6 +5581,7 @@ class AssistantAgent(ModelGroupAgent):
         self._last_system_prompt = system_prompt
         self._last_user_prompt = user_prompt
         requested_at = datetime.now(UTC)
+        step_uuid = uuid4()
         reason = "long request summarized before step 0 (code-driven)"
         if self._run is not None:
             db.checkpoint_assistant_call(
@@ -5558,15 +5591,16 @@ class AssistantAgent(ModelGroupAgent):
                 model_group_uuid=self._slot_group(
                     ASSISTANT_REQUEST_SUMMARY_UUID))
         try:
-            summary = self._summarize_request(
-                system_prompt=system_prompt, user_prompt=user_prompt)
+            with self._logging_step(step_uuid):
+                summary = self._summarize_request(
+                    system_prompt=system_prompt, user_prompt=user_prompt)
         except Exception as e:
             logger.warning("assistant: request-summary call failed open: %s", e)
             self._record_request_summary_step(
                 step_index=step_index, phase="failed", reason=reason,
                 error=f"{type(e).__name__}: {e}",
                 system_prompt=system_prompt, user_prompt=user_prompt,
-                requested_at=requested_at)
+                requested_at=requested_at, step_uuid=step_uuid)
             return
         if summary is None:
             logger.info("assistant: request-summary call skipped; no model "
@@ -5575,7 +5609,7 @@ class AssistantAgent(ModelGroupAgent):
                 step_index=step_index, phase="skipped", reason=reason,
                 observation_preview=_SKIPPED_NO_MODEL_GROUP,
                 system_prompt=system_prompt, user_prompt=user_prompt,
-                requested_at=requested_at)
+                requested_at=requested_at, step_uuid=step_uuid)
             return
         self._long_request_summary = summary
         self._long_request_summary_markdown = (
@@ -5586,7 +5620,7 @@ class AssistantAgent(ModelGroupAgent):
             observation_preview=json.dumps(
                 summary.model_dump(), ensure_ascii=False, indent=1),
             system_prompt=system_prompt, user_prompt=user_prompt,
-            requested_at=requested_at)
+            requested_at=requested_at, step_uuid=step_uuid)
 
     def _store_request_summary(self, messages: list[dict[str, Any]]) -> None:
         """Keep this turn's description on the message it describes, so later
@@ -5619,6 +5653,7 @@ class AssistantAgent(ModelGroupAgent):
         system_prompt: str,
         user_prompt: str,
         requested_at: datetime,
+        step_uuid: "UUID | None" = None,
     ) -> None:
         """Persist the summary call as its own step row, outside the step
         budget. The row is where the operator checks the one thing they cannot
@@ -5632,7 +5667,7 @@ class AssistantAgent(ModelGroupAgent):
             return
         usage = self._last_usage or {}
         db.append_assistant_step(
-            run_uuid=self._run.uuid, step_index=step_index,
+            run_uuid=self._run.uuid, uuid=step_uuid, step_index=step_index,
             phase=phase,  # type: ignore[arg-type]
             action=action, reason=reason,
             system_prompt=system_prompt, user_prompt=user_prompt,
@@ -5814,6 +5849,7 @@ class AssistantAgent(ModelGroupAgent):
         self._last_system_prompt = system_prompt
         self._last_user_prompt = user_prompt
         requested_at = datetime.now(UTC)
+        step_uuid = uuid4()
         if self._run is not None:
             db.checkpoint_assistant_call(
                 self._run, step_index=step_index,
@@ -5822,8 +5858,9 @@ class AssistantAgent(ModelGroupAgent):
                 model_group_uuid=self._slot_group(
                     ASSISTANT_ACCEPTANCE_CRITERIA_UUID))
         try:
-            criteria = self._request_acceptance_criteria(
-                system_prompt=system_prompt, user_prompt=user_prompt)
+            with self._logging_step(step_uuid):
+                criteria = self._request_acceptance_criteria(
+                    system_prompt=system_prompt, user_prompt=user_prompt)
         except Exception as e:
             logger.warning(
                 "assistant: acceptance-criteria call failed open: %s", e)
@@ -5831,7 +5868,7 @@ class AssistantAgent(ModelGroupAgent):
                 step_index=step_index, phase="failed", reason=reason,
                 error=f"{type(e).__name__}: {e}",
                 system_prompt=system_prompt, user_prompt=user_prompt,
-                requested_at=requested_at)
+                requested_at=requested_at, step_uuid=step_uuid)
             return
         if criteria is None:
             logger.info("assistant: acceptance-criteria call skipped; no model "
@@ -5840,14 +5877,14 @@ class AssistantAgent(ModelGroupAgent):
                 step_index=step_index, phase="skipped", reason=reason,
                 observation_preview=_SKIPPED_NO_MODEL_GROUP,
                 system_prompt=system_prompt, user_prompt=user_prompt,
-                requested_at=requested_at)
+                requested_at=requested_at, step_uuid=step_uuid)
             return
         self._set_acceptance_criteria(criteria)
         self._record_criteria_step(
             step_index=step_index, phase="observed", reason=reason,
             observation_preview=self._criteria_json,
             system_prompt=system_prompt, user_prompt=user_prompt,
-            requested_at=requested_at)
+            requested_at=requested_at, step_uuid=step_uuid)
 
     def _record_criteria_step(
         self,
@@ -5860,6 +5897,7 @@ class AssistantAgent(ModelGroupAgent):
         system_prompt: str | None = None,
         user_prompt: str | None = None,
         requested_at: "datetime | None" = None,
+        step_uuid: "UUID | None" = None,
     ) -> None:
         """Persist a code-driven criteria call as its own step row (and
         mirror it), so the inspector shows every criteria call, its prompts,
@@ -5873,7 +5911,7 @@ class AssistantAgent(ModelGroupAgent):
             return
         usage = self._last_usage or {}
         db.append_assistant_step(
-            run_uuid=self._run.uuid, step_index=step_index,
+            run_uuid=self._run.uuid, uuid=step_uuid, step_index=step_index,
             phase=phase,  # type: ignore[arg-type]
             action=AssistantActionName.ACCEPTANCE_CRITERIA.value,
             reason=reason, system_prompt=system_prompt,
@@ -6297,7 +6335,7 @@ class AssistantAgent(ModelGroupAgent):
 
     def _record_reply_audit_step(
         self, *, step_index: int, payload: dict[str, Any],
-        requested_at: datetime,
+        requested_at: datetime, step_uuid: "UUID | None" = None,
     ) -> None:
         """Persist the audit call without entering the step budget.
 
@@ -6317,6 +6355,7 @@ class AssistantAgent(ModelGroupAgent):
         usage = payload.get("usage") or {}
         db.append_assistant_step(
             run_uuid=self._run.uuid,
+            uuid=step_uuid,
             step_index=step_index,
             phase="observed",  # type: ignore[arg-type]
             action=self.REPLY_AUDIT_ACTION,
@@ -6633,6 +6672,27 @@ class AssistantAgent(ModelGroupAgent):
                 model_group_uuid=self.model_group_uuid,
             )
 
+    @contextmanager
+    def _logging_step(self, step_uuid: UUID):
+        """Tag every `llm_call` this block records with the step it belongs to.
+
+        The step row is written once the response is in hand, so while a call
+        is in flight there is no row to read a uuid off — which is why the
+        caller MINTS the uuid here and gives the same one to the row it writes
+        afterwards. The tag is then a record of which step made the call, not a
+        later guess from how close its start time was.
+
+        Cleared on the way out, `finally` so a call that raises clears it too.
+        A call made outside a step — the run summarizer, an embed inside an
+        action — must record no step rather than the last one's.
+        """
+        previous = self._log_step_uuid
+        self._log_step_uuid = step_uuid
+        try:
+            yield step_uuid
+        finally:
+            self._log_step_uuid = previous
+
     def _open_step(
         self, *, step_index: int, decision: AssistantStepDecision,
         usage: dict[str, int] | None = None, model_uuid: "UUID | None" = None,
@@ -6641,12 +6701,17 @@ class AssistantAgent(ModelGroupAgent):
         model_response: str | None = None,
         rejected_attempts: list | None = None,
         requested_at: "datetime | None" = None,
+        step_uuid: "UUID | None" = None,
     ) -> "db.AssistantStep | None":
         """Open a non-terminal action step: insert its single `running` row
         (committed before the action runs) and mirror it as one in-process entry
         that `_settle_step` later mutates in place. Returns the row so the loop
         can bind a write-intent to its uuid; None when there is no run (the
-        scripted-seam unit path). `usage` is the decide call's token counts."""
+        scripted-seam unit path). `usage` is the decide call's token counts.
+
+        `step_uuid` is the uuid minted before the decide call so that call's
+        `llm_call` row could be tagged with it; the row takes the same one,
+        which is what makes the two joinable."""
         self._steps.append(
             {
                 "step_index": step_index,
@@ -6661,6 +6726,7 @@ class AssistantAgent(ModelGroupAgent):
             return None
         step = db.open_assistant_step(
             run_uuid=self._run.uuid,
+            uuid=step_uuid,
             step_index=step_index,
             action=decision.action.value,
             reason=decision.reason,
@@ -6719,6 +6785,7 @@ class AssistantAgent(ModelGroupAgent):
         model_response: str | None = None,
         rejected_attempts: list | None = None,
         requested_at: "datetime | None" = None,
+        step_uuid: "UUID | None" = None,
     ) -> None:
         """Record a single-insert (no open/settle lifecycle) trace step — the
         terminal-only path: a `failed` validation, the `final` reply, and a
@@ -6726,6 +6793,10 @@ class AssistantAgent(ModelGroupAgent):
         its self-contained `debug-assistant` chat anchor — and mirrors one entry
         into `self._steps` for fast in-process assertions. `usage` is the decide
         call's token counts (None for a crash/control row).
+
+        `step_uuid` is the uuid minted before the call this row records, so the
+        row and that call's `llm_call` row carry the same one. None on a crash
+        row written without a call behind it.
         """
         action = decision.action.value if decision is not None else None
         reason = decision.reason if decision is not None else None
@@ -6743,6 +6814,7 @@ class AssistantAgent(ModelGroupAgent):
         if self._run is not None:
             db.append_assistant_step(
                 run_uuid=self._run.uuid,
+                uuid=step_uuid,
                 step_index=step_index,
                 phase=phase,  # type: ignore[arg-type]
                 action=action,

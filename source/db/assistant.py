@@ -15,7 +15,7 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 
@@ -103,6 +103,7 @@ def open_assistant_step(
     run_uuid: UUID,
     step_index: int,
     action: str | None,
+    uuid: UUID | None = None,
     reason: str | None = None,
     args: dict[str, Any] | None = None,
     log: list | None = None,
@@ -122,8 +123,14 @@ def open_assistant_step(
     action runs (trace-before-action durability: a kill mid-action leaves this
     row). Returns the row so the caller has its stable `uuid` to bind a
     write-intent to. Posts no chat row — that lands at settle, when the
-    observation exists."""
+    observation exists.
+
+    `uuid` is supplied when the caller minted it before making the call this
+    row records, so the call's `llm_call` row could be tagged with it while it
+    was still in flight (see `AssistantAgent._logging_step`). Defaulted here so
+    every other caller keeps getting a fresh one."""
     step = AssistantStep(
+        uuid=uuid or uuid4(),
         run_uuid=run_uuid,
         step_index=step_index,
         phase="running",
@@ -178,6 +185,7 @@ def append_assistant_step(
     step_index: int,
     phase: StepPhase,
     action: str | None,
+    uuid: UUID | None = None,
     reason: str | None = None,
     args: dict[str, Any] | None = None,
     log: list | None = None,
@@ -202,8 +210,12 @@ def append_assistant_step(
     instead.
 
     `code_driven` marks a row the loop produced on its own initiative (see the
-    column): its action and reason are labels, not a model decision."""
+    column): its action and reason are labels, not a model decision.
+
+    `uuid` is supplied when the caller minted it before the call this row
+    records — see `open_assistant_step`."""
     step = AssistantStep(
+        uuid=uuid or uuid4(),
         run_uuid=run_uuid,
         step_index=step_index,
         phase=phase,
@@ -738,10 +750,10 @@ def assistant_trace_steps(run_uuid: UUID) -> list[AssistantStep]:
     audit prompt carries no action list, the run reads as one where the model
     was never offered its actions.
 
-    The model-call waterfall on the same page has always been laid out on the
-    clock, so commit order left one page disagreeing with itself about which of
-    two calls came first. `_step_kinds` already had to reach for `requested_at`
-    for the same reason; this puts the rows themselves in that order.
+    The gantt on the same page has always been laid out on the clock, so commit
+    order left one page disagreeing with itself about which of two calls came
+    first. This puts the rows themselves in that order, so every surface reads
+    one sequence.
 
     A row with no start at all falls back to when it was written, and one
     without even that keeps its row position at the end: a legacy row belongs

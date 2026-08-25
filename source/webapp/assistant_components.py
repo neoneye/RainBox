@@ -213,18 +213,26 @@ def _kpi_html(event: dict) -> Markup:
     return Markup('<div class="ev-kpis">{}</div>').format(cells)
 
 
-def _block(title: str, body: Any, *, collapsed: bool = False,
-           key: str = "") -> Markup:
-    """A labelled block of text, escaped.
+# --- blocks -------------------------------------------------------------------
+#
+# A component decides WHAT a pane says; a serializer decides how one surface
+# says it. They were the same function once, which is why the markdown export
+# had to rebuild every pane from the step rows instead of reading the events
+# the page reads. Splitting them is what lets both surfaces read one stream.
 
-    `collapsed` renders a shut `<details>` — for the prompts above all, where a
+
+def _block(title: str, body: Any, *, collapsed: bool = False,
+           key: str = "") -> dict | None:
+    """A labelled block of text, or None when there is nothing to show.
+
+    None rather than an empty block: an absent field says "not recorded",
+    which is true, where an empty box says the field was empty.
+
+    `collapsed` asks a surface to fold it — for the prompts above all, where a
     50k-token payload open by default buries every number above it. `key` is
     the `data-k` the live refresh reopens by, the same mechanism every other
-    collapsed block on the page uses.
-
-    One typeface for every block, the same as the trigger card's: what a block
-    holds is text exactly as it was sent or returned, and a second font would
-    have said a request and a response are different kinds of thing.
+    collapsed block on the page uses. Markdown honours neither: a document has
+    no fold and no refresh.
 
     Never truncated. This is the pane that exists to inspect a prompt, and the
     prompt-cache work turns on reading the exact bytes a call sent — a clipped
@@ -233,62 +241,107 @@ def _block(title: str, body: Any, *, collapsed: bool = False,
     step recorded was already bounded when it was captured.
     """
     if body in (None, "", {}, []):
-        return Markup("")
-    text = body if isinstance(body, str) else json.dumps(
+        return None
+    return {"title": title, "body": body, "collapsed": collapsed,
+            "key": key or title, "note": False}
+
+
+def _note(text: str) -> dict:
+    """A pane's prose, for a kind whose substance is that nothing was
+    recorded. Not a block: there is no field being labelled."""
+    return {"title": "", "body": text, "collapsed": False, "key": "",
+            "note": True}
+
+
+def _blocks(*items: dict | None) -> list[dict]:
+    """The blocks that have something in them, in the order given."""
+    return [item for item in items if item is not None]
+
+
+def _block_text(block: dict) -> str:
+    """A block's body as the text a surface shows: strings as they are, and
+    everything else as indented JSON."""
+    body = block["body"]
+    return body if isinstance(body, str) else json.dumps(
         body, indent=2, sort_keys=True, default=str, ensure_ascii=False)
-    if collapsed:
+
+
+def _block_html(block: dict | None) -> Markup:
+    """One block as the page draws it. Everything is escaped: a body is model
+    and tool output, and a title can be an action name that arrived as data."""
+    if block is None:
+        return Markup("")
+    if block["note"]:
+        return Markup('<p class="ev-note">{}</p>').format(block["body"])
+    text = _block_text(block)
+    if block["collapsed"]:
         return Markup(
             '<details class="prompt ev-block" data-k="{}">'
             '<summary>{} ({} chars)</summary>'
             '<pre class="ev-pre">{}</pre></details>'
-        ).format(key or title, title, len(text), text)
+        ).format(block["key"], block["title"], len(text), text)
     return Markup(
         '<div class="ev-block"><h5>{}</h5><pre class="ev-pre">{}</pre></div>'
-    ).format(title, text)
+    ).format(block["title"], text)
 
 
-def _generic_action(event: dict) -> Markup:
+def _blocks_html(blocks: list[dict]) -> Markup:
+    return Markup("").join(_block_html(b) for b in blocks)
+
+
+# --- components ---------------------------------------------------------------
+
+
+def _result_text(payload: dict):
+    """What an action returned, as prose.
+
+    The observation's own text where the step recorded one, and the capped
+    preview otherwise. The fallback is not cosmetic: a step settled before the
+    full observation was captured has the preview and nothing else, and a
+    bespoke renderer that read only the observation showed such a step no
+    result at all — the one thing every action pane must carry.
+    """
+    observation = payload.get("observation") or {}
+    text = observation.get("text") if isinstance(observation, dict) else None
+    return text or payload.get("observation_preview")
+
+
+def _generic_action(event: dict) -> list[dict]:
     """Any action at all: what was asked for, and what came back.
 
     The renderer that has to be right, because it is the one 30-odd actions
     use and the one a new action gets for free.
     """
     payload = event.get("payload") or {}
-    observation = payload.get("observation") or {}
-    structured = observation if isinstance(observation, dict) else {}
-    text = structured.get("text")
-    return Markup("").join([
+    return _blocks(
         _block("reason", payload.get("reason")),
         _block("arguments", payload.get("args")),
-        _block("result", text or payload.get("observation_preview")),
+        _block("result", _result_text(payload)),
         _block("error", payload.get("error")),
-    ])
+    )
 
 
-def _python_run(event: dict) -> Markup:
+def _python_run(event: dict) -> list[dict]:
     """A program and its output, as a program and its output."""
     payload = event.get("payload") or {}
-    observation = payload.get("observation") or {}
     args = payload.get("args") or {}
-    text = observation.get("text") if isinstance(observation, dict) else None
-    return Markup("").join([
+    return _blocks(
         _block("code", args.get("code")),
-        _block("output", text),
+        _block("output", _result_text(payload)),
         _block("error", payload.get("error")),
-    ])
+    )
 
 
-def _memory_query(event: dict) -> Markup:
+def _memory_query(event: dict) -> list[dict]:
     """The recalled text first: it is what the rest of the turn reasons from."""
     payload = event.get("payload") or {}
     observation = payload.get("observation") or {}
-    text = observation.get("text") if isinstance(observation, dict) else None
     data = observation.get("data") if isinstance(observation, dict) else None
-    return Markup("").join([
+    return _blocks(
         _block("query", (payload.get("args") or {}).get("query")),
-        _block("recalled", text),
+        _block("recalled", _result_text(payload)),
         _block("retrieval", data),
-    ])
+    )
 
 
 #: Actions whose payload earned a renderer of its own.
@@ -298,15 +351,15 @@ _ACTION_RENDERERS = {
 }
 
 
-def _llm(event: dict) -> Markup:
+def _llm(event: dict) -> list[dict]:
     payload = event.get("payload") or {}
     rejected = payload.get("rejected_attempts") or []
     key = event.get("uuid") or event.get("label") or "ev"
-    parts = [
+    return _blocks(
         # First: what the call was working from — the profile in force, the
         # switch states. It frames everything below it, and it is short, so
         # putting it after the prompts left it past tens of thousands of
-        # characters. The step sections read in this order too.
+        # characters.
         _block("log", payload.get("log"), collapsed=True, key=f"{key}-log"),
         # The prompts shut by default: they are the largest thing here and the
         # least often the answer. The response is what the reader came for.
@@ -318,68 +371,48 @@ def _llm(event: dict) -> Markup:
         _block("reasoning", payload.get("reasoning"),
                collapsed=True, key=f"{key}-reasoning"),
         _block("error", payload.get("error")),
-    ]
-    if rejected:
-        parts.append(_block(
-            f"rejected attempts ({len(rejected)})", rejected))
-    # What was appended to a retried call's prompt: its own refused answer and
-    # why it was refused. That is what makes the second attempt a different
-    # call from the first, and the first carries none of it.
-    parts.append(_block("added turns", payload.get("feedback"),
-                        collapsed=True, key=f"{key}-feedback"))
-    return Markup("").join(parts)
+        _block(f"rejected attempts ({len(rejected)})", rejected or None),
+        # What was appended to a retried call's prompt: its own refused answer
+        # and why it was refused. That is what makes the second attempt a
+        # different call from the first, and the first carries none of it.
+        _block("added turns", payload.get("feedback"),
+               collapsed=True, key=f"{key}-feedback"),
+    )
 
 
-def _embedding(event: dict) -> Markup:
-    return _block("text", (event.get("payload") or {}).get("detail"))
+def _embedding(event: dict) -> list[dict]:
+    return _blocks(_block("text", (event.get("payload") or {}).get("detail")))
 
 
-def _control(event: dict) -> Markup:
+def _control(event: dict) -> list[dict]:
     payload = event.get("payload") or {}
-    return Markup("").join([
+    return _blocks(
         _block("instruction", payload.get("reason")),
         _block("payload", payload.get("args")),
-    ])
+    )
 
 
-def _start(event: dict) -> Markup:
-    """The question the run was given, and both ways back to where it came
-    from: the person who asked, and the message in the room.
+def _start(event: dict) -> list[dict]:
+    """The question the run was given.
 
     The run already had a "Started by" card beside the trace. On the stream it
     sits where it belongs — first — so reading the log top to bottom starts
     with the question rather than with whatever the loop did about it.
+
+    Where it came FROM — the person who asked and the message in the room — is
+    a pair of links, so it belongs to the surfaces rather than here.
     """
-    payload = event.get("payload") or {}
-    links = []
-    if payload.get("sender_uuid"):
-        links.append(Markup(
-            'Started by <a href="/user?id={}">{} ↗</a>').format(
-                payload["sender_uuid"], payload.get("sender_name") or "user"))
-    elif payload.get("sender_name"):
-        links.append(Markup("Started by {}").format(payload["sender_name"]))
-    if payload.get("room_uuid"):
-        target = Markup('/chat?id={}').format(payload["room_uuid"])
-        if payload.get("message_id") is not None:
-            target = Markup('/chat?id={}&msg={}').format(
-                payload["room_uuid"], payload["message_id"])
-        links.append(Markup('<a href="{}">chat ↗</a>').format(target))
-    header = Markup('<p class="ev-links">{}</p>').format(
-        Markup(" · ").join(links)) if links else Markup("")
-    # A write with no step of its own belongs to the run, and this is the
-    # run's row. It is still a decision the assistant is waiting on, so it
-    # cannot be the one that has nowhere to appear.
-    return header + _block("request", payload.get("text")) + _intents(event)
+    return _blocks(_block("request", (event.get("payload") or {}).get("text")))
 
 
-def _unaccounted(_event: dict) -> Markup:
-    return Markup(
-        '<p class="ev-note">Nothing measured this stretch. It is the absence '
-        'of a record, not a slow operation that was observed — the gap says '
-        'where instrumenting would pay.</p>')
+def _unaccounted(_event: dict) -> list[dict]:
+    return [_note(
+        "Nothing measured this stretch. It is the absence of a record, not a "
+        "slow operation that was observed — the gap says where instrumenting "
+        "would pay.")]
 
 
-def _activity(event: dict) -> Markup:
+def _activity(event: dict) -> list[dict]:
     """A stretch of an action's own work — and what it produced, where the
     action recorded that.
 
@@ -389,16 +422,116 @@ def _activity(event: dict) -> Markup:
     """
     found = (event.get("payload") or {}).get("found")
     if found in (None, {}, []):
-        return Markup(
-            '<p class="ev-note">An action\'s own work, outside the calls it '
-            'made. Nothing finer was recorded inside it.</p>')
-    return _block("found", found)
+        return [_note("An action's own work, outside the calls it made. "
+                      "Nothing finer was recorded inside it.")]
+    return _blocks(_block("found", found))
 
 
+def _skipped(event: dict) -> list[dict]:
+    """A call that was never made.
+
+    Not a failure and not a success: nothing ran. A pane that looked like
+    either would say something untrue about the run.
+    """
+    payload = event.get("payload") or {}
+    return [_note("This call was never made — nothing ran, and nothing "
+                  "failed.")] + _blocks(
+        _block("reason", payload.get("reason")),
+        _block("error", payload.get("error")),
+    )
+
+
+def _review(event: dict) -> list[dict]:
+    """The pre-execution gate on an action, led by its verdict.
+
+    The verdict is what the row is read for, and it is an outcome rather than
+    a cost — so it reads as a block like an action's status, not as a figure
+    on the meta line beside the token counts.
+
+    `skipped` and `error` are verdicts too. Both let the action run and
+    neither is an approval, so the reason one of them happened is the pane's
+    substance: a run that went wrong because the gate never ran is a different
+    bug from one the gate approved.
+    """
+    payload = event.get("payload") or {}
+    problems = payload.get("problems") or []
+    # Present on approvals too: "approved with problems" is the
+    # right-answer-wrong-reasons signal, and folding it behind the verdict
+    # would lose exactly the reviews worth reading.
+    #
+    # The sentences, not the objects. A problem carries a category as well,
+    # and printing it beside the finding puts a tag where the reader is
+    # looking for what was actually wrong.
+    problem_text = "\n".join(
+        f"- {p.get('text', '')}" if isinstance(p, dict) else f"- {p}"
+        for p in problems) if problems else None
+    return _blocks(
+        _block("verdict", (event.get("kpis") or {}).get("verdict")),
+        _block("group", payload.get("group_from")),
+        _block("reason", payload.get("skip_reason")),
+        _block("error", payload.get("error")),
+        _block(f"problems ({len(problems)})", problem_text),
+    ) + _llm(event)
+
+
+_KIND_RENDERERS = {
+    "start": _start,
+    "llm": _llm,
+    "embedding": _embedding,
+    "action": _generic_action,
+    "activity": _activity,
+    "control": _control,
+    "unaccounted": _unaccounted,
+    "skipped": _skipped,
+}
+
+
+def event_blocks(event: dict) -> list[dict]:
+    """What one event's detail pane says, before any surface renders it.
+
+    Dispatches on kind, and for an action on the action name — falling back to
+    the generic renderer, which is what lets an action nobody anticipated show
+    up looking right. One dispatch, so the page and the export cannot give one
+    event two different readings.
+    """
+    kind = event.get("kind") or "action"
+    label = event.get("label") or kind
+    if kind == "action":
+        # How the action ended is an outcome, not a cost, so it reads as a
+        # labelled block rather than a figure on the meta line. Prepended here
+        # so a bespoke renderer cannot be the one that drops it.
+        status = (event.get("kpis") or {}).get("status")
+        observation = (event.get("payload") or {}).get("observation") or {}
+        data = observation.get("data") if isinstance(observation, dict) else None
+        return (
+            _blocks(_block("status", status))
+            + _ACTION_RENDERERS.get(label, _generic_action)(event)
+            # Appended here rather than inside a renderer so a bespoke one
+            # cannot be the one that drops it — the same reason the status
+            # block is prepended. The counts a retrieval reports are on the
+            # meta line above; anything else an action records has this row as
+            # its only home.
+            + _blocks(_block("data", data, collapsed=True,
+                             key=f"{event.get('uuid') or 'ev'}-data")))
+    if event.get("variant") == "review":
+        # A variant earns a renderer on the same terms an action does: its
+        # payload genuinely differs from a plain model call's.
+        return _review(event)
+    return _KIND_RENDERERS.get(kind, _generic_action)(event)
+
+
+# --- write intents ------------------------------------------------------------
+#
 #: Where a write intent is acted on. The endpoints already exist and are
 #: tested on their own (webapp/chat_api.py); this is the only place the
 #: operator reaches them for a run.
 _INTENT_ACTION = "/chat/api/assistant/write-intents/{}/{}"
+
+
+def event_intents(event: dict) -> list[dict]:
+    """The writes a row proposed. On an action, the ones it proposed; on the
+    run's opening row, the ones that belong to no step."""
+    return (event.get("payload") or {}).get("intents") or []
 
 
 def _intent_controls(intent: dict) -> Markup:
@@ -408,6 +541,9 @@ def _intent_controls(intent: dict) -> Markup:
     it is confirmed or rejected the assistant is waiting. Undo is offered only
     where the write recorded how to reverse itself — a button that cannot do
     what it says is worse than no button.
+
+    The page only. A document cannot be clicked, so the export states the
+    decision an intent is waiting on rather than offering it.
     """
     state = intent.get("state") or ""
     uuid = intent.get("uuid") or ""
@@ -427,9 +563,9 @@ def _intent_controls(intent: dict) -> Markup:
     return Markup("")
 
 
-def _intents(event: dict) -> Markup:
+def _intents_html(event: dict) -> Markup:
     """The writes a row proposed, each with whatever decision it still owes."""
-    intents = (event.get("payload") or {}).get("intents") or []
+    intents = event_intents(event)
     if not intents:
         return Markup("")
     rows = [
@@ -438,12 +574,12 @@ def _intents(event: dict) -> Markup:
                '</div></div>').format(
             intent.get("state") or "", intent.get("capability_name") or "",
             intent.get("state") or "",
-            "\u21a9 " if intent.get("state") == "undone" else "",
+            "↩ " if intent.get("state") == "undone" else "",
             intent.get("state") or "",
             Markup('<div class="muted">{}</div>').format(
                 intent["preview_text"]) if intent.get("preview_text")
             else Markup(""),
-            _block("payload", intent.get("payload")),
+            _block_html(_block("payload", intent.get("payload"))),
             _intent_controls(intent))
         for intent in intents
     ]
@@ -455,79 +591,27 @@ def _intents(event: dict) -> Markup:
     ).format(len(rows), Markup("").join(rows))
 
 
-def _action_data(event: dict) -> Markup:
-    """What an action returned besides prose.
-
-    Rendered here rather than inside a renderer so a bespoke one cannot be the
-    one that drops it — the same reason the status block is prepended. The
-    counts a retrieval reports are on the meta line above; anything else an
-    action records has this row as its only home.
-    """
-    observation = (event.get("payload") or {}).get("observation") or {}
-    data = observation.get("data") if isinstance(observation, dict) else None
-    return _block("data", data, collapsed=True,
-                  key=f"{event.get('uuid') or 'ev'}-data")
-
-
-def _skipped(event: dict) -> Markup:
-    """A call that was never made.
-
-    Not a failure and not a success: nothing ran. A pane that looked like
-    either would say something untrue about the run.
-    """
+def _start_links(event: dict) -> Markup:
+    """Both ways back to where a run came from: the person who asked, and the
+    message in the room. Links, so the page only."""
     payload = event.get("payload") or {}
-    return (Markup('<p class="ev-note">This call was never made \u2014 nothing '
-                   'ran, and nothing failed.</p>')
-            + _block("reason", payload.get("reason"))
-            + _block("error", payload.get("error")))
-
-
-def _review(event: dict) -> Markup:
-    """The pre-execution gate on an action, led by its verdict.
-
-    The verdict is what the row is read for, and it is an outcome rather than
-    a cost — so it reads as a block like an action's status, not as a figure
-    on the meta line beside the token counts.
-
-    `skipped` and `error` are verdicts too. Both let the action run and
-    neither is an approval, so the reason one of them happened is the pane's
-    substance: a run that went wrong because the gate never ran is a different
-    bug from one the gate approved.
-    """
-    payload = event.get("payload") or {}
-    problems = payload.get("problems") or []
-    parts = [
-        _block("verdict", (event.get("kpis") or {}).get("verdict")),
-        _block("group", payload.get("group_from")),
-        _block("reason", payload.get("skip_reason")),
-        _block("error", payload.get("error")),
-    ]
-    if problems:
-        # Present on approvals too: "approved with problems" is the
-        # right-answer-wrong-reasons signal, and folding it behind the verdict
-        # would lose exactly the reviews worth reading.
-        #
-        # The sentences, not the objects. A problem carries a category as
-        # well, and printing it beside the finding puts a tag where the reader
-        # is looking for what was actually wrong.
-        parts.append(_block(
-            f"problems ({len(problems)})",
-            "\n".join(f"- {p.get('text', '')}" if isinstance(p, dict)
-                       else f"- {p}" for p in problems)))
-    parts.append(_llm(event))
-    return Markup("").join(parts)
-
-
-_KIND_RENDERERS = {
-    "start": _start,
-    "llm": _llm,
-    "embedding": _embedding,
-    "action": _generic_action,
-    "activity": _activity,
-    "control": _control,
-    "unaccounted": _unaccounted,
-    "skipped": _skipped,
-}
+    links = []
+    if payload.get("sender_uuid"):
+        links.append(Markup(
+            'Started by <a href="/user?id={}">{} ↗</a>').format(
+                payload["sender_uuid"], payload.get("sender_name") or "user"))
+    elif payload.get("sender_name"):
+        links.append(Markup("Started by {}").format(payload["sender_name"]))
+    if payload.get("room_uuid"):
+        target = Markup('/chat?id={}').format(payload["room_uuid"])
+        if payload.get("message_id") is not None:
+            target = Markup('/chat?id={}&msg={}').format(
+                payload["room_uuid"], payload["message_id"])
+        links.append(Markup('<a href="{}">chat ↗</a>').format(target))
+    if not links:
+        return Markup("")
+    return Markup('<p class="ev-links">{}</p>').format(
+        Markup(" · ").join(links))
 
 
 def event_description(event: dict) -> str:
@@ -546,35 +630,70 @@ def event_description(event: dict) -> str:
             or _KIND_CAPTION.get(event.get("kind") or "", ""))
 
 
-def render_event_detail(event: dict) -> str:
-    """The detail pane for one event.
+# --- surfaces -----------------------------------------------------------------
 
-    Dispatches on kind, and for an action on the action name — falling back to
-    the generic renderer, which is what lets an action nobody anticipated show
-    up looking right.
+
+def render_event_detail(event: dict) -> str:
+    """The detail pane for one event, as the page draws it.
+
+    The blocks come from `event_blocks`; what is added here is what only a page
+    can carry — the links out of the opening row, and the buttons a proposed
+    write is waiting on.
     """
     kind = event.get("kind") or "action"
-    label = event.get("label") or kind
-    if kind == "action":
-        # How the action ended is an outcome, not a cost, so it reads as a
-        # labelled block rather than a figure on the meta line. Prepended here
-        # so a bespoke renderer cannot be the one that drops it.
-        status = (event.get("kpis") or {}).get("status")
-        body = (_block("status", status)
-                + _ACTION_RENDERERS.get(label, _generic_action)(event)
-                + _action_data(event)
-                + _intents(event))
-    elif event.get("variant") == "review":
-        # A variant earns a renderer on the same terms an action does: its
-        # payload genuinely differs from a plain model call's.
-        body = _review(event)
-    else:
-        body = _KIND_RENDERERS.get(kind, _generic_action)(event)
+    body = (_start_links(event) if kind == "start" else Markup("")) \
+        + _blocks_html(event_blocks(event)) \
+        + (_intents_html(event) if kind in ("start", "action") else Markup(""))
     # The label and the description ride as data rather than as markup: the
     # card header is what names the thing being inspected, and printing them
     # here too would say it twice on one screen.
     return str(Markup(
         '<div class="ev-detail" data-kind="{}" data-label="{}" data-desc="{}"'
         ' data-step="{}">{}{}</div>'
-    ).format(kind, label, event_description(event),
+    ).format(kind, event.get("label") or kind, event_description(event),
              event.get("step_ref") or "", _kpi_html(event), body))
+
+
+def fence(text: str, lang: str = "") -> str:
+    """A fenced code block whose fence is long enough to survive backticks in
+    `text` (CommonMark: the closing fence must be at least as long as any run of
+    backticks inside)."""
+    longest = 0
+    run = 0
+    for ch in text:
+        run = run + 1 if ch == "`" else 0
+        longest = max(longest, run)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{lang}\n{text}\n{fence}"
+
+
+def event_markdown(event: dict) -> list[str]:
+    """One event as the export writes it: heading, meta line, then its blocks.
+
+    The same blocks the page draws, from the same dispatch. That is the whole
+    point of the split — the export used to rebuild every pane from the step
+    rows, which is how two readings of one run came to exist.
+    """
+    label = " ".join((event.get("label") or "").split())
+    description = event_description(event)
+    out = [f"### {label}" + (f" — {description}" if description else ""), ""]
+    meta = [f["text"] for f in event_kpis(event)]
+    if step_ref := event.get("step_ref"):
+        meta.insert(0, step_ref)
+    if meta:
+        out += [" · ".join(meta), ""]
+    for block in event_blocks(event):
+        if block["note"]:
+            out += [block["body"], ""]
+            continue
+        out += [f"**{block['title']}**", "", fence(_block_text(block)), ""]
+    for intent in event_intents(event):
+        out += [f"**write — {intent.get('capability_name') or 'write'} "
+                f"({intent.get('state') or '—'})**", ""]
+        if intent.get("preview_text"):
+            out += [intent["preview_text"], ""]
+        if intent.get("payload"):
+            out += [fence(json.dumps(intent["payload"], indent=2,
+                                      sort_keys=True, default=str,
+                                      ensure_ascii=False)), ""]
+    return out

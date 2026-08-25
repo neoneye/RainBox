@@ -7,6 +7,7 @@ the only writes.
 """
 
 import html
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -15,11 +16,8 @@ import pytest
 import db
 import webapp  # noqa: F401 — registers all views (incl. /assistant) on the app
 from db import AssistantRun
-from webapp.assistant_views import (
-    _format_duration,
-    _review_meta,
-    _review_payload,
-)
+from webapp.assistant_components import event_kpis
+from webapp.assistant_views import _format_duration
 from webapp.core import app as flask_app
 
 
@@ -539,9 +537,12 @@ def test_markdown_export_serializes_the_run(app_ctx, client):
         assert "### Obstacles" in md and "- the disk was full" in md
         assert "## Run" in md and "please file the report" in md
         assert "## Timeline" in md
-        assert "Step 1 of 1 — memory_query" in md   # action + its description
-        assert '"query": "report"' in md             # action args block
-        assert "found it" in md                       # observation
+        # One section per event, named and described the way the inspector
+        # names it — the export and the page read one stream.
+        assert "### memory_query — recall facts" in md
+        assert "Step 1 end" in md                     # which step it belongs to
+        assert "**query**" in md and "report" in md   # what was asked
+        assert "found it" in md                       # what came back
         assert "## Verdict — Resolved" in md and "all done — the verdict" in md
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -575,7 +576,6 @@ def test_query_memory_data_renders_as_table_with_tooltips():
     """The memory_query step's structured data renders as a compact counts table
     (short headers + explanatory tooltips), not a raw JSON blob."""
     from webapp.assistant_components import _KPI_FIELDS
-    from webapp.assistant_views import _step_md
 
     # The counts are fields on the action row's meta line now, each still
     # saying what it means rather than only what it is called.
@@ -593,32 +593,29 @@ def test_query_memory_data_renders_as_table_with_tooltips():
     assert "not admitted because they no longer fit" in template
     assert "not the whole observation" in template
     # And the short headers still read the same, on the row itself.
-    from webapp.assistant_components import render_event_detail
+    from webapp.assistant_components import event_markdown, render_event_detail
 
-    pane = render_event_detail({
+    event = {
         "uuid": "u", "kind": "action", "variant": "action",
         "label": "memory_query", "start": None, "duration_ms": 1,
         "anchor": "", "payload": {"args": {}},
         "kpis": {"status": "ok", "qa_static": 3, "qa_dynamic": 0,
-                 "memory": 6, "truncated": 0, "omitted": 0}})
+                 "memory": 6, "truncated": 0, "omitted": 0}}
+    pane = render_event_detail(event)
     for hdr in ["QA static 3", "QA dynamic 0", "memory 6"]:
         assert hdr in pane
-    # Markdown mirror (_step_md) renders the same counts as a table row.
-    class _Step:  # all fields default to None except the two we set
-        action = "memory_query"
-        observation = {"ok": True, "data": {"qa_static": 3, "qa_dynamic": 0,
-                        "memory": 6, "truncated": 0, "omitted": 0}}
-        def __getattr__(self, name):
-            return None
-    md = "\n".join(_step_md(_Step(), {}, {}))
-    assert "| QA static | QA dynamic | memory | truncated | omitted |" in md
-    assert "| 3 | 0 | 6 | 0 | 0 |" in md
+    # The export reads the same meta line off the same event, so the two
+    # surfaces cannot report different counts for one retrieval.
+    md = "\n".join(event_markdown(event))
+    for hdr in ["QA static 3", "QA dynamic 0", "memory 6"]:
+        assert hdr in md
 
 
 def test_step_reasoning_renders_collapsed_in_timeline_and_markdown(app_ctx, client):
-    """A step's captured model reasoning shows as a collapsed "model reasoning"
-    block on the page and a **model reasoning** section in the markdown export;
-    a step without reasoning (non-reasoning model) renders neither."""
+    """A step's captured model reasoning shows as a collapsed block on the page
+    and a section in the markdown export — under the same label, because both
+    are the same block of the same event; a step without reasoning (a
+    non-reasoning model) renders neither."""
     room = _room()
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
@@ -629,12 +626,12 @@ def test_step_reasoning_renders_collapsed_in_timeline_and_markdown(app_ctx, clie
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        # On the page it is a collapsed block on the call's own row; the
-        # markdown export keeps the longer label it has always used.
+        # A collapsed block on the call's own row, and the same block —
+        # same label — in the export.
         assert "reasoning (" in body
         assert "the operator wants git state, memory holds that" in body
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
-        assert "**model reasoning**" in md
+        assert "**reasoning**" in md
         assert "the operator wants git state, memory holds that" in md
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -650,9 +647,9 @@ def test_step_without_reasoning_has_no_reasoning_block(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "model reasoning" not in body
+        assert "reasoning (" not in body
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
-        assert "**model reasoning**" not in md
+        assert "**reasoning**" not in md
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -677,8 +674,13 @@ def test_interrupted_step_shows_partial_model_response(app_ctx, client):
         assert "enough evidence" in body
         assert "worker killed" in body
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
-        assert "**partial model response**" in md
+        # The same "response" block the page shows: what came back is what
+        # came back, whole or cut short, and the error beside it is what says
+        # which. A second label for a partial one made the export claim a
+        # distinction the record does not carry.
+        assert "**response**" in md
         assert "enough evidence" in md
+        assert "**error**" in md and "worker killed" in md
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -715,7 +717,7 @@ def test_code_driven_step_shows_its_real_response_not_a_synthesized_decision(
         _cleanup(run.uuid, room.uuid)
 
 
-def _real_run_shape(run) -> None:
+def _real_run_shape(run):
     """The row sequence a plain reply run produces: two calls the loop makes
     before the loop opens, the audit of the finished reply, then the reply the
     model decided. All four carry decide-step index 0 — the code-driven ones
@@ -723,7 +725,10 @@ def _real_run_shape(run) -> None:
 
     The audit's ROW precedes the reply's — the reply lands only once the audit
     says send — while its CALL went out 20s later. That inversion is the whole
-    point of the fixture, so the `requested_at` stamps matter."""
+    point of the fixture, so the `requested_at` stamps matter.
+
+    Returns the moment the last row settled, so a caller that finishes the run
+    can pin its end to the calls rather than to wall-clock now."""
     t0 = datetime(2026, 7, 29, 14, 7, 21, tzinfo=UTC)
     db.append_assistant_step(
         run_uuid=run.uuid, step_index=0, phase="observed",
@@ -749,40 +754,59 @@ def _real_run_shape(run) -> None:
         args={"message": "About 321179090 meters."},
         requested_at=t0 + timedelta(seconds=35))
     db.settle_assistant_step(step, phase="final", observation_preview="replied")
+    # Pin the run to the calls it made. The action row is placed where its step
+    # settled, and the stream draws the stretches nothing covers, so a settle
+    # time left at wall-clock now would put a 27-day "unaccounted" bar on a run
+    # that took a minute.
+    end = t0 + timedelta(seconds=57)
+    step.settled_at = end
+    run.started_at = t0
+    db.db.session.commit()
+    return end
 
 
-def test_steps_are_numbered_by_position_and_marked_warm_up_or_follow_up(
+def test_rows_are_attributed_to_a_step_by_position_not_by_step_index(
         app_ctx, client):
-    """Numbering by `step_index` printed "Step 1 of 4" for three rows in a row,
-    because the code-driven calls share the decide index they sit beside. The
-    timeline numbers positions instead, and says which rows are not decide
-    steps: warm-up before the loop opens, follow-up once it has."""
+    """Numbering by `step_index` printed the same number for three rows in a
+    row, because the code-driven calls share the decide index they sit beside.
+    Rows are attributed by position instead, and a decide step's two ends are
+    named as such: its call opens it and its action closes it.
+
+    Both surfaces read the attribution off the same events, so the page and the
+    export can be read against each other line by line."""
     room = _room()
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
-    _real_run_shape(run)
+    end = _real_run_shape(run)
     db.finish_run(run, "finished")
+    # Pinned to the last row, so the stretch after it is the run's own tail
+    # rather than the days between the fixture's dates and today.
+    run.finished_at = end
+    db.db.session.commit()
     try:
         page, md = _rendered(client, run)
-        # Each row says which step it belongs to, in the numbering the export
-        # uses, so the two can be read against each other.
-        assert [n for n in range(1, 5) if f'data-step="Step {n}' in page] == [
-            1, 2, 3, 4]
-        assert md.count("Step 1 of 4") == 1
-        # The two pre-loop calls, then the audit of what the model decided.
-        assert md.count("warm-up") >= 2
-        assert md.count("follow-up") >= 1
-        # The markdown headings carry it in reading order — the order the
-        # calls RAN. The audit's row was written first, but it audits a reply
-        # the decide call had already produced, so it reads last.
-        heads = [ln.split(" — ")[:3] for ln in md.splitlines()
-                 if ln.startswith("### Step ")]
+        assert sorted(set(re.findall(r'data-step="([^"]*)"', page))) == [
+            "Step 1", "Step 2", "Step 3", "Step 3 end", "Step 3 start",
+            "Step 4"]
+        # In reading order — the order the calls RAN. The audit's row was
+        # written first, but it audits a reply the decide call had already
+        # produced, so it reads after it.
+        heads = [ln for ln in md.splitlines() if ln.startswith("### ")]
         assert heads == [
-            ["### Step 1 of 4", "warm-up", "response_language_classifier"],
-            ["### Step 2 of 4", "warm-up", "acceptance_criteria"],
-            # No kind on the one real decide step, so its action sits here.
-            ["### Step 3 of 4", "reply", "send the final answer to the user"],
-            ["### Step 4 of 4", "follow-up", "reply_audit"],
+            "### response_language_classifier — determine which language(s) "
+            "the reply should use",
+            "### acceptance_criteria — establish what a good reply must "
+            "satisfy",
+            "### decide → reply — send the final answer to the user",
+            # The 17s between the decide call returning and the audit going
+            # out. Nothing measured it, and the stream says so rather than
+            # closing the gap silently.
+            "### unaccounted — unmeasured",
+            "### reply_audit — check the finished reply before it is sent",
+            # And the stretch between the audit and the reply settling: the
+            # audit row recorded no duration, so nothing covers it either.
+            "### unaccounted — unmeasured",
+            "### reply — send the final answer to the user",
         ]
         # The catalog summary for `acceptance_criteria` describes the revision
         # the model can request; the loop's own call establishes them.
@@ -873,28 +897,23 @@ def test_every_model_call_row_shows_the_same_io_meta_fields(app_ctx, client):
 
 
 def test_io_meta_line_has_a_single_definition(app_ctx, client):
-    """Each surface builds its meta line in one place, so changing a field's
-    wording changes every row that surface draws.
+    """ONE builder, for both surfaces: changing a field's wording changes every
+    row of the page and every line of the export together.
 
-    The page and the export no longer share ONE builder: the page's rows come
-    from the event components and the export still walks the step rows. That
-    is a real seam, and the follow-up is to build the export from the same
-    event stream — until then this pins each side against growing a second
-    copy of its own line.
+    They were two for a while — the page drew from the event components and the
+    export walked the step rows — which is how one run came to have two
+    readings that could disagree about what a call cost. Bending the single
+    definition and finding the bend on both surfaces is what says it is single.
     """
     from webapp import assistant_components as components
-    from webapp import assistant_views as views
 
     room = _room()
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     _real_run_shape(run)
     db.finish_run(run, "finished")
-    original_field = views._field
     original_kpi = components._kpi
     try:
-        views._field = lambda text, title, **kw: original_field(
-            f"[{text}]", title, **kw)
         components._kpi = lambda label, text, title, **kw: original_kpi(
             label, f"[{text}]", title, **kw)
         page, md = _rendered(client, run)
@@ -904,7 +923,6 @@ def test_io_meta_line_has_a_single_definition(app_ctx, client):
         assert "[in 900]" in page and "[out 120]" in page
         assert "[60 tok/s]" in page and "[took 17.0s]" in page
     finally:
-        views._field = original_field
         components._kpi = original_kpi
         _cleanup(run.uuid, room.uuid)
 
@@ -941,10 +959,15 @@ def _run_with_hidden_calls(run, t0):
         input_tokens=1500, output_tokens=80, duration_ms=6000,
         requested_at=t0 + timedelta(seconds=35))
     # Pin the run's span to the calls, so the layout percentages below are
-    # arithmetic rather than a function of when the test happens to run.
+    # arithmetic rather than a function of when the test happens to run. The
+    # settle times are part of that: an action row is placed where its step
+    # settled, so leaving those at wall-clock now would stretch the span from
+    # this backdated run to today and squash every bar to nothing.
     db.finish_run(run, "finished")
     run.started_at = t0
     run.finished_at = t0 + timedelta(seconds=41)
+    step.settled_at = t0 + timedelta(seconds=9)
+    gated.settled_at = t0 + timedelta(seconds=34)
     db.db.session.commit()
     return step, gated
 
@@ -984,10 +1007,15 @@ def test_waterfall_places_each_call_on_the_run_span(app_ctx, client):
     t0 = datetime(2026, 7, 29, 14, 0, 0, tzinfo=UTC)
     _run_with_hidden_calls(run, t0)
     try:
-        from webapp.assistant_views import _waterfall
+        from webapp.assistant_log_view import log_view
         steps = db.list_assistant_steps(run.uuid)
-        rows = _waterfall(db.assistant_llm_calls(
-            steps, db.list_second_opinion_reviews(run.uuid)), run)
+        reviews = db.list_second_opinion_reviews(run.uuid)
+        # The placement is the same arithmetic for every row, so it is read off
+        # the one stream both surfaces draw rather than a layout pass of its
+        # own. Narrowed to the model calls: the stream also carries the gaps
+        # between them, which is a different fact with its own test.
+        rows = [e for e in log_view(run, steps, reviews)["events"]
+                if e["kind"] == "llm"]
         assert [r["label"] for r in rows] == [
             "decide → query_memory", "recall_filter", "decide → python_run",
             "second opinion"]
@@ -1266,7 +1294,7 @@ def test_inspector_resolves_the_review_pointer(app_ctx, client):
         # The raw pointer is never shown as the action-result data.
         assert "review_uuid" not in body
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
-        assert "**second opinion**" in md
+        assert "### second opinion" in md
         assert "- convert to meters" in md
         assert "review_uuid" not in md
     finally:
@@ -1390,13 +1418,19 @@ def test_markdown_export_mirrors_the_second_opinion_block(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
-        assert "**second opinion** · approved: true" in md
-        assert md.index("**second opinion**") < md.index("**action call**")
+        # The gate is a section of its own, under the same labels the
+        # inspector uses — the export renders the same event through the same
+        # component, so there is nothing left for it to name differently.
+        # Which row comes first is the stream's business, and the page test
+        # above pins it; both surfaces read that one order.
+        assert "### second opinion" in md
+        assert "**verdict**" in md and "approved" in md
         assert "You are a second-opinion reviewer." in md
         assert "<python_program>print(12 * 0.3048)</python_program>" in md
-        assert "_reasoning_" in md
+        assert "**reasoning**" in md
         assert "The operator is metric; the conversion factor is right." in md
-        assert "_response_" in md and '{"problems": [], "approved": true}' in md
+        assert "**response**" in md and '{"problems": [], "approved": true}' in md
+        # Not repeated inside the action's result: it has its own row.
         assert '"second_opinion"' not in md
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -1448,7 +1482,8 @@ def test_a_skipped_call_reads_as_skipped_not_as_a_silent_row(app_ctx, client):
         requested_at=datetime.now(UTC))
     db.append_assistant_step(
         run_uuid=run.uuid, step_index=0, phase="final", action="reply",
-        reason="ready", duration_ms=4000, input_tokens=100, output_tokens=20)
+        reason="ready", model_response='{"action": "reply"}',
+        duration_ms=4000, input_tokens=100, output_tokens=20)
     db.finish_run(run, "finished")
     try:
         page, md = _rendered(client, run)
@@ -1460,7 +1495,9 @@ def test_a_skipped_call_reads_as_skipped_not_as_a_silent_row(app_ctx, client):
         pane = page.split('data-kind="skipped"')[1].split("</div></div>")[0]
         assert "<h5>response</h5>" not in pane
         assert f'data-primary="{skipped.uuid}"' in page
-        assert md.count("**model response**") == 1         # the reply's, only
+        # The reply answered and its row shows what came back; the skipped one
+        # never called, so there is exactly one response section in the export.
+        assert md.count("**response**") == 1
         # It cost nothing, so it is not one of the run's model calls.
         assert "- **LLM calls:** 1" in md
     finally:
@@ -1470,11 +1507,13 @@ def test_a_skipped_call_reads_as_skipped_not_as_a_silent_row(app_ctx, client):
 def test_review_meta_shows_what_the_review_cost():
     """The reviewer's row stored its tokens all along; the line rendered only
     the model and the group, so the gate looked free next to the step it
-    gates."""
-    fields = _review_meta(
-        {"model_uuid": str(uuid4()), "group_from": "second_opinion",
-         "usage": {"input": 3100, "output": 120, "ms": 4000}},
-        {})
+    gates. Read through the same meta-line builder every other call uses."""
+    fields = event_kpis({
+        "kind": "llm", "variant": "review", "label": "second opinion",
+        "duration_ms": 4000, "start": None,
+        "kpis": {"model_uuid": str(uuid4()), "input_tokens": 3100,
+                 "output_tokens": 120, "verdict": "approved"},
+        "payload": {"group_from": "second_opinion"}})
     texts = [f["text"] for f in fields]
 
     assert "in 3100" in texts
@@ -1484,26 +1523,42 @@ def test_review_meta_shows_what_the_review_cost():
 
 
 def test_review_meta_survives_a_review_that_recorded_no_usage():
-    """A skipped or failed-open review has no model call to cost."""
-    fields = _review_meta({"group_from": "own"}, {})
+    """A skipped or failed-open review has no model call to cost, so its line
+    claims none — an absent field says "not measured", where a zero would say
+    the call was free."""
+    fields = event_kpis({
+        "kind": "llm", "variant": "review", "label": "second opinion",
+        "duration_ms": None, "start": None,
+        "kpis": {"verdict": "skipped"}, "payload": {"group_from": "own"}})
 
-    assert [f["text"] for f in fields] == ["group: own"]
+    assert [f["text"] for f in fields] == []
 
 
-def test_review_payload_carries_the_rows_usage_forward():
-    """The row is the source of truth, so the shape it hands the renderer has
-    to match the inline payload's."""
-    class _Row:
-        problems = []
-        group_from = "own"
-        model_uuid = None
-        system_prompt = user_prompt = reasoning = response = None
-        skip_reason = error = None
-        verdict = "approved"
-        input_tokens, output_tokens, duration_ms = 11, 22, 33
-
-    assert _review_payload(_Row())["usage"] == {
-        "input": 11, "output": 22, "ms": 33}
+def test_review_row_carries_its_usage_onto_the_stream(app_ctx, client):
+    """The review table is the source of truth for what the gate cost, and the
+    stream is where anyone reads it — so the row's tokens and duration have to
+    reach the event, not stop at the table."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = _second_opinion_step(run, approved=True)
+    db.record_second_opinion_review(
+        run_uuid=run.uuid, step_uuid=step.uuid, step_index=0,
+        action="python_run", verdict="approved", group_from="second_opinion",
+        input_tokens=3100, output_tokens=120, duration_ms=4000)
+    db.finish_run(run, "finished")
+    try:
+        rows = db.list_second_opinion_reviews(run.uuid)
+        events = db.run_events(
+            run, db.assistant_trace_steps(run.uuid), rows)
+        reviews = [e for e in events if e["variant"] == "review"
+                   and e["uuid"] == str(rows[0].uuid)]
+        assert reviews, "the gate has a row of its own"
+        assert reviews[0]["kpis"]["input_tokens"] == 3100
+        assert reviews[0]["kpis"]["output_tokens"] == 120
+        assert reviews[0]["duration_ms"] == 4000
+    finally:
+        _cleanup(run.uuid, room.uuid)
 
 
 def test_a_long_request_renders_whole_but_not_at_full_height(app_ctx, client):
@@ -1704,10 +1759,12 @@ def test_memory_query_phase_timing_renders_in_both_views(app_ctx, client):
         for body in (page, md):
             assert "claim retrieval" in body
             assert "recall filter" in body
-        # On the page each phase is a row on the timeline carrying its own
-        # duration; the export keeps the table it has always had.
+        # A row of its own on each surface, carrying its own duration — the
+        # export reads the same rows the page draws, so a phase that has a bar
+        # on one has a section on the other.
         assert "memory_query › claim retrieval" in page
-        assert "| phase | took | at |" in md
+        assert "### memory_query › claim retrieval" in md
+        assert "took 1.2s" in page or "took 0.7s" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1721,12 +1778,12 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
     run = _timed_memory_query_run(room)
     try:
         page, md = _rendered(client, run)
-        assert "kind-embedding" in page                    # waterfall rows
+        assert "kind-embedding" in page                    # gantt rows
         assert "embed 0.9s" in page                        # dashboard Time cell
-        # The model is named once, in the export's summary line — not on
-        # every row of the page, where it would be the same string repeated
-        # down the column.
-        assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in md
+        # The model is on the row's meta line, where every other call row
+        # carries its own — never in the label, which is a fixed-width column
+        # beside a bar and would push the timing off the row.
+        assert "embeddinggemma:300m" in page and "embeddinggemma:300m" in md
         assert "embed embeddinggemma:300m" not in page
         assert "embed 0.9s (2 calls)" in md
         assert "| embed | embedding |" in md

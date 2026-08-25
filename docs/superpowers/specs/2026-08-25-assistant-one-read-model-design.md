@@ -257,3 +257,49 @@ than riding in on this one.
 
 Minting the uuid is the part that costs nothing and unblocks the join. The rest
 waits until there is a reason beyond tidiness.
+
+## Built
+
+Both parts landed. `webapp/assistant_views.py` went from 1939 lines to 1197 —
+26 functions and `_waterfall` gone, and the route passes nine names where it
+passed twenty-eight.
+
+Four things came out differently from the sketch above, each for a reason:
+
+- **Both serializers live in `assistant_components`.** `event_markdown` sits
+  beside `render_event_detail` rather than in the export, so the two ways of
+  writing a block are one file apart and neither can drift without the other in
+  view. `fence` moved with it and is public.
+- **`_logging_step` covers a step's own call only.** A second opinion runs
+  beside its step and the criteria revision's inner call runs inside the
+  action; neither IS the step, so neither is tagged and both stay on the time
+  match. That is what makes the pairing inside a step unambiguous.
+- **The pairing is positional, not indexed.** Grouping by `step_uuid` narrows
+  the candidates to one step's calls, and within a step the assistant calls one
+  at a time — so the rows and the events are the same sequence in start order
+  and no tolerance is involved at all. Rows whose step has no events fall back
+  rather than being dropped.
+- **The embedder's name needed a home.** It used to be printed once per step in
+  the timing block the step sections carried; with those gone it was rendered
+  nowhere. It is on the embed row's meta line now, where every other call row
+  carries its own model.
+
+### What the migration turned up
+
+- **A bespoke action pane could drop the result.** `python_run` and
+  `memory_query` read the observation's text and nothing else, so a step that
+  settled with only a capped preview showed no result at all. All three panes
+  now go through one fallback.
+- **Three fixtures backdated their calls but not their settle times.** An
+  action row is placed where its step settled, so a fixture with July calls and
+  a settle time of now drew a 27-day `unaccounted` bar across the run. The
+  stream was right and the fixtures were not; they pin both ends now.
+
+### Deliberately not carried over
+
+The export's `warm-up` / `follow-up` labels, which named the code-driven rows
+that ran before and after the model's first decision. They came from
+`_step_kinds`, and the page stopped rendering them when the step sections were
+retired — the export was the last surface carrying them. Restoring the
+distinction means putting it on the event, next to `step_ref`, which is a
+change to the read model and belongs in its own change.

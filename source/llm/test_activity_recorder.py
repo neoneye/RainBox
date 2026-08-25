@@ -670,6 +670,50 @@ def test_the_agent_tags_its_calls_with_the_run():
     assert plain == {"caller": "eval.x"}
 
 
+def test_the_agent_tags_its_calls_with_the_step_that_made_them():
+    """The step row is written once the response is in hand, so a call in
+    flight has no row to be tagged from. The uuid that row will be given is
+    what rides along — which is what lets /assistant join a call to its event
+    by record instead of by how close two start times are."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from agents.base import StructuredLLMAgent
+
+    run_uuid, step_uuid = uuid4(), uuid4()
+    agent = SimpleNamespace(_log_run_uuid=run_uuid, _log_step_uuid=step_uuid)
+    tags = StructuredLLMAgent._instrument_tags(agent, "assistant.decide")
+
+    assert tags["run_uuid"] == str(run_uuid)
+    assert tags["step_uuid"] == str(step_uuid)
+
+    # Between steps there is no step to name, and a call made outside one — the
+    # summarizer, an embed inside an action — must record none rather than the
+    # last one's.
+    between = SimpleNamespace(_log_run_uuid=run_uuid, _log_step_uuid=None)
+    assert "step_uuid" not in StructuredLLMAgent._instrument_tags(
+        between, "assistant.run_summarizer")
+
+
+def test_the_step_tag_is_cleared_even_when_the_call_raises():
+    """A call that dies inside the block must not leave its step named on
+    whatever the agent does next."""
+    from uuid import uuid4
+
+    import pytest
+
+    from agents.assistant import AssistantAgent
+
+    agent = AssistantAgent.__new__(AssistantAgent)
+    agent._log_step_uuid = None
+    step_uuid = uuid4()
+    with pytest.raises(RuntimeError):
+        with agent._logging_step(step_uuid):
+            assert agent._log_step_uuid == step_uuid
+            raise RuntimeError("the model timed out")
+    assert agent._log_step_uuid is None
+
+
 def test_the_agent_tags_its_calls_with_the_model_it_chose():
     """The provider reports a model NAME, which is not a model this app can be
     asked about: /model is keyed on the config uuid, and the name does not say
