@@ -73,11 +73,17 @@ def _parse_ts(value):
 
 
 def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
-          model_uuid=None, input_tokens=None, output_tokens=None,
-          detail: str = "", found=None, payload: dict | None = None) -> dict:
+          model_uuid=None, model: str = "", input_tokens=None,
+          output_tokens=None, detail: str = "", found=None,
+          payload: dict | None = None) -> dict:
+    """`model_uuid` is a config this app can be asked about; `model` is a bare
+    name a payload recorded. The embedder is the second kind — it is not one of
+    the assistant's model slots, so there is no uuid to look up and the name it
+    ran under is all there is."""
     return {"label": label, "kind": kind, "start": start,
             "duration_ms": duration_ms, "anchor": anchor,
             "model_uuid": str(model_uuid) if model_uuid else None,
+            "model": model,
             "input_tokens": input_tokens, "output_tokens": output_tokens,
             "detail": detail, "found": found, "payload": payload or {}}
 
@@ -125,9 +131,9 @@ def embed_call_label(call: dict) -> tuple[str, str]:
     query is exactly that. The text belongs in the detail, which the inspector
     pane and the step's timing table both have room to show whole.
 
-    The model is deliberately in neither: a run embeds on one model, so naming
-    it per row is the same string repeated down the column. It is named once
-    per step, in the timing block's embedder line.
+    The model is deliberately in neither: a bar's label is what ran, and the
+    model it ran on belongs on the meta line, where every other call row
+    carries its own.
 
     A batch is named by its size. A first-run seed populate embeds the whole
     registry in one call, and how many it took IS the thing worth knowing —
@@ -156,7 +162,11 @@ def _embedding_calls(step, data: dict) -> list[dict]:
         calls.append(_call(
             label, "embedding",
             start=_parse_ts(call.get("requested_at")),
-            duration_ms=call.get("ms"), anchor=str(step.uuid), detail=detail))
+            duration_ms=call.get("ms"), anchor=str(step.uuid), detail=detail,
+            # The name the payload recorded. Not a uuid: the embedder is not
+            # one of the assistant's model slots, so there is no config page to
+            # reach — and without the name the row cannot say what answered.
+            model=str(call.get("model") or "")))
     return calls
 
 
@@ -379,6 +389,7 @@ def _as_event(call: dict) -> dict:
         duration_ms=call["duration_ms"], anchor=call["anchor"],
         variant=variant,
         kpis={"model_uuid": call.get("model_uuid"),
+              "model": call.get("model") or None,
               "input_tokens": call.get("input_tokens"),
               "output_tokens": call.get("output_tokens")},
         payload={"detail": call.get("detail", ""),
@@ -724,6 +735,10 @@ def run_events(run, steps: list, reviews: list | None = None,
 #: not the same call. Generous: the row is stamped when the request goes out
 #: and the event from the step's own `requested_at`, which can differ by the
 #: time it takes to build a prompt.
+#:
+#: Governs the FALLBACK only. A row that names its step is paired by record,
+#: where no tolerance is involved and none would have worked — a retried
+#: step's two attempts are seconds apart.
 _LLM_CALL_MATCH_TOLERANCE = timedelta(seconds=5)
 
 
@@ -745,6 +760,40 @@ def _step_span(step):
     return start, end
 
 
+def _code_driven_kinds(steps: list) -> dict[str, str]:
+    """Label the steps that are not the model's, by uuid.
+
+    A code-driven row is a call the loop made on its own initiative, and it
+    consumes none of the step budget — so a reader needs to see at a glance
+    that it is not part of the ReAct sequence. Which label depends on when it
+    ran: the response-language classifier and the step-0 acceptance criteria go
+    out before the first decide call (`warm-up`), while the reply audit and a
+    mid-run criteria refresh react to something the model has already decided
+    (`follow-up`).
+
+    `requested_at`, not row order, decides. The audit's row is written before
+    the reply row it audits (the reply lands only once the audit says send), so
+    ordering by row would call it a warm-up. Timing rather than action name also
+    means a code-driven call added later is labelled right the day it lands.
+    Rows predating `requested_at` capture fall back to row order.
+    """
+    first_decide = min(
+        (s.requested_at for s in steps
+         if not s.code_driven and s.phase != "control" and s.requested_at),
+        default=None)
+    kinds: dict[str, str] = {}
+    seen_decide = False
+    for s in steps:
+        if not s.code_driven:
+            if s.phase != "control":
+                seen_decide = True
+            continue
+        after = (s.requested_at > first_decide
+                 if s.requested_at and first_decide else seen_decide)
+        kinds[str(s.uuid)] = "follow-up" if after else "warm-up"
+    return kinds
+
+
 def _attach_step_refs(events: list[dict], steps: list) -> None:
     """Say which step each row belongs to.
 
@@ -760,7 +809,9 @@ def _attach_step_refs(events: list[dict], steps: list) -> None:
     A step's call is labelled its start and its action its end, because those
     are the two moments the step is bounded by. A code-driven step has no
     action, so its one row IS the step: calling that row a start would promise
-    an end the stream never delivers.
+    an end the stream never delivers. It carries `warm-up` or `follow-up`
+    instead, which is the thing its number does not say — that the loop issued
+    it and the model never chose it.
     """
     for event in events:
         event["step_ref"] = ""
@@ -769,19 +820,23 @@ def _attach_step_refs(events: list[dict], steps: list) -> None:
     number = {str(s.uuid): i + 1 for i, s in enumerate(steps)}
     bounded = {str(s.uuid) for s in steps
                if getattr(s, "action", None) and not s.code_driven}
+    kinds = _code_driven_kinds(steps)
     spans = [(_step_span(s), i + 1) for i, s in enumerate(steps)]
     spans = [((a, b), n) for (a, b), n in spans if a and b]
     spans.sort()
     for event in events:
-        n = number.get(str(event.get("anchor") or ""))
+        anchor = str(event.get("anchor") or "")
+        n = number.get(anchor)
         if n is not None:
-            if str(event["anchor"]) in bounded and event["kind"] == "llm" \
+            if anchor in bounded and event["kind"] == "llm" \
                     and event["variant"] in ("decide", "code-driven"):
                 event["step_ref"] = f"Step {n} start"
             elif event["kind"] == "action":
                 event["step_ref"] = f"Step {n} end"
             else:
-                event["step_ref"] = f"Step {n}"
+                kind = kinds.get(anchor)
+                event["step_ref"] = f"Step {n}" + (f" \u00b7 {kind}" if kind
+                                                   else "")
             continue
         event["step_ref"] = _ref_by_time(event["start"], spans)
 
@@ -859,13 +914,84 @@ def _attach_model_names(events: list[dict]) -> None:
             event["kpis"]["model"] = name
 
 
+#: The variants that ARE a step's own call — the ones a `step_uuid` on an
+#: `llm_call` row names. A `review` runs beside its step rather than being it,
+#: and an `inner` call is made from within the action, so neither is tagged and
+#: both stay on the time match.
+_OWN_CALL_VARIANTS: frozenset[str] = frozenset(
+    {"decide", "code-driven", "rejected"})
+
+
+def _apply_call_kpis(event: dict, row) -> None:
+    """Put one `llm_call` row's numbers on the event it belongs to."""
+    event["kpis"].update({
+        "prefill_ms": row.prefill_ms,
+        "decode_ms": row.decode_ms,
+        "cached_tokens": (row.cached_tokens_reported
+                          if row.cached_tokens_reported is not None
+                          else row.cached_tokens_estimated),
+        "model": row.model,
+        "provider": row.provider,
+        "call_uuid": str(row.uuid),
+    })
+    if row.prompt_tokens is not None:
+        event["kpis"]["input_tokens"] = row.prompt_tokens
+    if row.completion_tokens is not None:
+        event["kpis"]["output_tokens"] = row.completion_tokens
+
+
+def _match_by_step(events: list[dict], rows: list) -> list:
+    """Pair each step's calls with its events, and return the rows left over.
+
+    A row carrying `step_uuid` says which step made the call — the uuid was
+    minted before the call went out and given to the step row afterwards, so
+    this is a record and not a match. Within one step it is positional: a step
+    makes its calls one at a time, its thrown-away attempts first and the
+    answer it kept last, and both sequences are in start order. No tolerance is
+    involved, which is what a retried step needed — its two attempts sit inside
+    any workable one.
+
+    Rows whose step has no events, and any surplus on either side, fall
+    through to the time match rather than being dropped.
+    """
+    by_step: dict[str, list] = {}
+    rest: list = []
+    for row in rows:
+        step_uuid = getattr(row, "step_uuid", None)
+        if step_uuid:
+            by_step.setdefault(str(step_uuid), []).append(row)
+        else:
+            rest.append(row)
+    if not by_step:
+        return rest
+    owned: dict[str, list[dict]] = {}
+    for event in events:
+        if (event["kind"] == "llm"
+                and event["variant"] in _OWN_CALL_VARIANTS
+                and str(event.get("anchor") or "") in by_step):
+            owned.setdefault(str(event["anchor"]), []).append(event)
+    for step_uuid, step_rows in by_step.items():
+        step_rows.sort(key=lambda r: (r.started_at is None, r.started_at))
+        step_events = sorted(
+            owned.get(step_uuid, []),
+            key=lambda e: (e["start"] is None, e["start"] or datetime.min))
+        for event, row in zip(step_events, step_rows):
+            _apply_call_kpis(event, row)
+        rest.extend(step_rows[len(step_events):])
+    return rest
+
+
 def _attach_llm_call_kpis(events: list[dict], run) -> None:
     """Fill each llm event's prefill, decode and cache KPIs from `llm_call`.
 
-    Matched on the run plus the closest start time. Within a run that is exact
-    rather than a guess: the assistant makes one model call at a time, so the
-    calls and the events are the same sequence. `run_uuid` is what makes it
-    safe — matching on time alone would confuse two runs happening at once.
+    Two matches, in that order. A row that names its step is paired with that
+    step's calls by record (`_match_by_step`). Everything else — a call made
+    beside a step rather than by it, and every row written before the linkage
+    existed — is paired on the run plus the closest start time. Within a run
+    that is close to exact: the assistant makes one model call at a time, so
+    the calls and the events are the same sequence. `run_uuid` is what makes it
+    safe at all — matching on time alone would confuse two runs happening at
+    once.
 
     One query for the run, not a lookup per event, which would be a query per
     bar on the page. An event with no matching row keeps the KPIs the step
@@ -887,9 +1013,10 @@ def _attach_llm_call_kpis(events: list[dict], run) -> None:
     except Exception:
         # The read model must never take the page down over telemetry.
         return
-    unused = [r for r in rows if r.started_at]
+    unused = [r for r in _match_by_step(events, rows) if r.started_at]
     for event in events:
-        if event["kind"] != "llm" or not event["start"]:
+        if (event["kind"] != "llm" or not event["start"]
+                or event["kpis"].get("call_uuid")):
             continue
         best, best_gap = None, None
         for row in unused:
@@ -899,20 +1026,7 @@ def _attach_llm_call_kpis(events: list[dict], run) -> None:
         if best is None or best_gap > _LLM_CALL_MATCH_TOLERANCE:
             continue
         unused.remove(best)
-        event["kpis"].update({
-            "prefill_ms": best.prefill_ms,
-            "decode_ms": best.decode_ms,
-            "cached_tokens": (best.cached_tokens_reported
-                              if best.cached_tokens_reported is not None
-                              else best.cached_tokens_estimated),
-            "model": best.model,
-            "provider": best.provider,
-            "call_uuid": str(best.uuid),
-        })
-        if best.prompt_tokens is not None:
-            event["kpis"]["input_tokens"] = best.prompt_tokens
-        if best.completion_tokens is not None:
-            event["kpis"]["output_tokens"] = best.completion_tokens
+        _apply_call_kpis(event, best)
 
 
 #: The caller name the run summarizer's model call records

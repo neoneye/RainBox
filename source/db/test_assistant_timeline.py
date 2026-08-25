@@ -220,3 +220,44 @@ def test_an_activity_is_named_for_the_step_that_recorded_it():
     assert "memory_query › recall filter" in labels
     assert "recall_filter" in labels
     assert "recall filter" not in labels
+
+
+def test_a_loop_issued_call_says_which_side_of_the_decision_it_fell_on():
+    """A code-driven row is a call the loop made itself, so it is not part of
+    the ReAct sequence and consumed none of its budget. Which side of the
+    model's first decision it ran on is the rest of the answer: a warm-up
+    established something the decision was made from, a follow-up reacted to
+    the decision.
+
+    Decided on the clock, not on row order — the reply audit's ROW is written
+    before the reply row it audits, because the reply lands only once the audit
+    says send. Read by row it would be a warm-up.
+    """
+    classifier = _step("response_language_classifier", at=0, ms=1000)
+    decide = _step("reply", at=2, ms=1000, code_driven=False)
+    audit = _step("reply_audit", at=4, ms=1000)
+    # Row order puts the audit ahead of the call it audited, as the loop does.
+    events = db.run_events(_run(finished=6), [classifier, audit, decide])
+    by_label = {e["label"]: e["step_ref"] for e in events}
+
+    assert by_label["response_language_classifier"].endswith("· warm-up")
+    assert by_label["reply_audit"].endswith("· follow-up")
+    # The model's own step is neither: it IS the sequence.
+    assert "·" not in by_label["decide → reply"]
+
+
+def test_a_row_with_no_clock_falls_back_to_the_order_it_was_written():
+    """Legacy rows predate the `requested_at` capture. Row order is a worse
+    answer than the clock and the right one to fall back to: the loop writes a
+    warm-up before it opens and a follow-up after."""
+    classifier = _step("response_language_classifier", at=0, ms=1000)
+    decide = _step("reply", at=2, ms=1000, code_driven=False)
+    audit = _step("reply_audit", at=4, ms=1000)
+    for step in (classifier, decide, audit):
+        step.requested_at = None
+    # Written in the order the loop writes them, the audit before the reply.
+    events = db.run_events(_run(finished=6), [classifier, decide, audit])
+    by_label = {e["label"]: e["step_ref"] for e in events}
+
+    assert by_label["response_language_classifier"].endswith("· warm-up")
+    assert by_label["reply_audit"].endswith("· follow-up")

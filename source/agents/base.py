@@ -393,10 +393,17 @@ class ModelGroupAgent(Agent):
         """Tags that ride the instrumentation events into the `llm_call` row.
 
         `caller` labels the call on /activity. The run and step are added when
-        the agent is tracking them — the assistant sets them around each call —
-        so a row can be joined back to the turn that made it, which is what
-        lets /assistant show a call's prefill/decode split and cache reuse.
-        Absent for every other agent, whose calls simply record no linkage.
+        the agent is tracking them — the assistant sets the run for the whole
+        turn and the step around each call — so a row can be joined back to
+        the turn that made it, which is what lets /assistant show a call's
+        prefill/decode split and cache reuse. Absent for every other agent,
+        whose calls simply record no linkage.
+
+        The step is read here rather than passed in because the step row does
+        not exist yet: it is written once the response is in hand. What the
+        assistant sets is the uuid that row will be given
+        (`AssistantAgent._logging_step`), so the tag is a record of which step
+        made the call rather than a later guess from its start time.
 
         The model rides along for the same reason. What instrumentation sees is
         the NAME the provider was given, which is not something this app can be
@@ -410,6 +417,9 @@ class ModelGroupAgent(Agent):
         run_uuid = getattr(self, "_log_run_uuid", None)
         if run_uuid:
             tags["run_uuid"] = str(run_uuid)
+        step_uuid = getattr(self, "_log_step_uuid", None)
+        if step_uuid:
+            tags["step_uuid"] = str(step_uuid)
         model_uuid = getattr(self, "_last_model_uuid", None)
         if model_uuid:
             tags["model_uuid"] = str(model_uuid)

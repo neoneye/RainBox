@@ -327,12 +327,17 @@ def test_work_inside_a_step_is_named_by_the_step_alone():
 
 def test_a_step_that_is_only_a_call_is_not_split_into_two_ends():
     """A code-driven step has no action, so its one row IS the step. Calling
-    it the start would promise an end that never comes."""
+    it the start would promise an end that never comes.
+
+    It says the loop issued it instead — which is what the number cannot: this
+    row is not part of the ReAct sequence and consumed none of its budget."""
     events = db.run_events(_run(finished=10),
                            [_step("reply_audit", at=0, ms=2000,
                                   code_driven=True)])
 
-    assert _ref(events, "llm") == "Step 1"
+    ref = _ref(events, "llm")
+    assert not ref.endswith(" start") and not ref.endswith(" end")
+    assert ref.startswith("Step 1 \u00b7 ")
 
 
 def test_time_between_two_steps_names_both():

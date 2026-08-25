@@ -2,42 +2,35 @@
 
 Split layout (mirrors /memory's facet tree): the left pane groups recent
 `AssistantRun`s into **virtual status folders** (Recent / Running / Stopped /
-Resolved / Unresolved — computed each load, not editable), the right pane shows
-the selected run's summary, details, and `AssistantStep` timeline with each
-`AssistantWriteIntent` inline (joined by `step_uuid`). Read-only except the
-lifecycle actions the existing endpoints already own — confirm / reject / undo a
-write-intent, and stop / redirect a live run (`webapp/chat_api.py`). The selected
-run carries a kebab (Copy run id / Copy journal id / Stop). See
+Resolved / Unresolved — computed each load, not editable). The right pane shows
+the selected run as a dashboard over a stream of typed events — a gantt for
+spotting an anomaly by its width, a list for reading down what happened, and an
+inspector for whichever row is selected. Read-only except the lifecycle actions
+the existing endpoints already own — confirm / reject / undo a write-intent,
+and stop / redirect a live run (`webapp/chat_api.py`). The selected run carries
+a kebab (Copy run id / Copy journal id / Stop). See
 notes/ui-left-panel-tree.md.
+
+This module owns the page and its markdown twin, and no more than that. What a
+run consists of is `db.assistant_log`; what one event says is
+`webapp.assistant_components`; where a row sits on the gantt is
+`webapp.assistant_log_view`. Both surfaces render the same events through the
+same components, which is the point — the export used to walk the step rows and
+rebuild every pane, so one run had two readings that could disagree.
 """
 
-import json
-from datetime import datetime, timedelta
 from uuid import UUID
 
 from flask import Response, render_template_string, request
 
 import db
-from agents.assistant import CAPABILITIES, problem_texts
-from .assistant_components import (
-    CODE_DRIVEN_DESCRIPTIONS as _CODE_DRIVEN_DESCRIPTIONS,
-)
-from .assistant_components import (
-    ACTION_DESCRIPTIONS as _ACTION_DESCRIPTIONS,
-)
+from .assistant_components import event_markdown, fence
 from .assistant_log_view import log_view
 from .core import app
 
-# action value -> short human-readable summary, for the timeline's "action
-# call" section (the verbose `description` is LLM-facing). Static (the capability
-# registry is defined in code), so resolve once at import.
 ASSISTANT_TEMPLATE = """
 <!doctype html>
 <title>Assistant run &mdash; rainbox</title>
-{# The right-aligned meta line on an io-label. The fields come from the
-   builders in this module (_response_meta and friends) — the same ones the
-   markdown export renders through _meta_md — so this macro decides only how a
-   field looks, never which fields there are. #}
 <style>
   body { margin: 0; font-family: system-ui, sans-serif; height: 100vh;
          display: flex; flex-direction: column; overflow: hidden; }
@@ -539,8 +532,11 @@ ASSISTANT_TEMPLATE = """
       <div class="step phase-running" id="active-call">
         <div class="card-header">
           {# The in-flight call has no row yet, so it takes the position right
-             after the last one — the number the timeline will give it. #}
-          <span class="ix" title="{% if active_call.step_index is not none %}decide-loop step index={{ active_call.step_index }}{% endif %}">Step {{ timeline|length + 1 }}</span>
+             after the last one — the number the stream will give it. Counted
+             off the events' distinct steps rather than the rows: one step is
+             several rows (its call, the action it chose, the phases it ran),
+             and counting rows would number the live call in the hundreds. #}
+          <span class="ix" title="{% if active_call.step_index is not none %}decide-loop step index={{ active_call.step_index }}{% endif %}">Step {{ log.events | map(attribute='anchor') | select | unique | list | length + 1 }}</span>
           <span class="action">model call in progress…</span>
           {% if active_call.model_name %}<span class="action-desc">{{ active_call.model_name }}</span>{% endif %}
         </div>
@@ -943,49 +939,6 @@ def _dash_status(run) -> tuple[str, str]:
     return ("Unresolved", "unresolved")
 
 
-def _waterfall(calls: list[dict], run) -> list[dict]:
-    """Lay the calls out over the run's wall-clock span as percentages, so the
-    page draws where each call sat and — by the gaps between bars — where the
-    time went that no model was working."""
-    starts = [c["start"] for c in calls if c["start"]]
-    if not starts:
-        return []
-    first = min([run.started_at] + starts) if run.started_at else min(starts)
-    ends = [c["start"] + timedelta(milliseconds=c["duration_ms"] or 0)
-            for c in calls if c["start"]]
-    last = max(ends + ([run.finished_at] if run.finished_at else []))
-    span = (last - first).total_seconds()
-    if span <= 0:
-        return []
-    rows = []
-    for c in calls:
-        row = dict(c)
-        if c["start"]:
-            offset = (c["start"] - first).total_seconds()
-            width = (c["duration_ms"] or 0) / 1000
-            row["offset_pct"] = round(offset / span * 100, 3)
-            # A floor so a sub-second call against a long run stays visible.
-            row["width_pct"] = round(max(width / span * 100, 0.6), 3)
-        else:
-            row["offset_pct"] = None
-            row["width_pct"] = None
-        row["seconds"] = (f"{c['duration_ms'] / 1000:.1f}s"
-                          if c["duration_ms"] is not None else "—")
-        # Where following this bar lands. An activity is a slice of an action's
-        # phase table, so it goes to that table rather than to the top of a
-        # long step section. An unaccounted bar has nothing that explains it —
-        # that is what it means — so it is not a link at all rather than a
-        # dead one.
-        if not c["anchor"]:
-            row["href"] = None
-        elif c["kind"] == "activity":
-            row["href"] = f"#phases-{c['anchor']}"
-        else:
-            row["href"] = f"#step-{c['anchor']}"
-        rows.append(row)
-    return rows
-
-
 def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
     """Aggregate metrics for the top-of-detail mini dashboard.
 
@@ -1028,555 +981,21 @@ def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
 
 
 # --- markdown export ---------------------------------------------------------
-# Serialize the /assistant detail pane to Markdown, section-for-section with
-# ASSISTANT_TEMPLATE's `.as-main`: dashboard → summary → trigger → timeline →
-# unlinked writes → verdict. Built from the data model (not the DOM) so it stays
-# stable as the HTML evolves.
-
-
-def _fence(text: str, lang: str = "") -> str:
-    """A fenced code block whose fence is long enough to survive backticks in
-    `text` (CommonMark: the closing fence must be at least as long as any run of
-    backticks inside)."""
-    longest = 0
-    run = 0
-    for ch in text:
-        run = run + 1 if ch == "`" else 0
-        longest = max(longest, run)
-    fence = "`" * max(3, longest + 1)
-    return f"{fence}{lang}\n{text}\n{fence}"
-
-
-def _hms(dt) -> str | None:
-    return dt.strftime("%H:%M:%S") if dt else None
-
-
-# --- io-meta ------------------------------------------------------------------
+# The detail pane serialized to Markdown, section-for-section with
+# ASSISTANT_TEMPLATE's `.as-main`: dashboard → summary → model calls → run →
+# timeline → verdict.
 #
-# The small right-aligned line on an io-label (model · tokens · throughput ·
-# duration · timestamp). Every io block has one, and both renderers draw it: the
-# page via the `io_meta` macro, the markdown export via _meta_md(). Each builder
-# below returns the line's fields ONCE, so a change to what a field says, how a
-# number is formatted, or which order they appear in is made in exactly one
-# place. Renderers decide presentation only — never which fields exist.
-
-
-def _field(text: str, title: str, *, html: str | None = None,
-           href: str | None = None, cls: str = "") -> dict:
-    """One io-meta field. `text` is the value both renderers show; `html`
-    overrides it on the page when the link text differs from the exported text;
-    `title` is the page's hover explanation."""
-    return {"text": text, "title": title, "html": html, "href": href, "cls": cls}
-
-
-def _model_field(model_uuid, model_names: dict[str, str], title: str) -> dict:
-    """The link to the model that answered. The page shows a compact "model ↗"
-    with the name on hover; the export has no hover, so it prints the name."""
-    name = model_names.get(str(model_uuid), str(model_uuid)[:8])
-    return _field(name, f"{title}: {name}", html="model ↗",
-                  href=f"/model?id={model_uuid}", cls="io-model")
-
-
-def _time_field(dt, title: str) -> list[dict]:
-    when = _hms(dt)
-    if not when:
-        return []
-    return [_field(when, f"{title}: {dt.replace(microsecond=0).isoformat()}",
-                   cls="io-time")]
-
-
-
-
-def _usage_fields(
-    input_tokens: int | None, output_tokens: int | None, duration_ms: int | None
-) -> list[dict]:
-    """What one model call cost, as the meta fields every such line shares.
-
-    One renderer because a model call costs the same thing wherever it ran: a
-    line that showed only a duration read as a call that was free, which is
-    exactly how the reply audit's cost went unnoticed."""
-    fields: list[dict] = []
-    if input_tokens is not None or output_tokens is not None:
-        tokens = (input_tokens or 0) + (output_tokens or 0)
-        fields.append(_field(
-            f"in {input_tokens or 0}",
-            "Input tokens: the size of the prompt sent to the model for this step"))
-        fields.append(_field(
-            f"out {output_tokens or 0}",
-            "Output tokens: the amount of text the model generated for this step"))
-        if duration_ms:
-            fields.append(_field(
-                f"{tokens * 1000 / duration_ms:.0f} tok/s",
-                "Throughput: total tokens (input + output) processed per second"))
-    if duration_ms is not None:
-        fields.append(_field(
-            f"took {duration_ms / 1000:.1f}s",
-            "Duration: how long the model took to produce this response",
-            cls="io-dur"))
-    return fields
-
-
-def _response_meta(step, model_names: dict[str, str]) -> list[dict]:
-    """The model-response line: which model, what the call cost, how fast."""
-    fields: list[dict] = []
-    if step.model_uuid:
-        fields.append(_model_field(
-            step.model_uuid, model_names, "The model that produced this response"))
-    fields += _usage_fields(
-        step.input_tokens, step.output_tokens, step.duration_ms)
-    return fields + _time_field(
-        step.created_at, "When this model response was recorded")
-
-
-def _exchanges(step, model_names: dict[str, str], decision_text: str) -> list[dict]:
-    """One step's LLM exchanges, oldest first: every attempt its call made.
-
-    A retried call is several exchanges, not one exchange plus a footnote. A
-    rejected attempt is an LLM invocation like any other — it was sent a
-    request, it thought, it answered — so it renders through the same shape as
-    the kept one, and prompts, reasoning and response appear for all of them or
-    for none.
-
-    Every attempt shares the step's system and user prompt; a retry differs
-    only by the turns appended after them, which is what `turns` carries (the
-    feedback from each earlier rejection, accumulated). The rejected attempts
-    store no prompt of their own for exactly this reason.
-    """
-    exchanges: list[dict] = []
-    attempts = list(step.rejected_attempts or [])
-    turns: list[dict] = []
-    for index, attempt in enumerate(attempts, start=1):
-        exchanges.append({
-            "key_prefix": f"attempt{index}-",
-            "rejected": True,
-            "request_label": f"model request (attempt {index})",
-            "request_meta": [_field(
-                _iso_hms(attempt.get("requested_at")),
-                "When this attempt was sent", cls="io-time")]
-            if attempt.get("requested_at") else [],
-            "system_prompt": step.system_prompt,
-            "user_prompt": step.user_prompt,
-            "turns": list(turns),
-            "reasoning": attempt.get("reasoning"),
-            "response_label": f"rejected response {index} of {len(attempts)}",
-            "response_meta": _rejected_meta(attempt, model_names),
-            "response_text": attempt.get("response"),
-            "error": attempt.get("error"),
-        })
-        turns = turns + list(attempt.get("feedback") or [])
-    # The attempt the step itself records — the one whose answer was kept,
-    # which on a call that never retried is the only one there was.
-    if step.system_prompt or step.user_prompt or decision_text or step.model_response:
-        exchanges.append({
-            "key_prefix": "",
-            "rejected": False,
-            # Only worth numbering when there is something to number it
-            # against; a call that got it right first time reads as before.
-            "request_label": ("model request"
-                              if not attempts
-                              else f"model request (attempt {len(attempts) + 1})"),
-            # A retry went out when the attempt before it was refused, not
-            # when the call started — `requested_at` is the first attempt's
-            # (the same reading the waterfall places these bars by).
-            "request_meta": (
-                _request_meta(step) if not attempts else
-                [_field(_hms(db.retry_resumed_at(step)) or "—",
-                        "When this attempt was sent", cls="io-time")]),
-            "system_prompt": step.system_prompt,
-            "user_prompt": step.user_prompt,
-            "turns": turns,
-            "reasoning": step.reasoning,
-            # "partial" means the call died mid-stream and this is as far as
-            # it got — a row that never produced a decision AND recorded an
-            # error. A code-driven row that succeeded holds its complete
-            # response, so it stays "model response".
-            "response_label": (
-                "partial model response"
-                if step.model_response and not decision_text and step.error
-                else "model response"),
-            "response_meta": _response_meta(step, model_names),
-            "response_text": decision_text or step.model_response,
-            "error": None,
-        })
-    return [x for x in exchanges
-            if x["system_prompt"] or x["user_prompt"] or x["turns"]
-            or x["reasoning"] or x["response_text"] or x["error"]]
-
-
-def _rejected_meta(attempt: dict, model_names: dict[str, str]) -> list[dict]:
-    """The rejected-response line: which model wrote it, what it cost, when.
-
-    The same fields as the accepted response beside it, because the question
-    the operator is asking is the same one — where did the time go — and this
-    attempt spent as much of it as the one that worked."""
-    fields: list[dict] = []
-    if attempt.get("model_uuid"):
-        fields.append(_model_field(
-            attempt["model_uuid"], model_names,
-            "The model that produced this rejected response"))
-    fields += _usage_fields(
-        attempt.get("input_tokens"), attempt.get("output_tokens"),
-        attempt.get("ms"))
-    if attempt.get("requested_at"):
-        fields.append(_field(
-            _iso_hms(attempt["requested_at"]),
-            "When this attempt was sent", cls="io-time"))
-    return fields
-
-
-def _request_meta(step) -> list[dict]:
-    return _time_field(step.requested_at, "When this model request was made")
-
-
-def _call_meta(step) -> list[dict]:
-    return _time_field(step.created_at, "When this action was called")
-
-
-def _result_meta(step) -> list[dict]:
-    """The action-result line. Its duration is the action's own — wall-clock
-    from the call to the observation — not the model call's."""
-    if not step.settled_at:
-        return []
-    fields: list[dict] = []
-    if step.created_at:
-        elapsed = (step.settled_at - step.created_at).total_seconds()
-        fields.append(_field(
-            f"took {elapsed:.1f}s",
-            "Duration: how long the action took to complete", cls="io-dur"))
-    return fields + _time_field(
-        step.settled_at, "When this action result was recorded")
-
-
-def _review_meta(so: dict, model_names: dict[str, str]) -> list[dict]:
-    """The second-opinion line: the reviewer model, where its group came from,
-    and what the review cost — the review is a model call like any other, and
-    it is the one the operator is most likely to be weighing against the step
-    it gates."""
-    fields: list[dict] = []
-    if so.get("model_uuid"):
-        fields.append(_model_field(
-            so["model_uuid"], model_names, "The reviewing model"))
-    if so.get("group_from"):
-        fields.append(_field(
-            f"group: {so['group_from']}",
-            "Which agent binding supplied the reviewer's model group "
-            "(second_opinion on /agentmodel, else the assistant's own)"))
-    usage = so.get("usage") or {}
-    return fields + _usage_fields(
-        usage.get("input"), usage.get("output"), usage.get("ms"))
-
-
-def _meta_md(fields: list[dict]) -> str:
-    """The export's rendering of an io-meta line: the field values, in order."""
-    return " · ".join(f["text"] for f in fields)
-
-
-def _labelled(label: str, fields: list[dict]) -> str:
-    """An export io-label with its meta line appended — the flat-text
-    counterpart of the page's label + right-aligned `io_meta` span."""
-    meta = _meta_md(fields)
-    return f"{label} · {meta}" if meta else label
-
-
-def _intent_md(it) -> list[str]:
-    """One write-intent as Markdown: a bullet with capability + state, optional
-    preview, and the payload as a JSON block."""
-    lines = [f"- write intent `{it.capability_name}` — {it.state}"]
-    if it.preview_text:
-        lines.append(f"  - {it.preview_text}")
-    if it.payload:
-        lines.append("")
-        lines.append(_fence(json.dumps(it.payload, ensure_ascii=False, indent=2), "json"))
-    lines.append("")
-    return lines
-
-
-def _review_payload(row) -> dict:
-    """A second_opinion_review row in the shape both renderers already expect,
-    so the row became the source of truth without either of them changing.
-    `approved` is present only for a real verdict — a skipped or failed-open
-    review never approved anything, and an `approved: false` badge on one would
-    read as a rejection."""
-    payload: dict = {
-        "problems": list(row.problems or []),
-        "group_from": row.group_from,
-        "model_uuid": str(row.model_uuid) if row.model_uuid else None,
-        "system_prompt": row.system_prompt,
-        "user_prompt": row.user_prompt,
-        "reasoning": row.reasoning,
-        "response": row.response,
-        "skipped": row.skip_reason,
-        "error": row.error,
-        # Same shape the inline payload carries, so `_review_meta` reads one
-        # thing whether the review came from its own row or from the step's
-        # observation fallback.
-        "usage": {"input": row.input_tokens, "output": row.output_tokens,
-                  "ms": row.duration_ms},
-    }
-    if row.verdict in ("approved", "rejected"):
-        payload["approved"] = row.verdict == "approved"
-    return payload
-
-
-def _split_second_opinion(step, reviews: dict | None = None) -> tuple[dict | None, dict]:
-    """A gated step's observation data points at the second-opinion review, but
-    chronologically the review ran BEFORE the action — so both renderers (HTML
-    and markdown) show it as its own block above the action call and strip the
-    pointer from the action-result data. Returns (review_or_None, remaining_data).
-
-    `reviews` maps review uuid -> row. Steps written before the row existed
-    carry the whole payload inline instead of a pointer and are passed through
-    unchanged; a pointer with no row (the write failed, or the run was pruned)
-    yields None rather than breaking the trace.
-    """
-    obs = step.observation or {}
-    data = dict(obs.get("data") or {})
-    so = data.pop("second_opinion", None)
-    if isinstance(so, dict) and "review_uuid" in so:
-        row = (reviews or {}).get(str(so["review_uuid"]))
-        return (_review_payload(row) if row is not None else None), data
-    return so, data
-
-
-def _split_timing(step) -> dict | None:
-    """The action's phase timing, lifted out of the observation data so it
-    renders as a table instead of a JSON dump inside the result.
-
-    Only memory_query records it today. Its step duration says the action took
-    half a minute; the phases say whether that was the vector search, the seed
-    KB, or the relevance filter's own LLM call — three different problems with
-    three different fixes."""
-    data = (step.observation or {}).get("data") or {}
-    timing = data.get("timing")
-    return timing if isinstance(timing, dict) and timing.get("phases") else None
-
-
-def _timing_view(timing: dict) -> dict:
-    """The timing block as the page and the export both render it: one row per
-    phase, the embedder's totals underneath, and under those the text each
-    embedder call was given.
-
-    The embedder calls are not phase rows — their time is already inside the
-    phase that made them, and a second set of durations adding up to more than
-    the action took would read as a contradiction. They are listed for their
-    text, which is the one thing about them the waterfall's bars and the
-    totals' char count cannot show: whether two calls embedded the same thing.
-    Their placement on the run's wall-clock stays in the waterfall above."""
-    rows = []
-    for p in timing.get("phases") or []:
-        ms = p.get("ms")
-        rows.append({
-            "name": str(p.get("name") or "—"),
-            "took": _format_seconds(ms / 1000) if ms is not None else "—",
-            "at": _iso_hms(p.get("started_at")),
-        })
-    embeds = timing.get("embeddings") or {}
-    summary = None
-    calls = []
-    if embeds.get("count"):
-        parts = [f"{embeds['count']} call{'s' if embeds['count'] != 1 else ''}",
-                 _format_seconds((embeds.get("ms") or 0) / 1000)]
-        if embeds.get("chars"):
-            parts.append(f"{embeds['chars']} chars")
-        parts += [str(m) for m in (embeds.get("models") or [])]
-        # A bulk populate embeds more calls than the payload keeps. Said out
-        # loud, because a list that silently stops short reads as the whole of
-        # it — and then the totals above look wrong instead of the list.
-        if embeds.get("dropped"):
-            parts.append(f"{embeds['dropped']} not kept below")
-        summary = " · ".join(parts)
-        for call in embeds.get("calls") or []:
-            label, detail = db.embed_call_label(call)
-            ms = call.get("ms")
-            calls.append({
-                "text": detail or label,
-                "took": _format_seconds(ms / 1000) if ms is not None else "—",
-                "at": _iso_hms(call.get("requested_at")),
-            })
-    return {"rows": rows, "embeddings": summary, "embed_calls": calls}
-
-
-def _iso_hms(value: str | None) -> str:
-    """An ISO timestamp from a JSONB payload as wall-clock HH:MM:SS, in the
-    same zone as the other trace times (the payloads store UTC). Unparseable
-    or missing renders as an em dash rather than raising — the timing block is
-    diagnostics, and diagnostics must not be what breaks the page."""
-    if not value:
-        return "—"
-    try:
-        parsed = datetime.fromisoformat(str(value))
-    except ValueError:
-        return "—"
-    return (parsed.astimezone() if parsed.tzinfo else parsed).strftime("%H:%M:%S")
-
-
-def _second_opinion_md(so: dict, model_names: dict[str, str]) -> list[str]:
-    """The second-opinion block as Markdown: verdict and reviewer on the label,
-    the exact prompts the reviewer model was given, then the problems (or why
-    the review was skipped / failed open) as bullets."""
-    label = "**second opinion**"
-    if "approved" in so:
-        label += f" · approved: {'true' if so.get('approved') else 'false'}"
-    lines = [_labelled(label, _review_meta(so, model_names)), ""]
-    if so.get("system_prompt"):
-        lines.append("_system prompt_")
-        lines.append(_fence(so["system_prompt"]))
-        lines.append("")
-    if so.get("user_prompt"):
-        lines.append("_user prompt_")
-        lines.append(_fence(so["user_prompt"]))
-        lines.append("")
-    if so.get("reasoning"):
-        lines.append("_reasoning_")
-        lines.append(_fence(so["reasoning"]))
-        lines.append("")
-    if so.get("response"):
-        lines.append("_response_")
-        lines.append(_fence(so["response"], "json"))
-        lines.append("")
-    for text in problem_texts(so.get("problems")):
-        lines.append(f"- {text}")
-    if so.get("skipped"):
-        lines.append(f"- review skipped: {so['skipped']}")
-    if so.get("error"):
-        lines.append(f"- review failed open: {so['error']}")
-    if lines[-1] != "":
-        lines.append("")
-    return lines
-
-
-def _exchange_md(exchange: dict, *, fence_json: bool) -> list[str]:
-    """One LLM exchange as Markdown.
-
-    The export is the only renderer of this shape now: the page draws a run as
-    its event stream, where a rejected attempt is a row like the attempt that
-    replaced it rather than a block inside one. Both are still fed the same
-    dicts from `_exchanges`, so the two attempts cannot drift apart here."""
-    lines: list[str] = []
-    if exchange["system_prompt"] or exchange["user_prompt"] or exchange["turns"]:
-        lines.append(_labelled(f"**{exchange['request_label']}**",
-                               exchange["request_meta"]))
-        lines.append("")
-        if exchange["system_prompt"]:
-            lines.append("_system prompt_")
-            lines.append(_fence(exchange["system_prompt"]))
-            lines.append("")
-        if exchange["user_prompt"]:
-            lines.append("_user prompt_")
-            lines.append(_fence(exchange["user_prompt"]))
-            lines.append("")
-        for turn in exchange["turns"]:
-            lines.append(f"_{turn.get('role')} turn_")
-            lines.append(_fence(str(turn.get("content") or "")))
-            lines.append("")
-    if exchange["reasoning"]:
-        lines.append("**model reasoning**")
-        lines.append("")
-        lines.append(_fence(exchange["reasoning"]))
-        lines.append("")
-    if exchange["response_text"] or exchange["error"]:
-        lines.append(_labelled(f"**{exchange['response_label']}**",
-                               exchange["response_meta"]))
-        lines.append("")
-        if exchange["error"]:
-            lines.append(f"**error:** {exchange['error']}")
-            lines.append("")
-        if exchange["response_text"]:
-            lines.append(_fence(
-                exchange["response_text"],
-                "json" if fence_json and not exchange["rejected"] else ""))
-            lines.append("")
-    return lines
-
-
-def _step_md(step, decision_json: dict[str, str], model_names: dict[str, str],
-             reviews: dict | None = None,
-             duplicate_result: set[str] | None = None) -> list[str]:
-    """A single timeline step's body: model request/response, action call/result
-    and any error. Mirror of the template's per-step io-blocks (search
-    ASSISTANT_TEMPLATE for "mirrored in Python by _step_md"); keep the set of
-    blocks and their order aligned with the HTML."""
-    lines: list[str] = []
-    if step.phase == "control":
-        if step.reason:
-            lines.append(step.reason)
-            lines.append("")
-        return lines
-    if step.log:
-        lines.append("**log**")
-        lines.append("")
-        for entry in step.log:
-            text = str(entry.get("text") or "")
-            suffix = f" `{entry['uuid']}`" if entry.get("uuid") else ""
-            lines.append(f"- {entry.get('label')}: {text}{suffix}")
-        lines.append("")
-    decision = decision_json.get(str(step.uuid), "")
-    for exchange in _exchanges(step, model_names, decision):
-        lines.extend(_exchange_md(exchange, fence_json=bool(decision)))
-    second_opinion, obs_data = _split_second_opinion(step, reviews)
-    if second_opinion is not None:
-        lines.extend(_second_opinion_md(second_opinion, model_names))
-    if step.action and not step.code_driven:
-        lines.append(_labelled("**action call**", _call_meta(step)))
-        lines.append("")
-        if step.args:
-            lines.append(_fence(json.dumps(step.args, ensure_ascii=False, indent=2), "json"))
-            lines.append("")
-    obs = step.observation
-    if (obs is not None or step.observation_preview) and (
-            str(step.uuid) not in (duplicate_result or set())):
-        label = "**action result**"
-        if obs is not None:
-            label += f" · ok: {'true' if obs.get('ok') else 'false'}"
-        lines.append(_labelled(label, _result_meta(step)))
-        lines.append("")
-        if obs is not None:
-            if obs.get("text"):
-                lines.append(_fence(obs["text"]))
-                lines.append("")
-            # Phase timing, same table as the page (see _timing_view), before
-            # the counts: it explains the duration on the label just above.
-            tm = _split_timing(step)
-            if tm is not None:
-                view = _timing_view(tm)
-                lines.append("| phase | took | at |")
-                lines.append("|---|---|---|")
-                for r in view["rows"]:
-                    lines.append(f"| {r['name']} | {r['took']} | {r['at']} |")
-                if view["embeddings"]:
-                    lines.append(f"| embedder | {view['embeddings']} | |")
-                for e in view["embed_calls"]:
-                    # An embedded text is arbitrary content: a newline would
-                    # end the table row and a pipe would split it into columns
-                    # that aren't there.
-                    text = " ".join(e["text"].split()).replace("|", "\\|")
-                    lines.append(f"| ↳ {text} | {e['took']} | {e['at']} |")
-                lines.append("")
-            obs_data.pop("timing", None)
-            if obs_data:
-                data = obs_data
-                if "qa_static" in data:
-                    lines.append("| QA static | QA dynamic | memory | truncated | omitted |")
-                    lines.append("|---|---|---|---|---|")
-                    lines.append(f"| {data['qa_static']} | {data['qa_dynamic']} | "
-                                 f"{data['memory']} | {data['truncated']} | {data['omitted']} |")
-                else:
-                    lines.append(_fence(json.dumps(data, ensure_ascii=False, indent=2), "json"))
-                lines.append("")
-        elif step.observation_preview:
-            lines.append(_fence(step.observation_preview))
-            lines.append("")
-    if step.error:
-        lines.append(f"**error:** {step.error}")
-        lines.append("")
-    return lines
+# Built from `run_events` — the same stream the page draws — rather than from
+# the step rows. It used to walk the rows and rebuild every pane, which is how
+# one run came to have two readings that could disagree. What each event says
+# is decided once, in `webapp.assistant_components`.
 
 
 def _run_markdown(run, ctx: dict) -> str:
     """Serialize a run's detail pane to Markdown, mirroring `.as-main`."""
     dash = ctx["dash"]
     trigger = ctx["trigger"]
-    timeline = ctx["timeline"]
+    events = ctx.get("log", {}).get("events") or []
 
     def fmt_dt(dt) -> str:
         return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "—"
@@ -1619,13 +1038,13 @@ def _run_markdown(run, ctx: dict) -> str:
             out.append("Not yet summarized.")
     out.append("")
 
-    # Model calls. The page draws these as a waterfall; flat text keeps the
-    # same reading — start offset from the run's beginning, then duration — so
-    # the gaps that show where the time went survive the export.
-    if ctx.get("log", {}).get("events"):
+    # Model calls. The page draws these as a gantt; flat text keeps the same
+    # reading — start offset from the run's beginning, then duration — so the
+    # gaps that show where the time went survive the export.
+    if events:
         out += ["## Model calls", "",
                 "| call | kind | at | took |", "|---|---|---|---|"]
-        for c in ctx["log"]["events"]:
+        for c in events:
             at = c["start"].strftime("%H:%M:%S") if c["start"] else "—"
             # An embed row's label quotes the text it was given, so the label
             # is no longer a fixed vocabulary: a pipe in it would split the
@@ -1641,7 +1060,7 @@ def _run_markdown(run, ctx: dict) -> str:
     # Trigger message.
     out += ["## Run", ""]
     if trigger:
-        out += [f"Started by {trigger['sender_name']}", "", _fence(trigger["text"])]
+        out += [f"Started by {trigger['sender_name']}", "", fence(trigger["text"])]
     else:
         out.append("No triggering chat message found.")
     out.append("")
@@ -1654,37 +1073,13 @@ def _run_markdown(run, ctx: dict) -> str:
             out.append(f"- pending {c.command}" + (f": {instr}" if instr else ""))
         out.append("")
 
-    # Step timeline.
+    # The stream, one section per event — the same events, the same dispatch
+    # and the same blocks the inspector shows for whichever row is selected.
     out += ["## Timeline", ""]
-    if not timeline:
-        out += ["This run has no steps.", ""]
-    n = len(timeline)
-    kinds = ctx.get("step_kinds", {})
-    for position, (step, intents) in enumerate(timeline, start=1):
-        # Position, not step_index — see the template's numbering note.
-        head = f"Step {position} of {n}"
-        kind = kinds.get(str(step.uuid))
-        if kind:
-            head += f" — {kind}"
-        if step.phase == "control":
-            out.append(f"### {head} — control")
-        else:
-            desc = (step.code_driven
-                    and _CODE_DRIVEN_DESCRIPTIONS.get(step.action or "")
-                    ) or _ACTION_DESCRIPTIONS.get(step.action or "")
-            title = f"{head} — {step.action or '—'}" + (f" — {desc}" if desc else "")
-            out.append(f"### {title}")
-        out.append("")
-        out += _step_md(step, ctx["decision_json"], ctx["model_names"],
-                        ctx["reviews"], ctx.get("duplicate_result", set()))
-        for it in intents:
-            out += _intent_md(it)
-
-    # Unlinked writes.
-    if ctx["unlinked"]:
-        out += ["## Unlinked writes", ""]
-        for it in ctx["unlinked"]:
-            out += _intent_md(it)
+    if not events:
+        out += ["This run has no events.", ""]
+    for event in events:
+        out += event_markdown(event)
 
     # Verdict.
     if ctx["verdict"]:
@@ -1718,160 +1113,35 @@ def _active_model_call(run) -> dict | None:
     }
 
 
-def _step_kinds(steps) -> dict[str, str]:
-    """Label the rows that are not decide steps, by uuid.
-
-    A code-driven row is a call the loop made on its own initiative, and it
-    consumes none of the step budget — so the operator needs to see at a glance
-    that it isn't part of the ReAct sequence. Which label depends on when it
-    ran: the response-language classifier and the acceptance-criteria step 0 go
-    out before the first decide call (`warm-up`), while the reply audit and a
-    mid-run criteria refresh react to something the model already decided
-    (`follow-up`).
-
-    `requested_at`, not row order, decides. The audit's row is written before
-    the reply row it audits (the reply lands only once the audit says send), so
-    ordering by row would call it a warm-up. Timing, not action name, also means
-    a code-driven call added later is labelled right the day it lands. Rows
-    predating `requested_at` capture fall back to row order."""
-    first_decide = min(
-        (s.requested_at for s in steps
-         if not s.code_driven and s.phase != "control" and s.requested_at),
-        default=None)
-    kinds: dict[str, str] = {}
-    seen_decide = False
-    for s in steps:
-        if not s.code_driven:
-            if s.phase != "control":
-                seen_decide = True
-            continue
-        started = (s.requested_at > first_decide
-                   if s.requested_at and first_decide else seen_decide)
-        kinds[str(s.uuid)] = "follow-up" if started else "warm-up"
-    return kinds
-
-
-def _same_payload(response: str | None, result: str | None) -> bool:
-    """True when a step's raw model response and its recorded result are the
-    same content. A code-driven call's result IS its response — the two differ
-    only by the serializer's indentation — and printing it twice under two
-    labels reads as two separate things having happened."""
-    if not response or not result:
-        return False
-    try:
-        return json.loads(response) == json.loads(result)
-    except ValueError:
-        return " ".join(response.split()) == " ".join(result.split())
-
-
 def _load_run_detail(selected) -> dict:
-    """Assemble the per-run detail shared by the HTML page and the markdown
-    export: the step timeline (each step with its write-intents), the verbatim
-    decision dumps, unlinked write-intents, pending controls, trigger/reply
-    messages, dashboard metrics, model display names, and the verdict text."""
+    """The per-run detail both surfaces read: the event stream, the dashboard
+    metrics above it, the run's controls, and the trigger and reply messages.
+
+    One shape, because the page and the markdown export are two renderings of
+    it. Anything derived per-event — prompts, results, write intents, review
+    verdicts — is on the events themselves and is not assembled again here.
+    """
     # Causal order, not commit order: the reply audit's row is written before
     # the reply row it audits, so ordering by id put it above the decide call
-    # that produced the reply — and disagreed with the waterfall on the same
-    # page. See `assistant_trace_steps`.
+    # that produced the reply — and disagreed with the gantt on the same page.
+    # See `assistant_trace_steps`.
     steps = db.assistant_trace_steps(selected.uuid)
-    intents = db.list_write_intents_for_run(selected.uuid)
-    unlinked: list = []
-    by_step: dict[str, list] = {}
-    for it in intents:
-        if it.step_uuid is None:
-            unlinked.append(it)
-        else:
-            by_step.setdefault(str(it.step_uuid), []).append(it)
-    timeline = [(s, by_step.get(str(s.uuid), [])) for s in steps]
-    # The model emits one AssistantStepDecision per step; dump it verbatim
-    # (field order preserved, not Flask's key-sorted tojson) for the trace.
-    # Skipped for rows with no decision behind them, because rendering their
-    # action/reason in decision shape would put words in the model's mouth:
-    # control steps are operator events, and code-driven steps are calls the
-    # loop issued itself (their real response is on `model_response`).
-    decision_json = {
-        str(s.uuid): json.dumps(
-            {"reason": s.reason, "action": s.action, "args": s.args or {}},
-            ensure_ascii=False,
-        )
-        for s in steps
-        if s.phase != "control" and not s.code_driven
-        and (s.action is not None or s.reason is not None)
-    }
-    step_kinds = _step_kinds(steps)
-    duplicate_result = {
-        str(s.uuid) for s in steps
-        if s.observation is None
-        and _same_payload(s.model_response, s.observation_preview)
-    }
-    # The review rows this run's steps point at — one query, like the steps and
-    # write-intents above. Keyed by uuid for the pointer lookup; each is split
-    # out of its step's observation data so the template renders it in
-    # chronological position (before the action call) and the action result
-    # shows only the remaining data.
     review_rows = db.list_second_opinion_reviews(selected.uuid)
-    reviews = {str(r.uuid): r for r in review_rows}
-    second_opinion: dict[str, dict] = {}
-    timing: dict[str, dict] = {}
-    obs_data: dict[str, dict] = {}
-    for s in steps:
-        tm = _split_timing(s)
-        if tm is not None:
-            timing[str(s.uuid)] = _timing_view(tm)
-        so, data = _split_second_opinion(s, reviews)
-        if so is not None:
-            # problems_text is precomputed because ASSISTANT_TEMPLATE is a
-            # non-raw string: a '\n' inside a Jinja expression would be
-            # interpreted by Python before Jinja ever parses it.
-            so = dict(so)
-            so["problems_text"] = "\n".join(
-                f"- {t}" for t in problem_texts(so.get("problems")))
-            second_opinion[str(s.uuid)] = so
-        # Timing renders as its own table under the result, so it is stripped
-        # here for the same reason the review is: left in, it reaches the page
-        # as a JSON dump nobody reads.
-        data.pop("timing", None)
-        obs_data[str(s.uuid)] = data
+    trigger = db.get_run_trigger_message(selected)
     # The full final reply (the run stores only a truncated final_summary).
     reply = db.get_run_final_reply(selected)
-    model_names: dict[str, str] = {}
-    reviewer_uuids = {
-        UUID(so["model_uuid"])
-        for so in second_opinion.values() if so.get("model_uuid")
-    }
-    for muid in {s.model_uuid for s in steps if s.model_uuid} | reviewer_uuids:
-        mc = db.get_model_config(muid)
-        if mc is not None:
-            model_names[str(muid)] = mc.display_name or mc.model_name
-    # Built here, not in the template: the export renders the same dicts, so
-    # what an exchange consists of is decided once (see _exchanges).
-    exchanges = {
-        str(s.uuid): _exchanges(s, model_names, decision_json.get(str(s.uuid), ""))
-        for s in steps if s.phase != "control"
-    }
     return {
-        "timeline": timeline,
-        "decision_json": decision_json,
-        "exchanges": exchanges,
-        "step_kinds": step_kinds,
-        "duplicate_result": duplicate_result,
-        "second_opinion": second_opinion,
-        "obs_data": obs_data,
-        "timing": timing,
-        "unlinked": unlinked,
-        "reviews": reviews,
         "pending_controls": db.list_pending_controls(selected.uuid),
-        "trigger": db.get_run_trigger_message(selected),
+        "trigger": trigger,
         "dash": _run_dashboard(selected, steps, review_rows),
         # The gantt and the log read one stream, so a kind added to
         # db.assistant_log appears in both without either learning about it.
         "log": log_view(selected, steps, review_rows,
-                        trigger=db.get_run_trigger_message(selected),
-                        intents=intents,
+                        trigger=trigger,
+                        intents=db.list_write_intents_for_run(selected.uuid),
                         active=_active_model_call(selected)),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
-        "model_names": model_names,
         "active_call": _active_model_call(selected),
     }
 
@@ -1887,7 +1157,6 @@ def _selected_run():
     except ValueError:
         return None
 
-
 @app.route("/assistant")
 def assistant_page() -> str:
     selected = _selected_run()
@@ -1899,29 +1168,14 @@ def assistant_page() -> str:
         ASSISTANT_TEMPLATE,
         selected=selected,
         trigger=ctx.get("trigger"),
-        timeline=ctx.get("timeline", []),
-        decision_json=ctx.get("decision_json", {}),
-        exchanges=ctx.get("exchanges", {}),
-        step_kinds=ctx.get("step_kinds", {}),
-        duplicate_result=ctx.get("duplicate_result", set()),
         log=ctx.get("log", {"events": [], "span_seconds": 0.0}),
-        second_opinion=ctx.get("second_opinion", {}),
-        obs_data=ctx.get("obs_data", {}),
-        timing=ctx.get("timing", {}),
-        action_descriptions=_ACTION_DESCRIPTIONS,
-        code_driven_descriptions=_CODE_DRIVEN_DESCRIPTIONS,
-        # The io-meta field builders, called from the template so the page and
-        # the markdown export read the same definitions.
-        response_meta=_response_meta, request_meta=_request_meta,
-        call_meta=_call_meta, result_meta=_result_meta,
-        review_meta=_review_meta, rejected_meta=_rejected_meta,
-        unlinked=ctx.get("unlinked", []),
         pending_controls=ctx.get("pending_controls", []),
-        duration=duration, model_names=ctx.get("model_names", {}),
-        dash=ctx.get("dash"), waterfall=ctx.get("waterfall", []),
+        duration=duration,
+        dash=ctx.get("dash"),
         verdict=ctx.get("verdict"), reply=ctx.get("reply"),
         active_call=ctx.get("active_call"),
     )
+
 
 
 @app.route("/assistant/<run_id>/markdown")
