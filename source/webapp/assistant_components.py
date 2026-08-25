@@ -534,15 +534,69 @@ def _unaccounted(_event: dict) -> list[dict]:
         "would pay.")]
 
 
+#: What a candidate row says about the input — what was put in front of the
+#: scorer, in the order it reads: which candidate, where it came from, how
+#: retrieval ranked it, and the text itself.
+_RECALL_SENT_FIELDS: tuple[str, ...] = (
+    "qa_id", "path", "kind", "score", "signals", "matched_question",
+    "tokens", "truncated_to", "document",
+)
+
+
+def _recall_sent(candidates: list) -> list:
+    """The input half of each candidate row.
+
+    The payload keeps one row per candidate, which is how it is written and
+    how every run already recorded is stored. Splitting input from output is
+    the PANE's job: read as one merged row, a score sits beside a token count
+    with nothing saying which of them the scorer produced.
+    """
+    return [{key: row[key] for key in _RECALL_SENT_FIELDS if key in row}
+            for row in candidates if isinstance(row, dict)]
+
+
+def _recall_score_text(row: dict) -> str:
+    """What the scorer said about one candidate, in its own terms: the
+    reranker's single relevance score, or the LLM's three scales."""
+    if row.get("rerank_score") is not None:
+        return f"{float(row['rerank_score']):.4f}"
+    return (f"direct {row.get('direct', 0)} · "
+            f"indirect {row.get('indirect', 0)} · "
+            f"relevancy {row.get('relevancy', 0)}")
+
+
+def _recall_answered(candidates: list) -> str:
+    """Every candidate's verdict, best-first — the order the scorer put them
+    in, which is itself part of the answer.
+
+    Aligned lines rather than another list of JSON objects. The output is the
+    short half and the half being scanned: fourteen three-line objects hide
+    the shape that fourteen aligned lines show at a glance — where the scores
+    fall off, and where the keep/drop boundary landed among them.
+    """
+    rows = [(_recall_score_text(row),
+             "kept" if row.get("kept") else "dropped",
+             " · ".join(part for part in (
+                 str(row.get("path") or row.get("kind") or ""),
+                 str(row.get("qa_id") or "")) if part))
+            for row in candidates if isinstance(row, dict)]
+    if not rows:
+        return ""
+    width = max(len(score) for score, _verdict, _label in rows)
+    return "\n".join(f"{score:>{width}}  {verdict:<7}  {label}".rstrip()
+                     for score, verdict, label in rows)
+
+
 def _recall_filter_phase(found: dict) -> list[dict]:
     """The recall filter: what scored the recalled candidates, what it was
-    asked, and what it said.
+    asked, what it answered, and what was kept.
 
-    Led by the scorer and the message, because the candidate list is the long
-    part and a sorted JSON dump buries everything else beneath it. Which
-    matters most for the reranker backend: it makes no model call, so this
-    pane is the ONLY record of the model that ran and of the text it read —
-    for the LLM backend those live on its own call row.
+    In that order, and with the input and the output as separate blocks. Led
+    by the scorer and the message because the candidate list is the long part
+    and a sorted JSON dump buries everything else beneath it. Which matters
+    most for the reranker backend: it makes no model call, so this pane is the
+    ONLY record of the model that ran, of the text it read, and of what it
+    said — for the LLM backend those live on its own call row.
     """
     mode = str(found.get("mode") or "")
     if mode == "gated":
@@ -556,17 +610,28 @@ def _recall_filter_phase(found: dict) -> list[dict]:
         f"{found['service_ms']} ms in the service" if found.get("service_ms") else "",
         f"pairs cut at {found['max_length']} tokens" if found.get("max_length") else "",
     ) if part)
-    candidates = found.get("candidates") or []
+    candidates = [row for row in (found.get("candidates") or [])
+                  if isinstance(row, dict)]
+    kept = sum(1 for row in candidates if row.get("kept"))
     return _blocks(
         _block("scorer", scorer),
         # Half of every pair the reranker scored — the other half is each
         # candidate's own `document` below.
         _block("scored against", found.get("query")),
-        # The LLM backend's own summary of the set. It is deliberately kept
-        # out of the observation the assistant reads (one model's unsupported
-        # account of a candidate list), so this pane is where it is read.
+        _block(f"sent to the scorer ({len(candidates)})",
+               _recall_sent(candidates)),
+        # The LLM backend's own summary of the set, written before it scored.
+        # It is deliberately kept out of the observation the assistant reads
+        # (one model's unsupported account of a candidate list), so this pane
+        # is where it is read. It opens the answer because the model wrote it
+        # first and conditioned the scores on it.
         _block("scorer's note", found.get("reasoning")),
-        _block(f"candidates ({len(candidates)})", candidates),
+        # The point of the split. Which candidates came back with which score,
+        # and which of them survived the keep/drop policy — the half a reader
+        # cannot infer from the input, and the half that was indistinguishable
+        # from it while both were one list.
+        _block(f"what it answered ({kept} of {len(candidates)} kept)",
+               _recall_answered(candidates)),
     )
 
 

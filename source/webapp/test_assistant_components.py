@@ -82,26 +82,63 @@ def _recall_filter_pane(**found):
         payload={"found": found}))
 
 
+_RERANKED = dict(
+    mode="reranker", scorer_model="mmarco-mMiniLMv2-L12-H384-v1",
+    service_ms=203, max_length=512, query="where I live",
+    candidates=[
+        {"qa_id": "qa-1", "path": "person.location", "kept": True,
+         "rerank_score": 0.9783, "tokens": 25,
+         "document": "where do you live?\nIn a house."},
+        {"qa_id": "qa-2", "path": "system.uptime_host", "kept": False,
+         "rerank_score": 0.005, "tokens": 66,
+         "document": "how long has the host been up?\n2 days."},
+    ])
+
+
 def test_the_recall_filter_pane_leads_with_the_scorer_and_the_message():
     """The candidate list is the long part, and under sorted JSON it buried
     the two things the reader opens the pane for: what scored, and what it was
     asked. The reranker backend has no call row to carry either."""
-    html = _recall_filter_pane(
-        mode="reranker", scorer_model="mmarco-mMiniLMv2-L12-H384-v1",
-        service_ms=203, max_length=512, query="where I live",
-        candidates=[{"qa_id": "qa-1", "kept": True, "rerank_score": 0.9,
-                     "document": "where do you live?\nIn a house.",
-                     "tokens": 25}])
+    html = _recall_filter_pane(**_RERANKED)
 
     assert "mmarco-mMiniLMv2-L12-H384-v1" in html
     assert "203 ms in the service" in html
     assert "512 tokens" in html
     assert "where I live" in html                 # the message scored against
     assert "In a house." in html                  # the document it was paired with
-    assert "candidates (1)" in html
+    assert "sent to the scorer (2)" in html
     # The scorer and the message read before the list, not after it.
     assert html.index("mmarco") < html.index("qa-1")
     assert html.index("where I live") < html.index("qa-1")
+
+
+def test_the_recall_filter_pane_shows_the_answer_after_the_input():
+    """Input and output were one merged row per candidate, so a score sat
+    beside a token count with nothing saying which of them the scorer
+    produced — and no way to read what came back at all."""
+    html = _recall_filter_pane(**_RERANKED)
+
+    assert "what it answered (1 of 2 kept)" in html
+    assert "0.9783" in html and "kept" in html
+    assert "0.0050" in html and "dropped" in html
+    # The answer reads AFTER the input it was given, and the input block no
+    # longer carries the scores.
+    assert html.index("sent to the scorer") < html.index("what it answered")
+    sent = html[html.index("sent to the scorer"):html.index("what it answered")]
+    assert "0.9783" not in sent and "kept" not in sent
+
+
+def test_the_recall_filter_pane_answers_in_the_llm_backends_own_terms():
+    """One number is the reranker's answer; three scales are the LLM's. A pane
+    that printed one shape for both would be inventing the other."""
+    html = _recall_filter_pane(
+        mode="llm", scorer_model="gemma4:e4b", group_from="assistant.default",
+        candidates=[{"qa_id": "qa-1", "path": "person.location", "kept": True,
+                     "direct": 5, "indirect": 3, "relevancy": 4,
+                     "matched_question": "where do you live?"}])
+
+    assert "direct 5 · indirect 3 · relevancy 4" in html
+    assert "what it answered (1 of 1 kept)" in html
 
 
 def test_the_recall_filter_pane_shows_the_llm_backends_note():
