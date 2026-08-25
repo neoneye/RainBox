@@ -1150,10 +1150,11 @@ def test_page_live_refreshes_via_sse_not_polling(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
-def test_in_flight_model_call_card(app_ctx, client):
-    """A running run with an active_call checkpoint shows the streamed
-    partial reasoning/response; a settled run never shows the card."""
-    room = _room()
+def _in_flight_run(room):
+    """A run with a call in the air: the checkpoint the loop streams into while
+    it waits, which is the only evidence such a call exists. Triggered by a
+    real message, so the stream has an opening row to fall back to."""
+    db.post_chat_message(room.uuid, db.get_human_user().uuid, "file the report")
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     model_uuid = uuid4()
@@ -1165,21 +1166,84 @@ def test_in_flight_model_call_card(app_ctx, client):
     db.checkpoint_assistant_model_progress(
         run, model_uuid=model_uuid,
         reasoning="pondering the request", response_text='{"reason": "part')
+    return run
+
+
+def test_the_call_in_flight_is_a_row_on_the_stream(app_ctx, client):
+    """It used to be a card of its own below the stream, which vanished the
+    moment the call landed — the reader was watching a pane that deleted
+    itself. It is a row like every other now, and what it has streamed back
+    reads in the inspector like every other row's detail."""
+    room = _room()
+    run = _in_flight_run(room)
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "model call in progress" in body
+        assert 'kind-live' in body and "in flight" in body
         assert "pondering the request" in body
         assert "live-model" in body
-        # The card takes the position the timeline will give the row it becomes
-        # — not step_index + 1, which the timeline no longer numbers by.
-        assert "Step 1<" in body
-        _real_run_shape(run)
-        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "Step 5<" in body
+        assert "This call is still running" in body
+        # No second surface saying the same thing: the card is gone.
+        assert "model call in progress" not in body
+        assert 'id="active-call"' not in body
 
         db.finish_run(run, "finished")
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "model call in progress" not in body
+        assert 'kind-live' not in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_running_run_opens_on_the_call_in_flight(app_ctx, client):
+    """Someone opening a running run came to watch it run. The request that
+    started it cannot have changed since they last looked; the call in the air
+    is the only thing that has."""
+    room = _room()
+    run = _in_flight_run(room)
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        picked = re.findall(r'<button[^>]*class="wf-row ev-pick on"[^>]*>', body)
+        assert len(picked) == 1, "exactly one row is selected"
+        assert 'data-key="llm:live:in-flight:"' in picked[0]
+
+        # A run that is over opens on the request instead — nothing is moving,
+        # and the question it was given is where reading starts.
+        db.finish_run(run, "finished")
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        picked = re.findall(r'<button[^>]*class="wf-row ev-pick on"[^>]*>', body)
+        assert len(picked) == 1
+        assert 'data-variant="start"' in picked[0]
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_landed_call_keeps_the_reader_who_was_watching_it(app_ctx, client):
+    """The in-flight row is the one row guaranteed to disappear — it exists
+    only between the request going out and the row landing. Dropping the reader
+    back to the top at that moment is the worst possible time to do it, so the
+    refresh follows it to the row it became."""
+    room = _room()
+    run = _in_flight_run(room)
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        # The live row is what the reader is on, and the refresh knows to
+        # follow it rather than fall back to the server's choice.
+        assert 'data-key="llm:live:in-flight:"' in body
+        assert ("if (!pick && key.indexOf('llm:live:') === 0) "
+                "{ pick = landedCall(root); }") in body
+        # Which row it follows to: the newest call on the stream, found by the
+        # variant every row carries for exactly this.
+        assert ('.ev-pick[data-variant="decide"], '
+                '.ev-pick[data-variant="code-driven"]') in body
+
+        # And once a call HAS landed, such a row is really there to be found.
+        db.append_assistant_step(
+            run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+            reason="ready", model_response='{"action": "reply"}',
+            requested_at=datetime.now(UTC), duration_ms=1000)
+        db.finish_run(run, "finished")
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert 'data-variant="decide"' in body
+        assert 'data-key="llm:live:in-flight:"' not in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1467,8 +1531,7 @@ def test_live_refresh_keeps_expanded_blocks_open(app_ctx, client):
         for role in ("log", "system", "user", "reasoning"):
             assert f'-{role}"' in body
         # …and the refresh reads them before the swap and reapplies after.
-        assert "function detailsKey(d) {" in body
-        assert "return (step ? step.id : '') + '/' + d.getAttribute('data-k');" in body
+        assert "function detailsKey(d) { return d.getAttribute('data-k'); }" in body
         assert "var open = openDetails(cur);" in body
         assert "function (d) { if (open[detailsKey(d)]) d.open = true; });" in body
     finally:
@@ -1830,7 +1893,6 @@ def test_each_embed_call_shows_the_text_it_was_given(app_ctx, client):
         # down in the timing table.
         panes = page.split('class="ev-pane')
         assert any("what languages do I know" in p for p in panes[1:])
-        assert "io-embed-text" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -2157,27 +2219,24 @@ def test_the_inspector_meta_line_is_right_aligned_like_a_step_s():
     assert "justify-content:flex-end" in rule.group(0).replace(" ", "")
 
 
-def test_the_inspector_meta_line_shares_the_step_meta_styling():
-    """The inspector's meta line and a step's io-meta report the same things
-    about the same call. They take one rule rather than two sets of values, so
-    a monospace face here against a sans-serif one there cannot come back.
-    """
+def test_the_meta_line_has_one_rule():
+    """Every pane reports what its call cost on the same line, so there is one
+    rule for it. It used to be shared with a step section's `io-meta` to stop
+    the two drifting apart; the step sections are gone and the sharing with
+    them went too, which leaves this as the thing to hold — a second rule for
+    a second kind of pane is how a monospace face here and a sans-serif one
+    there comes back."""
     import re
 
     from webapp.assistant_views import ASSISTANT_TEMPLATE
 
-    shared = re.search(r"\.as-main \.step \.io-meta[^{]*\{[^}]*\}",
-                       ASSISTANT_TEMPLATE)
-    assert shared and ".ev-kpis" in shared.group(0), "ev-kpis has its own rule"
-
-    link = re.search(r"\.as-main \.step \.io-model[^{]*\{[^}]*\}",
-                     ASSISTANT_TEMPLATE)
-    assert link and ".ev-kpi a" in link.group(0), "the model link diverged"
-
-    # Whatever ev-kpis still declares must not restate the shared look.
-    own = re.search(r"\.as-main \.ev-kpis \{[^}]*\}", ASSISTANT_TEMPLATE)
-    for restated in ("font-family", "font-size", "color:"):
-        assert restated not in (own.group(0) if own else ""), restated
+    kpis = re.findall(r"\.as-main [^{}]*\.ev-kpis[^{]*\{[^}]*\}",
+                      ASSISTANT_TEMPLATE)
+    assert len(kpis) == 1, kpis
+    link = re.findall(r"\.as-main [^{}]*\.ev-kpi a \{[^}]*\}",
+                      ASSISTANT_TEMPLATE)
+    assert len(link) == 1, link
+    assert "color:#2563eb" in link[0].replace(" ", "")
 
 
 def test_every_styled_inspector_class_has_a_rule():
@@ -2199,20 +2258,17 @@ def test_every_styled_inspector_class_has_a_rule():
 
 def test_a_collapsible_summary_is_not_selectable_text():
     """Clicking a toggle repeatedly selects its label, which is never what the
-    click meant. The step's prompt summaries already opt out; the inspector's
-    take the same rule rather than a near-copy of it — 70% beside 0.64rem,
-    0.05em beside 0.04em, and no user-select at all.
+    click meant. One rule, for every collapsed block a pane holds.
     """
     import re
 
     from webapp.assistant_views import ASSISTANT_TEMPLATE
 
-    rule = re.search(
-        r"\.as-main \.step \.prompt > summary,[^{]*\{[^}]*\}", ASSISTANT_TEMPLATE)
-    assert rule, "the shared summary rule is gone"
-    assert "details.ev-block > summary" in rule.group(0), (
-        "the inspector's summaries have their own rule again")
-    assert "user-select:none" in rule.group(0).replace(" ", "")
+    rules = re.findall(
+        r"\.as-main details\.ev-block > summary \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert len(rules) == 1, rules
+    assert "user-select:none" in rules[0].replace(" ", "")
+    assert "cursor:pointer" in rules[0].replace(" ", "")
 
 
 def test_a_header_divider_has_the_same_space_on_both_sides():
@@ -2229,14 +2285,12 @@ def test_a_header_divider_has_the_same_space_on_both_sides():
     from webapp.assistant_views import ASSISTANT_TEMPLATE
 
     header = re.search(
-        r"\.as-main \.step \.card-header, \.as-main \.card \.card-header \{"
-        r"[^}]*\}", ASSISTANT_TEMPLATE)
+        r"\.as-main \.card \.card-header \{[^}]*\}", ASSISTANT_TEMPLATE)
     assert header, "the shared header rule is gone"
     gap = re.search(r"gap:([\d.]+rem)", header.group(0))
     assert gap, header.group(0)
 
     divider = re.search(
-        r"\.as-main \.step \.card-header > span:not\(:first-child\),\s*"
         r"\.as-main \.inspect \.card-header > span:not\(:first-child\) \{"
         r"[^}]*\}", ASSISTANT_TEMPLATE)
     assert divider, "the shared divider rule is gone"
@@ -2245,8 +2299,8 @@ def test_a_header_divider_has_the_same_space_on_both_sides():
     assert after, divider.group(0)
     assert gap.group(1) == after.group(1)
 
-    # And nothing may set a different gap on one of the two headers again.
-    assert not re.search(r"\.as-main \.step \.card-header \{ gap:",
+    # And nothing may override the gap on the inspect header again.
+    assert not re.search(r"\.as-main \.inspect \.card-header \{[^}]*gap:",
                          ASSISTANT_TEMPLATE)
 
 
@@ -2258,9 +2312,8 @@ def test_a_card_header_lines_up_with_the_body_under_it():
     from webapp.assistant_views import ASSISTANT_TEMPLATE
 
     header = re.search(
-        r"\.as-main \.step \.card-header, \.as-main \.card \.card-header \{"
-        r"[^}]*\}", ASSISTANT_TEMPLATE)
-    body = re.search(r"\.as-main \.step-body, \.as-main \.card-body, "
+        r"\.as-main \.card \.card-header \{[^}]*\}", ASSISTANT_TEMPLATE)
+    body = re.search(r"\.as-main \.card-body, "
                      r"\.as-main \.log-detail \{[^}]*\}", ASSISTANT_TEMPLATE)
     assert body, "the shared body rule is gone"
     assert re.search(r"padding:[\d.]+px (\d+px)", header.group(0)).group(1) \

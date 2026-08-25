@@ -77,6 +77,23 @@ _PRIMARY_ROW_ORDER: tuple[tuple[str, str], ...] = (
 )
 
 
+def _mark_selected_row(rows: list[dict]) -> None:
+    """Which row the page opens on.
+
+    The call in flight when there is one. Someone opening a running run came to
+    watch it run, and the request that started it — the first row, and the
+    right answer for a run that is over — is the one thing on the page that
+    cannot have changed since they last looked.
+
+    Exactly one row, so the page never opens with two panes claiming to be the
+    selection or none at all.
+    """
+    if not rows:
+        return
+    live = [r for r in rows if r["variant"] == "live"]
+    (live[0] if live else rows[0])["selected"] = True
+
+
 def _mark_primary_rows(rows: list[dict]) -> None:
     """Name the one row each step's published link resolves to.
 
@@ -103,10 +120,10 @@ def log_view(run, steps: list, reviews: list | None = None,
 
     Each event gains what the two surfaces need to draw it: `offset_pct` and
     `width_pct` (None when it has no span), `seconds`, `glyph`, `row_id`,
-    `key` (its identity across a live refresh, see `_row_key`), and
-    the rendered `detail_html` its component produced. The detail is built
-    here, once per event, so selecting a row is a client-side swap rather than
-    a round trip.
+    `key` (its identity across a live refresh, see `_row_key`), `selected`
+    (which row the page opens on, see `_mark_selected_row`), and the rendered
+    `detail_html` its component produced. The detail is built here, once per
+    event, so selecting a row is a client-side swap rather than a round trip.
 
     `trigger` is the chat message that began the run; given one, the stream
     opens with the request it carried. `intents` are the run's write intents,
@@ -166,6 +183,8 @@ def log_view(run, steps: list, reviews: list | None = None,
         row["description"] = event_description(event)
         row["detail_html"] = render_event_detail(event)
         row["primary_for"] = ""
+        row["selected"] = False
         rows.append(row)
     _mark_primary_rows(rows)
+    _mark_selected_row(rows)
     return {"events": rows, "span_seconds": span}

@@ -134,19 +134,14 @@ ASSISTANT_TEMPLATE = """
   /* The run header and each ReAct step are self-contained cards: a header band
      (.card-header) over a padded body, so each reads as one grouped
      unit. The name matches its children, card-title and card-link. */
-  .as-main .step, .as-main .card { border:1px solid #e5e7eb; border-radius:8px;
+  .as-main .card { border:1px solid #e5e7eb; border-radius:8px;
                    overflow:hidden; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05);
                    margin-bottom:16px; }
-  .as-main .step { scroll-margin-top:14px; }
-  .as-main .step:target { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.25); }
-  .as-main .step-anchor { text-decoration:none; padding:0.05rem 0.3rem; border-radius:4px; }
-  .as-main .step .step-anchor:hover { color:#2563eb; background:#eef2ff; }
-  .as-main .step:target .step-anchor { color:#2563eb; }
   /* One gap for every header, matching the padding the divider box adds on
      its other side — otherwise each part sits closer to the rule on its right
      than to the one on its left. The horizontal padding matches the body
      below, so a header's first word starts where the body's text does. */
-  .as-main .step .card-header, .as-main .card .card-header { display:flex; gap:1rem; align-items:center;
+  .as-main .card .card-header { display:flex; gap:1rem; align-items:center;
                        flex-wrap:wrap; padding:10px 16px; background:#fbfdff;
                        border-bottom:1px solid #e5e7eb; }
   .as-main .card .card-header .card-title { font-size:1rem; font-weight:400; }
@@ -166,20 +161,13 @@ ASSISTANT_TEMPLATE = """
   /* The inspector's pane is a card body and takes the same padding as one,
      rather than restating a near-miss of it — its content lined up two pixels
      inside the header above it. */
-  .as-main .step-body, .as-main .card-body, .as-main .log-detail { padding:14px 16px; }
-  .as-main .step-body > :first-child { margin-top:0; }
-  .as-main .step-body > :last-child { margin-bottom:0; }
-  .as-main .step.phase-control .step-body { background:#faf5ff; }
-  .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
+  .as-main .card-body, .as-main .log-detail { padding:14px 16px; }
   /* The divider between a header's parts: a rule drawn by the box, not a
      pipe character typed between them. Shared so the inspect header and a
      step's header separate the same way. */
-  .as-main .step .card-header > span:not(:first-child),
   .as-main .inspect .card-header > span:not(:first-child) {
                        align-self:stretch; display:flex; align-items:center;
                        margin:-10px 0; padding:10px 0 10px 1rem; border-left:1px solid #e5e7eb; }
-  .as-main .step .card-header .ix { color:inherit; }
-  .as-main .step .card-header .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   /* Model-call waterfall: name | track | duration. Bars are positioned on the
      run's wall-clock span, so a wide gap between two bars is time no model was
      working — which is what the chart is FOR, and what a bar per kind in a
@@ -237,8 +225,6 @@ ASSISTANT_TEMPLATE = """
         font-weight:600; white-space:nowrap; }
   .as-main .ev-crumb-desc { color:#6b7280; min-width:0; overflow:hidden;
         text-overflow:ellipsis; white-space:nowrap; }
-  .as-main .ev-kpis { flex-wrap:wrap; justify-content:flex-end;
-        margin-bottom:0.7rem; }
   .as-main .ev-kpi { white-space:nowrap; }
   .as-main details.ev-block > summary:hover { color:#1a1a2e; }
   .as-main .ev-block { margin-bottom:0.7rem; }
@@ -278,84 +264,24 @@ ASSISTANT_TEMPLATE = """
   .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;
                       font-variant-numeric:tabular-nums; }
   .as-main .card .card-header .outcome.muted { color:#667085; font-weight:400; font-size:0.85rem; }
-  /* Rows the loop produced itself (warm-up / follow-up calls). Purple like the
-     control badge, which marks the other kind of row the model didn't decide;
-     the tinted header keeps the real ReAct steps scannable between them. */
-  .as-main .step.aux .card-header { background:#faf5ff; }
-  .as-main .step .card-header .kind { color:#7e22ce; font-weight:600; }
-  /* Right-aligned metadata on io-labels: model link, token counts, duration, timestamp.
-     Fields are separated by the flex gap, not punctuation. */
-  /* One rule for both meta lines. A step's io-meta and the inspector's
-     ev-kpis report the same things about the same call, so they are the same
-     line in two places rather than two looks for one fact. */
-  .as-main .step .io-meta, .as-main .ev-kpis {
-                            margin-left:auto; display:flex; gap:1rem; align-items:center;
-                            font-size:0.72rem; font-weight:400; text-transform:none;
-                            letter-spacing:normal; color:#98a2b3;
-                            font-variant-numeric:tabular-nums; }
-  .as-main .step .io-model, .as-main .ev-kpi a {
-                            color:#2563eb; text-decoration:none; }
-  .as-main .step .io-model:hover, .as-main .ev-kpi a:hover {
-                            text-decoration:underline; }
-  .as-main .step .action { font-weight:400; }
-  .as-main .step .reason { color:#475467; margin:0.3rem 0; }
-  /* Each step bundles the model's structured output (request) and the action's
-     result (response); the uppercase io-label tells them apart. */
-  .as-main .step .io { margin:0.4rem 0; }
-  /* Extra space above these so the labels are easy to scan for. */
-  .as-main .step .io-out, .as-main .step .io-call, .as-main .step .io-in,
-  .as-main .step .io-think, .as-main .step .io-so { margin-top:1.4rem; }
-  .as-main .step .io-label { font-size:0.68rem; text-transform:uppercase;
-                             letter-spacing:0.04em; color:#6b7280; margin-bottom:0.2rem;
-                             display:flex; align-items:center; }
-  .as-main .step .io > pre { margin:0; }
-  .as-main .step .io-req pre { max-height:20rem; overflow:auto; }
-  /* Compact counts table for structured action data (e.g. memory_query). */
-  .as-main .step .io-data { border-collapse:collapse; font-size:0.8rem; margin:0.6rem 0 0; }
-  .as-main .step .io-data th, .as-main .step .io-data td {
-     border:1px solid #d1d5db; padding:2px 8px; text-align:right; }
-  .as-main .step .io-data th { background:#f3f4f6; font-weight:600; cursor:help; }
-  /* Phase timing: where one action's own duration went. Names read left, the
-     numbers stay right-aligned with the counts table above them. */
-  .as-main .step .io-timing td.io-timing-name { text-align:left;
-     font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-     font-size:0.76rem; }
-  /* The text each embedder call was given, indented under the embedder line
-     it belongs to. Wraps rather than ellipsises: a query cut off mid-word is
-     exactly the one that has to be read in full to be recognised. */
-  .as-main .step .io-timing tr.io-embed td { color:#667085; }
-  .as-main .step .io-timing td.io-embed-text { text-align:left;
-     font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-     font-size:0.72rem; padding-left:1.6rem; max-width:34rem;
-     overflow-wrap:anywhere; }
-  /* The chosen action's human description, shown after the action in the header band. */
-  .as-main .step .card-header .action-desc { color:inherit; font-size:inherit; font-weight:400; }
-  /* The observation's ok flag, derived from the step phase (observed=ok). */
-  .as-main .step .fn-ok { text-transform:none; font-weight:600; margin-left:0.3rem; }
-  .as-main .step .fn-ok.ok-true { color:#1e7e34; }
-  .as-main .step .fn-ok.ok-false { color:#c0392b; }
-  /* Timestamps and durations live inside io-meta; spacing comes from its gap. */
-  .as-main .step .io-time, .as-main .step .io-dur { text-transform:none; font-weight:400;
-                            color:#98a2b3; font-size:0.72rem; font-variant-numeric:tabular-nums; }
-  /* Per-step debug log: collapsed by default, placed before the model
-     request. Entries are {label, text, uuid?, href?} rows. Its summary
-     shares the .prompt > summary styling below (one rule, no drift). */
-  .as-main .step .steplog { margin:0 0 0.3rem; }
-  .as-main .step .steplog-body { margin:0.2rem 0 0 0.4rem; font-size:0.78rem; }
-  .as-main .step .steplog-entry { padding:1px 0; }
-  .as-main .step .steplog-entry .k { color:#6b7280; font-weight:600;
-                             margin-right:0.35rem; }
-  .as-main .step .steplog-entry .u { color:#98a2b3; font-size:0.7rem;
-                             margin-left:0.35rem; }
-  /* "model request" sub-parts: system and user prompt, each collapsed in a
-     <details>. The summaries mirror .io-label but a notch smaller. */
-  .as-main .step .prompt { margin:0.25rem 0 0; }
-  .as-main .step .prompt > summary,
-  .as-main .step .steplog > summary,
+  /* The meta line under a pane's header: what the call cost, right-aligned,
+     with the fields separated by the flex gap rather than by punctuation.
+     ONE rule — it was two while a step section had a meta line of its own,
+     and two rules for one line is how a monospace face here and a sans-serif
+     one there comes back. */
+  .as-main .ev-kpis { margin-left:auto; display:flex; gap:1rem; align-items:center;
+                      flex-wrap:wrap; justify-content:flex-end;
+                      margin-bottom:0.7rem;
+                      font-size:0.72rem; font-weight:400; text-transform:none;
+                      letter-spacing:normal; color:#98a2b3;
+                      font-variant-numeric:tabular-nums; }
+  .as-main .ev-kpi a { color:#2563eb; text-decoration:none; }
+  .as-main .ev-kpi a:hover { text-decoration:underline; }
+  /* Every collapsed block in a pane: the summary reads a notch smaller
+     than the block titles beside it. */
   .as-main details.ev-block > summary { font-size:0.64rem; text-transform:uppercase;
                              letter-spacing:0.04em; color:#6b7280; margin-bottom:0.15rem;
                              cursor:pointer; -webkit-user-select:none; user-select:none; }
-  .as-main .err { color:#c0392b; }
   .as-main .intent { border-left:3px solid #cbd5e1; margin:0.45rem 0 0.2rem 0.4rem;
                      padding:0.4rem 0.6rem; background:#fcfcfd; border-radius:0 6px 6px 0; }
   .as-main .intent.proposed { border-left-color:#f59e0b; }
@@ -464,8 +390,9 @@ ASSISTANT_TEMPLATE = """
         <div class="card-body">
           <div class="wf">
             {% for e in log.events %}
-            <button type="button" class="wf-row ev-pick{% if loop.first %} on{% endif %}"
+            <button type="button" class="wf-row ev-pick{% if e.selected %} on{% endif %}"
                     data-ev="{{ e.row_id }}" data-key="{{ e.key }}"
+                    data-variant="{{ e.variant or e.kind }}"
                     {% if e.primary_for %}data-primary="{{ e.primary_for }}"{% endif %}
                     title="{{ e.label }} — {{ e.seconds }} at {{ e.clock }}">
               <span class="wf-name kind-{{ e.variant or e.kind }}">{{ e.label }}</span>
@@ -523,43 +450,6 @@ ASSISTANT_TEMPLATE = """
       {% endfor %}
 
       {% if not log.events %}<div class="as-empty">This run has no steps.</div>{% endif %}
-
-            {# Live view of the model call in flight (streamed checkpoints, updated
-         ~1s). Present only between "request sent" and "step row landed", so it
-         never duplicates a timeline step. Live-view only: intentionally NOT
-         mirrored in _run_markdown(), which exports the durable run record. #}
-      {% if active_call %}
-      <div class="step phase-running" id="active-call">
-        <div class="card-header">
-          {# The in-flight call has no row yet, so it takes the position right
-             after the last one — the number the stream will give it. Counted
-             off the events' distinct steps rather than the rows: one step is
-             several rows (its call, the action it chose, the phases it ran),
-             and counting rows would number the live call in the hundreds. #}
-          <span class="ix" title="{% if active_call.step_index is not none %}decide-loop step index={{ active_call.step_index }}{% endif %}">Step {{ log.events | map(attribute='anchor') | select | unique | list | length + 1 }}</span>
-          <span class="action">model call in progress…</span>
-          {% if active_call.model_name %}<span class="action-desc">{{ active_call.model_name }}</span>{% endif %}
-        </div>
-        <div class="step-body">
-          {% if active_call.partial_reasoning %}
-          <div class="io io-think">
-            <div class="io-label">model reasoning (streaming)</div>
-            <pre>{{ active_call.partial_reasoning }}</pre>
-          </div>
-          {% endif %}
-          {% if active_call.partial_response %}
-          <div class="io io-out">
-            <div class="io-label">partial model response</div>
-            <pre>{{ active_call.partial_response }}</pre>
-          </div>
-          {% endif %}
-          {% if active_call.error %}<div class="err">{{ active_call.error }}</div>{% endif %}
-          {% if not active_call.partial_reasoning and not active_call.partial_response and not active_call.error %}
-          <div class="muted">Waiting for the model…</div>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
 
       {% if verdict %}
       <div class="card">
@@ -820,14 +710,11 @@ var asSelectEvent = null;
     var runId = {% if selected %}'{{ selected.uuid }}'{% else %}null{% endif %};
     if (!runId) return;
     var timer = null, dirty = false, connectedOnce = false;
-    // Which collapsed block is which, across a swap. Keyed by the step it
-    // belongs to plus its `data-k` role, NOT by position: a live step grows
-    // blocks as it runs (its reasoning, then its second opinion), so an index
-    // would slide under the reader and reopen the wrong one.
-    function detailsKey(d) {
-      var step = d.closest('.step');
-      return (step ? step.id : '') + '/' + d.getAttribute('data-k');
-    }
+    // Which collapsed block is which, across a swap. By its `data-k` — the row
+    // it belongs to plus its role — and NOT by position: a live run grows rows
+    // while it is being read, so an index would slide under the reader and
+    // reopen the wrong one.
+    function detailsKey(d) { return d.getAttribute('data-k'); }
     // The row being inspected, by the key that survives the run growing. The
     // server renders the first row selected, so without this a reader is
     // thrown back to `start` every few seconds — while watching the step they
@@ -836,12 +723,28 @@ var asSelectEvent = null;
       var picked = root.querySelector('.ev-pick.on');
       return picked ? picked.getAttribute('data-key') : null;
     }
+    // The row the in-flight call BECAME, for a reader who was watching it.
+    // The stream is chronological and the call that just landed is the newest
+    // one on it, so the last decide / code-driven row is the row that was in
+    // flight a moment ago.
+    function landedCall(root) {
+      var calls = root.querySelectorAll(
+        '.ev-pick[data-variant="decide"], .ev-pick[data-variant="code-driven"]');
+      return calls.length ? calls[calls.length - 1] : null;
+    }
     function reselect(root, key) {
       if (!key || !asSelectEvent) { return; }
       var pick = root.querySelector('.ev-pick[data-key="' + key + '"]');
-      // Gone: the row it named is no longer on the stream (an unaccounted gap
-      // that has since been filled). Leave the server's choice standing
-      // rather than selecting something the reader did not ask for.
+      // The in-flight row is the one row that is GUARANTEED to go: it exists
+      // only between the request going out and the row landing. Dropping the
+      // reader back to the top at that moment is the worst possible time to
+      // do it — they were watching that exact call. Follow it to the row it
+      // became instead. (A run still going keeps its live row, and the key
+      // above matches it, so this only fires once the call has landed.)
+      if (!pick && key.indexOf('llm:live:') === 0) { pick = landedCall(root); }
+      // Otherwise: gone means the row it named is no longer on the stream (an
+      // unaccounted gap that has since been filled). Leave the server's choice
+      // standing rather than selecting something the reader did not ask for.
       if (pick) { asSelectEvent(pick.getAttribute('data-ev')); }
     }
     function openDetails(root) {
@@ -1142,7 +1045,6 @@ def _load_run_detail(selected) -> dict:
                         active=_active_model_call(selected)),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
-        "active_call": _active_model_call(selected),
     }
 
 
@@ -1173,7 +1075,6 @@ def assistant_page() -> str:
         duration=duration,
         dash=ctx.get("dash"),
         verdict=ctx.get("verdict"), reply=ctx.get("reply"),
-        active_call=ctx.get("active_call"),
     )
 
 

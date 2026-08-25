@@ -380,6 +380,23 @@ def _llm(event: dict) -> list[dict]:
     )
 
 
+def _live(event: dict) -> list[dict]:
+    """The call happening right now, as it streams back.
+
+    The only pane on the page with no record behind it: the row lands when the
+    call returns, so until then the streamed checkpoint is the sole evidence
+    there is. It says so, because everything else in the inspector is a
+    finished fact and this one is still moving — and because a pane that is
+    empty for the first few seconds of a call has to distinguish "nothing came
+    back" from "nothing yet".
+    """
+    blocks = _llm(event)
+    if not blocks:
+        return [_note("Waiting for the model — nothing has streamed back yet.")]
+    return [_note("This call is still running. What it has sent back so far is "
+                  "below, and grows as more arrives.")] + blocks
+
+
 def _embedding(event: dict) -> list[dict]:
     return _blocks(_block("text", (event.get("payload") or {}).get("detail")))
 
@@ -513,10 +530,12 @@ def event_blocks(event: dict) -> list[dict]:
             # its only home.
             + _blocks(_block("data", data, collapsed=True,
                              key=f"{event.get('uuid') or 'ev'}-data")))
+    # A variant earns a renderer on the same terms an action does: its payload
+    # genuinely differs from a plain model call's.
     if event.get("variant") == "review":
-        # A variant earns a renderer on the same terms an action does: its
-        # payload genuinely differs from a plain model call's.
         return _review(event)
+    if event.get("variant") == "live":
+        return _live(event)
     return _KIND_RENDERERS.get(kind, _generic_action)(event)
 
 
