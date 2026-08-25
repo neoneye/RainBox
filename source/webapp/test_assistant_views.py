@@ -1200,6 +1200,52 @@ def test_the_json_reading_is_this_operator_s_and_it_persists(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_a_copy_that_did_nothing_says_so(app_ctx, client):
+    """`navigator.clipboard` is absent outside a secure context and can reject
+    — a denied permission, an unfocused page. A copy that silently failed is
+    worse than no button: the reader pastes whatever was there before and gets
+    the wrong story."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "navigator.clipboard && navigator.clipboard.writeText" in body
+        assert "ppFallbackCopy(t, done)" in body
+        assert "document.execCommand('copy')" in body
+        assert "Could not copy" in body
+        # Confirmed by the toast rather than by the button relabelling itself:
+        # a button that changes width reflows the block under the reader.
+        assert "asToast(ok === false" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_copying_a_block_copies_what_it_is_showing(app_ctx, client):
+    """A reader who switched a block to indented JSON asked for that reading,
+    and the recorded bytes are one click away in the same header."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="ready", model_response='{"action":"reply"}',
+        requested_at=datetime.now(UTC), duration_ms=1000)
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        handler = body.split("ev.target.closest('.ev-copy')")[1]
+        handler = handler.split("});")[0]
+        # The pre's current text — not a copy of the raw stashed elsewhere.
+        assert "block.querySelector('pre.ev-pre')" in handler
+        assert "ppCopyText(pre.textContent" in handler
+        # And in a <summary> the click must not also fold the block.
+        assert "ev.preventDefault();" in handler
+        assert "ev.stopPropagation();" in handler
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_switching_the_json_reading_does_not_fold_the_block(app_ctx, client):
     """The prompts are collapsed, so their switch sits in a <summary> — where
     a plain click would also toggle the block it is labelling."""
@@ -1467,7 +1513,7 @@ def test_second_opinion_renders_before_the_action_call(app_ctx, client):
         assert "second opinion" in body
         # The gate has a row of its own, ahead of the action it gated.
         assert body.index("second opinion") < body.index("python_run")
-        assert "<h5>verdict</h5>" in body and "approved" in body
+        assert "<h5>verdict<" in body and "approved" in body
         # The reviewer's own model request, collapsed like the decide call's.
         assert "You are a second-opinion reviewer." in body
         assert "&lt;python_program&gt;print(12 * 0.3048)&lt;/python_program&gt;" in body
@@ -1738,7 +1784,7 @@ def test_a_skipped_call_reads_as_skipped_not_as_a_silent_row(app_ctx, client):
         # It has no response, so its row shows none — an empty response block
         # reads as a call that answered with nothing.
         pane = page.split('data-kind="skipped"')[1].split("</div></div>")[0]
-        assert "<h5>response</h5>" not in pane
+        assert "<h5>response<" not in pane
         assert f'data-primary="{skipped.uuid}"' in page
         # The reply answered and its row shows what came back; the skipped one
         # never called, so there is exactly one response section in the export.

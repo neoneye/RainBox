@@ -204,7 +204,7 @@ def test_a_review_pane_leads_with_its_verdict():
         payload={"problems": [{"category": "safety", "text": "writes a file"}],
                  "model_response": "{}"}))
 
-    assert "<h5>verdict</h5>" in html
+    assert "<h5>verdict<" in html
     assert "rejected" in html
     assert "writes a file" in html
     # The finding, not its tag: a category beside the sentence puts a label
@@ -522,7 +522,7 @@ def test_an_action_s_status_is_a_block_not_a_meta_field():
         "action", "memory_query", kpis={"status": "ok"},
         payload={"args": {}, "observation": {"text": "facts"}}))
 
-    assert '<h5>status</h5>' in html
+    assert '<h5>status<' in html
     assert 'title="How the action ended"' not in html
     assert '<span class="ev-kpi" title="How the action ended">' not in html
 
@@ -549,7 +549,7 @@ def test_every_action_renderer_shows_the_status():
     ):
         html = render_event_detail(_event(
             "action", label, kpis={"status": "error"}, payload=payload))
-        assert "<h5>status</h5>" in html, label
+        assert "<h5>status<" in html, label
         assert ">error<" in html, label
 
 
@@ -559,7 +559,7 @@ def test_a_call_has_no_status_block():
     html = render_event_detail(_event(
         "llm", "reply", payload={"model_response": "{}"}))
 
-    assert "<h5>status</h5>" not in html
+    assert "<h5>status<" not in html
 
 
 def test_a_structured_answer_offers_the_reading_it_needs():
@@ -615,3 +615,45 @@ def test_a_collapsed_json_block_keeps_its_switch_inside_the_summary():
 
     summary = html.split("<summary>")[1].split("</summary>")[0]
     assert "ev-view" in summary
+
+
+def test_every_block_can_be_copied():
+    """A prompt is read somewhere else as often as it is read here, and
+    selecting twelve thousand characters by dragging is its own ordeal."""
+    html = render_event_detail(_event("llm", "decide → reply", payload={
+        "system_prompt": "you are the assistant",
+        "user_prompt": "how far is the moon",
+        "model_response": "About 384400 km.",
+        "log": [{"label": "profile", "text": "default"}]}))
+
+    # Exactly one per block — the collapsed prompts included, so a prompt can
+    # be copied without opening it first.
+    assert html.count("ev-block") == 4
+    assert html.count('class="ev-copy"') == 4
+    # And each sits in its own block's label, ahead of the text it copies.
+    for block in html.split("ev-block")[1:]:
+        block = block.split("</pre>")[0]
+        assert "ev-copy" in block, block[:80]
+
+
+def test_a_note_is_not_something_to_copy():
+    """The prose a pane writes when there is nothing recorded is the page
+    talking, not a record. A copy button on it offers the page's own words as
+    though they came from the run."""
+    html = render_event_detail(_event("unaccounted", "unaccounted"))
+
+    assert "ev-note" in html
+    assert "ev-copy" not in html
+
+
+def test_the_controls_ride_with_the_block_s_own_label():
+    """Not aligned to the pane edge: they belong to that block, and a control
+    at the edge reads as belonging to the pane."""
+    html = render_event_detail(_event("llm", "x", payload={
+        "model_response": '{"action":"reply"}'}))
+
+    acts = html.split('<h5>response')[1].split("</h5>")[0]
+    assert "ev-view" in acts and "ev-copy" in acts
+    # The switch first, then copy: one changes how you are looking, the other
+    # acts on what you are looking at.
+    assert acts.index("ev-view") < acts.index("ev-copy")

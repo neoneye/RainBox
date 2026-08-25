@@ -242,6 +242,16 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-view button + button { border-left:1px solid #e5e7eb; }
   .as-main .ev-view button:hover { color:#1a1a2e; background:#f3f4f6; }
   .as-main .ev-view button.on { background:#eef2ff; color:#2563eb; font-weight:600; }
+  /* The block's controls, together on its label. `copy` last because it acts
+     where the switch only changes how you are looking. */
+  .as-main .ev-acts { display:inline-flex; gap:0.35rem; align-items:center;
+                      margin-left:0.5rem; vertical-align:middle; }
+  .as-main .ev-acts .ev-view { margin-left:0; }
+  .as-main .ev-copy { border:1px solid #e5e7eb; border-radius:5px; background:#fff;
+                      cursor:pointer; font:inherit; font-size:0.62rem;
+                      letter-spacing:0.03em; text-transform:lowercase;
+                      color:#98a2b3; padding:0 0.4rem; line-height:1.5; }
+  .as-main .ev-copy:hover { color:#1a1a2e; background:#f3f4f6; }
   .as-main .ev-block h5 { margin:0 0 0.2rem; font-size:70%;
         letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }
   /* Only what `.as-main pre` does not already give it. The box and the size
@@ -758,7 +768,54 @@ var asSelectEvent = null;
     if (f) asToast(f);
   })();
   function ppConfirmAct(url, msg) { if (window.confirm(msg)) ppAct(url); }
-  function ppCopyText(text) { navigator.clipboard.writeText(text); }
+  // Copy, confirm, and degrade. `navigator.clipboard` is unavailable outside a
+  // secure context and can reject (a denied permission, a page that is not
+  // focused), and a copy that silently did nothing is worse than no button —
+  // the reader pastes whatever was on the clipboard before and gets the wrong
+  // story. The toast is the confirmation rather than the button relabelling
+  // itself: a button that changes width reflows the block under the reader.
+  function ppFallbackCopy(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    done(ok);
+  }
+  function ppCopyText(text, what) {
+    var t = (text == null) ? '' : String(text);
+    var done = function (ok) {
+      asToast(ok === false ? 'Could not copy — select the text instead'
+                           : 'Copied ' + (what || 'to the clipboard'));
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(t).then(
+        function () { done(true); },
+        function () { ppFallbackCopy(t, done); });
+    } else {
+      ppFallbackCopy(t, done);
+    }
+  }
+
+  // Copying one block. What is copied is what the block is SHOWING: a reader
+  // who switched it to indented JSON asked for that reading.
+  document.addEventListener('click', function (ev) {
+    var btn = ev.target.closest && ev.target.closest('.ev-copy');
+    if (!btn) { return; }
+    // Inside a <summary> the click would also fold the block it is labelling.
+    ev.preventDefault();
+    ev.stopPropagation();
+    var block = btn.closest('.ev-block');
+    var pre = block && block.querySelector('pre.ev-pre');
+    if (!pre) { return; }
+    var name = block.querySelector('h5, summary');
+    ppCopyText(pre.textContent,
+               name ? '“' + name.firstChild.textContent.trim() + '”' : null);
+  });
   function ppRedirect(runId) {
     var instruction = prompt('Redirect instruction for the running run:');
     if (!instruction) return;

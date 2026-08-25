@@ -322,6 +322,18 @@ _VIEW_SWITCH: Markup = Markup(
     'was written in is part of reading it">pretty</button></span>')
 
 
+#: Every block gets one. What a pane holds is a prompt, a response, or a
+#: result — text that is read somewhere else as often as it is read here, and
+#: selecting a 12,000-character prompt by dragging is its own small ordeal.
+#:
+#: It copies what is SHOWN, not the recorded bytes: a reader who switched a
+#: block to indented JSON asked for that reading, and the raw one is a click
+#: away in the same header.
+_COPY_BUTTON: Markup = Markup(
+    '<button type="button" class="ev-copy" '
+    'title="Copy this block, exactly as it is shown">copy</button>')
+
+
 def _block_html(block: dict | None) -> Markup:
     """One block as the page draws it. Everything is escaped: a body is model
     and tool output, and a title can be an action name that arrived as data.
@@ -336,17 +348,18 @@ def _block_html(block: dict | None) -> Markup:
     if block["note"]:
         return Markup('<p class="ev-note">{}</p>').format(block["body"])
     text = _block_text(block)
-    switch = _VIEW_SWITCH if block.get("json") else Markup("")
+    acts = Markup('<span class="ev-acts">{}{}</span>').format(
+        _VIEW_SWITCH if block.get("json") else Markup(""), _COPY_BUTTON)
     pre = Markup('<pre class="ev-pre"{}>{}</pre>').format(
         Markup(' data-json') if block.get("json") else Markup(""), text)
     if block["collapsed"]:
         return Markup(
             '<details class="prompt ev-block" data-k="{}">'
             '<summary>{} ({} chars){}</summary>{}</details>'
-        ).format(block["key"], block["title"], len(text), switch, pre)
+        ).format(block["key"], block["title"], len(text), acts, pre)
     return Markup(
         '<div class="ev-block"><h5>{}{}</h5>{}</div>'
-    ).format(block["title"], switch, pre)
+    ).format(block["title"], acts, pre)
 
 
 def _blocks_html(blocks: list[dict]) -> Markup:
