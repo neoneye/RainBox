@@ -559,6 +559,7 @@ ASSISTANT_TEMPLATE = """
             {% for e in log.events %}
             <button type="button" class="wf-row ev-pick{% if loop.first %} on{% endif %}"
                     data-ev="{{ e.row_id }}" data-key="{{ e.key }}"
+                    {% if e.primary_for %}data-primary="{{ e.primary_for }}"{% endif %}
                     title="{{ e.label }} — {{ e.seconds }} at {{ e.clock }}">
               <span class="wf-name kind-{{ e.variant or e.kind }}">{{ e.label }}</span>
               <span class="wf-track">
@@ -595,6 +596,12 @@ ASSISTANT_TEMPLATE = """
           <span class="ev-crumb-step">{{ log.events[0].step_ref }}</span>
           <span class="ev-crumb-label">{{ log.events[0].label }}</span>
           <span class="ev-crumb-desc">{{ log.events[0].description }}</span>
+          {# A link to whatever is being inspected. Real href so the context
+             menu can copy it; clicking copies the absolute URL, because a
+             click that only rewrote the address bar looks like nothing
+             happened. #}
+          <a class="card-link" id="ev-permalink"
+             href="#ev-{{ log.events[0].key }}">link</a>
         </div>
         <div class="log-detail">
           {% for e in log.events %}
@@ -904,6 +911,17 @@ var asSelectEvent = null;
     if (detail && label) { label.textContent = detail.dataset.label || ""; }
     if (detail && desc) { desc.textContent = detail.dataset.desc || ""; }
     if (detail && step) { step.textContent = detail.dataset.step || ""; }
+    var pick = document.querySelector('.ev-pick[data-ev="' + id + '"]');
+    var key = pick ? pick.getAttribute("data-key") : "";
+    var link = document.getElementById("ev-permalink");
+    if (link && key) { link.setAttribute("href", "#ev-" + key); }
+    // The address bar holds a link to what is on screen, without stacking a
+    // history entry per click — replaceState fires no hashchange, so this
+    // cannot loop back into selectFromHash.
+    if (key && window.history && history.replaceState) {
+      history.replaceState(null, "", location.pathname + location.search
+                           + "#ev-" + key);
+    }
     clampBlocks(document.getElementById(id));
   }
   document.addEventListener("click", function (ev) {
@@ -920,6 +938,31 @@ var asSelectEvent = null;
   }, true);
   clampBlocks(document.querySelector(".ev-pane.on"));
   asSelectEvent = select;
+
+  // Two fragment formats. `#ev-<key>` names a row directly, by the identity
+  // the live refresh already uses. `#step-<uuid>` is the published format
+  // db.assistant_step_path mints — chat proposal cards, cron provenance and
+  // the uuid lookup all emit it — so it keeps resolving, through the one row
+  // marked primary for that step.
+  function pickFromHash(hash) {
+    if (hash.indexOf("#ev-") === 0) {
+      return document.querySelector(
+        '.ev-pick[data-key="' + hash.slice(4) + '"]');
+    }
+    if (hash.indexOf("#step-") === 0) {
+      return document.querySelector(
+        '.ev-pick[data-primary="' + hash.slice(6) + '"]');
+    }
+    return null;
+  }
+  function selectFromHash() {
+    var pick = pickFromHash(location.hash || "");
+    // A fragment naming nothing leaves the page as it is rather than
+    // selecting a neighbour the reader did not ask for.
+    if (pick) { select(pick.dataset.ev); pick.scrollIntoView({block: "nearest"}); }
+  }
+  selectFromHash();
+  window.addEventListener("hashchange", selectFromHash);
 })();
 
   // --- kebab menu on the selected run ----------------------------------------
@@ -1006,8 +1049,22 @@ var asSelectEvent = null;
       .catch(function (e) { alert('Request failed: ' + e); });
   }
 
-  // Deep-link to a step: #step-<uuid> scrolls the .as-main pane to it on load.
-  // (.as-main is the scroll container, so a bare fragment isn't reliable here.)
+  // Copying the link to what is being inspected. The href is already right —
+  // this is so a click does something visible rather than silently rewriting
+  // the address bar.
+  document.addEventListener('click', function (e) {
+    var link = e.target.closest && e.target.closest('#ev-permalink');
+    if (!link) return;
+    e.preventDefault();
+    ppCopyText(location.origin + location.pathname + location.search
+               + link.getAttribute('href'));
+    asToast('Link copied.');
+  });
+
+  // Deep-link to a step section: #step-<uuid> scrolls the .as-main pane to it
+  // on load. (.as-main is the scroll container, so a bare fragment isn't
+  // reliable here.) The inspector understands the same fragment and selects
+  // the step's primary row; see selectFromHash.
   (function () {
     var h = location.hash;
     if (h.indexOf('#step-') === 0) {

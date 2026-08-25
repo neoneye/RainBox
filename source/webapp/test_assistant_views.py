@@ -2186,6 +2186,47 @@ def test_a_card_header_lines_up_with_the_body_under_it():
     assert ".as-main .log-detail" in body.group(0)
 
 
+def test_a_row_can_be_linked_to(app_ctx, client):
+    """Any row on the timeline is something to send someone. Its identity is
+    the key the live refresh already mints — a second identity for one row is
+    how the two drift apart."""
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="look")
+    db.settle_assistant_step(step, phase="observed", observation={"text": "x"})
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+
+        # Each row carries the step it is the published link for, and the
+        # copy affordance is in the inspector header.
+        assert f'data-primary="{step.uuid}"' in body
+        assert "ev-permalink" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+    # #ev-<key> selects a row; #step-<uuid> keeps resolving through the row
+    # marked primary for it.
+    assert "#ev-" in ASSISTANT_TEMPLATE
+    assert "data-primary=" in ASSISTANT_TEMPLATE
+    assert "function selectFromHash" in ASSISTANT_TEMPLATE
+    # The address bar follows the selection without stacking history entries.
+    assert "replaceState" in ASSISTANT_TEMPLATE
+
+
+def test_the_old_step_fragment_still_scrolls_nothing_away(app_ctx, client):
+    """`#step-<uuid>` is minted by db.assistant_step_path and linked from chat
+    proposal cards, cron rows and the uuid lookup. Those links are durable, so
+    the page must keep understanding the format even once no step section
+    exists to scroll to."""
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    assert "'#step-'" in ASSISTANT_TEMPLATE or '"#step-"' in ASSISTANT_TEMPLATE
+
+
 def test_a_live_refresh_keeps_the_row_the_reader_is_inspecting():
     """A running run refreshes every few seconds and the page swaps its whole
     pane. The server renders the first row selected, so without carrying the

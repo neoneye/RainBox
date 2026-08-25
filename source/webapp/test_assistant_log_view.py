@@ -97,3 +97,67 @@ def test_a_key_is_usable_as_an_html_attribute():
 
     for key in _keys(view):
         assert not set(key) & set('"\'<>&')
+
+
+# --- anchors -----------------------------------------------------------------
+#
+# `#step-<uuid>` is a published URL: db.assistant_step_path() mints it and six
+# places outside this page link to it, including chat messages and cron rows
+# that are years old by now. One step uuid is several rows, so it needs a
+# documented primary row rather than whichever one happens to sort first.
+
+
+def _primary(view, step):
+    return [e for e in view["events"] if e.get("primary_for") == str(step.uuid)]
+
+
+def test_a_step_with_an_action_is_anchored_to_the_action():
+    """Every external link means "the step that did this", and the action is
+    the row carrying the args, the result and the writes it proposed."""
+    step = _step("memory_query", at=0, ms=2000, code_driven=False)
+
+    view = log_view(_run(30), [step])
+
+    assert [e["kind"] for e in _primary(view, step)] == ["action"]
+
+
+def test_a_step_that_is_only_a_call_is_anchored_to_the_call():
+    step = _step("reply_audit", at=0, ms=2000, code_driven=True)
+
+    view = log_view(_run(30), [step])
+
+    assert [e["kind"] for e in _primary(view, step)] == ["llm"]
+
+
+def test_a_step_is_anchored_to_exactly_one_row():
+    """Two rows claiming one uuid is a link that lands somewhere different
+    depending on which the lookup reaches first."""
+    step = _step("memory_query", at=0, ms=2000, code_driven=False,
+                 phases=[("claim retrieval", 2, 3.0)])
+
+    view = log_view(_run(30), [step])
+
+    assert len(_primary(view, step)) == 1
+
+
+def test_a_row_belonging_to_no_step_anchors_nothing():
+    view = log_view(_run(30), [_step("reply", at=0, ms=1000)])
+
+    assert [e for e in view["events"] if e.get("primary_for")], "no anchors"
+    assert all(e.get("primary_for") in (None, "")
+               for e in view["events"] if not e["anchor"])
+
+
+def test_a_retried_step_is_anchored_to_the_call_it_kept():
+    """Its rejected attempts are llm rows on the same step and they ran first.
+    A published link landing on an answer the run threw away would be worse
+    than one that landed nowhere."""
+    step = _step("reply_audit", at=10, ms=2000, code_driven=True)
+    step.rejected_attempts = [{"requested_at": _at(0).isoformat(), "ms": 9000,
+                               "input_tokens": 5, "output_tokens": 1}]
+
+    view = log_view(_run(30), [step])
+    primary = [e for e in view["events"] if e.get("primary_for")]
+
+    assert len(primary) == 1
+    assert primary[0]["variant"] == "code-driven"

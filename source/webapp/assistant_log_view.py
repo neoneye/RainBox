@@ -60,6 +60,42 @@ def _row_key(event: dict) -> str:
     return "".join(c if c in _KEY_SAFE else "-" for c in ":".join(parts))
 
 
+#: Which row a `#step-<uuid>` link resolves to, best first. That format is
+#: minted by `db.assistant_step_path` and linked from six places outside this
+#: page — chat proposal cards, cron provenance, the second-opinion view, the
+#: uuid lookup — so it has to keep landing somewhere, and one step uuid is
+#: several rows. The action wins because every one of those links means "the
+#: step that did this", and the action is the row carrying the arguments, the
+#: result and the writes it proposed.
+#: Matched on (kind, variant); an empty variant matches any. The kept call is
+#: named by variant because a retried step's thrown-away attempts are `llm`
+#: rows on the same step and they ran first — a published link landing on an
+#: answer the run discarded is worse than one landing nowhere.
+_PRIMARY_ROW_ORDER: tuple[tuple[str, str], ...] = (
+    ("action", ""), ("skipped", ""), ("llm", "decide"), ("llm", "code-driven"),
+    ("llm", ""),
+)
+
+
+def _mark_primary_rows(rows: list[dict]) -> None:
+    """Name the one row each step's published link resolves to.
+
+    Exactly one, or a link lands somewhere different depending on which row
+    the lookup reaches first.
+    """
+    by_step: dict[str, list[dict]] = {}
+    for row in rows:
+        if row.get("anchor"):
+            by_step.setdefault(str(row["anchor"]), []).append(row)
+    for step_uuid, owned in by_step.items():
+        for kind, variant in _PRIMARY_ROW_ORDER:
+            match = [r for r in owned if r["kind"] == kind
+                     and (not variant or r["variant"] == variant)]
+            if match:
+                match[0]["primary_for"] = step_uuid
+                break
+
+
 def log_view(run, steps: list, reviews: list | None = None,
              trigger: dict | None = None, intents: list | None = None) -> dict:
     """`{"events": [...], "span_seconds": float}` for the page.
@@ -121,5 +157,7 @@ def log_view(run, steps: list, reviews: list | None = None,
         # description the header shows for whichever event is selected.
         row["description"] = event_description(event)
         row["detail_html"] = render_event_detail(event)
+        row["primary_for"] = ""
         rows.append(row)
+    _mark_primary_rows(rows)
     return {"events": rows, "span_seconds": span}
