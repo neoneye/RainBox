@@ -598,38 +598,17 @@ def test_a_memory_query_pane_reports_what_it_found():
     assert "number of QA static items" in html
 
 
-def _memory_query_pane(data):
-    return render_event_detail(_event(
+def test_a_memory_query_pane_does_not_reprint_the_observation_above_itself():
+    """It printed the whole observation as an expanded block of its own, and
+    the pane ends with that same payload — the recall filter's share of it was
+    seventeen kilobytes of documents, twice."""
+    html = render_event_detail(_event(
         "action", "memory_query", kpis={"status": "ok"},
         payload={"args": {"query": "where I live"},
-                 "observation": {"text": "facts", "data": data}}))
+                 "observation": {"text": "facts", "data": {"qa_static": 1}}}))
 
-
-def test_a_memory_query_pane_does_not_reprint_what_the_recall_filter_row_shows():
-    """The filter's payload is every candidate's document and score, and it
-    has a phase row of its own that reads it properly. Printing it here too
-    put the same payload on the page a second time."""
-    html = _memory_query_pane({
-        "qa_static": 1,
-        "timing": {"phases": [{"name": "recall filter", "ms": 400}]},
-        "recall_filter": {"mode": "reranker",
-                          "candidates": [{"qa_id": "qa-1",
-                                          "document": "a document body"}]},
-    })
-
-    assert "a document body" not in html
-    assert "recall_filter" not in html
-    assert "qa_static" in html      # the rest of what the action recorded stays
-
-
-def test_a_run_with_no_recall_filter_row_keeps_its_payload_in_the_pane():
-    """No phase means no row to send the reader to, so hiding the payload
-    would lose it rather than move it."""
-    html = _memory_query_pane({
-        "recall_filter": {"mode": "llm", "reasoning": "a note from before"},
-    })
-
-    assert "a note from before" in html
+    assert html.count("qa_static") == 1
+    assert "retrieval" not in html
 
 
 def test_an_action_s_status_is_a_block_not_a_meta_field():

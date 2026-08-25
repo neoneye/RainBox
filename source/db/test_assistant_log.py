@@ -638,6 +638,40 @@ def test_an_inline_review_is_not_repeated_inside_the_action():
     assert action["payload"]["observation"]["data"]["duration_seconds"] == 0.01
 
 
+def test_a_phases_findings_are_not_repeated_inside_the_action():
+    """The recall filter's payload is every candidate's document and score,
+    and its phase row renders it split into what was sent and what came back.
+    The action's pane was printing all of it again underneath."""
+    step = _step("memory_query", at=0, ms=1000, observation={"text": "facts"})
+    step.observation["data"]["qa_static"] = 2
+    step.observation["data"]["recall_filter"] = {
+        "mode": "reranker",
+        "candidates": [{"qa_id": "qa-1", "document": "a document body"}]}
+    step.observation["data"]["timing"] = {
+        "phases": [{"name": "recall filter", "ms": 380,
+                    "started_at": _at(0.1).isoformat()}]}
+
+    action = _first(db.run_events(_run(finished=10), [step]), "action")
+
+    data = action["payload"]["observation"]["data"]
+    assert "recall_filter" not in data
+    assert data["qa_static"] == 2       # the rest of what it recorded stays
+
+
+def test_a_run_with_no_phase_row_keeps_its_findings_in_the_action():
+    """No phase means no row to send the reader to, so dropping the payload
+    would lose it rather than move it — which is what every run recorded
+    before the phase existed depends on."""
+    step = _step("memory_query", at=0, ms=1000, observation={"text": "facts"})
+    step.observation["data"]["recall_filter"] = {"mode": "llm",
+                                                 "reasoning": "an old note"}
+
+    action = _first(db.run_events(_run(finished=10), [step]), "action")
+
+    assert action["payload"]["observation"]["data"]["recall_filter"] == {
+        "mode": "llm", "reasoning": "an old note"}
+
+
 def test_a_pointer_to_a_review_row_does_not_become_a_second_row():
     """Newer runs record only the review's uuid there; the row it points at is
     already on the stream from the reviews table."""

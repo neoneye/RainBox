@@ -436,12 +436,30 @@ def _observation_without_timing(step) -> dict:
     `second_opinion` as the gate's row. Dumping either again would show the
     same thing twice on one screen — and the same review printed twice reads
     as two reviews.
+
+    So is anything a PHASE row shows: `_PHASE_FINDINGS_KEY` is the same
+    relation read from the other end, and a phase that shows its findings has
+    already published them. memory_query's recall filter is the case that
+    forced this — its payload is every candidate's document and score, which
+    the phase pane renders split into what was sent and what came back, and
+    the action pane was printing all of it again underneath.
+
+    Dropped only when the phase is actually in THIS step's timing: a run
+    recorded before the phase existed has no row to send the reader to, so
+    hiding its payload would lose it rather than move it. Which is why this
+    lives here, with the timing still in hand, and not in the pane that reads
+    the result — by then the timing is gone and the question cannot be asked.
     """
     observation = dict(step.observation or {})
     data = observation.get("data")
     if isinstance(data, dict):
-        data = {k: v for k, v in data.items()
-                if k not in ("timing", "second_opinion")}
+        phases = {phase.get("name")
+                  for phase in ((data.get("timing") or {}).get("phases") or [])
+                  if isinstance(phase, dict)}
+        drop = {"timing", "second_opinion"} | {
+            _PHASE_FINDINGS_KEY[name] for name in phases
+            if name in _PHASE_FINDINGS_KEY}
+        data = {k: v for k, v in data.items() if k not in drop}
         observation["data"] = data
     return observation
 
