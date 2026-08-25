@@ -207,6 +207,9 @@ def test_a_review_pane_leads_with_its_verdict():
     assert "<h5>verdict</h5>" in html
     assert "rejected" in html
     assert "writes a file" in html
+    # The finding, not its tag: a category beside the sentence puts a label
+    # where the reader is looking for what was actually wrong.
+    assert "safety" not in html
 
 
 def test_a_review_that_never_ran_shows_the_reason_not_a_verdict():
@@ -522,6 +525,19 @@ def test_an_action_s_status_is_a_block_not_a_meta_field():
     assert '<h5>status</h5>' in html
     assert 'title="How the action ended"' not in html
     assert '<span class="ev-kpi" title="How the action ended">' not in html
+
+
+def test_every_action_renderer_shows_what_the_action_returned():
+    """A bespoke renderer must not be the one that drops the structured half
+    of a result. python_run has one, and its result data is where the run
+    records how long the program took."""
+    for label in ("python_run", "memory_query", "kanban_task_teleport"):
+        html = render_event_detail(_event(
+            "action", label, kpis={"status": "ok"},
+            payload={"args": {"code": "x"},
+                     "observation": {"text": "y",
+                                     "data": {"duration_seconds": 0.01}}}))
+        assert "duration_seconds" in html, label
 
 
 def test_every_action_renderer_shows_the_status():

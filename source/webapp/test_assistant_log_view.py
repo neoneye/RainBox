@@ -161,3 +161,27 @@ def test_a_retried_step_is_anchored_to_the_call_it_kept():
 
     assert len(primary) == 1
     assert primary[0]["variant"] == "code-driven"
+
+
+def test_a_run_whose_rows_carry_no_time_still_renders():
+    """Legacy rows, and any step settled without timing, have no start. The
+    stream is the only view of a run now, so dropping every row for want of a
+    clock renders the run as if nothing had happened in it."""
+    step = _step("response_language_classifier", at=0, ms=0,
+                 code_driven=False)
+    step.requested_at = None
+    step.created_at = None
+    step.duration_ms = None
+    step.settled_at = None
+    step.system_prompt = None
+
+    view = log_view(SimpleNamespace(uuid=uuid4(), started_at=None,
+                                    finished_at=None, room_uuid=None,
+                                    summary=None), [step])
+
+    # The call it recorded a response for, and the action it chose. Both
+    # undated, both drawn without a bar.
+    assert [e["label"] for e in view["events"]] == [
+        "decide → response_language_classifier", "response_language_classifier"]
+    assert all(e["offset_pct"] is None for e in view["events"])
+    assert all(e["clock"] == "—" for e in view["events"])

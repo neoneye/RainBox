@@ -38,82 +38,6 @@ ASSISTANT_TEMPLATE = """
    builders in this module (_response_meta and friends) — the same ones the
    markdown export renders through _meta_md — so this macro decides only how a
    field looks, never which fields there are. #}
-{% macro io_meta(fields) %}
-{%- if fields %}<span class="io-meta">
-  {%- for f in fields %}
-    {%- if f.href %}<a class="{{ f.cls }}" href="{{ f.href }}" title="{{ f.title }}">{{ f.html or f.text }}</a>
-    {%- else %}<span class="{{ f.cls }}" title="{{ f.title }}">{{ f.html or f.text }}</span>{% endif %}
-  {%- endfor %}
-</span>{% endif %}
-{%- endmacro %}
-{# One LLM exchange of a step: what was sent, what the model thought, what it
-   answered. Built by _exchanges(), which returns one of these per ATTEMPT —
-   so a call that was refused and asked again renders as two, identical in
-   shape, and no attempt is a special case that shows less than the others.
-   Mirrored in Python by _exchange_md(); keep the two aligned. #}
-{% macro llm_exchange(x) %}
-  {% if x.system_prompt or x.user_prompt or x.turns %}
-  <div class="io io-req">
-    <div class="io-label">{{ x.request_label }}{{ io_meta(x.request_meta) }}</div>
-    {% if x.system_prompt %}
-    <details class="prompt" data-k="{{ x.key_prefix }}system">
-      <summary>system prompt ({{ x.system_prompt | length }} chars)</summary>
-      <pre>{{ x.system_prompt }}</pre>
-    </details>
-    {% endif %}
-    {% if x.user_prompt %}
-    <details class="prompt" data-k="{{ x.key_prefix }}user">
-      <summary>user prompt ({{ x.user_prompt | length }} chars)</summary>
-      <pre>{{ x.user_prompt }}</pre>
-    </details>
-    {% endif %}
-    {# What a retry received on top of the shared prompt above: the refused
-       answer replayed as the model's own turn, and the reason it was refused
-       as the turn after it. #}
-    {% for t in x.turns %}
-    <details class="prompt" data-k="{{ x.key_prefix }}turn{{ loop.index }}">
-      <summary>{{ t.role }} turn ({{ t.content | length }} chars)</summary>
-      <pre>{{ t.content }}</pre>
-    </details>
-    {% endfor %}
-  </div>
-  {% endif %}
-  {% if x.reasoning %}
-  <div class="io io-think">
-    {# The model's native reasoning channel (a reasoning model's thinking
-       before it emitted the structured decision); absent for non-reasoning
-       models. Collapsed like the request prompts. #}
-    <div class="io-label">model reasoning</div>
-    <details class="prompt" data-k="{{ x.key_prefix }}reasoning">
-      <summary>reasoning ({{ x.reasoning | length }} chars)</summary>
-      <pre>{{ x.reasoning }}</pre>
-    </details>
-  </div>
-  {% endif %}
-  {% if x.response_text or x.error %}
-  <div class="io io-out{% if x.rejected %} io-rejected{% endif %}">
-    <div class="io-label">{{ x.response_label }}{{ io_meta(x.response_meta) }}</div>
-    {% if x.error %}<div class="err">{{ x.error }}</div>{% endif %}
-    {% if x.response_text %}<pre>{{ x.response_text }}</pre>{% endif %}
-  </div>
-  {% endif %}
-{% endmacro %}
-{% macro render_intent(it) %}
-  <div class="intent {{ it.state }}">
-    <span class="cap">{{ it.capability_name }}</span>
-    <span class="badge b-{{ it.state }}">{% if it.state == 'undone' %}↩ {% endif %}{{ it.state }}</span>
-    {% if it.preview_text %}<div class="muted">{{ it.preview_text }}</div>{% endif %}
-    {% if it.payload %}<pre>{{ it.payload | tojson }}</pre>{% endif %}
-    <div class="acts">
-      {% if it.state == 'proposed' %}
-        <button class="primary" onclick="ppAct('/chat/api/assistant/write-intents/{{ it.uuid }}/confirm')">Confirm</button>
-        <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/write-intents/{{ it.uuid }}/reject', 'Reject this {{ it.capability_name }} write?')">Reject</button>
-      {% elif it.state == 'completed' and it.result and it.result.get('undo') %}
-        <button onclick="ppConfirmAct('/chat/api/assistant/write-intents/{{ it.uuid }}/undo', 'Undo this {{ it.capability_name }} write? This reverts the change.')">Undo</button>
-      {% endif %}
-    </div>
-  </div>
-{% endmacro %}
 <style>
   body { margin: 0; font-family: system-ui, sans-serif; height: 100vh;
          display: flex; flex-direction: column; overflow: hidden; }
@@ -654,156 +578,9 @@ ASSISTANT_TEMPLATE = """
       <div class="pending">⏳ pending {{ c.command }}{% if c.payload and c.payload.get('instruction') %}: {{ c.payload.get('instruction') }}{% endif %}</div>
       {% endfor %}
 
-      {% if not timeline %}<div class="as-empty">This run has no steps.</div>{% endif %}
-      {% for step, intents in timeline %}
-      {% set kind = step_kinds.get(step.uuid|string) %}
-      <div class="step phase-{{ step.phase }}{% if kind %} aux{% endif %}" id="step-{{ step.uuid }}">
-        <div class="card-header">
-          {# Numbered by position in the timeline, not by `step_index`: the
-             code-driven rows deliberately share the decide index they sit
-             beside, so numbering by it repeated "Step 1 of 4" three times. The
-             decide-loop index stays in the tooltip. #}
-          <a class="ix step-anchor" href="#step-{{ step.uuid }}" title="Link to this step (decide-loop step index={{ step.step_index }})">Step {{ loop.index }} of {{ timeline|length }}</a>
-          {% if step.phase == 'skipped' %}<span><span class="badge b-skipped" title="The loop could not make this call at all — nothing ran, and nothing failed">skipped</span></span>{% endif %}
-          {% if kind %}<span class="kind" title="Not a decide step: the loop issued this call itself {{ 'before the first decide step' if kind == 'warm-up' else 'in reaction to what the model decided' }}, so the model never chose it and it consumes none of the step budget">{{ kind }}</span>{% endif %}
-          <span class="action" title="{% if kind %}The call the loop made at this point{% else %}The action the model decided to take for this step{% endif %}">{{ step.action or '—' }}</span>
-          {% set desc = step.action and ((code_driven_descriptions.get(step.action) if step.code_driven else none) or action_descriptions.get(step.action)) %}
-          {% if desc %}<span class="action-desc">{{ desc }}</span>{% endif %}
-        </div>
-        <div class="step-body">
-        {% if step.phase == 'control' %}
-          {% if step.reason %}<div class="reason">{{ step.reason }}</div>{% endif %}
-        {% else %}
-        {% if step.log %}
-        <details class="steplog" data-k="log">
-          <summary>log</summary>
-          <div class="steplog-body">
-          {% for entry in step.log %}
-            <div class="steplog-entry"><span class="k">{{ entry.label }}</span>
-              {%- if entry.href %} <a href="{{ entry.href }}">{{ entry.text }}</a>
-              {%- else %} {{ entry.text }}{% endif %}
-              {%- if entry.uuid %} <code class="u">{{ entry.uuid }}</code>{% endif %}</div>
-          {% endfor %}
-          </div>
-        </details>
-        {% endif %}
-        {# Every attempt this step's call made, oldest first: the ones whose
-           answer was thrown away, then the one that was kept. All render
-           through one macro, so a rejected attempt shows its request,
-           thinking and answer exactly like the attempt that replaced it. #}
-        {% for x in exchanges.get(step.uuid|string, []) %}{{ llm_exchange(x) }}{% endfor %}
-        {% set so = second_opinion.get(step.uuid|string) %}
-        {% if so %}
-        <div class="io io-so">
-          {# The independent pre-execution review of a gated action (currently
-             python_run). Chronologically it ran between the model response and
-             the action executing, so it renders before the action call; its
-             payload is stripped from the action-result data below. #}
-          <div class="io-label">second opinion{% if 'approved' in so %}<span class="fn-ok {{ 'ok-true' if so.approved else 'ok-false' }}" title="The reviewer's verdict: false means the action was blocked and never executed">approved: {{ 'true' if so.approved else 'false' }}</span>{% endif %}{{ io_meta(review_meta(so, model_names)) }}</div>
-          {% if so.system_prompt %}
-          <details class="prompt" data-k="so-system">
-            <summary>system prompt ({{ so.system_prompt | length }} chars)</summary>
-            <pre>{{ so.system_prompt }}</pre>
-          </details>
-          {% endif %}
-          {% if so.user_prompt %}
-          <details class="prompt" data-k="so-user">
-            <summary>user prompt ({{ so.user_prompt | length }} chars)</summary>
-            <pre>{{ so.user_prompt }}</pre>
-          </details>
-          {% endif %}
-          {% if so.reasoning %}
-          <details class="prompt" data-k="so-reasoning">
-            <summary>reasoning ({{ so.reasoning | length }} chars)</summary>
-            <pre>{{ so.reasoning }}</pre>
-          </details>
-          {% endif %}
-          {% if so.response %}<pre title="The reviewer model's verbatim response">{{ so.response }}</pre>{% endif %}
-          {% if so.problems_text %}<pre>{{ so.problems_text }}</pre>{% endif %}
-          {% if so.skipped %}<pre>review skipped: {{ so.skipped }}</pre>{% endif %}
-          {% if so.error %}<pre>review failed open: {{ so.error }}</pre>{% endif %}
-        </div>
-        {% endif %}
-        {# No action call on a code-driven row: nothing was dispatched from a
-           decision, and the empty args made the block read as one that was. #}
-        {% if step.action and not step.code_driven %}
-        <div class="io io-call">
-          <div class="io-label">action call{{ io_meta(call_meta(step)) }}</div>
-          {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
-        </div>
-        {% endif %}
-        {% endif %}
-        {% set obs = step.observation %}
-        {# The model request / second opinion / action call / action result
-           io-blocks are mirrored in Python by _step_md(); keep them aligned.
-           The result is dropped when it only repeats the model response above
-           (a code-driven call's response IS its result). #}
-        {% if (obs is not none or step.observation_preview)
-              and (step.uuid|string) not in duplicate_result %}
-        <div class="io io-in">
-          <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{{ io_meta(result_meta(step)) }}</div>
-          {% if obs is not none %}
-            {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
-            {% set tm = timing.get(step.uuid|string) %}
-            {% if tm %}
-            {# Where the action's own duration went. The phases are the
-               action's parts in the order they finished; the embedder line
-               below counts the calls those phases made (already inside their
-               durations — the per-call bars are in the waterfall above). #}
-            <table class="io-data io-timing" id="phases-{{ step.uuid }}"><thead><tr>
-              <th title="A named part of this action">phase</th>
-              <th title="Wall-clock spent in this phase">took</th>
-              <th title="When this phase started">at</th>
-            </tr></thead><tbody>
-              {% for r in tm.rows %}
-              <tr><td class="io-timing-name">{{ r.name }}</td><td>{{ r.took }}</td><td>{{ r.at }}</td></tr>
-              {% endfor %}
-              {% if tm.embeddings %}
-              <tr><td class="io-timing-name" title="Embedding calls made inside the phases above — a second model on the same runtime, which is what a warm cache for the assistant's own model competes with">embedder</td><td colspan="2">{{ tm.embeddings }}</td></tr>
-              {# One row per embedder call, showing the text it was given —
-                 the question a column of identical bars raises and cannot
-                 answer: did these embed the same thing or different things? #}
-              {% for e in tm.embed_calls %}
-              <tr class="io-embed"><td class="io-embed-text" title="The text sent to the embedder">{{ e.text }}</td><td>{{ e.took }}</td><td>{{ e.at }}</td></tr>
-              {% endfor %}
-              {% endif %}
-            </tbody></table>
-            {% endif %}
-            {% set odata = obs_data.get(step.uuid|string) %}
-            {% if odata %}
-              {% if 'qa_static' in odata %}
-              <table class="io-data"><thead><tr>
-                <th title="number of QA static items">QA static</th>
-                <th title="number of QA dynamic items">QA dynamic</th>
-                <th title="number of memory items">memory</th>
-                <th title="number of facts whose middle was dropped to fit the 1200-char rendered per-fact cap, both ends kept (tagged truncate1200); read one in full via memory_query with its uuid">truncated</th>
-                <th title="number of lower-ranked facts not admitted because they no longer fit the 11000-char fact payload — the legend and the retained lines, not the whole observation; narrow the query or fetch a fact by its uuid">omitted</th>
-              </tr></thead><tbody><tr>
-                <td>{{ odata.qa_static }}</td>
-                <td>{{ odata.qa_dynamic }}</td>
-                <td>{{ odata.memory }}</td>
-                <td>{{ odata.truncated }}</td>
-                <td>{{ odata.omitted }}</td>
-              </tr></tbody></table>
-              {% else %}<pre>{{ odata | tojson }}</pre>{% endif %}
-            {% endif %}
-          {% elif step.observation_preview %}
-            <pre>{{ step.observation_preview }}</pre>
-          {% endif %}
-        </div>
-        {% endif %}
-        {% if step.error %}<div class="err">{{ step.error }}</div>{% endif %}
-        {% for it in intents %}{{ render_intent(it) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
+      {% if not log.events %}<div class="as-empty">This run has no steps.</div>{% endif %}
 
-      {% if unlinked %}
-        <div class="grp">Unlinked writes <span class="muted">(no step reference)</span></div>
-        {% for it in unlinked %}{{ render_intent(it) }}{% endfor %}
-      {% endif %}
-
-      {# Live view of the model call in flight (streamed checkpoints, updated
+            {# Live view of the model call in flight (streamed checkpoints, updated
          ~1s). Present only between "request sent" and "step row landed", so it
          never duplicates a timeline step. Live-view only: intentionally NOT
          mirrored in _run_markdown(), which exports the durable run record. #}
@@ -1750,11 +1527,12 @@ def _second_opinion_md(so: dict, model_names: dict[str, str]) -> list[str]:
 
 
 def _exchange_md(exchange: dict, *, fence_json: bool) -> list[str]:
-    """One LLM exchange as Markdown — the mirror of the template's
-    `llm_exchange` macro (search ASSISTANT_TEMPLATE for it); keep the two
-    aligned. Both are fed the same dicts from `_exchanges`, so a rejected
-    attempt and the attempt that replaced it cannot drift into different
-    shapes in one renderer and not the other."""
+    """One LLM exchange as Markdown.
+
+    The export is the only renderer of this shape now: the page draws a run as
+    its event stream, where a rejected attempt is a row like the attempt that
+    replaced it rather than a block inside one. Both are still fed the same
+    dicts from `_exchanges`, so the two attempts cannot drift apart here."""
     lines: list[str] = []
     if exchange["system_prompt"] or exchange["user_prompt"] or exchange["turns"]:
         lines.append(_labelled(f"**{exchange['request_label']}**",

@@ -255,7 +255,8 @@ def _generic_action(event: dict) -> Markup:
     """
     payload = event.get("payload") or {}
     observation = payload.get("observation") or {}
-    text = observation.get("text") if isinstance(observation, dict) else None
+    structured = observation if isinstance(observation, dict) else {}
+    text = structured.get("text")
     return Markup("").join([
         _block("reason", payload.get("reason")),
         _block("arguments", payload.get("args")),
@@ -321,6 +322,11 @@ def _llm(event: dict) -> Markup:
     if rejected:
         parts.append(_block(
             f"rejected attempts ({len(rejected)})", rejected))
+    # What was appended to a retried call's prompt: its own refused answer and
+    # why it was refused. That is what makes the second attempt a different
+    # call from the first, and the first carries none of it.
+    parts.append(_block("added turns", payload.get("feedback"),
+                        collapsed=True, key=f"{key}-feedback"))
     return Markup("").join(parts)
 
 
@@ -449,6 +455,20 @@ def _intents(event: dict) -> Markup:
     ).format(len(rows), Markup("").join(rows))
 
 
+def _action_data(event: dict) -> Markup:
+    """What an action returned besides prose.
+
+    Rendered here rather than inside a renderer so a bespoke one cannot be the
+    one that drops it — the same reason the status block is prepended. The
+    counts a retrieval reports are on the meta line above; anything else an
+    action records has this row as its only home.
+    """
+    observation = (event.get("payload") or {}).get("observation") or {}
+    data = observation.get("data") if isinstance(observation, dict) else None
+    return _block("data", data, collapsed=True,
+                  key=f"{event.get('uuid') or 'ev'}-data")
+
+
 def _skipped(event: dict) -> Markup:
     """A call that was never made.
 
@@ -478,6 +498,7 @@ def _review(event: dict) -> Markup:
     problems = payload.get("problems") or []
     parts = [
         _block("verdict", (event.get("kpis") or {}).get("verdict")),
+        _block("group", payload.get("group_from")),
         _block("reason", payload.get("skip_reason")),
         _block("error", payload.get("error")),
     ]
@@ -485,7 +506,14 @@ def _review(event: dict) -> Markup:
         # Present on approvals too: "approved with problems" is the
         # right-answer-wrong-reasons signal, and folding it behind the verdict
         # would lose exactly the reviews worth reading.
-        parts.append(_block(f"problems ({len(problems)})", problems))
+        #
+        # The sentences, not the objects. A problem carries a category as
+        # well, and printing it beside the finding puts a tag where the reader
+        # is looking for what was actually wrong.
+        parts.append(_block(
+            f"problems ({len(problems)})",
+            "\n".join(f"- {p.get('text', '')}" if isinstance(p, dict)
+                       else f"- {p}" for p in problems)))
     parts.append(_llm(event))
     return Markup("").join(parts)
 
@@ -534,6 +562,7 @@ def render_event_detail(event: dict) -> str:
         status = (event.get("kpis") or {}).get("status")
         body = (_block("status", status)
                 + _ACTION_RENDERERS.get(label, _generic_action)(event)
+                + _action_data(event)
                 + _intents(event))
     elif event.get("variant") == "review":
         # A variant earns a renderer on the same terms an action does: its

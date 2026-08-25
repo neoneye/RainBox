@@ -118,15 +118,21 @@ def log_view(run, steps: list, reviews: list | None = None,
     if not events:
         return {"events": [], "span_seconds": 0.0}
 
+    # A run with no clock anywhere still has rows. Legacy steps predate the
+    # timing capture and a step can settle without one, and the stream is the
+    # only view of a run now — dropping every row for want of a start would
+    # render the run as if nothing had happened in it. They lay out with no
+    # bars, which `offset_pct: None` already means.
     starts = [e["start"] for e in events if e["start"]]
-    if not starts:
-        return {"events": [], "span_seconds": 0.0}
     run_started = getattr(run, "started_at", None)
     run_finished = getattr(run, "finished_at", None)
-    first = min(starts + ([run_started] if run_started else []))
-    ends = [e for e in (_end_of(x) for x in events) if e]
-    last = max(ends + ([run_finished] if run_finished else []))
-    span = (last - first).total_seconds()
+    span = 0.0
+    first = None
+    if starts:
+        first = min(starts + ([run_started] if run_started else []))
+        ends = [e for e in (_end_of(x) for x in events) if e]
+        last = max(ends + ([run_finished] if run_finished else []))
+        span = (last - first).total_seconds()
 
     rows = []
     for index, event in enumerate(events):
@@ -137,7 +143,7 @@ def log_view(run, steps: list, reviews: list | None = None,
         # next one.
         row["key"] = _row_key(event)
         row["glyph"] = EVENT_GLYPH.get(event["kind"], "·")
-        if event["start"] and span > 0:
+        if event["start"] and first is not None and span > 0:
             offset = (event["start"] - first).total_seconds()
             row["offset_pct"] = round(offset / span * 100, 3)
             if event["duration_ms"]:

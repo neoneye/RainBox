@@ -107,3 +107,31 @@ changes under everything that reads it.
 
 **Deriving, not emitting.** Everything above already exists in a row somewhere.
 If a payload is genuinely not recorded, the pane says so rather than guessing.
+
+## Done, and what the removal turned up
+
+All four slices landed. The step sections are gone; the page is the
+dashboard, the stream, the trigger card and the verdict.
+
+Removing them exposed gaps the sections had been covering for. Each is fixed:
+
+- **A run whose rows carry no clock rendered empty.** `log_view` dropped every
+  row when none had a start. Legacy steps predate the timing capture, and the
+  stream is the only view now, so a run read as if nothing had happened in it.
+- **A step recorded only its model, or only its response, and got no call
+  row.** The evidence a call was made is now a list of the fields a step
+  records about one — any of them earns the row.
+- **48 reviews live inside their step's observation**, not in the reviews
+  table, and the read model knew only the table. More reviews are that shape
+  than are not.
+- **A rejected attempt was a bar and nothing else.** Its refused answer — the
+  reason anyone opens the row — was not on the event.
+- **An action's structured result was not shown at all.** Rendered above the
+  per-action renderers, so a bespoke one cannot drop it.
+
+## Follow-up
+
+The page and the export no longer share one meta-line builder: the page draws
+from the event components, the export still walks the step rows. Each has a
+single definition and a test pinning it, but they are two. Building the export
+from `run_events` would close it.

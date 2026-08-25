@@ -580,3 +580,93 @@ def test_an_idle_run_has_no_live_row():
                            [_step("reply", at=0, ms=2000, code_driven=True)])
 
     assert not [e for e in events if e["variant"] == "live"]
+
+
+def test_a_step_that_recorded_only_its_model_still_has_a_call_row():
+    """A recorded model IS evidence a call was made. Legacy rows carry the
+    model and nothing else about the call, and without a row for it the model
+    the step ran on has nowhere to be shown at all."""
+    step = _step("memory_query", at=0, ms=0, observation={"text": "f"})
+    step.requested_at = None
+    step.duration_ms = None
+    step.system_prompt = None
+    step.model_uuid = "9999"
+
+    events = db.run_events(_run(finished=10), [step])
+
+    call = _first(events, "llm")
+    assert call["kpis"]["model_uuid"] == "9999"
+
+
+def test_a_review_recorded_inside_the_observation_gets_a_row_too():
+    """The gate wrote its result into the step's observation before it had a
+    table of its own, and most of the reviews that exist are that shape. Left
+    unread they are raw JSON inside the action's result — which is exactly the
+    dead end the step sections were removed for."""
+    step = _step("python_run", at=0, ms=1000, observation={"text": "4"})
+    step.observation["data"]["second_opinion"] = {
+        "approved": False,
+        "problems": [{"category": "safety", "text": "writes a file"}],
+        "response": '{"approved": false}',
+        "system_prompt": "review sys", "user_prompt": "review usr",
+        "reasoning": "it writes", "model_uuid": "9999"}
+
+    events = db.run_events(_run(finished=10), [step])
+
+    review = next(e for e in events if e["variant"] == "review")
+    assert review["kpis"]["verdict"] == "rejected"
+    assert review["payload"]["problems"][0]["text"] == "writes a file"
+    assert review["payload"]["system_prompt"] == "review sys"
+
+
+def test_an_inline_review_is_not_repeated_inside_the_action():
+    """It has a row of its own now, and the same review printed twice on one
+    screen reads as two reviews."""
+    step = _step("python_run", at=0, ms=1000, observation={"text": "4"})
+    step.observation["data"]["second_opinion"] = {"approved": True,
+                                                  "problems": []}
+    step.observation["data"]["duration_seconds"] = 0.01
+
+    action = _first(db.run_events(_run(finished=10), [step]), "action")
+
+    assert "second_opinion" not in action["payload"]["observation"]["data"]
+    assert action["payload"]["observation"]["data"]["duration_seconds"] == 0.01
+
+
+def test_a_pointer_to_a_review_row_does_not_become_a_second_row():
+    """Newer runs record only the review's uuid there; the row it points at is
+    already on the stream from the reviews table."""
+    step = _step("python_run", at=0, ms=1000, observation={"text": "4"})
+    step.observation["data"]["second_opinion"] = {"review_uuid": "abcd"}
+    review = SimpleNamespace(
+        uuid=uuid4(), step_uuid=step.uuid, requested_at=_at(0.5),
+        duration_ms=100, model_uuid=None, input_tokens=1, output_tokens=1,
+        verdict="approved", skip_reason=None, error=None, problems=[],
+        system_prompt="s", user_prompt="u", reasoning=None, response="{}")
+
+    events = db.run_events(_run(finished=10), [step], [review])
+
+    assert len([e for e in events if e["variant"] == "review"]) == 1
+
+
+def test_a_rejected_attempt_carries_what_it_answered():
+    """It is an invocation like any other: it was sent, it thought, it
+    answered, and the answer was refused. A row that showed only its seconds
+    would teach that it is less of a call than the one that replaced it — and
+    the refused answer is the whole reason anyone opens it."""
+    step = _step("reply", at=10, ms=2000, code_driven=True)
+    step.rejected_attempts = [{
+        "requested_at": _at(0).isoformat(), "ms": 9000,
+        "input_tokens": 940, "output_tokens": 68,
+        "reasoning": "thinking about it",
+        "response": '{"action": null}',
+        "error": "RejectedResponse: not a valid decision",
+        "feedback": [{"role": "user", "content": "<rejected_response>"}]}]
+
+    events = db.run_events(_run(finished=20), [step])
+
+    attempt = next(e for e in events if e["variant"] == "rejected")
+    assert attempt["payload"]["model_response"] == '{"action": null}'
+    assert attempt["payload"]["reasoning"] == "thinking about it"
+    assert "not a valid decision" in attempt["payload"]["error"]
+    assert attempt["payload"]["feedback"][0]["content"] == "<rejected_response>"

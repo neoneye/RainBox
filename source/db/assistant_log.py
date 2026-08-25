@@ -74,12 +74,12 @@ def _parse_ts(value):
 
 def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
           model_uuid=None, input_tokens=None, output_tokens=None,
-          detail: str = "", found=None) -> dict:
+          detail: str = "", found=None, payload: dict | None = None) -> dict:
     return {"label": label, "kind": kind, "start": start,
             "duration_ms": duration_ms, "anchor": anchor,
             "model_uuid": str(model_uuid) if model_uuid else None,
             "input_tokens": input_tokens, "output_tokens": output_tokens,
-            "detail": detail, "found": found}
+            "detail": detail, "found": found, "payload": payload or {}}
 
 
 def _rejected_calls(step) -> list[dict]:
@@ -104,7 +104,15 @@ def _rejected_calls(step) -> list[dict]:
             duration_ms=attempt.get("ms"), anchor=str(step.uuid),
             model_uuid=attempt.get("model_uuid"),
             input_tokens=attempt.get("input_tokens"),
-            output_tokens=attempt.get("output_tokens")))
+            output_tokens=attempt.get("output_tokens"),
+            # What it answered and why that was refused. Without it the row is
+            # a bar with a duration, which teaches that a discarded attempt is
+            # less of a call than the one that replaced it — when the refused
+            # answer is the whole reason anyone opens the row.
+            payload={"model_response": attempt.get("response"),
+                     "reasoning": attempt.get("reasoning"),
+                     "error": attempt.get("error"),
+                     "feedback": attempt.get("feedback") or []}))
     return calls
 
 
@@ -374,7 +382,8 @@ def _as_event(call: dict) -> dict:
               "input_tokens": call.get("input_tokens"),
               "output_tokens": call.get("output_tokens")},
         payload={"detail": call.get("detail", ""),
-                 "found": call.get("found")})
+                 "found": call.get("found"),
+                 **(call.get("payload") or {})})
 
 
 #: Counts an action's observation may report about what it found. Only
@@ -397,18 +406,71 @@ def _observation_counts(step) -> dict:
 
 
 def _observation_without_timing(step) -> dict:
-    """The observation an action pane shows, minus its `timing` block.
+    """The observation an action pane shows, minus what has rows of its own.
 
-    Those seconds are already on the stream as their own activity and
-    embedding events; dumping the payload again would show the same numbers
-    twice, as JSON nobody reads.
+    `timing` is already on the stream as activity and embedding events, and
+    `second_opinion` as the gate's row. Dumping either again would show the
+    same thing twice on one screen — and the same review printed twice reads
+    as two reviews.
     """
     observation = dict(step.observation or {})
     data = observation.get("data")
-    if isinstance(data, dict) and "timing" in data:
-        data = {k: v for k, v in data.items() if k != "timing"}
+    if isinstance(data, dict):
+        data = {k: v for k, v in data.items()
+                if k not in ("timing", "second_opinion")}
         observation["data"] = data
     return observation
+
+
+#: Anything a step records ABOUT its model call. Any one of them means a call
+#: was made and so earns the row that shows it. Listed rather than tested one
+#: by one because rows differ in what they captured: legacy rows carry only
+#: the model, an interrupted one only the partial response it got back, and a
+#: step that recorded any of these and got no row lost the only place that
+#: evidence could be read.
+_CALL_EVIDENCE: tuple[str, ...] = (
+    "requested_at", "duration_ms", "system_prompt", "user_prompt",
+    "model_response", "reasoning", "model_uuid", "input_tokens",
+)
+
+
+def _made_a_call(step) -> bool:
+    return any(getattr(step, field, None) is not None
+               for field in _CALL_EVIDENCE)
+
+
+def _inline_review(step, data: dict) -> list[dict]:
+    """The gate's verdict where the step recorded it inside its observation.
+
+    That is where it went before the review had a table of its own, and most
+    of the reviews that exist are still that shape. Read only as part of the
+    action's result they are raw JSON inside a payload — the dead end the step
+    sections were retired for.
+
+    A newer row records only the review's uuid there. That review is already
+    on the stream from its own table, so the pointer yields nothing: the same
+    review twice on one screen reads as two reviews.
+    """
+    review = data.get("second_opinion")
+    if not isinstance(review, dict) or "approved" not in review:
+        return []
+    return [_event(
+        "llm", "second opinion", variant="review",
+        # The review ran between the call returning and the action executing,
+        # and nothing finer was recorded, so it is placed where the step was
+        # opened rather than given a span it never reported.
+        start=step_started_at(step), duration_ms=None,
+        anchor=str(step.uuid), uuid=f"{step.uuid}-review",
+        kpis={"model_uuid": review.get("model_uuid"),
+              "verdict": "approved" if review.get("approved") else "rejected"},
+        payload={"system_prompt": review.get("system_prompt"),
+                 "user_prompt": review.get("user_prompt"),
+                 "reasoning": review.get("reasoning"),
+                 "model_response": review.get("response"),
+                 "problems": review.get("problems") or [],
+                 "group_from": review.get("group_from"),
+                 "skip_reason": review.get("skipped"),
+                 "error": review.get("error")})]
 
 
 def _step_events(step) -> list[dict]:
@@ -445,7 +507,7 @@ def _step_events(step) -> list[dict]:
 
     # The attempts thrown away came first, so they enumerate first.
     events.extend(_as_event(c) for c in _rejected_calls(step))
-    if step.requested_at or step.duration_ms is not None or step.system_prompt:
+    if _made_a_call(step):
         start = step_started_at(step)
         resumed = retry_resumed_at(step)
         if resumed is not None and (start is None or resumed > start):
@@ -467,6 +529,7 @@ def _step_events(step) -> list[dict]:
                 "system_prompt", "user_prompt", "model_response", "reasoning",
                 "log", "error")}
             | {"rejected_attempts": getattr(step, "rejected_attempts", None) or []}))
+    events.extend(_inline_review(step, data))
     events.extend(_as_event(c) for c in _inner_calls(step, data))
     events.extend(_as_event(c) for c in _embedding_calls(step, data))
     events.extend(_as_event(c) for c in _phase_calls(step, data))
@@ -624,6 +687,7 @@ def run_events(run, steps: list, reviews: list | None = None,
                      "reasoning": getattr(r, "reasoning", None),
                      "model_response": getattr(r, "response", None),
                      "problems": getattr(r, "problems", None) or [],
+                     "group_from": getattr(r, "group_from", None),
                      "skip_reason": getattr(r, "skip_reason", None),
                      "error": getattr(r, "error", None)}))
 

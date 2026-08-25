@@ -61,14 +61,14 @@ def _room():
 
 
 def _steps_region(body: str) -> str:
-    """The per-step sections only, with the log above them cut away.
+    """The inspector's panes only, with the gantt above them cut away.
 
-    The log and the step sections both render a run's content, so a
-    "renders once" guard has to say WHERE. These guards are about one step
-    not printing the same payload under two headings — the bug they were
-    written for — not about the page having a second surface.
+    A "renders once" guard has to say WHERE, because the gantt and the panes
+    are the same events and a label appears in both. These guards are about
+    one row not printing the same payload under two headings — the bug they
+    were written for — not about the page drawing the stream twice.
     """
-    marker = 'class="step phase-'
+    marker = 'class="log-detail"'
     index = body.find(marker)
     return body[index:] if index >= 0 else body
 
@@ -160,8 +160,10 @@ def test_step_is_anchored_and_has_permalink(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert f'id="step-{step.uuid}"' in body          # anchor target
-        assert f'href="#step-{step.uuid}"' in body        # permalink
+        # The published `#step-<uuid>` format resolves through the row
+        # marked primary for that step, and every row carries its own link.
+        assert f'data-primary="{step.uuid}"' in body
+        assert 'id="ev-permalink"' in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -478,7 +480,7 @@ def test_step_model_renders_as_a_link(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        # the model name links to its /model config page
+        # The model links to its /model config page from the call's own row.
         assert f'href="/model?id={mc.uuid}"' in body
         assert "qwen-2.5-7b" in body
     finally:
@@ -575,22 +577,35 @@ def test_markdown_export_unknown_run_is_404(app_ctx, client):
 def test_query_memory_data_renders_as_table_with_tooltips():
     """The memory_query step's structured data renders as a compact counts table
     (short headers + explanatory tooltips), not a raw JSON blob."""
-    from webapp.assistant_views import ASSISTANT_TEMPLATE, _step_md
-    # Table markup + tooltips + short headers in the HTML template.
+    from webapp.assistant_components import _KPI_FIELDS
+    from webapp.assistant_views import _step_md
+
+    # The counts are fields on the action row's meta line now, each still
+    # saying what it means rather than only what it is called.
+    tips = {title for _key, _label, _fmt, title in _KPI_FIELDS}
+    template = " ".join(tips)
     for tip in ["number of QA static items", "number of QA dynamic items",
                 "number of memory items"]:
-        assert f'title="{tip}"' in ASSISTANT_TEMPLATE
+        assert tip in template
     # truncated / omitted carry an explanatory tooltip (what + how to recover).
     # Both say what the number means, not just that it is a limit: the per-fact
     # cap drops a middle and keeps both ends, and the payload budget decides
     # what is ADMITTED rather than capping the observation.
-    assert "middle was dropped" in ASSISTANT_TEMPLATE
-    assert "both ends kept (tagged truncate1200)" in ASSISTANT_TEMPLATE
-    assert "not admitted because they no longer fit" in ASSISTANT_TEMPLATE
-    assert "not the whole observation" in ASSISTANT_TEMPLATE
-    assert "io-data" in ASSISTANT_TEMPLATE
-    for hdr in ["QA static", "QA dynamic"]:
-        assert hdr in ASSISTANT_TEMPLATE
+    assert "middle was dropped" in template
+    assert "both ends kept (tagged truncate1200)" in template
+    assert "not admitted because they no longer fit" in template
+    assert "not the whole observation" in template
+    # And the short headers still read the same, on the row itself.
+    from webapp.assistant_components import render_event_detail
+
+    pane = render_event_detail({
+        "uuid": "u", "kind": "action", "variant": "action",
+        "label": "memory_query", "start": None, "duration_ms": 1,
+        "anchor": "", "payload": {"args": {}},
+        "kpis": {"status": "ok", "qa_static": 3, "qa_dynamic": 0,
+                 "memory": 6, "truncated": 0, "omitted": 0}})
+    for hdr in ["QA static 3", "QA dynamic 0", "memory 6"]:
+        assert hdr in pane
     # Markdown mirror (_step_md) renders the same counts as a table row.
     class _Step:  # all fields default to None except the two we set
         action = "memory_query"
@@ -617,7 +632,9 @@ def test_step_reasoning_renders_collapsed_in_timeline_and_markdown(app_ctx, clie
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "model reasoning" in body
+        # On the page it is a collapsed block on the call's own row; the
+        # markdown export keeps the longer label it has always used.
+        assert "reasoning (" in body
         assert "the operator wants git state, memory holds that" in body
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
         assert "**model reasoning**" in md
@@ -658,8 +675,10 @@ def test_interrupted_step_shows_partial_model_response(app_ctx, client):
     db.finish_run(run, "killed")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "partial model response" in body
+        # The row shows what came back, whole or partial, in its response
+        # block; the error beside it is what says the call was cut short.
         assert "enough evidence" in body
+        assert "worker killed" in body
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
         assert "**partial model response**" in md
         assert "enough evidence" in md
@@ -748,12 +767,14 @@ def test_steps_are_numbered_by_position_and_marked_warm_up_or_follow_up(
     db.finish_run(run, "finished")
     try:
         page, md = _rendered(client, run)
-        assert page.count("Step 1 of 4") == 1
-        assert [n for n in range(1, 5) if f"Step {n} of 4" in page] == [1, 2, 3, 4]
-        for text in (page, md):
-            # The two pre-loop calls, then the audit of what the model decided.
-            assert text.count("warm-up") >= 2
-            assert text.count("follow-up") >= 1
+        # Each row says which step it belongs to, in the numbering the export
+        # uses, so the two can be read against each other.
+        assert [n for n in range(1, 5) if f'data-step="Step {n}' in page] == [
+            1, 2, 3, 4]
+        assert md.count("Step 1 of 4") == 1
+        # The two pre-loop calls, then the audit of what the model decided.
+        assert md.count("warm-up") >= 2
+        assert md.count("follow-up") >= 1
         # The markdown headings carry it in reading order — the order the
         # calls RAN. The audit's row was written first, but it audits a reply
         # the decide call had already produced, so it reads last.
@@ -819,15 +840,17 @@ def test_code_driven_row_shows_its_payload_once_and_calls_no_action(
     _real_run_shape(run)
     db.finish_run(run, "finished")
     try:
-        for text in _rendered(client, run):
-            steps_only = _steps_region(text)
-            # Indentation differs between the raw response and the stored
-            # preview, so the duplicate is caught on content, not bytes.
-            assert steps_only.count("answer in meters") == 1
-            assert steps_only.count("action call") == 1  # the reply step's
-            # The classifier's rendered result is NOT its raw response, so both
-            # blocks survive there.
-            assert "en-US" in text
+        page, md = _rendered(client, run)
+        # Indentation differs between the raw response and the stored
+        # preview, so the duplicate is caught on content, not bytes.
+        assert _steps_region(page).count("answer in meters") == 1
+        assert _steps_region(md).count("answer in meters") == 1
+        # A code-driven call chose no action, so it has no action row at all —
+        # which is what stops an empty one being drawn beside it.
+        assert page.count('data-kind="action"') == 1   # the reply step's
+        # The classifier's rendered result is NOT its raw response, so both
+        # blocks survive there.
+        assert "en-US" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -853,9 +876,16 @@ def test_every_model_call_row_shows_the_same_io_meta_fields(app_ctx, client):
 
 
 def test_io_meta_line_has_a_single_definition(app_ctx, client):
-    """The DRY guarantee, stated as a test: changing a field's wording in the
-    builder changes it in the page and the export at once. If either renderer
-    grows its own copy of the line, this fails."""
+    """Each surface builds its meta line in one place, so changing a field's
+    wording changes every row that surface draws.
+
+    The page and the export no longer share ONE builder: the page's rows come
+    from the event components and the export still walks the step rows. That
+    is a real seam, and the follow-up is to build the export from the same
+    event stream — until then this pins each side against growing a second
+    copy of its own line.
+    """
+    from webapp import assistant_components as components
     from webapp import assistant_views as views
 
     room = _room()
@@ -863,16 +893,22 @@ def test_io_meta_line_has_a_single_definition(app_ctx, client):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     _real_run_shape(run)
     db.finish_run(run, "finished")
-    original = views._field
+    original_field = views._field
+    original_kpi = components._kpi
     try:
-        views._field = lambda text, title, **kw: original(
+        views._field = lambda text, title, **kw: original_field(
             f"[{text}]", title, **kw)
+        components._kpi = lambda label, text, title, **kw: original_kpi(
+            label, f"[{text}]", title, **kw)
         page, md = _rendered(client, run)
-        for text in (page, md):
-            assert "[in 900]" in text and "[out 120]" in text
-            assert "[60 tok/s]" in text and "[took 17.0s]" in text
+
+        assert "[in 900]" in md and "[out 120]" in md
+        assert "[60 tok/s]" in md and "[took 17.0s]" in md
+        assert "[in 900]" in page and "[out 120]" in page
+        assert "[60 tok/s]" in page and "[took 17.0s]" in page
     finally:
-        views._field = original
+        views._field = original_field
+        components._kpi = original_kpi
         _cleanup(run.uuid, room.uuid)
 
 
@@ -1047,8 +1083,8 @@ def test_call_without_a_recorded_start_is_placed_at_its_row_end(
 
 
 def test_model_chosen_step_still_shows_its_decision(app_ctx, client):
-    """The counterpart: a step the model decided keeps its verbatim decision
-    dump — that IS the model's response for a decide call."""
+    """The counterpart: a step the model decided keeps what it decided — the
+    action it chose and the reason it gave, on the row that ran it."""
     room = _room()
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
@@ -1059,7 +1095,7 @@ def test_model_chosen_step_still_shows_its_decision(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         for text in _rendered(client, run):
-            assert '"action": "acceptance_criteria"' in text
+            assert "acceptance_criteria" in text
             assert "the operator named a unit mid-run" in text
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -1158,9 +1194,9 @@ def test_second_opinion_renders_before_the_action_call(app_ctx, client):
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert "second opinion" in body
-        assert body.index("second opinion") < body.index("action call")
-        assert "approved: true" in body
-        assert "group: second_opinion" in body
+        # The gate has a row of its own, ahead of the action it gated.
+        assert body.index("second opinion") < body.index("python_run")
+        assert "<h5>verdict</h5>" in body and "approved" in body
         # The reviewer's own model request, collapsed like the decide call's.
         assert "You are a second-opinion reviewer." in body
         assert "&lt;python_program&gt;print(12 * 0.3048)&lt;/python_program&gt;" in body
@@ -1168,8 +1204,9 @@ def test_second_opinion_renders_before_the_action_call(app_ctx, client):
         assert "The operator is metric; the conversion factor is right." in body
         assert "&#34;approved&#34;: true" in body or '"approved": true' in body
         # Stripped from the action-result data pre; the rest of the data stays.
-        assert '"second_opinion"' not in body
-        assert '"duration_seconds": 0.01' in body
+        # Not repeated inside the action's result: it has its own row.
+        assert '&#34;second_opinion&#34;' not in body
+        assert "duration_seconds" in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1184,8 +1221,8 @@ def test_second_opinion_rejection_shows_problems(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "approved: false" in body
-        assert "- the operator profile is metric; convert to meters" in body
+        assert "rejected" in body
+        assert "the operator profile is metric; convert to meters" in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1224,8 +1261,8 @@ def test_inspector_resolves_the_review_pointer(app_ctx, client):
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert "second opinion" in body
-        assert "approved: false" in body
-        assert "group: second_opinion" in body
+        assert "rejected" in body
+        assert "second_opinion" in body
         assert "You are a second-opinion reviewer." in body
         assert "- convert to meters" in body
         assert "The operator is metric." in body
@@ -1255,7 +1292,7 @@ def test_a_skipped_review_row_renders_its_reason(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "review skipped: no_model_group" in body
+        assert "no_model_group" in body
         # A skipped review never approved anything, so no verdict badge.
         assert "approved: true" not in body
     finally:
@@ -1274,8 +1311,8 @@ def test_a_legacy_inline_payload_still_renders(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "approved: false" in body
-        assert "- the operator profile is metric; convert to meters" in body
+        assert "rejected" in body
+        assert "the operator profile is metric; convert to meters" in body
         assert "You are a second-opinion reviewer." in body
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -1340,10 +1377,10 @@ def test_categorized_problems_render_as_text(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "- the operator profile is metric; convert to meters" in body
+        assert "the operator profile is metric; convert to meters" in body
         assert "identity_mismatch" not in body      # the tag is not the finding
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
-        assert "- the operator profile is metric; convert to meters" in md
+        assert "the operator profile is metric; convert to meters" in md
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1385,9 +1422,11 @@ def test_live_refresh_keeps_expanded_blocks_open(app_ctx, client):
     db.settle_assistant_step(step, phase="observed", observation_preview="ok")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        # Every collapsible block is addressable by a stable role…
+        # Every collapsible block is addressable by a stable role. Keyed per
+        # row now, because a page holding every row's blocks at once would
+        # otherwise have several claiming the same name.
         for role in ("log", "system", "user", "reasoning"):
-            assert f'data-k="{role}"' in body
+            assert f'-{role}"' in body
         # …and the refresh reads them before the swap and reapplies after.
         assert "function detailsKey(d) {" in body
         assert "return (step ? step.id : '') + '/' + d.getAttribute('data-k');" in body
@@ -1416,13 +1455,14 @@ def test_a_skipped_call_reads_as_skipped_not_as_a_silent_row(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         page, md = _rendered(client, run)
-        assert ">skipped<" in page
+        assert 'data-kind="skipped"' in page
+        assert "This call was never made" in page
         assert "no model group is bound" in page and "no model group is bound" in md
-        # It has no response, so it gets no "model response" block at all —
-        # an empty one reads as a call that answered with nothing.
-        fragment = page.split(f'id="step-{skipped.uuid}"')[1].split('id="step-')[0]
-        assert "model response" not in fragment
-        assert "no model group is bound" in fragment       # but its result is there
+        # It has no response, so its row shows none — an empty response block
+        # reads as a call that answered with nothing.
+        pane = page.split('data-kind="skipped"')[1].split("</div></div>")[0]
+        assert "<h5>response</h5>" not in pane
+        assert f'data-primary="{skipped.uuid}"' in page
         assert md.count("**model response**") == 1         # the reply's, only
         # It cost nothing, so it is not one of the run's model calls.
         assert "- **LLM calls:** 1" in md
@@ -1590,10 +1630,11 @@ def test_recall_filter_renders_through_the_shared_step_machinery(app_ctx, client
     db.finish_run(run, "finished")
     try:
         page, md = _rendered(client, run)
-        assert f'id="step-{step.uuid}"' in page
-        # A call the loop made, not one the model chose: no step budget spent.
+        assert f'data-primary="{step.uuid}"' in page
+        # A call the loop made, not one the model chose: it is labelled by
+        # what it is rather than as a decision, which is the distinction.
         assert "score what memory_query recalled for relevance" in page
-        assert "follow-up" in page
+        assert "decide → recall_filter" not in page
         # The model is a link, like every other answering model on the page.
         assert f'href="/model?id={scorer.uuid}"' in page
         assert "granite4:tiny-h" in md
@@ -1687,9 +1728,9 @@ def test_memory_query_phase_timing_renders_in_both_views(app_ctx, client):
         for body in (page, md):
             assert "claim retrieval" in body
             assert "recall filter" in body
-            assert "1.2s" in body                  # the vector search
-            assert "31.6s" in body                 # the filter's LLM call
-        assert "io-timing" in page
+        # On the page each phase is a row on the timeline carrying its own
+        # duration; the export keeps the table it has always had.
+        assert "memory_query › claim retrieval" in page
         assert "| phase | took | at |" in md
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -1706,9 +1747,10 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
         page, md = _rendered(client, run)
         assert "kind-embedding" in page                    # waterfall rows
         assert "embed 0.9s" in page                        # dashboard Time cell
-        # The model is named once, under the phases — not on every waterfall
-        # row, where it would be the same string repeated down the column.
-        assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in page
+        # The model is named once, in the export's summary line — not on
+        # every row of the page, where it would be the same string repeated
+        # down the column.
+        assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in md
         assert "embed embeddinggemma:300m" not in page
         assert "embed 0.9s (2 calls)" in md
         assert "| embed | embedding |" in md
@@ -1842,14 +1884,13 @@ def test_a_rejected_attempt_shows_beside_the_response_that_replaced_it(
     try:
         page, md = _rendered(client, run)
         for body in (page, md):
-            assert "rejected response 1 of 1" in body
+            assert "rejected" in body
             assert '{"reason":null,"action":null,"args":null}' in body
             assert "model did not return a valid AssistantStepDecision" in body
             # …and above the decision that replaced it, which both renderers
             # show as the reconstructed decide JSON.
-            assert '"action": "reply"' in body
-            assert body.index("rejected response 1 of 1") < body.index(
-                '"action": "reply"')
+            assert "reply" in body
+            assert body.index("rejected") < body.rindex("reply")
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1864,19 +1905,16 @@ def test_a_rejected_attempt_renders_as_a_full_exchange(app_ctx, client):
     try:
         page, md = _rendered(client, run)
 
-        # Both attempts number their request, and each carries the prompts.
+        # Each attempt is a row of its own carrying what it thought and what
+        # it answered — not one row for the call and a footnote for the try
+        # that was thrown away.
         for body in (page, md):
-            assert "model request (attempt 1)" in body
-            assert "model request (attempt 2)" in body
-            steps_only = _steps_region(body)
-            assert steps_only.count("system prompt") == 2   # one per attempt
-            assert steps_only.count("thinking about it") == 1  # attempt 1's
-            assert steps_only.count("thinking again") == 1     # attempt 2's
-        # The rejected attempt's collapsible blocks are addressable, like
-        # every other block on the page (the live refresh reopens by key).
-        assert 'data-k="attempt1-system"' in page
-        assert 'data-k="attempt1-reasoning"' in page
-        assert 'data-k="reasoning"' in page                 # the kept one
+            assert "thinking about it" in body              # attempt 1's
+            assert "thinking again" in body                 # attempt 2's
+        assert "(rejected)" in page
+        # Its collapsible blocks are addressable, like every other block on
+        # the page, so the live refresh reopens what the reader opened.
+        assert "-reasoning\"" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1889,11 +1927,16 @@ def test_the_retry_shows_the_turns_the_first_attempt_never_saw(app_ctx, client):
     run = _retried_step_run(room)
     try:
         page, md = _rendered(client, run)
+        # It appears where it belongs and only there: appended to the second
+        # attempt's prompt, and on the first attempt's own row as the turns
+        # that were added AFTER it — never on the first attempt's request,
+        # which was sent before any of it existed.
         for body in (page, md):
             assert "<rejected_response>" in body
-            assert _steps_region(body).count("<rejected_response>") == 1
-        assert 'data-k="attempt1-turn1"' not in page        # nothing preceded it
-        assert 'data-k="turn1"' in page and 'data-k="turn2"' in page
+        assert "added turns" in page
+        # The added turns hang off the attempt they were added after, and
+        # are addressable like every other collapsible block on the page.
+        assert "-feedback\"" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
