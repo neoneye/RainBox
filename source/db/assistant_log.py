@@ -539,9 +539,33 @@ def _attach_intents(events: list[dict], intents: list) -> None:
             event["payload"]["intents"] = run_level
 
 
+def _live_event(active: dict | None) -> list[dict]:
+    """The model call happening right now, if one is.
+
+    The only thing on the page with no record behind it: the row lands when
+    the call returns, so until then the sole evidence is the streamed
+    checkpoint. Watching a run means watching this.
+
+    No duration and no start of its own — it has not finished, so a span would
+    claim time still being spent, and it sorts last because it is the newest
+    thing that has happened. Held out of the run's totals for the same reason:
+    its tokens are not known, and it may yet be retried or fail.
+    """
+    if not active:
+        return []
+    return [_event(
+        "llm", "in flight", variant="live", start=None, duration_ms=None,
+        uuid="live",
+        kpis={"model": active.get("model_name"), "status": "running"},
+        payload={"model_response": active.get("partial_response"),
+                 "reasoning": active.get("partial_reasoning"),
+                 "error": active.get("error"),
+                 "step_index": active.get("step_index")})]
+
+
 def run_events(run, steps: list, reviews: list | None = None,
-               trigger: dict | None = None, intents: list | None = None
-               ) -> list[dict]:
+               trigger: dict | None = None, intents: list | None = None,
+               active: dict | None = None) -> list[dict]:
     """A run as a flat stream of typed events, oldest first.
 
     Derived from records that already exist, so a run that happened before
@@ -625,6 +649,10 @@ def run_events(run, steps: list, reviews: list | None = None,
     _attach_model_names(out)
     _attach_step_refs(out, steps)
     _attach_intents(out, intents or [])
+    # Appended after the sort, not through it: it has no start, and an undated
+    # row sorts last anyway — but saying so here is what guarantees the row
+    # the reader is watching is the one at the bottom.
+    out.extend(_live_event(active))
     return out
 
 
@@ -984,7 +1012,7 @@ def assistant_llm_calls(steps: list, reviews: list | None = None,
     """
     return [e for e in run_events(run, steps, reviews)
             if e["kind"] not in ("action", "control", "start", "skipped")
-            and e["variant"] != "summary"]
+            and e["variant"] not in ("summary", "live")]
 
 
 #: Timeline rows that are not LLM calls. `embedding` is a real call but a

@@ -529,3 +529,54 @@ def test_an_action_with_no_writes_carries_none():
     action = _first(db.run_events(_run(finished=10), [step]), "action")
 
     assert action["payload"].get("intents") in (None, [])
+
+
+def test_a_call_in_flight_gets_a_row_while_it_runs():
+    """The one thing on the page with no record yet: the model is answering
+    right now. Watching a run means watching this, so it belongs on the stream
+    rather than in a card below it."""
+    run = _run(finished=None)
+    run.status = "running"
+
+    events = db.run_events(
+        run, [_step("acceptance_criteria", at=0, ms=2000, code_driven=True)],
+        active={"step_index": 1, "model_name": "gemma4:e4b",
+                "partial_response": '{"action": "re',
+                "partial_reasoning": "thinking", "error": None})
+
+    live = next(e for e in events if e["variant"] == "live")
+    assert live["kpis"]["model"] == "gemma4:e4b"
+    assert live["payload"]["model_response"] == '{"action": "re'
+
+
+def test_the_live_row_is_last_and_carries_no_duration():
+    """It has not finished, so any duration would be a guess, and a bar would
+    claim time that is still being spent."""
+    run = _run(finished=None)
+    run.status = "running"
+
+    events = db.run_events(run, [_step("reply", at=0, ms=2000,
+                                       code_driven=True)],
+                           active={"model_name": "m", "partial_response": "x"})
+
+    assert events[-1]["variant"] == "live"
+    assert events[-1]["duration_ms"] is None
+
+
+def test_a_call_still_in_flight_is_not_counted_as_a_finished_one():
+    """Its tokens are not known and its row is not written; counting it would
+    put a call in the totals that may yet be retried or fail."""
+    run = _run(finished=None)
+    run.status = "running"
+    steps = [_step("reply", at=0, ms=2000, code_driven=True)]
+
+    stats = db.assistant_run_stats(steps, run=run)
+
+    assert stats["calls"] == 1
+
+
+def test_an_idle_run_has_no_live_row():
+    events = db.run_events(_run(finished=10),
+                           [_step("reply", at=0, ms=2000, code_driven=True)])
+
+    assert not [e for e in events if e["variant"] == "live"]

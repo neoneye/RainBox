@@ -42,6 +42,9 @@ ACTION_DESCRIPTIONS.update({
     "request_summary": (
         "describe a request too long to fit in the prompt whole"
     ),
+    "in flight": (
+        "the model call happening right now, as it streams back"
+    ),
     "second opinion": (
         "review a gated action independently before it is allowed to run"
     ),
@@ -357,7 +360,10 @@ def _start(event: dict) -> Markup:
         links.append(Markup('<a href="{}">chat ↗</a>').format(target))
     header = Markup('<p class="ev-links">{}</p>').format(
         Markup(" · ").join(links)) if links else Markup("")
-    return header + _block("request", payload.get("text"))
+    # A write with no step of its own belongs to the run, and this is the
+    # run's row. It is still a decision the assistant is waiting on, so it
+    # cannot be the one that has nowhere to appear.
+    return header + _block("request", payload.get("text")) + _intents(event)
 
 
 def _unaccounted(_event: dict) -> Markup:
@@ -381,6 +387,66 @@ def _activity(event: dict) -> Markup:
             '<p class="ev-note">An action\'s own work, outside the calls it '
             'made. Nothing finer was recorded inside it.</p>')
     return _block("found", found)
+
+
+#: Where a write intent is acted on. The endpoints already exist and are
+#: tested on their own (webapp/chat_api.py); this is the only place the
+#: operator reaches them for a run.
+_INTENT_ACTION = "/chat/api/assistant/write-intents/{}/{}"
+
+
+def _intent_controls(intent: dict) -> Markup:
+    """The decision an intent is still waiting on, if any.
+
+    A proposed write is the only thing on this page that BLOCKS a run: until
+    it is confirmed or rejected the assistant is waiting. Undo is offered only
+    where the write recorded how to reverse itself — a button that cannot do
+    what it says is worse than no button.
+    """
+    state = intent.get("state") or ""
+    uuid = intent.get("uuid") or ""
+    name = intent.get("capability_name") or "write"
+    if state == "proposed":
+        return Markup(
+            '<button class="primary" onclick="ppAct(\'{}\')">Confirm</button>'
+            '<button class="danger" onclick="ppConfirmAct(\'{}\', '
+            '\'Reject this {} write?\')">Reject</button>'
+        ).format(_INTENT_ACTION.format(uuid, "confirm"),
+                 _INTENT_ACTION.format(uuid, "reject"), name)
+    if state == "completed" and (intent.get("result") or {}).get("undo"):
+        return Markup(
+            '<button onclick="ppConfirmAct(\'{}\', \'Undo this {} write? '
+            'This reverts the change.\')">Undo</button>'
+        ).format(_INTENT_ACTION.format(uuid, "undo"), name)
+    return Markup("")
+
+
+def _intents(event: dict) -> Markup:
+    """The writes a row proposed, each with whatever decision it still owes."""
+    intents = (event.get("payload") or {}).get("intents") or []
+    if not intents:
+        return Markup("")
+    rows = [
+        Markup('<div class="intent {}"><span class="cap">{}</span>'
+               '<span class="badge b-{}">{}{}</span>{}{}<div class="acts">{}'
+               '</div></div>').format(
+            intent.get("state") or "", intent.get("capability_name") or "",
+            intent.get("state") or "",
+            "\u21a9 " if intent.get("state") == "undone" else "",
+            intent.get("state") or "",
+            Markup('<div class="muted">{}</div>').format(
+                intent["preview_text"]) if intent.get("preview_text")
+            else Markup(""),
+            _block("payload", intent.get("payload")),
+            _intent_controls(intent))
+        for intent in intents
+    ]
+    # Not through _block: that wraps its body in a <pre>, which is right for
+    # text exactly as it was sent and wrong for buttons — they would render
+    # monospace and the long-block clamp would try to fold them away.
+    return Markup(
+        '<div class="ev-block"><h5>writes ({})</h5>{}</div>'
+    ).format(len(rows), Markup("").join(rows))
 
 
 def _skipped(event: dict) -> Markup:
@@ -467,7 +533,8 @@ def render_event_detail(event: dict) -> str:
         # so a bespoke renderer cannot be the one that drops it.
         status = (event.get("kpis") or {}).get("status")
         body = (_block("status", status)
-                + _ACTION_RENDERERS.get(label, _generic_action)(event))
+                + _ACTION_RENDERERS.get(label, _generic_action)(event)
+                + _intents(event))
     elif event.get("variant") == "review":
         # A variant earns a renderer on the same terms an action does: its
         # payload genuinely differs from a plain model call's.

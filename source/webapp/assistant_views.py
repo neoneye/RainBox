@@ -326,6 +326,11 @@ ASSISTANT_TEMPLATE = """
   /* What is being inspected, in the card header beside "Inspect". The
      divider between them comes from the shared header rule below. */
   .as-main .ev-crumb-step { color:#6b7280; white-space:nowrap; }
+  /* A row can belong to no step — the run's opening, or any row at all on a
+     run whose steps recorded no timing to place them against. The span still
+     has to exist for the selection to write into, so it hides itself rather
+     than leaving a divider with nothing after it. */
+  .as-main .inspect .card-header > span.ev-crumb-step:empty { display:none; }
   .as-main .ev-crumb-label { font-family:ui-monospace,monospace;
         font-weight:600; white-space:nowrap; }
   .as-main .ev-crumb-desc { color:#6b7280; min-width:0; overflow:hidden;
@@ -2166,7 +2171,8 @@ def _load_run_detail(selected) -> dict:
         "log": log_view(selected, steps, review_rows,
                         trigger=_with_trigger_peek(
                             db.get_run_trigger_message(selected)),
-                        intents=intents),
+                        intents=intents,
+                        active=_active_model_call(selected)),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,

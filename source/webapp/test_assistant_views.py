@@ -2186,6 +2186,18 @@ def test_a_card_header_lines_up_with_the_body_under_it():
     assert ".as-main .log-detail" in body.group(0)
 
 
+def test_a_row_belonging_to_no_step_draws_no_empty_divider():
+    """The span has to exist for the selection to write into, but a row can
+    belong to no step — the run's opening, or any row on a run whose steps
+    recorded no timing — and an empty one left a rule with nothing after it."""
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    # Specific enough to beat the shared divider rule, which sets display on
+    # the same element and would otherwise win on element count.
+    assert (".as-main .inspect .card-header > span.ev-crumb-step:empty "
+            "{ display:none; }") in ASSISTANT_TEMPLATE
+
+
 def test_a_row_can_be_linked_to(app_ctx, client):
     """Any row on the timeline is something to send someone. Its identity is
     the key the live refresh already mints — a second identity for one row is

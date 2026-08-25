@@ -97,7 +97,8 @@ def _mark_primary_rows(rows: list[dict]) -> None:
 
 
 def log_view(run, steps: list, reviews: list | None = None,
-             trigger: dict | None = None, intents: list | None = None) -> dict:
+             trigger: dict | None = None, intents: list | None = None,
+             active: dict | None = None) -> dict:
     """`{"events": [...], "span_seconds": float}` for the page.
 
     Each event gains what the two surfaces need to draw it: `offset_pct` and
@@ -109,10 +110,11 @@ def log_view(run, steps: list, reviews: list | None = None,
 
     `trigger` is the chat message that began the run; given one, the stream
     opens with the request it carried. `intents` are the run's write intents,
-    which ride on the action that proposed each of them.
+    which ride on the action that proposed each of them. `active` is the model
+    call in flight, which has no record behind it yet.
     """
     events = db.run_events(run, steps, reviews, trigger=trigger,
-                           intents=intents)
+                           intents=intents, active=active)
     if not events:
         return {"events": [], "span_seconds": 0.0}
 

@@ -89,6 +89,93 @@ def test_an_activity_s_findings_are_escaped():
     assert "<script>" not in html
 
 
+def _intent(**over):
+    row = {"uuid": "1111", "capability_name": "memory_remember",
+           "state": "proposed", "preview_text": "remember x",
+           "payload": {"text": "x"}, "result": {}}
+    row.update(over)
+    return row
+
+
+def test_a_proposed_write_offers_the_decision_it_is_waiting_on():
+    """The operator's only way to approve a pending write. It has to travel
+    with the action that proposed it or the run stalls with nothing to press.
+    """
+    html = render_event_detail(_event(
+        "action", "memory_remember", kpis={"status": "ok"},
+        payload={"args": {}, "intents": [_intent()]}))
+
+    assert "/write-intents/1111/confirm" in html
+    assert "/write-intents/1111/reject" in html
+    assert "remember x" in html
+
+
+def test_a_completed_write_offers_undo_only_where_it_can_be_undone():
+    html = render_event_detail(_event(
+        "action", "memory_remember", kpis={"status": "ok"},
+        payload={"args": {}, "intents": [
+            _intent(state="completed", result={"undo": {"kind": "x"}})]}))
+
+    assert "/write-intents/1111/undo" in html
+    assert "confirm" not in html
+
+    bare = render_event_detail(_event(
+        "action", "memory_remember", kpis={"status": "ok"},
+        payload={"args": {}, "intents": [_intent(state="completed")]}))
+
+    assert "/undo" not in bare
+
+
+def test_a_write_already_undone_offers_nothing():
+    html = render_event_detail(_event(
+        "action", "memory_remember", kpis={"status": "ok"},
+        payload={"args": {}, "intents": [_intent(state="undone")]}))
+
+    assert "/confirm" not in html and "/reject" not in html
+    assert "/undo" not in html
+    assert "undone" in html
+
+
+def test_a_write_intent_s_text_is_escaped():
+    """A preview is model output and a capability name can arrive as data."""
+    html = render_event_detail(_event(
+        "action", "x", payload={"args": {}, "intents": [
+            _intent(preview_text="<script>x</script>",
+                    capability_name="<img src=q>")]}))
+
+    assert "<script>" not in html and "<img" not in html
+
+
+def test_the_run_s_opening_shows_a_write_that_belongs_to_no_step():
+    html = render_event_detail(_event(
+        "start", "start", duration_ms=0,
+        payload={"text": "hi", "sender_name": "Operator", "sender_uuid": "2",
+                 "message_id": 1, "room_uuid": "3",
+                 "intents": [_intent()]}))
+
+    assert "/write-intents/1111/confirm" in html
+
+
+def test_a_write_block_is_not_wrapped_in_a_pre():
+    """It holds buttons, not text as it was sent. Inside a <pre> they render
+    monospace and the long-block clamp tries to fold them away."""
+    html = render_event_detail(_event(
+        "action", "memory_remember", kpis={"status": "ok"},
+        payload={"args": {}, "intents": [_intent()]}))
+
+    after = html[html.index("<h5>writes"):]
+    after = after[after.index("</h5>") + len("</h5>"):]
+    assert after.startswith('<div class="intent')
+
+
+def test_a_pane_with_no_writes_shows_no_write_block():
+    html = render_event_detail(_event(
+        "action", "memory_query", kpis={"status": "ok"},
+        payload={"args": {}, "observation": {"text": "f"}}))
+
+    assert "write-intents" not in html
+
+
 def test_a_skipped_pane_says_the_call_was_never_made():
     """Not a failure and not a success — nothing ran. A pane that looked like
     either would be worse than one that says so."""
