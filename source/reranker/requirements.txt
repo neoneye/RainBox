@@ -1,0 +1,18 @@
+# Cross-encoder reranker service — isolated from the main project's deps.
+#
+# Install into a LOCAL venv in this directory (never the main app's venv):
+#
+#     cd reranker && python3.12 -m venv venv
+#     venv/bin/pip install -r requirements.txt
+#
+# The main app talks to this service over HTTP only and never imports it, so
+# torch/transformers stay out of its resolver entirely.
+
+# Direct dependencies
+torch==2.12.0
+transformers==5.10.1
+Flask==3.1.3
+# XLM-RoBERTa's tokenizer (both models) converts from a SentencePiece model,
+# and jina's remote code uses einops.
+sentencepiece==0.2.1
+einops==0.8.1

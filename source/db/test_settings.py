@@ -276,3 +276,34 @@ def test_set_setting_commits_so_value_survives_rollback(app_ctx):
     finally:
         db.set_setting("cron.paused", False)
         db.db.session.commit()
+
+
+def test_a_choice_setting_accepts_only_its_choices(temp_setting):
+    """A setting whose domain is a fixed set rejects anything outside it on
+    write — the page renders a dropdown, but the API is what enforces it."""
+    temp_setting(key="test.choice", env=None, type="string", default="a",
+                 choices=("a", "b"))
+    db.set_setting("test.choice", "b")
+    assert db.get_setting("test.choice") == "b"
+    with pytest.raises(ValueError, match="not one of a, b"):
+        db.set_setting("test.choice", "c")
+    db.db.session.rollback()
+    # Unset still means unset: clearing falls back to the default.
+    db.set_setting("test.choice", None)
+    assert db.get_setting("test.choice") == "a"
+
+
+def test_all_settings_carries_the_choices_for_the_page(temp_setting):
+    temp_setting(key="test.choice", env=None, type="string", default="a",
+                 choices=("a", "b"))
+    rows = {r["key"]: r for r in db.all_settings()}
+    assert rows["test.choice"]["choices"] == ["a", "b"]
+    # A free-text setting has none, which is what keeps it a text field.
+    assert rows["backup.repo"]["choices"] is None
+
+
+def test_the_recall_filter_backend_is_llm_until_the_operator_says_otherwise(app_ctx):
+    """The reranker sidecar is a separate process; defaulting to it would make
+    a fresh install's memory recall depend on something nobody started."""
+    assert db_settings.SETTINGS["memory.recall_filter_backend"].default == "llm"
+    assert db.get_setting("memory.recall_filter_backend") == "llm"

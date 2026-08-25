@@ -50,6 +50,11 @@ class Setting:
     # (e.g. chat.default_model derives from the model_config table). Must be
     # cheap and app-context safe: it runs on every unset get_setting().
     dynamic_default: Callable[[], object] | None = None
+    # The only values this setting accepts, for a setting whose domain is a
+    # fixed set rather than a range. Enforced on write and rendered by the
+    # /settings page as a dropdown instead of a free-text field, so a choice
+    # cannot be mistyped into a key that reads as unset.
+    choices: tuple[str, ...] | None = None
     # Machine-owned bookkeeping keys (event stamps) that the /settings page
     # must not list. get_setting/set_setting treat them normally. Distinct
     # from `secret`: secrets are redacted but still listed and env-managed;
@@ -137,6 +142,20 @@ SETTINGS: dict[str, Setting] = {
                     "used (true positive) and rejected (false positive) "
                     "filter verdicts are retained per memory; older ones are "
                     "pruned when new verdicts are recorded.",
+    ),
+    "memory.recall_filter_backend": Setting(
+        "memory.recall_filter_backend", None, "string", "llm",
+        choices=("llm", "reranker:mmarco-mMiniLMv2-L12-H384-v1",
+                 "reranker:jina-reranker-v2-base-multilingual"),
+        description="What scores the candidates memory_query recalled, before "
+                    "any of them reaches the assistant's prompt. 'llm' has the "
+                    "assistant.memory_filter model group rate every candidate "
+                    "on three scales and say why — thorough, and around twenty "
+                    "seconds of the turn. A 'reranker:' backend sends the same "
+                    "candidates to the cross-encoder sidecar (reranker/, port "
+                    "5008), which answers in milliseconds with one relevance "
+                    "score each and no explanation. The sidecar must be "
+                    "running, or the filter falls back to gated retrieval.",
     ),
     "cron.paused": Setting(
         "cron.paused", None, "bool", False,
@@ -300,6 +319,10 @@ def _upsert_setting_row(spec: Setting, value: object) -> None:
         row.value = None
     else:
         text = _to_text(spec, value)
+        if spec.choices is not None and text.strip() != "" and text not in spec.choices:
+            raise ValueError(
+                f"{spec.key}: not one of {', '.join(spec.choices)}: {text!r}"
+            )
         if spec.validate is not None and text.strip() != "":
             spec.validate(_coerce(spec, text))
         row.value = text
@@ -435,6 +458,9 @@ def all_settings(include_internal: bool = False) -> list[dict]:
             "value_type": spec.type,
             "secret": spec.secret,
             "description": spec.description,
+            # None for a free-text setting; a list is what makes the page
+            # render a dropdown, so the page never has to know the key.
+            "choices": list(spec.choices) if spec.choices else None,
             "source": _source(spec),
         })
     return out

@@ -312,3 +312,30 @@ def test_rebuild_stamps_facts_invalidated(client, monkeypatch):
     finally:
         db.set_setting("qa.facts_invalidated_at", None)
         db.db.session.commit()
+
+
+def test_a_choice_setting_renders_as_a_dropdown(client):
+    """The recall-filter backend is a fixed set of values, and a free-text
+    field would let a typo read as 'unset' — which silently keeps the LLM."""
+    body = client.get("/settings").get_data(as_text=True)
+    assert "memory.recall_filter_backend" in body
+    assert "reranker:jina-reranker-v2-base-multilingual" in body
+    # The generic branch: any registry setting carrying choices gets a select.
+    assert "s.choices && s.choices.length" in body
+
+
+def test_api_rejects_a_value_outside_a_settings_choices(client):
+    resp = client.post("/settings/api/set", json={
+        "key": "memory.recall_filter_backend", "value": "reranker:gpt-9"})
+    assert resp.status_code == 400
+    assert "not one of" in resp.get_json()["error"]
+    assert db.get_setting("memory.recall_filter_backend") == "llm"
+
+
+def test_api_accepts_a_reranker_backend(client):
+    resp = client.post("/settings/api/set", json={
+        "key": "memory.recall_filter_backend",
+        "value": "reranker:mmarco-mMiniLMv2-L12-H384-v1"})
+    assert resp.status_code == 200
+    assert (db.get_setting("memory.recall_filter_backend")
+            == "reranker:mmarco-mMiniLMv2-L12-H384-v1")

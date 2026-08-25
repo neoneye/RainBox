@@ -230,6 +230,10 @@ class ScoredCandidate:
     indirect: int
     relevancy: int
     kept: bool
+    # Set only by the assistant's reranker backend (agents/recall_reranker.py),
+    # which scores relevance as one number and leaves the three Likert scales
+    # at 0. None means an LLM produced this row, and the scales are the scores.
+    rerank_score: float | None = None
 
 
 def apply_filter_scores(

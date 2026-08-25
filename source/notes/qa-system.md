@@ -440,18 +440,31 @@ action for facts. It:
    (`_ensure_populated`) — the assistant loop does not otherwise load the KB.
 2. Retrieves memory-claim candidates (`retrieve_memories_hybrid`) and seed
    candidates (`_hybrid_seed_ranked`, ungated, per-signal budgets).
-3. Runs ONE shared **recall filter** call over both candidate kinds
-   (`_filter_recalled_candidates`): the scorer LLM (the
-   `assistant.memory_filter` slot) rates every candidate on the Likert scales, code keeps/drops via
-   `apply_filter_scores`, kept seed entries are resolved (dynamic handlers run
-   only for kept candidates), kept claims are injected. In a live run the
-   scoring call is made by the loop (`AssistantAgent._recall_filter_call`)
-   through the same `_structured_completion` as every other call of the turn,
-   on the filter's model group, and lands as its own code-driven `recall_filter`
-   step row — prompts, scores, model link, cost and retries included. Live runs
-   also record one RetrievalEvent verdict per candidate (see
-   `relevance-telemetry.md`).
-   Fallback when no scorer group is bound or the LLM fails: `MIN_SCORE`-gated
+3. Runs ONE shared **recall filter** pass over both candidate kinds
+   (`_filter_recalled_candidates`): every candidate is scored, code keeps/drops,
+   kept seed entries are resolved (dynamic handlers run only for kept
+   candidates), kept claims are injected. Live runs also record one
+   RetrievalEvent verdict per candidate (see `relevance-telemetry.md`).
+
+   What does the scoring is the `memory.recall_filter_backend` setting:
+
+   - `llm` (default) — the scorer LLM (the `assistant.memory_filter` slot)
+     rates every candidate on the Likert scales and code keeps/drops via
+     `apply_filter_scores`. In a live run the scoring call is made by the loop
+     (`AssistantAgent._recall_filter_call`) through the same
+     `_structured_completion` as every other call of the turn, on the filter's
+     model group, and lands as its own code-driven `recall_filter` step row —
+     prompts, scores, model link, cost and retries included.
+   - `reranker:<model>` — a cross-encoder in the `reranker/` sidecar
+     (`agents/recall_reranker.py`) scores each candidate on its own, from the
+     candidate's text and the message alone: one relevance number each, tens of
+     milliseconds for the list instead of tens of seconds, no prompt, no model
+     call, no step row. Its keep/drop policy is relative to the best score in
+     the list (`apply_rerank_scores`), because the two models' absolute scales
+     differ by an order of magnitude.
+
+   Fallback when the LLM backend has no scorer group bound, or the scorer fails
+   (a model error, or the reranker sidecar not running): `MIN_SCORE`-gated
    `retrieve_seed_answers` plus unfiltered claims — recall degrades, never
    dies with the scorer.
 4. Tiers the result — user-overlay seed, then upstream seed, then claims —

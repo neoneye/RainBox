@@ -456,6 +456,11 @@ def _seed_entries(monkeypatch, qkb, entries):
     monkeypatch.setattr(qkb, "get_entry", lambda qa_id: entries.get(qa_id))
 
 
+def _no_llm(*_a, **_k):
+    """A scorer the reranker backend must never reach."""
+    raise AssertionError("the reranker backend made a model call")
+
+
 def _score(qa_id, direct=1, indirect=1, relevancy=1):
     return {"id": qa_id, "direct": direct, "indirect": indirect,
             "relevancy": relevancy}
@@ -997,7 +1002,7 @@ def test_query_memory_recall_filter_falls_back_when_llm_fails(app_ctx, monkeypat
     assert obs.ok
     assert "gated fallback fact" in obs.text
     assert obs.data["recall_filter"] == {"mode": "gated",
-                                       "reason": "filter_llm_failed"}
+                                         "reason": "filter_failed"}
 
 
 def test_query_memory_recall_filter_skipped_without_model_group(app_ctx, monkeypatch):
@@ -1914,3 +1919,100 @@ def test_the_scoring_prompts_ask_for_unquoted_numbers():
         assert '"1".."5"' not in prompt
         assert '"1" (not at all)' not in prompt
         assert "1..5" in prompt
+
+
+def _use_reranker(monkeypatch, model="mmarco-mMiniLMv2-L12-H384-v1"):
+    """Point memory.recall_filter_backend at a reranker for one test."""
+    import db.settings as db_settings
+
+    real_get = db_settings.get_setting
+    monkeypatch.setattr(
+        db_settings, "get_setting",
+        lambda key: (f"reranker:{model}"
+                     if key == "memory.recall_filter_backend" else real_get(key)))
+
+
+def test_query_memory_reranker_backend_scores_without_an_llm(app_ctx, monkeypatch):
+    """With a reranker backend the recall filter makes no model call at all:
+    no group is resolved, the cross-encoder sidecar scores the same candidate
+    list, and the trace says which model did it and how long it took."""
+    import agents.query_filter_router as qfr
+    import agents.recall_reranker as rr
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _use_reranker(monkeypatch)
+    _seed_entries(monkeypatch, qkb, {
+        f"qa-{i}": {"kind": "static", "path": f"p{i}", "_source": "upstream",
+                    "answer": f"answer {i}."}
+        for i in range(1, 6)
+    })
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
+        Match(qa_id=f"qa-{i}", method="semantic", score=0.8,
+              matched_question=f"question {i}")
+        for i in range(1, 6)])
+    # The candidate rows are built in query_filter_router, which bound
+    # get_entry at import; without this the rows carry no answer and the
+    # document text under test would be half of what it is in a real run.
+    monkeypatch.setattr(qfr, "get_entry", qkb.get_entry)
+    # No model group is bound anywhere: the reranker path must not need one.
+    monkeypatch.setattr(db, "get_agent_model_binding", lambda agent_uuid: None)
+    monkeypatch.setattr(qfr, "structured_llm_call", _no_llm)
+
+    seen = {}
+
+    def fake_rerank(query, documents, *, model, **kwargs):
+        seen.update(query=query, model=model, documents=documents)
+        scores = {"qa-1": 0.91, "qa-2": 0.77, "qa-3": 0.02,
+                  "qa-4": 0.01, "qa-5": 0.0}
+        return scores, 37
+
+    monkeypatch.setattr(rr, "rerank", fake_rerank)
+    obs = _action_query_memory(_ctx(), {"query": "question 1"})
+
+    assert obs.ok
+    assert "answer 1." in obs.text and "answer 2." in obs.text
+    assert "answer 3." not in obs.text
+    debug = obs.data["recall_filter"]
+    assert debug["mode"] == "reranker"
+    assert debug["scorer_model"] == "mmarco-mMiniLMv2-L12-H384-v1"
+    assert debug["service_ms"] == 37
+    # The candidate rows carry the score the backend produced, and not the
+    # Likert columns it never filled in.
+    top = debug["candidates"][0]
+    assert top["qa_id"] == "qa-1" and top["rerank_score"] == 0.91
+    assert "direct" not in top
+    # What the cross-encoder read: the fact itself, not the filter prompt.
+    assert seen["query"] == "question 1"
+    assert seen["documents"][0] == {"id": "qa-1",
+                                    "text": "question 1\nanswer 1."}
+
+
+def test_query_memory_falls_back_to_gated_when_the_reranker_is_down(
+        app_ctx, monkeypatch):
+    """The sidecar is a separate process the operator can forget to start.
+    That must degrade the same way a dead filter LLM does — gated retrieval,
+    not an empty seed block."""
+    import agents.recall_reranker as rr
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match, SeedMemory
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _use_reranker(monkeypatch)
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
+        Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
+    monkeypatch.setattr(db, "get_agent_model_binding", lambda agent_uuid: None)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(rr, "rerank", boom)
+    monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [
+        SeedMemory(uuid="gated-1", path="p", source="upstream",
+                   answer="gated fallback fact", score=0.7)])
+    obs = _action_query_memory(_ctx(), {"query": "anything"})
+    assert obs.ok
+    assert "gated fallback fact" in obs.text
+    assert obs.data["recall_filter"] == {"mode": "gated",
+                                         "reason": "filter_failed"}

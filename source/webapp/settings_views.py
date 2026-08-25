@@ -321,7 +321,7 @@ function openEdit(key){
 
   let field;
   const isSelect = s.value_type === 'bool' || s.key === 'chat.default_model'
-    || s.key === 'profile.current';
+    || s.key === 'profile.current' || (s.choices && s.choices.length > 0);
   if (s.key === 'chat.default_model'){
     // An unavailable model cannot answer, so it is noise in the picker. The
     // exception is whatever the setting already holds (stored or effective):
@@ -340,6 +340,14 @@ function openEdit(key){
       + '<option value="">(unset &mdash; no operator identity)</option>'
       + PROFILES.map(p => '<option value="' + escapeHtml(p.uuid) + '">'
           + escapeHtml(p.label) + '</option>').join('')
+      + '</select>';
+  } else if (s.choices && s.choices.length){
+    // A registry setting with a fixed domain. The options come from the
+    // registry, so a new choice appears here without touching this page.
+    field = 'Value <select id="s-edit-input">'
+      + '<option value="">(unset &mdash; use env/default)</option>'
+      + s.choices.map(c => '<option value="' + escapeHtml(c) + '">'
+          + escapeHtml(c) + '</option>').join('')
       + '</select>';
   } else if (s.value_type === 'bool'){
     field = 'Value <select id="s-edit-input">'

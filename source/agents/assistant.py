@@ -1263,25 +1263,37 @@ def _filter_recalled_candidates(
     prompt_prefix: str = "", recall_filter_call: "RecallFilterCall | None" = None,
     step_index: int = 0,
 ) -> tuple[list | None, list | None, dict[str, Any]]:
-    """One LLM relevance filter over EVERYTHING memory_query recalls: the
+    """One relevance filter over EVERYTHING memory_query recalls: the
     hybrid seed candidates (ungated top-K per signal) AND the memory claims
     (`claim_candidates`, RetrievedMemory rows from hybrid claim retrieval —
-    the /memory store). Scoring both kinds in a single call keeps latency at
+    the /memory store). Scoring both kinds in a single pass keeps latency at
     one scorer round-trip and lets seed entries and claims compete under the
     same keep/drop policy.
 
-    The scorer's model group resolves via `assistant.memory_filter`, else
-    `assistant.default` — the assistant's own slot, so a scorer chosen for
-    this filter is not also chosen for the query_filter_router chat route.
-    Returns `(seeds, kept_claims, debug)`;
-    the first two are None when no group is bound anywhere (the caller falls
-    back to gated seed retrieval + unfiltered claims); an LLM failure raises
-    (same fallback). `debug` describes every candidate — source, score,
-    Likert scales, kept/dropped — for the step trace and /memory/developer.
-    Hallucinated ids are ignored.
+    WHAT scores them is the `memory.recall_filter_backend` setting: an LLM
+    (the default) or a cross-encoder reranker in the `reranker/` sidecar
+    (agents/recall_reranker.py). The two answer different questions — the LLM
+    rates three named scales for the whole turn's context and explains itself
+    in ~20s, the reranker returns one relevance number per candidate in
+    milliseconds — so each brings its own keep/drop policy and its own debug
+    columns, and everything downstream of `scored` is shared.
 
-    `recall_filter_call` is how the scoring call is made and recorded: the loop
-    passes its own, which runs the call through the agent's
+    The LLM scorer's model group resolves via `assistant.memory_filter`, else
+    `assistant.default` — the assistant's own slot, so a scorer chosen for
+    this filter is not also chosen for the query_filter_router chat route. The
+    reranker backend resolves no group at all: the model it runs is named in
+    the setting, and no model slot points at it.
+    Returns `(seeds, kept_claims, debug)`;
+    the first two are None when the LLM backend has no group bound anywhere
+    (the caller falls back to gated seed retrieval + unfiltered claims); a
+    scorer failure — a model error, or the reranker sidecar being down —
+    raises (same fallback). `debug` describes every candidate — source, score,
+    the backend's own scores, kept/dropped — for the step trace and
+    /memory/developer. Hallucinated ids are ignored.
+
+    `recall_filter_call` is how the LLM backend's scoring call is made and
+    recorded (the reranker backend makes no model call, so it uses none of
+    this): the loop passes its own, which runs the call through the agent's
     `_structured_completion` on the resolved group and writes a step row for it
     like every other assistant call. Without one (the /memory/developer probe,
     which has no run to record into) the call falls through to the standalone
@@ -1293,24 +1305,34 @@ def _filter_recalled_candidates(
     (defaults TOP_K_VECTOR/TOP_K_FULLTEXT) — /memory/developer tuning knobs;
     live runs pass None."""
     from agents.query_filter_router import (
-        FilterDecision,
+        TOP_K_FILTER, FilterDecision,
         apply_filter_scores, resolve_assistant_model_group,
         seed_candidate_rows, structured_llm_call,
     )
+    from agents.recall_reranker import (
+        apply_rerank_scores, document_text, rerank, reranker_model,
+    )
+    from db.settings import get_setting
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
-    group_uuid, group_from = resolve_assistant_model_group(
-        ASSISTANT_MEMORY_FILTER_UUID)
-    if group_uuid is None:
-        return None, None, {"mode": "gated", "reason": "no_model_group"}
-    model_uuids = db.get_model_group_member_uuids(group_uuid)
+    rerank_model = reranker_model(get_setting("memory.recall_filter_backend"))
+    mode = "reranker" if rerank_model is not None else "llm"
+    group_uuid: UUID | None = None
+    group_from: str | None = None
+    model_uuids: list[UUID] = []
+    if rerank_model is None:
+        group_uuid, group_from = resolve_assistant_model_group(
+            ASSISTANT_MEMORY_FILTER_UUID)
+        if group_uuid is None:
+            return None, None, {"mode": "gated", "reason": "no_model_group"}
+        model_uuids = db.get_model_group_member_uuids(group_uuid)
     seed_cands = qkb._hybrid_seed_ranked(
         query, qkb._vector_store(),
         top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext)
     claims_by_id = {str(m.uuid): m for m in claim_candidates}
     if not seed_cands and not claims_by_id:
-        return [], [], {"mode": "llm", "group_from": group_from, "candidates": []}
+        return [], [], {"mode": mode, "group_from": group_from, "candidates": []}
 
     # One combined candidate list: seed Matches as-is, each claim wrapped in a
     # Match so apply_filter_scores ranks/keeps both kinds under one policy.
@@ -1330,32 +1352,55 @@ def _filter_recalled_candidates(
         }
         for cid, m in claims_by_id.items()
     ]
-    filter_user_prompt = _build_recall_filter_prompt(
-        query, rows, prompt_prefix=prompt_prefix)
-    if recall_filter_call is not None:
-        decision, scorer_model_uuid = recall_filter_call(
-            model_uuids=model_uuids, model_group_uuid=group_uuid,
-            group_from=group_from,
-            system_prompt=ASSISTANT_SHARED_SYSTEM_PROMPT,
-            user_prompt=filter_user_prompt, step_index=step_index)
-    else:
-        decision, scorer_model_uuid = structured_llm_call(
-            "assistant.memory_filter", model_uuids,
-            ASSISTANT_SHARED_SYSTEM_PROMPT, filter_user_prompt,
-            FilterDecision,
-        )
-    # The scorer's display name for the observation (the /memory/developer
-    # page reads it); the run trace reads the model off the step row instead.
-    scorer_model = str(scorer_model_uuid)
-    if scorer_model_uuid is not None:
-        try:
-            _provider, scorer_model, _args = db.resolved_model_kwargs(scorer_model_uuid)
-        except Exception:
-            pass
-    # The LLM only scored; the keep/drop policy (keep all when few candidates,
-    # threshold on a full list) is code — apply_filter_scores.
-    scored = apply_filter_scores(decision, candidates)
     by_qa_id = {c.qa_id: c for c in candidates}
+    if rerank_model is not None:
+        # The cross-encoder reads the candidate itself, not a prompt: no turn
+        # prefix, no history, no instructions — which is where the two orders
+        # of magnitude between the backends come from.
+        documents = [{"id": row["id"], "text": document_text(row)}
+                     for row in rows]
+        scores, service_ms = rerank(query, documents, model=rerank_model)
+        scored = apply_rerank_scores(scores, candidates, top_k=TOP_K_FILTER)
+        # What the backend was and what it cost. `service_ms` is the sidecar's
+        # own measurement of the scoring pass — the figure to hold against the
+        # LLM scorer's step row, with this function's HTTP round trip and the
+        # candidate build left out of it.
+        head: dict[str, Any] = {
+            "mode": "reranker", "scorer_model": rerank_model,
+            "service_ms": service_ms,
+        }
+    else:
+        filter_user_prompt = _build_recall_filter_prompt(
+            query, rows, prompt_prefix=prompt_prefix)
+        if recall_filter_call is not None:
+            decision, scorer_model_uuid = recall_filter_call(
+                model_uuids=model_uuids, model_group_uuid=group_uuid,
+                group_from=group_from,
+                system_prompt=ASSISTANT_SHARED_SYSTEM_PROMPT,
+                user_prompt=filter_user_prompt, step_index=step_index)
+        else:
+            decision, scorer_model_uuid = structured_llm_call(
+                "assistant.memory_filter", model_uuids,
+                ASSISTANT_SHARED_SYSTEM_PROMPT, filter_user_prompt,
+                FilterDecision,
+            )
+        # The scorer's display name for the observation (the /memory/developer
+        # page reads it); the run trace reads the model off the step row instead.
+        scorer_model = str(scorer_model_uuid)
+        if scorer_model_uuid is not None:
+            try:
+                _provider, scorer_model, _args = db.resolved_model_kwargs(scorer_model_uuid)
+            except Exception:
+                pass
+        # The LLM only scored; the keep/drop policy (keep all when few candidates,
+        # threshold on a full list) is code — apply_filter_scores.
+        scored = apply_filter_scores(decision, candidates)
+        # The scorer's note is NOT injected into the observation the model
+        # reads (see the note below); it stays here, where the operator does.
+        head = {
+            "mode": "llm", "group_from": group_from,
+            "scorer_model": scorer_model, "reasoning": decision.reasoning,
+        }
 
     def _debug_row(s) -> dict[str, Any]:
         cand = by_qa_id[s.qa_id]
@@ -1373,26 +1418,28 @@ def _filter_recalled_candidates(
             path = str(entry.get("path", ""))
             kind = str(entry.get("kind", ""))
             question = cand.matched_question
-        return {
+        row: dict[str, Any] = {
             "qa_id": s.qa_id, "path": path, "kind": kind,
             "score": qkb.score_permille(cand.score), "signals": cand.method,
-            "matched_question": question,
-            "direct": s.direct, "indirect": s.indirect,
-            "relevancy": s.relevancy, "kept": s.kept,
+            "matched_question": question, "kept": s.kept,
         }
+        # A row shows the scores its backend produced and no others. The
+        # reranker leaves the three Likert scales at 0, and three zeroes in a
+        # trace read as a scorer that rated everything irrelevant rather than
+        # as a scorer that was never asked.
+        if s.rerank_score is None:
+            row.update(direct=s.direct, indirect=s.indirect,
+                       relevancy=s.relevancy)
+        else:
+            row["rerank_score"] = round(s.rerank_score, 4)
+        return row
 
-    # What the filter DECIDED, for the observation: which model scored, on
-    # whose binding, its note, and every candidate's scores and verdict. What
-    # the call cost and what it was sent live on its own step row (see
-    # AssistantAgent._recall_filter_call) — the same place the decide call
-    # keeps them — so no prompt or token count is stored twice.
-    debug = {
-        "mode": "llm",
-        "group_from": group_from,
-        "scorer_model": scorer_model,
-        "reasoning": decision.reasoning,
-        "candidates": [_debug_row(s) for s in scored],
-    }
+    # What the filter DECIDED, for the observation: which backend scored, on
+    # whose binding, its note where it makes one, and every candidate's scores
+    # and verdict. What an LLM call cost and what it was sent live on its own
+    # step row (see AssistantAgent._recall_filter_call) — the same place the
+    # decide call keeps them — so no prompt or token count is stored twice.
+    debug = {**head, "candidates": [_debug_row(s) for s in scored]}
     seeds: list[qkb.SeedMemory] = []
     kept_claims: list = []
     for s in scored:
@@ -1443,7 +1490,8 @@ def _record_recall_verdicts(
     """One RetrievalEvent per scored candidate: stage `used` for kept (true
     positive — it was injected into the observation) and `rejected` for
     dropped (false positive — retrieval surfaced it, the filter judged it
-    irrelevant). Metadata carries the Likert scales and retrieval signals so
+    irrelevant). Metadata carries the scores the backend produced (the Likert
+    scales, or the reranker's relevance score) and the retrieval signals, so
     a false positive can be diagnosed from the event alone. Each candidate's
     (target, stage) stream is then pruned to the memory.recall_fifo_capacity
     setting. Batched into a single commit."""
@@ -1466,8 +1514,11 @@ def _record_recall_verdicts(
             retrieval_rank=rank,
             retrieval_score=float(cand.score),
             filter_label="relevant" if s.kept else "irrelevant",
-            metadata={"direct": s.direct, "indirect": s.indirect,
-                      "relevancy": s.relevancy, "signals": cand.method},
+            metadata=({"rerank_score": round(s.rerank_score, 4),
+                       "signals": cand.method}
+                      if s.rerank_score is not None else
+                      {"direct": s.direct, "indirect": s.indirect,
+                       "relevancy": s.relevancy, "signals": cand.method}),
             commit=False,
         )
     db.db.session.commit()
@@ -1691,9 +1742,9 @@ def _action_query_memory(
                             step_index=ctx.step_index)
                 except Exception:
                     logger.warning(
-                        "assistant: recall LLM filter failed; falling back to "
+                        "assistant: recall filter failed; falling back to "
                         "gated seeds + unfiltered claims", exc_info=True)
-                    recall_filter_debug = {"mode": "gated", "reason": "filter_llm_failed"}
+                    recall_filter_debug = {"mode": "gated", "reason": "filter_failed"}
                 if filtered is not None:
                     seeds = filtered
                     memories = kept_claims if kept_claims is not None else memories

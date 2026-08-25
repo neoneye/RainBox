@@ -374,7 +374,7 @@ The demo only exercises `processing → completed`; `failed` and `stopped` exist
 | `providers/` | Ollama-first provider registry, with Jan and LM Studio support |
 | `tools/` | the no-LLM workspace_shell command runner |
 | `data/` | the base Q&A knowledge file (`question_answer.jsonl`) |
-| `voice_tts_kokoro/`, `voice_stt_whisper/`, `telegram_service/` | standalone processes with their own venvs (TTS, STT, Telegram bridge) — the core talks to/with them over HTTP only |
+| `voice_tts_kokoro/`, `voice_stt_whisper/`, `reranker/`, `telegram_service/` | standalone processes with their own venvs (TTS, STT, cross-encoder reranking, Telegram bridge) — the core talks to/with them over HTTP only |
 
 Tests are colocated inside each package next to the modules they test (`<pkg>/test_*.py`); the root `conftest.py` pins every pytest run to the `rainbox_claude` database.
 
