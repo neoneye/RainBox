@@ -228,6 +228,20 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-kpi { white-space:nowrap; }
   .as-main details.ev-block > summary:hover { color:#1a1a2e; }
   .as-main .ev-block { margin-bottom:0.7rem; }
+  /* raw | pretty, on a block whose text is a JSON document. Sits with the
+     block's own label rather than floating right: it belongs to that block,
+     and a control aligned to the pane edge reads as belonging to the pane.
+     Small and grey until it is the view you are on — the switch is not the
+     thing being inspected, and the two words are legible enough unlit. */
+  .as-main .ev-view { display:inline-flex; margin-left:0.5rem; vertical-align:middle;
+                      border:1px solid #e5e7eb; border-radius:5px; overflow:hidden; }
+  .as-main .ev-view button { border:0; background:#fff; cursor:pointer;
+                             font:inherit; font-size:0.62rem; letter-spacing:0.03em;
+                             text-transform:lowercase; color:#98a2b3;
+                             padding:0 0.4rem; line-height:1.5; }
+  .as-main .ev-view button + button { border-left:1px solid #e5e7eb; }
+  .as-main .ev-view button:hover { color:#1a1a2e; background:#f3f4f6; }
+  .as-main .ev-view button.on { background:#eef2ff; color:#2563eb; font-weight:600; }
   .as-main .ev-block h5 { margin:0 0 0.2rem; font-size:70%;
         letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }
   /* Only what `.as-main pre` does not already give it. The box and the size
@@ -493,6 +507,72 @@ ASSISTANT_TEMPLATE = """
 // lines rather than pixels because that is the unit a reader scans in, and
 // the block's own line-height is what says how tall a line is.
 var EV_CLAMP_LINES = 6;
+
+// --- how this operator reads JSON ----------------------------------------
+//
+// One preference for the whole page, kept in localStorage so it survives a
+// reload and the next run. `raw` is the default and stays it: what a block
+// holds is the bytes that were recorded, and a page that silently reformats
+// them has made a claim about a response nobody asked it to make.
+//
+// Reformatting is done here rather than served: the page would otherwise
+// carry every JSON response twice, and the raw text is the thing the
+// prompt-cache work reads byte for byte.
+var JSON_VIEW_KEY = 'assistant.json-view';
+// The mode is held here and only PERSISTED to localStorage. Reading it back
+// on every switch made the whole control depend on storage being writable —
+// so in a private window, or with storage full, the buttons did nothing at
+// all and gave no reason why. The preference is worth keeping across reloads;
+// it is not worth the switch not working.
+var jsonViewMode = 'raw';
+try {
+  if (localStorage.getItem(JSON_VIEW_KEY) === 'pretty') { jsonViewMode = 'pretty'; }
+} catch (e) {}  // storage unavailable: this session starts on raw
+function applyJsonView(root) {
+  var mode = jsonViewMode;
+  Array.prototype.forEach.call(
+    root.querySelectorAll('pre.ev-pre[data-json]'),
+    function (pre) {
+      // The recorded bytes, kept once on the node the first time it is
+      // touched — switching back has to return the original, not a
+      // re-serialization of it.
+      if (pre.dataset.raw === undefined) { pre.dataset.raw = pre.textContent; }
+      if (mode !== 'pretty') { pre.textContent = pre.dataset.raw; return; }
+      try {
+        // No key sorting: the order a decision was written in — reason,
+        // then action, then args — is part of reading it.
+        pre.textContent = JSON.stringify(
+          JSON.parse(pre.dataset.raw), null, 2);
+      } catch (e) {
+        // It parsed when the page was built and does not now: show what is
+        // actually there rather than an error where the response should be.
+        pre.textContent = pre.dataset.raw;
+      }
+    });
+  Array.prototype.forEach.call(
+    root.querySelectorAll('.ev-view button'),
+    function (b) {
+      var on = b.getAttribute('data-view') === mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+}
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('.ev-view button');
+  if (!b) { return; }
+  // Inside a <summary> the click would also fold the block it is labelling.
+  ev.preventDefault();
+  ev.stopPropagation();
+  jsonViewMode = b.getAttribute('data-view') === 'pretty' ? 'pretty' : 'raw';
+  try { localStorage.setItem(JSON_VIEW_KEY, jsonViewMode); }
+  catch (e) {}  // it still switches; it just will not be remembered
+  applyJsonView(document);
+});
+// Applied here, beside its own definition, rather than at the end of the
+// script: every pane is already in the document by this point, and a throw
+// anywhere below would otherwise leave the reader looking at a view they did
+// not choose with no sign that anything went wrong.
+applyJsonView(document);
 
 // A block is only measurable once its pane is shown and its <details> open,
 // so this runs then rather than at load, and once per block.
@@ -826,6 +906,7 @@ var asSelectEvent = null;
             cur.querySelectorAll('details[data-k]'),
             function (d) { if (open[detailsKey(d)]) d.open = true; });
           reselect(cur, key);
+          applyJsonView(cur);
           cur.scrollTop = scrollTop;
           retick(cur);
         })
@@ -858,6 +939,7 @@ var asSelectEvent = null;
     startRunStream();
     retick(document);
   })();
+
 </script>
 """
 

@@ -261,14 +261,35 @@ def _block(title: str, body: Any, *, collapsed: bool = False,
     if body in (None, "", {}, []):
         return None
     return {"title": title, "body": body, "collapsed": collapsed,
-            "key": key or title, "note": False}
+            "key": key or title, "note": False, "json": _is_json_text(body)}
+
+
+def _is_json_text(body: Any) -> bool:
+    """Whether this body is a JSON document that ARRIVED as text.
+
+    Only a string qualifies. A dict or list was never text in the first place
+    — it is serialized for display and comes out indented already, so there is
+    no second reading of it to offer. What this finds is the structured call's
+    own answer: a whole object on one line, exactly as the provider sent it,
+    which is unreadable and is also the only record of what was actually
+    received.
+
+    A bare scalar is valid JSON and is excluded: `"ok"` and `12` read the same
+    either way, and offering to reformat them says there is something to see.
+    """
+    if not isinstance(body, str):
+        return False
+    try:
+        return isinstance(json.loads(body), (dict, list))
+    except (ValueError, TypeError):
+        return False
 
 
 def _note(text: str) -> dict:
     """A pane's prose, for a kind whose substance is that nothing was
     recorded. Not a block: there is no field being labelled."""
     return {"title": "", "body": text, "collapsed": False, "key": "",
-            "note": True}
+            "note": True, "json": False}
 
 
 def _blocks(*items: dict | None) -> list[dict]:
@@ -284,23 +305,48 @@ def _block_text(block: dict) -> str:
         body, indent=2, sort_keys=True, default=str, ensure_ascii=False)
 
 
+#: The raw / pretty switch a JSON block carries. Two buttons rather than one
+#: that toggles: a lone button has to be read to know which way it will go,
+#: and which view you are LOOKING at is the thing worth showing.
+#:
+#: The choice is one preference, not one per block — it is how this operator
+#: reads JSON, and the page restores it from localStorage on every load. So
+#: every switch on the page moves together; a block whose text is already
+#: indented simply does not change.
+_VIEW_SWITCH: Markup = Markup(
+    '<span class="ev-view">'
+    '<button type="button" data-view="raw" title="Exactly the bytes that were '
+    'recorded">raw</button>'
+    '<button type="button" data-view="pretty" title="The same JSON, indented. '
+    'Field order is the model\'s own, never sorted — the order a decision '
+    'was written in is part of reading it">pretty</button></span>')
+
+
 def _block_html(block: dict | None) -> Markup:
     """One block as the page draws it. Everything is escaped: a body is model
-    and tool output, and a title can be an action name that arrived as data."""
+    and tool output, and a title can be an action name that arrived as data.
+
+    A JSON block ships its RAW text and a switch. The reformatting happens in
+    the browser, so the page carries one copy of a response rather than two,
+    and what arrives is what was recorded — the reader opts into the prettier
+    reading rather than being handed it and having to trust it.
+    """
     if block is None:
         return Markup("")
     if block["note"]:
         return Markup('<p class="ev-note">{}</p>').format(block["body"])
     text = _block_text(block)
+    switch = _VIEW_SWITCH if block.get("json") else Markup("")
+    pre = Markup('<pre class="ev-pre"{}>{}</pre>').format(
+        Markup(' data-json') if block.get("json") else Markup(""), text)
     if block["collapsed"]:
         return Markup(
             '<details class="prompt ev-block" data-k="{}">'
-            '<summary>{} ({} chars)</summary>'
-            '<pre class="ev-pre">{}</pre></details>'
-        ).format(block["key"], block["title"], len(text), text)
+            '<summary>{} ({} chars){}</summary>{}</details>'
+        ).format(block["key"], block["title"], len(text), switch, pre)
     return Markup(
-        '<div class="ev-block"><h5>{}</h5><pre class="ev-pre">{}</pre></div>'
-    ).format(block["title"], text)
+        '<div class="ev-block"><h5>{}{}</h5>{}</div>'
+    ).format(block["title"], switch, pre)
 
 
 def _blocks_html(blocks: list[dict]) -> Markup:

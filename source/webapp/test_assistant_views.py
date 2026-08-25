@@ -1164,6 +1164,63 @@ def test_page_live_refreshes_via_sse_not_polling(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_the_json_reading_is_this_operator_s_and_it_persists(app_ctx, client):
+    """Which way JSON reads is a preference, not a per-block fiddle: it is set
+    once, kept in localStorage, and restored before the reader looks. Raw is
+    the default and stays it — the bytes a block holds are what was recorded,
+    and reformatting them unasked makes a claim about a response."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="ready", model_response='{"reason":"done","action":"reply"}',
+        requested_at=datetime.now(UTC), duration_ms=1000)
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "localStorage.getItem(JSON_VIEW_KEY)" in body
+        assert "localStorage.setItem(JSON_VIEW_KEY, jsonViewMode)" in body
+        # Raw unless the reader has said otherwise.
+        assert "var jsonViewMode = 'raw';" in body
+        # And storage is persistence ONLY. Reading it back on every switch
+        # made the control itself depend on storage being writable, so in a
+        # private window the buttons did nothing and said nothing.
+        assert "var mode = jsonViewMode;" in body
+        assert "jsonViewMode = b.getAttribute('data-view')" in body
+        # Restored on load, and re-applied after a live swap — the swap brings
+        # back raw markup, so without this the reader's choice lasts one
+        # refresh on a running run.
+        assert body.count("applyJsonView(document);") == 2
+        assert "applyJsonView(cur);" in body
+        # Never sorted: the order a decision was written in is part of it.
+        assert "JSON.stringify(\n          JSON.parse(pre.dataset.raw), null, 2)" in body
+        assert "sort" not in body.split("function applyJsonView")[1].split("}")[0]
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_switching_the_json_reading_does_not_fold_the_block(app_ctx, client):
+    """The prompts are collapsed, so their switch sits in a <summary> — where
+    a plain click would also toggle the block it is labelling."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="ready", user_prompt='{"request":"how far is the moon"}',
+        requested_at=datetime.now(UTC), duration_ms=1000)
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        handler = body.split("var b = ev.target.closest('.ev-view button');")[1]
+        handler = handler.split("});")[0]
+        assert "ev.preventDefault();" in handler
+        assert "ev.stopPropagation();" in handler
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_the_in_flight_clock_touches_nothing_but_the_page(app_ctx, client):
     """The carve-out is only a carve-out because it does no I/O. A fetch, a
     send, or anything else reaching the server on this timer is the polling

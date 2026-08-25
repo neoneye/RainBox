@@ -560,3 +560,58 @@ def test_a_call_has_no_status_block():
         "llm", "reply", payload={"model_response": "{}"}))
 
     assert "<h5>status</h5>" not in html
+
+
+def test_a_structured_answer_offers_the_reading_it_needs():
+    """A structured call's answer arrives as one long line of JSON — the exact
+    bytes the provider sent, and unreadable. The block offers to indent it,
+    and ships the raw text so the reader opts in rather than being handed a
+    reformatting they have to trust."""
+    html = render_event_detail(_event("llm", "decide → reply", payload={
+        "model_response": '{"reason":"enough evidence","action":"reply"}'}))
+
+    assert '<pre class="ev-pre" data-json>' in html
+    assert 'data-view="raw"' in html and 'data-view="pretty"' in html
+    # The raw bytes, not an indented copy of them.
+    assert '{&#34;reason&#34;:&#34;enough evidence&#34;,&#34;action&#34;:&#34;reply&#34;}' in html
+
+
+def test_prose_is_not_offered_a_reading_it_does_not_have():
+    """Most of what a pane holds is text. A switch on a block that cannot
+    change says there is something to see there."""
+    html = render_event_detail(_event("llm", "decide → reply", payload={
+        "model_response": "I could not complete that."}))
+
+    assert "ev-view" not in html
+    assert "data-json" not in html
+
+
+def test_a_scalar_is_json_but_has_no_second_reading():
+    """`"ok"` and `12` are valid JSON documents and read the same either way."""
+    for scalar in ('"ok"', "12", "true", "null"):
+        html = render_event_detail(_event("llm", "x", payload={
+            "model_response": scalar}))
+        assert "ev-view" not in html, scalar
+
+
+def test_a_payload_that_was_never_text_gets_no_switch():
+    """An action's arguments are a dict — serialized for display, indented
+    already. There is no raw form to switch back to, so offering one would
+    promise a reading that does not exist."""
+    html = render_event_detail(_event("action", "kanban_create", payload={
+        "args": {"title": "the report", "column": "doing"}}))
+
+    assert "ev-view" not in html
+    # And it is shown indented, as it always was.
+    assert "&#34;title&#34;: &#34;the report&#34;" in html
+
+
+def test_a_collapsed_json_block_keeps_its_switch_inside_the_summary():
+    """The prompts are collapsed, and a structured call's user prompt can be
+    JSON too. The switch rides in the summary so it is reachable without
+    opening the block first."""
+    html = render_event_detail(_event("llm", "x", payload={
+        "user_prompt": '{"request":"how far is the moon"}'}))
+
+    summary = html.split("<summary>")[1].split("</summary>")[0]
+    assert "ev-view" in summary
