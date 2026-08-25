@@ -4162,6 +4162,7 @@ class AssistantAgent(ModelGroupAgent):
                 user_prompt=user_prompt,
                 requested_at=datetime.now(UTC),
                 model_group_uuid=group_uuid,
+                log=self._turn_log or None,
             )
         result = self._structured_completion(
             system_prompt=system_prompt,
@@ -5245,6 +5246,7 @@ class AssistantAgent(ModelGroupAgent):
                 requested_at=requested_at,
                 model_group_uuid=self._slot_group(
                     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID),
+                log=self._turn_log or None,
             )
         try:
             with self._logging_step(step_uuid):
@@ -5388,6 +5390,7 @@ class AssistantAgent(ModelGroupAgent):
                 user_prompt=user_prompt,
                 requested_at=requested_at,
                 model_group_uuid=model_group_uuid,
+                log=self._turn_log or None,
             )
         try:
             with self._logging_step(step_uuid):
@@ -5589,7 +5592,8 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt=system_prompt, user_prompt=user_prompt,
                 requested_at=requested_at,
                 model_group_uuid=self._slot_group(
-                    ASSISTANT_REQUEST_SUMMARY_UUID))
+                    ASSISTANT_REQUEST_SUMMARY_UUID),
+                log=self._turn_log or None)
         try:
             with self._logging_step(step_uuid):
                 summary = self._summarize_request(
@@ -5856,7 +5860,8 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt=system_prompt, user_prompt=user_prompt,
                 requested_at=requested_at,
                 model_group_uuid=self._slot_group(
-                    ASSISTANT_ACCEPTANCE_CRITERIA_UUID))
+                    ASSISTANT_ACCEPTANCE_CRITERIA_UUID),
+                log=self._turn_log or None)
         try:
             with self._logging_step(step_uuid):
                 criteria = self._request_acceptance_criteria(
@@ -5990,7 +5995,8 @@ class AssistantAgent(ModelGroupAgent):
                 system_prompt=system_prompt, user_prompt=user_prompt,
                 requested_at=self._criteria_call_requested_at,
                 model_group_uuid=self._slot_group(
-                    ASSISTANT_ACCEPTANCE_CRITERIA_UUID))
+                    ASSISTANT_ACCEPTANCE_CRITERIA_UUID),
+                log=self._turn_log or None)
         try:
             criteria = self._request_acceptance_criteria(
                 system_prompt=system_prompt, user_prompt=user_prompt)

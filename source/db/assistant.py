@@ -284,13 +284,23 @@ def checkpoint_assistant_call(
     user_prompt: str,
     requested_at: datetime,
     model_group_uuid: UUID | None,
+    log: list | None = None,
 ) -> AssistantRun:
-    """Persist a model request before dispatch so a killed worker leaves evidence."""
+    """Persist a model request before dispatch so a killed worker leaves
+    evidence — and so /assistant can show what a call in flight was ASKED,
+    while it is still in flight. The request is fully known before dispatch;
+    waiting for the step row to land to show it means the one thing the
+    operator cannot see is the thing that explains what they are watching.
+
+    `log` is the same operator-facing context the step row carries: which
+    profile was in force, which blocks were switched on. It frames the prompts
+    the same way there as here."""
     metadata = dict(run.metadata_ or {})
     metadata["active_call"] = {
         "step_index": step_index,
         "system_prompt": system_prompt,
         "user_prompt": user_prompt,
+        "log": log or None,
         "requested_at": requested_at.isoformat(),
         "model_group_uuid": str(model_group_uuid) if model_group_uuid else None,
         "attempts": [],

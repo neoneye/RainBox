@@ -650,6 +650,11 @@ def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
         start=start, duration_ms=max(elapsed, 0) if elapsed is not None else None,
         uuid="live",
         kpis={"model": active.get("model_name"),
+              # The binding that chose the model, so the row is a link to the
+              # page an operator would change — the same one the summarizer's
+              # row offers. There is no config uuid to offer: which member
+              # answered is not settled until the call returns.
+              "model_group_uuid": active.get("model_group_uuid"),
               "status": "running",
               "streamed": (len(response) + len(reasoning)) or None,
               # What it is racing. The loop abandons the call at this point,
@@ -661,7 +666,13 @@ def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
               # the line from the numbers that do.
               "attempt": (active.get("attempt")
                           if (active.get("attempt") or 0) > 1 else None)},
-        payload={"model_response": response or None,
+        # The request is complete before the call goes out, so it reads here
+        # exactly as it will on the step row that replaces this one — same
+        # blocks, same order, same collapsed state carried across refreshes.
+        payload={"log": active.get("log"),
+                 "system_prompt": active.get("system_prompt"),
+                 "user_prompt": active.get("user_prompt"),
+                 "model_response": response or None,
                  "reasoning": reasoning or None,
                  "error": active.get("error"),
                  "step_index": active.get("step_index")})]

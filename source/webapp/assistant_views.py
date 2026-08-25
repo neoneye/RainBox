@@ -1154,9 +1154,16 @@ def _active_model_call(run) -> dict | None:
     return {
         "step_index": active.get("step_index"),
         "model_name": newest.get("model_name"),
+        "model_group_uuid": active.get("model_group_uuid"),
         "started_at": newest.get("started_at") or active.get("requested_at"),
         "timeout_seconds": newest.get("timeout_seconds"),
         "attempt": len(attempts),
+        # What the call was ASKED. Known in full before dispatch and recorded
+        # by the checkpoint, so there is no reason for the one row an operator
+        # is actively watching to be the one row that cannot say what it sent.
+        "system_prompt": active.get("system_prompt"),
+        "user_prompt": active.get("user_prompt"),
+        "log": active.get("log"),
         "partial_reasoning": newest.get("partial_reasoning"),
         "partial_response": newest.get("partial_response"),
         "error": newest.get("error"),

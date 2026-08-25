@@ -1255,8 +1255,10 @@ def _in_flight_run(room):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     model_uuid = uuid4()
     db.checkpoint_assistant_call(
-        run, step_index=0, system_prompt="s", user_prompt="u",
-        requested_at=datetime.now(UTC), model_group_uuid=None)
+        run, step_index=0, system_prompt="you are the assistant",
+        user_prompt="how far is the moon", requested_at=datetime.now(UTC),
+        model_group_uuid=None,
+        log=[{"label": "profile", "text": "the profile in force"}])
     db.checkpoint_assistant_model_attempt(
         run, model_uuid=model_uuid, model_name="live-model", timeout_seconds=10.0)
     db.checkpoint_assistant_model_progress(
@@ -1308,6 +1310,57 @@ def test_the_row_in_flight_shows_how_long_and_how_much(app_ctx, client):
         # And the two numbers, on the meta line every other call uses.
         assert "chars back" in body
         assert "of 10s" in body      # the checkpoint's configured timeout
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_call_in_flight_shows_what_it_was_asked(app_ctx, client):
+    """The request is complete before the call goes out — the checkpoint has
+    the prompts and the turn log the moment it is written. Holding them back
+    until the step row lands made the one row the operator is watching the one
+    row that could not say what it sent."""
+    room = _room()
+    run = _in_flight_run(room)
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        pane = body.split('data-label="in flight"')[1].split("</div></div>")[0]
+        # The same three blocks, in the same order, that the step row landing
+        # in its place will carry.
+        assert pane.index("log (") < pane.index("system prompt (")
+        assert pane.index("system prompt (") < pane.index("user prompt (")
+        assert "the profile in force" in pane      # the log's own content
+        assert "you are the assistant" in pane     # the system prompt
+        assert "how far is the moon" in pane       # the user prompt
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_call_that_has_answered_nothing_yet_says_which(app_ctx, client):
+    """A pane holding a prompt and nothing else reads the same whether the
+    model answered nothing or has not answered yet. Those are different runs."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.checkpoint_assistant_call(
+        run, step_index=0, system_prompt="you are the assistant",
+        user_prompt="how far is the moon", requested_at=datetime.now(UTC),
+        model_group_uuid=None)
+    model_uuid = uuid4()
+    db.checkpoint_assistant_model_attempt(
+        run, model_uuid=model_uuid, model_name="gemma4:e4b",
+        timeout_seconds=90.0)
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "nothing has come back from the model yet" in body
+        # The request is there regardless — that is the point of showing it
+        # before the answer exists.
+        assert "how far is the moon" in body
+        # And once a token arrives, the pane stops saying so.
+        db.checkpoint_assistant_model_progress(
+            run, model_uuid=model_uuid, reasoning=None, response_text='{"re')
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "nothing has come back from the model yet" not in body
+        assert "What it has sent back so far is below" in body
     finally:
         _cleanup(run.uuid, room.uuid)
 

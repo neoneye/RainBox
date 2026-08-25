@@ -445,20 +445,28 @@ def _llm(event: dict) -> list[dict]:
 
 
 def _live(event: dict) -> list[dict]:
-    """The call happening right now, as it streams back.
+    """The call happening right now: what it was asked, and what has come back
+    so far.
 
-    The only pane on the page with no record behind it: the row lands when the
+    The only pane on the page with no record behind it. The row lands when the
     call returns, so until then the streamed checkpoint is the sole evidence
-    there is. It says so, because everything else in the inspector is a
-    finished fact and this one is still moving — and because a pane that is
-    empty for the first few seconds of a call has to distinguish "nothing came
-    back" from "nothing yet".
+    there is — but the REQUEST half of it is complete before the call goes
+    out, so this pane reads exactly like the step row that will replace it:
+    same blocks, same order. There is no reason for the one row an operator is
+    actively watching to be the one row that cannot say what it sent.
+
+    It says which it is, because everything else in the inspector is a
+    finished fact and this one is still moving — and because a pane holding a
+    prompt and nothing else has to distinguish "the model answered nothing"
+    from "the model has not answered yet".
     """
-    blocks = _llm(event)
-    if not blocks:
-        return [_note("Waiting for the model — nothing has streamed back yet.")]
-    return [_note("This call is still running. What it has sent back so far is "
-                  "below, and grows as more arrives.")] + blocks
+    payload = event.get("payload") or {}
+    answering = bool(payload.get("model_response") or payload.get("reasoning"))
+    return [_note(
+        "This call is still running. What it has sent back so far is below,"
+        " and grows as more arrives." if answering else
+        "This call is still running. What it was asked is below; nothing has"
+        " come back from the model yet.")] + _llm(event)
 
 
 def _embedding(event: dict) -> list[dict]:
