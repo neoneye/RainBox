@@ -106,6 +106,41 @@ def test_a_phase_contributes_only_the_time_no_call_occupies():
     assert not [c for c in calls if (c["duration_ms"] or 0) == 22800]
 
 
+def _recall_filter_step(**found):
+    """A memory_query step whose recall-filter phase recorded `found`."""
+    step = _step("memory_query", at=0, ms=100,
+                 phases=[("recall filter", 0.1, 0.3)])
+    step.observation["data"]["recall_filter"] = {"candidates": [], **found}
+    return step
+
+
+def _phase_row(calls):
+    return next(c for c in calls if c["label"].endswith("recall filter"))
+
+
+def test_the_reranker_backend_names_its_model_on_the_phase_row():
+    """It makes no model call, so this row is the only one that can say what
+    scored — and a row that cannot name what ran inside it sends the reader
+    looking for a call row that does not exist."""
+    calls = db.assistant_llm_calls(
+        [_recall_filter_step(mode="reranker",
+                             scorer_model="mmarco-mMiniLMv2-L12-H384-v1")],
+        run=_run(finished=1.0))
+
+    assert _phase_row(calls)["kpis"]["model"] == "mmarco-mMiniLMv2-L12-H384-v1"
+
+
+def test_the_llm_backend_leaves_the_phase_row_unnamed():
+    """Its scorer has a call row of its own; naming the model here too would
+    print it on two adjacent rows."""
+    calls = db.assistant_llm_calls(
+        [_recall_filter_step(mode="llm", scorer_model="gemma4:e4b",
+                             group_from="assistant.default")],
+        run=_run(finished=1.0))
+
+    assert _phase_row(calls)["kpis"]["model"] is None
+
+
 def test_a_phase_with_no_calls_inside_it_is_one_whole_bar():
     """Nothing to subtract, so the phase IS the activity."""
     step = _step("memory_query", at=0, ms=1000,

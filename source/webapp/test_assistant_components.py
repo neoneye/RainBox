@@ -76,6 +76,54 @@ def test_an_activity_pane_shows_what_the_phase_found():
     assert "Nothing finer" not in html
 
 
+def _recall_filter_pane(**found):
+    return render_event_detail(_event(
+        "activity", "memory_query \u203a recall filter",
+        payload={"found": found}))
+
+
+def test_the_recall_filter_pane_leads_with_the_scorer_and_the_message():
+    """The candidate list is the long part, and under sorted JSON it buried
+    the two things the reader opens the pane for: what scored, and what it was
+    asked. The reranker backend has no call row to carry either."""
+    html = _recall_filter_pane(
+        mode="reranker", scorer_model="mmarco-mMiniLMv2-L12-H384-v1",
+        service_ms=203, max_length=512, query="where I live",
+        candidates=[{"qa_id": "qa-1", "kept": True, "rerank_score": 0.9,
+                     "document": "where do you live?\nIn a house.",
+                     "tokens": 25}])
+
+    assert "mmarco-mMiniLMv2-L12-H384-v1" in html
+    assert "203 ms in the service" in html
+    assert "512 tokens" in html
+    assert "where I live" in html                 # the message scored against
+    assert "In a house." in html                  # the document it was paired with
+    assert "candidates (1)" in html
+    # The scorer and the message read before the list, not after it.
+    assert html.index("mmarco") < html.index("qa-1")
+    assert html.index("where I live") < html.index("qa-1")
+
+
+def test_the_recall_filter_pane_shows_the_llm_backends_note():
+    """Deliberately kept out of the assistant's own observation, so this pane
+    is where the operator reads it."""
+    html = _recall_filter_pane(
+        mode="llm", scorer_model="gemma4:e4b", group_from="assistant.default",
+        reasoning="nothing here answers the question", candidates=[])
+
+    assert "assistant.default model group" in html
+    assert "nothing here answers the question" in html
+
+
+def test_a_gated_recall_filter_pane_says_nothing_was_scored():
+    """An empty candidate list here is not "everything was irrelevant" — the
+    filter never ran."""
+    html = _recall_filter_pane(mode="gated", reason="filter_failed")
+
+    assert "did not run" in html
+    assert "filter_failed" in html
+
+
 def test_an_activity_pane_with_no_findings_still_says_what_it_is():
     html = render_event_detail(_event("activity", "python_run \u203a execute"))
 

@@ -202,6 +202,15 @@ def _phase_calls(step, data: dict) -> list[dict]:
         found = phase.get("found")
         if found is None:
             found = data.get(_PHASE_FINDINGS_KEY.get(name, ""))
+        # A phase that contains no call row has nowhere else to name what ran
+        # inside it. The recall filter's reranker backend is exactly that: it
+        # makes no model call, so the model that scored is named on this row or
+        # nowhere. Its LLM backend has a call row of its own, which is where
+        # that name belongs — so this stays empty there rather than printing
+        # the same model on two adjacent rows.
+        model = ""
+        if isinstance(found, dict) and found.get("mode") == "reranker":
+            model = str(found.get("scorer_model") or "")
         # Named for the step that recorded it. A phase called "recall filter"
         # sits beside the `recall_filter` call it contains, and the two read as
         # one thing listed twice; the prefix says which step owns the bar, and
@@ -209,7 +218,8 @@ def _phase_calls(step, data: dict) -> list[dict]:
         calls.append(_call(
             f"{step.action} › {name}", "phase",
             start=_parse_ts(phase.get("started_at")),
-            duration_ms=phase.get("ms"), anchor=str(step.uuid), found=found))
+            duration_ms=phase.get("ms"), anchor=str(step.uuid), found=found,
+            model=model))
     return calls
 
 
@@ -284,7 +294,10 @@ def _activity_rows(phases: list[dict], calls: list[dict]) -> list[dict]:
                 # What the phase found travels with every slice of it: the
                 # slices are one phase cut around the calls it made, and the
                 # reader clicking any of them is asking the same question.
-                found=(phase.get("payload") or {}).get("found")))
+                found=(phase.get("payload") or {}).get("found"),
+                # And so does what ran inside it, for a phase that named it
+                # (see _phase_calls): the slices are that same phase.
+                model=(phase.get("kpis") or {}).get("model") or ""))
     return rows
 
 

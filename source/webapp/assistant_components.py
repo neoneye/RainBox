@@ -534,6 +534,48 @@ def _unaccounted(_event: dict) -> list[dict]:
         "would pay.")]
 
 
+def _recall_filter_phase(found: dict) -> list[dict]:
+    """The recall filter: what scored the recalled candidates, what it was
+    asked, and what it said.
+
+    Led by the scorer and the message, because the candidate list is the long
+    part and a sorted JSON dump buries everything else beneath it. Which
+    matters most for the reranker backend: it makes no model call, so this
+    pane is the ONLY record of the model that ran and of the text it read —
+    for the LLM backend those live on its own call row.
+    """
+    mode = str(found.get("mode") or "")
+    if mode == "gated":
+        return [_note(
+            "Nothing was scored: the filter did not run, so recall fell back "
+            "to the score-gated retrieval.")] + _blocks(
+            _block("reason", found.get("reason")))
+    scorer = " · ".join(str(part) for part in (
+        mode, found.get("scorer_model"),
+        f"{found['group_from']} model group" if found.get("group_from") else "",
+        f"{found['service_ms']} ms in the service" if found.get("service_ms") else "",
+        f"pairs cut at {found['max_length']} tokens" if found.get("max_length") else "",
+    ) if part)
+    candidates = found.get("candidates") or []
+    return _blocks(
+        _block("scorer", scorer),
+        # Half of every pair the reranker scored — the other half is each
+        # candidate's own `document` below.
+        _block("scored against", found.get("query")),
+        # The LLM backend's own summary of the set. It is deliberately kept
+        # out of the observation the assistant reads (one model's unsupported
+        # account of a candidate list), so this pane is where it is read.
+        _block("scorer's note", found.get("reasoning")),
+        _block(f"candidates ({len(candidates)})", candidates),
+    )
+
+
+#: Phase panes with a renderer of their own, by the phase's own name — the
+#: half of the label after the step that recorded it ("memory_query › recall
+#: filter"). Everything else falls through to the generic findings block.
+_PHASE_RENDERERS = {"recall filter": _recall_filter_phase}
+
+
 def _activity(event: dict) -> list[dict]:
     """A stretch of an action's own work — and what it produced, where the
     action recorded that.
@@ -546,6 +588,10 @@ def _activity(event: dict) -> list[dict]:
     if found in (None, {}, []):
         return [_note("An action's own work, outside the calls it made. "
                       "Nothing finer was recorded inside it.")]
+    name = (event.get("label") or "").split("›")[-1].strip()
+    renderer = _PHASE_RENDERERS.get(name)
+    if renderer is not None and isinstance(found, dict):
+        return renderer(found)
     return _blocks(_block("found", found))
 
 
