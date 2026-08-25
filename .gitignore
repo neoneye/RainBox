@@ -1,2 +1,5 @@
 .claude/worktrees/
 .env
+
+# Superpowers brainstorming companion scratch (mockups, session state)
+.superpowers/

@@ -389,6 +389,35 @@ class ModelGroupAgent(Agent):
     ) -> None:
         """Hook for throttled persistence of an in-flight model stream."""
 
+    def _instrument_tags(self, caller_tag: str) -> dict[str, str]:
+        """Tags that ride the instrumentation events into the `llm_call` row.
+
+        `caller` labels the call on /activity. The run and step are added when
+        the agent is tracking them — the assistant sets them around each call —
+        so a row can be joined back to the turn that made it, which is what
+        lets /assistant show a call's prefill/decode split and cache reuse.
+        Absent for every other agent, whose calls simply record no linkage.
+
+        The model rides along for the same reason. What instrumentation sees is
+        the NAME the provider was given, which is not something this app can be
+        asked about: /model is keyed on the config uuid, and one name can be
+        configured more than once. The agent is the only place that knows which
+        uuid it picked, and only while the attempt it picked for is running —
+        `_run_with_model_fallback` sets `_last_model_uuid` before the call goes
+        out, which is what makes this the moment to read it.
+        """
+        tags = {"caller": caller_tag}
+        run_uuid = getattr(self, "_log_run_uuid", None)
+        if run_uuid:
+            tags["run_uuid"] = str(run_uuid)
+        model_uuid = getattr(self, "_last_model_uuid", None)
+        if model_uuid:
+            tags["model_uuid"] = str(model_uuid)
+        group_uuid = getattr(self, "model_group_uuid", None)
+        if group_uuid:
+            tags["model_group_uuid"] = str(group_uuid)
+        return tags
+
     def _caller_tag(self, purpose: str | None = None) -> str:
         """How this call labels itself on /activity: `name` or `name.purpose`.
 
@@ -559,7 +588,8 @@ class ModelGroupAgent(Agent):
                     # result, so instrumentation is the only place it's visible.
                     # Recorded per attempt, even on failure (the partial reasoning
                     # of a timed-out call is exactly what one wants to inspect).
-                    with instrument_tags({"caller": caller_tag}), capture_reasoning() as tally:
+                    with instrument_tags(self._instrument_tags(caller_tag)), \
+                            capture_reasoning() as tally:
                         try:
                             for last in sllm.stream_chat(messages + corrections):
                                 # Prefer the instrumentation capture: it holds the

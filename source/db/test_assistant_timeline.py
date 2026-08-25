@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import db
-from db.assistant import UNACCOUNTED_MIN_MS
+from db.assistant_log import UNACCOUNTED_MIN_MS
 
 T0 = datetime(2026, 8, 23, 23, 4, 12, tzinfo=UTC)
 

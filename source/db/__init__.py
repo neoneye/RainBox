@@ -37,6 +37,7 @@ from db.settings import *  # noqa: F401,F403  re-export app_setting registry/acc
 from db.find_uuid import *  # noqa: F401,F403  re-export the cross-table fuzzy uuid lookup
 from db.activity import *  # noqa: F401,F403  re-export llm_call recording + /activity aggregation
 from db.benchmark import *  # noqa: F401,F403  re-export benchmark_result recording + retention
+from db.assistant_log import *  # noqa: F401,F403  re-export the assistant run read model
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +352,13 @@ def init_db(app: Flask) -> None:
         # this, and on rows whose text has aged past PROMPT_RETENTION_DAYS.
         _add_column_if_missing("llm_call", "messages", "messages JSONB")
         _add_column_if_missing("llm_call", "response_text", "response_text TEXT")
+        # llm_call gained the assistant run and step it belongs to, so
+        # /assistant can reach a call's prefill/decode split and cache reuse.
+        _add_column_if_missing("llm_call", "run_uuid", "run_uuid UUID")
+        # The model config and the group the call resolved before it, so a
+        # trace row can be followed back to the binding that chose the model.
+        _add_column_if_missing("llm_call", "model_group_uuid",
+                               "model_group_uuid UUID")
         _add_column_if_missing("model_config", "provider",
                                "provider TEXT NOT NULL DEFAULT "
                                f"'{PREFERRED_PROVIDER_ID}'")

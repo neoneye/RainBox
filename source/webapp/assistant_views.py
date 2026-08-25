@@ -19,34 +19,18 @@ from flask import Response, render_template_string, request
 
 import db
 from agents.assistant import CAPABILITIES, problem_texts
+from .assistant_components import (
+    CODE_DRIVEN_DESCRIPTIONS as _CODE_DRIVEN_DESCRIPTIONS,
+)
+from .assistant_components import (
+    ACTION_DESCRIPTIONS as _ACTION_DESCRIPTIONS,
+)
+from .assistant_log_view import log_view
 from .core import app
 
 # action value -> short human-readable summary, for the timeline's "action
 # call" section (the verbose `description` is LLM-facing). Static (the capability
 # registry is defined in code), so resolve once at import.
-_ACTION_DESCRIPTIONS = {
-    n.value: (c.summary or c.description) for n, c in CAPABILITIES.items()
-}
-# Code-driven trace rows are not model-selectable capabilities, so they do not
-# belong in CAPABILITIES. Give them the same compact timeline description via
-# this companion registry.
-_ACTION_DESCRIPTIONS.update({
-    "response_language_classifier": (
-        "determine which language(s) the reply should use"
-    ),
-    "reply_audit": "check the finished reply before it is sent",
-    "request_summary": (
-        "describe a request too long to fit in the prompt whole"
-    ),
-})
-# Consulted first for a `code_driven` row. `acceptance_criteria` is the one
-# action that is both: the catalog summary describes the revision the model can
-# request, which is not what the loop's own call does.
-_CODE_DRIVEN_DESCRIPTIONS = {
-    "acceptance_criteria": "establish what a good reply must satisfy",
-    "recall_filter": "score what memory_query recalled for relevance",
-}
-
 ASSISTANT_TEMPLATE = """
 <!doctype html>
 <title>Assistant run &mdash; rainbox</title>
@@ -54,82 +38,6 @@ ASSISTANT_TEMPLATE = """
    builders in this module (_response_meta and friends) — the same ones the
    markdown export renders through _meta_md — so this macro decides only how a
    field looks, never which fields there are. #}
-{% macro io_meta(fields) %}
-{%- if fields %}<span class="io-meta">
-  {%- for f in fields %}
-    {%- if f.href %}<a class="{{ f.cls }}" href="{{ f.href }}" title="{{ f.title }}">{{ f.html or f.text }}</a>
-    {%- else %}<span class="{{ f.cls }}" title="{{ f.title }}">{{ f.html or f.text }}</span>{% endif %}
-  {%- endfor %}
-</span>{% endif %}
-{%- endmacro %}
-{# One LLM exchange of a step: what was sent, what the model thought, what it
-   answered. Built by _exchanges(), which returns one of these per ATTEMPT —
-   so a call that was refused and asked again renders as two, identical in
-   shape, and no attempt is a special case that shows less than the others.
-   Mirrored in Python by _exchange_md(); keep the two aligned. #}
-{% macro llm_exchange(x) %}
-  {% if x.system_prompt or x.user_prompt or x.turns %}
-  <div class="io io-req">
-    <div class="io-label">{{ x.request_label }}{{ io_meta(x.request_meta) }}</div>
-    {% if x.system_prompt %}
-    <details class="prompt" data-k="{{ x.key_prefix }}system">
-      <summary>system prompt ({{ x.system_prompt | length }} chars)</summary>
-      <pre>{{ x.system_prompt }}</pre>
-    </details>
-    {% endif %}
-    {% if x.user_prompt %}
-    <details class="prompt" data-k="{{ x.key_prefix }}user">
-      <summary>user prompt ({{ x.user_prompt | length }} chars)</summary>
-      <pre>{{ x.user_prompt }}</pre>
-    </details>
-    {% endif %}
-    {# What a retry received on top of the shared prompt above: the refused
-       answer replayed as the model's own turn, and the reason it was refused
-       as the turn after it. #}
-    {% for t in x.turns %}
-    <details class="prompt" data-k="{{ x.key_prefix }}turn{{ loop.index }}">
-      <summary>{{ t.role }} turn ({{ t.content | length }} chars)</summary>
-      <pre>{{ t.content }}</pre>
-    </details>
-    {% endfor %}
-  </div>
-  {% endif %}
-  {% if x.reasoning %}
-  <div class="io io-think">
-    {# The model's native reasoning channel (a reasoning model's thinking
-       before it emitted the structured decision); absent for non-reasoning
-       models. Collapsed like the request prompts. #}
-    <div class="io-label">model reasoning</div>
-    <details class="prompt" data-k="{{ x.key_prefix }}reasoning">
-      <summary>reasoning ({{ x.reasoning | length }} chars)</summary>
-      <pre>{{ x.reasoning }}</pre>
-    </details>
-  </div>
-  {% endif %}
-  {% if x.response_text or x.error %}
-  <div class="io io-out{% if x.rejected %} io-rejected{% endif %}">
-    <div class="io-label">{{ x.response_label }}{{ io_meta(x.response_meta) }}</div>
-    {% if x.error %}<div class="err">{{ x.error }}</div>{% endif %}
-    {% if x.response_text %}<pre>{{ x.response_text }}</pre>{% endif %}
-  </div>
-  {% endif %}
-{% endmacro %}
-{% macro render_intent(it) %}
-  <div class="intent {{ it.state }}">
-    <span class="cap">{{ it.capability_name }}</span>
-    <span class="badge b-{{ it.state }}">{% if it.state == 'undone' %}↩ {% endif %}{{ it.state }}</span>
-    {% if it.preview_text %}<div class="muted">{{ it.preview_text }}</div>{% endif %}
-    {% if it.payload %}<pre>{{ it.payload | tojson }}</pre>{% endif %}
-    <div class="acts">
-      {% if it.state == 'proposed' %}
-        <button class="primary" onclick="ppAct('/chat/api/assistant/write-intents/{{ it.uuid }}/confirm')">Confirm</button>
-        <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/write-intents/{{ it.uuid }}/reject', 'Reject this {{ it.capability_name }} write?')">Reject</button>
-      {% elif it.state == 'completed' and it.result and it.result.get('undo') %}
-        <button onclick="ppConfirmAct('/chat/api/assistant/write-intents/{{ it.uuid }}/undo', 'Undo this {{ it.capability_name }} write? This reverts the change.')">Undo</button>
-      {% endif %}
-    </div>
-  </div>
-{% endmacro %}
 <style>
   body { margin: 0; font-family: system-ui, sans-serif; height: 100vh;
          display: flex; flex-direction: column; overflow: hidden; }
@@ -189,8 +97,12 @@ ASSISTANT_TEMPLATE = """
   .as-main .dash { position:relative; display:grid; grid-template-columns:1.1fr 0.6fr 0.6fr 1.2fr 1fr;
                    gap:24px; margin:-12px -18px 1.4rem; padding:18px 18px;
                    border-bottom:1px solid #e5e7eb; }
-  /* Kebab sits in the dash's top-right free space (over the Tokens cell). */
-  .as-main .dash .as-kebab { position:absolute; top:12px; right:14px; margin:0; }
+  /* The run's controls sit in the dash's top-right free space (over the
+     Tokens cell): the kebab, and — while the run is live — Stop and Redirect,
+     which are only ever wanted while watching it from up here. */
+  .as-main .dash .dash-actions { grid-column:1 / -1; justify-self:end;
+        display:flex; align-items:center; gap:0.5rem; margin-bottom:-14px; }
+  .as-main .dash .dash-actions .as-kebab { margin:0; }
   .as-main .dash .dcell { display:flex; flex-direction:column; }
   .as-main .dash .dlabel { font-size:0.66rem; font-weight:700; text-transform:uppercase;
                            letter-spacing:0.05em; color:#9ca3af; margin-bottom:8px; }
@@ -220,34 +132,15 @@ ASSISTANT_TEMPLATE = """
   .as-main button.danger { color:#c0392b; border-color:#e7b9b3; }
   .as-main .summary { border:1px solid #e5e7eb; border-radius:8px;
                     padding:0.5rem 0.7rem; margin:0.6rem 0; background:#fbfdff; }
-  .as-main .summary .grp, .as-main .trigger .grp { margin:0 0 0.25rem; }
+  .as-main .summary .grp { margin:0 0 0.25rem; }
   .as-main .obstacles { margin:0.2rem 0 0; padding-left:1.2rem; }
   .as-main .obstacles li { margin:0.1rem 0; }
-  .as-main .trigmsg { white-space:pre-wrap; word-break:break-word; margin:0; }
-  /* An over-long triggering message is collapsed to its opening lines: a
-     pasted document or log otherwise pushes the step timeline — the reason
-     this page exists — below the fold. The peek sits in the <summary>, so the
-     whole closed card is one click target; open, the summary is just the
-     toggle. */
-  .as-main .trigwrap > summary { cursor:pointer; list-style:none;
-                             -webkit-user-select:none; user-select:none; }
-  .as-main .trigwrap > summary::-webkit-details-marker { display:none; }
-  .as-main .trigwrap[open] > summary .peek { display:none; }
-  .as-main .trigwrap .peek { -webkit-mask-image:linear-gradient(#000 70%, transparent);
-                             mask-image:linear-gradient(#000 70%, transparent); }
-  .as-main .trigtoggle { display:inline-block; margin-top:0.35rem; padding:0;
-                             border:0; background:none; font:inherit;
-                             font-size:0.72rem; color:#3b6fd4; cursor:pointer; }
-  .as-main .trigtoggle:hover { text-decoration:underline; }
-  .as-main .trigwrap > summary .trigtoggle::before { content:attr(data-more); }
-  .as-main .trigwrap[open] > summary .trigtoggle::before { content:attr(data-less); }
-  .as-main .trigwrap .trigless { display:none; }
-  .as-main .trigwrap[open] .trigless { display:inline-block; }
   .as-main .card-body pre { margin:0; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
   /* The run header and each ReAct step are self-contained cards: a header band
-     (.hd) over a padded body, so each reads as one grouped unit. */
+     (.card-header) over a padded body, so each reads as one grouped
+     unit. The name matches its children, card-title and card-link. */
   .as-main .step, .as-main .card { border:1px solid #e5e7eb; border-radius:8px;
                    overflow:hidden; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05);
                    margin-bottom:16px; }
@@ -256,33 +149,44 @@ ASSISTANT_TEMPLATE = """
   .as-main .step-anchor { text-decoration:none; padding:0.05rem 0.3rem; border-radius:4px; }
   .as-main .step .step-anchor:hover { color:#2563eb; background:#eef2ff; }
   .as-main .step:target .step-anchor { color:#2563eb; }
-  .as-main .step .hd, .as-main .card .hd { display:flex; gap:0.5rem; align-items:center;
-                       flex-wrap:wrap; padding:10px 14px; background:#fbfdff;
+  /* One gap for every header, matching the padding the divider box adds on
+     its other side — otherwise each part sits closer to the rule on its right
+     than to the one on its left. The horizontal padding matches the body
+     below, so a header's first word starts where the body's text does. */
+  .as-main .step .card-header, .as-main .card .card-header { display:flex; gap:1rem; align-items:center;
+                       flex-wrap:wrap; padding:10px 16px; background:#fbfdff;
                        border-bottom:1px solid #e5e7eb; }
-  .as-main .card .hd .card-title { font-size:1rem; font-weight:400; }
-  .as-main .card .hd .card-link { margin-left:auto; font-size:0.82rem; color:#2563eb; text-decoration:none; }
-  .as-main .card .hd .card-link:hover { text-decoration:underline; }
+  .as-main .card .card-header .card-title { font-size:1rem; font-weight:400; }
+  .as-main .card .card-header .card-link { margin-left:auto; font-size:0.82rem; color:#2563eb; text-decoration:none; }
+  .as-main .card .card-header .card-link:hover { text-decoration:underline; }
   /* Outcome chip after the card title, separated like the step header's spans. */
-  .as-main .card .hd .outcome { align-self:stretch; display:flex; align-items:center;
+  .as-main .card .card-header .outcome { align-self:stretch; display:flex; align-items:center;
                                 margin:-10px 0; padding:10px 0 10px 1rem;
                                 border-left:1px solid #e5e7eb; font-weight:600; }
   /* The chip carries the run's outcome (same reading as the dashboard's
      headline status), not its lifecycle status: "finished" only means the loop
      terminated, so colouring it green would sell an unresolved run as a win. */
-  .as-main .card .hd .out-resolved { color:#1e7e34; }
-  .as-main .card .hd .out-unresolved { color:#c0392b; }
-  .as-main .card .hd .out-running { color:#1d4ed8; }
-  .as-main .card .hd .out-pending { color:#98a2b3; }
-  .as-main .step-body, .as-main .card-body { padding:14px 16px; }
+  .as-main .card .card-header .out-resolved { color:#1e7e34; }
+  .as-main .card .card-header .out-unresolved { color:#c0392b; }
+  .as-main .card .card-header .out-running { color:#1d4ed8; }
+  .as-main .card .card-header .out-pending { color:#98a2b3; }
+  /* The inspector's pane is a card body and takes the same padding as one,
+     rather than restating a near-miss of it — its content lined up two pixels
+     inside the header above it. */
+  .as-main .step-body, .as-main .card-body, .as-main .log-detail { padding:14px 16px; }
   .as-main .step-body > :first-child { margin-top:0; }
   .as-main .step-body > :last-child { margin-bottom:0; }
   .as-main .step.phase-control .step-body { background:#faf5ff; }
   .as-main .step .ix { color:#98a2b3; font-variant-numeric:tabular-nums; }
-  .as-main .step .hd { gap:1rem; }
-  .as-main .step .hd > span:not(:first-child) { align-self:stretch; display:flex; align-items:center;
+  /* The divider between a header's parts: a rule drawn by the box, not a
+     pipe character typed between them. Shared so the inspect header and a
+     step's header separate the same way. */
+  .as-main .step .card-header > span:not(:first-child),
+  .as-main .inspect .card-header > span:not(:first-child) {
+                       align-self:stretch; display:flex; align-items:center;
                        margin:-10px 0; padding:10px 0 10px 1rem; border-left:1px solid #e5e7eb; }
-  .as-main .step .hd .ix { color:inherit; }
-  .as-main .step .hd .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .as-main .step .card-header .ix { color:inherit; }
+  .as-main .step .card-header .action { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   /* Model-call waterfall: name | track | duration. Bars are positioned on the
      run's wall-clock span, so a wide gap between two bars is time no model was
      working — which is what the chart is FOR, and what a bar per kind in a
@@ -291,10 +195,19 @@ ASSISTANT_TEMPLATE = """
      kind of every other call is already written next to it in the name
      column, so colouring it too said nothing twice and left the row that is
      actually a problem as one colour among five. */
-  .as-main .wf { display:flex; flex-direction:column; gap:2px; }
+  /* No gap between the rows. A gap belongs to the container, not to either
+     row beside it, so a click landing in one selected nothing — and on a
+     timeline every row is a click target. The rows carry the spacing as their
+     own padding instead, which keeps the pitch and gives every pixel an
+     owner. */
+  .as-main .wf { display:flex; flex-direction:column; }
+  /* A button, because the row selects the pane below rather than navigating.
+     The reset is what keeps it looking like a row and not a form control. */
   .as-main .wf-row { display:grid; grid-template-columns:14rem 1fr 4rem; gap:0.8rem;
                      align-items:center; text-decoration:none; color:inherit;
-                     padding:2px 4px; border-radius:4px; }
+                     padding:3px 4px; border-radius:4px;
+                     width:100%; text-align:left; background:none; border:0;
+                     font:inherit; cursor:pointer; }
   .as-main .wf-row:hover { background:#f3f4f6; }
   .as-main .wf-name { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
                       font-size:0.76rem; white-space:nowrap; overflow:hidden;
@@ -306,6 +219,59 @@ ASSISTANT_TEMPLATE = """
   /* The one exception: a call whose response was thrown away and asked for
      again. Same red as the error text — the run paid for it and got nothing
      back, and against neutral bars it is the row the eye finds first. */
+  .as-main .wf-tick { position:absolute; top:0; bottom:0; width:2px;
+        background:#9aa3af; }
+  .as-main .wf-row.on .wf-name { font-weight:600; }
+  .as-main .wf-row:hover .wf-name { color:#1a1a2e; }
+  .as-main .wf-row.on { background:#eef4ff; }
+  .as-main .log-detail { overflow-x:auto; }
+  .as-main .ev-pane { display:none; }
+  .as-main .ev-pane.on { display:block; }
+  .as-main .ev-detail h4 { margin:0 0 0.1rem; font-size:0.95rem; }
+  .as-main .ev-caption { color:#6b7280; font-size:80%; margin-bottom:0.6rem; }
+  /* Only what a line standing on its own needs: the step's version is
+     right-aligned by margin-left:auto inside its label row, which does
+     nothing for a flex container that already fills the width. */
+  /* What is being inspected, in the card header beside "Inspect". The
+     divider between them comes from the shared header rule below. */
+  .as-main .ev-crumb-step { color:#6b7280; white-space:nowrap; }
+  /* A row can belong to no step — the run's opening, or any row at all on a
+     run whose steps recorded no timing to place them against. The span still
+     has to exist for the selection to write into, so it hides itself rather
+     than leaving a divider with nothing after it. */
+  .as-main .inspect .card-header > span.ev-crumb-step:empty { display:none; }
+  .as-main .ev-crumb-label { font-family:ui-monospace,monospace;
+        font-weight:600; white-space:nowrap; }
+  .as-main .ev-crumb-desc { color:#6b7280; min-width:0; overflow:hidden;
+        text-overflow:ellipsis; white-space:nowrap; }
+  .as-main .ev-kpis { flex-wrap:wrap; justify-content:flex-end;
+        margin-bottom:0.7rem; }
+  .as-main .ev-kpi { white-space:nowrap; }
+  .as-main details.ev-block > summary:hover { color:#1a1a2e; }
+  .as-main .ev-block { margin-bottom:0.7rem; }
+  .as-main .ev-block h5 { margin:0 0 0.2rem; font-size:70%;
+        letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }
+  /* Only what `.as-main pre` does not already give it. The box and the size
+     come from there — restating them produced a 4px radius beside a 6px one
+     and #f7f8fa beside #f6f8fa, which reads as two kinds of block when it is
+     one.
+     No inner scroller: a scroll area inside a scrolling page traps the wheel,
+     and a prompt here runs to tens of thousands of characters. A long block is
+     clamped to EV_CLAMP_LINES lines with a toggle, so the page is the only
+     thing that scrolls. */
+  .as-main .ev-pre { margin:0; word-break:break-word; }
+  .as-main .ev-pre.clamped { overflow-y:hidden;
+        -webkit-mask-image:linear-gradient(#000 72%, transparent);
+        mask-image:linear-gradient(#000 72%, transparent); }
+  .as-main .ev-more { display:block; margin:0.25rem 0 0; padding:0;
+        border:0; background:none; font:inherit; font-size:0.72rem;
+        color:#2563eb; cursor:pointer;
+        -webkit-user-select:none; user-select:none; }
+  .as-main .ev-more:hover { text-decoration:underline; }
+  .as-main .ev-links { margin:0 0 0.6rem; font-size:85%; }
+  .as-main .ev-links a { color:#2563eb; text-decoration:none; }
+  .as-main .ev-links a:hover { text-decoration:underline; }
+  .as-main .ev-note { color:#6b7280; font-size:85%; }
   .as-main .wf-bar.kind-rejected { background:#e8746f; }
   .as-main .wf-name.kind-rejected { color:#c0392b; }
   /* Visibly not a measurement of anything: nothing reported this time, which
@@ -318,20 +284,26 @@ ASSISTANT_TEMPLATE = """
   .as-main .wf-undated { position:absolute; left:4px; font-size:0.68rem; color:#98a2b3; }
   .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;
                       font-variant-numeric:tabular-nums; }
-  .as-main .card .hd .outcome.muted { color:#667085; font-weight:400; font-size:0.85rem; }
+  .as-main .card .card-header .outcome.muted { color:#667085; font-weight:400; font-size:0.85rem; }
   /* Rows the loop produced itself (warm-up / follow-up calls). Purple like the
      control badge, which marks the other kind of row the model didn't decide;
      the tinted header keeps the real ReAct steps scannable between them. */
-  .as-main .step.aux .hd { background:#faf5ff; }
-  .as-main .step .hd .kind { color:#7e22ce; font-weight:600; }
+  .as-main .step.aux .card-header { background:#faf5ff; }
+  .as-main .step .card-header .kind { color:#7e22ce; font-weight:600; }
   /* Right-aligned metadata on io-labels: model link, token counts, duration, timestamp.
      Fields are separated by the flex gap, not punctuation. */
-  .as-main .step .io-meta { margin-left:auto; display:flex; gap:1rem; align-items:center;
+  /* One rule for both meta lines. A step's io-meta and the inspector's
+     ev-kpis report the same things about the same call, so they are the same
+     line in two places rather than two looks for one fact. */
+  .as-main .step .io-meta, .as-main .ev-kpis {
+                            margin-left:auto; display:flex; gap:1rem; align-items:center;
                             font-size:0.72rem; font-weight:400; text-transform:none;
                             letter-spacing:normal; color:#98a2b3;
                             font-variant-numeric:tabular-nums; }
-  .as-main .step .io-model { color:#2563eb; text-decoration:none; }
-  .as-main .step .io-model:hover { text-decoration:underline; }
+  .as-main .step .io-model, .as-main .ev-kpi a {
+                            color:#2563eb; text-decoration:none; }
+  .as-main .step .io-model:hover, .as-main .ev-kpi a:hover {
+                            text-decoration:underline; }
   .as-main .step .action { font-weight:400; }
   .as-main .step .reason { color:#475467; margin:0.3rem 0; }
   /* Each step bundles the model's structured output (request) and the action's
@@ -364,7 +336,7 @@ ASSISTANT_TEMPLATE = """
      font-size:0.72rem; padding-left:1.6rem; max-width:34rem;
      overflow-wrap:anywhere; }
   /* The chosen action's human description, shown after the action in the header band. */
-  .as-main .step .hd .action-desc { color:inherit; font-size:inherit; font-weight:400; }
+  .as-main .step .card-header .action-desc { color:inherit; font-size:inherit; font-weight:400; }
   /* The observation's ok flag, derived from the step phase (observed=ok). */
   .as-main .step .fn-ok { text-transform:none; font-weight:600; margin-left:0.3rem; }
   .as-main .step .fn-ok.ok-true { color:#1e7e34; }
@@ -386,7 +358,8 @@ ASSISTANT_TEMPLATE = """
      <details>. The summaries mirror .io-label but a notch smaller. */
   .as-main .step .prompt { margin:0.25rem 0 0; }
   .as-main .step .prompt > summary,
-  .as-main .step .steplog > summary { font-size:0.64rem; text-transform:uppercase;
+  .as-main .step .steplog > summary,
+  .as-main details.ev-block > summary { font-size:0.64rem; text-transform:uppercase;
                              letter-spacing:0.04em; color:#6b7280; margin-bottom:0.15rem;
                              cursor:pointer; -webkit-user-select:none; user-select:none; }
   .as-main .err { color:#c0392b; }
@@ -404,7 +377,7 @@ ASSISTANT_TEMPLATE = """
 <style>.pp-nav{margin-bottom:0}</style>
   {# /assistant is a single-run detail view; the run finder is /assistant-overview.
      The .as-main detail pane has a Markdown twin: _run_markdown() serializes the
-     same sections (dashboard → summary → trigger → timeline → verdict) for the
+     same sections (dashboard → summary → timeline → verdict) for the
      kebab's "View as markdown". Keep the two in sync when editing either. #}
   <section class="as-main">
     {% if not selected %}
@@ -414,8 +387,18 @@ ASSISTANT_TEMPLATE = """
         to pick a run.</div>
     {% else %}
       <div class="dash">
-        <button class="as-kebab" title="actions"
-                onclick="asKebab(event, '{{ selected.uuid }}', '{{ selected.status }}', '{{ selected.journal_id or '' }}')"></button>
+        <div class="dash-actions">
+          {# Acting on a live run belongs where the reader already is. The
+             dashboard says it is still going and the timeline below is what
+             they are reading, so the controls sit here rather than under a
+             timeline that grows for as long as the run does. #}
+          {% if selected.status in ('running', 'stopping') %}
+          <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
+          <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
+          {% endif %}
+          <button class="as-kebab" title="actions"
+                  onclick="asKebab(event, '{{ selected.uuid }}', '{{ selected.status }}', '{{ selected.journal_id or '' }}')"></button>
+        </div>
         <div class="dcell">
           <div class="dlabel">Status</div>
           <div class="dval-big dstatus-{{ dash.status_class }}">{{ dash.status }}</div>
@@ -473,236 +456,88 @@ ASSISTANT_TEMPLATE = """
         </div>
       </div>
 
-      {% if waterfall %}
+      {% if log.events %}
       {# Where the run's wall-clock went, in full: one bar per activity, laid
          end to end. Model calls, embedding calls, and each action's own work,
          none of them drawn over another — a bar spanning other bars hides
          them, and hides any stall between them. So one activity ends where
          the next begins, and a remaining gap is genuinely unmeasured time.
-         The summary still counts model calls only. #}
+         The run's totals are in the dashboard above; repeating them here only
+         asked the reader which of the two to believe. #}
       <div class="card">
-        <div class="hd">
+        <div class="card-header">
           <div class="card-title">Timeline</div>
-          <span class="outcome muted">{{ dash.llm_calls }} calls · model {{ dash.model_time }}{% if dash.embed_calls %} · {{ dash.embed_calls }} embed {{ dash.embed_time }}{% endif %} · total {{ dash.total_time }}</span>
         </div>
         <div class="card-body">
           <div class="wf">
-            {% for c in waterfall %}
-            <a class="wf-row"{% if c.href %} href="{{ c.href }}"{% endif %} title="{{ c.label }} — {{ c.seconds }}{% if c.start %} at {{ c.start.strftime('%H:%M:%S') }}{% endif %}{% if c.detail %}&#10;&#10;{{ c.detail }}{% endif %}">
-              <span class="wf-name kind-{{ c.kind }}">{{ c.label }}</span>
+            {% for e in log.events %}
+            <button type="button" class="wf-row ev-pick{% if loop.first %} on{% endif %}"
+                    data-ev="{{ e.row_id }}" data-key="{{ e.key }}"
+                    {% if e.primary_for %}data-primary="{{ e.primary_for }}"{% endif %}
+                    title="{{ e.label }} — {{ e.seconds }} at {{ e.clock }}">
+              <span class="wf-name kind-{{ e.variant or e.kind }}">{{ e.label }}</span>
               <span class="wf-track">
-                {% if c.width_pct is not none %}
-                <span class="wf-bar kind-{{ c.kind }}" style="left:{{ c.offset_pct }}%;width:{{ c.width_pct }}%"></span>
+                {% if e.width_pct is not none %}
+                <span class="wf-bar kind-{{ e.variant or e.kind }}" style="left:{{ e.offset_pct }}%;width:{{ e.width_pct }}%"></span>
+                {% elif e.offset_pct is not none %}
+                <span class="wf-tick" style="left:{{ e.offset_pct }}%"></span>
                 {% else %}
                 <span class="wf-undated">not timed</span>
                 {% endif %}
               </span>
-              <span class="wf-secs">{{ c.seconds }}</span>
-            </a>
+              <span class="wf-secs">{{ e.seconds }}</span>
+            </button>
             {% endfor %}
           </div>
         </div>
       </div>
       {% endif %}
 
-      <div class="card">
-        <div class="hd">
-          <div class="card-title">{% if trigger %}Started by <a href="/user?id={{ trigger.sender_uuid }}">{{ trigger.sender_name }} ↗</a>{% else %}Run{% endif %}</div>
-          {% if selected.status in ('running', 'stopping') %}
-            <button class="danger" onclick="ppConfirmAct('/chat/api/assistant/runs/{{ selected.uuid }}/stop', 'Stop this run?')">Stop</button>
-            <button onclick="ppRedirect('{{ selected.uuid }}')">Redirect…</button>
-          {% endif %}
-          <a class="card-link" href="/chat?id={{ selected.room_uuid }}{% if trigger %}&msg={{ trigger.id }}{% endif %}">chat ↗</a>
+      {% if log.events %}
+      {# The detail for whichever event the gantt above has selected — one
+         renderer per kind, so a new kind costs a component rather than more
+         markup here. The gantt IS the list: a second list beside this pane
+         said the same thing twice and made the reader choose which to read.
+         Every pane is rendered once into the page, which is what makes
+         selection a client-side swap rather than a round trip. #}
+      <div class="card inspect">
+        <div class="card-header">
+          <div class="card-title">Inspect</div>
+          {# What is being inspected right now, as the header's own children so
+             they take the same divider a step's header parts do. Filled from
+             the selected event's data attributes, so the header and the pane
+             cannot describe different things. #}
+          <span class="ev-crumb-step">{{ log.events[0].step_ref }}</span>
+          <span class="ev-crumb-label">{{ log.events[0].label }}</span>
+          <span class="ev-crumb-desc">{{ log.events[0].description }}</span>
+          {# A link to whatever is being inspected. Real href so the context
+             menu can copy it; clicking copies the absolute URL, because a
+             click that only rewrote the address bar looks like nothing
+             happened. #}
+          <a class="card-link" id="ev-permalink"
+             href="#ev-{{ log.events[0].key }}">link</a>
         </div>
-        <div class="card-body">
-          <div class="trigger">
-            {% if trigger and trigger.peek %}
-              {# Collapsed to its opening lines. A <details> rather than a
-                 hand-rolled toggle so the live-refresh swap carries the open
-                 state like every other collapsed block on this page (see
-                 detailsKey below) — the peek lives in the <summary> because a
-                 closed <details> hides everything else. #}
-              <details class="trigwrap" data-k="trigger">
-                <summary>
-                  <pre class="trigmsg peek">{{ trigger.peek.head }}</pre>
-                  <span class="trigtoggle" data-more="{{ trigger.peek.more }}"
-                        data-less="show less"></span>
-                </summary>
-                <pre class="trigmsg">{{ trigger.text }}</pre>
-                {# A second way out at the far end: scrolling back up past a
-                   long message to collapse it is the whole complaint again. #}
-                <button class="trigtoggle trigless" type="button"
-                        onclick="this.closest('details').open=false">show less</button>
-              </details>
-            {% elif trigger %}
-              <pre class="trigmsg">{{ trigger.text }}</pre>
-            {% else %}
-              <div class="muted">No triggering chat message found.</div>
-            {% endif %}
-          </div>
+        <div class="log-detail">
+          {% for e in log.events %}
+          <div class="ev-pane{% if loop.first %} on{% endif %}" id="{{ e.row_id }}">{{ e.detail_html|safe }}</div>
+          {% endfor %}
         </div>
       </div>
+      {% endif %}
 
       {% for c in pending_controls %}
       <div class="pending">⏳ pending {{ c.command }}{% if c.payload and c.payload.get('instruction') %}: {{ c.payload.get('instruction') }}{% endif %}</div>
       {% endfor %}
 
-      {% if not timeline %}<div class="as-empty">This run has no steps.</div>{% endif %}
-      {% for step, intents in timeline %}
-      {% set kind = step_kinds.get(step.uuid|string) %}
-      <div class="step phase-{{ step.phase }}{% if kind %} aux{% endif %}" id="step-{{ step.uuid }}">
-        <div class="hd">
-          {# Numbered by position in the timeline, not by `step_index`: the
-             code-driven rows deliberately share the decide index they sit
-             beside, so numbering by it repeated "Step 1 of 4" three times. The
-             decide-loop index stays in the tooltip. #}
-          <a class="ix step-anchor" href="#step-{{ step.uuid }}" title="Link to this step (decide-loop step index={{ step.step_index }})">Step {{ loop.index }} of {{ timeline|length }}</a>
-          {% if step.phase == 'skipped' %}<span><span class="badge b-skipped" title="The loop could not make this call at all — nothing ran, and nothing failed">skipped</span></span>{% endif %}
-          {% if kind %}<span class="kind" title="Not a decide step: the loop issued this call itself {{ 'before the first decide step' if kind == 'warm-up' else 'in reaction to what the model decided' }}, so the model never chose it and it consumes none of the step budget">{{ kind }}</span>{% endif %}
-          <span class="action" title="{% if kind %}The call the loop made at this point{% else %}The action the model decided to take for this step{% endif %}">{{ step.action or '—' }}</span>
-          {% set desc = step.action and ((code_driven_descriptions.get(step.action) if step.code_driven else none) or action_descriptions.get(step.action)) %}
-          {% if desc %}<span class="action-desc">{{ desc }}</span>{% endif %}
-        </div>
-        <div class="step-body">
-        {% if step.phase == 'control' %}
-          {% if step.reason %}<div class="reason">{{ step.reason }}</div>{% endif %}
-        {% else %}
-        {% if step.log %}
-        <details class="steplog" data-k="log">
-          <summary>log</summary>
-          <div class="steplog-body">
-          {% for entry in step.log %}
-            <div class="steplog-entry"><span class="k">{{ entry.label }}</span>
-              {%- if entry.href %} <a href="{{ entry.href }}">{{ entry.text }}</a>
-              {%- else %} {{ entry.text }}{% endif %}
-              {%- if entry.uuid %} <code class="u">{{ entry.uuid }}</code>{% endif %}</div>
-          {% endfor %}
-          </div>
-        </details>
-        {% endif %}
-        {# Every attempt this step's call made, oldest first: the ones whose
-           answer was thrown away, then the one that was kept. All render
-           through one macro, so a rejected attempt shows its request,
-           thinking and answer exactly like the attempt that replaced it. #}
-        {% for x in exchanges.get(step.uuid|string, []) %}{{ llm_exchange(x) }}{% endfor %}
-        {% set so = second_opinion.get(step.uuid|string) %}
-        {% if so %}
-        <div class="io io-so">
-          {# The independent pre-execution review of a gated action (currently
-             python_run). Chronologically it ran between the model response and
-             the action executing, so it renders before the action call; its
-             payload is stripped from the action-result data below. #}
-          <div class="io-label">second opinion{% if 'approved' in so %}<span class="fn-ok {{ 'ok-true' if so.approved else 'ok-false' }}" title="The reviewer's verdict: false means the action was blocked and never executed">approved: {{ 'true' if so.approved else 'false' }}</span>{% endif %}{{ io_meta(review_meta(so, model_names)) }}</div>
-          {% if so.system_prompt %}
-          <details class="prompt" data-k="so-system">
-            <summary>system prompt ({{ so.system_prompt | length }} chars)</summary>
-            <pre>{{ so.system_prompt }}</pre>
-          </details>
-          {% endif %}
-          {% if so.user_prompt %}
-          <details class="prompt" data-k="so-user">
-            <summary>user prompt ({{ so.user_prompt | length }} chars)</summary>
-            <pre>{{ so.user_prompt }}</pre>
-          </details>
-          {% endif %}
-          {% if so.reasoning %}
-          <details class="prompt" data-k="so-reasoning">
-            <summary>reasoning ({{ so.reasoning | length }} chars)</summary>
-            <pre>{{ so.reasoning }}</pre>
-          </details>
-          {% endif %}
-          {% if so.response %}<pre title="The reviewer model's verbatim response">{{ so.response }}</pre>{% endif %}
-          {% if so.problems_text %}<pre>{{ so.problems_text }}</pre>{% endif %}
-          {% if so.skipped %}<pre>review skipped: {{ so.skipped }}</pre>{% endif %}
-          {% if so.error %}<pre>review failed open: {{ so.error }}</pre>{% endif %}
-        </div>
-        {% endif %}
-        {# No action call on a code-driven row: nothing was dispatched from a
-           decision, and the empty args made the block read as one that was. #}
-        {% if step.action and not step.code_driven %}
-        <div class="io io-call">
-          <div class="io-label">action call{{ io_meta(call_meta(step)) }}</div>
-          {% if step.args %}<pre>{{ step.args | tojson }}</pre>{% endif %}
-        </div>
-        {% endif %}
-        {% endif %}
-        {% set obs = step.observation %}
-        {# The model request / second opinion / action call / action result
-           io-blocks are mirrored in Python by _step_md(); keep them aligned.
-           The result is dropped when it only repeats the model response above
-           (a code-driven call's response IS its result). #}
-        {% if (obs is not none or step.observation_preview)
-              and (step.uuid|string) not in duplicate_result %}
-        <div class="io io-in">
-          <div class="io-label">action result{% if obs is not none %}<span class="fn-ok {{ 'ok-true' if obs.ok else 'ok-false' }}">ok: {{ 'true' if obs.ok else 'false' }}</span>{% endif %}{{ io_meta(result_meta(step)) }}</div>
-          {% if obs is not none %}
-            {% if obs.text %}<pre>{{ obs.text }}</pre>{% endif %}
-            {% set tm = timing.get(step.uuid|string) %}
-            {% if tm %}
-            {# Where the action's own duration went. The phases are the
-               action's parts in the order they finished; the embedder line
-               below counts the calls those phases made (already inside their
-               durations — the per-call bars are in the waterfall above). #}
-            <table class="io-data io-timing" id="phases-{{ step.uuid }}"><thead><tr>
-              <th title="A named part of this action">phase</th>
-              <th title="Wall-clock spent in this phase">took</th>
-              <th title="When this phase started">at</th>
-            </tr></thead><tbody>
-              {% for r in tm.rows %}
-              <tr><td class="io-timing-name">{{ r.name }}</td><td>{{ r.took }}</td><td>{{ r.at }}</td></tr>
-              {% endfor %}
-              {% if tm.embeddings %}
-              <tr><td class="io-timing-name" title="Embedding calls made inside the phases above — a second model on the same runtime, which is what a warm cache for the assistant's own model competes with">embedder</td><td colspan="2">{{ tm.embeddings }}</td></tr>
-              {# One row per embedder call, showing the text it was given —
-                 the question a column of identical bars raises and cannot
-                 answer: did these embed the same thing or different things? #}
-              {% for e in tm.embed_calls %}
-              <tr class="io-embed"><td class="io-embed-text" title="The text sent to the embedder">{{ e.text }}</td><td>{{ e.took }}</td><td>{{ e.at }}</td></tr>
-              {% endfor %}
-              {% endif %}
-            </tbody></table>
-            {% endif %}
-            {% set odata = obs_data.get(step.uuid|string) %}
-            {% if odata %}
-              {% if 'qa_static' in odata %}
-              <table class="io-data"><thead><tr>
-                <th title="number of QA static items">QA static</th>
-                <th title="number of QA dynamic items">QA dynamic</th>
-                <th title="number of memory items">memory</th>
-                <th title="number of facts whose middle was dropped to fit the 1200-char rendered per-fact cap, both ends kept (tagged truncate1200); read one in full via memory_query with its uuid">truncated</th>
-                <th title="number of lower-ranked facts not admitted because they no longer fit the 11000-char fact payload — the legend and the retained lines, not the whole observation; narrow the query or fetch a fact by its uuid">omitted</th>
-              </tr></thead><tbody><tr>
-                <td>{{ odata.qa_static }}</td>
-                <td>{{ odata.qa_dynamic }}</td>
-                <td>{{ odata.memory }}</td>
-                <td>{{ odata.truncated }}</td>
-                <td>{{ odata.omitted }}</td>
-              </tr></tbody></table>
-              {% else %}<pre>{{ odata | tojson }}</pre>{% endif %}
-            {% endif %}
-          {% elif step.observation_preview %}
-            <pre>{{ step.observation_preview }}</pre>
-          {% endif %}
-        </div>
-        {% endif %}
-        {% if step.error %}<div class="err">{{ step.error }}</div>{% endif %}
-        {% for it in intents %}{{ render_intent(it) }}{% endfor %}
-        </div>
-      </div>
-      {% endfor %}
+      {% if not log.events %}<div class="as-empty">This run has no steps.</div>{% endif %}
 
-      {% if unlinked %}
-        <div class="grp">Unlinked writes <span class="muted">(no step reference)</span></div>
-        {% for it in unlinked %}{{ render_intent(it) }}{% endfor %}
-      {% endif %}
-
-      {# Live view of the model call in flight (streamed checkpoints, updated
+            {# Live view of the model call in flight (streamed checkpoints, updated
          ~1s). Present only between "request sent" and "step row landed", so it
          never duplicates a timeline step. Live-view only: intentionally NOT
          mirrored in _run_markdown(), which exports the durable run record. #}
       {% if active_call %}
       <div class="step phase-running" id="active-call">
-        <div class="hd">
+        <div class="card-header">
           {# The in-flight call has no row yet, so it takes the position right
              after the last one — the number the timeline will give it. #}
           <span class="ix" title="{% if active_call.step_index is not none %}decide-loop step index={{ active_call.step_index }}{% endif %}">Step {{ timeline|length + 1 }}</span>
@@ -732,7 +567,7 @@ ASSISTANT_TEMPLATE = """
 
       {% if verdict %}
       <div class="card">
-        <div class="hd">
+        <div class="card-header">
           <div class="card-title">Verdict</div>
           <span class="outcome out-{{ dash.status_class }}">{{ dash.status }}</span>
           {% if reply %}<a class="card-link" href="/chat?id={{ selected.room_uuid }}&msg={{ reply.id }}">chat ↗</a>{% endif %}
@@ -749,6 +584,120 @@ ASSISTANT_TEMPLATE = """
 <div id="as-toast" class="as-toast"></div>
 
 <script>
+// The gantt bars and the log rows are the same events, so selecting is one
+// operation on a shared data-ev id. Every pane is already in the page, which
+// is why this is a class swap rather than a fetch.
+// How many lines of a long block are shown before its toggle. Measured in
+// lines rather than pixels because that is the unit a reader scans in, and
+// the block's own line-height is what says how tall a line is.
+var EV_CLAMP_LINES = 6;
+
+// A block is only measurable once its pane is shown and its <details> open,
+// so this runs then rather than at load, and once per block.
+function clampBlocks(root) {
+  if (!root) { return; }
+  root.querySelectorAll(".ev-pre").forEach(function (pre) {
+    if (pre.dataset.clamped || !pre.offsetHeight) { return; }
+    pre.dataset.clamped = "1";
+    var cs = getComputedStyle(pre);
+    var line = parseFloat(cs.lineHeight);
+    if (!line) { line = parseFloat(cs.fontSize) * 1.2; }
+    var max = Math.round(line * EV_CLAMP_LINES);
+    // A block that already fits gets no control: a toggle that does nothing
+    // is worse than no toggle.
+    if (pre.scrollHeight <= max + 4) { return; }
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ev-more";
+    function apply(on) {
+      pre.classList.toggle("clamped", on);
+      pre.style.maxHeight = on ? max + "px" : "";
+      btn.textContent = on ? "show more" : "show less";
+    }
+    btn.addEventListener("click", function () {
+      apply(!pre.classList.contains("clamped"));
+    });
+    apply(true);
+    pre.parentNode.insertBefore(btn, pre.nextSibling);
+  });
+}
+
+// Set by initEventLog, called by the live refresh: after a swap the selected
+// row has to be restored through the same path a click takes, or the pane and
+// the header say different things.
+var asSelectEvent = null;
+
+(function initEventLog() {
+  function select(id) {
+    document.querySelectorAll(".ev-pane").forEach(function (p) {
+      p.classList.toggle("on", p.id === id);
+    });
+    document.querySelectorAll(".ev-pick").forEach(function (b) {
+      b.classList.toggle("on", b.dataset.ev === id);
+    });
+    // The header says what is being inspected, read off the pane itself so
+    // the two cannot drift apart.
+    var detail = document.querySelector("#" + id + " .ev-detail");
+    var label = document.querySelector(".ev-crumb-label");
+    var desc = document.querySelector(".ev-crumb-desc");
+    var step = document.querySelector(".ev-crumb-step");
+    if (detail && label) { label.textContent = detail.dataset.label || ""; }
+    if (detail && desc) { desc.textContent = detail.dataset.desc || ""; }
+    if (detail && step) { step.textContent = detail.dataset.step || ""; }
+    var pick = document.querySelector('.ev-pick[data-ev="' + id + '"]');
+    var key = pick ? pick.getAttribute("data-key") : "";
+    var link = document.getElementById("ev-permalink");
+    if (link && key) { link.setAttribute("href", "#ev-" + key); }
+    // The address bar holds a link to what is on screen, without stacking a
+    // history entry per click — replaceState fires no hashchange, so this
+    // cannot loop back into selectFromHash.
+    if (key && window.history && history.replaceState) {
+      history.replaceState(null, "", location.pathname + location.search
+                           + "#ev-" + key);
+    }
+    clampBlocks(document.getElementById(id));
+  }
+  document.addEventListener("click", function (ev) {
+    var pick = ev.target.closest(".ev-pick");
+    if (!pick) { return; }
+    ev.preventDefault();
+    select(pick.dataset.ev);
+  });
+  // A collapsed block has no height until it opens, so it is measured then.
+  document.addEventListener("toggle", function (ev) {
+    if (ev.target.classList && ev.target.classList.contains("ev-block")) {
+      clampBlocks(ev.target);
+    }
+  }, true);
+  clampBlocks(document.querySelector(".ev-pane.on"));
+  asSelectEvent = select;
+
+  // Two fragment formats. `#ev-<key>` names a row directly, by the identity
+  // the live refresh already uses. `#step-<uuid>` is the published format
+  // db.assistant_step_path mints — chat proposal cards, cron provenance and
+  // the uuid lookup all emit it — so it keeps resolving, through the one row
+  // marked primary for that step.
+  function pickFromHash(hash) {
+    if (hash.indexOf("#ev-") === 0) {
+      return document.querySelector(
+        '.ev-pick[data-key="' + hash.slice(4) + '"]');
+    }
+    if (hash.indexOf("#step-") === 0) {
+      return document.querySelector(
+        '.ev-pick[data-primary="' + hash.slice(6) + '"]');
+    }
+    return null;
+  }
+  function selectFromHash() {
+    var pick = pickFromHash(location.hash || "");
+    // A fragment naming nothing leaves the page as it is rather than
+    // selecting a neighbour the reader did not ask for.
+    if (pick) { select(pick.dataset.ev); pick.scrollIntoView({block: "nearest"}); }
+  }
+  selectFromHash();
+  window.addEventListener("hashchange", selectFromHash);
+})();
+
   // --- kebab menu on the selected run ----------------------------------------
   var asMenu = document.getElementById('as-menu');
   function asCloseMenu() { asMenu.hidden = true; asMenu.replaceChildren(); }
@@ -774,6 +723,12 @@ ASSISTANT_TEMPLATE = """
     }
     asMenu.appendChild(asItem('View as markdown', function () {
       window.location = '/assistant/' + uuid + '/markdown';
+    }));
+    // The run's opening row links the room for every run that has a
+    // triggering message. One seeded outside the chat flow has no such row,
+    // and the room is still where the run happened.
+    asMenu.appendChild(asItem('Open chat room', function () {
+      window.location = '/chat?id={{ selected.room_uuid }}';
     }));
     asMenu.appendChild(asItem('Refresh summary', function () {
       // The summarizer runs out-of-process, so just confirm it's queued — the
@@ -833,8 +788,22 @@ ASSISTANT_TEMPLATE = """
       .catch(function (e) { alert('Request failed: ' + e); });
   }
 
-  // Deep-link to a step: #step-<uuid> scrolls the .as-main pane to it on load.
-  // (.as-main is the scroll container, so a bare fragment isn't reliable here.)
+  // Copying the link to what is being inspected. The href is already right —
+  // this is so a click does something visible rather than silently rewriting
+  // the address bar.
+  document.addEventListener('click', function (e) {
+    var link = e.target.closest && e.target.closest('#ev-permalink');
+    if (!link) return;
+    e.preventDefault();
+    ppCopyText(location.origin + location.pathname + location.search
+               + link.getAttribute('href'));
+    asToast('Link copied.');
+  });
+
+  // Deep-link to a step section: #step-<uuid> scrolls the .as-main pane to it
+  // on load. (.as-main is the scroll container, so a bare fragment isn't
+  // reliable here.) The inspector understands the same fragment and selects
+  // the step's primary row; see selectFromHash.
   (function () {
     var h = location.hash;
     if (h.indexOf('#step-') === 0) {
@@ -863,6 +832,22 @@ ASSISTANT_TEMPLATE = """
       var step = d.closest('.step');
       return (step ? step.id : '') + '/' + d.getAttribute('data-k');
     }
+    // The row being inspected, by the key that survives the run growing. The
+    // server renders the first row selected, so without this a reader is
+    // thrown back to `start` every few seconds — while watching the step they
+    // are inspecting actually run.
+    function selectedKey(root) {
+      var picked = root.querySelector('.ev-pick.on');
+      return picked ? picked.getAttribute('data-key') : null;
+    }
+    function reselect(root, key) {
+      if (!key || !asSelectEvent) { return; }
+      var pick = root.querySelector('.ev-pick[data-key="' + key + '"]');
+      // Gone: the row it named is no longer on the stream (an unaccounted gap
+      // that has since been filled). Leave the server's choice standing
+      // rather than selecting something the reader did not ask for.
+      if (pick) { asSelectEvent(pick.getAttribute('data-ev')); }
+    }
     function openDetails(root) {
       var open = {};
       Array.prototype.forEach.call(
@@ -887,10 +872,12 @@ ASSISTANT_TEMPLATE = """
           // open blocks (and the scroll) across the swap.
           var scrollTop = cur.scrollTop;
           var open = openDetails(cur);
+          var key = selectedKey(cur);
           cur.innerHTML = next.innerHTML;
           Array.prototype.forEach.call(
             cur.querySelectorAll('details[data-k]'),
             function (d) { if (open[detailsKey(d)]) d.open = true; });
+          reselect(cur, key);
           cur.scrollTop = scrollTop;
         })
         .catch(function () { dirty = true; });
@@ -1098,44 +1085,6 @@ def _time_field(dt, title: str) -> list[dict]:
                    cls="io-time")]
 
 
-# How much of the triggering message the card shows before the reader asks for
-# the rest. Two limits because one is not enough: a pasted log is many short
-# lines, and a pasted document can be one line thousands of characters long —
-# clamping only by line count leaves the second one filling the screen.
-TRIGGER_PEEK_LINES: int = 12
-TRIGGER_PEEK_CHARS: int = 900
-
-
-def _trigger_peek(text: str) -> dict | None:
-    """The opening of an over-long triggering message, or None when the whole
-    message is short enough to show.
-
-    The card led with the operator's message in full, which was fine until the
-    assistant started accepting pasted documents and logs: a 20 000-character
-    trigger pushed the entire step timeline — the reason the page exists —
-    below the fold. Returning None for a short message keeps the common card
-    exactly as it was, with no toggle to ignore."""
-    lines = text.splitlines()
-    if len(lines) <= TRIGGER_PEEK_LINES and len(text) <= TRIGGER_PEEK_CHARS:
-        return None
-    head = "\n".join(lines[:TRIGGER_PEEK_LINES])
-    if len(head) > TRIGGER_PEEK_CHARS:
-        head = head[:TRIGGER_PEEK_CHARS]
-    return {
-        "head": head + " …",
-        # What the reader gives up by leaving it collapsed, in the units they
-        # can see: a bare "show more" cannot tell 3 held-back lines from 3000.
-        "more": f"show all {len(lines):,} lines ({len(text):,} characters)",
-    }
-
-
-def _with_trigger_peek(trigger: dict | None) -> dict | None:
-    """Attach the card's peek to the trigger dict, leaving db's shape alone —
-    how much of a message fits on a page is a rendering question."""
-    if trigger is None:
-        return None
-    peek = _trigger_peek(str(trigger.get("text") or ""))
-    return trigger if peek is None else {**trigger, "peek": peek}
 
 
 def _usage_fields(
@@ -1497,11 +1446,12 @@ def _second_opinion_md(so: dict, model_names: dict[str, str]) -> list[str]:
 
 
 def _exchange_md(exchange: dict, *, fence_json: bool) -> list[str]:
-    """One LLM exchange as Markdown — the mirror of the template's
-    `llm_exchange` macro (search ASSISTANT_TEMPLATE for it); keep the two
-    aligned. Both are fed the same dicts from `_exchanges`, so a rejected
-    attempt and the attempt that replaced it cannot drift into different
-    shapes in one renderer and not the other."""
+    """One LLM exchange as Markdown.
+
+    The export is the only renderer of this shape now: the page draws a run as
+    its event stream, where a rejected attempt is a row like the attempt that
+    replaced it rather than a block inside one. Both are still fed the same
+    dicts from `_exchanges`, so the two attempts cannot drift apart here."""
     lines: list[str] = []
     if exchange["system_prompt"] or exchange["user_prompt"] or exchange["turns"]:
         lines.append(_labelled(f"**{exchange['request_label']}**",
@@ -1672,16 +1622,20 @@ def _run_markdown(run, ctx: dict) -> str:
     # Model calls. The page draws these as a waterfall; flat text keeps the
     # same reading — start offset from the run's beginning, then duration — so
     # the gaps that show where the time went survive the export.
-    if ctx.get("waterfall"):
+    if ctx.get("log", {}).get("events"):
         out += ["## Model calls", "",
                 "| call | kind | at | took |", "|---|---|---|---|"]
-        for c in ctx["waterfall"]:
+        for c in ctx["log"]["events"]:
             at = c["start"].strftime("%H:%M:%S") if c["start"] else "—"
             # An embed row's label quotes the text it was given, so the label
             # is no longer a fixed vocabulary: a pipe in it would split the
             # row into columns that aren't there.
             label = " ".join(c["label"].split()).replace("|", "\\|")
-            out.append(f"| {label} | {c['kind']} | {at} | {c['seconds']} |")
+            # The finer `variant` (rejected, decide, code-driven) rather than
+            # the coarse kind, so the export names a row the way the page
+            # colours it.
+            out.append(
+                f"| {label} | {c.get('variant') or c['kind']} | {at} | {c['seconds']} |")
         out.append("")
 
     # Trigger message.
@@ -1907,10 +1861,14 @@ def _load_run_detail(selected) -> dict:
         "unlinked": unlinked,
         "reviews": reviews,
         "pending_controls": db.list_pending_controls(selected.uuid),
-        "trigger": _with_trigger_peek(db.get_run_trigger_message(selected)),
+        "trigger": db.get_run_trigger_message(selected),
         "dash": _run_dashboard(selected, steps, review_rows),
-        "waterfall": _waterfall(
-            db.assistant_llm_calls(steps, review_rows, run=selected), selected),
+        # The gantt and the log read one stream, so a kind added to
+        # db.assistant_log appears in both without either learning about it.
+        "log": log_view(selected, steps, review_rows,
+                        trigger=db.get_run_trigger_message(selected),
+                        intents=intents,
+                        active=_active_model_call(selected)),
         "reply": reply,
         "verdict": reply["text"] if reply else selected.final_summary,
         "model_names": model_names,
@@ -1946,6 +1904,7 @@ def assistant_page() -> str:
         exchanges=ctx.get("exchanges", {}),
         step_kinds=ctx.get("step_kinds", {}),
         duplicate_result=ctx.get("duplicate_result", set()),
+        log=ctx.get("log", {"events": [], "span_seconds": 0.0}),
         second_opinion=ctx.get("second_opinion", {}),
         obs_data=ctx.get("obs_data", {}),
         timing=ctx.get("timing", {}),

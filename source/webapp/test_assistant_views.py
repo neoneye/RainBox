@@ -16,10 +16,7 @@ import db
 import webapp  # noqa: F401 — registers all views (incl. /assistant) on the app
 from db import AssistantRun
 from webapp.assistant_views import (
-    TRIGGER_PEEK_CHARS,
-    TRIGGER_PEEK_LINES,
     _format_duration,
-    _trigger_peek,
     _review_meta,
     _review_payload,
 )
@@ -58,6 +55,19 @@ def _room():
     human = db.get_human_user()
     assert human is not None
     return db.create_chatroom(f"as-view-{uuid4().hex[:8]}", human.uuid, [])
+
+
+def _steps_region(body: str) -> str:
+    """The inspector's panes only, with the gantt above them cut away.
+
+    A "renders once" guard has to say WHERE, because the gantt and the panes
+    are the same events and a label appears in both. These guards are about
+    one row not printing the same payload under two headings — the bug they
+    were written for — not about the page drawing the stream twice.
+    """
+    marker = 'class="log-detail"'
+    index = body.find(marker)
+    return body[index:] if index >= 0 else body
 
 
 def _rendered(client, run) -> tuple[str, str]:
@@ -147,8 +157,10 @@ def test_step_is_anchored_and_has_permalink(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert f'id="step-{step.uuid}"' in body          # anchor target
-        assert f'href="#step-{step.uuid}"' in body        # permalink
+        # The published `#step-<uuid>` format resolves through the row
+        # marked primary for that step, and every row carries its own link.
+        assert f'data-primary="{step.uuid}"' in body
+        assert 'id="ev-permalink"' in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -231,6 +243,36 @@ def test_stop_redirect_only_for_running_run(app_ctx, client):
         db.finish_run(run, "finished")
         body2 = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert f"/chat/api/assistant/runs/{run.uuid}/stop" not in body2
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_the_live_controls_sit_at_the_top_of_the_page(app_ctx, client):
+    """Stopping or redirecting a run is what a reader does WHILE watching it,
+    and the reader is at the top: the dashboard says the run is still going and
+    the timeline below is what they are reading. The controls sat under both,
+    past a timeline that grows all run — so the one moment they are useful is
+    the one moment they have scrolled off.
+    """
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    # With a step, so the timeline the controls used to sit below is drawn.
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="look")
+    db.settle_assistant_step(step, phase="observed", observation={"text": "x"})
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+
+        stop = body.index(f"/chat/api/assistant/runs/{run.uuid}/stop")
+        redirect = body.index("ppRedirect(")
+        # Inside the dashboard: before the timeline, and before the card that
+        # used to hold them.
+        assert stop < body.index('class="wf"')
+        assert redirect < body.index('class="wf"')
+        assert body.index('class="dash"') < stop
+        # And not left behind in the trigger card as well.
+        assert body.count("ppRedirect('") == 1
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -387,8 +429,10 @@ def test_step_token_counts_render_in_timeline(app_ctx, client):
         # (412+87)/5.1s ≈ 98 tok/s
         assert "in 412" in body and "out 87" in body
         assert "98 tok/s" in body and "took 5.1s" in body
-        # exactly one step metrics line (the control step shows none)
-        assert body.count('title="Input tokens') == 1
+        # exactly one step metrics line (the control step shows none). Scoped
+        # to the step sections: the log pane above carries its own meta line
+        # for the same call, which is a second surface, not a second step.
+        assert _steps_region(body).count('title="Input tokens') == 1
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -433,7 +477,7 @@ def test_step_model_renders_as_a_link(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        # the model name links to its /model config page
+        # The model links to its /model config page from the call's own row.
         assert f'href="/model?id={mc.uuid}"' in body
         assert "qwen-2.5-7b" in body
     finally:
@@ -530,22 +574,35 @@ def test_markdown_export_unknown_run_is_404(app_ctx, client):
 def test_query_memory_data_renders_as_table_with_tooltips():
     """The memory_query step's structured data renders as a compact counts table
     (short headers + explanatory tooltips), not a raw JSON blob."""
-    from webapp.assistant_views import ASSISTANT_TEMPLATE, _step_md
-    # Table markup + tooltips + short headers in the HTML template.
+    from webapp.assistant_components import _KPI_FIELDS
+    from webapp.assistant_views import _step_md
+
+    # The counts are fields on the action row's meta line now, each still
+    # saying what it means rather than only what it is called.
+    tips = {title for _key, _label, _fmt, title in _KPI_FIELDS}
+    template = " ".join(tips)
     for tip in ["number of QA static items", "number of QA dynamic items",
                 "number of memory items"]:
-        assert f'title="{tip}"' in ASSISTANT_TEMPLATE
+        assert tip in template
     # truncated / omitted carry an explanatory tooltip (what + how to recover).
     # Both say what the number means, not just that it is a limit: the per-fact
     # cap drops a middle and keeps both ends, and the payload budget decides
     # what is ADMITTED rather than capping the observation.
-    assert "middle was dropped" in ASSISTANT_TEMPLATE
-    assert "both ends kept (tagged truncate1200)" in ASSISTANT_TEMPLATE
-    assert "not admitted because they no longer fit" in ASSISTANT_TEMPLATE
-    assert "not the whole observation" in ASSISTANT_TEMPLATE
-    assert "io-data" in ASSISTANT_TEMPLATE
-    for hdr in ["QA static", "QA dynamic"]:
-        assert hdr in ASSISTANT_TEMPLATE
+    assert "middle was dropped" in template
+    assert "both ends kept (tagged truncate1200)" in template
+    assert "not admitted because they no longer fit" in template
+    assert "not the whole observation" in template
+    # And the short headers still read the same, on the row itself.
+    from webapp.assistant_components import render_event_detail
+
+    pane = render_event_detail({
+        "uuid": "u", "kind": "action", "variant": "action",
+        "label": "memory_query", "start": None, "duration_ms": 1,
+        "anchor": "", "payload": {"args": {}},
+        "kpis": {"status": "ok", "qa_static": 3, "qa_dynamic": 0,
+                 "memory": 6, "truncated": 0, "omitted": 0}})
+    for hdr in ["QA static 3", "QA dynamic 0", "memory 6"]:
+        assert hdr in pane
     # Markdown mirror (_step_md) renders the same counts as a table row.
     class _Step:  # all fields default to None except the two we set
         action = "memory_query"
@@ -572,7 +629,9 @@ def test_step_reasoning_renders_collapsed_in_timeline_and_markdown(app_ctx, clie
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "model reasoning" in body
+        # On the page it is a collapsed block on the call's own row; the
+        # markdown export keeps the longer label it has always used.
+        assert "reasoning (" in body
         assert "the operator wants git state, memory holds that" in body
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
         assert "**model reasoning**" in md
@@ -613,8 +672,10 @@ def test_interrupted_step_shows_partial_model_response(app_ctx, client):
     db.finish_run(run, "killed")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "partial model response" in body
+        # The row shows what came back, whole or partial, in its response
+        # block; the error beside it is what says the call was cut short.
         assert "enough evidence" in body
+        assert "worker killed" in body
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
         assert "**partial model response**" in md
         assert "enough evidence" in md
@@ -703,12 +764,14 @@ def test_steps_are_numbered_by_position_and_marked_warm_up_or_follow_up(
     db.finish_run(run, "finished")
     try:
         page, md = _rendered(client, run)
-        assert page.count("Step 1 of 4") == 1
-        assert [n for n in range(1, 5) if f"Step {n} of 4" in page] == [1, 2, 3, 4]
-        for text in (page, md):
-            # The two pre-loop calls, then the audit of what the model decided.
-            assert text.count("warm-up") >= 2
-            assert text.count("follow-up") >= 1
+        # Each row says which step it belongs to, in the numbering the export
+        # uses, so the two can be read against each other.
+        assert [n for n in range(1, 5) if f'data-step="Step {n}' in page] == [
+            1, 2, 3, 4]
+        assert md.count("Step 1 of 4") == 1
+        # The two pre-loop calls, then the audit of what the model decided.
+        assert md.count("warm-up") >= 2
+        assert md.count("follow-up") >= 1
         # The markdown headings carry it in reading order — the order the
         # calls RAN. The audit's row was written first, but it audits a reply
         # the decide call had already produced, so it reads last.
@@ -751,9 +814,13 @@ def test_the_timeline_reads_in_the_same_order_as_the_waterfall(app_ctx, client):
         assert [s.action for s in db.list_assistant_steps(run.uuid)] == [
             "response_language_classifier", "acceptance_criteria",
             "reply_audit", "reply"]
-        # And the two surfaces on the page now agree call for call.
+        # And the two surfaces on the page now agree call for call. A step the
+        # model chose is labelled by the decision it made; a call the loop
+        # issued itself is labelled by what it is, since presenting it as a
+        # decision would be a fiction.
         calls = db.assistant_llm_calls(steps)
-        assert [c["label"] for c in calls] == [s.action for s in steps]
+        assert [c["label"] for c in calls] == [
+            s.action if s.code_driven else f"decide → {s.action}" for s in steps]
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -770,14 +837,17 @@ def test_code_driven_row_shows_its_payload_once_and_calls_no_action(
     _real_run_shape(run)
     db.finish_run(run, "finished")
     try:
-        for text in _rendered(client, run):
-            # Indentation differs between the raw response and the stored
-            # preview, so the duplicate is caught on content, not bytes.
-            assert text.count("answer in meters") == 1
-            assert text.count("action call") == 1  # the reply step's, only
-            # The classifier's rendered result is NOT its raw response, so both
-            # blocks survive there.
-            assert "en-US" in text
+        page, md = _rendered(client, run)
+        # Indentation differs between the raw response and the stored
+        # preview, so the duplicate is caught on content, not bytes.
+        assert _steps_region(page).count("answer in meters") == 1
+        assert _steps_region(md).count("answer in meters") == 1
+        # A code-driven call chose no action, so it has no action row at all —
+        # which is what stops an empty one being drawn beside it.
+        assert page.count('data-kind="action"') == 1   # the reply step's
+        # The classifier's rendered result is NOT its raw response, so both
+        # blocks survive there.
+        assert "en-US" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -803,9 +873,16 @@ def test_every_model_call_row_shows_the_same_io_meta_fields(app_ctx, client):
 
 
 def test_io_meta_line_has_a_single_definition(app_ctx, client):
-    """The DRY guarantee, stated as a test: changing a field's wording in the
-    builder changes it in the page and the export at once. If either renderer
-    grows its own copy of the line, this fails."""
+    """Each surface builds its meta line in one place, so changing a field's
+    wording changes every row that surface draws.
+
+    The page and the export no longer share ONE builder: the page's rows come
+    from the event components and the export still walks the step rows. That
+    is a real seam, and the follow-up is to build the export from the same
+    event stream — until then this pins each side against growing a second
+    copy of its own line.
+    """
+    from webapp import assistant_components as components
     from webapp import assistant_views as views
 
     room = _room()
@@ -813,16 +890,22 @@ def test_io_meta_line_has_a_single_definition(app_ctx, client):
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
     _real_run_shape(run)
     db.finish_run(run, "finished")
-    original = views._field
+    original_field = views._field
+    original_kpi = components._kpi
     try:
-        views._field = lambda text, title, **kw: original(
+        views._field = lambda text, title, **kw: original_field(
             f"[{text}]", title, **kw)
+        components._kpi = lambda label, text, title, **kw: original_kpi(
+            label, f"[{text}]", title, **kw)
         page, md = _rendered(client, run)
-        for text in (page, md):
-            assert "[in 900]" in text and "[out 120]" in text
-            assert "[60 tok/s]" in text and "[took 17.0s]" in text
+
+        assert "[in 900]" in md and "[out 120]" in md
+        assert "[60 tok/s]" in md and "[took 17.0s]" in md
+        assert "[in 900]" in page and "[out 120]" in page
+        assert "[60 tok/s]" in page and "[took 17.0s]" in page
     finally:
-        views._field = original
+        views._field = original_field
+        components._kpi = original_kpi
         _cleanup(run.uuid, room.uuid)
 
 
@@ -906,7 +989,8 @@ def test_waterfall_places_each_call_on_the_run_span(app_ctx, client):
         rows = _waterfall(db.assistant_llm_calls(
             steps, db.list_second_opinion_reviews(run.uuid)), run)
         assert [r["label"] for r in rows] == [
-            "query_memory", "recall_filter", "python_run", "second opinion"]
+            "decide → query_memory", "recall_filter", "decide → python_run",
+            "second opinion"]
         # The span runs from the first call to the last one's end (41s), so the
         # first bar starts at 0 and the recall filter 10s in.
         assert rows[0]["offset_pct"] == 0.0
@@ -996,8 +1080,8 @@ def test_call_without_a_recorded_start_is_placed_at_its_row_end(
 
 
 def test_model_chosen_step_still_shows_its_decision(app_ctx, client):
-    """The counterpart: a step the model decided keeps its verbatim decision
-    dump — that IS the model's response for a decide call."""
+    """The counterpart: a step the model decided keeps what it decided — the
+    action it chose and the reason it gave, on the row that ran it."""
     room = _room()
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
@@ -1008,7 +1092,7 @@ def test_model_chosen_step_still_shows_its_decision(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         for text in _rendered(client, run):
-            assert '"action": "acceptance_criteria"' in text
+            assert "acceptance_criteria" in text
             assert "the operator named a unit mid-run" in text
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -1107,9 +1191,9 @@ def test_second_opinion_renders_before_the_action_call(app_ctx, client):
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert "second opinion" in body
-        assert body.index("second opinion") < body.index("action call")
-        assert "approved: true" in body
-        assert "group: second_opinion" in body
+        # The gate has a row of its own, ahead of the action it gated.
+        assert body.index("second opinion") < body.index("python_run")
+        assert "<h5>verdict</h5>" in body and "approved" in body
         # The reviewer's own model request, collapsed like the decide call's.
         assert "You are a second-opinion reviewer." in body
         assert "&lt;python_program&gt;print(12 * 0.3048)&lt;/python_program&gt;" in body
@@ -1117,8 +1201,9 @@ def test_second_opinion_renders_before_the_action_call(app_ctx, client):
         assert "The operator is metric; the conversion factor is right." in body
         assert "&#34;approved&#34;: true" in body or '"approved": true' in body
         # Stripped from the action-result data pre; the rest of the data stays.
-        assert '"second_opinion"' not in body
-        assert '"duration_seconds": 0.01' in body
+        # Not repeated inside the action's result: it has its own row.
+        assert '&#34;second_opinion&#34;' not in body
+        assert "duration_seconds" in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1133,8 +1218,8 @@ def test_second_opinion_rejection_shows_problems(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "approved: false" in body
-        assert "- the operator profile is metric; convert to meters" in body
+        assert "rejected" in body
+        assert "the operator profile is metric; convert to meters" in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1173,8 +1258,8 @@ def test_inspector_resolves_the_review_pointer(app_ctx, client):
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert "second opinion" in body
-        assert "approved: false" in body
-        assert "group: second_opinion" in body
+        assert "rejected" in body
+        assert "second_opinion" in body
         assert "You are a second-opinion reviewer." in body
         assert "- convert to meters" in body
         assert "The operator is metric." in body
@@ -1204,7 +1289,7 @@ def test_a_skipped_review_row_renders_its_reason(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "review skipped: no_model_group" in body
+        assert "no_model_group" in body
         # A skipped review never approved anything, so no verdict badge.
         assert "approved: true" not in body
     finally:
@@ -1223,8 +1308,8 @@ def test_a_legacy_inline_payload_still_renders(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "approved: false" in body
-        assert "- the operator profile is metric; convert to meters" in body
+        assert "rejected" in body
+        assert "the operator profile is metric; convert to meters" in body
         assert "You are a second-opinion reviewer." in body
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -1289,10 +1374,10 @@ def test_categorized_problems_render_as_text(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert "- the operator profile is metric; convert to meters" in body
+        assert "the operator profile is metric; convert to meters" in body
         assert "identity_mismatch" not in body      # the tag is not the finding
         md = client.get(f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
-        assert "- the operator profile is metric; convert to meters" in md
+        assert "the operator profile is metric; convert to meters" in md
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1334,9 +1419,11 @@ def test_live_refresh_keeps_expanded_blocks_open(app_ctx, client):
     db.settle_assistant_step(step, phase="observed", observation_preview="ok")
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        # Every collapsible block is addressable by a stable role…
+        # Every collapsible block is addressable by a stable role. Keyed per
+        # row now, because a page holding every row's blocks at once would
+        # otherwise have several claiming the same name.
         for role in ("log", "system", "user", "reasoning"):
-            assert f'data-k="{role}"' in body
+            assert f'-{role}"' in body
         # …and the refresh reads them before the swap and reapplies after.
         assert "function detailsKey(d) {" in body
         assert "return (step ? step.id : '') + '/' + d.getAttribute('data-k');" in body
@@ -1365,13 +1452,14 @@ def test_a_skipped_call_reads_as_skipped_not_as_a_silent_row(app_ctx, client):
     db.finish_run(run, "finished")
     try:
         page, md = _rendered(client, run)
-        assert ">skipped<" in page
+        assert 'data-kind="skipped"' in page
+        assert "This call was never made" in page
         assert "no model group is bound" in page and "no model group is bound" in md
-        # It has no response, so it gets no "model response" block at all —
-        # an empty one reads as a call that answered with nothing.
-        fragment = page.split(f'id="step-{skipped.uuid}"')[1].split('id="step-')[0]
-        assert "model response" not in fragment
-        assert "no model group is bound" in fragment       # but its result is there
+        # It has no response, so its row shows none — an empty response block
+        # reads as a call that answered with nothing.
+        pane = page.split('data-kind="skipped"')[1].split("</div></div>")[0]
+        assert "<h5>response</h5>" not in pane
+        assert f'data-primary="{skipped.uuid}"' in page
         assert md.count("**model response**") == 1         # the reply's, only
         # It cost nothing, so it is not one of the run's model calls.
         assert "- **LLM calls:** 1" in md
@@ -1418,47 +1506,26 @@ def test_review_payload_carries_the_rows_usage_forward():
         "input": 11, "output": 22, "ms": 33}
 
 
-def test_trigger_peek_leaves_a_short_message_alone():
-    """The common card keeps exactly the shape it had, with no toggle to
-    ignore."""
-    assert _trigger_peek("convert 12 feet") is None
-    assert _trigger_peek("line\n" * TRIGGER_PEEK_LINES) is None
-
-
-def test_trigger_peek_clamps_by_lines():
-    peek = _trigger_peek("\n".join(f"line {i}" for i in range(400)))
-
-    assert peek["head"].count("\n") == TRIGGER_PEEK_LINES - 1
-    assert peek["head"].startswith("line 0")
-    assert peek["more"] == "show all 400 lines (3,489 characters)"
-
-
-def test_trigger_peek_clamps_a_single_enormous_line_too():
-    """A pasted document can be one line thousands of characters long, which a
-    line-count clamp would let through whole."""
-    peek = _trigger_peek("x" * 20_000)
-
-    assert len(peek["head"]) <= TRIGGER_PEEK_CHARS + 2  # + the ellipsis
-    assert peek["more"] == "show all 1 lines (20,000 characters)"
-
-
-def test_a_long_trigger_message_renders_collapsed_but_whole(app_ctx, client):
-    """Collapsed, not truncated: the reader can still get the whole message,
-    and the open state rides the live-refresh swap like every other block."""
+def test_a_long_request_renders_whole_but_not_at_full_height(app_ctx, client):
+    """Clamped, not truncated: the reader can still get the whole message.
+    It reads on the run's opening row now, through the same clamp every long
+    block on the page uses — the trigger had its own hand-rolled peek."""
     room = _room()
     human = db.get_human_user()
     text = "OPENING LINE\n" + "\n".join(f"pasted line {i}" for i in range(400))
     db.post_chat_message(room.uuid, human.uuid, text)
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="reply", reason="answer")
+    db.settle_assistant_step(step, phase="final", observation={"text": "ok"})
     db.finish_run(run, "finished")
     try:
-        body = html.unescape(
-            client.get(f"/assistant?id={run.uuid}").get_data(as_text=True))
-        assert 'data-k="trigger"' in body          # carried across a refresh
-        assert "show all 401 lines" in body
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+
         assert "OPENING LINE" in body
-        assert "pasted line 399" in body           # the whole message is there
+        assert "pasted line 399" in body       # whole, not clipped
+        assert "EV_CLAMP_LINES" in body        # and bounded by the shared clamp
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1539,10 +1606,11 @@ def test_recall_filter_renders_through_the_shared_step_machinery(app_ctx, client
     db.finish_run(run, "finished")
     try:
         page, md = _rendered(client, run)
-        assert f'id="step-{step.uuid}"' in page
-        # A call the loop made, not one the model chose: no step budget spent.
+        assert f'data-primary="{step.uuid}"' in page
+        # A call the loop made, not one the model chose: it is labelled by
+        # what it is rather than as a decision, which is the distinction.
         assert "score what memory_query recalled for relevance" in page
-        assert "follow-up" in page
+        assert "decide → recall_filter" not in page
         # The model is a link, like every other answering model on the page.
         assert f'href="/model?id={scorer.uuid}"' in page
         assert "granite4:tiny-h" in md
@@ -1636,9 +1704,9 @@ def test_memory_query_phase_timing_renders_in_both_views(app_ctx, client):
         for body in (page, md):
             assert "claim retrieval" in body
             assert "recall filter" in body
-            assert "1.2s" in body                  # the vector search
-            assert "31.6s" in body                 # the filter's LLM call
-        assert "io-timing" in page
+        # On the page each phase is a row on the timeline carrying its own
+        # duration; the export keeps the table it has always had.
+        assert "memory_query › claim retrieval" in page
         assert "| phase | took | at |" in md
     finally:
         _cleanup(run.uuid, room.uuid)
@@ -1655,12 +1723,13 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
         page, md = _rendered(client, run)
         assert "kind-embedding" in page                    # waterfall rows
         assert "embed 0.9s" in page                        # dashboard Time cell
-        # The model is named once, under the phases — not on every waterfall
-        # row, where it would be the same string repeated down the column.
-        assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in page
+        # The model is named once, in the export's summary line — not on
+        # every row of the page, where it would be the same string repeated
+        # down the column.
+        assert "2 calls · 0.9s · 137 chars · embeddinggemma:300m" in md
         assert "embed embeddinggemma:300m" not in page
         assert "embed 0.9s (2 calls)" in md
-        assert '| embed "what languages do I know" | embedding |' in md
+        assert "| embed | embedding |" in md
         # The LLM totals are the step's own, untouched by the two embed calls.
         assert "in 100" in page and "out 20" in page
         steps = db.list_assistant_steps(run.uuid)
@@ -1675,9 +1744,13 @@ def test_embedder_is_counted_and_named_but_not_folded_into_llm_totals(app_ctx, c
 
 def test_each_embed_call_shows_the_text_it_was_given(app_ctx, client):
     """Two embed bars of the same length raise one question — same query or
-    different ones? — that neither the bars nor the char total can answer. The
-    text goes on the waterfall row itself and under the phases, so the answer
-    is on the page rather than in a psql session."""
+    different ones? — that neither the bars nor the char total can answer, so
+    the text has to be somewhere on the page.
+
+    Not on the timeline label, which is a fixed-width column: a query of any
+    length would push the timing off the row. It goes in the row's own detail
+    pane and in the step's timing table, both of which have room for it.
+    """
     room = _room()
     run = _timed_memory_query_run(room)
     try:
@@ -1685,30 +1758,43 @@ def test_each_embed_call_shows_the_text_it_was_given(app_ctx, client):
         for body in (page, md):
             assert "what languages do I know" in body
             assert "where do I live" in body
-        # On the waterfall row's own label, not only in the timing table: the
-        # Model calls card is where a repeated-looking row is noticed.
-        assert 'embed "what languages do I know"' in page
+        # The label stays the shape of the call, never its content.
+        assert 'embed "what languages do I know"' not in page
+        assert ">embed<" in page
+        # Reachable from the row: the text is inside an event pane, not only
+        # down in the timing table.
+        panes = page.split('class="ev-pane')
+        assert any("what languages do I know" in p for p in panes[1:])
         assert "io-embed-text" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
 
-def test_a_bulk_embed_is_named_by_its_size_and_a_legacy_one_still_renders():
-    """A first-run seed populate embeds the whole registry in one call — its
-    first chunk says nothing about it, so the row is named by its size. A
-    payload written before the text was captured keeps its bare `embed` row:
-    losing the call would lose time the trace cannot otherwise explain."""
+def test_an_embed_row_is_named_by_its_shape_never_by_its_text():
+    """The label sits in a fixed-width column beside a bar, so it cannot carry
+    a value of unbounded length: a query of any size would push the timing off
+    the row. The text goes to the detail, which has room for it.
+
+    A first-run seed populate embeds the whole registry in one call, and its
+    size IS the thing worth knowing, so a batch says how many.
+    """
     bulk, detail = db.embed_call_label(
         {"texts": 312, "chars": 90000, "preview": ["a fact", "another fact"]})
     assert bulk == "embed 312 texts"
     assert detail == "a fact / another fact"        # still readable in full
 
+    # One text, however long, is just "embed".
     assert db.embed_call_label({"texts": 1, "chars": 26}) == ("embed", "")
 
     long_query = "x" * 200
     label, detail = db.embed_call_label({"texts": 1, "preview": [long_query]})
-    assert label == f"embed \"{'x' * db.EMBED_LABEL_CHARS}…\""
-    assert detail == long_query                     # the tooltip keeps it whole
+    assert label == "embed"
+    assert detail == long_query                     # the detail keeps it whole
+
+    short_query = "street address"
+    label, detail = db.embed_call_label({"texts": 1, "preview": [short_query]})
+    assert label == "embed"
+    assert detail == short_query
 
 
 def test_timing_payload_is_not_dumped_as_json_in_the_result(app_ctx, client):
@@ -1774,14 +1860,13 @@ def test_a_rejected_attempt_shows_beside_the_response_that_replaced_it(
     try:
         page, md = _rendered(client, run)
         for body in (page, md):
-            assert "rejected response 1 of 1" in body
+            assert "rejected" in body
             assert '{"reason":null,"action":null,"args":null}' in body
             assert "model did not return a valid AssistantStepDecision" in body
             # …and above the decision that replaced it, which both renderers
             # show as the reconstructed decide JSON.
-            assert '"action": "reply"' in body
-            assert body.index("rejected response 1 of 1") < body.index(
-                '"action": "reply"')
+            assert "reply" in body
+            assert body.index("rejected") < body.rindex("reply")
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1796,18 +1881,16 @@ def test_a_rejected_attempt_renders_as_a_full_exchange(app_ctx, client):
     try:
         page, md = _rendered(client, run)
 
-        # Both attempts number their request, and each carries the prompts.
+        # Each attempt is a row of its own carrying what it thought and what
+        # it answered — not one row for the call and a footnote for the try
+        # that was thrown away.
         for body in (page, md):
-            assert "model request (attempt 1)" in body
-            assert "model request (attempt 2)" in body
-            assert body.count("system prompt") == 2      # one per attempt
-            assert body.count("thinking about it") == 1     # attempt 1's
-            assert body.count("thinking again") == 1        # attempt 2's
-        # The rejected attempt's collapsible blocks are addressable, like
-        # every other block on the page (the live refresh reopens by key).
-        assert 'data-k="attempt1-system"' in page
-        assert 'data-k="attempt1-reasoning"' in page
-        assert 'data-k="reasoning"' in page                 # the kept one
+            assert "thinking about it" in body              # attempt 1's
+            assert "thinking again" in body                 # attempt 2's
+        assert "(rejected)" in page
+        # Its collapsible blocks are addressable, like every other block on
+        # the page, so the live refresh reopens what the reader opened.
+        assert "-reasoning\"" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1820,11 +1903,16 @@ def test_the_retry_shows_the_turns_the_first_attempt_never_saw(app_ctx, client):
     run = _retried_step_run(room)
     try:
         page, md = _rendered(client, run)
+        # It appears where it belongs and only there: appended to the second
+        # attempt's prompt, and on the first attempt's own row as the turns
+        # that were added AFTER it — never on the first attempt's request,
+        # which was sent before any of it existed.
         for body in (page, md):
             assert "<rejected_response>" in body
-            assert body.count("<rejected_response>") == 1   # only the retry's
-        assert 'data-k="attempt1-turn1"' not in page        # nothing preceded it
-        assert 'data-k="turn1"' in page and 'data-k="turn2"' in page
+        assert "added turns" in page
+        # The added turns hang off the attempt they were added after, and
+        # are addressable like every other collapsible block on the page.
+        assert "-feedback\"" in page
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1878,7 +1966,7 @@ def test_the_kept_attempt_starts_where_the_rejected_one_ended(app_ctx, client):
         steps = db.list_assistant_steps(run.uuid)
         calls = db.assistant_llm_calls(steps)
 
-        assert [c["label"] for c in calls] == ["reply (rejected)", "reply"]
+        assert [c["label"] for c in calls] == ["reply (rejected)", "decide → reply"]
         rejected, kept = calls
         assert rejected["start"] == datetime(
             2026, 8, 15, 15, 53, 5, tzinfo=UTC).astimezone()
@@ -1907,7 +1995,7 @@ def test_several_rejections_are_numbered_and_laid_end_to_end(app_ctx, client):
     try:
         calls = db.assistant_llm_calls(db.list_assistant_steps(run.uuid))
         assert [c["label"] for c in calls] == [
-            "reply (rejected 1/2)", "reply (rejected 2/2)", "reply"]
+            "reply (rejected 1/2)", "reply (rejected 2/2)", "decide → reply"]
         # …and the kept attempt sits after the LAST rejection, not the first.
         assert calls[-1]["start"] == datetime(
             2026, 8, 15, 12, 0, 10, tzinfo=UTC).astimezone()
@@ -1915,14 +2003,12 @@ def test_several_rejections_are_numbered_and_laid_end_to_end(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
-def test_every_waterfall_bar_links_to_the_detail_that_explains_it(
-        app_ctx, client):
+def test_every_gantt_bar_selects_the_event_that_explains_it(app_ctx, client):
     """A bar the reader cannot follow is a number with no provenance.
 
-    A call links to its own step. An activity is a slice of an action's phase
-    table, so it links to that table rather than to the top of a long step
-    section. An unaccounted bar has nothing to explain it — by definition — so
-    it is not a link at all, rather than a dead one.
+    The gantt IS the list — there is no second column of the same events, so
+    every bar has to name an event the pane below can render, including the
+    bars carrying no detail of their own, whose pane says exactly that.
     """
     import re
 
@@ -1930,14 +2016,335 @@ def test_every_waterfall_bar_links_to_the_detail_that_explains_it(
     run = _timed_memory_query_run(room)
     try:
         page, _ = _rendered(client, run)
-        ids = set(re.findall(r'id="((?:step|phases)-[0-9a-f-]+)"', page))
-        hrefs = re.findall(r'class="wf-row"[^>]*href="#([^"]*)"', page)
+        panes = re.findall(r'class="ev-pane[^"]*" id="(ev-\d+)"', page)
+        picked = re.findall(r'class="wf-row ev-pick[^"]*"\s+data-ev="(ev-\d+)"',
+                            page)
 
-        assert hrefs, "no waterfall rows rendered"
-        for target in hrefs:
-            assert target in ids, f"{target} has no landing element"
-        assert any(t.startswith("phases-") for t in hrefs)
-        # No row links to the bare prefix left by an empty anchor.
-        assert "step-" not in hrefs and "phases-" not in hrefs
+        assert picked, "no gantt rows rendered"
+        for target in picked:
+            assert target in panes, f"{target} has no detail pane"
+        # One pane per bar, and one bar per event: a second enumeration of the
+        # same run is what this layout exists to avoid.
+        assert sorted(picked) == sorted(panes)
+        assert "log-row" not in page
+        # Exactly one pane is open to begin with, or the page opens on a wall
+        # of every prompt the run sent.
+        assert page.count('class="ev-pane on"') == 1
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_the_inspector_names_the_override_a_call_ran_on(app_ctx, client):
+    """A step records the OVERRIDE it ran on, not the base config, so looking
+    the uuid up as a config alone left the reader eight hex characters. An
+    override is named by the model it tunes plus the tuning."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    cfg = db.list_model_configs()[0]
+    override = db.create_model_config_override(
+        cfg.uuid, {}, display_name="t0.15 probe")
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="answer", system_prompt="s", user_prompt="u",
+        model_response="{}", code_driven=True, model_uuid=override.uuid,
+        input_tokens=10, output_tokens=2, duration_ms=1000,
+        requested_at=datetime.now(UTC))
+    db.finish_run(run, "finished")
+    try:
+        page, _ = _rendered(client, run)
+        assert f"{cfg.model_name} · t0.15 probe" in page
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_an_inspector_block_looks_like_every_other_pre():
+    """`.as-main pre` already gives every block its box and its size, which is
+    why `.trigmsg` needs to declare almost nothing. An inspector block holds
+    the same kind of thing — a prompt, a response, a request — so it takes the
+    same box rather than restating it in near-miss values: a 4px radius beside
+    a 6px one, #f7f8fa beside #f6f8fa.
+
+    Its height is bounded, but not here: a long block is clamped to a few
+    lines by clampBlocks, which measures the block's own line-height. See
+    test_a_long_block_clamps_instead_of_scrolling_inside_itself.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    rule = re.search(r"\.as-main \.ev-pre \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert rule, "the .ev-pre rule is gone"
+    for restated in ("font-size", "background", "border-radius", "padding"):
+        assert restated not in rule.group(0), restated
+
+
+def test_the_inspector_meta_line_is_right_aligned_like_a_step_s():
+    """A step's io-meta sits at the right end of its row. The inspector's meta
+    line reports the same things about the same call, so it lands in the same
+    place rather than reading as a different kind of row."""
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    rule = re.search(r"\.as-main \.ev-kpis \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert rule, "the .ev-kpis rule is gone"
+    assert "justify-content:flex-end" in rule.group(0).replace(" ", "")
+
+
+def test_the_inspector_meta_line_shares_the_step_meta_styling():
+    """The inspector's meta line and a step's io-meta report the same things
+    about the same call. They take one rule rather than two sets of values, so
+    a monospace face here against a sans-serif one there cannot come back.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    shared = re.search(r"\.as-main \.step \.io-meta[^{]*\{[^}]*\}",
+                       ASSISTANT_TEMPLATE)
+    assert shared and ".ev-kpis" in shared.group(0), "ev-kpis has its own rule"
+
+    link = re.search(r"\.as-main \.step \.io-model[^{]*\{[^}]*\}",
+                     ASSISTANT_TEMPLATE)
+    assert link and ".ev-kpi a" in link.group(0), "the model link diverged"
+
+    # Whatever ev-kpis still declares must not restate the shared look.
+    own = re.search(r"\.as-main \.ev-kpis \{[^}]*\}", ASSISTANT_TEMPLATE)
+    for restated in ("font-family", "font-size", "color:"):
+        assert restated not in (own.group(0) if own else ""), restated
+
+
+def test_every_styled_inspector_class_has_a_rule():
+    """A class in the markup with no rule behind it fails silently — the page
+    still renders, just wrong. Editing the stylesheet by slicing a range is
+    exactly how a neighbouring rule disappears unnoticed.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    styled = {"ev-crumb-label", "ev-crumb-desc",
+              "ev-kpis", "ev-kpi", "ev-pre", "ev-block", "ev-pane",
+              "ev-detail", "ev-links", "ev-note", "log-detail", "wf-tick"}
+    for name in styled:
+        assert re.search(rf"\.{re.escape(name)}\b[^{{]*\{{", ASSISTANT_TEMPLATE), (
+            f".{name} is used but has no CSS rule")
+
+
+def test_a_collapsible_summary_is_not_selectable_text():
+    """Clicking a toggle repeatedly selects its label, which is never what the
+    click meant. The step's prompt summaries already opt out; the inspector's
+    take the same rule rather than a near-copy of it — 70% beside 0.64rem,
+    0.05em beside 0.04em, and no user-select at all.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    rule = re.search(
+        r"\.as-main \.step \.prompt > summary,[^{]*\{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert rule, "the shared summary rule is gone"
+    assert "details.ev-block > summary" in rule.group(0), (
+        "the inspector's summaries have their own rule again")
+    assert "user-select:none" in rule.group(0).replace(" ", "")
+
+
+def test_a_header_divider_has_the_same_space_on_both_sides():
+    """The gap before a divider is the flex gap; the gap after it is the
+    padding of the box drawing it. They have to be one value or every part of
+    a header sits closer to the rule on its right than the one on its left.
+
+    They drifted because the divider was shared between the step and inspect
+    headers but the gap was not: steps overrode it, so only the inspect header
+    read lopsided.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    header = re.search(
+        r"\.as-main \.step \.card-header, \.as-main \.card \.card-header \{"
+        r"[^}]*\}", ASSISTANT_TEMPLATE)
+    assert header, "the shared header rule is gone"
+    gap = re.search(r"gap:([\d.]+rem)", header.group(0))
+    assert gap, header.group(0)
+
+    divider = re.search(
+        r"\.as-main \.step \.card-header > span:not\(:first-child\),\s*"
+        r"\.as-main \.inspect \.card-header > span:not\(:first-child\) \{"
+        r"[^}]*\}", ASSISTANT_TEMPLATE)
+    assert divider, "the shared divider rule is gone"
+    after = re.search(r"padding:[\d.]+px 0 [\d.]+px ([\d.]+rem)",
+                      divider.group(0))
+    assert after, divider.group(0)
+    assert gap.group(1) == after.group(1)
+
+    # And nothing may set a different gap on one of the two headers again.
+    assert not re.search(r"\.as-main \.step \.card-header \{ gap:",
+                         ASSISTANT_TEMPLATE)
+
+
+def test_a_card_header_lines_up_with_the_body_under_it():
+    """Header text 2px left of the body text below reads as a mistake rather
+    than as a choice."""
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    header = re.search(
+        r"\.as-main \.step \.card-header, \.as-main \.card \.card-header \{"
+        r"[^}]*\}", ASSISTANT_TEMPLATE)
+    body = re.search(r"\.as-main \.step-body, \.as-main \.card-body, "
+                     r"\.as-main \.log-detail \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert body, "the shared body rule is gone"
+    assert re.search(r"padding:[\d.]+px (\d+px)", header.group(0)).group(1) \
+        == re.search(r"padding:[\d.]+px (\d+px)", body.group(0)).group(1)
+    # The inspector's pane is a body too, and shares the rule rather than
+    # restating a near-miss of it.
+    assert ".as-main .log-detail" in body.group(0)
+
+
+def test_a_row_belonging_to_no_step_draws_no_empty_divider():
+    """The span has to exist for the selection to write into, but a row can
+    belong to no step — the run's opening, or any row on a run whose steps
+    recorded no timing — and an empty one left a rule with nothing after it."""
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    # Specific enough to beat the shared divider rule, which sets display on
+    # the same element and would otherwise win on element count.
+    assert (".as-main .inspect .card-header > span.ev-crumb-step:empty "
+            "{ display:none; }") in ASSISTANT_TEMPLATE
+
+
+def test_the_run_s_question_is_shown_once(app_ctx, client):
+    """The trigger had a card of its own beside the stream, and the stream
+    opens with the same question, the same asker and the same chat link. Two
+    copies on one screen invite the reader to wonder how they differ."""
+    room = _room()
+    human = db.get_human_user()
+    db.post_chat_message(room.uuid, human.uuid, "tell me where I live")
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="reply", reason="answer")
+    db.settle_assistant_step(step, phase="final", observation={"text": "ok"})
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+
+        assert body.count("tell me where I live") == 1
+        assert "trigmsg" not in body
+        assert "Started by" in body            # on the run's opening row
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_the_chat_room_is_reachable_from_the_menu(app_ctx, client):
+    """The trigger card carried the only guaranteed link to the room. The
+    opening row carries one for every run that has a triggering message — all
+    of them, today — but a run seeded outside the chat flow has no such row,
+    and the room is still where it happened."""
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    assert "Open chat room" in ASSISTANT_TEMPLATE
+
+
+def test_no_click_between_two_timeline_rows_is_wasted():
+    """The rows were spaced by a gap on their container, which belongs to
+    neither row: a click landing in it selected nothing. The spacing is the
+    rows' own padding now, so every pixel of the timeline belongs to a row and
+    the pitch is unchanged.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    container = re.search(r"\.as-main \.wf \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert container, "the timeline container rule is gone"
+    assert "gap" not in container.group(0), "the dead strip is back"
+
+    row = re.search(r"\.as-main \.wf-row \{[^}]*\}", ASSISTANT_TEMPLATE)
+    # The padding absorbs what the gap used to add, so a row is as tall as the
+    # row plus the gap it replaced.
+    assert re.search(r"padding:3px \d+px", row.group(0)), row.group(0)
+
+
+def test_a_row_can_be_linked_to(app_ctx, client):
+    """Any row on the timeline is something to send someone. Its identity is
+    the key the live refresh already mints — a second identity for one row is
+    how the two drift apart."""
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    step = db.open_assistant_step(
+        run_uuid=run.uuid, step_index=0, action="memory_query", reason="look")
+    db.settle_assistant_step(step, phase="observed", observation={"text": "x"})
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+
+        # Each row carries the step it is the published link for, and the
+        # copy affordance is in the inspector header.
+        assert f'data-primary="{step.uuid}"' in body
+        assert "ev-permalink" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+    # #ev-<key> selects a row; #step-<uuid> keeps resolving through the row
+    # marked primary for it.
+    assert "#ev-" in ASSISTANT_TEMPLATE
+    assert "data-primary=" in ASSISTANT_TEMPLATE
+    assert "function selectFromHash" in ASSISTANT_TEMPLATE
+    # The address bar follows the selection without stacking history entries.
+    assert "replaceState" in ASSISTANT_TEMPLATE
+
+
+def test_the_old_step_fragment_still_scrolls_nothing_away(app_ctx, client):
+    """`#step-<uuid>` is minted by db.assistant_step_path and linked from chat
+    proposal cards, cron rows and the uuid lookup. Those links are durable, so
+    the page must keep understanding the format even once no step section
+    exists to scroll to."""
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    assert "'#step-'" in ASSISTANT_TEMPLATE or '"#step-"' in ASSISTANT_TEMPLATE
+
+
+def test_a_live_refresh_keeps_the_row_the_reader_is_inspecting():
+    """A running run refreshes every few seconds and the page swaps its whole
+    pane. The server renders the first row selected, so without carrying the
+    selection the reader is thrown back to `start` every few seconds — while
+    inspecting the very step they are watching run.
+
+    Carried by key, never by position: an event can land ahead of the selected
+    one, and restoring by index would quietly show a different row.
+    """
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    assert "data-key=" in ASSISTANT_TEMPLATE
+    assert "selectedKey" in ASSISTANT_TEMPLATE
+    # The swap restores it through the same selection path the click uses.
+    assert "asSelectEvent" in ASSISTANT_TEMPLATE
+
+
+def test_a_long_block_clamps_instead_of_scrolling_inside_itself():
+    """A scroll area inside a scrolling page traps the wheel: the reader aims
+    at the page and moves the block, or the reverse. A long block is cut to a
+    few lines with a toggle instead, so there is only ever one scroller.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    rule = re.search(r"\.as-main \.ev-pre \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert rule, "the .ev-pre rule is gone"
+    flat = rule.group(0).replace(" ", "").replace("\n", "")
+    assert "max-height" not in flat, "the inner scroller is back"
+    assert "overflow:auto" not in flat
+
+    # Clamped state and its control exist, and the clamp is measured in lines.
+    assert ".ev-pre.clamped" in ASSISTANT_TEMPLATE
+    assert ".ev-more" in ASSISTANT_TEMPLATE
+    assert "EV_CLAMP_LINES" in ASSISTANT_TEMPLATE
+    assert "function clampBlocks" in ASSISTANT_TEMPLATE

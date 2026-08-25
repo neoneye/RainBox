@@ -99,6 +99,29 @@ def test_summarizes_run_into_summary_column(app_ctx):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_the_call_records_the_run_it_summarizes(app_ctx):
+    """The digest is the only thing this call leaves behind — it writes no step
+    row — so without the run on its `llm_call` row, /assistant has no way back
+    to the prompt that produced the digest it shows."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.finish_run(run, "finished")
+    agent = _agent()
+    seen: dict = {}
+
+    def fake_call(user_prompt, validator=None):
+        seen["run_uuid"] = agent._instrument_tags("assistant.run_summarizer")
+        return RunSummary(trigger="t", obstacles=[], outcome="resolved")
+
+    agent._structured_call = fake_call  # type: ignore[method-assign]
+    try:
+        agent.handle(uuid4(), {"run_uuid": str(run.uuid)})
+        assert seen["run_uuid"].get("run_uuid") == str(run.uuid)
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_missing_run_returns_not_ok_without_calling_the_model(app_ctx):
     agent = _agent()
 
