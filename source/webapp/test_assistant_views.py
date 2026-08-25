@@ -290,7 +290,11 @@ def test_verdict_shows_the_full_reply_not_the_truncated_summary(app_ctx, client)
         _cleanup(run.uuid, room.uuid)
 
 
-def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
+def test_the_stream_opens_with_the_request_and_closes_with_the_answer(
+        app_ctx, client):
+    """The shape of the thing being read. The answer had a card of its own
+    below the stream, which made the one row everybody quotes the one row
+    nobody could link to."""
     room = _room()
     human = db.get_human_user()
     db.post_chat_message(room.uuid, human.uuid, "please mark the task done")
@@ -306,15 +310,22 @@ def test_trigger_block_at_top_and_verdict_at_bottom(app_ctx, client):
         assert f"/user?id={human.uuid}" in body
         # links into chat AND anchors on the specific triggering message
         assert f"/chat?id={run.room_uuid}&msg=" in body
-        # The verdict (final_summary) is present and sits BELOW the trigger.
-        assert "Verdict" in body and "all done — the verdict" in body
-        assert body.index("Verdict") > body.index("Started by")
+        # The answer is a row of the stream, last, and addressable like any
+        # other — which is the point of it being a row.
+        rows = re.findall(r'data-variant="([^"]*)"[^>]*\n?[^>]*>\s*'
+                          r'<span class="wf-name[^"]*">([^<]*)<', body)
+        assert rows[0][1] == "start" and rows[-1][1] == "verdict"
+        assert "all done — the verdict" in body
+        assert 'data-key="verdict:verdict:verdict:' in body
+        # And no card below it saying the same thing again.
+        assert "<div class=\"card-title\">Verdict</div>" not in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
 
-def test_verdict_chip_carries_the_outcome_not_the_lifecycle_status(app_ctx, client):
-    """The Verdict card's chip is the verdict — Resolved/Unresolved — matching
+def test_the_verdict_row_carries_the_outcome_not_the_lifecycle_status(
+        app_ctx, client):
+    """The verdict row is led by the outcome — Resolved/Unresolved — matching
     the dashboard's headline status. It must never show the lifecycle status
     ("Finished" = the loop terminated), which reads as success on a run that
     resolved nothing."""
@@ -327,13 +338,18 @@ def test_verdict_chip_carries_the_outcome_not_the_lifecycle_status(app_ctx, clie
         "outcome": "partial"})
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert '<span class="outcome out-unresolved">Unresolved</span>' in body
-        assert "out-finished" not in body      # the green lifecycle chip is gone
+        pane = body.split('data-kind="verdict"')[1].split("</div></div>")[0]
+        # Led by it, the way an action is led by its status: an outcome is not
+        # a cost, so it reads as a labelled block and not as a figure among
+        # the token counts.
+        assert pane.index("<h5>outcome<") < pane.index("<h5>reply<")
+        assert "Unresolved" in pane
+        assert "Finished" not in pane
     finally:
         _cleanup(run.uuid, room.uuid)
 
 
-def test_verdict_chip_is_resolved_when_the_run_resolved(app_ctx, client):
+def test_the_verdict_row_is_resolved_when_the_run_resolved(app_ctx, client):
     room = _room()
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
@@ -342,7 +358,8 @@ def test_verdict_chip_is_resolved_when_the_run_resolved(app_ctx, client):
         "trigger": "file the report", "obstacles": [], "outcome": "resolved"})
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert '<span class="outcome out-resolved">Resolved</span>' in body
+        pane = body.split('data-kind="verdict"')[1].split("</div></div>")[0]
+        assert "Resolved" in pane and "done" in pane
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -543,13 +560,16 @@ def test_markdown_export_serializes_the_run(app_ctx, client):
         assert "Step 1 end" in md                     # which step it belongs to
         assert "**query**" in md and "report" in md   # what was asked
         assert "found it" in md                       # what came back
-        assert "## Verdict — Resolved" in md and "all done — the verdict" in md
+        # The answer closes the timeline rather than repeating below it.
+        assert "### verdict" in md and "all done — the verdict" in md
+        assert "## Verdict" not in md
+        assert md.index("### verdict") > md.index("### memory_query")
     finally:
         _cleanup(run.uuid, room.uuid)
 
 
-def test_markdown_verdict_header_carries_the_outcome(app_ctx, client):
-    """The markdown twin of the Verdict chip: the outcome, not the lifecycle
+def test_the_exported_verdict_carries_the_outcome(app_ctx, client):
+    """The markdown twin of the verdict row: the outcome, not the lifecycle
     status. A run that finished without resolving reads "Unresolved"."""
     room = _room()
     run = db.start_assistant_run(
@@ -561,8 +581,12 @@ def test_markdown_verdict_header_carries_the_outcome(app_ctx, client):
     try:
         md = client.get(
             f"/assistant/{run.uuid}/markdown").get_data(as_text=True)
-        assert "## Verdict — Unresolved" in md
-        assert "## Verdict — Finished" not in md
+        verdict = md.split("### verdict")[1]
+        assert "**outcome**" in verdict and "Unresolved" in verdict
+        assert "Finished" not in verdict
+        # The dashboard line above still names both, which is where the
+        # lifecycle status belongs — beside the outcome, not instead of it.
+        assert "- **Status:** Unresolved (Finished)" in md
     finally:
         _cleanup(run.uuid, room.uuid)
 

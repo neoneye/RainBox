@@ -700,8 +700,10 @@ def get_run_final_reply(run: AssistantRun) -> dict[str, Any] | None:
     `[started_at, finished_at]` so it can't borrow a sibling run's reply: without
     the lower bound, a later run that fails before replying would pick up the
     *previous* run's reply (any agent message before its finished_at). Returns a
-    small dict (id/uuid/text) for the /assistant inspector's verdict block; `id`
-    is the int the chat DOM anchors on, letting the verdict link jump to it."""
+    small dict (id/uuid/text/timestamp) for the /assistant inspector's verdict
+    row; `id` is the int the chat DOM anchors on, letting the verdict link jump
+    to it, and `timestamp` is when the answer actually landed — which is what
+    places the row, and is a moment earlier than the run's own finish."""
     if run.finished_at is None:
         return None
     msg = (
@@ -718,7 +720,8 @@ def get_run_final_reply(run: AssistantRun) -> dict[str, Any] | None:
     )
     if msg is None:
         return None
-    return {"id": msg.id, "uuid": str(msg.uuid), "text": msg.text}
+    return {"id": msg.id, "uuid": str(msg.uuid), "text": msg.text,
+            "timestamp": msg.created_at}
 
 
 def list_assistant_steps(run_uuid: UUID) -> list[AssistantStep]:

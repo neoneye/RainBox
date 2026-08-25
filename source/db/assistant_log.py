@@ -357,7 +357,7 @@ def retry_resumed_at(step):
 #: it; `variant` on the event keeps the finer distinction the page colours by.
 EVENT_KINDS: tuple[str, ...] = (
     "start", "llm", "embedding", "action", "activity", "control",
-    "unaccounted", "skipped",
+    "unaccounted", "skipped", "verdict",
 )
 
 #: Which `variant` values are model calls. Everything produced by the call
@@ -678,9 +678,45 @@ def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
                  "step_index": active.get("step_index")})]
 
 
+def _verdict_event(run, verdict: dict | None) -> list[dict]:
+    """The answer the run arrived at.
+
+    The stream opens with the question and closes with the answer, which is
+    the shape of the thing being read. It had a card of its own below the
+    stream, which meant the one row nobody could link to was the one everybody
+    quotes — and a reader following a link to a step had to know to scroll
+    past the stream to find what the run actually said.
+
+    Zero duration, exactly like the opening event: the reply landed at a
+    moment, it did not spend a stretch. The time it took to arrive at is
+    already on the stream, as the calls that produced it.
+
+    Placed where the answer LANDED — the reply's own timestamp — rather than
+    at the run's finish, which is a moment later and would sort the answer
+    after the action that produced it. A run that failed before replying has
+    no such moment and falls back to the finish: its `final_summary` is what
+    it ended up saying, and the finish is when it stopped saying anything.
+
+    A run still going has no verdict at all, because it has not arrived at
+    one.
+    """
+    text = (verdict or {}).get("text")
+    if not text:
+        return []
+    return [_event(
+        "verdict", "verdict",
+        start=(verdict or {}).get("at") or getattr(run, "finished_at", None),
+        duration_ms=0, anchor="", uuid="verdict",
+        kpis={"status": (verdict or {}).get("status")},
+        payload={"text": text,
+                 "message_id": (verdict or {}).get("message_id"),
+                 "room_uuid": str(getattr(run, "room_uuid", "") or "")})]
+
+
 def run_events(run, steps: list, reviews: list | None = None,
                trigger: dict | None = None, intents: list | None = None,
-               active: dict | None = None) -> list[dict]:
+               active: dict | None = None,
+               verdict: dict | None = None) -> list[dict]:
     """A run as a flat stream of typed events, oldest first.
 
     Derived from records that already exist, so a run that happened before
@@ -696,6 +732,10 @@ def run_events(run, steps: list, reviews: list | None = None,
     to look somewhere else for it is reading the run without its question.
     Omitted when there is none — a run seeded outside the chat flow has no
     message that began it, and an empty Start row would claim one existed.
+
+    `verdict` closes it the same way: `{text, message_id, status}` for the
+    answer the run ended on. Omitted while a run is still going, because it
+    has not arrived at one.
     """
     events: list[dict] = []
     if trigger is not None:
@@ -743,6 +783,7 @@ def run_events(run, steps: list, reviews: list | None = None,
                      "skip_reason": getattr(r, "skip_reason", None),
                      "error": getattr(r, "error", None)}))
 
+    events.extend(_verdict_event(run, verdict))
     events.extend(_summary_events(run))
 
     # Undated events sort last rather than crashing the comparison — they are
@@ -754,8 +795,10 @@ def run_events(run, steps: list, reviews: list | None = None,
     # control events are held out of the subtraction.
     phases = [e for e in events if e["kind"] == "phase"]
     spanning = [e for e in events
-                if e["kind"] not in ("phase", "action", "control", "start")]
-    rest = [e for e in events if e["kind"] in ("action", "control", "start")]
+                if e["kind"] not in ("phase", "action", "control", "start",
+                                     "verdict")]
+    rest = [e for e in events
+            if e["kind"] in ("action", "control", "start", "verdict")]
     leaves = spanning + [_as_event(c) for c in _activity_rows(phases, spanning)]
     leaves.extend(_as_event(c) for c in _unaccounted_rows(leaves, run))
     out = leaves + rest
@@ -784,8 +827,9 @@ _LLM_CALL_MATCH_TOLERANCE = timedelta(seconds=5)
 
 
 #: Ties at one instant: the run's opening event leads, an action trails the
-#: call that chose it.
-_ORDER_AT_SAME_INSTANT: dict[str, int] = {"start": 0, "action": 2}
+#: call that chose it, and the answer precedes the queue wait that follows it —
+#: the reply landed, and only then did the run start waiting to be summarized.
+_ORDER_AT_SAME_INSTANT: dict[str, int] = {"start": 0, "verdict": 0, "action": 2}
 
 
 def _step_span(step):
@@ -1230,7 +1274,8 @@ def assistant_llm_calls(steps: list, reviews: list | None = None,
     the stream, where its cost is its own; it is not part of the turn's.
     """
     return [e for e in run_events(run, steps, reviews)
-            if e["kind"] not in ("action", "control", "start", "skipped")
+            if e["kind"] not in ("action", "control", "start", "skipped",
+                                 "verdict")
             and e["variant"] not in ("summary", "live")]
 
 

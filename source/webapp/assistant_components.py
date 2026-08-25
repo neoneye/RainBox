@@ -75,6 +75,7 @@ EVENT_GLYPH: dict[str, str] = {
     "control": "●",
     "unaccounted": "·",
     "skipped": "⊘",
+    "verdict": "■",
 }
 
 #: What each kind's pane says it is, under the label.
@@ -87,6 +88,7 @@ _KIND_CAPTION: dict[str, str] = {
     "control": "operator",
     "unaccounted": "unmeasured",
     "skipped": "a call the loop could not make",
+    "verdict": "what the run ended up saying",
 }
 
 def _fmt_ms(value: Any) -> str | None:
@@ -507,6 +509,24 @@ def _start(event: dict) -> list[dict]:
     return _blocks(_block("request", (event.get("payload") or {}).get("text")))
 
 
+def _verdict(event: dict) -> list[dict]:
+    """What the run ended up saying.
+
+    The answer, whole. The run stores a truncated `final_summary`; this is the
+    reply that was actually posted, which is what anyone quoting the run
+    quotes.
+
+    Led by the outcome, for the reason an action is led by its status: how it
+    ended is an outcome and not a cost, so it reads as a labelled block rather
+    than as a figure among the token counts. And it is the OUTCOME — resolved
+    or not — never the lifecycle status, which only says the loop terminated
+    and reads as success on a run that resolved nothing.
+    """
+    return _blocks(
+        _block("outcome", (event.get("kpis") or {}).get("status")),
+        _block("reply", (event.get("payload") or {}).get("text")))
+
+
 def _unaccounted(_event: dict) -> list[dict]:
     return [_note(
         "Nothing measured this stretch. It is the absence of a record, not a "
@@ -585,6 +605,7 @@ _KIND_RENDERERS = {
     "control": _control,
     "unaccounted": _unaccounted,
     "skipped": _skipped,
+    "verdict": _verdict,
 }
 
 
@@ -695,6 +716,17 @@ def _intents_html(event: dict) -> Markup:
     ).format(len(rows), Markup("").join(rows))
 
 
+def _verdict_link(event: dict) -> Markup:
+    """The reply where it lives, in the room. A run is read here and quoted
+    there, so the row that holds the answer is the one that has to reach it."""
+    payload = event.get("payload") or {}
+    if not payload.get("room_uuid") or payload.get("message_id") is None:
+        return Markup("")
+    return Markup(
+        '<p class="ev-links"><a href="/chat?id={}&msg={}">chat ↗</a></p>'
+    ).format(payload["room_uuid"], payload["message_id"])
+
+
 def _start_links(event: dict) -> Markup:
     """Both ways back to where a run came from: the person who asked, and the
     message in the room. Links, so the page only."""
@@ -745,8 +777,9 @@ def render_event_detail(event: dict) -> str:
     write is waiting on.
     """
     kind = event.get("kind") or "action"
-    body = (_start_links(event) if kind == "start" else Markup("")) \
-        + _blocks_html(event_blocks(event)) \
+    links = (_start_links(event) if kind == "start" else
+             _verdict_link(event) if kind == "verdict" else Markup(""))
+    body = links + _blocks_html(event_blocks(event)) \
         + (_intents_html(event) if kind in ("start", "action") else Markup(""))
     # The label and the description ride as data rather than as markup: the
     # card header is what names the thing being inspected, and printing them

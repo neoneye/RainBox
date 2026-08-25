@@ -319,3 +319,43 @@ def test_a_call_in_flight_is_not_counted_as_a_call_the_run_has_made():
     events = db.run_events(_run(finished=3), steps, active=_active(started))
     assert any(e["variant"] == "live" for e in events)
     assert db.assistant_run_stats(steps, run=_run(finished=3))["calls"] == 1
+
+
+def test_the_answer_closes_the_stream_and_costs_nothing():
+    """The run's opening event and its closing one are a pair: a question at a
+    moment, an answer at a moment. Neither spends a stretch — the time between
+    them is already on the stream as the calls that crossed it — so the answer
+    draws a row and no bar."""
+    run = _run(finished=10)
+    events = db.run_events(
+        run, [_step("reply", at=0, ms=2000, code_driven=False)],
+        verdict={"text": "About 384400 km.", "message_id": 42,
+                 "status": "Resolved"})
+    verdict = [e for e in events if e["kind"] == "verdict"]
+
+    assert len(verdict) == 1
+    assert verdict[0]["duration_ms"] == 0
+    assert verdict[0]["start"] == run.finished_at
+    assert events[-1]["kind"] == "verdict"
+    # Addressable, which is the whole reason it is a row: it had a card of its
+    # own below the stream and nothing could point at it.
+    assert verdict[0]["uuid"] == "verdict"
+    assert verdict[0]["payload"]["message_id"] == 42
+
+
+def test_a_run_still_going_has_arrived_at_no_answer():
+    """An empty verdict row would claim the run had said something."""
+    events = db.run_events(_run(), [_step("reply", at=0, ms=2000)],
+                           verdict={"text": "", "status": "—"})
+
+    assert not [e for e in events if e["kind"] == "verdict"]
+
+
+def test_the_answer_is_not_one_of_the_run_s_model_calls():
+    """It is what the calls produced, not another of them. Counting it would
+    put a call in the dashboard that never went to a model."""
+    steps = [_step("reply", at=0, ms=2000)]
+    calls = db.assistant_llm_calls(steps, run=_run(finished=3))
+
+    assert all(c["kind"] != "verdict" for c in calls)
+    assert db.assistant_run_stats(steps, run=_run(finished=3))["calls"] == 1

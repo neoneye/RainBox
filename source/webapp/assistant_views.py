@@ -147,17 +147,6 @@ ASSISTANT_TEMPLATE = """
   .as-main .card .card-header .card-title { font-size:1rem; font-weight:400; }
   .as-main .card .card-header .card-link { margin-left:auto; font-size:0.82rem; color:#2563eb; text-decoration:none; }
   .as-main .card .card-header .card-link:hover { text-decoration:underline; }
-  /* Outcome chip after the card title, separated like the step header's spans. */
-  .as-main .card .card-header .outcome { align-self:stretch; display:flex; align-items:center;
-                                margin:-10px 0; padding:10px 0 10px 1rem;
-                                border-left:1px solid #e5e7eb; font-weight:600; }
-  /* The chip carries the run's outcome (same reading as the dashboard's
-     headline status), not its lifecycle status: "finished" only means the loop
-     terminated, so colouring it green would sell an unresolved run as a win. */
-  .as-main .card .card-header .out-resolved { color:#1e7e34; }
-  .as-main .card .card-header .out-unresolved { color:#c0392b; }
-  .as-main .card .card-header .out-running { color:#1d4ed8; }
-  .as-main .card .card-header .out-pending { color:#98a2b3; }
   /* The inspector's pane is a card body and takes the same padding as one,
      rather than restating a near-miss of it — its content lined up two pixels
      inside the header above it. */
@@ -302,7 +291,6 @@ ASSISTANT_TEMPLATE = """
   .as-main .wf-undated { position:absolute; left:4px; font-size:0.68rem; color:#98a2b3; }
   .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;
                       font-variant-numeric:tabular-nums; }
-  .as-main .card .card-header .outcome.muted { color:#667085; font-weight:400; font-size:0.85rem; }
   /* The meta line under a pane's header: what the call cost, right-aligned,
      with the fields separated by the flex gap rather than by punctuation.
      ONE rule — it was two while a step section had a meta line of its own,
@@ -491,18 +479,6 @@ ASSISTANT_TEMPLATE = """
 
       {% if not log.events %}<div class="as-empty">This run has no steps.</div>{% endif %}
 
-      {% if verdict %}
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">Verdict</div>
-          <span class="outcome out-{{ dash.status_class }}">{{ dash.status }}</span>
-          {% if reply %}<a class="card-link" href="/chat?id={{ selected.room_uuid }}&msg={{ reply.id }}">chat ↗</a>{% endif %}
-        </div>
-        <div class="card-body">
-          <pre>{{ verdict }}</pre>
-        </div>
-      </div>
-      {% endif %}
     {% endif %}
   </section>
 
@@ -1076,7 +1052,7 @@ def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
 # --- markdown export ---------------------------------------------------------
 # The detail pane serialized to Markdown, section-for-section with
 # ASSISTANT_TEMPLATE's `.as-main`: dashboard → summary → model calls → run →
-# timeline → verdict.
+# timeline, which opens with the request and closes with the answer.
 #
 # Built from `run_events` — the same stream the page draws — rather than from
 # the step rows. It used to walk the rows and rebuild every pane, which is how
@@ -1174,14 +1150,9 @@ def _run_markdown(run, ctx: dict) -> str:
     for event in events:
         out += event_markdown(event)
 
-    # Verdict.
-    if ctx["verdict"]:
-        # Mirrors the HTML chip: the outcome, not the lifecycle status. The
-        # not-yet-summarized label is "—", which reads as noise in a header.
-        label = ctx["dash"]["status"]
-        head = "## Verdict" + (f" — {label}" if label != "—" else "")
-        out += [head, "", ctx["verdict"], ""]
-
+    # No Verdict section: the answer is the row that closes the stream, and
+    # printing it twice would ask the reader which copy to believe. The
+    # outcome is on the dashboard line above, where the page shows it too.
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -1244,18 +1215,28 @@ def _load_run_detail(selected) -> dict:
     trigger = db.get_run_trigger_message(selected)
     # The full final reply (the run stores only a truncated final_summary).
     reply = db.get_run_final_reply(selected)
+    dash = _run_dashboard(selected, steps, review_rows)
+    # The answer, as the row that closes the stream. It had a card below the
+    # stream, which made the one row everybody quotes the one row nobody could
+    # link to.
+    verdict = {
+        "text": reply["text"] if reply else selected.final_summary,
+        "message_id": reply["id"] if reply else None,
+        "at": reply["timestamp"] if reply else None,
+        "status": dash["status"],
+    }
     return {
         "pending_controls": db.list_pending_controls(selected.uuid),
         "trigger": trigger,
-        "dash": _run_dashboard(selected, steps, review_rows),
+        "dash": dash,
         # The gantt and the log read one stream, so a kind added to
         # db.assistant_log appears in both without either learning about it.
         "log": log_view(selected, steps, review_rows,
                         trigger=trigger,
                         intents=db.list_write_intents_for_run(selected.uuid),
-                        active=_active_model_call(selected)),
-        "reply": reply,
-        "verdict": reply["text"] if reply else selected.final_summary,
+                        active=_active_model_call(selected),
+                        verdict=verdict),
+        "verdict": verdict,
     }
 
 
@@ -1285,7 +1266,6 @@ def assistant_page() -> str:
         pending_controls=ctx.get("pending_controls", []),
         duration=duration,
         dash=ctx.get("dash"),
-        verdict=ctx.get("verdict"), reply=ctx.get("reply"),
     )
 
 
